@@ -14,6 +14,7 @@ export interface PrismaMock {
   withVerifiedSubject: jest.Mock;
   withServiceKeyLookup: jest.Mock;
   withServicePrincipal: jest.Mock;
+  withSyncPrincipal: jest.Mock;
   withSystemTransaction: jest.Mock;
   withPublicViewer: jest.Mock;
   withDeliveryService: jest.Mock;
@@ -134,6 +135,10 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
     ),
     withServiceKeyLookup: jest.fn(run),
     withServicePrincipal: jest.fn(
+      <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>) =>
+        run(fn),
+    ),
+    withSyncPrincipal: jest.fn(
       <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>) =>
         run(fn),
     ),

@@ -112,6 +112,7 @@ import { CancellationBatchesService } from '../../src/publication/cancellation-b
 import { PublicLinksService } from '../../src/publication/public-links.service';
 import { tokenHashOf } from '../../src/publication/public-token';
 import { familyPushChecks, sweepFamilySchool } from './probe-family-push';
+import { ss12000SyncChecks, sweepSs12000School } from './probe-ss12000-sync';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -3913,6 +3914,7 @@ async function runChecks(
   await viewerChecks(owner, api);
   await coverChecks(owner, api, open, appUrl);
   await familyPushChecks(owner, api, MARKER, check);
+  await ss12000SyncChecks(owner, api, MARKER, check);
 }
 
 
@@ -4358,6 +4360,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query('DELETE FROM "RoomBookings" WHERE title = $1', [MARKER]);
   // Elev- och vårdnadshavarytan's school, whole, for a run that stopped inside it.
   await sweepFamilySchool(owner, MARKER);
+  // The SS12000 consumer's school, whole, likewise.
+  await sweepSs12000School(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Duties first: TeacherDuties_take_their_block deletes each one's slot with
   // it (the service writes the slot's reason as the bare word "Uppdrag", so a

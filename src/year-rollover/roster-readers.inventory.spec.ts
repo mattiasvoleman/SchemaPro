@@ -68,6 +68,14 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'writes notices and email; nobody is told about next year’s class before the activation',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
+  'src/integration/ss12000-sync/local-slice.ts': {
+    basis: 'CURRENT',
+    why: 'the SS12000 sync compares the source with the rows as they are and writes against them; nothing is written into a year that is not active',
+  },
+  'src/integration/ss12000-sync/ss12000-sync.service.ts': {
+    basis: 'CURRENT',
+    why: 'the provisioning list: linked people as they are now, with their current class',
+  },
   'src/resources/academic-years.service.ts': { basis: 'CURRENT', why: 'YEAR_HAS_HOME_PUPILS guards real rows' },
   'src/resources/student-groups.service.ts': { basis: 'CURRENT', why: 'shows and writes a group’s members as facts' },
   'src/users/users.service.ts': { basis: 'CURRENT', why: 'a user’s own class, read before it is written' },

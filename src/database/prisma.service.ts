@@ -452,6 +452,36 @@ export class PrismaService
   }
 
   /**
+   * Execute `fn` as the SS12000 SYNC acting for one school (migrations
+   * 20261014090000–20261014110000): the run that reads the school's source,
+   * writes its diff and, when the admin enabled it, auto-applies the safe
+   * changes. There is no person behind it — the nightly run has none, and a
+   * manual run's fetch happens after its 202 — so no claims are set, only
+   * `app.sync_school_id`.
+   *
+   * `schoolId` MUST come from a source row the gateway read, never from
+   * request input. The sync arms hold every statement to that school, and
+   * the guards narrow what it may write (users: names, class, deactivation
+   * of a pupil or guardian; the source: its cursors) and refuse it every
+   * DELETE. Transaction-local, like the service principal's setting.
+   */
+  async withSyncPrincipal<T>(
+    schoolId: string,
+    fn: (tx: PrismaClient) => Promise<T>,
+    options?: { timeoutMs?: number },
+  ): Promise<T> {
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
+          SELECT set_config('app.sync_school_id', ${schoolId}, true)
+        `;
+        return fn(tx as unknown as PrismaClient);
+      },
+      { timeout: options?.timeoutMs ?? 30_000 },
+    );
+  }
+
+  /**
    * The public viewer's door (Publicering, 20261011120000): a transaction
    * with no principal at all — RLS answers nothing in it — and a 2 s
    * statement_timeout, in which the only thing worth doing is calling
