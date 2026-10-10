@@ -34,6 +34,7 @@
  * earlier run was killed half-way.
  */
 import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -3269,12 +3270,22 @@ async function runChecks(
         assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, today, 'RECORDED']]);
         await users.update(eh.p2, { isActive: true }, ehAdmin);
         assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
-        // Another school's class is no class of this school: 400, nothing written.
-        await assert.rejects(users.update(eh.p2, { studentGroupId: eh.foreignGroupId }, ehAdmin), (error: unknown) => {
-          assert.ok(error instanceof BadRequestException, summarise(error));
-          assert.match(error.message, /^studentGroupId: /);
-          return true;
-        });
+        // Another school's class is no class of this school: 400, nothing
+        // written — the same answer as a class id that exists nowhere, for an
+        // active pupil and for one being deactivated in the same write.
+        const refusals: string[] = [];
+        for (const data of [
+          { studentGroupId: eh.foreignGroupId },
+          { studentGroupId: randomUUID() },
+          { studentGroupId: eh.foreignGroupId, isActive: false },
+        ]) {
+          await assert.rejects(users.update(eh.p2, data as never, ehAdmin), (error: unknown) => {
+            assert.ok(error instanceof BadRequestException, summarise(error));
+            refusals.push(error.message);
+            return true;
+          });
+        }
+        assert.deepEqual(refusals, Array(3).fill('studentGroupId: klassen finns inte i skolan.'));
         assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
 
         // 8: a move whose transaction rolls back leaves no history.

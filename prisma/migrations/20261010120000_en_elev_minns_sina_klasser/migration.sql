@@ -62,12 +62,21 @@
 --   * (studentGroupId, academicYearId, schoolId) -> StudentGroups(id,
 --     academicYearId, schoolId), ON UPDATE NO ACTION, ON DELETE SET NULL
 --     ("studentGroupId") — the column list, as 20261007150000 uses it. The key
---     ties a segment to a class OF ITS OWN YEAR for every writer, and closes a
---     gap: Users."studentGroupId" references StudentGroups(id) alone, the one
+--     ties a segment to a class OF ITS OWN YEAR for every writer. It needs the
+--     additive unique StudentGroups_id_academicYearId_schoolId_key.
+--   * Users."studentGroupId" references StudentGroups(id) alone, the one
 --     tenant reference without a composite key, so a class of another school
---     could be written there through PostgREST; now that write aborts with
---     23503 from the segment it would open. It needs the additive unique
---     StudentGroups_id_academicYearId_schoolId_key.
+--     could be written there through PostgREST (users_admin_all). The trigger
+--     below closes that for every pupil, active or not: a class that is not
+--     the pupil's school's is refused with 23503 in Users_studentGroupId_fkey's
+--     own words — message, the redacted detail, the constraint name — so a
+--     tenant cannot tell another school's class id from one that exists
+--     nowhere. (Left to the segment's composite key, the refusal came from
+--     inside a SECURITY DEFINER function, unredacted, and named the other
+--     school's academicYearId; and an inactive pupil, who opens no segment,
+--     was not refused at all. Measured in review, closed here.) The gateway
+--     answers both with the same 400 "studentGroupId: klassen finns inte i
+--     skolan".
 --     ON UPDATE NO ACTION, not CASCADE: StudentGroupsService.update accepts
 --     academicYearId, and the rollover link trigger only fixes LINKED groups.
 --     A cascade would move a class's history into another year while its dates
@@ -199,7 +208,9 @@
 --
 -- A pupil whose class belongs to another school (possible only through a
 -- PostgREST write before this migration) is counted in a NOTICE and gets no
--- row; the next real move of that pupil aborts with 23503.
+-- row; any later write that keeps or sets that class while the pupil is
+-- active aborts with 23503 (deactivating them, or clearing the class, does
+-- not).
 --
 -- ## Row-level security
 --
@@ -353,6 +364,7 @@ DECLARE
   hint text;
   hint_match text[];
   hint_day date;
+  check_class boolean;
 BEGIN
   -- Inside a school's cascade the school is already gone: nothing to record.
   SELECT s."timezone" INTO tz FROM "Schools" s WHERE s."id" = NEW."schoolId";
@@ -361,11 +373,35 @@ BEGIN
   END IF;
   today := (now() AT TIME ZONE tz)::date;
 
+  -- A class written to the pupil must be a class of the pupil's school,
+  -- whether or not a segment opens (an inactive pupil, too). Refused in
+  -- Users' own key's words, so the refusal of another school's class id
+  -- reads exactly like the refusal of an id that exists nowhere: an existence
+  -- oracle for other tenants' classes otherwise (this function runs as the
+  -- owner, so a key error raised inside it would name another school's year).
+  IF NEW."studentGroupId" IS NOT NULL THEN
+    IF TG_OP = 'INSERT' THEN
+      check_class := true;
+    ELSE
+      check_class := want_open OR OLD."studentGroupId" IS DISTINCT FROM NEW."studentGroupId";
+    END IF;
+    IF check_class AND NOT EXISTS (
+         SELECT 1 FROM "StudentGroups" g
+          WHERE g."id" = NEW."studentGroupId" AND g."schoolId" = NEW."schoolId") THEN
+      RAISE EXCEPTION 'insert or update on table "Users" violates foreign key constraint "Users_studentGroupId_fkey"'
+        USING ERRCODE = 'foreign_key_violation',
+              DETAIL = 'Key is not present in table "StudentGroups".',
+              SCHEMA = 'public',
+              TABLE = 'Users',
+              CONSTRAINT = 'Users_studentGroupId_fkey';
+    END IF;
+  END IF;
+
   IF want_open THEN
     SELECT g."id", g."gradeLevel", y."id", y."startDate", y."endDate"
       INTO g_id, g_grade, y_id, y_start, y_end
       FROM "StudentGroups" g JOIN "AcademicYears" y ON y."id" = g."academicYearId"
-     WHERE g."id" = NEW."studentGroupId";
+     WHERE g."id" = NEW."studentGroupId" AND g."schoolId" = NEW."schoolId";
     IF NOT FOUND THEN
       want_open := false;
     ELSE
@@ -502,10 +538,12 @@ REVOKE ALL ON FUNCTION app.student_enrollments_follow_the_class() FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.student_enrollments_follow_the_grade() FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.student_enrollments_written_by_trigger() FROM PUBLIC;
 
+-- Every pupil created with a class, active or not: an inactive one opens no
+-- segment, but its class must still be the school's (see the function).
 CREATE TRIGGER "Users_enrollment_on_insert"
     AFTER INSERT ON "Users"
     FOR EACH ROW
-    WHEN (NEW."role" = 'STUDENT' AND NEW."isActive" AND NEW."studentGroupId" IS NOT NULL)
+    WHEN (NEW."studentGroupId" IS NOT NULL)
     EXECUTE FUNCTION app.student_enrollments_follow_the_class();
 
 CREATE TRIGGER "Users_enrollment_on_update"

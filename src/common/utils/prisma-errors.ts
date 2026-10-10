@@ -480,16 +480,26 @@ const ENROLMENT_CLASS_KEY = 'StudentEnrollments_studentGroupId_academicYearId_sc
 const ENROLMENT_YEAR_KEY = 'StudentEnrollments_academicYearId_schoolId_fkey';
 
 /**
+ * Users' own class key. The class-history trigger refuses another school's
+ * class in this key's exact words (migration 20261010120000), so a class id
+ * of another school and one that exists nowhere are one refusal — and one
+ * answer here, the 400 naming the field.
+ */
+const USERS_CLASS_KEY = 'Users_studentGroupId_fkey';
+
+/**
  * Which side of the class-history key refused (23503), or null.
  *
- * 'NOT_THE_SCHOOLS': a pupil's class was written as a group the history cannot
- * name — another school's (Users."studentGroupId" references the group's id
- * alone; the segment the trigger opens carries the pupil's school) — "insert
- * or update on table "StudentEnrollments"". 'CLASS_MOVED': a class with
- * segments moved to another year, "update or delete on table
- * "StudentGroups"". Read like isTimplanInUseRefusal: the constraint from the
- * driver's cause, else from the rendered message; the side from the driver's
- * message, else from the model whose operation failed.
+ * 'NOT_THE_SCHOOLS': a pupil's class was written as a group that is not a
+ * class of the pupil's school — none at all, or another school's
+ * (Users."studentGroupId" references the group's id alone, and the history
+ * trigger refuses it in the same words) — "insert or update on table
+ * "Users"", or a segment the history could not name, "insert or update on
+ * table "StudentEnrollments"". 'CLASS_MOVED': a class with segments moved to
+ * another year, "update or delete on table "StudentGroups"". Read like
+ * isTimplanInUseRefusal: the constraint from the driver's cause, else from
+ * the rendered message; the side from the driver's message, else from the
+ * model whose operation failed.
  */
 export function enrolmentClassKeyRefusal(error: unknown): 'NOT_THE_SCHOOLS' | 'CLASS_MOVED' | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') return null;
@@ -502,6 +512,12 @@ export function enrolmentClassKeyRefusal(error: unknown): 'NOT_THE_SCHOOLS' | 'C
     typeof cause?.constraint?.index === 'string'
       ? cause.constraint.index
       : (/constraint: `([^`]+)`/.exec(error.message)?.[1] ?? /foreign key constraint "([^"]+)"/.exec(message)?.[1] ?? null);
+  if (constraint === USERS_CLASS_KEY) {
+    const written = message
+      ? message.startsWith('insert or update on table "Users"')
+      : meta?.modelName === 'User';
+    return written ? 'NOT_THE_SCHOOLS' : null;
+  }
   if (constraint !== ENROLMENT_CLASS_KEY && constraint !== ENROLMENT_YEAR_KEY) return null;
   const moved = message
     ? message.startsWith('update or delete on table "StudentGroups"')

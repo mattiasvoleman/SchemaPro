@@ -7228,8 +7228,9 @@ ROLLBACK;
 --      day coalescing; the class cleared; deactivation and reactivation; a
 --      malformed hint ignored; a grade corrected; a class with history moved
 --      to another year (23503); a class deleted (a closed segment, no class,
---      its grade); a role change; another school's class (23503); a year
---      deleted (its segments with it, nothing raised).
+--      its grade); a role change; another school's class (23503, for an
+--      active and an inactive pupil alike, in the words of an unknown id); a
+--      year deleted (its segments with it, nothing raised).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -7393,6 +7394,7 @@ DECLARE
   y1_start date := today - 50;
   y0_end date := today - 60;
   n bigint; seg record; con text;
+  con_b text; msg_none text; det_none text; msg_b text; det_b text;
 BEGIN
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
   VALUES (school, 'RLS26 förra', today - 400, y0_end, false, now()) RETURNING id INTO y0;
@@ -7492,10 +7494,36 @@ BEGIN
     END IF;
   END;
 
-  -- Another school's class: the segment it would open refuses it.
+  -- Another school's class is refused for every pupil, active or not, and in
+  -- Users' own key's words: the refusal of school B's class id reads exactly
+  -- like that of an id that exists nowhere (no existence oracle, and nothing
+  -- of school B — its year — in the detail).
+  BEGIN
+    UPDATE "Users" SET "studentGroupId" = gen_random_uuid() WHERE id = r;
+    RAISE EXCEPTION 'enrolment: a pupil was placed in a class that does not exist';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME, msg_none = MESSAGE_TEXT, det_none = PG_EXCEPTION_DETAIL;
+  END;
   BEGIN
     UPDATE "Users" SET "studentGroupId" = current_setting('app.test_group_b')::uuid WHERE id = r;
     RAISE EXCEPTION 'enrolment: a pupil was placed in another school''s class';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS con_b = CONSTRAINT_NAME, msg_b = MESSAGE_TEXT, det_b = PG_EXCEPTION_DETAIL;
+    IF con_b IS DISTINCT FROM con OR msg_b IS DISTINCT FROM msg_none OR det_b IS DISTINCT FROM det_none THEN
+      RAISE EXCEPTION 'enrolment: another school''s class is refused as "%" / "%" / "%", an unknown id as "%" / "%" / "%"',
+        con_b, msg_b, det_b, con, msg_none, det_none;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "Users" SET "isActive" = false, "studentGroupId" = current_setting('app.test_group_b')::uuid WHERE id = r;
+    RAISE EXCEPTION 'enrolment: an inactive pupil was placed in another school''s class';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+    VALUES (school, 'rls26-x@example.invalid', 'RLS26', 'X', 'STUDENT', gen_random_uuid(), false, now(),
+            current_setting('app.test_group_b')::uuid);
+    RAISE EXCEPTION 'enrolment: an inactive pupil was created in another school''s class';
   EXCEPTION WHEN foreign_key_violation THEN NULL;
   END;
 
