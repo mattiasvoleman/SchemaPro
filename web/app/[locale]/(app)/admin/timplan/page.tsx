@@ -628,6 +628,7 @@ export default function TimplanPage() {
         </div>
       )}
 
+      {/* Its own boundary: a dialog's chunk loading must not hide the notice already shown. */}
       <Suspense fallback={null}>
         {!loading && !failed && years && groups && national ? (
           <SchoolCohortNotice
@@ -638,6 +639,8 @@ export default function TimplanPage() {
             className="mt-6"
           />
         ) : null}
+      </Suspense>
+      <Suspense fallback={null}>
         {dialog === "create" ? (
           <CreateDialog
             open
