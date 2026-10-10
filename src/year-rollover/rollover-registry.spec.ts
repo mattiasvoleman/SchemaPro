@@ -247,6 +247,7 @@ describe('the rollover registry', () => {
       'CancellationBatch',
       'CancellationBatchLesson',
       'CancellationBatchCredit',
+      'PublicTimetableLink',
       'PublicationPendingRemoval',
     ];
     expect(
@@ -254,7 +255,7 @@ describe('the rollover registry', () => {
         .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.slice(-10)).toEqual([
+    expect(skipped.slice(-11)).toEqual([
       expect.objectContaining({ model: 'TimplanCredit', counted: false }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', counted: false }),
       expect.objectContaining({ model: 'TimplanStatementPublication', counted: false }),
@@ -264,6 +265,7 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'CancellationBatch', counted: false }),
       expect.objectContaining({ model: 'CancellationBatchLesson', counted: false }),
       expect.objectContaining({ model: 'CancellationBatchCredit', counted: false }),
+      expect.objectContaining({ model: 'PublicTimetableLink', counted: false }),
       expect.objectContaining({ model: 'PublicationPendingRemoval', counted: false }),
     ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());

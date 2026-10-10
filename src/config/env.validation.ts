@@ -4,6 +4,7 @@ import {
   IsInt,
   IsNotEmpty,
   IsOptional,
+  MinLength,
   IsString,
   IsUrl,
   Max,
@@ -129,6 +130,19 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SUPABASE_SERVICE_ROLE_KEY?: string;
+
+  /**
+   * The public viewer (src/publication/public-timetable.controller.ts): the
+   * secret the web server sends with the viewer's own client address
+   * (X-Viewer-Proxy-Key beside X-Viewer-Client-Ip), so each family reading a
+   * timetable through the web is rate-limited on its own address rather than
+   * all of them on the web server's. Unset, the header is ignored and the
+   * limit is per caller address. At least 32 characters when set.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(32)
+  PUBLIC_VIEWER_PROXY_KEY?: string;
 }
 
 export function validateEnv(

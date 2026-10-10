@@ -8,6 +8,10 @@ import { PublicationsService } from './publications.service';
 import { DraftService } from './draft.service';
 import { CancellationBatchesController } from './cancellation-batches.controller';
 import { CancellationBatchesService } from './cancellation-batches.service';
+import { PublicLinksController } from './public-links.controller';
+import { PublicLinksService } from './public-links.service';
+import { PublicTimetableController } from './public-timetable.controller';
+import { PublicViewerThrottlerGuard } from './public-viewer-throttler.guard';
 
 /**
  * Publicering: validity-dated publications, the school's gate policy and the
@@ -20,8 +24,14 @@ import { CancellationBatchesService } from './cancellation-batches.service';
  */
 @Module({
   imports: [CalendarModule, StaffingModule, TimplanModule],
-  controllers: [CalendarController, PublicationsController, CancellationBatchesController],
-  providers: [PublicationsService, DraftService, CancellationBatchesService],
+  controllers: [
+    CalendarController,
+    PublicationsController,
+    CancellationBatchesController,
+    PublicLinksController,
+    PublicTimetableController,
+  ],
+  providers: [PublicationsService, DraftService, CancellationBatchesService, PublicLinksService, PublicViewerThrottlerGuard],
   exports: [PublicationsService],
 })
 export class PublicationModule {}

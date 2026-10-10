@@ -34,6 +34,11 @@ export interface SupabaseAdminConfig {
   serviceRoleKey?: string;
 }
 
+export interface PublicViewerConfig {
+  /** Undefined: X-Viewer-Client-Ip is never trusted. */
+  proxyKey?: string;
+}
+
 export interface Configuration {
   app: AppConfig;
   database: DatabaseConfig;
@@ -41,6 +46,7 @@ export interface Configuration {
   aiEngine: AiEngineConfig;
   throttle: ThrottleConfig;
   supabase: SupabaseAdminConfig;
+  publicViewer: PublicViewerConfig;
 }
 
 /**
@@ -82,6 +88,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     supabase: {
       url: env.SUPABASE_URL,
       serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    },
+    publicViewer: {
+      proxyKey: env.PUBLIC_VIEWER_PROXY_KEY && env.PUBLIC_VIEWER_PROXY_KEY.length > 0 ? env.PUBLIC_VIEWER_PROXY_KEY : undefined,
     },
   };
 }

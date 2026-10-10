@@ -547,6 +547,15 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'CancellationBatch',
     reason: 'The credits a batch of the old year handed off.',
   },
+  /**
+   * The public viewer (20261011120000): a share link names a class or a
+   * year's index of classes, so it is the old year's; the new year's classes
+   * are shared again, by links of their own.
+   */
+  PublicTimetableLink: {
+    kind: 'SKIPPED',
+    reason: 'A share link of the old year names its classes; the new year is shared with links of its own.',
+  },
   PublicationPendingRemoval: {
     kind: 'FOLLOWS',
     parent: 'CalendarLesson',

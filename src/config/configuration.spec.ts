@@ -63,7 +63,15 @@ describe('loadConfiguration', () => {
         url: 'https://project.supabase.invalid',
         serviceRoleKey: 'service-role-key-000000',
       },
+      // Unset: the viewer trusts no forwarded address.
+      publicViewer: { proxyKey: undefined },
     });
+  });
+
+  it('carries the public viewer\'s proxy key when it is set, and treats an empty one as unset', () => {
+    const key = 'k'.repeat(40);
+    expect(loadConfiguration(env({ PUBLIC_VIEWER_PROXY_KEY: key })).publicViewer).toEqual({ proxyKey: key });
+    expect(loadConfiguration(env({ PUBLIC_VIEWER_PROXY_KEY: '' })).publicViewer).toEqual({ proxyKey: undefined });
   });
 
   describe('corsOrigins', () => {

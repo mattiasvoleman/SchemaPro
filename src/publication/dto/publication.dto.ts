@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { GATE_POLICY_KEYS } from '../publication-gates';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -71,6 +71,15 @@ export class UpsertPublicationSettingsDto {
   @IsOptional() @IsIn(GATE_MODES) gateWeekSplit?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateGap?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateDayOpsLost?: 'WARN' | 'REFUSE';
+
+  // The public viewer (20261011120000). Off by default, every one.
+  @IsOptional() @IsBoolean() publicViewerEnabled?: boolean;
+  @IsOptional() @IsBoolean() publicGroups?: boolean;
+  @IsOptional() @IsBoolean() publicTeachers?: boolean;
+  @IsOptional() @IsBoolean() publicRooms?: boolean;
+  @IsOptional() @IsIn(['NONE', 'SIGNATURE', 'NAME']) publicTeacherDisplay?: 'NONE' | 'SIGNATURE' | 'NAME';
+  @IsOptional() @IsBoolean() publicShowMeals?: boolean;
+  @IsOptional() @IsInt() @Min(3) @Max(30) publicMinGroupSize?: number;
 }
 
 /** Compile-time: the DTO names exactly the policy's columns. */
@@ -111,4 +120,32 @@ export class DiscardDraftDto {
   @Transform(lower)
   @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
   academicYearId!: string;
+}
+
+/** POST /public-links: a share link. A TEACHER link names its teacher and takes no free text. */
+export class CreatePublicLinkDto {
+  @Transform(lower)
+  @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
+  academicYearId!: string;
+
+  @IsIn(['GROUP', 'TEACHER', 'ROOM'], { message: "kind: 'GROUP', 'TEACHER' eller 'ROOM'." })
+  kind!: 'GROUP' | 'TEACHER' | 'ROOM';
+
+  /** The class or group, the teacher or the room; absent = an index (GROUP and ROOM only). */
+  @IsOptional()
+  @Transform(lower)
+  @IsUUID('4', { message: 'targetId: anges med sitt id.' })
+  targetId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MinLength(1)
+  @MaxLength(80)
+  label?: string;
+}
+
+export class TeacherPublicLabelDto {
+  @IsBoolean()
+  hidden!: boolean;
 }
