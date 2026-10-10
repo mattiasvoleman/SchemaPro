@@ -59,6 +59,8 @@
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
       <li><span>7.1 Schemavisaren</span><span class="dots"></span><span class="pg" data-pg="s71"></span></li>
+      <li><span>7.2 Hämta från elevregistret (SS12000)</span><span class="dots"></span><span class="pg" data-pg="s72"></span></li>
+      <li><span>7.3 API-nycklar, omfång och prenumerationer</span><span class="dots"></span><span class="pg" data-pg="s73"></span></li>
     </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
@@ -448,8 +450,8 @@
     </p>
   </div>
   <p>
-    Har skolan ett elevregister som stöder SS12000 kan personerna importeras i
-    stället för att läggas in för hand — se kapitel 7.
+    Har skolan ett elevregister som stöder SS12000 kan personerna hämtas
+    därifrån i stället för att läggas in för hand — se 7.2.
   </p>
 
   <h3><span class="num">3.6</span>Importera från fil (CSV)</h3>
@@ -2908,16 +2910,20 @@
   <p class="lede">Koppla SchemaPro till skolans övriga system.</p>
 
   <p>
-    SchemaPro har ett externt API inspirerat av <strong>SS12000</strong>, den
-    svenska standarden för informationsutbyte mellan skoladministrativa system.
-    Genom det kan elevregister importeras och aktiviteter och lektioner läsas ut
-    till andra system.
+    SchemaPro talar <strong>SS12000</strong>, den svenska standarden för
+    informationsutbyte mellan skoladministrativa system, åt båda hållen.
+    SchemaPro <em>hämtar</em> elever, personal, vårdnadshavare och klasser från
+    skolans elevregister, så att ingenting behöver skrivas in två gånger (7.2).
+    Och andra system <em>läser</em> det publicerade schemat från SchemaPro med
+    en API-nyckel (7.3). Båda finns under
+    <span class="path">Integrationer</span>, på flikarna
+    <span class="ui">Elevregister</span> och <span class="ui">API-nycklar</span>.
   </p>
   <p>
-    Under <span class="path">Integrationer</span> skapar du en API-nyckel per
-    anslutet system, med ett namn som beskriver vad nyckeln används till — till
-    exempel <em>Vklass-synk</em>. Ge varje system sin egen nyckel: då kan en
-    enskild anslutning stängas av utan att övriga påverkas.
+    Under <span class="path">Integrationer › API-nycklar</span> skapar du en
+    API-nyckel per anslutet system, med ett namn som beskriver vad nyckeln
+    används till — till exempel <em>Vklass-synk</em>. Ge varje system sin egen
+    nyckel: då kan en enskild anslutning stängas av utan att övriga påverkas.
   </p>
   <div class="warn">
     <span class="label">Nyckeln visas bara en gång</span>
@@ -3009,6 +3015,200 @@
       enskild besökare och en enskild länk kan hämta.
     </p>
   </div>
+
+  <h3 id="s72"><span class="num">7.2</span>Hämta från elevregistret (SS12000)</h3>
+  <p>
+    Har kommunen ett elevregister som följer SS12000 2.1 — IST, Edlevo eller
+    ett annat — kan SchemaPro hämta skolans elever, personal, vårdnadshavare,
+    klasser och undervisningsgrupper därifrån. Registret är då källan, och
+    SchemaPro följer det. Allt görs under
+    <span class="path">Integrationer › Elevregister</span>.
+  </p>
+  <div class="note">
+    <span class="label">Inget ändras förrän du har granskat</span>
+    <p>
+      En synk <em>läser</em> registret och visar vad som skulle ändras. Ingen
+      person och ingen klass i SchemaPro ändras förrän du har gått igenom
+      ändringarna och tillämpat dem. Det enda undantaget är en nattlig synk där
+      du själv har slagit på automatisk tillämpning, och den gör bara det som
+      är säkert (se nedan). Ingenting raderas någonsin: den som har försvunnit
+      ur registret avaktiveras, och klassbyten och borttagna vårdnadshavare
+      sparas i historiken.
+    </p>
+  </div>
+
+  <h4>Koppla registret</h4>
+  <ol>
+    <li>Under <span class="ui">Källsystem</span> anger du registrets adress,
+      hela vägen till och med <code>/v2.0</code>, som leverantören har gett
+      skolan. Adressen måste börja med <code>https://</code>.</li>
+    <li>Välj hur SchemaPro loggar in: <span class="ui">OAuth2 med klient-id
+      och klienthemlighet</span> (så gör IST), en <span class="ui">statisk
+      token</span> eller ett <span class="ui">klientcertifikat</span>. För OAuth2
+      anger du också tokenadressen och klient-id. Spara.</li>
+    <li>Under <span class="ui">Inloggningsuppgifter</span> klistrar du in
+      klienthemligheten, token eller certifikat och nyckel, en i taget.</li>
+    <li>Tryck <span class="ui">Testa anslutning</span>. SchemaPro hämtar en
+      token och listar registrets skolenheter. Kryssa i den eller de (högst
+      fem) som är den här skolan och tryck <span class="ui">Spara val av
+      skolenhet</span>.</li>
+  </ol>
+  <div class="warn">
+    <span class="label">Inloggningsuppgifterna visas aldrig igen</span>
+    <p>
+      En klienthemlighet, en token eller en privat nyckel sparas krypterad och
+      kan inte läsas ut igen, inte ens av en administratör. Listan visar bara
+      <em>att</em> den är sparad och när. Uppgifterna gäller bara för den
+      adress de skickas till: byter du registrets adress tas de bort, och du
+      anger dem på nytt. På så vis kan en sparad hemlighet aldrig skickas till
+      en annan server.
+    </p>
+  </div>
+  <p>
+    Byter du adress eller skolenhet när personer och klasser redan är
+    kopplade frågar SchemaPro först, eftersom deras id i registret kan betyda
+    någon annan på det nya stället. Nästa synk blir då en full synk.
+  </p>
+
+  <h4>Synka och granska</h4>
+  <p>
+    <span class="ui">Synka nu</span> hämtar det som ändrats sedan förra synken
+    när registret klarar det, annars allt. <span class="ui">Full synk</span>
+    hämtar allt och ser också vem som har försvunnit ur registret. Synken går i
+    bakgrunden; när den är klar står den i <span class="ui">Synkhistorik</span>
+    som <em>Väntar på granskning</em>. Tryck <span class="ui">Granska</span>.
+  </p>
+  <p>
+    Granskningen visar varje ändring: personer som skapas, kopplas, ändras
+    eller avaktiveras, klasser och grupper, klassbyten, vårdnadshavare och
+    tjänster. Det som är förvalt är ikryssat. Du kan kryssa ur det du inte vill
+    ha och kryssa i det som inte är förvalt. Några saker är aldrig förvalda:
+  </p>
+  <ul>
+    <li>Ändringar för en person med <strong>skyddad identitet</strong> i
+      registret.</li>
+    <li>En ändrad <strong>e-postadress</strong> för någon som redan är
+      inbjuden. Personen loggar in med den gamla adressen.</li>
+    <li>Att koppla en ny post till en person som är <strong>avaktiverad</strong>
+      i SchemaPro. Gör det bara om det är samma människa.</li>
+    <li>En tjänst som <strong>lärarassistent, fritidspedagog eller
+      förskollärare</strong>: den skulle ge en lärarinloggning med åtkomst till
+      elevernas uppgifter.</li>
+  </ul>
+  <p>
+    <strong>Konflikter</strong> och <strong>noteringar</strong> tillämpas
+    aldrig. De säger vad synken inte kunde avgöra på egen hand, till exempel en
+    e-postadress som redan används av någon annan, två personer med samma
+    adress eller en klass som redan finns med samma namn. Rätta det i
+    SchemaPro eller i registret och synka igen. Personer kopplas alltid på
+    registrets id. Bara första gången, när ett id saknas, kopplas en person på
+    e-postadressen, och då bara om adressen pekar ut exakt en aktiv person med
+    samma roll.
+  </p>
+  <div class="warn">
+    <span class="label">Vårdnadshavare som inte längre anges</span>
+    <p>
+      En synk tar aldrig bort en vårdnadshavare från ett barn. Anger registret
+      inte längre en vårdnadshavare för ett barn listas det överst i
+      granskningen, med en länk till barnets vårdnadshavare under
+      <span class="path">Planering › Personer</span>. Kontrollera var och en och ta bort
+      kopplingen där om den ska bort, så att ingen tidigare vårdnadshavare
+      fortsätter se barnets schema. Du kan inte tillämpa förrän du har kryssat
+      i att du har sett listan. Har en vårdnadshavare inget barn kvar alls
+      avaktiveras hen i stället.
+    </p>
+  </div>
+  <p>
+    <span class="ui">Tillämpa</span> gör alla valda ändringar i ett enda steg:
+    antingen alla eller ingen. Har registret eller SchemaPro ändrats sedan
+    hämtningen stoppas tillämpningen och du ombeds synka igen, så att det du
+    tillämpar alltid är det du har granskat. Avaktiverar diffen ovanligt många
+    — fler än fem, eller fler än en tiondel av de kopplade personerna om det
+    är fler — måste du bekräfta det särskilt. Det skyddar mot ett register som av misstag svarar utan
+    elever. Det du kryssar ur kommer tillbaka vid nästa fulla synk.
+    <span class="ui">Kasta diffen</span> ändrar ingenting.
+  </p>
+  <p>
+    En klass som en synk flyttar en elev till dateras i klasshistoriken med
+    dagens datum, inte med registrets startdatum.
+  </p>
+
+  <h4>Nya personer</h4>
+  <p>
+    Den som en synk lägger in får <em>ingen inloggning</em> och inget mejl.
+    Personen finns i schemat och i registret men kan inte logga in. Under
+    <span class="ui">Nya personer</span> listas alla som synken har lagt in
+    eller kopplat och som inte är inbjudna ännu. Kryssa i dem som ska få en
+    inbjudan och tryck <span class="ui">Bjud in valda</span>. Inbjudan är
+    densamma som under <span class="path">Planering › Personer</span>.
+  </p>
+
+  <h4>Nattlig synk</h4>
+  <p>
+    Under <span class="ui">Nattlig synk</span> slår du på en synk varje natt
+    vid den timme du väljer, skolans tid. Var sjunde dag (eller så ofta du
+    anger) blir den en full synk. En nattlig synk som bara hämtar väntar på
+    din granskning precis som en manuell. Väntar en manuell diff redan på dig
+    hoppar natten över sin synk, så att din granskning inte ersätts.
+  </p>
+  <p>
+    Slår du också på <span class="ui">Tillämpa säkra ändringar
+    automatiskt</span> tillämpar natten själv: namnändringar, klassbyten, nya
+    medlemskap i undervisningsgrupper, vårdnadshavare mellan personer som
+    redan är kopplade, tjänster, och avaktivering av elever och
+    vårdnadshavare. Allt annat väntar på dig: nya personer, kopplingar, ändrad
+    e-post, återaktivering, avaktivering av personal, det du själv har ändrat
+    sedan förra synken och allt som rör en person med skyddad identitet.
+    Skulle natten avaktivera fler än fem personer, eller fler än två procent
+    av de kopplade om det är fler, gör den ingenting alls.
+  </p>
+  <div class="check">
+    <span class="label">Det registret aldrig lämnar till SchemaPro</span>
+    <p>
+      SchemaPro sparar inga personnummer, adresser, telefonnummer, foton,
+      födelsedatum eller tjänstgöringsgrader från registret. Namn och
+      e-postadresser i en diff sparas bara så länge den väntar på granskning
+      och rensas när den tillämpas, kastas eller ersätts. Historiken behåller
+      bara antal och koder.
+    </p>
+  </div>
+
+  <h3 id="s73"><span class="num">7.3</span>API-nycklar, omfång och prenumerationer</h3>
+  <p>
+    Under <span class="path">Integrationer › API-nycklar</span> väljer du för
+    varje nyckel vad den får nå, dess <strong>omfång</strong>. En nyckel som
+    fanns innan omfången infördes, och en ny nyckel där du inte ändrar
+    förvalet, når SchemaPros eget format (<code>/ss12000/v1</code>) och dess
+    import, precis som förut. En ny nyckel kan också bara få läsa, eller bara
+    nå standardformatet SS12000 2.1 (<code>/ss12000/v2.0</code>): skolenheten,
+    elever och personal, vårdnadshavare, klasser och grupper, lärartjänster,
+    aktiviteter och lektioner i det publicerade schemat, salar och ämnen.
+    Ändra omfånget med <span class="ui">Ändra omfång</span>. Ge varje system
+    bara det det behöver: en lärplattform behöver sällan vårdnadshavare.
+  </p>
+  <p>
+    Bara det <em>publicerade</em> schemat lämnas ut, aldrig ett utkast. Ingen
+    frånvaroorsak, anteckning eller personnummer lämnas någonsin ut, och
+    tjänstgöringsgrader bara när skolan har valt att dela dem (se ovan).
+  </p>
+  <h4>Prenumerationer och signeringshemlighet</h4>
+  <p>
+    Ett system med omfånget <code>subscriptions.write</code> kan prenumerera
+    på ändringar: SchemaPro skickar då en kort notis till systemet när något
+    det läser ändras. Varje notis är signerad, och systemet behöver
+    nyckelns <strong>signeringshemlighet</strong> för att kontrollera
+    signaturen. Skapa den med <span class="ui">Skapa
+    signeringshemlighet</span>. Den visas en gång, så ge den till systemet
+    direkt. Byter du hemlighet signerar den gamla i 24 timmar till, så att
+    systemet hinner byta.
+  </p>
+  <p>
+    Under varje nyckel listas dess prenumerationer: vart notiserna går (bara
+    värdnamnet), vilka uppgifter de gäller och när den senaste skickades.
+    Misslyckas leveranserna i tre dygn stoppas prenumerationen. Du kan pausa
+    och återuppta en prenumeration. En återkallad nyckel får inga fler
+    notiser.
+  </p>
 </section>
 
 <!-- ============================ 8 ============================ -->
@@ -3371,7 +3571,17 @@
       <tr>
         <td class="k">Ett externt system får inte kontakt</td>
         <td>API-nyckeln är återkallad, felaktigt kopierad eller aldrig sparad.</td>
-        <td>Kontrollera under <span class="path">Integrationer</span> om nyckeln är aktiv och när den senast användes. Skapa vid behov en ny.</td>
+        <td>Kontrollera under <span class="path">Integrationer › API-nycklar</span> om nyckeln är aktiv och när den senast användes, och att den har omfånget för det systemet läser. Skapa vid behov en ny.</td>
+      </tr>
+      <tr>
+        <td class="k">Synken mot elevregistret misslyckas</td>
+        <td>Historiken säger varför: en inloggningsuppgift saknas eller nekas, adressen är fel, eller registret svarade utan elever.</td>
+        <td>Testa anslutningen under <span class="path">Integrationer › Elevregister</span>. Har adressen bytts behöver inloggningsuppgifterna anges igen. Svarar registret utan elever görs ingen diff alls; kontrollera klientens behörigheter hos leverantören.</td>
+      </tr>
+      <tr>
+        <td class="k">En person från registret kan inte logga in</td>
+        <td>En synk ger ingen inloggning.</td>
+        <td>Bjud in personen under <span class="ui">Nya personer</span> eller under <span class="path">Planering › Personer</span>.</td>
       </tr>
     </tbody>
   </table>
