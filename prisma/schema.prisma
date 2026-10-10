@@ -773,6 +773,8 @@ model TimplanStatementPublication {
   statements   TimplanStatement[]
 
   @@unique([id, schoolId])
+  /// The target of the statement rows' key: their year and day are this row's.
+  @@unique([id, academicYearId, asOfDate, schoolId])
   @@index([academicYearId, schoolId])
   @@index([publishedByUserId, schoolId])
   @@map("TimplanStatementPublications")
@@ -785,6 +787,11 @@ model TimplanStatement {
   id                    String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId              String       @db.Uuid
   publicationId         String       @db.Uuid
+  /// The publication's year and the school's day it was published, copied so
+  /// a family reads the card without the publication row (which names an
+  /// admin); held equal by the key below.
+  academicYearId        String       @db.Uuid
+  asOfDate              DateTime     @db.Date
   studentId             String       @db.Uuid
   stage                 TimplanStage
   /// A top-level national code (MA, SV_SVA, NO …).
@@ -810,7 +817,7 @@ model TimplanStatement {
   backfilled            Boolean      @default(false)
 
   school      School                      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  publication TimplanStatementPublication @relation(fields: [publicationId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  publication TimplanStatementPublication @relation(fields: [publicationId, academicYearId, asOfDate, schoolId], references: [id, academicYearId, asOfDate, schoolId], onDelete: Cascade)
   student     User                        @relation("StatementStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
   subject     NationalSubject             @relation(fields: [subjectCode], references: [code], onDelete: Restrict)
   version     NationalTimplanVersion?     @relation(fields: [versionCode], references: [code], onDelete: Restrict)

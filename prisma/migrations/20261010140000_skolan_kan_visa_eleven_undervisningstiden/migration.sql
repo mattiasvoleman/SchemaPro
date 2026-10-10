@@ -27,11 +27,18 @@
 -- ## Two tables
 --
 -- TimplanStatementPublications: at most ONE per school (unique schoolId) — the
--- statement currently shown. academicYearId is the active year it was
--- computed for; the card renders only while that year is the active one,
--- which families can read through the AcademicYears member arm, so last
--- year's figures never show all autumn after an activation (and the
--- activation writes no statement). publishedByUserId is nullable with ON
+-- statement currently shown, and the admin's record of it: who published,
+-- when, for how many pupils. academicYearId is the active year it was
+-- computed for. FAMILIES DO NOT READ IT: who published (an admin's Users.id)
+-- and the school's pupil count are nothing a pupil or a guardian needs, and
+-- RLS cannot hide columns. Each statement row carries what the card needs of
+-- its publication instead — academicYearId and asOfDate, the school's day it
+-- was computed and published — held equal to the publication's by the
+-- composite key (publicationId, academicYearId, asOfDate, schoolId). The
+-- card renders only while that year is the active one, which families can
+-- read through the AcademicYears member arm, so last year's figures never
+-- show all autumn after an activation (and the activation writes no
+-- statement). publishedByUserId is nullable with ON
 -- DELETE SET NULL ("publishedByUserId"), the column list: a publication is a
 -- replaceable snapshot, not a decision of record (LocalTimplans.decidedBy is
 -- RESTRICT because a decision's author is part of it); RESTRICT here would
@@ -43,7 +50,7 @@
 -- TimplanStatements: one row per (pupil, stadium, national cell) of the
 -- stadium the pupil is IN — data minimisation: the card shows "this stage so
 -- far", and completed stages would widen the surface and roughly triple the
--- rows. No teacher id, no group id, no other pupil's figure. versionCode
+-- rows. No teacher id, no group id, no admin id, no other pupil's figure. versionCode
 -- references NationalTimplanVersions(code) and subjectCode NationalSubjects
 -- (code), both RESTRICT (reference data is never deleted). recordedFrom is the
 -- first recorded day of the stage, so a card says "263 timmar sedan 1 oktober
@@ -62,9 +69,10 @@
 --   * timplan_statements_student_select: a STUDENT, their own rows.
 --   * timplan_statements_guardian_select: a GUARDIAN, their children's rows
 --     (20261010120000's subquery, with the role check).
---   * timplan_statement_publications_family_select: a STUDENT or GUARDIAN of
---     the school reads the publication row — its date and year, nothing about
---     any pupil.
+--
+-- No family arm on the publication (see above: its row names an admin and
+-- counts the school's pupils; the rows a family reads carry its year and
+-- day).
 --
 -- No teacher arm: no teacher reader exists, and P2/P3 strip every pupil figure
 -- for a teacher. No service arm. GRANT to app_authenticated guarded; anon
@@ -88,6 +96,9 @@ CREATE TABLE "TimplanStatementPublications" (
 
 CREATE UNIQUE INDEX "TimplanStatementPublications_schoolId_key" ON "TimplanStatementPublications"("schoolId");
 CREATE UNIQUE INDEX "TimplanStatementPublications_id_schoolId_key" ON "TimplanStatementPublications"("id", "schoolId");
+-- The target of the rows' key: a row's year and day are its publication's.
+CREATE UNIQUE INDEX "TimplanStatementPublications_id_academicYearId_asOfDate_schoolId_key"
+    ON "TimplanStatementPublications"("id", "academicYearId", "asOfDate", "schoolId");
 CREATE INDEX "TimplanStatementPublications_academicYearId_schoolId_idx" ON "TimplanStatementPublications"("academicYearId", "schoolId");
 CREATE INDEX "TimplanStatementPublications_publishedByUserId_schoolId_idx" ON "TimplanStatementPublications"("publishedByUserId", "schoolId");
 
@@ -107,6 +118,8 @@ CREATE TABLE "TimplanStatements" (
     "id"                    UUID NOT NULL DEFAULT gen_random_uuid(),
     "schoolId"              UUID NOT NULL,
     "publicationId"         UUID NOT NULL,
+    "academicYearId"        UUID NOT NULL,
+    "asOfDate"              DATE NOT NULL,
     "studentId"             UUID NOT NULL,
     "stage"                 "TimplanStage" NOT NULL,
     "subjectCode"           TEXT NOT NULL,
@@ -154,8 +167,9 @@ ALTER TABLE "TimplanStatements"
     ADD CONSTRAINT "TimplanStatements_schoolId_fkey"
     FOREIGN KEY ("schoolId") REFERENCES "Schools"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "TimplanStatements"
-    ADD CONSTRAINT "TimplanStatements_publicationId_schoolId_fkey"
-    FOREIGN KEY ("publicationId", "schoolId") REFERENCES "TimplanStatementPublications"("id", "schoolId")
+    ADD CONSTRAINT "TimplanStatements_publicationId_academicYearId_asOfDate_schoolId_fkey"
+    FOREIGN KEY ("publicationId", "academicYearId", "asOfDate", "schoolId")
+    REFERENCES "TimplanStatementPublications"("id", "academicYearId", "asOfDate", "schoolId")
     ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "TimplanStatements"
     ADD CONSTRAINT "TimplanStatements_studentId_schoolId_fkey"
@@ -179,13 +193,6 @@ CREATE POLICY "timplan_statement_publications_admin_all" ON "TimplanStatementPub
     FOR ALL TO "authenticated"
     USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
     WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
-
-CREATE POLICY "timplan_statement_publications_family_select" ON "TimplanStatementPublications"
-    FOR SELECT TO "authenticated"
-    USING (
-        "schoolId" = (select app.current_school_id())
-        AND (select app.current_user_role()) IN ('STUDENT', 'GUARDIAN')
-    );
 
 CREATE POLICY "timplan_statements_admin_all" ON "TimplanStatements"
     FOR ALL TO "authenticated"

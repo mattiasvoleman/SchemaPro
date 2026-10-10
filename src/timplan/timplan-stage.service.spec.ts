@@ -110,14 +110,9 @@ describe('TimplanStageService', () => {
   });
 
   describe('the card', () => {
-    const publication = () =>
-      tx.timplanStatementPublication.findFirst.mockResolvedValue({
-        id: PUBLICATION,
-        academicYearId: YEAR_ID,
-        publishedAt: new Date('2026-10-01T08:00:00.000Z'),
-        asOfDate: new Date('2026-10-01T00:00:00.000Z'),
-      });
     const row = (stage: string, subjectCode: string) => ({
+      academicYearId: YEAR_ID,
+      asOfDate: new Date('2026-10-01T00:00:00.000Z'),
       stage,
       subjectCode,
       versionCode: 'SFS2023:945/B1',
@@ -137,16 +132,18 @@ describe('TimplanStageService', () => {
       backfilled: true,
     });
 
-    it('reads a pupil’s OWN statement whatever studentId was sent', async () => {
-      publication();
+    it('reads a pupil’s OWN statement whatever studentId was sent, and never the publication row', async () => {
       tx.academicYear.findUnique.mockResolvedValue({ isActive: true });
       tx.timplanStatement.findMany.mockResolvedValue([row('MELLAN', 'MA')]);
       tx.nationalSubject.findMany.mockResolvedValue([{ code: 'MA', name: 'Matematik' }]);
       const pupil = testUser({ role: Role.STUDENT, userId: PUPIL });
       const answer = await service.card({ studentId: OTHER }, pupil);
       expect(tx.timplanStatement.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { publicationId: PUBLICATION, studentId: PUPIL } }),
+        expect.objectContaining({ where: { studentId: PUPIL } }),
       );
+      // The publication row names the publishing admin and counts the pupils; RLS gives a family none.
+      expect(tx.timplanStatementPublication.findFirst).not.toHaveBeenCalled();
+      expect(tx.academicYear.findUnique).toHaveBeenCalledWith({ where: { id: YEAR_ID }, select: { isActive: true } });
       expect(answer.statement).toMatchObject({
         studentId: PUPIL,
         asOfDate: '2026-10-01',
@@ -161,16 +158,14 @@ describe('TimplanStageService', () => {
       });
     });
 
-    it('shows nothing without a publication, for last year’s, or for a pupil whose rows RLS hides', async () => {
+    it('shows nothing without a publication (or for a pupil whose rows RLS hides), and nothing for last year’s', async () => {
       const guardian = testUser({ role: Role.GUARDIAN });
+      tx.timplanStatement.findMany.mockResolvedValue([]);
       await expect(service.card({ studentId: PUPIL }, guardian)).resolves.toEqual({ statement: null });
-      publication();
+      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      tx.timplanStatement.findMany.mockResolvedValue([row('MELLAN', 'MA')]);
       tx.academicYear.findUnique.mockResolvedValue({ isActive: false });
       await expect(service.card({ studentId: PUPIL }, guardian)).resolves.toEqual({ statement: null });
-      expect(tx.timplanStatement.findMany).not.toHaveBeenCalled();
-      tx.academicYear.findUnique.mockResolvedValue({ isActive: true });
-      tx.timplanStatement.findMany.mockResolvedValue([]);
-      await expect(service.card({ studentId: OTHER }, guardian)).resolves.toEqual({ statement: null });
     });
 
     it('asks a guardian which child', async () => {

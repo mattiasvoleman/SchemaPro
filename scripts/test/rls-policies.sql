@@ -7666,10 +7666,12 @@ ROLLBACK;
 --
 -- TimplanStatementPublications and TimplanStatements (20261010140000) hold the
 -- pupils' published hours. The admin writes them; a STUDENT reads exactly
--- their own rows, a GUARDIAN exactly their children's, both read the
--- publication row (a date and a year); a TEACHER reads nothing; nobody reads
--- the second school's. Asserted from the excluding side, in the transaction
--- that just wrote the rows, with role guards.
+-- their own rows, a GUARDIAN exactly their children's, and neither reads the
+-- publication row (it names the publishing admin and counts the school's
+-- pupils; their rows carry its year and day, held equal by the key); a
+-- TEACHER reads nothing; nobody reads the second school's. Asserted from the
+-- excluding side, in the transaction that just wrote the rows, with role
+-- guards.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -7693,11 +7695,17 @@ BEGIN
   DELETE FROM "TimplanStatementPublications";
   INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "publishedByUserId", "asOfDate", pupils)
   VALUES (school, y, app.current_user_id(), current_date, 2) RETURNING id INTO pub;
-  INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "studentId", stage, "subjectCode", "distributionPublished",
-                                   "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours", "projectedHours",
-                                   status, "projectedStatus", complete)
-  VALUES (school, pub, child, 'MELLAN', 'MA', true, 4, 6, 410, 413, 263, 413, 'MET', 'MET', true),
-         (school, pub, other, 'MELLAN', 'MA', true, 4, 6, 410, 300, 200, 300, 'BELOW', 'BELOW', true);
+  INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "academicYearId", "asOfDate", "studentId", stage, "subjectCode",
+                                   "distributionPublished", "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours",
+                                   "projectedHours", status, "projectedStatus", complete)
+  VALUES (school, pub, y, current_date, child, 'MELLAN', 'MA', true, 4, 6, 410, 413, 263, 413, 'MET', 'MET', true),
+         (school, pub, y, current_date, other, 'MELLAN', 'MA', true, 4, 6, 410, 300, 200, 300, 'BELOW', 'BELOW', true);
+  -- A row's year and day are its publication's: the key refuses any other.
+  BEGIN
+    UPDATE "TimplanStatements" SET "asOfDate" = current_date - 1 WHERE "studentId" = child;
+    RAISE EXCEPTION 'statement: a row was dated apart from its publication';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
   -- The CHECKs bound what even the admin's own PostgREST writes.
   BEGIN
     UPDATE "TimplanStatements" SET "plannedHours" = 20001 WHERE "studentId" = child;
@@ -7717,7 +7725,7 @@ BEGIN
 END
 $$;
 
--- The child as a STUDENT: their row and the publication, nothing else; no write.
+-- The child as a STUDENT: their row, nothing else — not the publication row; no write.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls26d_child_sub'))::text, true);
 DO $$
 DECLARE n bigint; me uuid := app.current_user_id();
@@ -7734,13 +7742,20 @@ BEGIN
     RAISE EXCEPTION 'statement: a pupil reads % of their own row(s), expected 1', n;
   END IF;
   SELECT count(*) INTO n FROM "TimplanStatementPublications";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a pupil reads % publication row(s) — the publishing admin and the pupil count', n;
+  END IF;
+  -- What the card needs of the publication is on the pupil's own row.
+  SELECT count(*) INTO n FROM "TimplanStatements" WHERE "studentId" = me AND "academicYearId" IS NOT NULL AND "asOfDate" = current_date;
   IF n <> 1 THEN
-    RAISE EXCEPTION 'statement: a pupil reads % publication(s), expected their school''s one', n;
+    RAISE EXCEPTION 'statement: the pupil''s row does not carry its year and day';
   END IF;
   BEGIN
-    INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "studentId", stage, "subjectCode", "distributionPublished",
-                                     "gradesFrom", "gradesTo", "plannedHours", "outcomeHours", "projectedHours", status, "projectedStatus", complete)
-    SELECT "schoolId", "publicationId", me, 'HOG', 'EN', true, 7, 9, 1, 1, 1, 'MET', 'MET', true FROM "TimplanStatements" LIMIT 1;
+    INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "academicYearId", "asOfDate", "studentId", stage, "subjectCode",
+                                     "distributionPublished", "gradesFrom", "gradesTo", "plannedHours", "outcomeHours", "projectedHours",
+                                     status, "projectedStatus", complete)
+    SELECT "schoolId", "publicationId", "academicYearId", "asOfDate", me, 'HOG', 'EN', true, 7, 9, 1, 1, 1, 'MET', 'MET', true
+      FROM "TimplanStatements" LIMIT 1;
     RAISE EXCEPTION 'statement: a pupil wrote a statement row';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
@@ -7773,6 +7788,10 @@ BEGIN
   IF n <> 1 THEN
     RAISE EXCEPTION 'statement: a guardian reads % of their child''s row(s), expected 1', n;
   END IF;
+  SELECT count(*) INTO n FROM "TimplanStatementPublications";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a guardian reads % publication row(s) — the publishing admin and the pupil count', n;
+  END IF;
 END
 $$;
 
@@ -7797,7 +7816,7 @@ DECLARE bad text; api_role text;
 BEGIN
   SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid IN ('public."TimplanStatements"'::regclass, 'public."TimplanStatementPublications"'::regclass);
-  IF bad IS DISTINCT FROM 'timplan_statement_publications_admin_all:*,timplan_statement_publications_family_select:r,timplan_statements_admin_all:*,timplan_statements_guardian_select:r,timplan_statements_student_select:r' THEN
+  IF bad IS DISTINCT FROM 'timplan_statement_publications_admin_all:*,timplan_statements_admin_all:*,timplan_statements_guardian_select:r,timplan_statements_student_select:r' THEN
     RAISE EXCEPTION 'statement: policies are %', bad;
   END IF;
   SELECT string_agg(polname, ',') INTO bad FROM pg_policy

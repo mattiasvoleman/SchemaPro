@@ -64,7 +64,7 @@ export interface TeachingTimeCardResponse {
   statement: {
     studentId: string;
     academicYearId: string;
-    publishedAt: string;
+    /** The school's day the statement was published (its rows carry it; the publication row is the admin's). */
     asOfDate: string;
     stages: TeachingTimeStage[];
   } | null;
@@ -97,7 +97,7 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
       <h2 id={titleId} className="font-semibold">
         {childName ? t("titleChild", { name: childName }) : t("title")}
       </h2>
-      <p className="text-muted-foreground">{t("updated", { date: day(statement.publishedAt) })}</p>
+      <p className="text-muted-foreground">{t("updated", { date: day(statement.asOfDate) })}</p>
       {statement.stages.map((stage) => (
         <div key={stage.stage} className="mt-3 space-y-1">
           <h3 className="font-medium">

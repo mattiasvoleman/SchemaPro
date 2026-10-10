@@ -4153,6 +4153,8 @@ describe('Planning surface (e2e)', () => {
         [ANNA, 'HOG', 'MA', PUBLICATION, SCHOOL_ID],
         [BO, 'HOG', 'MA', PUBLICATION, SCHOOL_ID],
       ]);
+      // Each row carries its publication's year and the school's day, for the card.
+      expect(created.data.every((row) => row['academicYearId'] === YEAR_ID && row['asOfDate'] instanceof Date)).toBe(true);
 
       await request(http()).delete('/api/v1/timplan-stages/statements').set('x-test-user', admin()).expect(204);
       expect(harness.tx['timplanStatementPublication']!['deleteMany']!).toHaveBeenCalled();
@@ -4169,22 +4171,43 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['timplanStatement']!['createMany']!).not.toHaveBeenCalled();
     });
 
-    it('a pupil reads their OWN card — whatever id is sent — and a guardian the child they name', async () => {
+    it('a pupil reads their OWN card — whatever id is sent — and a guardian the child they name, never the publication row', async () => {
       const tx = harness.tx;
-      tx['timplanStatementPublication']!['findFirst']!.mockResolvedValue({
-        id: PUBLICATION, academicYearId: YEAR_ID, publishedAt: new Date('2026-10-01T08:00:00.000Z'), asOfDate: new Date('2026-10-01T00:00:00.000Z'),
-      });
       tx['academicYear']!['findUnique']!.mockResolvedValue({ isActive: true });
       tx['timplanStatement']!['findMany']!.mockResolvedValue([]);
       const pupil = asUser({ role: 'STUDENT' as never, userId: ANNA });
       const own = await request(http()).get(`/api/v1/timplan-stages/card?studentId=${BO}`).set('x-test-user', pupil).expect(200);
       expect(own.body).toEqual({ statement: null });
-      expect(tx['timplanStatement']!['findMany']!).toHaveBeenCalledWith(expect.objectContaining({ where: { publicationId: PUBLICATION, studentId: ANNA } }));
+      expect(tx['timplanStatement']!['findMany']!).toHaveBeenCalledWith(expect.objectContaining({ where: { studentId: ANNA } }));
 
       const guardian = asUser({ role: 'GUARDIAN' as never });
       await request(http()).get(`/api/v1/timplan-stages/card?studentId=${BO}`).set('x-test-user', guardian).expect(200);
-      expect(tx['timplanStatement']!['findMany']!).toHaveBeenLastCalledWith(expect.objectContaining({ where: { publicationId: PUBLICATION, studentId: BO } }));
+      expect(tx['timplanStatement']!['findMany']!).toHaveBeenLastCalledWith(expect.objectContaining({ where: { studentId: BO } }));
       await request(http()).get('/api/v1/timplan-stages/card').set('x-test-user', guardian).expect(400);
+      // The publication row names the publishing admin and counts the pupils: a family's card never reads it.
+      expect(tx['timplanStatementPublication']!['findFirst']!).not.toHaveBeenCalled();
+    });
+
+    it('shows the card from the rows’ own year and day, and nothing once that year is no longer the active one', async () => {
+      const tx = harness.tx;
+      const row = {
+        studentId: ANNA, academicYearId: YEAR_ID, asOfDate: new Date('2026-10-01T00:00:00.000Z'), stage: 'HOG', subjectCode: 'MA',
+        versionCode: 'SFS2023:945/B1', distributionPublished: true, gradesFrom: 7, gradesTo: 9, nationalHours: 400, plannedHours: 403,
+        outcomeHours: 120, projectedHours: 403, status: 'MET', projectedStatus: 'MET', complete: true, recordedFrom: new Date('2026-08-17T00:00:00.000Z'),
+        plannedGrades: [8, 9], unrecordedGrades: [], unplannedGrades: [], backfilled: false, historyFrom: null,
+      };
+      tx['timplanStatement']!['findMany']!.mockResolvedValue([row]);
+      tx['nationalSubject']!['findMany']!.mockResolvedValue([{ code: 'MA', name: 'Matematik' }]);
+      tx['academicYear']!['findUnique']!.mockResolvedValue({ isActive: true });
+      const pupil = asUser({ role: 'STUDENT' as never, userId: ANNA });
+      const shown = await request(http()).get('/api/v1/timplan-stages/card').set('x-test-user', pupil).expect(200);
+      expect(shown.body.statement).toMatchObject({ studentId: ANNA, academicYearId: YEAR_ID, asOfDate: '2026-10-01' });
+      expect(shown.body.statement).not.toHaveProperty('publishedAt');
+      expect(tx['academicYear']!['findUnique']!).toHaveBeenLastCalledWith({ where: { id: YEAR_ID }, select: { isActive: true } });
+
+      tx['academicYear']!['findUnique']!.mockResolvedValue({ isActive: false });
+      const hidden = await request(http()).get('/api/v1/timplan-stages/card').set('x-test-user', pupil).expect(200);
+      expect(hidden.body).toEqual({ statement: null });
     });
 
     it.each([
