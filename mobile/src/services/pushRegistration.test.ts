@@ -5,10 +5,14 @@ import {
   disablePush,
   enablePush,
   ensureAndroidChannel,
+  forgetTap,
   isPushEnabledFor,
   refreshRegistration,
+  releaseOnSignedOut,
   releasePending,
   serverPushEnabled,
+  startSignedIn,
+  takeLastTap,
   unregisterOnLogout,
 } from './pushRegistration';
 
@@ -34,7 +38,12 @@ jest.mock('expo-secure-store', () => ({
     mockStore.delete(key);
   }),
 }));
+let mockLastResponse: unknown = null;
 jest.mock('expo-notifications', () => ({
+  getLastNotificationResponse: jest.fn(() => mockLastResponse),
+  clearLastNotificationResponse: jest.fn(() => {
+    mockLastResponse = null;
+  }),
   getPermissionsAsync: jest.fn(),
   requestPermissionsAsync: jest.fn(),
   getExpoPushTokenAsync: jest.fn(),
@@ -173,6 +182,29 @@ describe('logout never leaves the device registered', () => {
     }
   });
 
+  it('bounds the whole call at four seconds, even when apiRequest never honours the signal (an expired bearer refreshing on a dead network)', async () => {
+    jest.useFakeTimers();
+    try {
+      await enablePush(A, 'sv');
+      route = (path) => (path === '/api/v1/devices/unregister' ? new Promise(() => undefined) : Promise.resolve(undefined));
+      let done = false;
+      void unregisterOnLogout(A).then(() => {
+        done = true;
+      });
+      await jest.advanceTimersByTimeAsync(4_000);
+      expect({ done, release: mockStore.get('sp_push_release') ?? null }).toEqual({ done: true, release: TOKEN });
+      expect(Notifications.unregisterForNotificationsAsync).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('forgets the token once the gateway has dropped the row', async () => {
+    await enablePush(A, 'sv');
+    await unregisterOnLogout(A);
+    expect(mockStore.has('sp_push_token')).toBe(false);
+  });
+
   it('releases the left-over token at the next signed-in start, whoever signs in', async () => {
     mockStore.set('sp_push_release', TOKEN);
     await releasePending();
@@ -203,6 +235,70 @@ describe('logout never leaves the device registered', () => {
     await disablePush(A);
     expect(await isPushEnabledFor(A)).toBe(false);
     expect(mockStore.get('sp_push_release')).toBe(TOKEN);
+    expect(Notifications.unregisterForNotificationsAsync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a sign-out the app did not start never leaves the device registered either', () => {
+  it('A’s session ended without the logout button: the phone stops at once, and B’s sign-in releases A’s row', async () => {
+    await enablePush(A, 'sv');
+    await releaseOnSignedOut();
+    expect(Notifications.unregisterForNotificationsAsync).toHaveBeenCalledTimes(1);
+    expect(mockStore.get('sp_push_release')).toBe(TOKEN);
+    (apiRequest as jest.Mock).mockClear();
+    await expect(startSignedIn(B)).resolves.toBe('OFF');
+    expect(calls()).toEqual([['/api/v1/devices/release', { token: TOKEN }]]);
+    expect(mockStore.has('sp_push_release')).toBe(false);
+  });
+
+  it('B signs in where A’s token was left with nothing marked: A’s row is released before B’s own (absent) choice', async () => {
+    await enablePush(A, 'sv');
+    (apiRequest as jest.Mock).mockClear();
+    await expect(startSignedIn(B)).resolves.toBe('OFF');
+    expect(calls()).toEqual([['/api/v1/devices/release', { token: TOKEN }]]);
+    expect(mockStore.has('sp_push_token')).toBe(false);
+  });
+
+  it('A signing back in is registered again by A’s own standing choice', async () => {
+    await enablePush(A, 'sv');
+    await releaseOnSignedOut();
+    (apiRequest as jest.Mock).mockClear();
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, canAskAgain: true });
+    await expect(startSignedIn(A)).resolves.toBe('ENABLED');
+    expect(calls()).toEqual([
+      ['/api/v1/devices/release', { token: TOKEN }],
+      ['/api/v1/push/config', null],
+      ['/api/v1/devices', { token: TOKEN, platform: 'ANDROID', locale: 'sv' }],
+    ]);
+  });
+
+  it('a start that finds no session and no token does nothing', async () => {
+    await releaseOnSignedOut();
+    expect(Notifications.unregisterForNotificationsAsync).not.toHaveBeenCalled();
+    expect(mockStore.size).toBe(0);
+  });
+
+  it('registers in the language stored on the device, not the screen’s Swedish default', async () => {
+    await enablePush(A, 'sv');
+    mockStore.set('sp_locale', 'en');
+    (apiRequest as jest.Mock).mockClear();
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, canAskAgain: true });
+    await expect(startSignedIn(A)).resolves.toBe('ENABLED');
+    expect(calls()).toContainEqual(['/api/v1/devices', { token: TOKEN, platform: 'ANDROID', locale: 'en' }]);
+  });
+});
+
+describe('a notification tap', () => {
+  it('that launched the app is acted on once, never replayed at a later sign-in', () => {
+    mockLastResponse = { notification: { request: { identifier: 'n-1' } } };
+    expect(takeLastTap()).toBe(true);
+    expect(takeLastTap()).toBe(false);
+  });
+
+  it('the running app acted on is forgotten', () => {
+    mockLastResponse = { notification: { request: { identifier: 'n-2' } } };
+    forgetTap();
+    expect(takeLastTap()).toBe(false);
   });
 });
 
