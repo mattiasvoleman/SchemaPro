@@ -3368,6 +3368,7 @@
     "ON_SITE": "Is at school that day",
     "NOT_ON_SITE": "Has no lessons that day",
     "RELEASED": "Free because {group} is cancelled",
+    "AT_EVENT": "Their lesson with {group} is cancelled for an activity – may be out with the class",
     "COUNTER_WEEK": "{count, plural, one {# cover} other {# covers}} this week",
     "COUNTER_TERM": "{count, plural, one {# cover} other {# covers}} this term",
     "UNDER_TARGET": "{minutes} min under the week's target",
@@ -3460,7 +3461,7 @@
       "NEUTRAL": "Like all other staff",
       "LAST_RESORT": "Use the pool last"
     },
-    "poolPreferenceHint": "A pool substitute with no lessons that day already ranks lower. \"Last\" means the pool is suggested only when none of your own staff can.",
+    "poolPreferenceHint": "A pool substitute with no lessons that day already ranks lower. \"Last\" puts the pool after every member of your own staff who can take the lesson, and Cover the day uses the pool only where none of them can.",
     "savePolicy": "Save the rules",
     "policySaved": "The rules are saved",
     "reasonsTitle": "Reasons",

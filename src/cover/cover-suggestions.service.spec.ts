@@ -130,6 +130,36 @@ describe('CoverSuggestionsService', () => {
     );
   });
 
+  it('candidates: a colleague whose own lesson then is cancelled is free and on site; one cancelled for an activity is ranked down, not up', async () => {
+    const cancelled = (cancelCause: string) =>
+      tx.calendarLessonTeacher.findMany.mockImplementation((query: { where: { teacherId?: unknown; role?: string } }) =>
+        Promise.resolve(
+          query.where.teacherId
+            ? [
+                { teacherId: A, calendarLesson: { id: LESSON, date: new Date(`${D}T00:00:00Z`), startsAt: START, endsAt: END, status: 'SCHEDULED', cancelCause: null, studentGroupId: '7a', subjectId: 'ma' } },
+                { teacherId: BUSY, calendarLesson: { id: 'other', date: new Date(`${D}T00:00:00Z`), startsAt: START, endsAt: END, status: 'CANCELLED', cancelCause, studentGroupId: '8a', subjectId: 'sv' } },
+              ]
+            : [],
+        ),
+      );
+    tx.studentGroup.findMany.mockResolvedValue([{ id: '7a', name: '7A' }, { id: '8a', name: '8A' }]);
+
+    cancelled('MANUAL');
+    const freed = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === BUSY)!;
+    expect(freed.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(['ON_SITE', 'RELEASED']));
+    expect(freed.reasons.map((r) => r.code)).not.toContain('NOT_ON_SITE');
+
+    cancelled('EVENT');
+    const away = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === BUSY)!;
+    expect(away.reasons.find((r) => r.code === 'AT_EVENT')).toEqual({ code: 'AT_EVENT', params: { group: '8A' }, points: -20 });
+    expect(away.reasons.map((r) => r.code)).not.toContain('RELEASED');
+  });
+
+  it('candidates under LAST_RESORT: the pool after every colleague, whatever the points', async () => {
+    const answer = await service.candidates(LESSON, testUser());
+    expect(answer.candidates.map((c) => c.kind)).toEqual(['STAFF', 'POOL']);
+  });
+
   it('candidates 404 for a lesson the caller cannot see', async () => {
     tx.calendarLesson.findMany.mockResolvedValue([]);
     await expect(service.candidates(LESSON, testUser())).rejects.toThrow('Lesson not found.');

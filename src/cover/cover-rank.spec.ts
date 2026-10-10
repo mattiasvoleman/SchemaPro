@@ -90,6 +90,35 @@ describe('cover ranking', () => {
     expect(points(base({ kind: 'POOL' })).POOL).toBe(0);
   });
 
+  it('LAST_RESORT is a tier, not only points: any feasible colleague ranks ahead of the pool, whatever their score', () => {
+    // The review's case: a legitimerad pool vikarie not on site (40 − 15 − 40 = −15)
+    // against a free colleague on site, two covers this week and over target (6 − 10 − 6 − 20 = −30).
+    const pool = { ...rankCandidate(base({ userId: 'pool', kind: 'POOL', qualification: 'LEGITIMATION', dayLessons: [], poolPreference: 'LAST_RESORT' })), counter: { week: 0 } };
+    const staff = {
+      ...rankCandidate(
+        base({ userId: 'staff', counter: { week: 2, term: 6 }, load: { weekMinutes: 1500, target: 1440, tolerancePercent: 5 }, poolPreference: 'LAST_RESORT' }),
+      ),
+      counter: { week: 2 },
+    };
+    expect(pool.score).toBeGreaterThan(staff.score);
+    expect([pool, staff].sort(compareRanked).map((r) => r.userId)).toEqual(['staff', 'pool']);
+    // NEUTRAL and PREFER stay points: the better score first.
+    const neutral = { ...rankCandidate(base({ userId: 'pool', kind: 'POOL', qualification: 'LEGITIMATION', dayLessons: [] })), counter: { week: 0 } };
+    expect([staff, neutral].sort(compareRanked).map((r) => r.userId)).toEqual(['pool', 'staff']);
+  });
+
+  it('a teacher freed by their own cancelled lesson is on site, not called in', () => {
+    const released = points(base({ dayLessons: [], releasedGroup: '8B' }));
+    expect(released).toMatchObject({ ON_SITE: 6, RELEASED: 8 });
+    expect(released.NOT_ON_SITE).toBeUndefined();
+  });
+
+  it('a lesson cancelled for an activity (prao, friluftsdag) frees no one: no RELEASED, and AT_EVENT says they may be out with the class', () => {
+    const ranked = rankCandidate(base({ dayLessons: [], eventGroup: '9A' }));
+    expect(ranked.reasons.map((reason) => reason.code)).toEqual(['NOT_ON_SITE', 'AT_EVENT']);
+    expect(ranked.reasons.find((reason) => reason.code === 'AT_EVENT')).toEqual({ code: 'AT_EVENT', params: { group: '9A' }, points: -20 });
+  });
+
   it('keeps the old picker’s order: behörighet first, then the class’s own teacher', () => {
     const legit = rankCandidate(base({ userId: 'a', qualification: 'LEGITIMATION' }));
     const primary = rankCandidate(base({ userId: 'b', teachesGroupSubject: true, teachesSubject: true }));

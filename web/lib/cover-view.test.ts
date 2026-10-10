@@ -236,7 +236,7 @@ describe("reasons in plain Swedish", () => {
     // src/cover/cover-rank.ts RankReasonCode and src/cover/cover-rules.ts HardRuleCode.
     const codes = [
       "QUAL_LEGITIMATION", "QUAL_BEHORIG", "QUAL_TILLATEN", "TEACHES_SUBJECT", "TEACHES_GROUP_SUBJECT",
-      "TEACHES_GROUP", "MENTOR", "GAP_FILL", "ON_SITE", "NOT_ON_SITE", "RELEASED", "COUNTER_WEEK",
+      "TEACHES_GROUP", "MENTOR", "GAP_FILL", "ON_SITE", "NOT_ON_SITE", "RELEASED", "AT_EVENT", "COUNTER_WEEK",
       "COUNTER_TERM", "UNDER_TARGET", "OVER_TARGET", "POOL_PREFERRED", "POOL", "POOL_LAST", "PREFERS_FREE",
       "INACTIVE", "ON_LESSON", "ABSENT", "BUSY_LESSON", "BUSY_DUTY", "UNAVAILABLE", "BOOKED_ROOM", "LUNCH",
       "DAILY_REST", "POOL_NOT_DECLARED",

@@ -68,6 +68,8 @@ export interface PersonLesson {
   status: LessonStatusValue;
   studentGroupId: string;
   subjectId: string;
+  /** Why a CANCELLED lesson is cancelled; the ranking tells an activity (EVENT) from the rest. */
+  cancelCause?: string | null;
 }
 
 export interface PersonClosure {

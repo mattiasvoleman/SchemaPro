@@ -3368,6 +3368,7 @@
     "ON_SITE": "Är på skolan den dagen",
     "NOT_ON_SITE": "Har inga lektioner den dagen",
     "RELEASED": "Ledig eftersom {group} har inställt",
+    "AT_EVENT": "Lektionen med {group} är inställd för en aktivitet – kan vara med klassen där",
     "COUNTER_WEEK": "{count, plural, one {# vikariepass} other {# vikariepass}} denna vecka",
     "COUNTER_TERM": "{count, plural, one {# vikariepass} other {# vikariepass}} denna termin",
     "UNDER_TARGET": "{minutes} min under veckans riktmärke",
@@ -3460,7 +3461,7 @@
       "NEUTRAL": "Som all annan personal",
       "LAST_RESORT": "Använd poolen sist"
     },
-    "poolPreferenceHint": "En poolvikarie utan lektioner den dagen hamnar redan längre ner. \"Sist\" gör att poolen bara föreslås när ingen egen personal kan.",
+    "poolPreferenceHint": "En poolvikarie utan lektioner den dagen hamnar redan längre ner. \"Sist\" ställer poolen efter all egen personal som kan ta lektionen, och Fördela dagen tar poolen bara där ingen egen personal kan.",
     "savePolicy": "Spara reglerna",
     "policySaved": "Reglerna är sparade",
     "reasonsTitle": "Orsaker",

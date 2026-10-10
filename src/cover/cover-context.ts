@@ -122,7 +122,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       select: {
         teacherId: true,
         calendarLesson: {
-          select: { id: true, date: true, startsAt: true, endsAt: true, status: true, studentGroupId: true, subjectId: true },
+          select: { id: true, date: true, startsAt: true, endsAt: true, status: true, cancelCause: true, studentGroupId: true, subjectId: true },
         },
       },
     })) ?? [];
@@ -136,6 +136,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       start: lesson.startsAt.getTime(),
       end: lesson.endsAt.getTime(),
       status: lesson.status,
+      cancelCause: lesson.cancelCause ?? null,
       studentGroupId: lesson.studentGroupId,
       subjectId: lesson.subjectId,
     } satisfies PersonLesson);

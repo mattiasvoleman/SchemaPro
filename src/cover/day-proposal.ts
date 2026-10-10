@@ -51,7 +51,11 @@ export interface ProposalDeps {
    * The score of `userId` for `lesson`, given the lessons already given to
    * them in this proposal (`picked`): their presence and counter move.
    */
-  score(lesson: ProposalLesson, userId: string, picked: readonly PersonLesson[]): { score: number; reasons: RankReason[]; week: number };
+  score(
+    lesson: ProposalLesson,
+    userId: string,
+    picked: readonly PersonLesson[],
+  ): { score: number; reasons: RankReason[]; week: number; tier?: number };
 }
 
 export interface ProposalItem {
@@ -115,7 +119,9 @@ export function proposeDay(lessons: readonly ProposalLesson[], deps: ProposalDep
       .sort()
       .filter((userId) => feasible(lesson, userId, pickedOf(userId)))
       .map((userId) => ({ userId, ...deps.score(lesson, userId, pickedOf(userId)) }))
-      .sort((a, b) => b.score - a.score || a.week - b.week || a.userId.localeCompare(b.userId));
+      // The ranking's own order: tier (a pool the school uses last), score,
+      // fewer covers this week, id.
+      .sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0) || b.score - a.score || a.week - b.week || a.userId.localeCompare(b.userId));
     const best = options[0];
     if (best) {
       give(best.userId, lesson);
