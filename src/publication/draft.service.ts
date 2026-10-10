@@ -26,6 +26,7 @@ import {
   type PublishedMaster,
 } from './published-grundschema';
 import { enterPublication, publishModeOf } from './publish-mode';
+import { reapplyActiveBatches } from './cancellation-batches.service';
 import {
   PUBLISH_DRAFT_PENDING,
   PUBLISH_NOT_DRAFT,
@@ -376,6 +377,13 @@ export class DraftService {
           total.cancelled += result.cancelled;
           total.skipped += result.skipped;
         }
+        // An unreversed bulk avbokning takes what the refill wrote into its range (S7).
+        const year = await tx.academicYear.findUnique({
+          where: { id: dto.academicYearId },
+          select: { school: { select: { timezone: true } } },
+        });
+        const batched = await reapplyActiveBatches(tx, schoolId, dto.academicYearId, from, to, year?.school.timezone ?? 'Europe/Stockholm');
+        total.cancelled += batched.length;
         const row = await tx.timetablePublication.create({
           data: {
             schoolId,

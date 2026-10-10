@@ -106,6 +106,7 @@ import type { ScheduleVersionsService } from '../../src/calendar/schedule-versio
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { PublicationsService } from '../../src/publication/publications.service';
 import { DraftService } from '../../src/publication/draft.service';
+import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
@@ -3882,6 +3883,7 @@ async function runChecks(
   await publicationChecks(owner, api);
   await draftChecks(owner, api);
   await equivalenceCheck(owner, api);
+  await batchChecks(owner, api);
 }
 
 
@@ -4356,9 +4358,10 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-elevhistorik'`, [MARKER]);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
   // The publicering checks' schools, whole, for a run that stopped inside them.
-  await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b')`, [
-    MARKER,
-  ]);
+  await owner.query(
+    `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning')`,
+    [MARKER],
+  );
   // (u4)'s pupil, for a run that stopped before deleting it.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
@@ -4459,9 +4462,10 @@ interface Fas3School {
 async function givenFas3School(owner: Client): Promise<Fas3School> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
   // The publicering checks' schools, whole, for a run that stopped inside them.
-  await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b')`, [
-    MARKER,
-  ]);
+  await owner.query(
+    `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning')`,
+    [MARKER],
+  );
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const DAY = 24 * 60 * 60 * 1000;
   const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
@@ -5293,5 +5297,134 @@ async function equivalenceCheck(owner: Client, api: PrismaService): Promise<void
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-tvilling-a', $1 || '-tvilling-b')`, [MARKER]);
+  }
+}
+
+/**
+ * Bulk avbokning (20261011110000) against Postgres, in a school of its own:
+ * the batch takes a class's week in one transaction with the cause the
+ * timplan counts and the note pupils read; a credit is handed off and linked;
+ * the reversal leaves a row whose room was booked meanwhile, restores the
+ * notes and deletes the credits ahead; a second reversal is refused; and a
+ * publish into a batch still in force cancels what it writes there (S7).
+ */
+async function batchChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenPublicationSchool(owner, 'avbokning');
+  const { publications } = publicationServicesFor(api);
+  const broadcast: string[][] = [];
+  const batches = new CancellationBatchesService(api, {
+    notifyLessonsChanged: async (_tx: unknown, ids: readonly string[]) => {
+      broadcast.push([...ids]);
+    },
+  } as unknown as RealtimeService);
+  const rows = async (sql: string, params: unknown[] = [school.schoolId]) => (await owner.query(sql, params)).rows;
+  const week = {
+    academicYearId: school.yearId,
+    name: 'Prao åk 7',
+    cause: 'EVENT' as const,
+    fromDate: '2096-10-01',
+    toDate: '2096-10-07',
+    scope: 'GRADES' as const,
+    minGradeLevel: 7,
+    maxGradeLevel: 7,
+  };
+  try {
+    await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-09-01', toDate: '2096-10-31' }, school.admin);
+    // A note somebody wrote on one of the week's lessons, to be given back.
+    await owner.query(
+      `UPDATE "CalendarLessons" SET note = 'Ta med miniräknare' WHERE "schoolId" = $1 AND date = '2096-10-01'`,
+      [school.schoolId],
+    );
+
+    await check('(pub-d) a batch takes a class\'s week in one transaction, EVENT and the note, and hands off its credits', async () => {
+      const preview = await batches.preview(week, school.admin);
+      // 1–7 Oct 2096: Mon 1 and Wed 3 (the school's two weekly lessons).
+      assert.equal(preview.matched, 2);
+      assert.deepEqual(preview.creditDates, ['2096-10-01', '2096-10-03']);
+      const created = await batches.create({ ...week, expectedDigest: preview.digest, credit: { minutes: 300 } }, school.admin);
+      assert.deepEqual([created.cancelled, created.credits], [2, 2]);
+      const cancelled = await rows(
+        `SELECT status::text, "cancelCause"::text AS cause, note FROM "CalendarLessons" WHERE "schoolId" = $1 AND date BETWEEN '2096-10-01' AND '2096-10-07' ORDER BY date`,
+      );
+      assert.deepEqual(cancelled, [
+        { status: 'CANCELLED', cause: 'EVENT', note: 'Inställd: Prao åk 7' },
+        { status: 'CANCELLED', cause: 'EVENT', note: 'Inställd: Prao åk 7' },
+      ]);
+      const credits = await rows(
+        `SELECT c.date::text, c.minutes, c."minGradeLevel", c."maxGradeLevel" FROM "TimplanCredits" c
+           JOIN "CancellationBatchCredits" l ON l."creditId" = c.id WHERE c."schoolId" = $1 ORDER BY c.date`,
+      );
+      assert.deepEqual(credits, [
+        { date: '2096-10-01', minutes: 300, minGradeLevel: 7, maxGradeLevel: 7 },
+        { date: '2096-10-03', minutes: 300, minGradeLevel: 7, maxGradeLevel: 7 },
+      ]);
+      assert.deepEqual(broadcast.at(-1)!.length, 2);
+      // The same digest again: the rows have changed, so it is stale.
+      await assert.rejects(
+        batches.create({ ...week, expectedDigest: preview.digest }, school.admin),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('CANCELLATION_STALE'),
+      );
+    });
+
+    await check('(pub-d) a publish into a batch still in force cancels what it writes there (S7)', async () => {
+      // A third lesson that week, published after the batch was made.
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, 5, '13:00', '14:00', now())`,
+        [school.schoolId, school.yearId, school.subject, school.class7a, school.teacherId],
+      );
+      await publications.publish(
+        { academicYearId: school.yearId, validFrom: '2096-10-01', validTo: '2096-10-07', acknowledgeWarnings: true },
+        school.admin,
+      );
+      const friday = await rows(
+        `SELECT status::text, "cancelCause"::text AS cause FROM "CalendarLessons" WHERE "schoolId" = $1 AND date = '2096-10-05'`,
+      );
+      assert.deepEqual(friday, [{ status: 'CANCELLED', cause: 'EVENT' }]);
+      const list = await batches.list(school.yearId, school.admin);
+      assert.equal(list[0]!.cancelled, 3);
+      assert.equal(list[0]!.addedSince, 0);
+    });
+
+    await check('(pub-d) the reversal leaves a row whose room was booked meanwhile, gives the notes back and deletes the credits ahead; once', async () => {
+      const [monday] = await rows(
+        `SELECT id, "startsAt", "endsAt", "roomId" FROM "CalendarLessons" WHERE "schoolId" = $1 AND date = '2096-10-01'`,
+      );
+      await owner.query(
+        `INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, now())`,
+        [school.schoolId, monday.roomId, school.teacherId, MARKER, monday.startsAt, monday.endsAt],
+      );
+      const [batch] = await batches.list(school.yearId, school.admin);
+      const preview = await batches.reversePreview(batch!.id, school.admin);
+      assert.equal(preview.reinstate, 2);
+      assert.deepEqual(preview.skippedRoomTaken.map((entry) => [entry.date, entry.by]), [['2096-10-01', 'BOOKING']]);
+      assert.equal(preview.creditsDeleted, 2);
+      const result = await batches.reverse(batch!.id, school.admin);
+      assert.equal(result.reinstate, 2);
+      const after = await rows(
+        `SELECT date::text, status::text, "cancelCause"::text AS cause, note FROM "CalendarLessons" WHERE "schoolId" = $1 AND date BETWEEN '2096-10-01' AND '2096-10-07' ORDER BY date`,
+      );
+      assert.deepEqual(after, [
+        { date: '2096-10-01', status: 'CANCELLED', cause: 'EVENT', note: 'Inställd: Prao åk 7' },
+        { date: '2096-10-03', status: 'SCHEDULED', cause: null, note: null },
+        { date: '2096-10-05', status: 'SCHEDULED', cause: null, note: null },
+      ]);
+      assert.equal((await rows(`SELECT count(*)::int AS n FROM "TimplanCredits" WHERE "schoolId" = $1`))[0].n, 0);
+      await assert.rejects(
+        batches.reverse(batch!.id, school.admin),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('CANCELLATION_REVERSED'),
+      );
+    });
+
+    await check('(pub-d) a teacher reads the delivered layer of a school with batches, and no batch row', async () => {
+      const coverage = new TimplanCoverageService(api);
+      const delivered = await coverage.delivered({ academicYearId: school.yearId, layer: 'delivered' }, school.teacher);
+      assert.ok(delivered);
+      const seen = await api.withRls(school.teacher, (tx) => tx.cancellationBatch.count());
+      assert.equal(seen, 0);
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-avbokning'`, [MARKER]);
   }
 }

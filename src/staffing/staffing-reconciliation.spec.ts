@@ -332,4 +332,29 @@ describe('buildReconciliation', () => {
     // One week of the two is lov for åk 7: planned and scheduled both halve.
     expect(row(result, ANNA)).toMatchObject({ planned: 180, scheduled: 180 });
   });
+
+  describe('a bulk avbokning (Publicering)', () => {
+    it('adds no cancelledEvent key to any row of a school that never made one (B6)', () => {
+      const result = buildReconciliation(base());
+      for (const teacher of result.teachers) expect(teacher.lost).not.toHaveProperty('cancelledEvent');
+      for (const loss of result.groupLosses ?? []) expect(loss).not.toHaveProperty('cancelledEvent');
+      expect(JSON.stringify(result)).not.toContain('cancelledEvent');
+    });
+
+    it('counts its cancelled lessons as lost, under cancelledEvent, for the teachers and the group', () => {
+      const result = buildReconciliation(
+        base({
+          credits: [
+            ...credits,
+            t(ANNA, 'LEAD', 'CANCELLED_EVENT', 120, 2),
+            { kind: 'G', personId: null, role: null, subjectId: MA, studentGroupId: G7A, extraGroupIds: null, bucket: 'CANCELLED_EVENT', minutes: 120, lessons: 2 },
+          ],
+        }),
+      );
+      expect(row(result, ANNA).lost).toMatchObject({ cancelledTeacherUnavailable: 60, cancelledEvent: 120 });
+      expect(row(result, ANNA).lostMinutes).toBe(180);
+      expect(row(result, BO).lost).not.toHaveProperty('cancelledEvent');
+      expect(result.groupLosses!.find((loss) => loss.studentGroupId === G7A)).toMatchObject({ cancelledEvent: 120 });
+    });
+  });
 });

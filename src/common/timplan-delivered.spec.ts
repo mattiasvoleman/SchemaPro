@@ -290,6 +290,62 @@ describe('the worked example (spec §4.4, recomputed in review R22)', () => {
   });
 });
 
+describe('a bulk avbokning (Publicering)', () => {
+  // The worked example's 7A, as above, plus what a batch writes.
+  const a = group('7A');
+  const monday = master(a, S.MA, 1);
+  const wednesday = master(a, S.MA, 3);
+  const friday = master(a, S.MA, 5);
+  const base: Partial<DeliveredCoverageInput> & { planned: Partial<DeliveredCoverageInput['planned']> } = {
+    planned: { groups: [a], requirements: [req(a, S.MA, 3, 60)], pupils: [pupil(a)] },
+    audiences: [
+      row(a, S.MA, 'DELIVERED', 19),
+      row(a, S.MA, 'CANCELLED_EVENT', 2),
+      row(a, S.MA, 'CANCELLED_MANUAL', 1),
+      row(a, S.MA, 'AHEAD', 6),
+      // The friluftsdag ahead, cancelled by the batch.
+      row(a, S.MA, 'AHEAD_CANCELLED', 1),
+    ],
+    horizon: [
+      { masterLessonId: monday.id, aheadRows: 2, firstDate: '2026-08-17', lastDate: '2026-10-19' },
+      { masterLessonId: wednesday.id, aheadRows: 2, firstDate: '2026-08-19', lastDate: '2026-10-21' },
+      { masterLessonId: friday.id, aheadRows: 3, firstDate: '2026-08-21', lastDate: '2026-10-23' },
+    ],
+    masterLessons: [monday, wednesday, friday],
+    drillGroupId: a.id,
+  };
+  const credit = (fromCancellationBatch: boolean) => ({
+    id: id(8000 + (fromCancellationBatch ? 1 : 0)),
+    date: '2026-10-16',
+    minutes: 60,
+    subjectId: S.MA,
+    studentGroupId: a.id,
+    minGradeLevel: null,
+    maxGradeLevel: null,
+    name: 'Friluftsdag',
+    ...(fromCancellationBatch ? { fromCancellationBatch: true } : {}),
+  });
+
+  it('counts its cancelled lessons as lost, under their own cause after the school\'s', () => {
+    const line = lineOf(compute(base), a, `subject:${S.MA}`) as DeliveredLineDetail;
+    expect(line.lost).toEqual({ cancelledManual: 60, cancelledEvent: 120 });
+    expect(Object.keys(line.lost)).toEqual(['cancelledManual', 'cancelledEvent']);
+  });
+
+  it('credits the day without the schedule reading better than it is (B7)', () => {
+    const plain = lineOf(compute(base), a, `subject:${S.MA}`) as DeliveredLineDetail;
+    const batched = lineOf(compute({ ...base, credits: [credit(true)] }), a, `subject:${S.MA}`) as DeliveredLineDetail;
+    const byHand = lineOf(compute({ ...base, credits: [credit(false)] }), a, `subject:${S.MA}`) as DeliveredLineDetail;
+    // The day counts as teaching: delta improves by the credit either way.
+    expect(batched.projection!.deltaMinutes).toBe(plain.projection!.deltaMinutes + 60);
+    expect(byHand.projection!.deltaMinutes).toBe(plain.projection!.deltaMinutes + 60);
+    // But the batch's cancelled lesson is already added back to the gap as
+    // ahead-cancelled; its credit must not be added a second time.
+    expect(batched.projection!.scheduleGapMinutes).toBe(plain.projection!.scheduleGapMinutes);
+    expect(byHand.projection!.scheduleGapMinutes).toBe(plain.projection!.scheduleGapMinutes + 60);
+  });
+});
+
 describe('genomfört mot schemalagt', () => {
   const a = group('8A', 'CLASS', 8);
 

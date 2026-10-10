@@ -6170,8 +6170,9 @@ BEGIN
   END IF;
   SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) INTO labels
     FROM pg_enum WHERE enumtypid = '"LessonCancelCause"'::regtype;
-  IF labels IS DISTINCT FROM 'TEACHER_UNAVAILABLE,ROOM_UNAVAILABLE,MANUAL' THEN
-    RAISE EXCEPTION 'cancel cause: the enum is (%), expected TEACHER_UNAVAILABLE, ROOM_UNAVAILABLE, MANUAL', labels;
+  -- EVENT since 20261011103000: a bulk avbokning's cause.
+  IF labels IS DISTINCT FROM 'TEACHER_UNAVAILABLE,ROOM_UNAVAILABLE,MANUAL,EVENT' THEN
+    RAISE EXCEPTION 'cancel cause: the enum is (%), expected TEACHER_UNAVAILABLE, ROOM_UNAVAILABLE, MANUAL, EVENT', labels;
   END IF;
 END $$;
 
@@ -8296,4 +8297,139 @@ BEGIN
   IF has_function_privilege('anon', 'app.enter_publication(uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'draft: anon may take the publication lock';
   END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 27g: en avbokning gäller många lektioner.
+--
+-- CancellationBatches, CancellationBatchLessons and CancellationBatchCredits
+-- (20261011110000). The admin writes them; the CHECKs mirror the DTO (31 days
+-- at most, a whole window or none, a scope with exactly its fields, the
+-- school's own causes). A TEACHER reads the credit links (ids, for the
+-- timplan's schedule gap) and nothing else; a pupil and a guardian nothing.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date; b uuid; lesson uuid; credit uuid; n bigint;
+BEGIN
+  SELECT id, "startDate" INTO y, y_start FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope, "minGradeLevel", "maxGradeLevel")
+  VALUES (school, y, 'Prao åk 9', 'EVENT', y_start, y_start + 30, 'GRADES', 9, 9) RETURNING id INTO b;
+  BEGIN
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+    VALUES (school, y, 'För lång', 'EVENT', y_start, y_start + 31, 'SCHOOL');
+    RAISE EXCEPTION 'batch: 32 days were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+    VALUES (school, y, 'Lärarens', 'TEACHER_UNAVAILABLE', y_start, y_start, 'SCHOOL');
+    RAISE EXCEPTION 'batch: a teacher''s cause was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope, "groupIds")
+    VALUES (school, y, 'Skolan med grupper', 'EVENT', y_start, y_start, 'SCHOOL', ARRAY[gen_random_uuid()]);
+    RAISE EXCEPTION 'batch: a SCHOOL scope with groups was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope, "startTime")
+    VALUES (school, y, 'Halvt fönster', 'EVENT', y_start, y_start, 'SCHOOL', '13:00');
+    RAISE EXCEPTION 'batch: half a time window was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "CancellationBatches" SET reinstated = 3 WHERE id = b;
+    RAISE EXCEPTION 'batch: a batch not reversed reinstated lessons';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  SELECT cl.id INTO lesson FROM "CalendarLessons" cl WHERE cl."schoolId" = school ORDER BY cl.id LIMIT 1;
+  IF lesson IS NULL THEN
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+    SELECT school, s.id, g.id, y_start, y_start::timestamptz, y_start::timestamptz + interval '1 hour', now()
+      FROM "Subjects" s, "StudentGroups" g WHERE s."schoolId" = school AND g."schoolId" = school AND g."academicYearId" = y
+     ORDER BY s.id, g.id LIMIT 1 RETURNING id INTO lesson;
+  END IF;
+  INSERT INTO "CancellationBatchLessons" ("batchId", "calendarLessonId", "schoolId", "previousNote") VALUES (b, lesson, school, NULL);
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+  VALUES (school, y, y_start, 300, 'Friluftsdag', now()) RETURNING id INTO credit;
+  INSERT INTO "CancellationBatchCredits" ("batchId", "creditId", "schoolId") VALUES (b, credit, school);
+  -- A credit deleted by hand leaves the batch.
+  DELETE FROM "TimplanCredits" WHERE id = credit;
+  SELECT count(*) INTO n FROM "CancellationBatchCredits" WHERE "batchId" = b;
+  IF n <> 0 THEN RAISE EXCEPTION 'batch: a deleted credit stayed linked'; END IF;
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+  VALUES (school, y, y_start, 300, 'Friluftsdag', now()) RETURNING id INTO credit;
+  INSERT INTO "CancellationBatchCredits" ("batchId", "creditId", "schoolId") VALUES (b, credit, school);
+  PERFORM set_config('app.test_rls27g_batch', b::text, true);
+  PERFORM set_config('app.test_rls27g_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls27g_student_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27g_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'batch: expected a TEACHER'; END IF;
+  SELECT (SELECT count(*) FROM "CancellationBatches") + (SELECT count(*) FROM "CancellationBatchLessons") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'batch: a teacher reads % batch row(s)', n; END IF;
+  SELECT count(*) INTO n FROM "CancellationBatchCredits" WHERE "batchId" = current_setting('app.test_rls27g_batch')::uuid;
+  IF n <> 1 THEN RAISE EXCEPTION 'batch: a teacher reads % of the credit link, expected 1', n; END IF;
+  BEGIN
+    INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+    SELECT "schoolId", id, 'Lärarens egen', 'EVENT', "startDate", "startDate", 'SCHOOL' FROM "AcademicYears" WHERE "isActive";
+    RAISE EXCEPTION 'batch: a teacher made a batch';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27g_student_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "CancellationBatches") + (SELECT count(*) FROM "CancellationBatchLessons")
+       + (SELECT count(*) FROM "CancellationBatchCredits") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'batch: a pupil reads % batch row(s)', n; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "CancellationBatches") + (SELECT count(*) FROM "CancellationBatchLessons")
+       + (SELECT count(*) FROM "CancellationBatchCredits") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'batch: a guardian reads % batch row(s)', n; END IF;
+END $$;
+ROLLBACK;
+
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."CancellationBatches"'::regclass, 'public."CancellationBatchLessons"'::regclass,
+                      'public."CancellationBatchCredits"'::regclass);
+  IF bad IS DISTINCT FROM 'cancellation_batch_credits_admin_all:*,cancellation_batch_credits_staff_select:r,'
+                          'cancellation_batch_lessons_admin_all:*,cancellation_batches_admin_all:*' THEN
+    RAISE EXCEPTION 'batch: policies are %', bad;
+  END IF;
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."CancellationBatches"'::regclass, 'public."CancellationBatchLessons"'::regclass,
+                      'public."CancellationBatchCredits"'::regclass)
+     AND (pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%'
+          OR (polcmd = '*' AND pg_get_expr(polwithcheck, polrelid) NOT LIKE '%current_user_role%'));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'batch: arms without the role: %', bad; END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."CancellationBatches"', p)
+        OR has_table_privilege(api_role, 'public."CancellationBatchLessons"', p)
+        OR has_table_privilege(api_role, 'public."CancellationBatchCredits"', p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'batch: % holds % on the batch tables', api_role, bad; END IF;
+  END LOOP;
 END $$;

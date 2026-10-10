@@ -359,7 +359,7 @@ export function staffingCreditStatement(
            SUM(l."minutes")::int, COUNT(*)::int
       FROM l
      WHERE l."bucket" IN ('TEACHERLESS', 'CANCELLED_TEACHER_UNAVAILABLE', 'CANCELLED_ROOM_UNAVAILABLE',
-                          'CANCELLED_MANUAL', 'CANCELLED_UNKNOWN', 'OTHER')
+                          'CANCELLED_MANUAL', 'CANCELLED_EVENT', 'CANCELLED_UNKNOWN', 'OTHER')
      GROUP BY 4, 5, 7`
       : Prisma.empty;
   // The grundschema slot a substitute covered: the master lesson's, or — read
