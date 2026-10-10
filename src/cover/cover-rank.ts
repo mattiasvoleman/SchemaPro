@@ -19,7 +19,14 @@ import type { Span } from './cover-rules';
  *   GAP_FILL +12 / ON_SITE +6 / NOT_ON_SITE −15, RELEASED +8
  *       Presence before fairness: calling somebody in for one lesson costs
  *       more than an uneven week. A teacher whose own lesson at that time is
- *       cancelled is free and already in the building.
+ *       cancelled is free and already in the building — on site, though the
+ *       cancelled lesson is no longer among the day's lessons.
+ *   AT_EVENT −20 (instead of RELEASED)
+ *       A lesson cancelled for an activity the school names (EVENT: prao,
+ *       friluftsdag, studiedag) frees its time by the hard rules, as every
+ *       cancellation does, but its teacher may well be out with the class.
+ *       A wish-like penalty and a reason the admin reads, not a filter:
+ *       during prao the teacher is in school and free.
  *   COUNTER_WEEK −5 each (cap −25), COUNTER_TERM −1 each (cap −15)
  *       Untis' Vertretungszähler: after two or three covers in a week a
  *       teacher drops below the next qualification tier.
@@ -27,13 +34,17 @@ import type { Span } from './cover-rules';
  *       This week's calendar minutes plus the lesson against the Fas 1–3
  *       target, with the policy's tolerance on the upper side.
  *   POOL_PREFERRED +20 / POOL 0 / POOL_LAST −40 (by CoverSettings)
- *       LAST_RESORT cancels a LEGITIMATION: a pool vikarie then appears only
- *       when no qualified or familiar colleague is free.
+ *       LAST_RESORT is also a TIER: a pool vikarie (no post) is ranked after
+ *       every feasible colleague, whatever the points — what "Använd poolen
+ *       sist" promises the school. Points alone could not: a legitimerad
+ *       pool vikarie at −15 outranked a free colleague who was over target
+ *       with two covers this week, at −30. The −40 stays as the reason the
+ *       list shows.
  *   PREFERS_FREE −10
  *       A PREFERRED_FREE row is a wish, never a filter.
  *
- * Sorted by score, then fewer covers this week, then id: two loads of the
- * same day agree.
+ * Sorted by tier, then score, then fewer covers this week, then id: two
+ * loads of the same day agree.
  */
 
 export type RankReasonCode =
@@ -48,6 +59,7 @@ export type RankReasonCode =
   | 'ON_SITE'
   | 'NOT_ON_SITE'
   | 'RELEASED'
+  | 'AT_EVENT'
   | 'COUNTER_WEEK'
   | 'COUNTER_TERM'
   | 'UNDER_TARGET'
@@ -77,6 +89,8 @@ export interface RankInput {
   dayLessons: Span[];
   /** The group whose cancelled lesson frees them at that time, if any. */
   releasedGroup: string | null;
+  /** The group whose lesson then is cancelled for an activity (EVENT), if any. */
+  eventGroup?: string | null;
   counter: { week: number; term: number };
   load: { weekMinutes: number; target: number | null; tolerancePercent: number };
   poolPreference: CoverPoolPreference;
@@ -88,6 +102,13 @@ export interface Ranked {
   userId: string;
   score: number;
   reasons: RankReason[];
+  /** 0, or 1 for a pool vikarie the school uses last; sorted before the score. */
+  tier?: number;
+}
+
+/** The tier of a candidate: a pool vikarie under LAST_RESORT comes after everybody else. */
+export function poolTier(kind: 'STAFF' | 'POOL', preference: CoverPoolPreference): number {
+  return kind === 'POOL' && preference === 'LAST_RESORT' ? 1 : 0;
 }
 
 export const QUALIFICATION_POINTS: Record<TeacherQualificationKind, number> = {
@@ -117,9 +138,10 @@ export function rankCandidate(input: RankInput): Ranked {
   const before = input.dayLessons.some((span) => span.end <= input.lesson.start);
   const after = input.dayLessons.some((span) => span.start >= input.lesson.end);
   if (before && after) add('GAP_FILL', 12);
-  else if (input.dayLessons.length > 0) add('ON_SITE', 6);
+  else if (input.dayLessons.length > 0 || input.releasedGroup !== null) add('ON_SITE', 6);
   else add('NOT_ON_SITE', -15);
   if (input.releasedGroup !== null) add('RELEASED', 8, { group: input.releasedGroup });
+  else if (input.eventGroup) add('AT_EVENT', -20, { group: input.eventGroup });
 
   if (input.counter.week > 0) add('COUNTER_WEEK', Math.max(-25, -5 * input.counter.week), { count: input.counter.week });
   if (input.counter.term > 0) add('COUNTER_TERM', Math.max(-15, -1 * input.counter.term), { count: input.counter.term });
@@ -141,14 +163,24 @@ export function rankCandidate(input: RankInput): Ranked {
   }
   if (input.prefersFree) add('PREFERS_FREE', -10);
 
-  return { userId: input.userId, score: reasons.reduce((sum, reason) => sum + reason.points, 0), reasons };
+  return {
+    userId: input.userId,
+    score: reasons.reduce((sum, reason) => sum + reason.points, 0),
+    reasons,
+    tier: poolTier(input.kind, input.poolPreference),
+  };
 }
 
-/** Score desc, then fewer covers this week, then id. */
+/** Tier asc, then score desc, then fewer covers this week, then id. */
 export function compareRanked(
   a: Ranked & { counter: { week: number } },
   b: Ranked & { counter: { week: number } },
 ): number {
-  return b.score - a.score || a.counter.week - b.counter.week || a.userId.localeCompare(b.userId);
+  return (
+    (a.tier ?? 0) - (b.tier ?? 0) ||
+    b.score - a.score ||
+    a.counter.week - b.counter.week ||
+    a.userId.localeCompare(b.userId)
+  );
 }
 

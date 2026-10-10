@@ -105,6 +105,18 @@ describe('Fördela dagen (greedy proposal)', () => {
     expect(two).toEqual(one);
   });
 
+  it('a pool the school uses last is proposed only where no colleague can take the lesson, whatever its score', () => {
+    const people = [person('A'), person('P')];
+    const lessons = [lesson('L1', 9, 10, ['A', 'P']), lesson('L2', 9, 10, ['A', 'P'])];
+    const base = deps(people, { L1: { A: -30, P: -15 }, L2: { A: -30, P: -15 } });
+    const proposal = proposeDay(lessons, {
+      ...base,
+      score: (entry, userId, picked) => ({ ...base.score(entry, userId, picked), tier: userId === 'P' ? 1 : 0 }),
+    });
+    // A takes the first; the second overlaps it, so only then the pool.
+    expect(assignment(proposal)).toEqual({ L1: 'A', L2: 'P' });
+  });
+
   describe('two pairs of one lesson (a co-taught lesson whose two teachers are both away)', () => {
     const pair = (id: string, absenceId: string, from: number, to: number, candidates: string[]): ProposalLesson => ({
       lessonId: id,

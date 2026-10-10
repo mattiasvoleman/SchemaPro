@@ -23,7 +23,7 @@ import {
   type QualificationRow,
 } from './cover-context';
 import { lockCoverDay, lockLessons, lockTeachers } from './cover-decisions';
-import { compareRanked, rankCandidate, type RankReason } from './cover-rank';
+import { compareRanked, poolTier, rankCandidate, type RankReason } from './cover-rank';
 import { hardFindings, holdsTime, overlaps, prefersFree, type CoverTarget, type PersonLesson, type RuleFinding } from './cover-rules';
 import { CoverService, emptyEffects, merge, naming } from './cover.service';
 import { proposeDay, type DayProposal, type ProposalLesson } from './day-proposal';
@@ -118,7 +118,8 @@ export class CoverSuggestionsService {
         }
         candidates.push(this.candidateOf(lesson, userId, read, context, []));
       }
-      candidates.sort((a, b) => compareRanked({ ...a, counter: { week: a.counter.weekLessons } }, { ...b, counter: { week: b.counter.weekLessons } }));
+      const ranked = (c: Candidate) => ({ ...c, tier: poolTier(c.kind, context.poolPreference), counter: { week: c.counter.weekLessons } });
+      candidates.sort((a, b) => compareRanked(ranked(a), ranked(b)));
       return { lessonId, candidates, excluded };
     });
   }
@@ -230,7 +231,12 @@ export class CoverSuggestionsService {
       score: (entry, userId, picked) => {
         const lesson = lessons.get(entry.lessonId)!;
         const candidate = this.candidateOf(lesson, userId, read, context, picked);
-        return { score: candidate.score, reasons: candidate.reasons, week: candidate.counter.weekLessons };
+        return {
+          score: candidate.score,
+          reasons: candidate.reasons,
+          week: candidate.counter.weekLessons,
+          tier: poolTier(candidate.kind, context.poolPreference),
+        };
       },
     });
   }
@@ -252,9 +258,13 @@ export class CoverSuggestionsService {
     const dayLessons = [...day.lessons, ...picked].filter(
       (row) => holdsTime(row) && row.date === lesson.date && row.id !== lesson.id,
     );
-    const released = day.lessons.find(
+    // Their own lesson then, cancelled: free and in the building — unless
+    // it was cancelled for an activity, which they may be out with.
+    const cancelledThen = day.lessons.filter(
       (row) => row.status === 'CANCELLED' && row.date === lesson.date && overlaps(row, target),
     );
+    const released = cancelledThen.find((row) => row.cancelCause !== 'EVENT');
+    const atEvent = cancelledThen.find((row) => row.cancelCause === 'EVENT');
     const employment = read.employments.get(userId) ?? null;
     const target_ = targetMinutesPerWeek(employment, {
       fullTimeTeachingMinutesPerWeek: context.policy.fullTimeTeachingMinutesPerWeek,
@@ -280,6 +290,7 @@ export class CoverSuggestionsService {
       lesson: { start: target.start, end: target.end, minutes: lessonMinutes },
       dayLessons,
       releasedGroup: released ? (context.groupName.get(released.studentGroupId) ?? '') : null,
+      eventGroup: atEvent ? (context.groupName.get(atEvent.studentGroupId) ?? '') : null,
       counter: { week: weekLessons, term: termLessons },
       load: { weekMinutes, target: target_, tolerancePercent: context.policy.overAllocationTolerancePercent },
       poolPreference: context.poolPreference,
