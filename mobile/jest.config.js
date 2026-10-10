@@ -34,14 +34,16 @@ module.exports = {
     '!src/**/*.d.ts',
   ],
   coverageThreshold: {
-    // Floors set just under what the suite measures: 61.94 statements, 62.84
-    // lines, 63.05 functions, 66.66 branches (2026-10-10, with src/i18n
-    // counted). They were 12/12/16/11 when this runner arrived; the step is the
-    // gateway client, the family schedule, push registration, the catalogue and
-    // its formats, notice wording and the auth codes, all tested where they
-    // live. Auth storage, the WebSocket client and the hooks are still
-    // uncovered, and that is the gap that remains. Raise these as tests land;
-    // never lower one to green a build.
-    global: { statements: 61, lines: 62, functions: 62, branches: 66 },
+    // Floors set just under what the suite measures: 65.87 statements, 66.24
+    // lines, 66.86 functions, 70.29 branches (2026-10-10, after the review's
+    // fixes: the inbox service, the child list's states, the sign-out release
+    // and restoreSession; before them 61.94/62.84/63.05/66.66). They were
+    // 12/12/16/11 when this runner arrived; the step is the gateway client,
+    // the family schedule, push registration, the catalogue and its formats,
+    // notice wording and the auth codes, all tested where they live. Auth
+    // storage, the WebSocket client and the hooks are still uncovered, and
+    // that is the gap that remains. Raise these as tests land; never lower one
+    // to green a build.
+    global: { statements: 65, lines: 66, functions: 66, branches: 70 },
   },
 };
