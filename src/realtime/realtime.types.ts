@@ -38,3 +38,17 @@ export interface TimetablePeer {
   /** Master lesson the peer currently has open in the editor, if any. */
   editingLessonId: string | null;
 }
+
+/**
+ * The cover board changed for a span of days (Vikarieplanering): to the
+ * school's admins only, and dates only — no lesson, no person, no reason.
+ * The board refetches when the span overlaps the days it shows.
+ */
+export const COVER_BOARD_UPDATED_EVENT = 'cover_board_updated';
+
+export interface CoverBoardUpdatedPayload {
+  /** YYYY-MM-DD, school-local, inclusive. */
+  from: string;
+  to: string;
+  changedAt: string;
+}

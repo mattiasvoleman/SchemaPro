@@ -10,6 +10,7 @@ import {
 import type { PrismaService } from '../database/prisma.service';
 import { RealtimeGateway } from './realtime.gateway';
 import {
+  COVER_BOARD_UPDATED_EVENT,
   LESSON_UPDATED_EVENT,
   MASTER_TIMETABLE_UPDATED_EVENT,
   TIMETABLE_PRESENCE_EVENT,
@@ -490,6 +491,20 @@ describe('RealtimeGateway', () => {
       gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'admin');
       expect(server.to).toHaveBeenCalledWith(`admin:${SCHOOL_ID}`);
       expect(server.to).not.toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
+    });
+  });
+
+  describe('emitCoverBoardUpdated', () => {
+    it('reaches the school’s admins only, with dates and a timestamp and nothing else', () => {
+      gateway.emitCoverBoardUpdated(SCHOOL_ID, { from: '2026-10-14', to: '2026-10-16', changedAt: '2026-10-14T06:00:00.000Z' });
+      expect(server.to).toHaveBeenCalledWith(`admin:${SCHOOL_ID}`);
+      expect(server.to).not.toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
+      expect(emit).toHaveBeenCalledWith(COVER_BOARD_UPDATED_EVENT, {
+        from: '2026-10-14',
+        to: '2026-10-16',
+        changedAt: '2026-10-14T06:00:00.000Z',
+      });
+      expect(Object.keys(emit.mock.calls[0][1]).sort()).toEqual(['changedAt', 'from', 'to']);
     });
   });
 

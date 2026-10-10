@@ -290,7 +290,7 @@ export class StaffingLoadService {
       }
       const [{ input: yearInput }, staffIds] = await Promise.all([
         this.readInput(tx, requirement.academicYearId, user),
-        readActiveStaffIds(tx),
+        readActiveStaffIds(tx, requirement.academicYearId),
       ]);
       const predecessorId = requirement.studentGroup.predecessorId;
       const lastYear = predecessorId

@@ -504,11 +504,14 @@ describe('CalendarLessonsService', () => {
       await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
 
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
+      // Vikarieplanering: the substitute is no longer in the class notice —
+      // they get one notice of their own (the row below), not an English
+      // class e-mail and a Swedish cover e-mail for one event.
       expect(notifications.notifyUsers).toHaveBeenCalledWith(
         tx,
         expect.objectContaining({
           schoolId: SCHOOL_ID,
-          userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID, SUB_ID],
+          userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID],
           type: 'LESSON_SUBSTITUTE',
           email: {
             subject: 'Substitute assigned: Mathematics',
@@ -516,6 +519,32 @@ describe('CalendarLessonsService', () => {
           },
         }),
       );
+    });
+
+    it('tells the substitute of their own cover, in Swedish, with group and room and no reason', async () => {
+      arrangeAssign({ note: 'Sjuk' });
+      tx.studentGroup.findUnique.mockResolvedValue({ name: '7A' });
+      tx.room.findUnique.mockResolvedValue({ name: 'Sal 12' });
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      const own = notifications.notifyUsers.mock.calls
+        .map(([, options]) => options as { userIds: string[]; meta: Record<string, unknown>; email: { subject: string; body: string } })
+        .filter((options) => options.userIds.includes(SUB_ID));
+      expect(own).toEqual([
+        {
+          schoolId: SCHOOL_ID,
+          userIds: [SUB_ID],
+          type: 'LESSON_SUBSTITUTE',
+          meta: { subjectName: 'Mathematics', startsAt: STARTS_AT.toISOString(), cover: true, groupName: '7A', roomName: 'Sal 12' },
+          email: {
+            subject: 'Vikariepass: Mathematics mån 10 aug 10:00',
+            body: 'Du är inbokad som vikarie: Mathematics, 7A, Sal 12, mån 10 aug 10:00.',
+          },
+        },
+      ]);
+      expect(JSON.stringify(own)).not.toMatch(/Sjuk|reason/i);
     });
 
     it.each([
@@ -560,6 +589,209 @@ describe('CalendarLessonsService', () => {
       await expect(
         service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  /*
+   * Vikarieplanering: the assignment as the cover board builds on it — one
+   * teacher replaced, an absent substitute refused, the decision recorded
+   * when the leaver is away, the cover rules as warnings, the locks first,
+   * and the board told after the commit.
+   */
+  describe('assignSubstitute and the cover board', () => {
+    const CO_ID = 'abababab-abab-4bab-8bab-abababababab';
+    const OLD_SUB = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    let board: jest.Mock;
+
+    const arrange = (teachers: { teacherId: string; role: string }[]) => {
+      storeLesson({ teachers });
+      tx.user.findUnique.mockImplementation(answerById([{ id: SUB_ID, role: 'TEACHER', isActive: true }]));
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+      tx.calendarLesson.update.mockImplementation(answerUpdate(baseLesson({ teachers })));
+      board = jest.fn();
+      (realtime as unknown as { notifyCoverBoardChanged: jest.Mock }).notifyCoverBoardChanged = board;
+    };
+
+    it('replacesTeacherId removes that teacher’s row alone and keeps the co-teacher', async () => {
+      arrange([
+        { teacherId: TEACHER_ID, role: 'LEAD' },
+        { teacherId: CO_ID, role: 'ASSISTANT' },
+      ]);
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID, replacesTeacherId: TEACHER_ID }, testUser());
+
+      expect(tx.calendarLessonTeacher.deleteMany).toHaveBeenCalledWith({
+        where: { calendarLessonId: LESSON_ID, teacherId: { in: [TEACHER_ID] } },
+      });
+      // The co-teacher is not told the class has a substitute: they are still on it.
+      const classNotice = notifications.notifyUsers.mock.calls.find(([, options]) => options.userIds.includes(STUDENT_ID))!;
+      expect(classNotice[1].userIds).toEqual([STUDENT_ID, GUARDIAN_ID, TEACHER_ID]);
+    });
+
+    it('refuses a replacesTeacherId who is not on the lesson, and a substitute already on it', async () => {
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+      await expect(
+        service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID, replacesTeacherId: CO_ID }, testUser()),
+      ).rejects.toMatchObject({ response: { code: 'REPLACED_TEACHER_NOT_ON_LESSON' } });
+
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }, { teacherId: SUB_ID, role: 'ASSISTANT' }]);
+      await expect(
+        service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID, replacesTeacherId: TEACHER_ID }, testUser()),
+      ).rejects.toMatchObject({ response: { code: 'SUBSTITUTE_ON_LESSON' } });
+      expect(tx.calendarLessonTeacher.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a substitute who is absent themself (SUBSTITUTE_IS_ABSENT) before writing anything', async () => {
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+      tx.teacherAbsence.findMany.mockResolvedValue([{ id: 'abs-sub', userId: SUB_ID, startsAt: STARTS_AT, endsAt: ENDS_AT }]);
+
+      const error = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'SUBSTITUTE_IS_ABSENT' });
+      expect(tx.calendarLessonTeacher.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('records the decision when the leaver is absent — a wiped co-teacher in it too, so an undo restores both', async () => {
+      arrange([
+        { teacherId: TEACHER_ID, role: 'LEAD' },
+        { teacherId: CO_ID, role: 'ASSISTANT' },
+      ]);
+      tx.teacherAbsence.findMany.mockResolvedValue([{ id: 'abs-1', userId: TEACHER_ID, startsAt: STARTS_AT, endsAt: ENDS_AT }]);
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      expect(tx.calendarLessonTeacher.deleteMany).toHaveBeenCalledWith({ where: { calendarLessonId: LESSON_ID } });
+      expect(tx.teacherAbsenceCover.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceId: 'abs-1',
+          calendarLessonId: LESSON_ID,
+          absentTeacherId: TEACHER_ID,
+          decision: 'SUBSTITUTE',
+          substituteId: SUB_ID,
+          removedTeachers: [
+            { teacherId: TEACHER_ID, role: 'LEAD' },
+            { teacherId: CO_ID, role: 'ASSISTANT' },
+          ],
+        }),
+      });
+    });
+
+    it('writes no decision when nobody leaving is absent — the old behaviour', async () => {
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      expect(tx.teacherAbsenceCover.create).not.toHaveBeenCalled();
+      expect(tx.teacherAbsenceCover.update).not.toHaveBeenCalled();
+    });
+
+    it('a substitute replaced is told the cover is withdrawn, and the decision naming them moves on', async () => {
+      arrange([{ teacherId: OLD_SUB, role: 'SUBSTITUTE' }]);
+      tx.teacherAbsenceCover.findMany.mockResolvedValue([
+        {
+          id: 'dec-1',
+          absenceId: 'abs-1',
+          calendarLessonId: LESSON_ID,
+          absentTeacherId: TEACHER_ID,
+          removedTeachers: [{ teacherId: TEACHER_ID, role: 'LEAD' }],
+          decision: 'SUBSTITUTE',
+          substituteId: OLD_SUB,
+          previousNote: null,
+          decidedAt: STARTS_AT,
+        },
+      ]);
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID, replacesTeacherId: OLD_SUB }, testUser());
+
+      expect(tx.teacherAbsenceCover.update).toHaveBeenCalledWith({ where: { id: 'dec-1' }, data: { substituteId: SUB_ID } });
+      const types = notifications.notifyUsers.mock.calls.map(([, options]) => [options.type, options.userIds]);
+      expect(types).toContainEqual(['LESSON_COVER_WITHDRAWN', [OLD_SUB]]);
+      // …and not also the class notice as an "outgoing teacher".
+      expect(types).toContainEqual(['LESSON_SUBSTITUTE', [STUDENT_ID, GUARDIAN_ID]]);
+    });
+
+    it('answers the cover rules a manual pick breaks as warnings, never refusals', async () => {
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      // 10:00–11:00 in Stockholm; the substitute closed 09:00–12:00 that day.
+      tx.availabilityConstraint.findMany.mockResolvedValue([
+        {
+          id: 'c1',
+          userId: SUB_ID,
+          startTime: new Date('1970-01-01T09:00:00.000Z'),
+          endTime: new Date('1970-01-01T12:00:00.000Z'),
+          type: 'UNAVAILABLE',
+          reason: 'Sjukskriven',
+        },
+      ]);
+
+      const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      expect(result.warnings).toEqual([{ code: 'COVER_TEACHER_UNAVAILABLE', params: {} }]);
+      expect(JSON.stringify(result)).not.toContain('Sjukskriven');
+      expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('enters the publication lock first, then locks the lesson, then the substitute, before any check', async () => {
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+      const order: string[] = [];
+      tx.$queryRaw = jest.fn().mockImplementation((sql: { sql: string }) => {
+        order.push(sql.sql.includes('enter_grundschema_write') ? 'publication' : 'raw');
+        return Promise.resolve([]);
+      });
+      tx.$executeRaw = jest.fn().mockImplementation((sql: { sql: string }) => {
+        order.push(sql.sql.includes('FOR UPDATE') ? 'lesson' : 'teacher');
+        return Promise.resolve(1);
+      });
+      tx.calendarLesson.findFirst.mockImplementation((query: Query) => {
+        order.push('clash');
+        return answerFirst(null)(query);
+      });
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      expect(order.slice(0, 4)).toEqual(['publication', 'lesson', 'teacher', 'clash']);
+    });
+
+    it('tells the cover board the lesson’s day changed, after the commit', async () => {
+      arrange([{ teacherId: TEACHER_ID, role: 'LEAD' }]);
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+      await service.cancel(LESSON_ID, {}, testUser());
+
+      expect(board).toHaveBeenCalledWith(SCHOOL_ID, '2026-08-10', '2026-08-10');
+      expect(board).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('suggestSubstitutes and the cover rules', () => {
+    it('drops a teacher the hard rules exclude — a duty slot at that time — and keeps the shape', async () => {
+      const FREE = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const DUTY = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      storeLesson();
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        { teacherId: FREE, coTeacherId: DUTY, studentGroupId: GROUP_ID },
+      ]);
+      tx.user.findMany.mockResolvedValue([{ id: FREE }, { id: DUTY }]);
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+      tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      tx.studentGroup.findUnique.mockResolvedValue({ academicYearId: 'year-1' });
+      tx.availabilityConstraint.findMany.mockResolvedValue([
+        {
+          id: 'slot',
+          userId: DUTY,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          endTime: new Date('1970-01-01T10:30:00.000Z'),
+          type: 'UNAVAILABLE',
+        },
+      ]);
+      tx.teacherDuty.findMany.mockResolvedValue([{ blockedConstraintId: 'slot', label: 'Rastvakt', academicYearId: 'year-1' }]);
+
+      await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+        { teacherId: FREE, isPrimary: true, qualificationKind: null },
+      ]);
     });
   });
 

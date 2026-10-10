@@ -14,10 +14,12 @@ import type { UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import {
+  COVER_BOARD_UPDATED_EVENT,
   LESSON_UPDATED_EVENT,
   MASTER_TIMETABLE_UPDATED_EVENT,
   TIMETABLE_PRESENCE_EVENT,
   type CalendarLessonUpdatedPayload,
+  type CoverBoardUpdatedPayload,
   type TimetablePeer,
 } from './realtime.types';
 
@@ -234,6 +236,16 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.server
       .to(`${audience}:${schoolId}`)
       .emit(MASTER_TIMETABLE_UPDATED_EVENT, { changedAt: new Date().toISOString() });
+  }
+
+  /**
+   * The cover board changed for these days: to the school's admins only
+   * (`admin:<school>`), dates and a timestamp only. Nothing in it says who is
+   * away, let alone why — a payload a teacher's socket would never get, and
+   * still one that would not hurt if it did.
+   */
+  emitCoverBoardUpdated(schoolId: string, payload: CoverBoardUpdatedPayload): void {
+    this.server.to(`admin:${schoolId}`).emit(COVER_BOARD_UPDATED_EVENT, payload);
   }
 
   /**

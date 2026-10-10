@@ -34,6 +34,7 @@ describe('RealtimeService', () => {
   let gateway: {
     emitMasterTimetableUpdated: jest.Mock;
     emitLessonUpdated: jest.Mock;
+    emitCoverBoardUpdated: jest.Mock;
   };
   let warn: jest.SpyInstance;
 
@@ -45,6 +46,7 @@ describe('RealtimeService', () => {
     gateway = {
       emitMasterTimetableUpdated: jest.fn(),
       emitLessonUpdated: jest.fn(),
+      emitCoverBoardUpdated: jest.fn(),
     };
     service = new RealtimeService(gateway as unknown as RealtimeGateway);
   });
@@ -169,6 +171,30 @@ describe('RealtimeService', () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(SCHOOL_ID),
       );
+    });
+  });
+
+  describe('notifyCoverBoardChanged', () => {
+    it('tells the admins the days that changed, with the instant, and nothing else', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-14T06:00:00.000Z'));
+      try {
+        service.notifyCoverBoardChanged(SCHOOL_ID, '2026-10-14', '2026-10-15');
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(gateway.emitCoverBoardUpdated).toHaveBeenCalledWith(SCHOOL_ID, {
+        from: '2026-10-14',
+        to: '2026-10-15',
+        changedAt: '2026-10-14T06:00:00.000Z',
+      });
+    });
+
+    it('swallows a gateway failure so the write never fails', () => {
+      gateway.emitCoverBoardUpdated.mockImplementation(() => {
+        throw new Error('socket.io down');
+      });
+      expect(() => service.notifyCoverBoardChanged(SCHOOL_ID, '2026-10-14', '2026-10-14')).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(SCHOOL_ID));
     });
   });
 
