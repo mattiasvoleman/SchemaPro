@@ -1353,7 +1353,7 @@
   },
   "guardian": {
     "title": "My children",
-    "subtitle": "Report absence and request leave for your children",
+    "subtitle": "See the schedule, report absence and request leave for your children",
     "noChildrenTitle": "No children linked",
     "noChildrenBody": "Ask the school administrator to link your account to your children.",
     "child": "Child",
@@ -1382,7 +1382,27 @@
     "statusPENDING": "Pending",
     "statusAPPROVED": "Approved",
     "statusREJECTED": "Rejected",
-    "decisionNote": "Decision note"
+    "decisionNote": "Decision note",
+    "schedule": {
+      "title": "Schedule for {name}",
+      "body": "The week the school has published, in the school's times.",
+      "viewLabel": "Show",
+      "today": "Today",
+      "week": "Week",
+      "childLabel": "Choose child",
+      "weekLabel": "Week {week}",
+      "previousWeek": "Previous week",
+      "nextWeek": "Next week",
+      "cancelled": "Cancelled",
+      "substitute": "Substitute",
+      "lunch": "Lunch",
+      "loading": "Loading the schedule …",
+      "error": "The schedule could not be loaded. Try again in a moment.",
+      "weekOutOfRange": "That week is outside what can be shown.",
+      "emptyToday": "Nothing on the schedule today.",
+      "emptyDay": "Nothing on the schedule.",
+      "emptyWeek": "Nothing on the schedule this week."
+    }
   },
   "adminLeave": {
     "title": "Leave requests",
@@ -3013,7 +3033,7 @@
       "publicShowMeals": "Meals in a class's week",
       "publicShowMealsHint": "The class's lunch time is shown in its week.",
       "teacherDisplay": "The teacher is shown as",
-      "teacherDisplayHint": "The signature is the school's own (the post for the school year) and is never made up. A teacher without a signature is not shown.",
+      "teacherDisplayHint": "The signature is the school's own (the post for the school year) and is never made up. A teacher without a signature is not shown. The same choice applies to the schedule signed-in guardians see for their children.",
       "minGroupSize": "Smallest group shown by name",
       "minGroupSizeHint": "Between 3 and 30. A smaller group shows as \"Group\" and gets no link, so no pupil can be singled out."
     },
@@ -3062,7 +3082,7 @@
     "linkRevoked": "The link is revoked.",
     "linksNone": "No links for the school year.",
     "hiddenTitle": "Teachers never shown",
-    "hiddenBody": "A teacher marked here is not shown in the Timetable viewer: not with a week of their own, not in any list and not on any lesson. Meant for teachers with a protected identity.",
+    "hiddenBody": "A teacher marked here is not shown in the Timetable viewer or in the guardians' schedule: not with a week of their own, not in any list and not on any lesson. Meant for teachers with a protected identity.",
     "hiddenNoTeachers": "The school has no teachers.",
     "hiddenToggle": "Never show {name}",
     "errors": {

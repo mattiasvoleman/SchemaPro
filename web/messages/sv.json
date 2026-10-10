@@ -1353,7 +1353,7 @@
   },
   "guardian": {
     "title": "Mina barn",
-    "subtitle": "Anmäl frånvaro och ansök om ledighet för dina barn",
+    "subtitle": "Se schemat, anmäl frånvaro och ansök om ledighet för dina barn",
     "noChildrenTitle": "Inga barn kopplade",
     "noChildrenBody": "Be skolans administratör koppla ditt konto till dina barn.",
     "child": "Barn",
@@ -1382,7 +1382,27 @@
     "statusPENDING": "Väntar",
     "statusAPPROVED": "Beviljad",
     "statusREJECTED": "Avslagen",
-    "decisionNote": "Beslutskommentar"
+    "decisionNote": "Beslutskommentar",
+    "schedule": {
+      "title": "Schema för {name}",
+      "body": "Veckan som skolan har publicerat, med skolans tider.",
+      "viewLabel": "Visa",
+      "today": "I dag",
+      "week": "Vecka",
+      "childLabel": "Välj barn",
+      "weekLabel": "Vecka {week}",
+      "previousWeek": "Föregående vecka",
+      "nextWeek": "Nästa vecka",
+      "cancelled": "Inställd",
+      "substitute": "Vikarie",
+      "lunch": "Lunch",
+      "loading": "Hämtar schemat …",
+      "error": "Schemat gick inte att hämta. Försök igen om en stund.",
+      "weekOutOfRange": "Veckan ligger utanför det som går att visa.",
+      "emptyToday": "Inget på schemat i dag.",
+      "emptyDay": "Inget på schemat.",
+      "emptyWeek": "Inget på schemat den här veckan."
+    }
   },
   "adminLeave": {
     "title": "Ledighetsansökningar",
@@ -3013,7 +3033,7 @@
       "publicShowMeals": "Måltider i klassens vecka",
       "publicShowMealsHint": "Klassens lunchtid visas i dess vecka.",
       "teacherDisplay": "Läraren visas som",
-      "teacherDisplayHint": "Signaturen är skolans egen (tjänsten för läsåret) och hittas aldrig på. En lärare utan signatur visas inte.",
+      "teacherDisplayHint": "Signaturen är skolans egen (tjänsten för läsåret) och hittas aldrig på. En lärare utan signatur visas inte. Samma val gäller schemat som inloggade vårdnadshavare ser för sina barn.",
       "minGroupSize": "Minsta gruppstorlek som visas med namn",
       "minGroupSizeHint": "Mellan 3 och 30. En mindre grupp visas som \"Grupp\" och får ingen länk, så att ingen elev kan pekas ut."
     },
@@ -3062,7 +3082,7 @@
     "linkRevoked": "Länken är återkallad.",
     "linksNone": "Inga länkar för läsåret.",
     "hiddenTitle": "Lärare som aldrig visas",
-    "hiddenBody": "En lärare som markeras här visas inte i Schemavisaren: inte med en egen vecka, inte i någon lista och inte på någon lektion. Till för lärare med skyddad identitet.",
+    "hiddenBody": "En lärare som markeras här visas inte i Schemavisaren eller i vårdnadshavarnas schema: inte med en egen vecka, inte i någon lista och inte på någon lektion. Till för lärare med skyddad identitet.",
     "hiddenNoTeachers": "Skolan har inga lärare.",
     "hiddenToggle": "Visa aldrig {name}",
     "errors": {
