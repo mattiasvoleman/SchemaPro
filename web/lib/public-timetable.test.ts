@@ -12,6 +12,7 @@ import {
   viewerHref,
   viewerQueryOf,
   weekSpan,
+  canGoBack,
   type PublicDay,
 } from "@/lib/public-timetable";
 
@@ -105,3 +106,16 @@ describe("the printed week", () => {
     expect(viewerHref(TOKEN, { lang: "en" })).toBe(`/v/${TOKEN}?lang=en`);
   });
 });
+
+describe("the viewer's way back", () => {
+  it("offers last week from this week, and nothing further back", () => {
+    // Wednesday 14 October 2026: this week is the 12th, last week the 5th.
+    expect(canGoBack("2026-10-12", "2026-10-14")).toBe(true);
+    expect(canGoBack("2026-10-05", "2026-10-14")).toBe(false);
+    expect(canGoBack("2026-10-19", "2026-10-14")).toBe(true);
+    // On the Sunday and the Monday the week turns with them.
+    expect(canGoBack("2026-10-12", "2026-10-18")).toBe(true);
+    expect(canGoBack("2026-10-12", "2026-10-19")).toBe(false);
+  });
+});
+
