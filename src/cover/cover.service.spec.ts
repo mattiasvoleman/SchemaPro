@@ -214,6 +214,39 @@ describe('CoverService', () => {
       });
     });
 
+    it('the class, its guardians and the outgoing teachers are told after the commit, as the old page tells them — never why', async () => {
+      notifications.recipientsForGroups.mockResolvedValue(['pupil', 'parent']);
+      world({ teachers: [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }] });
+      let committed = false;
+      prisma.withRls.mockImplementation((_user: unknown, body: (client: unknown) => unknown) => {
+        const result = Promise.resolve(body(tx));
+        return result.then((value) => {
+          committed = true;
+          return value;
+        });
+      });
+      const seen: boolean[] = [];
+      notifications.notifyUsers.mockImplementation(() => {
+        seen.push(committed);
+        return Promise.resolve(1);
+      });
+
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, testUser());
+      const classNotice = notifications.notifyUsers.mock.calls.find(([, arg]) => arg.userIds.includes('pupil'))?.[1];
+      // The absent teacher leaves and is told; the co-teacher stays and the vikarie has their own notice.
+      expect(classNotice).toMatchObject({ type: 'LESSON_SUBSTITUTE', userIds: ['pupil', 'parent', A] });
+      expect(Object.keys(classNotice.meta).sort()).toEqual(['startsAt', 'subjectName']);
+      expect(seen.every(Boolean)).toBe(true);
+
+      notifications.notifyUsers.mockClear();
+      world();
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'CANCELLED', expected: 'OPEN' }, testUser());
+      const cancelled = notifications.notifyUsers.mock.calls.find(([, arg]) => arg.userIds.includes('pupil'))?.[1];
+      expect(cancelled).toMatchObject({ type: 'LESSON_CANCELLED', userIds: ['pupil', 'parent', A] });
+      expect(Object.keys(cancelled.meta).sort()).toEqual(['startsAt', 'subjectName']);
+      expect(cancelled.email.body).not.toMatch(/Reason/);
+    });
+
     it('SUPERVISED_STUDY removes the absent row, writes the constant note and keeps the old one', async () => {
       world({ note: 'Ta med miniräknare' });
       await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUPERVISED_STUDY', expected: 'OPEN' }, testUser());

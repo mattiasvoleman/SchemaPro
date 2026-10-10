@@ -56,11 +56,23 @@ export const COVER_UNDO_CLASH = 'COVER_UNDO_CLASH';
 export const COVER_RANGE = 'COVER_RANGE';
 export const COVER_SUBSTITUTE_REQUIRED = 'COVER_SUBSTITUTE_REQUIRED';
 
+/**
+ * What the class, its guardians and the outgoing teachers are told about a
+ * lesson the board covered or cancelled: what the old page tells them
+ * (LESSON_SUBSTITUTE / LESSON_CANCELLED, subject and start), never a reason.
+ */
+export interface ClassNotice {
+  lessonId: string;
+  type: 'LESSON_SUBSTITUTE' | 'LESSON_CANCELLED';
+  teacherIds: string[];
+}
+
 /** What a cover write leaves to do once it has committed. */
 export interface CoverEffects {
   lessonIds: string[];
   dates: string[];
   notices: PendingNotice[];
+  classNotices: ClassNotice[];
   warnings: Array<StaffingWarning | CoverWarning>;
 }
 
@@ -86,7 +98,7 @@ interface PairState {
 
 const LIVE_STATUSES = ['SCHEDULED', 'CANCELLED', 'COMPLETED'];
 
-export const emptyEffects = (): CoverEffects => ({ lessonIds: [], dates: [], notices: [], warnings: [] });
+export const emptyEffects = (): CoverEffects => ({ lessonIds: [], dates: [], notices: [], classNotices: [], warnings: [] });
 
 /**
  * THE COVER BOARD (Vikarietavla): the pairs of a day or a week, and the
@@ -282,6 +294,16 @@ export class CoverService {
         );
         effects.notices.push(...outcome.notices);
         effects.warnings.push(...outcome.result.warnings);
+        // The class and the teachers who left, as the old PATCH tells them;
+        // a vikarie replaced has their own notice, the new one theirs.
+        const withdrawn = new Set(outcome.notices.filter((n) => n.kind === 'WITHDRAWN').map((n) => n.userId));
+        effects.classNotices.push({
+          lessonId: lesson.id,
+          type: 'LESSON_SUBSTITUTE',
+          teacherIds: outcome.removed
+            .map((row) => row.teacherId)
+            .filter((teacherId) => !withdrawn.has(teacherId) && teacherId !== args.substituteId),
+        });
         return effects;
       }
       case 'CANCELLED': {
@@ -289,6 +311,11 @@ export class CoverService {
         // cancels one): the class is in the room.
         if (lesson.startsAt.getTime() <= now.getTime()) throw started();
         await this.calendarLessons.cancelInTransaction(tx, lesson, { cause: 'TEACHER_UNAVAILABLE' });
+        effects.classNotices.push({
+          lessonId: lesson.id,
+          type: 'LESSON_CANCELLED',
+          teacherIds: (lesson.teachers ?? []).map((t) => t.teacherId),
+        });
         await writeDecision(tx, {
           schoolId,
           absenceId: absence.id,
@@ -455,6 +482,9 @@ export class CoverService {
         .withRls(user, async (tx) => {
           const timezone = await schoolTimezone(tx, schoolId);
           await sendNotices(this.notifications, tx, schoolId, timezone, notices);
+          for (const notice of settleClassNotices(effects.classNotices)) {
+            await this.calendarLessons.notifyLessonClass(tx, notice.lessonId, notice.type, notice.teacherIds);
+          }
           await this.realtime.notifyLessonsChanged(tx, [...new Set(effects.lessonIds)]);
         })
         .catch(() => this.logger.warn(`Cover notices failed after commit [lessons=${effects.lessonIds.length}]`));
@@ -527,7 +557,19 @@ export function merge(into: CoverEffects, from: CoverEffects): void {
   into.lessonIds.push(...from.lessonIds);
   into.dates.push(...from.dates);
   into.notices.push(...from.notices);
+  into.classNotices.push(...from.classNotices);
   into.warnings.push(...from.warnings);
+}
+
+/** One class notice per lesson and kind: two pairs of one lesson covered in a batch tell the class once. */
+export function settleClassNotices(notices: readonly ClassNotice[]): ClassNotice[] {
+  const byKey = new Map<string, ClassNotice>();
+  for (const notice of notices) {
+    const key = `${notice.lessonId}:${notice.type}`;
+    const known = byKey.get(key);
+    byKey.set(key, known ? { ...known, teacherIds: [...new Set([...known.teacherIds, ...notice.teacherIds])] } : notice);
+  }
+  return [...byKey.values()];
 }
 
 /**

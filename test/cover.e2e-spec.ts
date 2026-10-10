@@ -315,6 +315,41 @@ describe('Vikarieplanering (e2e)', () => {
       ]);
     });
 
+    it('the board tells the class, its guardians and the outgoing teacher what the old page tells them — subject and start, never why', async () => {
+      const PUPIL = '99999999-9999-4999-8999-999999999999';
+      const PARENT = '98989898-9898-4898-8898-989898989898';
+      harness.tx.user.findMany.mockImplementation((query: { where?: { role?: string } }) =>
+        Promise.resolve(query?.where?.role === 'STUDENT' ? [{ id: PUPIL }] : []),
+      );
+      harness.tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: PARENT }]);
+      const rowsOf = () =>
+        harness.tx.notification.createMany.mock.calls.map(([arg]) => {
+          const rows = (arg as { data: { userId: string; type: string; meta: Record<string, unknown> }[] }).data;
+          return [rows[0]!.type, rows.map((row) => row.userId).sort(), Object.keys(rows[0]!.meta).sort()];
+        });
+
+      await request(http())
+        .post(`/api/v1/cover/lessons/${LESSON}/decision`)
+        .set('x-test-user', admin())
+        .send({ absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: SUB_ID, expected: 'OPEN' })
+        .expect(200);
+      expect(rowsOf()).toEqual(
+        expect.arrayContaining([
+          ['LESSON_SUBSTITUTE', [SUB_ID], ['cover', 'groupName', 'roomName', 'startsAt', 'subjectName']],
+          ['LESSON_SUBSTITUTE', [PUPIL, PARENT, TEACHER_ID].sort(), ['startsAt', 'subjectName']],
+        ]),
+      );
+
+      harness.tx.notification.createMany.mockClear();
+      await request(http())
+        .post(`/api/v1/cover/lessons/${LESSON}/decision`)
+        .set('x-test-user', admin())
+        .send({ absenceId: ABSENCE, kind: 'CANCELLED', expected: 'OPEN' })
+        .expect(200);
+      expect(rowsOf()).toEqual([['LESSON_CANCELLED', [PUPIL, PARENT, TEACHER_ID].sort(), ['startsAt', 'subjectName']]]);
+      expect(JSON.stringify(harness.tx.notification.createMany.mock.calls)).not.toContain(REASON);
+    });
+
     it('a decision on a held lesson is 409 COVER_LESSON_HELD; a DRAFT publish in progress is 409 PUBLISH_IN_PROGRESS', async () => {
       const past = isoDay(-2);
       harness.tx.teacherAbsence.findUnique.mockResolvedValue({ id: ABSENCE, userId: TEACHER_ID, startsAt: at(past, 0), endsAt: at(isoDay(-1), 0), status: 'ACTIVE' });
