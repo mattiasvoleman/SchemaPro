@@ -97,8 +97,8 @@ const week = (studentId: string, firstName: string, from = "2026-10-19"): Family
 
 const param = (path: string, name: string) => new URLSearchParams(path.split("?")[1]).get(name);
 
-function renderCard(childList = [{ id: ALVA, firstName: "Alva" }, { id: BO, firstName: "Bo" }]) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderCard(childList = [{ id: ALVA, firstName: "Alva" }, { id: BO, firstName: "Bo" }], gcTime?: number) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, ...(gcTime === undefined ? {} : { gcTime }) } } });
   return render(
     <QueryClientProvider client={client}>
       <ChildSchedule childList={childList} />
@@ -193,6 +193,29 @@ describe("the guardian's Schema card", () => {
     await waitFor(() => expect(next).not.toHaveAttribute("aria-disabled", "true"));
   });
 
+  it("writes the day heading as the words come, without CSS capitalisation (\"Måndag 12 Oktober\" is not Swedish)", async () => {
+    renderCard();
+    await screen.findByText("Matematik Alva");
+    const heading = screen.getByRole("heading", { level: 3 });
+    expect(heading.className).not.toMatch(/\bcapitalize\b/);
+  });
+
+  it("says loading, not an empty day, while today's week is fetched after stepping away", async () => {
+    const user = userEvent.setup();
+    renderCard(undefined, 0);
+    await screen.findByText("Matematik Alva");
+    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    // Next week: nothing on "today" (2026-10-20) there.
+    state.answer = (path) =>
+      Promise.resolve({ ...week(ALVA, "Alva", param(path, "week") ?? "2026-10-19"), lessons: [], lunches: [] });
+    await user.click(screen.getByRole("button", { name: "guardian.schedule.nextWeek" }));
+    await waitFor(() => expect(screen.getByText("guardian.schedule.weekLabel(42)")).toBeInTheDocument());
+    // Today's week, its cache entry long gone, held in flight.
+    state.answer = () => new Promise(() => undefined);
+    await user.click(screen.getByRole("button", { name: "guardian.schedule.today" }));
+    expect(screen.queryByText("guardian.schedule.emptyToday")).not.toBeInTheDocument();
+    expect(screen.getByText("guardian.schedule.loading")).toBeInTheDocument();
+  });
 
   it("switches child, asks for that child, and never shows one child's week under the other's name", async () => {
     const user = userEvent.setup();
@@ -215,6 +238,25 @@ describe("the guardian's Schema card", () => {
     renderCard([{ id: ALVA, firstName: "Alva" }]);
     await screen.findByText("Matematik Alva");
     expect(screen.queryByRole("group", { name: "guardian.schedule.childLabel" })).not.toBeInTheDocument();
+  });
+
+  it("in the summer shows the school's empty week, with nowhere to step, not an error", async () => {
+    const user = userEvent.setup();
+    state.answer = () =>
+      Promise.resolve({
+        ...week(ALVA, "Alva", "2027-06-28"),
+        today: "2027-07-01",
+        bounds: { earliest: "2027-06-28", latest: "2027-06-28" },
+        lessons: [],
+        lunches: [],
+      });
+    renderCard();
+    expect(await screen.findByText("guardian.schedule.emptyToday")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    expect(screen.getByText("guardian.schedule.emptyWeek")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "guardian.schedule.previousWeek" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "guardian.schedule.nextWeek" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("says the week is out of range in words, not as an error code", async () => {

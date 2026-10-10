@@ -97,6 +97,10 @@ export default function GuardianPage() {
     () => new Map((children ?? []).map((child) => [child.id, child])),
     [children],
   );
+  // The schedule's children: a pupil who has left is still a link, but the
+  // gateway answers their week with 404, so the card would offer a child
+  // (even by default) whose week can never load.
+  const activeChildren = (children ?? []).filter((child) => child.isActive);
   const selectedChildId = childId || (children?.[0]?.id ?? "");
   const selectedLeaveChildId = leaveChildId || (children?.[0]?.id ?? "");
 
@@ -163,9 +167,9 @@ export default function GuardianPage() {
       {/* The guardian's own children only: the gateway answers a guardian
           for their linked children and refuses anyone else's with the same
           404 as an unknown id. Another role opening this page asks nothing. */}
-      {profile.role === "GUARDIAN" && (children ?? []).length > 0 ? (
+      {profile.role === "GUARDIAN" && activeChildren.length > 0 ? (
         <Suspense fallback={null}>
-          <ChildSchedule childList={children ?? []} />
+          <ChildSchedule childList={activeChildren} />
         </Suspense>
       ) : null}
 
