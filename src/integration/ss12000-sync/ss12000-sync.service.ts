@@ -346,9 +346,14 @@ export class Ss12000SyncService {
           await tx.ss12000SyncRun.update({ where: { id: runId }, data: { autoApplyBlockedReason: 'MASS_DEACTIVATION' } });
           return 'BLOCKED';
         }
-        if (auto.length === 0) return 'NOTHING';
+        const pendingForAdmin = changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !change.autoApplicable);
+        // Nothing the night may make, and something the admin must: it waits.
+        if (auto.length === 0 && pendingForAdmin) return 'NOTHING';
         const stamp = new Date();
-        const outcome = await applyChanges(tx, schoolId, auto.map(storedOf), stamp);
+        // Nothing at all to make (conflicts only, say) falls through to
+        // APPLIED below with nothing written, so a standing conflict does not
+        // keep the cursors where they are night after night.
+        const outcome = auto.length > 0 ? await applyChanges(tx, schoolId, auto.map(storedOf), stamp) : { applied: [], skipped: [] };
         await this.markApplied(tx, schoolId, outcome.applied);
         const applied = new Set(outcome.applied);
         const remaining = changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !applied.has(change.id));

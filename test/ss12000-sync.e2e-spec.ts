@@ -412,6 +412,17 @@ describe('SS12000 sync (e2e)', () => {
       expect(w.source).toMatchObject({ modifiedCursor: null, lastAppliedAt: expect.any(Date) });
     });
 
+    it('finishes a night with nothing to make but a conflict as APPLIED, so a standing conflict does not hold the cursors', async () => {
+      await scheduled(true);
+      provider.world.persons = [{ ...s1Pupil(PUPIL, 'Utan', 'Adress', 'x@y.se', ORG), emails: [] }];
+      provider.world.groups = [];
+      provider.world.duties = [];
+      await harness.app.get(Ss12000SchedulerService).tick();
+      expect(w.runs).toEqual([expect.objectContaining({ trigger: 'SCHEDULED', status: 'APPLIED', autoApplied: true })]);
+      expect(w.changes).toEqual([expect.objectContaining({ op: 'CONFLICT', conflictCode: 'PERSON_NO_EMAIL', applied: false })]);
+      expect(w.source).toMatchObject({ modifiedCursor: expect.any(Date), lastAppliedAt: expect.any(Date) });
+    });
+
     it('waits with a diff when auto-apply is off', async () => {
       await scheduled(false);
       await harness.app.get(Ss12000SchedulerService).tick();
