@@ -107,6 +107,12 @@ const ADMIN_NAV: NavSection[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+      // Directly after the grid it publishes: the mode (direct or utkast),
+      // which published timetable is valid when, the checks, and
+      // Schemavisaren. The ramtider's icon, which the shell already carries —
+      // a validity range is a range of dates too — so the entry adds no icon
+      // bytes to every route.
+      { labelKey: "publishing", href: "/admin/publishing", icon: CalendarRange },
       // Next to the grid it is used against: finslipning starts once a base
       // schedule exists, and every answer there is read off this one.
       { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
