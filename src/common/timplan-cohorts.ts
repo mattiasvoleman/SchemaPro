@@ -28,10 +28,17 @@ import { cohortYear, stageGradesFor, type BaseStage, type SchoolForm } from './t
  *     (COHORTS_STARTING). The law says nothing of the older cohorts'
  *     distribution per subject after 2028.
  *   * SFS 2026:1243 (skollagen; utfärdad 2026-06-18, i kraft 2028-07-02)
- *     makes timplaner part of the läroplaner (1 kap. 11 §), behind prop.
- *     2025/26:194 (rskr. 2025/26:327); the distribution will come in a
- *     läroplan förordning. Skolverket's proposals are due 14 May 2027
- *     (U2026/01483, 2026-08-20). Nothing is published as of 2026-10-10.
+ *     makes timplaner part of the läroplaner of grundskolan, anpassade
+ *     grundskolan, specialskolan and sameskolan (1 kap. 11 §), behind prop.
+ *     2025/26:194 (rskr. 2025/26:327). The government may issue föreskrifter
+ *     on the timplan parts for grundskolan and anpassade grundskolan only (1
+ *     kap. 11 § tredje stycket); the issuer for specialskolan and sameskolan
+ *     is open. Its övergångsbestämmelse 4 keeps the older provisions for åk 9
+ *     and 10 (specialskolan 10 and 11) in 2028/29 and åk 10 (11) in 2029/30 —
+ *     the older cohorts finish under the older law, and their distribution
+ *     after 2028 is the reference data's assumption. Skolverket's proposals
+ *     are due 14 May 2027 (U2026/01483, 2026-08-20). Nothing is published as
+ *     of 2026-10-10.
  *
  * Every figure the module produces is the REFERENCE DATA's ("referensdata:
  * SFS …"), never a statement of law.

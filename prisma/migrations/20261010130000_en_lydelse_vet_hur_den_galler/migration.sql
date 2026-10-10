@@ -48,8 +48,9 @@
 --
 -- SFS 2026:1243 (lag om ändring i skollagen, utfärdad 2026-06-18, i kraft
 -- 2028-07-02, tillämpas första gången på utbildning som påbörjas HT 2028 i
--- åk 1–8; read from svenskforfattningssamling.se, SFS2026-1243.pdf, on
--- 2026-10-10) restates the same four totals in 10 kap. 5 §, 11 kap. 7 §,
+-- åk 1–8 i grundskolan och anpassade grundskolan, åk 1–9 i specialskolan och
+-- i sameskolan (övergångsbestämmelse 2); read from svenskforfattningssamling.se,
+-- SFS2026-1243.pdf, on 2026-10-10) restates the same four totals in 10 kap. 5 §, 11 kap. 7 §,
 -- 12 kap. 5 § and 13 kap. 5 §, and is the law behind prop. 2025/26:194 (bet.
 -- 2025/26:UbU23, rskr. 2025/26:327).
 --
@@ -64,10 +65,21 @@
 --
 -- SFS 2026:1243 rewrites skollagen 1 kap. 11 §: the läroplaner for
 -- grundskolan, anpassade grundskolan, specialskolan and sameskolan "ska också
--- innehålla kursplaner och fördelningar av undervisningstiden (timplaner)",
--- and the government may issue föreskrifter on those parts. The distribution
--- per subject will therefore arrive in a läroplan förordning, not as cells of
--- SFS 2025:729. Skolverket's proposals for "nya och reviderade läroplaner"
+-- innehålla kursplaner och fördelningar av undervisningstiden (timplaner)".
+-- Its third stycke lets the government issue föreskrifter on the timplan
+-- parts of the läroplaner for grundskolan and anpassade grundskolan ONLY; it
+-- names no issuer for specialskolan's and sameskolan's timplaner, so who
+-- issues those — and whether they come in the same förordning — is open. The
+-- distribution per subject will therefore arrive in läroplan(er), not as
+-- cells of SFS 2025:729, and the slot below may take more than one migration
+-- (SAM and a future specialskola row may be coded after another source).
+-- Its övergångsbestämmelse 4 keeps the older provisions for åk 9 and 10 of
+-- grundskolan and anpassade grundskolan (åk 10 and 11 of specialskolan) in
+-- 2028/29 and for åk 10 (åk 11) in 2029/30: the older cohorts finish under
+-- the law as it was, which is why their stages are read against the older
+-- lydelse — and why their per-subject distribution after 2028 remains the
+-- reference data's assumption (TIMPLAN_STAGE_OLD_COHORT_DISTRIBUTION_ASSUMED),
+-- not a published figure. Skolverket's proposals for "nya och reviderade läroplaner"
 -- were due 31 March 2027 (regeringsuppdrag U2025/02427, decided 2025-12-18 and
 -- published on regeringen.se 2025-12-22, which also asks how the 534 added
 -- hours in lågstadiet are distributed) and were postponed to 14 May 2027 by
@@ -75,8 +87,8 @@
 -- published, and no figure here is invented: the 534 h is the difference of
 -- two totals, not a distribution.
 --
--- When the förordning is issued, ONE migration adds a NationalTimplanVersion
--- coded after it (appliesBy COHORTS_STARTING, appliesFromCohortTerm HT2028),
+-- When the förordning for grundskolan (and anpassade grundskolan) is issued,
+-- ONE migration per source adds a NationalTimplanVersion coded after it (appliesBy COHORTS_STARTING, appliesFromCohortTerm HT2028),
 -- its cells, and P1's self-checking DO block. stageGradesFor and the stage
 -- module read it generically; no code changes.
 --
