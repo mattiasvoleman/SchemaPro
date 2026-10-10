@@ -1,6 +1,6 @@
 /*
  * The timetable's lesson dialogs, fetched as ONE chunk: Lägg till, Justera,
- * Publicera and the two questions after a drag.
+ * Publicera (and its utkast badge) and the two questions after a drag.
  *
  * One module rather than one import() each, because of how Turbopack builds
  * an on-demand chunk: it leaves out only what the page that loads it already
@@ -23,7 +23,11 @@
 
 export { CreateLessonDialog } from "@/components/schedule/create-lesson-dialog";
 export { LessonEditDialog } from "@/components/schedule/lesson-edit-dialog";
-export { PublishDialog } from "@/components/schedule/publish-dialog";
+// Publicera is the review dialog now (validity range, draft, dry run,
+// checks), and the utkast badge rides along: the page shows the badge as it
+// mounts, which is when it fetches this chunk anyway.
+export { PublishReviewDialog } from "@/components/publication/publish-review-dialog";
+export { PublicationBadge } from "@/components/publication/publication-badge";
 export {
   SharedMoveDialog,
   SuggestPlacementsDialog,

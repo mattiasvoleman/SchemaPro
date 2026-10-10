@@ -21,7 +21,6 @@ import {
   useOptimizationHistory,
   useOptimizationJob,
   usePeople,
-  usePublishSchedule,
   useReportAttendance,
   useRequirements,
   useRoomBookingActions,
@@ -995,28 +994,6 @@ describe("optimization + publish mutations", () => {
       ["masterLessons"],
       ["lunch-sittings"],
       ["optimizationHistory"],
-    ]);
-  });
-
-  it("usePublishSchedule refreshes the calendar, the meals and the rasts", async () => {
-    mockApi.post.mockResolvedValue({ created: 42 });
-    const harness = createHarness();
-    const { result } = renderHook(() => usePublishSchedule(), {
-      wrapper: harness.wrapper,
-    });
-
-    await act(async () => {
-      await result.current.mutateAsync({ academicYearId: "y-1" });
-    });
-    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/calendar/publish", {
-      academicYearId: "y-1",
-    });
-    // Publish dates the meal and the rasts too, into tables of their own, and
-    // the pupil page reads all three.
-    expect(invalidatedKeys(harness)).toEqual([
-      ["calendarLessons"],
-      ["calendar-lunches"],
-      ["calendar-rasts"],
     ]);
   });
 });

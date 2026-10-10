@@ -30,7 +30,6 @@ import {
   useMasterLessons,
   usePeople,
   useLunchSettings,
-  usePublishSchedule,
   useRequirements,
   useRooms,
   useSubjects,
@@ -121,8 +120,11 @@ const lazyLessonDialogs = () => ({
   LessonEditDialog: lazy(() =>
     loadLessonDialogs().then((module) => ({ default: module.LessonEditDialog })),
   ),
-  PublishDialog: lazy(() =>
-    loadLessonDialogs().then((module) => ({ default: module.PublishDialog })),
+  PublishReviewDialog: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.PublishReviewDialog })),
+  ),
+  PublicationBadge: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.PublicationBadge })),
   ),
   SharedMoveDialog: lazy(() =>
     loadLessonDialogs().then((module) => ({ default: module.SharedMoveDialog })),
@@ -253,7 +255,11 @@ export default function TimetablePage() {
    */
   const planning = usePlanningYear();
   const shownYear = planning.year;
-  const { data: lessons, isLoading } = useMasterLessons(shownYear?.id ?? null);
+  const {
+    data: lessons,
+    isLoading,
+    dataUpdatedAt: lessonsReadAt,
+  } = useMasterLessons(shownYear?.id ?? null);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
@@ -303,7 +309,6 @@ export default function TimetablePage() {
     warnings?: StaffingWarning[];
   }): void => savedToast(tEngine, editSavedMessage(result), result.warnings);
 
-  const publish = usePublishSchedule();
   const { data: lunchSettings } = useLunchSettings();
   const updateLesson = useUpdateMasterLesson();
   const createLesson = useCreateMasterLesson();
@@ -355,8 +360,7 @@ export default function TimetablePage() {
   /** The one teacher in view, or null — see onlyGroup. */
   const onlyTeacher = teacherFilters.length === 1 ? teacherFilters[0]! : null;
   const [publishOpen, setPublishOpen] = useState(false);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [badgeFailed, setBadgeFailed] = useState(false);
 
   const [editing, setEditing] = useState<MasterLesson | null>(null);
   const [editDraft, setEditDraft] = useState<LessonEditDraft>({
@@ -420,7 +424,8 @@ export default function TimetablePage() {
   const {
     CreateLessonDialog,
     LessonEditDialog,
-    PublishDialog,
+    PublishReviewDialog,
+    PublicationBadge,
     SharedMoveDialog,
     SuggestPlacementsDialog,
   } = lazyDialogs;
@@ -1800,9 +1805,16 @@ export default function TimetablePage() {
   // -------------------------------------------------------------------
 
 
+  /** "Utkast – ej publicerat" when the grid is an unpublished draft (lib/publication-draft-notice.ts). */
+  const draftNotice = async (): Promise<string | null> => {
+    if (!shownYear) return null;
+    const { draftPendingFor } = await import("@/lib/publication-draft-notice");
+    return (await draftPendingFor(shownYear.id)) ? t("draftExportNotice") : null;
+  };
+
   const doExportIcs = async () => {
     if (!shownYear) return;
-    const { buildIcs, downloadIcs } = await import("@/lib/ics");
+    const [{ buildIcs, downloadIcs }, notice] = await Promise.all([import("@/lib/ics"), draftNotice()]);
     const ics = buildIcs(
       filtered.map((lesson) => {
         const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
@@ -1844,7 +1856,7 @@ export default function TimetablePage() {
         };
       }),
       {
-        calendarName: t("title"),
+        calendarName: notice ? `${t("title")} (${notice})` : t("title"),
         yearStart: shownYear.startDate,
         yearEnd: shownYear.endDate,
       },
@@ -1854,10 +1866,10 @@ export default function TimetablePage() {
   };
 
   const doExportPdf = async () => {
-    const { exportTimetablePdf } = await import("@/lib/pdf");
+    const [{ exportTimetablePdf }, notice] = await Promise.all([import("@/lib/pdf"), draftNotice()]);
     await exportTimetablePdf({
       title: t("title"),
-      subtitle: shownYear?.name,
+      subtitle: [shownYear?.name, notice].filter(Boolean).join(" · ") || undefined,
       dayNames: [1, 2, 3, 4, 5, 6, 7].map((day) => tDays(String(day))),
       columnLabels: {
         time: t("editStart"),
@@ -1889,21 +1901,6 @@ export default function TimetablePage() {
         };
       }),
     });
-  };
-
-  const doPublish = async () => {
-    if (!shownYear) return;
-    try {
-      const result = await publish.mutateAsync({
-        academicYearId: shownYear.id,
-        ...(fromDate ? { fromDate } : {}),
-        ...(toDate ? { toDate } : {}),
-      });
-      toast.success(t("published", { count: result.created }));
-      setPublishOpen(false);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
-    }
   };
 
   const conflictCount = conflictMap.size;
@@ -1989,20 +1986,30 @@ export default function TimetablePage() {
             >
               <Printer />
             </Button>
-            <Button
-              onClick={() => {
-                setFromDate(shownYear?.startDate ?? "");
-                setToDate(shownYear?.endDate ?? "");
-                setPublishOpen(true);
-              }}
-              disabled={!lessons || lessons.length === 0}
-            >
+            <Button onClick={() => setPublishOpen(true)} disabled={!shownYear}>
               <Upload />
               {t("publish")}
             </Button>
           </div>
         }
       />
+      {/* Utkastläge only: what the grid holds against what is published. The
+          badge draws nothing in direct mode. It arrives with the lesson
+          dialogs' chunk, and a chunk that fails takes the badge away rather
+          than the page — no toast, no retry loop; the dialogs say it. */}
+      {shownYear && !badgeFailed ? (
+        <DialogLoadBoundary onError={() => setBadgeFailed(true)}>
+          <Suspense fallback={null}>
+            <div className="mb-2 empty:hidden">
+              <PublicationBadge
+                yearId={shownYear.id}
+                revision={lessonsReadAt}
+                onReview={() => setPublishOpen(true)}
+              />
+            </div>
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
       {/* In a row of its own, above the banner it explains, and not in the
           header's actions: that row is nine buttons already, and with the
           choice beside them it ran past a 1440 px screen and put Publicera
@@ -2499,16 +2506,14 @@ export default function TimetablePage() {
       <DialogLoadBoundary key={`publish-${dialogsAttempt}`} onError={lessonDialogsFailed}>
         {publishUsed && (
           <Suspense fallback={null}>
-            <PublishDialog
+            <PublishReviewDialog
               open={publishOpen}
               onOpenChange={setPublishOpen}
-              lunchEnabled={lunchSettings?.lunchEnabled === true}
-              fromDate={fromDate}
-              onFromDateChange={setFromDate}
-              toDate={toDate}
-              onToDateChange={setToDate}
-              onPublish={doPublish}
-              pending={publish.isPending}
+              year={shownYear}
+              subjects={subjects}
+              groups={groups}
+              teachers={teachers}
+              rooms={rooms}
             />
           </Suspense>
         )}

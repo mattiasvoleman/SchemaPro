@@ -132,10 +132,69 @@ vi.mock("@/lib/queries", () => ({
   }),
   // Imported by the room optimisation dialog the page renders.
   useRoomOptimization: () => roomOptimization,
-  usePublishSchedule: () => noMutation,
   useCreateMasterLesson: () => noMutation,
   useUpdateMasterLesson: () => noMutation,
   useDeleteMasterLesson: () => noMutation,
+}));
+
+/*
+ * Publicering (lib/publication-queries.ts) as the gateway would answer: the
+ * school's mode, a timeline whose today is Saturday 2026-10-10, the draft's
+ * changes in utkastläge, and a dry run whose warnings a row can switch on.
+ */
+const publication = vi.hoisted(() => ({
+  mode: "DIRECT" as "DIRECT" | "DRAFT",
+  needsAcknowledgement: false,
+  draftPending: false,
+  publish: { mutateAsync: vi.fn(), isPending: false },
+}));
+vi.mock("@/lib/publication-queries", () => ({
+  usePublicationSettings: () => ({ data: { publishMode: publication.mode }, isError: false }),
+  usePublicationTimeline: (yearId: string | null) => ({
+    data: yearId
+      ? { academicYearId: yearId, today: "2026-10-10", publications: [], segments: [], validNow: null }
+      : undefined,
+    isError: false,
+  }),
+  useDraftState: (_yearId: string | null, enabled: boolean) => ({
+    data: enabled
+      ? {
+          academicYearId: "y-1",
+          publishMode: "DRAFT",
+          publicationId: "p-1",
+          added: [],
+          changed: [
+            {
+              before: { id: "l-slojd", subjectId: "s-sl", studentGroupId: "g-41", teacherId: null, coTeacherId: null, roomId: null, dayOfWeek: 1, startTime: "11:00", endTime: "12:00", isParked: false },
+              after: { id: "l-slojd", subjectId: "s-sl", studentGroupId: "g-41", teacherId: null, coTeacherId: null, roomId: null, dayOfWeek: 2, startTime: "11:00", endTime: "12:00", isParked: false },
+            },
+          ],
+          removed: [{ id: "l-gone", subjectId: "s-sl", studentGroupId: "g-41", teacherId: null, coTeacherId: null, roomId: null, dayOfWeek: 3, startTime: "08:00", endTime: "09:00", isParked: false }],
+          pendingRemovals: 0,
+        }
+      : undefined,
+  }),
+  usePublicationPreview: (range: { academicYearId: string; validFrom: string; validTo: string } | null) => ({
+    data: range
+      ? {
+          ...range,
+          publishMode: publication.mode,
+          result: { created: 120, cancelled: 2, skipped: 30, fromDate: range.validFrom, toDate: range.validTo },
+          gates: publication.needsAcknowledgement
+            ? [{ code: "PUB_NO_ROOM", severity: "WARN", count: 1, items: [{ label: "Slöjd · 4.1, mån 11:00" }], params: {} }]
+            : [],
+          refused: false,
+          needsAcknowledgement: publication.needsAcknowledgement,
+          digest: "d".repeat(64),
+        }
+      : undefined,
+    isFetching: false,
+    isError: false,
+  }),
+  usePublishTimetable: () => publication.publish,
+}));
+vi.mock("@/lib/publication-draft-notice", () => ({
+  draftPendingFor: vi.fn(async () => publication.draftPending),
 }));
 
 vi.mock("@/lib/use-timetable-realtime", () => ({
@@ -992,8 +1051,8 @@ describe("the controls a dialog fetches when it opens", () => {
 
     await user.click(screen.getByRole("button", { name: "timetable.publish" }));
 
-    expect(await screen.findByLabelText("timetable.publishFrom")).toBeInTheDocument();
-    expect(await screen.findByLabelText("timetable.publishTo")).toBeInTheDocument();
+    expect(await screen.findByLabelText("publishing.validFrom")).toBeInTheDocument();
+    expect(await screen.findByLabelText("publishing.validTo")).toBeInTheDocument();
   });
 });
 
@@ -1085,22 +1144,44 @@ describe("the dialogs the page lifts out", () => {
     ).not.toHaveLength(0);
   });
 
-  it("publishes the year on screen from the publish dialog", async () => {
+  it("publishes the year on screen from the review dialog, from the school's today, with the dry run's digest", async () => {
+    publication.publish.mutateAsync.mockReset().mockResolvedValue({ result: { created: 120 } });
     const user = userEvent.setup();
     render(<TimetablePage />);
 
     await user.click(screen.getByRole("button", { name: "timetable.publish" }));
-    await user.click(await screen.findByRole("button", { name: "timetable.publishConfirm" }));
+    expect(await screen.findByText("publishing.previewResult(120|2|30)")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "publishing.publishConfirm" }));
 
-    // The press fills both dates from the year's bounds; they reach the API
-    // through the dialog's fields and back through the page's state.
+    // Direct mode: from the gateway's today (not the year's first day, which
+    // re-created past lessons) to the year's last; no warning to acknowledge.
     await waitFor(() =>
-      expect(noMutation.mutateAsync).toHaveBeenCalledWith({
+      expect(publication.publish.mutateAsync).toHaveBeenCalledWith({
         academicYearId: "y-1",
-        fromDate: "2026-08-17",
-        toDate: "2027-06-11",
+        validFrom: "2026-10-10",
+        validTo: "2027-06-11",
+        expectedDigest: "d".repeat(64),
       }),
     );
+  });
+
+  it("names the warnings and publishes only through Publicera ändå", async () => {
+    publication.needsAcknowledgement = true;
+    publication.publish.mutateAsync.mockReset().mockResolvedValue({ result: { created: 1 } });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(screen.getByRole("button", { name: "timetable.publish" }));
+    expect(await screen.findByText("Slöjd · 4.1, mån 11:00")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "publishing.publishConfirm" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "publishing.publishAnyway" }));
+
+    await waitFor(() =>
+      expect(publication.publish.mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ acknowledgeWarnings: true, expectedDigest: "d".repeat(64) }),
+      ),
+    );
+    publication.needsAcknowledgement = false;
   });
 });
 
@@ -1116,6 +1197,53 @@ describe("the dialogs the page lifts out", () => {
  * renders; the mock at the top (lessonDialogsLoad) throws the same way from
  * Justera, the one lifted dialog a row can reach with a single press.
  */
+/*
+ * Utkastläge on the grid: the badge says how much of the grundschema is not
+ * published and opens the review with the draft against the published one;
+ * an export of an unpublished draft says so. In direct mode — the default —
+ * neither appears.
+ */
+describe("the grid in utkastläge", () => {
+  afterEach(() => {
+    publication.mode = "DIRECT";
+    publication.draftPending = false;
+  });
+
+  it("shows no badge in direct mode", async () => {
+    render(<TimetablePage />);
+    // The lesson dialogs' chunk has arrived once the publish button can open it.
+    await screen.findByRole("button", { name: "timetable.publish" });
+    await waitFor(() => expect(screen.queryByText(/publishing\.badge/)).toBeNull());
+  });
+
+  it("counts the draft's changes and opens the review on them, defaulting to the next Monday", async () => {
+    publication.mode = "DRAFT";
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(await screen.findByText("publishing.badgePending(2)"));
+
+    expect(await screen.findByText("publishing.diffSummary(0|1|1)")).toBeInTheDocument();
+    // The moved Slöjd, named and said what moved; the removed lesson, named.
+    expect(screen.getByText("Slöjd · 4.1 · days.2 11:00–12:00 (publishing.diffField.time)")).toBeInTheDocument();
+    expect(screen.getByText("Slöjd · 4.1 · days.3 08:00–09:00")).toBeInTheDocument();
+    // Saturday's today: a draft is offered from Monday, so no week is split.
+    expect(screen.getByText("publishing.previewResult(120|2|30)")).toBeInTheDocument();
+    expect(screen.getByLabelText("publishing.validFrom")).toHaveValue("2026-10-12");
+  });
+
+  it("marks a PDF of an unpublished draft", async () => {
+    publication.mode = "DRAFT";
+    publication.draftPending = true;
+    vi.mocked(exportTimetablePdf).mockClear();
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(screen.getByRole("button", { name: "timetable.exportPdf" }));
+    await waitFor(() => expect(exportTimetablePdf).toHaveBeenCalled());
+    expect(vi.mocked(exportTimetablePdf).mock.calls[0]![0].subtitle).toBe("2026/27 · timetable.draftExportNotice");
+  });
+});
+
 describe("a lesson dialog whose code does not arrive", () => {
   afterEach(() => {
     lessonDialogsLoad.fail = false;

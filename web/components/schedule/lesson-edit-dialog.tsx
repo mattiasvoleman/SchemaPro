@@ -7,8 +7,9 @@
  * Lifted out of app/[locale]/(app)/admin/timetable/page.tsx for the reason the
  * create, versions and room dialogs beside it were: the page carries the most
  * JavaScript in the app, and the grid on screen does not need a form that is
- * only ever drawn after a click. With this dialog and the three small ones in
- * placement-dialogs.tsx and publish-dialog.tsx gone, the route no longer
+ * only ever drawn after a click. With this dialog, the small ones in
+ * placement-dialogs.tsx and the Publicera dialog
+ * (components/publication/publish-review-dialog.tsx) gone, the route no longer
  * carries @radix-ui/react-dialog, the Switch or the date picker at all. It is
  * fetched in one chunk with them and Lägg till; see lesson-dialogs.ts.
  *

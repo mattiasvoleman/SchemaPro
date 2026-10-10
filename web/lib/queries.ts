@@ -1019,22 +1019,6 @@ export function useOptimizationJob(jobId: string | null) {
   });
 }
 
-export function usePublishSchedule() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { academicYearId: string; fromDate?: string; toDate?: string }) =>
-      api.post<{ created: number }>("/api/v1/calendar/publish", body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
-      // Publish now dates the meal and the rasts too, into tables of their own.
-      // The pupil page reads all three; invalidating one of them left the other
-      // two showing last publish's week until a reload.
-      void queryClient.invalidateQueries({ queryKey: ["calendar-lunches"] });
-      void queryClient.invalidateQueries({ queryKey: ["calendar-rasts"] });
-    },
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Timetable adjustments & lesson operations
 // ---------------------------------------------------------------------------
