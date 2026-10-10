@@ -1435,21 +1435,80 @@
   },
   "integrations": {
     "title": "Integrations",
-    "subtitle": "API keys for the SS12000-style external API (rosters, activities, lesson export)",
+    "subtitle": "API keys for the systems that read SchemaPro: SchemaPro's own format under /ss12000/v1 and SS12000 2.1 under /ss12000/v2.0.",
     "createTitle": "Create API key",
-    "createBody": "External systems authenticate with the X-API-Key header. The key is shown once — store it securely.",
+    "createBody": "Another system reads SchemaPro with the key, as Authorization: Bearer or X-API-Key. Choose what the key may reach. The key is shown once — store it securely.",
     "namePlaceholder": "e.g. Vklass sync",
     "create": "Create key",
     "freshKeyTitle": "Your new API key (shown only once):",
     "freshKeyHint": "Store it in the consuming system now. If lost, revoke this key and create a new one.",
-    "docsHint": "Endpoints: /ss12000/v1/organisation, /persons, /groups, /activities, /calendarEvents?from&to, /import/persons — see docs/integration-api.md.",
+    "docsHint": "/ss12000/v1 is SchemaPro's own format; /ss12000/v2.0 follows SS12000 2.1. See docs/integration-api.md.",
     "empty": "No API keys yet.",
     "active": "Active",
     "revoked": "Revoked",
     "revoke": "Revoke",
     "created": "Created",
     "lastUsed": "Last used",
-    "neverUsed": "Never used"
+    "neverUsed": "Never used",
+    "keys": {
+      "name": "Key name",
+      "copy": "Copy",
+      "done": "I have stored it",
+      "secretSet": "Signing secret created {when}.",
+      "secretMissing": "No signing secret: the system cannot subscribe to changes until one exists.",
+      "previousValid": "The previous one signs until {when}.",
+      "createSecret": "Create signing secret",
+      "rotateSecret": "Rotate signing secret",
+      "freshSecretTitle": "The signing secret (shown only once):",
+      "freshSecretHint": "Give it to the system that receives the notices. The previous secret keeps signing for 24 hours, so the system has time to switch.",
+      "revokeTitle": "Revoke {name}?",
+      "revokeBody": "The system using the key stops reaching SchemaPro at once, and its subscriptions get no more notices. This cannot be undone."
+    },
+    "scopes": {
+      "title": "Scopes:",
+      "edit": "Change scopes",
+      "saved": "The scopes are saved.",
+      "empty": "Choose at least one scope.",
+      "groups": {
+        "v1": "SchemaPro's own format (/ss12000/v1)",
+        "v2": "SS12000 2.1 (/ss12000/v2.0)"
+      },
+      "names": {
+        "ss12000_v1": "/ss12000/v1: pupils, groups, activities and lessons in SchemaPro's own format",
+        "ss12000_v1_import": "Import people through /ss12000/v1",
+        "organisations_read": "The school unit (Organisations)",
+        "persons_read": "Pupils and staff (Persons)",
+        "responsibles_read": "Guardians and their children",
+        "groups_read": "Classes and groups with members (Groups)",
+        "duties_read": "Teaching duties (Duties)",
+        "activities_read": "Activities of the published timetable (Activities)",
+        "calendarEvents_read": "Lessons of the published timetable (CalendarEvents)",
+        "rooms_read": "Rooms (Rooms)",
+        "syllabuses_read": "Subjects (Syllabuses)",
+        "subscriptions_write": "Subscribe to changes (webhooks)"
+      }
+    },
+    "subscriptions": {
+      "none": "No subscriptions.",
+      "title": "{count, plural, one {# subscription} other {# subscriptions}}",
+      "state": {
+        "ACTIVE": "Active",
+        "PAUSED": "Paused",
+        "FAILING": "Stopped after failures",
+        "EXPIRED": "Expired"
+      },
+      "details": "{resources} · valid until {expires} · last notice {notified}",
+      "never": "never",
+      "failing": "Deliveries failing since {since} ({attempts} attempts).",
+      "pause": "Pause",
+      "resume": "Resume"
+    },
+    "errors": {
+      "SS12000_SECRETS_NOT_CONFIGURED": "The server lacks the key that encrypts secrets (INTEGRATION_SECRETS_KEY). Contact operations.",
+      "INTEGRATION_KEY_SCOPES_INVALID": "Choose at least one valid scope.",
+      "INTEGRATION_KEY_NOT_FOUND": "The key does not exist or is revoked.",
+      "SUBSCRIPTION_NOT_FOUND": "The subscription no longer exists."
+    }
   },
   "csvImport": {
     "title": "Import CSV",

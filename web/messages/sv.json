@@ -1435,21 +1435,80 @@
   },
   "integrations": {
     "title": "Integrationer",
-    "subtitle": "API-nycklar för det SS12000-inspirerade externa API:et (elevregister, aktiviteter, lektionsexport)",
+    "subtitle": "API-nycklar för systemen som läser SchemaPro: SchemaPros eget format under /ss12000/v1 och SS12000 2.1 under /ss12000/v2.0.",
     "createTitle": "Skapa API-nyckel",
-    "createBody": "Externa system autentiserar med X-API-Key-headern. Nyckeln visas en gång — spara den säkert.",
+    "createBody": "Ett annat system läser SchemaPro med nyckeln, som Authorization: Bearer eller X-API-Key. Välj vad nyckeln får nå. Nyckeln visas en gång — spara den säkert.",
     "namePlaceholder": "t.ex. Vklass-synk",
     "create": "Skapa nyckel",
     "freshKeyTitle": "Din nya API-nyckel (visas bara en gång):",
     "freshKeyHint": "Spara den i det konsumerande systemet nu. Om den tappas bort: återkalla nyckeln och skapa en ny.",
-    "docsHint": "Endpoints: /ss12000/v1/organisation, /persons, /groups, /activities, /calendarEvents?from&to, /import/persons — se docs/integration-api.md.",
+    "docsHint": "/ss12000/v1 är SchemaPros eget format; /ss12000/v2.0 följer SS12000 2.1. Se docs/integration-api.md.",
     "empty": "Inga API-nycklar ännu.",
     "active": "Aktiv",
     "revoked": "Återkallad",
     "revoke": "Återkalla",
     "created": "Skapad",
     "lastUsed": "Senast använd",
-    "neverUsed": "Aldrig använd"
+    "neverUsed": "Aldrig använd",
+    "keys": {
+      "name": "Nyckelns namn",
+      "copy": "Kopiera",
+      "done": "Jag har sparat den",
+      "secretSet": "Signeringshemlighet skapad {when}.",
+      "secretMissing": "Ingen signeringshemlighet: systemet kan inte prenumerera på ändringar förrän en finns.",
+      "previousValid": "Den förra signerar till {when}.",
+      "createSecret": "Skapa signeringshemlighet",
+      "rotateSecret": "Byt signeringshemlighet",
+      "freshSecretTitle": "Signeringshemligheten (visas bara en gång):",
+      "freshSecretHint": "Ge den till systemet som tar emot notiserna. Den förra hemligheten signerar i 24 timmar till, så att systemet hinner byta.",
+      "revokeTitle": "Återkalla {name}?",
+      "revokeBody": "Systemet som använder nyckeln slutar nå SchemaPro direkt, och dess prenumerationer får inga fler notiser. Det går inte att ångra."
+    },
+    "scopes": {
+      "title": "Omfång:",
+      "edit": "Ändra omfång",
+      "saved": "Omfånget är sparat.",
+      "empty": "Välj minst ett omfång.",
+      "groups": {
+        "v1": "SchemaPros eget format (/ss12000/v1)",
+        "v2": "SS12000 2.1 (/ss12000/v2.0)"
+      },
+      "names": {
+        "ss12000_v1": "/ss12000/v1: elever, grupper, aktiviteter och lektioner i SchemaPros eget format",
+        "ss12000_v1_import": "Importera personer till /ss12000/v1",
+        "organisations_read": "Skolenheten (Organisations)",
+        "persons_read": "Elever och personal (Persons)",
+        "responsibles_read": "Vårdnadshavare och deras barn",
+        "groups_read": "Klasser och grupper med medlemmar (Groups)",
+        "duties_read": "Lärartjänster (Duties)",
+        "activities_read": "Aktiviteter i det publicerade schemat (Activities)",
+        "calendarEvents_read": "Lektioner i det publicerade schemat (CalendarEvents)",
+        "rooms_read": "Salar (Rooms)",
+        "syllabuses_read": "Ämnen (Syllabuses)",
+        "subscriptions_write": "Prenumerera på ändringar (webhooks)"
+      }
+    },
+    "subscriptions": {
+      "none": "Inga prenumerationer.",
+      "title": "{count, plural, one {# prenumeration} other {# prenumerationer}}",
+      "state": {
+        "ACTIVE": "Aktiv",
+        "PAUSED": "Pausad",
+        "FAILING": "Stoppad efter fel",
+        "EXPIRED": "Utgången"
+      },
+      "details": "{resources} · gäller till {expires} · senaste notis {notified}",
+      "never": "aldrig",
+      "failing": "Leveranserna misslyckas sedan {since} ({attempts} försök).",
+      "pause": "Pausa",
+      "resume": "Återuppta"
+    },
+    "errors": {
+      "SS12000_SECRETS_NOT_CONFIGURED": "Servern saknar nyckeln för att kryptera hemligheter (INTEGRATION_SECRETS_KEY). Kontakta driften.",
+      "INTEGRATION_KEY_SCOPES_INVALID": "Välj minst ett giltigt omfång.",
+      "INTEGRATION_KEY_NOT_FOUND": "Nyckeln finns inte eller är återkallad.",
+      "SUBSCRIPTION_NOT_FOUND": "Prenumerationen finns inte längre."
+    }
   },
   "csvImport": {
     "title": "Importera CSV",
