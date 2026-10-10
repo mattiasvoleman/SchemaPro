@@ -1158,6 +1158,7 @@ export function useLessonActions() {
     void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
     void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
     void queryClient.invalidateQueries({ queryKey: ["teacherAbsenceLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["coverBoard"] });
   };
 
   const cancel = useMutation({
