@@ -102,27 +102,48 @@ export function CandidatesDialog({
           <ul className="space-y-2" aria-label={t("listLabel")}>
             {(data?.candidates ?? []).map((candidate) => {
               const selected = chosen === candidate.userId;
+              const choose = () => {
+                setChosen(candidate.userId);
+                setOther("");
+              };
+              const why = `cover-candidate-${candidate.userId}-why`;
+              // The button is the name and the score; the reasons are its
+              // description beside it (a button holds no list), so a screen
+              // reader says "Bo Ek 52 p" and reads the reasons on request.
+              // The whole card still chooses on a click.
               return (
-                <li key={candidate.userId}>
+                <li
+                  key={candidate.userId}
+                  onClick={choose}
+                  className={cn(
+                    "cursor-pointer rounded-md border p-3 text-sm transition-colors hover:bg-accent/50",
+                    selected && "border-primary ring-1 ring-primary",
+                  )}
+                >
                   <button
                     type="button"
                     aria-pressed={selected}
-                    onClick={() => {
-                      setChosen(candidate.userId);
-                      setOther("");
+                    aria-label={[
+                      nameOf(candidate.userId),
+                      candidate.kind === "POOL" ? t("pool") : null,
+                      t("score", { score: candidate.score }),
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    aria-describedby={why}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      choose();
                     }}
-                    className={cn(
-                      "w-full rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent/50",
-                      selected && "border-primary ring-1 ring-primary",
-                    )}
+                    className="flex w-full flex-wrap items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{nameOf(candidate.userId)}</span>
-                      {candidate.kind === "POOL" ? <Badge variant="secondary">{t("pool")}</Badge> : null}
-                      <span className="ml-auto tabular-nums text-muted-foreground">
-                        {t("score", { score: candidate.score })}
-                      </span>
+                    <span className="font-medium">{nameOf(candidate.userId)}</span>
+                    {candidate.kind === "POOL" ? <Badge variant="secondary">{t("pool")}</Badge> : null}
+                    <span className="ml-auto tabular-nums text-muted-foreground">
+                      {t("score", { score: candidate.score })}
                     </span>
+                  </button>
+                  <div id={why}>
                     <ul className="mt-1 space-y-0.5">
                       {candidate.reasons.map((reason) => (
                         <li key={reason.code} className="flex justify-between gap-2">
@@ -139,7 +160,7 @@ export function CandidatesDialog({
                       ))}
                     </ul>
                     <CandidateFacts candidate={candidate} />
-                  </button>
+                  </div>
                 </li>
               );
             })}
