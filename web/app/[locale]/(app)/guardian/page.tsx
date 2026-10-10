@@ -53,6 +53,19 @@ const TeachingTimeCard = lazy(() =>
   ),
 );
 
+/*
+ * "Schema": each child's published week (elev- och vårdnadshavarytan). Lazy
+ * for the same reason as the card above — the core tier's budget — and with
+ * the same fallback: the absence report must not depend on a chunk arriving.
+ * The card, its hook and its mappers all ride in that chunk.
+ */
+const ChildSchedule = lazy(() =>
+  import("@/components/guardian/child-schedule").then(
+    (module) => ({ default: module.ChildSchedule }),
+    () => ({ default: () => null }),
+  ),
+);
+
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -146,6 +159,15 @@ export default function GuardianPage() {
   return (
     <div>
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
+
+      {/* The guardian's own children only: the gateway answers a guardian
+          for their linked children and refuses anyone else's with the same
+          404 as an unknown id. Another role opening this page asks nothing. */}
+      {profile.role === "GUARDIAN" && (children ?? []).length > 0 ? (
+        <Suspense fallback={null}>
+          <ChildSchedule childList={children ?? []} />
+        </Suspense>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ---- Report absence ---- */}

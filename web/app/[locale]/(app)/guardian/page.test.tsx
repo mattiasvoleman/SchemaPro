@@ -42,6 +42,11 @@ vi.mock("@/components/teaching-time-card", () => ({
     <p>teaching-time {studentId} {childName}</p>
   ),
 }));
+vi.mock("@/components/guardian/child-schedule", () => ({
+  ChildSchedule: ({ childList }: { childList: { id: string; firstName: string }[] }) => (
+    <p>child-schedule {childList.map((child) => child.id).join(",")}</p>
+  ),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
@@ -75,5 +80,29 @@ describe("the guardian's Undervisningstid cards", () => {
     render(<GuardianPage />);
     expect(screen.getByText("guardian.noChildrenTitle")).toBeInTheDocument();
     expect(screen.queryByText(/^teaching-time/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The "Schema" card (elev- och vårdnadshavarytan): one card for the
+ * guardian's own children, lazily loaded, and none for any other role. What it
+ * shows is components/guardian/child-schedule.test.tsx's.
+ */
+describe("the guardian's Schema card", () => {
+  it("is given exactly the guardian's own children", async () => {
+    render(<GuardianPage />);
+    expect(await screen.findByText("child-schedule c-1,c-2")).toBeInTheDocument();
+  });
+
+  it("is not there for another role or for a guardian without children", async () => {
+    state.role = "SCHOOL_ADMIN";
+    const { unmount } = render(<GuardianPage />);
+    expect(await screen.findByText("guardian.reportTitle")).toBeInTheDocument();
+    expect(screen.queryByText(/^child-schedule/)).not.toBeInTheDocument();
+    unmount();
+    state.role = "GUARDIAN";
+    state.children = [];
+    render(<GuardianPage />);
+    expect(screen.queryByText(/^child-schedule/)).not.toBeInTheDocument();
   });
 });
