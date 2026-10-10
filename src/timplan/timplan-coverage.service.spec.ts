@@ -129,6 +129,73 @@ describe('TimplanCoverageService', () => {
     );
   });
 
+  describe('a past year with class history (timplan P4)', () => {
+    const past = () => {
+      givenTheYear();
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        isActive: false,
+        predecessorId: null,
+      });
+      tx.academicYear.findFirst.mockResolvedValue({ startDate: new Date('2027-08-16T00:00:00.000Z') });
+    };
+
+    it('reads that year’s rosters from the history: the last segment is the home, a pupil deactivated since still counts', async () => {
+      past();
+      // Bo moved 8A → nowhere (a class since deleted); Cleo, deactivated
+      // since, sat in 8A all year. Anna is in 8A.
+      tx.studentEnrollment.findMany.mockResolvedValue([
+        { studentId: ANNA, studentGroupId: CLASS_ID },
+        { studentId: BO, studentGroupId: CLASS_ID },
+        { studentId: BO, studentGroupId: null },
+        { studentId: VISITOR, studentGroupId: CLASS_ID },
+      ]);
+
+      const answer = await service.planned({ academicYearId: YEAR_ID }, testUser());
+
+      expect(tx.studentEnrollment.findMany).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR_ID },
+        select: { studentId: true, studentGroupId: true },
+        orderBy: [{ studentId: 'asc' }, { validFrom: 'asc' }],
+      });
+      // Not today's rows: no home read by class, and memberships of exactly these pupils, active or not.
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: [GROUP_ID] }, studentId: { in: [ANNA, BO, VISITOR] } },
+        select: { studentId: true, studentGroupId: true },
+      });
+      expect(answer).toMatchObject({ pupilCount: 2, pupilsOutsideClasses: 1 });
+    });
+
+    it('keeps today’s rosters for a past year the history says nothing about, and for the active year asks nothing more', async () => {
+      past();
+      await service.planned({ academicYearId: YEAR_ID }, testUser());
+      expect(tx.user.findMany).toHaveBeenCalled();
+
+      tx = createTxMock();
+      prisma = createPrismaMock(tx);
+      service = new TimplanCoverageService(prisma as unknown as PrismaService);
+      givenTheYear();
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        isActive: true,
+        predecessorId: null,
+      });
+      await service.planned({ academicYearId: YEAR_ID }, testUser());
+      expect(tx.academicYear.findFirst).not.toHaveBeenCalled();
+      expect(tx.studentEnrollment.findMany).not.toHaveBeenCalled();
+    });
+
+    it('reads a later year (a rolled one) never from the history', async () => {
+      past();
+      tx.academicYear.findFirst.mockResolvedValue({ startDate: new Date('2025-08-18T00:00:00.000Z') });
+      await service.planned({ academicYearId: YEAR_ID }, testUser());
+      expect(tx.studentEnrollment.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('answers a teacher with the group level only: no pupil id anywhere in the document', async () => {
     givenTheYear();
 

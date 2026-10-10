@@ -4,6 +4,7 @@ import {
   datesStatement,
   deliveredLessons,
   horizonStatement,
+  segmentedAudienceStatement,
   staffingCreditStatement,
 } from './timplan-delivered.sql';
 
@@ -100,5 +101,27 @@ describe('staffingCreditStatement (statement E)', () => {
     expect(statement.sql).toContain('WHERE t."teacherId" =');
     expect(statement.sql).toContain('AND s."person" =');
     expect(statement.values.filter((value) => value === own)).toHaveLength(2);
+  });
+
+  describe('segmentedAudienceStatement (timplan P4)', () => {
+    it('wraps the same classification, byte for byte, and groups by the segment too', () => {
+      const plain = audienceStatement(WINDOW);
+      const cut = segmentedAudienceStatement(WINDOW, ['2026-11-02', '2027-01-11']);
+      const cte = (sql: string) => sql.slice(sql.indexOf('WITH l AS ('), sql.indexOf(')\n    SELECT'));
+      expect(cte(cut.sql)).toBe(cte(plain.sql));
+      expect(cut.sql).toMatch(/width_bucket\("date", \?::date\[\]\)::int AS "segment"/);
+      expect(cut.sql).toMatch(/GROUP BY 1, 2, 3, 4, 5, 6\s*$/);
+      expect(cut.values.at(-1)).toEqual(['2026-11-02', '2027-01-11']);
+    });
+
+    it('is segment 0 for every row when nobody moved', () => {
+      const none = segmentedAudienceStatement(WINDOW, []);
+      expect(none.sql).toMatch(/0::int AS "segment"/);
+      expect(none.sql).not.toMatch(/width_bucket/);
+    });
+
+    it('leaves P3’s own statement pinned', () => {
+      expect(audienceStatement(WINDOW).sql).not.toMatch(/segment/);
+    });
   });
 });

@@ -79,6 +79,8 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
  */
 const ENROLLED: Record<string, string> = {
   'src/resources/student-groups.service.ts': 'a class with history keeps its läsår: counted before a year change (409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY)',
+  'src/timplan/timplan-coverage.service.ts':
+    'a past year’s rosters for planned and delivered coverage, when the history has rows for it (enrolmentBasisOf); rostersOfYear otherwise',
 };
 
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);

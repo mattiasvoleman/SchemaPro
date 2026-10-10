@@ -670,7 +670,49 @@ function figuresOf(tally: Tally): Figures {
   };
 }
 
-export function computeDeliveredCoverage(input: DeliveredCoverageInput): DeliveredCoverage {
+/**
+ * One pupil's year in one line, as the stage totals (timplan P4) read it: the
+ * same tally computeDeliveredCoverage judges the pupil by, every line, every
+ * pupil — not only the ones with a finding of their own. Whole minutes.
+ */
+export interface DeliveredPupilFigures {
+  /** Σ weeklyMinutesOf × teachingWeeks over the pupil's groups' posts, at the pupil's årskurs. */
+  plannedYear: number;
+  delivered: number;
+  credited: number;
+  /** The planned minutes of days nothing records (P3's "unrecorded"), counted at plan. */
+  atPlan: number;
+  /** calendarAhead + masterAhead + creditsAhead. */
+  ahead: number;
+}
+
+/**
+ * Every pupil's figures per line ('subject:<id>' or 'none'), from the tallies
+ * of computeDeliveredCoverage itself — its sink, so there is one arithmetic
+ * and the coverage's own output is untouched. Empty when nothing is
+ * published (the coverage says only TIMPLAN_NOT_PUBLISHED then).
+ */
+export function deliveredPupilFigures(input: DeliveredCoverageInput): Map<string, Map<string, DeliveredPupilFigures>> {
+  const out = new Map<string, Map<string, DeliveredPupilFigures>>();
+  computeDeliveredCoverage(input, (pupilId, key, figures) => {
+    let lines = out.get(pupilId);
+    if (!lines) out.set(pupilId, (lines = new Map()));
+    lines.set(key, {
+      plannedYear: figures.plannedYear,
+      delivered: figures.delivered,
+      credited: figures.credited,
+      atPlan: figures.unrecorded,
+      ahead: figures.calendarAhead + figures.masterAhead + figures.creditsAhead,
+    });
+  });
+  return out;
+}
+
+export function computeDeliveredCoverage(
+  input: DeliveredCoverageInput,
+  /** deliveredPupilFigures' sink: every pupil line's figures, as they are tallied. */
+  pupilSink?: (pupilId: string, key: string, figures: Figures) => void,
+): DeliveredCoverage {
   const { planned, asOfDate } = input;
   const includePupils = planned.includePupils;
   const year = planned.year;
@@ -1145,6 +1187,7 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
   const pupilFigures = new Map<string, Map<string, Figures>>();
   for (const [pupilId, lines] of pupilTallies) {
     pupilFigures.set(pupilId, new Map([...lines].map(([key, tally]) => [key, figuresOf(tally)])));
+    if (pupilSink) for (const [key, figures] of pupilFigures.get(pupilId)!) pupilSink(pupilId, key, figures);
   }
   /** The home class's median delivered per line, for "nothing delivered". */
   const classMedian = new Map<string, number>();
@@ -1397,7 +1440,9 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
       },
     });
   }
-  if (year.endDate < asOfDate) {
+  // A past year read with TODAY's rosters says so; one read from the class
+  // history (timplan P4, readPlannedInput's rostersFrom) has the year's own.
+  if (year.endDate < asOfDate && planned.rostersFrom !== 'ENROLLMENT') {
     verdicts.push({ code: 'TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS', severity: 'notice', params: { yearEnd: year.endDate } });
   }
   const drift =
