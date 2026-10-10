@@ -70,6 +70,7 @@ import { SubjectsService } from '../../src/resources/subjects.service';
 import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
 import { AcademicYearTimplansService } from '../../src/timplan/academic-year-timplans.service';
 import { TimplanCoverageService, readPlannedInput } from '../../src/timplan/timplan-coverage.service';
+import { TimplanStageService } from '../../src/timplan/timplan-stage.service';
 import { TimplanRequirementsService } from '../../src/timplan/timplan-requirements.service';
 import { TimplanCreditsService } from '../../src/timplan/timplan-credits.service';
 import { readDeliveredRows, staffingCreditStatement } from '../../src/timplan/timplan-delivered.sql';
@@ -3313,6 +3314,99 @@ async function runChecks(
         ]);
         assert.equal(synced.updated, 1);
         assert.deepEqual(await segmentsOf('ss'), [['i år', '8B', 8, today, null, 'RECORDED']]);
+
+        // The stage totals and the families' statement, on these rows: 8B's
+        // matematik mapped to MA and planned 3 × 60.
+        const stages = new TimplanStageService(api);
+        const subject = (
+          await owner.query<{ id: string }>(
+            `INSERT INTO "Subjects" ("schoolId", name, code, "nationalCode", "updatedAt") VALUES ($1, $2, 'EHMA', 'MA', now()) RETURNING id`,
+            [eh.schoolId, `${MARKER} eh matematik`],
+          )
+        ).rows[0].id;
+        await owner.query(
+          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+           VALUES ($1, $2, $3, $4, 3, 60, now())`,
+          [eh.schoolId, curYear, subject, await cls('8B')],
+        );
+        // 11: the statements sent do not grow with the pupils read — one class
+        // or the whole school, the same reads per läsår.
+        const class8bId = await cls('8B');
+        const small = await statementsDuring(async () => {
+          const answer = await stages.overview({ academicYearId: curYear, studentGroupId: class8bId }, ehAdmin);
+          assert.ok(answer.pupils!.length >= 3, `8B holds ${answer.pupils!.length} pupils`);
+        });
+        const whole = await statementsDuring(() => stages.overview({ academicYearId: curYear }, ehAdmin));
+        assert.equal(small.length, whole.length, `one class sent ${small.length} statements, the school ${whole.length}`);
+        // 12: published under the admin, read under the pupil's own RLS and a guardian's.
+        const published = await stages.publish({ academicYearId: curYear }, ehAdmin);
+        assert.ok(published.rows > 0, JSON.stringify(published));
+        const pupilUser = async (email: string) => {
+          const row = (await owner.query<{ id: string; authId: string }>(`SELECT id, "authId" FROM "Users" WHERE email = $1`, [`${MARKER}-eh-${email}@example.invalid`])).rows[0];
+          return { id: row.id, user: { authId: row.authId, userId: row.id, schoolId: eh.schoolId, role: Role.STUDENT } as AuthenticatedUser };
+        };
+        const csvPupil = await pupilUser('csv');
+        const p5Pupil = await pupilUser('p5');
+        const own = await stages.card({ studentId: p5Pupil.id }, csvPupil.user);
+        assert.equal(own.statement?.studentId, csvPupil.id, 'a pupil read a classmate’s card');
+        // Högstadiet, every cell bilaga 1 prints there (a cell nothing is planned
+        // for is the clearest shortfall), and matematik with 8B's minutes.
+        assert.deepEqual(own.statement!.stages.map((stage) => stage.stage), ['HOG']);
+        const lines = own.statement!.stages[0]!.lines;
+        assert.ok(lines.find((line) => line.subjectCode === 'MA')!.plannedHours > 0);
+        assert.ok(lines.filter((line) => line.subjectCode !== 'MA').every((line) => line.plannedHours === 0));
+        assert.equal(lines.find((line) => line.subjectCode === 'MA')!.nationalHours, 400);
+        const guardian = (
+          await owner.query<{ id: string; authId: string }>(
+            `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+             VALUES ($1, $2, 'Probe', 'EH', 'GUARDIAN', gen_random_uuid(), true, now()) RETURNING id, "authId"`,
+            [eh.schoolId, `${MARKER}-eh-guardian@example.invalid`],
+          )
+        ).rows[0];
+        await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [eh.schoolId, guardian.id, p5Pupil.id]);
+        const guardianUser = { authId: guardian.authId, userId: guardian.id, schoolId: eh.schoolId, role: Role.GUARDIAN } as AuthenticatedUser;
+        assert.equal((await stages.card({ studentId: p5Pupil.id }, guardianUser)).statement?.studentId, p5Pupil.id);
+        assert.deepEqual(await stages.card({ studentId: csvPupil.id }, guardianUser), { statement: null }, 'a guardian read a child not theirs');
+        // A publication is a snapshot: the admin who published it can be removed, and it stays, unattributed.
+        const admin2 = (
+          await owner.query<{ id: string; authId: string }>(
+            `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+             VALUES ($1, $2, 'Probe', 'EH', 'SCHOOL_ADMIN', gen_random_uuid(), true, now()) RETURNING id, "authId"`,
+            [eh.schoolId, `${MARKER}-eh-admin2@example.invalid`],
+          )
+        ).rows[0];
+        const admin2User = { authId: admin2.authId, userId: admin2.id, schoolId: eh.schoolId, role: Role.SCHOOL_ADMIN } as AuthenticatedUser;
+        await stages.publish({ academicYearId: curYear }, admin2User);
+        await users.remove(admin2.id, ehAdmin);
+        assert.deepEqual(
+          (await owner.query(`SELECT "publishedByUserId" FROM "TimplanStatementPublications" WHERE "schoolId" = $1`, [eh.schoolId])).rows,
+          [{ publishedByUserId: null }],
+        );
+        // Two publishes at once: the second meets the unique key, 409, nothing half-written.
+        await stages.withdraw(ehAdmin);
+        const holder = new Client({ connectionString: ownerUrl });
+        await holder.connect();
+        try {
+          await holder.query('BEGIN');
+          await holder.query(`INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "asOfDate", pupils) VALUES ($1, $2, current_date, 0)`, [eh.schoolId, curYear]);
+          const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+          const racing = stages.publish({ academicYearId: curYear }, ehAdmin).then(() => null, (error: unknown) => error);
+          for (let tries = 0; ; tries++) {
+            const { rows } = await owner.query<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))', [holderPid]);
+            if (rows[0].n > 0) break;
+            if (tries > 1000) throw new Error('the racing publish never waited on the unique key');
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          await holder.query('COMMIT');
+          const error = await racing;
+          assert.ok(error instanceof ConflictException, summarise(error));
+          assert.equal((error.getResponse() as { code?: string }).code, 'TIMPLAN_STAGE_PUBLISH_IN_PROGRESS');
+        } finally {
+          await holder.query('ROLLBACK').catch(() => undefined);
+          await holder.end();
+        }
+        assert.equal((await owner.query(`SELECT 1 FROM "TimplanStatements" WHERE "schoolId" = $1`, [eh.schoolId])).rowCount, 0);
+        await owner.query(`DELETE FROM "TimplanStatementPublications" WHERE "schoolId" = $1`, [eh.schoolId]);
 
         // C3: a class with history keeps its year — the service names it,
         // and the key refuses the PostgREST-equivalent write.

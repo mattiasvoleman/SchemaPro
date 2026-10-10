@@ -8,6 +8,8 @@ import { TimplanCoverageService } from './timplan-coverage.service';
 import { TimplanCreditsController } from './timplan-credits.controller';
 import { TimplanCreditsService } from './timplan-credits.service';
 import { TimplanRequirementsService } from './timplan-requirements.service';
+import { TimplanStageController } from './timplan-stage.controller';
+import { TimplanStageService } from './timplan-stage.service';
 
 /**
  * Den lokala timplanen: a school's own minutes per week per subject and
@@ -28,6 +30,7 @@ import { TimplanRequirementsService } from './timplan-requirements.service';
     AcademicYearTimplansController,
     TimplanCoverageController,
     TimplanCreditsController,
+    TimplanStageController,
   ],
   providers: [
     LocalTimplansService,
@@ -35,6 +38,7 @@ import { TimplanRequirementsService } from './timplan-requirements.service';
     TimplanCoverageService,
     TimplanCreditsService,
     TimplanRequirementsService,
+    TimplanStageService,
   ],
 })
 export class TimplanModule {}

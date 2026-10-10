@@ -199,6 +199,28 @@ WHERE s.slug = 'rls-fixture-school'
     SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000007'
   );
 
+-- A published "Undervisningstid" statement in the SECOND school, about its
+-- pupil with a class, so section 26d's tenant half counts a statement and a
+-- publication that exist over there. The publisher is NULL (the column's
+-- SET NULL state), which the CHECKs and keys allow.
+INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "asOfDate", "pupils")
+SELECT y."schoolId", y.id, current_date, 1
+FROM "AcademicYears" y
+JOIN "Schools" s ON s.id = y."schoolId"
+WHERE s.slug = 'rls-fixture-school' AND y.name = 'RLS Fixture Year'
+ON CONFLICT ("schoolId") DO NOTHING;
+
+INSERT INTO "TimplanStatements"
+  ("schoolId", "publicationId", "studentId", stage, "subjectCode", "versionCode", "distributionPublished",
+   "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours", "projectedHours",
+   status, "projectedStatus", complete)
+SELECT p."schoolId", p.id, u.id, 'HOG', 'MA', 'SFS2023:945/B1', true, 7, 9, 400, 403, 100, 403, 'UNRECORDED', 'UNRECORDED', false
+FROM "TimplanStatementPublications" p
+JOIN "Schools" s ON s.id = p."schoolId"
+JOIN "Users" u ON u."authId" = '00000000-0000-4000-8000-000000000007'
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("publicationId", "studentId", stage, "subjectCode") DO NOTHING;
+
 -- A tillgodoräknad dag in the SECOND school, its fixture class scoped and its
 -- fixture subject named, so section 23's tenant half counts a credit that
 -- exists over there. NOT EXISTS rather than ON CONFLICT: the table has no

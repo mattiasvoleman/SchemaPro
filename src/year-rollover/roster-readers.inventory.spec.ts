@@ -63,6 +63,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   'src/resources/academic-years.service.ts': { basis: 'CURRENT', why: 'YEAR_HAS_HOME_PUPILS guards real rows' },
   'src/resources/student-groups.service.ts': { basis: 'CURRENT', why: 'shows and writes a group’s members as facts' },
   'src/users/users.service.ts': { basis: 'CURRENT', why: 'a user’s own class, read before it is written' },
+  'src/timplan/timplan-stage.service.ts': {
+    basis: 'CURRENT',
+    why: 'stage totals: home classes from the class history (ENROLLED, below); teaching-group memberships as they are — they carry no dates — for the pupils the history names',
+  },
   'src/realtime/realtime.service.ts': {
     basis: 'CURRENT',
     why: 'pushes a dated lesson’s change to the people in its classes and groups as they are now',
@@ -81,6 +85,8 @@ const ENROLLED: Record<string, string> = {
   'src/resources/student-groups.service.ts': 'a class with history keeps its läsår: counted before a year change (409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY)',
   'src/timplan/timplan-coverage.service.ts':
     'a past year’s rosters for planned and delivered coverage, when the history has rows for it (enrolmentBasisOf); rostersOfYear otherwise',
+  'src/timplan/timplan-stage.service.ts':
+    'stage totals: the active year’s pupils (their open segments) and every year they sat in, window by window; no roster basis is asked',
 };
 
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);

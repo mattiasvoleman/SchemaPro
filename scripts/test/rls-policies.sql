@@ -7632,3 +7632,159 @@ BEGIN
 END
 $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 26d: skolans utskick av undervisningstiden.
+--
+-- TimplanStatementPublications and TimplanStatements (20261010140000) hold the
+-- pupils' published hours. The admin writes them; a STUDENT reads exactly
+-- their own rows, a GUARDIAN exactly their children's, both read the
+-- publication row (a date and a year); a TEACHER reads nothing; nobody reads
+-- the second school's. Asserted from the excluding side, in the transaction
+-- that just wrote the rows, with role guards.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; pub uuid; child uuid; other uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'statement: expected an admin, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanStatements" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: the admin reads % row(s) of another school''s statement', n;
+  END IF;
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs
+    JOIN "Users" g ON g.id = gs."guardianId" AND g."authId" = '00000000-0000-4000-8000-000000000004';
+  SELECT id INTO other FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND id <> child ORDER BY id LIMIT 1;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  DELETE FROM "TimplanStatementPublications";
+  INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "publishedByUserId", "asOfDate", pupils)
+  VALUES (school, y, app.current_user_id(), current_date, 2) RETURNING id INTO pub;
+  INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "studentId", stage, "subjectCode", "distributionPublished",
+                                   "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours", "projectedHours",
+                                   status, "projectedStatus", complete)
+  VALUES (school, pub, child, 'MELLAN', 'MA', true, 4, 6, 410, 413, 263, 413, 'MET', 'MET', true),
+         (school, pub, other, 'MELLAN', 'MA', true, 4, 6, 410, 300, 200, 300, 'BELOW', 'BELOW', true);
+  -- The CHECKs bound what even the admin's own PostgREST writes.
+  BEGIN
+    UPDATE "TimplanStatements" SET "plannedHours" = 20001 WHERE "studentId" = child;
+    RAISE EXCEPTION 'statement: 20001 h was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TimplanStatements" SET status = 'FEL' WHERE "studentId" = child;
+    RAISE EXCEPTION 'statement: an unknown status was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  PERFORM set_config('app.test_rls26d_child', child::text, true);
+  PERFORM set_config('app.test_rls26d_other', other::text, true);
+  PERFORM set_config('app.test_rls26d_child_sub', (SELECT "authId"::text FROM "Users" WHERE id = child), true);
+  PERFORM set_config('app.test_rls26d_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1), true);
+END
+$$;
+
+-- The child as a STUDENT: their row and the publication, nothing else; no write.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls26d_child_sub'))::text, true);
+DO $$
+DECLARE n bigint; me uuid := app.current_user_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' OR me IS DISTINCT FROM current_setting('app.test_rls26d_child')::uuid THEN
+    RAISE EXCEPTION 'statement: expected the child as a STUDENT, resolved % (%)', app.current_user_role(), me;
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanStatements" WHERE "studentId" <> me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a pupil reads % row(s) of another pupil''s hours', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanStatements" WHERE "studentId" = me;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'statement: a pupil reads % of their own row(s), expected 1', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanStatementPublications";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'statement: a pupil reads % publication(s), expected their school''s one', n;
+  END IF;
+  BEGIN
+    INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "studentId", stage, "subjectCode", "distributionPublished",
+                                     "gradesFrom", "gradesTo", "plannedHours", "outcomeHours", "projectedHours", status, "projectedStatus", complete)
+    SELECT "schoolId", "publicationId", me, 'HOG', 'EN', true, 7, 9, 1, 1, 1, 'MET', 'MET', true FROM "TimplanStatements" LIMIT 1;
+    RAISE EXCEPTION 'statement: a pupil wrote a statement row';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "TimplanStatements" SET "plannedHours" = 999 WHERE "studentId" = me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a pupil rewrote % of their own row(s)', n;
+  END IF;
+  DELETE FROM "TimplanStatementPublications";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a pupil withdrew the school''s statement';
+  END IF;
+END
+$$;
+
+-- The guardian: their child's row only.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'statement: expected a GUARDIAN, resolved %', coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanStatements" WHERE "studentId" <> current_setting('app.test_rls26d_child')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a guardian reads % row(s) of a pupil who is not their child', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanStatements";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'statement: a guardian reads % of their child''s row(s), expected 1', n;
+  END IF;
+END
+$$;
+
+-- A teacher: nothing of either table.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls26d_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'statement: expected a TEACHER, resolved %', app.current_user_role();
+  END IF;
+  SELECT (SELECT count(*) FROM "TimplanStatements") + (SELECT count(*) FROM "TimplanStatementPublications") INTO n;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'statement: a teacher reads % statement or publication row(s)', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."TimplanStatements"'::regclass, 'public."TimplanStatementPublications"'::regclass);
+  IF bad IS DISTINCT FROM 'timplan_statement_publications_admin_all:*,timplan_statement_publications_family_select:r,timplan_statements_admin_all:*,timplan_statements_guardian_select:r,timplan_statements_student_select:r' THEN
+    RAISE EXCEPTION 'statement: policies are %', bad;
+  END IF;
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."TimplanStatements"'::regclass, 'public."TimplanStatementPublications"'::regclass)
+     AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'statement: policies without the role in USING: %', bad;
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."TimplanStatements"', p)
+        OR has_table_privilege(api_role, 'public."TimplanStatementPublications"', p);
+    IF bad IS NOT NULL THEN
+      RAISE EXCEPTION 'statement: % holds % on the statement tables', api_role, bad;
+    END IF;
+  END LOOP;
+END $$;

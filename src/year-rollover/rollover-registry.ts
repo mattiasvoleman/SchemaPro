@@ -499,6 +499,22 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason:
       'The history of the old year’s tjänster is that year’s record; a carried tjänst starts the new year’s history as created.',
   },
+  /**
+   * Not carried, and not counted. The school's published "Undervisningstid"
+   * (timplan P4) is a snapshot computed for the year that was active; the card
+   * stops showing it once another year is activated, and the new year's is
+   * published again from the new year's figures.
+   */
+  TimplanStatementPublication: {
+    kind: 'SKIPPED',
+    reason:
+      'The pupils’ published undervisningstid is a snapshot of the old year; the new year’s is published again from its own figures.',
+  },
+  TimplanStatement: {
+    kind: 'FOLLOWS',
+    parent: 'TimplanStatementPublication',
+    reason: 'The rows of a statement that is not carried.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>
