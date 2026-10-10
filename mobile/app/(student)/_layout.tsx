@@ -7,7 +7,7 @@ function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: Co
   return <Text style={{ fontSize: 18, color }}>{glyph}</Text>;
 }
 
-/** Student shell — personal schedule and notifications. */
+/** Student shell — personal schedule, notifications, settings. */
 export default function StudentLayout(): React.JSX.Element {
   const { t } = useI18n();
   return (
@@ -34,6 +34,13 @@ export default function StudentLayout(): React.JSX.Element {
         options={{
           title: t('tabs.notifications'),
           tabBarIcon: ({ color }) => <TabGlyph glyph="🔔" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: t('tabs.settings'),
+          tabBarIcon: ({ color }) => <TabGlyph glyph="⚙" color={color} />,
         }}
       />
     </Tabs>

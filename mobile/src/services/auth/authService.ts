@@ -1,6 +1,7 @@
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { SecureTokenStore } from './secureTokenStore';
+import { unregisterOnLogout } from '../pushRegistration';
 import type { AuthState } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +108,10 @@ export const AuthService = {
   },
 
   async logout(): Promise<void> {
+    // While the bearer still works: this device stops receiving this
+    // person's notices (pushRegistration). Bounded and never throws.
+    const session = await SecureTokenStore.getTeacherSession();
+    if (session) await unregisterOnLogout(session.teacherId);
     await getSupabase().auth.signOut();
     await SecureTokenStore.clearSession();
     // The cached roster goes with the session. Unsent attendance does not —

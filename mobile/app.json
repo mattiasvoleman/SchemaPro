@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "SchemaPro Teacher",
+    "name": "SchemaPro",
     "slug": "schemapro-teacher",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,6 +9,13 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "default",
+          "color": "#6366f1"
+        }
+      ],
       [
         "expo-local-authentication",
         {

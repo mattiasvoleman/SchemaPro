@@ -1,10 +1,12 @@
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
+import { unregisterOnLogout } from '../pushRegistration';
 import { SecureTokenStore } from './secureTokenStore';
 import { AuthError, AuthService } from './authService';
 
 jest.mock('../supabase', () => ({ getSupabase: jest.fn() }));
 jest.mock('../database/localDatabase', () => ({ clearCachedSchoolData: jest.fn(async () => undefined) }));
+jest.mock('../pushRegistration', () => ({ unregisterOnLogout: jest.fn(async () => undefined) }));
 jest.mock('./secureTokenStore', () => ({
   SecureTokenStore: {
     getTeacherSession: jest.fn(),
@@ -15,7 +17,8 @@ jest.mock('./secureTokenStore', () => ({
 
 /**
  * Login failures arrive at the screen as codes it words in the reader's
- * language; logout signs out and clears the cached session.
+ * language, and logout takes this device off the person's push while the
+ * session can still say who they are — before the sign-out, never after.
  */
 
 const order: string[] = [];
@@ -39,6 +42,9 @@ function supabase(options: {
 
 beforeEach(() => {
   order.length = 0;
+  (unregisterOnLogout as jest.Mock).mockImplementation(async () => {
+    order.push('unregister');
+  });
   (SecureTokenStore.clearSession as jest.Mock).mockImplementation(async () => {
     order.push('clearSession');
   });
@@ -75,10 +81,20 @@ describe('AuthService.login', () => {
 });
 
 describe('AuthService.logout', () => {
-  it('signs out, then clears the cached session and the cache', async () => {
+  it('takes the device off the person’s push before signing out, then clears the cache', async () => {
     supabase({});
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER' });
     await AuthService.logout();
-    expect(order).toEqual(['signOut', 'clearSession']);
+    expect(unregisterOnLogout).toHaveBeenCalledWith('u-1');
+    expect(order).toEqual(['unregister', 'signOut', 'clearSession']);
     expect(clearCachedSchoolData).toHaveBeenCalled();
+  });
+
+  it('signs out even without a cached session', async () => {
+    const { signOut } = supabase({});
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue(null);
+    await AuthService.logout();
+    expect(unregisterOnLogout).not.toHaveBeenCalled();
+    expect(signOut).toHaveBeenCalled();
   });
 });

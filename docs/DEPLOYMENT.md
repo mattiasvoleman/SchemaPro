@@ -274,7 +274,10 @@ production changes before the last step.
 3. **A new native build** of the app with `EXPO_PUBLIC_EAS_PROJECT_ID` set to
    the EAS project's id (the `expo-notifications` config plugin needs a new
    binary; remote push does not work in Expo Go on Android). Without the id
-   the app reports push as unavailable and registers nothing.
+   the app reports push as unavailable and registers nothing. The same build
+   carries the app's new display name, "SchemaPro" (it was "SchemaPro
+   Teacher"); the slug, bundle identifier and Android package are unchanged,
+   so it installs as an update of the existing app.
 4. **The API**: `PUSH_NOTIFICATIONS=expo` (plus `EXPO_ACCESS_TOKEN` if enhanced
    push security is on). The receipt checker starts with it: every five
    minutes, in-process, safe across instances (each ticket is claimed with
