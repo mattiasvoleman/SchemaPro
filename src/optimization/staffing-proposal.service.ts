@@ -677,7 +677,7 @@ export class StaffingProposalService {
     const read = await readLoadInput(tx, user, academicYearId, schoolId);
     if (!read) throw new NotFoundException('Academic year not found.');
     const policy = await readCheckPolicy(tx, schoolId);
-    const staffIds = await readActiveStaffIds(tx);
+    const staffIds = await readActiveStaffIds(tx, academicYearId);
     const groups = await tx.studentGroup.findMany({
       where: { academicYearId, predecessorId: { not: null } },
       select: { id: true, predecessorId: true },

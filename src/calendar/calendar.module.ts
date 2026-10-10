@@ -21,7 +21,8 @@ import { ScheduleVersionsService } from './schedule-versions.service';
     MasterLessonsService,
     ScheduleVersionsService,
   ],
-  // The room optimisation snapshots the year inside its own apply transaction.
-  exports: [ScheduleVersionsService, CalendarService],
+  // The room optimisation snapshots the year inside its own apply transaction;
+  // the cover board builds on the day operations (CoverModule).
+  exports: [ScheduleVersionsService, CalendarService, CalendarLessonsService],
 })
 export class CalendarModule {}

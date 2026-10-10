@@ -497,8 +497,15 @@ describe('StaffingLoadService', () => {
       // a school that never rolls makes today's statements.
       expect(tx.teachingRequirement.findMany).toHaveBeenCalledTimes(1);
       expect(answer.lastYear).toBeNull();
+      // Active staff of the row's year: a substitute-pool member without a
+      // post that year is a timvikarie, not a candidate for a timplanspost
+      // (Vikarieplanering, 20261012110000) — one statement still.
       expect(tx.user.findMany).toHaveBeenCalledWith({
-        where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, isActive: true },
+        where: {
+          role: { in: ['TEACHER', 'SCHOOL_ADMIN'] },
+          isActive: true,
+          NOT: { substitutePoolMemberships: { some: {} }, employments: { none: { academicYearId: YEAR_ID } } },
+        },
         select: { id: true },
         orderBy: { id: 'asc' },
       });

@@ -3585,8 +3585,19 @@ async function runChecks(
       assert.deepEqual(
         Object.fromEntries(Object.entries(sent).map(([name, statements]) => [name, statements.length])),
         {
-          'suggest a substitute': 20,
-          'assign a substitute': 21,
+          // Vikarieplanering, both argued in its commit. The suggestion is
+          // intersected with the hard cover rules (+10: the class's year,
+          // the school's clock, the day's lessons of the candidates with
+          // their rows, their closures, bookings, work rules, absences, pool
+          // memberships and posts — one read each, for all candidates).
+          'suggest a substitute': 30,
+          // The assignment enters the publication lock and locks the lesson
+          // row and the substitute (+3: two writers cannot both put one
+          // person on two lessons at one hour, nor cover during a DRAFT
+          // publish), reads the absences (+1: SUBSTITUTE_IS_ABSENT and the
+          // decision), the substitute's day for the cover warnings (+8) and
+          // the class's name for the substitute's own notice (+1).
+          'assign a substitute': 34,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           'PATCH a new teacher': 34,

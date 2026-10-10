@@ -33,6 +33,19 @@ export class RealtimeService {
   }
 
   /**
+   * The cover board of a school changed over [from, to] (school-local
+   * dates). Called AFTER the write has committed, so an admin who refetches
+   * on it reads the new state. Best effort.
+   */
+  notifyCoverBoardChanged(schoolId: string, from: string, to: string): void {
+    try {
+      this.gateway.emitCoverBoardUpdated(schoolId, { from, to, changedAt: new Date().toISOString() });
+    } catch {
+      this.logger.warn(`Realtime cover board broadcast failed [school=${schoolId}]`);
+    }
+  }
+
+  /**
    * Loads the lesson's current state (inside the caller's RLS transaction)
    * and broadcasts it after the transaction work is done.
    */

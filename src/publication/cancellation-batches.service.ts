@@ -264,6 +264,7 @@ export class CancellationBatchesService {
       { timeoutMs: 60_000 },
     );
     await this.broadcast(user, lessonIds);
+    this.boardChanged(schoolId, selection.fromDate, selection.toDate);
     this.logger.log(`Cancellation batch created [batch=${batch.id}, cancelled=${batch.cancelled}, credits=${credits}]`);
     return { batch: toView(batch, 0), cancelled: batch.cancelled, credits };
   }
@@ -311,6 +312,7 @@ export class CancellationBatchesService {
       return { batch: stored, added };
     });
     await this.broadcast(user, added.ids);
+    this.boardChanged(schoolId, asDay(batch.fromDate), asDay(batch.toDate));
     return { batch: toView(batch, 0), added: added.ids.length };
   }
 
@@ -342,7 +344,7 @@ export class CancellationBatchesService {
    */
   async reverse(id: string, user: AuthenticatedUser): Promise<ReversePreview> {
     const schoolId = requireSchoolId(user);
-    const { result, ids } = await this.prisma.withRls(user, async (tx) => {
+    const { result, ids, range } = await this.prisma.withRls(user, async (tx) => {
       await enterGrundschemaWrite(tx, schoolId);
       const row = await this.requireBatch(tx, id);
       if (row.reversedAt !== null) throw reversed();
@@ -385,6 +387,7 @@ export class CancellationBatchesService {
       });
       return {
         ids: plan.reinstate.map((lesson) => lesson.id),
+        range: { from: asDay(row.fromDate), to: asDay(row.toDate) },
         result: {
           reinstate: plan.reinstate.length,
           skippedRoomTaken: plan.skipped,
@@ -395,6 +398,7 @@ export class CancellationBatchesService {
       };
     });
     await this.broadcast(user, ids);
+    this.boardChanged(schoolId, range.from, range.to);
     this.logger.log(`Cancellation batch reversed [batch=${id}, reinstated=${result.reinstate}, skipped=${result.skippedRoomTaken.length}]`);
     return result;
   }
@@ -411,6 +415,19 @@ export class CancellationBatchesService {
       orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
     });
     return selectLessons(rows.map(toCandidate), ruleOf(selection, timezone, new Date()));
+  }
+
+  /**
+   * The cover board's admins hear that these days changed: a batch cancels
+   * lessons an absence may be waiting on, and a reversal brings them back.
+   * After commit, best effort.
+   */
+  private boardChanged(schoolId: string, from: string, to: string): void {
+    try {
+      this.realtime.notifyCoverBoardChanged(schoolId, from, to);
+    } catch {
+      this.logger.debug(`Cover board broadcast failed [school=${schoolId}]`);
+    }
   }
 
   /** After commit, one read for all the rows, then one emit each (realtime.service.ts). */

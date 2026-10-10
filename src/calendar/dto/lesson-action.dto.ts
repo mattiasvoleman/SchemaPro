@@ -35,6 +35,15 @@ export class AssignSubstituteDto {
   @IsUUID('4')
   teacherId!: string;
 
+  /**
+   * The one teacher the substitute replaces; their row alone leaves the
+   * lesson and a co-teacher stays. Absent, every row is replaced, as the
+   * endpoint always did.
+   */
+  @IsOptional()
+  @IsUUID('4')
+  replacesTeacherId?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(500)
