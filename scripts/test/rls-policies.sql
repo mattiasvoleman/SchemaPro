@@ -9207,3 +9207,313 @@ BEGIN
     RAISE EXCEPTION 'cover: the self-report helper is not SECURITY DEFINER';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 29: elev- och vårdnadshavarytan.
+--
+-- 29a–c: a guardian reads the lessons their children are taught in, and
+-- nothing else (20261013090000). The fixture guardian's child C sits in
+-- home class H; planted here, as the admin, in one rolled-back transaction:
+-- C in a teaching group TG; lessons of another class O carrying TG, H, a
+-- sibling-only teaching group TG2 (another family's pupil S2 in H) or naming
+-- C; a lesson of TG itself; and a second, deactivated child X in a third
+-- class Z with a lunch there. Every assertion begins with a role guard, so
+-- none passes for want of a principal, and each "zero" has a teacher in the
+-- same transaction reading the same row.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  g uuid; c uuid; h uuid; o uuid; z uuid; s2 uuid; x uuid; tg uuid; tg2 uuid; yr uuid; subj uuid;
+  t1 uuid; t2 uuid; t3 uuid;
+  l uuid[] := '{}';
+  k int;
+  lid uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'family: expected the admin'; END IF;
+  SELECT id INTO g FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000004';
+  SELECT gs."studentId" INTO c FROM "GuardianStudents" gs WHERE gs."guardianId" = g ORDER BY gs."studentId" LIMIT 1;
+  SELECT "studentGroupId" INTO h FROM "Users" WHERE id = c;
+  SELECT "academicYearId" INTO yr FROM "StudentGroups" WHERE id = h;
+  SELECT id INTO o FROM "StudentGroups" WHERE "schoolId" = school AND kind = 'CLASS' AND id <> h AND "academicYearId" = yr ORDER BY name LIMIT 1;
+  SELECT id INTO z FROM "StudentGroups" WHERE "schoolId" = school AND kind = 'CLASS' AND id NOT IN (h, o) AND "academicYearId" = yr
+     AND EXISTS (SELECT 1 FROM "Users" u WHERE u."studentGroupId" = "StudentGroups".id AND u.role = 'STUDENT' AND u."isActive")
+   ORDER BY name LIMIT 1;
+  SELECT id INTO s2 FROM "Users" WHERE "studentGroupId" = h AND role = 'STUDENT' AND "isActive" AND id <> c
+     AND NOT EXISTS (SELECT 1 FROM "GuardianStudents" gs WHERE gs."studentId" = "Users".id AND gs."guardianId" = g)
+   ORDER BY id LIMIT 1;
+  SELECT id INTO x FROM "Users" WHERE "studentGroupId" = z AND role = 'STUDENT' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t3 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id NOT IN (t1, t2) ORDER BY "authId" LIMIT 1;
+  IF g IS NULL OR c IS NULL OR h IS NULL OR o IS NULL OR z IS NULL OR s2 IS NULL OR x IS NULL OR t3 IS NULL OR subj IS NULL THEN
+    RAISE EXCEPTION 'family: the fixtures lack a guardian child with a class, two more classes, a classmate or three teachers';
+  END IF;
+
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, yr, 'RLS29 språkval', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, yr, 'RLS29 syskonets grupp', 'TEACHING_GROUP', now()) RETURNING id INTO tg2;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, tg, c), (school, tg2, s2);
+  -- X: a second child of the same guardian, who has left.
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (school, g, x);
+  UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = x;
+
+  -- l[1] H, l[2] O+TG, l[3] O+H, l[4] O naming C, l[5] O alone, l[6] O+TG2, l[7] TG, l[8] Z.
+  FOR k IN 1..8 LOOP
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+    VALUES (school, subj, CASE k WHEN 1 THEN h WHEN 7 THEN tg WHEN 8 THEN z ELSE o END,
+            DATE '2095-04-02', timestamptz '2095-04-02 06:00 UTC' + k * interval '1 hour',
+            timestamptz '2095-04-02 06:45 UTC' + k * interval '1 hour', now())
+    RETURNING id INTO lid;
+    l := l || lid;
+  END LOOP;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+  VALUES (school, l[2], tg), (school, l[3], h), (school, l[6], tg2);
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (school, l[4], c), (school, l[5], s2);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
+  VALUES (school, l[1], t1, 'LEAD'), (school, l[2], t2, 'LEAD'), (school, l[2], t1, 'ASSISTANT'),
+         (school, l[3], t2, 'LEAD'), (school, l[3], t1, 'SUBSTITUTE'),
+         (school, l[4], t1, 'LEAD'), (school, l[5], t1, 'LEAD'), (school, l[7], t3, 'LEAD');
+  UPDATE "CalendarLessons" SET status = 'CANCELLED' WHERE id = l[4];
+  INSERT INTO "CalendarLunches" ("schoolId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, h, DATE '2095-04-02', timestamptz '2095-04-02 10:00 UTC', timestamptz '2095-04-02 10:30 UTC', now()),
+         (school, z, DATE '2095-04-02', timestamptz '2095-04-02 10:30 UTC', timestamptz '2095-04-02 11:00 UTC', now()),
+         (school, o, DATE '2095-04-02', timestamptz '2095-04-02 11:00 UTC', timestamptz '2095-04-02 11:30 UTC', now());
+  INSERT INTO "CalendarRasts" ("schoolId", "studentGroupId", name, date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, h, 'RLS29 rast', DATE '2095-04-02', timestamptz '2095-04-02 09:00 UTC', timestamptz '2095-04-02 09:15 UTC', now()),
+         (school, z, 'RLS29 rast', DATE '2095-04-02', timestamptz '2095-04-02 09:00 UTC', timestamptz '2095-04-02 09:15 UTC', now());
+
+  -- How the school names teachers to families: by signature, T1's is RL29;
+  -- T3 is never named.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+  VALUES (school, t1, yr, 100, 'RL29', now())
+  ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET signature = 'RL29';
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+  VALUES (school, t3, yr, 100, 'RL3H', now())
+  ON CONFLICT ("schoolId", "userId", "academicYearId") DO UPDATE SET signature = 'RL3H';
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden) VALUES (t3, school, true)
+  ON CONFLICT ("userId") DO UPDATE SET hidden = true;
+  INSERT INTO "PublicationSettings" ("schoolId", "publicTeacherDisplay", "updatedAt") VALUES (school, 'SIGNATURE', now())
+  ON CONFLICT ("schoolId") DO UPDATE SET "publicTeacherDisplay" = 'SIGNATURE';
+
+  PERFORM set_config('app.test_rls29_lessons', array_to_string(l, ','), true);
+  PERFORM set_config('app.test_rls29_c', c::text, true);
+  PERFORM set_config('app.test_rls29_h', h::text, true);
+  PERFORM set_config('app.test_rls29_z', z::text, true);
+  PERFORM set_config('app.test_rls29_t1', t1::text, true);
+  PERFORM set_config('app.test_rls29_c_sub', (SELECT "authId"::text FROM "Users" WHERE id = c), true);
+  PERFORM set_config('app.test_rls29_t2_sub', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
+END $$;
+
+-- 29a: a teacher of the school reads every planted lesson, so each zero
+-- below is a row that exists.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29_t2_sub'))::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'family: expected a TEACHER'; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessons" WHERE id = ANY (l);
+  IF n <> 8 THEN RAISE EXCEPTION 'family: a teacher reads % of the 8 planted lessons', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = ANY (l);
+  IF n <> 8 THEN RAISE EXCEPTION 'family: a teacher reads % of the 8 planted teacher rows', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLunches" WHERE date = DATE '2095-04-02';
+  IF n <> 3 THEN RAISE EXCEPTION 'family: a teacher reads % of the 3 planted lunches', n; END IF;
+END $$;
+
+-- 29a: the guardian. Home class, teaching group (as the lesson's group and as
+-- an extra group), the home class as an extra group, the lesson naming C —
+-- yes. Another class's own lesson, the sibling's group, a lesson naming
+-- another pupil, the departed child's class — no. Teacher rows — none.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE
+  l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[];
+  seen int[];
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'family: expected the GUARDIAN'; END IF;
+  IF NOT current_setting('app.test_rls29_c')::uuid = ANY (app.current_guardian_child_ids()) THEN
+    RAISE EXCEPTION 'family: the guardian''s child is not among their children';
+  END IF;
+  IF cardinality(app.current_guardian_child_ids()) <> 1 THEN
+    RAISE EXCEPTION 'family: the departed child still counts (% children)', cardinality(app.current_guardian_child_ids());
+  END IF;
+  IF current_setting('app.test_rls29_z')::uuid = ANY (app.current_guardian_group_ids()) THEN
+    RAISE EXCEPTION 'family: the departed child''s class is among the groups';
+  END IF;
+  SELECT array_agg(i ORDER BY i) INTO seen FROM generate_subscripts(l, 1) i
+   WHERE EXISTS (SELECT 1 FROM "CalendarLessons" cl WHERE cl.id = l[i]);
+  IF seen IS DISTINCT FROM ARRAY[1, 2, 3, 4, 7] THEN
+    RAISE EXCEPTION 'family: the guardian reads lessons % of the planted 1..8, not 1, 2, 3, 4 and 7', seen;
+  END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = ANY (l);
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads % teacher row(s)', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers";
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads % teacher row(s) anywhere', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonGroups" WHERE "calendarLessonId" = ANY (l);
+  IF n <> 2 THEN RAISE EXCEPTION 'family: the guardian reads % extra-group rows, not the TG and H ones', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonGroups" WHERE "calendarLessonId" = l[6];
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads the sibling group''s row'; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonStudents" WHERE "calendarLessonId" = ANY (l);
+  IF n <> 1 THEN RAISE EXCEPTION 'family: the guardian reads % named-pupil rows, not their own child''s one', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonStudents" WHERE "studentId" <> current_setting('app.test_rls29_c')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads % row(s) naming another pupil', n; END IF;
+  -- Meals: the home class's, not the departed child's class, not another class.
+  SELECT count(*) INTO n FROM "CalendarLunches" WHERE date = DATE '2095-04-02';
+  IF n <> 1 THEN RAISE EXCEPTION 'family: the guardian reads % lunches, not the home class''s one', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLunches" WHERE "studentGroupId" = current_setting('app.test_rls29_z')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian of a departed pupil still reads that class''s lunch'; END IF;
+  SELECT count(*) INTO n FROM "CalendarRasts" WHERE date = DATE '2095-04-02';
+  IF n <> 1 THEN RAISE EXCEPTION 'family: the guardian reads % rasts, not the home class''s one', n; END IF;
+END $$;
+
+-- 29a: the pupil's own arms are unchanged: the home class, the class as an
+-- extra group, the lesson naming them and their teaching group's own lesson —
+-- and not the lesson carrying their teaching group as an extra group, which
+-- the guardian reads (the old gap, out of scope). Their teacher rows are the
+-- home class's lessons', as P3 tuned them.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29_c_sub'))::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; seen int[]; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'family: expected the pupil'; END IF;
+  SELECT array_agg(i ORDER BY i) INTO seen FROM generate_subscripts(l, 1) i
+   WHERE EXISTS (SELECT 1 FROM "CalendarLessons" cl WHERE cl.id = l[i]);
+  IF seen IS DISTINCT FROM ARRAY[1, 3, 4, 7] THEN RAISE EXCEPTION 'family: the pupil reads lessons %, not 1, 3, 4 and 7', seen; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = ANY (l);
+  IF n <> 1 THEN RAISE EXCEPTION 'family: the pupil reads % teacher rows, not their home lesson''s one', n; END IF;
+  IF cardinality(app.current_guardian_child_ids()) + cardinality(app.current_guardian_group_ids()) <> 0 THEN
+    RAISE EXCEPTION 'family: a pupil has guardian helpers';
+  END IF;
+END $$;
+
+-- 29a: another school's guardian reads none of it.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000005')::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'family: expected the second school''s GUARDIAN'; END IF;
+  SELECT (SELECT count(*) FROM "CalendarLessons" WHERE id = ANY (l))
+       + (SELECT count(*) FROM "CalendarLessonGroups" WHERE "calendarLessonId" = ANY (l))
+       + (SELECT count(*) FROM "CalendarLessonStudents" WHERE "calendarLessonId" = ANY (l))
+       + (SELECT count(*) FROM "CalendarLunches" WHERE date = DATE '2095-04-02')
+       + (SELECT count(*) FROM app.family_lesson_staff(l)) INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'family: another school''s guardian reads % planted row(s)', n; END IF;
+END $$;
+
+-- 29b: app.family_lesson_staff. As the guardian: rows for the five lessons
+-- they read and none other; SIGNATURE names T1 on the plain lessons, the
+-- substituted lesson is "vikarie" and nameless, the cancelled one nameless
+-- and no vikarie, the hidden teacher never named.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; got text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'family: expected the GUARDIAN'; END IF;
+  SELECT string_agg(array_position(l, s.lesson_id) || ':' || s.substitute || ':' || array_to_string(s.labels, '+'), ' '
+                    ORDER BY array_position(l, s.lesson_id)) INTO got
+    FROM app.family_lesson_staff(l) s;
+  IF got IS DISTINCT FROM '1:false:RL29 2:false:RL29 3:true: 4:false: 7:false:' THEN
+    RAISE EXCEPTION 'family: the staff function answers %', got;
+  END IF;
+END $$;
+
+-- NAME, then NONE, then a deactivated teacher: the admin changes the setting.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'NAME' WHERE "schoolId" = app.current_school_id();
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; got text[]; want text;
+BEGIN
+  SELECT s.labels INTO got FROM app.family_lesson_staff(ARRAY[l[1]]) s;
+  SELECT "firstName" || ' ' || "lastName" INTO want FROM "Users" WHERE id = current_setting('app.test_rls29_t1')::uuid;
+  -- The guardian cannot read the teacher's row, so the name is compared by
+  -- length only here; the adapter probe compares it with the viewer's.
+  IF cardinality(got) <> 1 OR got[1] = 'RL29' OR want IS NOT NULL THEN
+    RAISE EXCEPTION 'family: NAME answers % (and the guardian read the teacher row: %)', got, want;
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; got text[]; want text;
+BEGIN
+  SELECT "firstName" || ' ' || "lastName" INTO want FROM "Users" WHERE id = current_setting('app.test_rls29_t1')::uuid;
+  SELECT s.labels INTO got FROM app.family_lesson_staff(ARRAY[l[1]]) s;
+  IF got IS DISTINCT FROM ARRAY[want] THEN RAISE EXCEPTION 'family: NAME answers the admin %, not %', got, want; END IF;
+  -- The admin reaches every lesson of the school, the guardian's or not.
+  IF (SELECT count(*) FROM app.family_lesson_staff(l)) <> 8 THEN RAISE EXCEPTION 'family: the admin is answered for fewer than 8 lessons'; END IF;
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'NONE' WHERE "schoolId" = app.current_school_id();
+  IF EXISTS (SELECT 1 FROM app.family_lesson_staff(l) s WHERE cardinality(s.labels) > 0) THEN
+    RAISE EXCEPTION 'family: NONE still names a teacher';
+  END IF;
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'SIGNATURE' WHERE "schoolId" = app.current_school_id();
+  UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = current_setting('app.test_rls29_t1')::uuid;
+  SELECT s.labels INTO got FROM app.family_lesson_staff(ARRAY[l[1]]) s;
+  IF got IS DISTINCT FROM '{}'::text[] THEN RAISE EXCEPTION 'family: a deactivated teacher is still named %', got; END IF;
+  UPDATE "Users" SET "isActive" = true, "updatedAt" = now() WHERE id = current_setting('app.test_rls29_t1')::uuid;
+  DELETE FROM "PublicationSettings" WHERE "schoolId" = app.current_school_id();
+  IF EXISTS (SELECT 1 FROM app.family_lesson_staff(l) s WHERE cardinality(s.labels) > 0) THEN
+    RAISE EXCEPTION 'family: a school without settings names a teacher';
+  END IF;
+END $$;
+
+-- A TEACHER or a STUDENT caller gets no rows.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29_t2_sub'))::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[];
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'family: expected a TEACHER'; END IF;
+  IF (SELECT count(*) FROM app.family_lesson_staff(l)) <> 0 THEN RAISE EXCEPTION 'family: a teacher is answered by the family function'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29_c_sub'))::text, true);
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[];
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'family: expected the pupil'; END IF;
+  IF (SELECT count(*) FROM app.family_lesson_staff(l)) <> 0 THEN RAISE EXCEPTION 'family: a pupil is answered by the family function'; END IF;
+END $$;
+
+-- 29c: PostgREST's role cannot call it; the helpers it can.
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM app.family_lesson_staff('{}'::uuid[]);
+    RAISE EXCEPTION 'family: authenticated may call the staff function';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM app.current_guardian_child_ids(), app.current_guardian_class_ids(), app.current_guardian_group_ids(), app.current_guardian_lesson_ids();
+END $$;
+SET LOCAL ROLE app_authenticated;
+DO $$
+DECLARE fn text; r text; bad text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['app.current_guardian_child_ids()', 'app.current_guardian_class_ids()', 'app.current_guardian_group_ids()',
+                            'app.current_guardian_lesson_ids()', 'app.family_lesson_staff(uuid[])'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'family: % may call %', r, fn;
+      END IF;
+    END LOOP;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'family: the API may not call %', fn; END IF;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'family: % is not SECURITY DEFINER', fn; END IF;
+    IF (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) LIKE '%{=X/%' OR (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) LIKE '%,=X/%' THEN
+      RAISE EXCEPTION 'family: PUBLIC may call %', fn;
+    END IF;
+  END LOOP;
+  -- The guard, re-read: the guardian arms and no teacher-row arm.
+  SELECT string_agg(tablename || '.' || policyname, ',' ORDER BY tablename, policyname) INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND (policyname LIKE '%guardian%' OR qual LIKE '%current_guardian_%')
+     AND tablename IN ('CalendarLessons', 'CalendarLessonGroups', 'CalendarLessonStudents', 'CalendarLunches', 'CalendarRasts', 'CalendarLessonTeachers');
+  IF bad IS DISTINCT FROM 'CalendarLessonGroups.calendar_lesson_groups_guardian_select,CalendarLessonStudents.calendar_lesson_students_guardian_select,'
+     'CalendarLessons.calendar_lessons_guardian_select,CalendarLunches.calendar_lunches_guardian_select,CalendarRasts.calendar_rasts_guardian_select' THEN
+    RAISE EXCEPTION 'family: the guardian arms are %', bad;
+  END IF;
+END $$;
+ROLLBACK;
