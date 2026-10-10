@@ -85,6 +85,66 @@ const view = (lesson: PublishedMaster): DraftLessonView => ({
   isParked: lesson.isParked,
 });
 
+const clock = (value: Date): string => value.toISOString().slice(11, 16);
+
+/**
+ * The draft against what is published, as the admin reads it.
+ *
+ * By id first: a lesson edited in the draft keeps its id. Then what is left
+ * on both sides is paired by content. A regeneration or a restore in DRAFT
+ * recreates every master under a new id (spec B3), and by id alone an
+ * unchanged timetable read as N added and N removed — the badge said "2N
+ * ändringar" over a publish whose own preview adopted nearly every row.
+ * Paired here as the publish pairs them: first on the adoption key (subject,
+ * group, weekday, start, end) — an identical lesson is no change — then
+ * what remains of a subject and group in weekday and time order, shown as
+ * moved. Only the rest is added or removed.
+ */
+export function diffDraft(
+  published: readonly PublishedMaster[],
+  masters: readonly PublishedMaster[],
+): {
+  added: PublishedMaster[];
+  changed: Array<{ before: PublishedMaster; after: PublishedMaster }>;
+  removed: PublishedMaster[];
+} {
+  const before = new Map(published.map((row) => [row.id, row]));
+  const after = new Map(masters.map((row) => [row.id, row]));
+  const changed: Array<{ before: PublishedMaster; after: PublishedMaster }> = [];
+  for (const row of masters) {
+    const was = before.get(row.id);
+    if (was && lessonDiffers(was, row)) changed.push({ before: was, after: row });
+  }
+  let added = masters.filter((row) => !before.has(row.id));
+  let removed = published.filter((row) => !after.has(row.id));
+  const order = (a: PublishedMaster, b: PublishedMaster) =>
+    a.dayOfWeek - b.dayOfWeek || clock(a.startTime).localeCompare(clock(b.startTime)) || a.id.localeCompare(b.id);
+  const pairOn = (key: (row: PublishedMaster) => string) => {
+    const waiting = new Map<string, PublishedMaster[]>();
+    for (const row of [...removed].sort(order)) {
+      const list = waiting.get(key(row)) ?? [];
+      list.push(row);
+      waiting.set(key(row), list);
+    }
+    const paired = new Set<PublishedMaster>();
+    const unmatched: PublishedMaster[] = [];
+    for (const row of [...added].sort(order)) {
+      const was = waiting.get(key(row))?.shift();
+      if (!was) {
+        unmatched.push(row);
+        continue;
+      }
+      paired.add(was);
+      if (lessonDiffers(was, row)) changed.push({ before: was, after: row });
+    }
+    added = added.filter((row) => unmatched.includes(row));
+    removed = removed.filter((row) => !paired.has(row));
+  };
+  pairOn((row) => `${row.subjectId}|${row.studentGroupId}|${row.dayOfWeek}|${clock(row.startTime)}|${clock(row.endTime)}`);
+  pairOn((row) => `${row.subjectId}|${row.studentGroupId}`);
+  return { added, changed, removed };
+}
+
 /**
  * The draft layer's own operations (20261011100000): switching the mode,
  * the draft's state against what is published, discarding a draft, and a
@@ -210,17 +270,14 @@ export class DraftService {
       const publicationId = snapshotFor(effectiveSegments(await snapshotRanges(tx, academicYearId)), today);
       const published = publicationId ? await readPublishedMasters(tx, publicationId) : [];
       const masters = await readDraftMasters(tx, academicYearId);
-      const before = new Map(published.map((row) => [row.id, row]));
-      const after = new Map(masters.map((row) => [row.id, row]));
+      const diff = diffDraft(published, masters);
       return {
         academicYearId,
         publishMode: mode,
         publicationId,
-        added: masters.filter((row) => !before.has(row.id)).map(view),
-        changed: masters
-          .filter((row) => before.has(row.id) && lessonDiffers(before.get(row.id)!, row))
-          .map((row) => ({ before: view(before.get(row.id)!), after: view(row) })),
-        removed: published.filter((row) => !after.has(row.id)).map(view),
+        added: diff.added.map(view),
+        changed: diff.changed.map((pair) => ({ before: view(pair.before), after: view(pair.after) })),
+        removed: diff.removed.map(view),
         // Rows a publish will adopt or remove: not those that have begun,
         // which are recorded only to keep their published key (20261011132000).
         pendingRemovals: await tx.publicationPendingRemoval.count({

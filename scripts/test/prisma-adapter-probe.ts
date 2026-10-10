@@ -5216,6 +5216,9 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
       await versions.restore(saved.id, school.admin);
       const pending = (await rows(`SELECT count(*)::int AS n FROM "PublicationPendingRemovals" WHERE "schoolId" = $1`))[0].n;
       assert.ok(pending > 30, `${pending} recorded`);
+      // The same timetable under new ids is no change to the admin either.
+      const state = await drafts.state(school.yearId, school.admin);
+      assert.deepEqual([state.added.length, state.changed.length, state.removed.length], [0, 0, 0]);
       const outcome = await publications.publish({ academicYearId: school.yearId, acknowledgeWarnings: true }, school.admin);
       assert.ok(outcome.draft!.adopted >= pending - 1, JSON.stringify(outcome.draft));
       const kept = await rows(`SELECT role::text FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1`, [target.id]);
