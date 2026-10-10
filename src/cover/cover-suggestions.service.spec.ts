@@ -30,7 +30,7 @@ describe('CoverSuggestionsService', () => {
     cover = {
       now: jest.fn().mockReturnValue(NOW),
       write: jest.fn((_user, body: (client: unknown) => unknown) => Promise.resolve(body(tx))),
-      decideInTransaction: jest.fn().mockResolvedValue({ lessonIds: [LESSON], dates: [D], notices: [], warnings: [] }),
+      decideInTransaction: jest.fn().mockResolvedValue({ lessonIds: [LESSON], dates: [D], notices: [], classNotices: [], warnings: [] }),
       afterCommit: jest.fn().mockResolvedValue(undefined),
     };
     service = new CoverSuggestionsService(prisma as unknown as PrismaService, cover as unknown as CoverService);

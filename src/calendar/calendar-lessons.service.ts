@@ -947,6 +947,34 @@ export class CalendarLessonsService {
   }
 
   /**
+   * The class's notice for a lesson the cover board covered or cancelled,
+   * sent by the board after its commit: the same type, meta and e-mail the
+   * old PATCHes send, without a reason (the board takes none).
+   */
+  async notifyLessonClass(
+    tx: PrismaClient,
+    lessonId: string,
+    type: 'LESSON_SUBSTITUTE' | 'LESSON_CANCELLED',
+    teacherIds: string[],
+  ): Promise<void> {
+    const lesson = await this.requireLesson(tx, lessonId);
+    await this.notifyLessonAudience(tx, lesson, {
+      type,
+      teacherIds,
+      email:
+        type === 'LESSON_CANCELLED'
+          ? {
+              subject: `Lesson cancelled: ${lesson.subject.name}`,
+              body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} has been cancelled.`,
+            }
+          : {
+              subject: `Substitute assigned: ${lesson.subject.name}`,
+              body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} will be covered by a substitute teacher.`,
+            },
+    });
+  }
+
+  /**
    * In-app (and optionally email) notice about a lesson change. Fans out to the
    * lesson's class (students + guardians) and to the teachers involved.
    */
