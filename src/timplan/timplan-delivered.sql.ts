@@ -397,6 +397,51 @@ export function staffingCreditStatement(
   `;
 }
 
+/**
+ * VIKARIETIMMAR: the held lessons a substitute covered, one row per (lesson,
+ * substitute) — statement E's T rows with role SUBSTITUTE and bucket
+ * DELIVERED, lesson by lesson rather than summed, so the hour export and
+ * Fas 3's credited substitute minutes are one figure (a contract test pins
+ * it). Raw clock minutes: payroll pays the clock, while the reconciliation's
+ * line.substitute weighs a subject's load factor on top.
+ *
+ * deliveredLessons gives no start, end or room, and its statement is pinned,
+ * so the times and the room are joined from CalendarLessons by id here.
+ * `own` narrows to one substitute.
+ */
+export function substituteHoursStatement(
+  window: DeliveredWindow,
+  range: { from: string; to: string },
+  own: string | null = null,
+): Prisma.Sql {
+  const lessons = deliveredLessons(window, { subjects: 'all', audience: 'groups', range });
+  const ownTeacher = own === null ? Prisma.empty : Prisma.sql`AND t."teacherId" = ${own}::uuid`;
+  return Prisma.sql`
+    WITH l AS MATERIALIZED (${lessons})
+    SELECT l."id" AS "lessonId", t."teacherId" AS "userId", to_char(l."date", 'YYYY-MM-DD') AS "date",
+           c."startsAt", c."endsAt", l."minutes", l."subjectId", l."studentGroupId", c."roomId"
+      FROM l
+      JOIN "CalendarLessonTeachers" t ON t."calendarLessonId" = l."id" AND t."role" = 'SUBSTITUTE'
+      JOIN "CalendarLessons" c ON c."id" = l."id"
+     WHERE l."bucket" = 'DELIVERED'
+       ${ownTeacher}
+     ORDER BY t."teacherId", c."startsAt", l."id"
+  `;
+}
+
+/** One row of the hour statement. */
+export interface SubstituteHoursRow {
+  lessonId: string;
+  userId: string;
+  date: string;
+  startsAt: Date;
+  endsAt: Date;
+  minutes: number;
+  subjectId: string;
+  studentGroupId: string;
+  roomId: string | null;
+}
+
 /** One row of statement E, as the pure reconciliation reads it. */
 export interface StaffingCreditRow {
   kind: 'T' | 'C' | 'G';

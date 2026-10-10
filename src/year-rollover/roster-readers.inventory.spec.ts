@@ -353,10 +353,23 @@ describe('the roster-reader inventory', () => {
       // ahead answers the 409 those pages answer. The old POST /calendar/publish
       // reaches them only for a school that has set a gate to REFUSE; with
       // every gate at its default WARN it asks nothing and refuses nothing.
+      //
+      // Vikarieplanering's board reaches a basis where a vikarie does: a
+      // SUBSTITUTE decision (decide, and apply and bulk through the same
+      // decision) asks behörighet through assignInTransaction, and the
+      // candidates and the day proposal ask the grade span of each lesson to
+      // rank behörighet. They are admin routes over published lessons of the
+      // running year, so a year two steps ahead answering R6's 409 there is
+      // the same answer the old vikarie PATCH gives.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
+        'CoverController.apply',
+        'CoverController.bulk',
+        'CoverController.candidates',
+        'CoverController.decide',
+        'CoverController.proposal',
         'ImportController.importRequirements',
         'LunchSittingsController.place',
         'MasterLessonsController.create',

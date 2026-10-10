@@ -6,6 +6,7 @@ import {
   horizonStatement,
   segmentedAudienceStatement,
   staffingCreditStatement,
+  substituteHoursStatement,
 } from './timplan-delivered.sql';
 
 /**
@@ -161,5 +162,32 @@ describe('the published key (Publicering), read in a DRAFT school by somebody wh
     ],
   ] as const)('%s is pinned', (_name, build, expected) => {
     expect(hash(build())).toBe(expected);
+  });
+});
+
+describe('substituteHoursStatement (vikarietimmar)', () => {
+  const range = { from: '2026-09-07', to: '2026-09-18' };
+
+  it('is pinned: the hour export changes only by a commit that says so', () => {
+    expect(hash(substituteHoursStatement(WINDOW, range, null))).toBe(
+      'cc31f423b09212610a43b146c84f50a831efb60ae13b3ce8f9f198cf906771ff',
+    );
+  });
+
+  it('reads statement E’s classification unchanged — every subject, the extra groups, MATERIALIZED once', () => {
+    const { sql } = substituteHoursStatement(WINDOW, range, null);
+    const ePrefix = staffingCreditStatement(WINDOW, range, null).sql.split('SELECT \'T\'')[0]!;
+    expect(sql.startsWith(ePrefix)).toBe(true);
+    expect(sql).toContain(`t."role" = 'SUBSTITUTE'`);
+    expect(sql).toContain(`WHERE l."bucket" = 'DELIVERED'`);
+    // The times and the room come from the lesson row itself, not from a
+    // changed deliveredLessons (whose hash above is unchanged).
+    expect(sql).toContain('JOIN "CalendarLessons" c ON c."id" = l."id"');
+  });
+
+  it('narrows to one substitute with own', () => {
+    const statement = substituteHoursStatement(WINDOW, range, 'me');
+    expect(statement.sql).toContain('AND t."teacherId" = ');
+    expect(statement.values).toContain('me');
   });
 });
