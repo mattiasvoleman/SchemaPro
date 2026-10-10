@@ -3013,6 +3013,14 @@
     "linkLastUsed": "Senast öppnad",
     "linkStateActive": "Aktiv",
     "linkStateRevoked": "Återkallad",
+    "linkNotShown": {
+      "VIEWER_OFF": "Visas inte: Schemavisaren är avstängd",
+      "SCOPE_OFF": "Visas inte: den här sortens länk är avstängd",
+      "TEACHER_HIDDEN": "Visas inte: läraren visas aldrig",
+      "NO_SIGNATURE": "Visas inte: läraren saknar signatur",
+      "GROUP_TOO_SMALL": "Visas inte: gruppen är för liten",
+      "YEAR_ENDED": "Visas inte: läsåret är slut"
+    },
     "linkRevoke": "Återkalla",
     "linkRevokeConfirm": "Länken slutar fungera inom en minut för alla som har den. Det går inte att ångra; skapa en ny länk om den behövs igen.",
     "linkRevoked": "Länken är återkallad.",

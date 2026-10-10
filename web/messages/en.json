@@ -3013,6 +3013,14 @@
     "linkLastUsed": "Last opened",
     "linkStateActive": "Active",
     "linkStateRevoked": "Revoked",
+    "linkNotShown": {
+      "VIEWER_OFF": "Not shown: the viewer is off",
+      "SCOPE_OFF": "Not shown: this kind of link is off",
+      "TEACHER_HIDDEN": "Not shown: the teacher is never shown",
+      "NO_SIGNATURE": "Not shown: the teacher has no signature",
+      "GROUP_TOO_SMALL": "Not shown: the group is too small",
+      "YEAR_ENDED": "Not shown: the school year has ended"
+    },
     "linkRevoke": "Revoke",
     "linkRevokeConfirm": "The link stops working within a minute for everyone who has it. This cannot be undone; make a new link if it is needed again.",
     "linkRevoked": "The link is revoked.",

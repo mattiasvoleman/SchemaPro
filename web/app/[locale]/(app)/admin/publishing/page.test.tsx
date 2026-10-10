@@ -271,6 +271,18 @@ describe("/admin/publishing › Schemavisaren", () => {
         createdAt: "2026-10-01T08:00:00.000Z",
         revokedAt: null,
         lastUsedAt: "2026-10-09T06:00:00.000Z",
+        notShownBecause: null,
+      },
+      {
+        id: "k-3",
+        academicYearId: "y26",
+        kind: "ROOM",
+        targetId: null,
+        label: null,
+        createdAt: "2026-10-01T08:00:00.000Z",
+        revokedAt: null,
+        lastUsedAt: null,
+        notShownBecause: "SCOPE_OFF",
       },
     ];
     server.hidden = ["t-bo"];
@@ -294,12 +306,15 @@ describe("/admin/publishing › Schemavisaren", () => {
 
   it("shows a new link's address once, and lists the year's links by what they show", async () => {
     post.mockResolvedValueOnce({
-      link: { id: "k-2", academicYearId: "y26", kind: "GROUP", targetId: null, label: null, createdAt: "", revokedAt: null, lastUsedAt: null },
+      link: { id: "k-2", academicYearId: "y26", kind: "GROUP", targetId: null, label: null, createdAt: "", revokedAt: null, lastUsedAt: null, notShownBecause: null },
       token: "T".repeat(43),
     });
     const user = userEvent.setup();
     await openViewerTab(user);
     expect(await screen.findByRole("cell", { name: "7A" })).toBeInTheDocument();
+    // A link that answers says so; one the viewer refuses says why, never "Aktiv".
+    expect(screen.getAllByText("Aktiv")).toHaveLength(1);
+    expect(screen.getByText("Visas inte: den här sortens länk är avstängd")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Skapa länk" }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/api/v1/public-links", { academicYearId: "y26", kind: "GROUP" }),
@@ -311,7 +326,7 @@ describe("/admin/publishing › Schemavisaren", () => {
     post.mockResolvedValueOnce({});
     const user = userEvent.setup();
     await openViewerTab(user);
-    await user.click(await screen.findByRole("button", { name: "Återkalla" }));
+    await user.click((await screen.findAllByRole("button", { name: "Återkalla" }))[0]!);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("inom en minut");
     await user.click(within(dialog).getByRole("button", { name: "Återkalla" }));

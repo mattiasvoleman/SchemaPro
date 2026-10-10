@@ -319,6 +319,14 @@ export interface ReversePreview {
 
 export type PublicScopeKind = "GROUP" | "TEACHER" | "ROOM";
 
+export type PublicLinkNotShown =
+  | "VIEWER_OFF"
+  | "SCOPE_OFF"
+  | "TEACHER_HIDDEN"
+  | "NO_SIGNATURE"
+  | "GROUP_TOO_SMALL"
+  | "YEAR_ENDED";
+
 export interface PublicLink {
   id: string;
   academicYearId: string;
@@ -329,6 +337,8 @@ export interface PublicLink {
   createdAt: string;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  /** Why an unrevoked link answers the viewer's 404 (the gateway's own rule), or null. */
+  notShownBecause: PublicLinkNotShown | null;
 }
 
 export interface PublicLinkInput {

@@ -57,7 +57,7 @@ export function useSetTeacherHidden() {
       api.put<{ userId: string; hidden: boolean }>(`/api/v1/teacher-public-labels/${userId}`, { hidden }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.hiddenTeachers });
-      // A hidden teacher's links stop resolving; the list says so after a refetch.
+      // A hidden teacher's links stop resolving; the list says so (notShownBecause) after a refetch.
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.links });
     },
   });
