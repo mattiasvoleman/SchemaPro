@@ -1011,11 +1011,13 @@ export class Ss12000V2Service {
     return this.run(caller, params, async (model) => {
       const wanted = new Set<string>(ids['ids'] ?? []);
       const activities = await model.slice.activities();
-      const activityIds = new Set(ids['activities'] ?? []);
-      const masterIds = activities.filter((row) => activityIds.has(row.id)).map((row) => (row.adhoc ? null : row.entityId));
-      const adhocLessons = activities.filter((row) => activityIds.has(row.id) && row.adhoc).map((row) => row.entityId);
-      adhocLessons.forEach((id) => wanted.add(id));
       const teachers = (ids['teacher'] ?? []).map((id) => model.ids.dutyFrom(id)?.userId).filter((id): id is string => !!id);
+      // S1's teacher: "activity.teachers.duty.id samt teacherExceptions.duty.id" —
+      // the events of the teacher's activities, and those the teacher stood in.
+      const activityIds = new Set(ids['activities'] ?? []);
+      const asked = activities.filter((row) => activityIds.has(row.id) || row.teacherIds.some((id) => teachers.includes(id)));
+      const masterIds = asked.map((row) => (row.adhoc ? null : row.entityId));
+      asked.filter((row) => row.adhoc).forEach((row) => wanted.add(row.entityId));
       const students = (ids['student'] ?? []).map((id) => model.ids.personFrom(id)).filter((id): id is string => !!id);
       const extra = await this.lessonIdsFor(model, masterIds.filter((id): id is string => id !== null), teachers, students);
       extra.forEach((id) => wanted.add(id));
