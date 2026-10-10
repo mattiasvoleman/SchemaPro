@@ -43,12 +43,18 @@ export default function TeacherSchedulePage() {
     [rooms],
   );
 
+  // A lesson the teacher covers says so under its group: "7A · Vikarie".
+  // Marked here, not in the shared mapper every schedule draws through.
+  const substituteMarker = t("substituteMarker");
   const gridLessons = useMemo(
     () =>
-      (lessons ?? []).map((lesson) =>
-        calendarLessonToGrid(lesson, subjectById, groupById, roomById),
-      ),
-    [lessons, subjectById, groupById, roomById],
+      (lessons ?? []).map((lesson) => {
+        const grid = calendarLessonToGrid(lesson, subjectById, groupById, roomById);
+        return lesson.assignmentRole === "SUBSTITUTE"
+          ? { ...grid, subtitle: grid.subtitle ? `${grid.subtitle} · ${substituteMarker}` : substituteMarker }
+          : grid;
+      }),
+    [lessons, subjectById, groupById, roomById, substituteMarker],
   );
 
   /**
