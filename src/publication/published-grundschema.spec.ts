@@ -95,11 +95,13 @@ describe('the published grundschema', () => {
   });
 
   it('reads the published snapshot for a teacher in a DRAFT school, and for the families whoever asks', async () => {
-    tx.$queryRaw.mockResolvedValue([{ mode: 'DRAFT' }]);
-    tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
-    tx.timetablePublication.findMany.mockResolvedValue([
+    const ranges = [
       { id: 'pub', publishedAt: new Date('2026-08-01'), validFrom: new Date('2026-08-17'), validTo: new Date('2027-06-11') },
-    ]);
+    ];
+    tx.$queryRaw.mockImplementation(async (query: { strings?: readonly string[] }) =>
+      (query.strings ?? []).join('?').includes('app.publication_snapshot_ranges') ? ranges : [{ mode: 'DRAFT' }],
+    );
+    tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
     tx.publishedLesson.findMany.mockResolvedValue([published()]);
     const teacher = await readGrundschema(tx as unknown as PrismaClient, { role: Role.TEACHER, schoolId: SCHOOL }, YEAR, async () => []);
     expect(teacher.source).toEqual({ kind: 'PUBLISHED', publicationId: 'pub' });
@@ -111,6 +113,8 @@ describe('the published grundschema', () => {
     });
     expect(families.source).toEqual({ kind: 'PUBLISHED', publicationId: 'pub' });
     expect(live).not.toHaveBeenCalled();
+    // The ranges come from the function, never from the log a teacher may not read.
+    expect(tx.timetablePublication.findMany).not.toHaveBeenCalled();
   });
 
   it('compares a slot on what moves a lesson, and a lesson on everything a snapshot holds', () => {

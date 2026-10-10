@@ -1,4 +1,4 @@
-import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type LessonRecurrence, type PrismaClient } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import { todayInZone } from '../common/utils/time';
 import { effectiveSegments, type PublicationRange, type ValiditySegment } from './publication-validity';
@@ -42,13 +42,19 @@ export interface PublishedMaster {
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
 
-/** The publications of a year that carry a snapshot, as validity ranges. */
+/**
+ * The publications of a year that carry a snapshot, as validity ranges.
+ *
+ * Asked of app.publication_snapshot_ranges (20261011131000), not of the
+ * table: a TEACHER reads no row of the publication log — its gates name the
+ * draft and, under a staffing REFUSE, colleagues' findings — only these four
+ * columns of the snapshot publications. The admin and the SS12000 service
+ * ask the same function, so there is one rule for what a range is.
+ */
 export async function snapshotRanges(tx: PrismaClient, academicYearId: string): Promise<PublicationRange[]> {
-  const rows = await tx.timetablePublication.findMany({
-    where: { academicYearId, outcome: 'PUBLISHED', lessonCount: { not: null }, kind: { not: 'REFILL' } },
-    orderBy: [{ publishedAt: 'asc' }, { id: 'asc' }],
-    select: { id: true, publishedAt: true, validFrom: true, validTo: true },
-  });
+  const rows = await tx.$queryRaw<{ id: string; publishedAt: Date; validFrom: Date; validTo: Date }[]>(
+    Prisma.sql`SELECT "id", "publishedAt", "validFrom", "validTo" FROM app.publication_snapshot_ranges(${academicYearId}::uuid)`,
+  );
   return rows.map((row) => ({
     id: row.id,
     publishedAt: row.publishedAt,

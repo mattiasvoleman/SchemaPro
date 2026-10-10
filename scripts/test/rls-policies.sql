@@ -7845,9 +7845,11 @@ END $$;
 -- append-only by privilege (no UPDATE, no DELETE for the API role); a
 -- range outside its läsår is refused by the constraint trigger (PB409); a
 -- snapshot row can only be erased on a person, never rewritten. A TEACHER
--- reads the log and the snapshot (the published grundschema is theirs to
--- see) and never the policy; a STUDENT and a GUARDIAN read none of the
--- three. Asserted in the transaction that wrote the rows, then rolled back.
+-- reads the snapshot (the published grundschema is theirs to see) and its
+-- validity through app.publication_snapshot_ranges (20261011131000), never a
+-- row of the log — whose gates name the draft — and never the policy; a
+-- STUDENT and a GUARDIAN read none of the three and are given no range.
+-- Asserted in the transaction that wrote the rows, then rolled back.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -7869,9 +7871,13 @@ BEGIN
   ON CONFLICT ("schoolId") DO UPDATE SET "gateClashes" = 'REFUSE';
 
   INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo",
-                                       "publishedByUserId", created, gates)
-  VALUES (school, y, 'PUBLISH', 'PUBLISHED', 'DRAFT', y_start, y_end, app.current_user_id(), 3, '[]')
+                                       "publishedByUserId", created, gates, "lessonCount")
+  VALUES (school, y, 'PUBLISH', 'PUBLISHED', 'DRAFT', y_start, y_end, app.current_user_id(), 3, '[]', 1)
   RETURNING id INTO pub;
+  -- A refused attempt whose gates name the draft (20261011131000): no teacher reads it.
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", gates)
+  VALUES (school, y, 'PUBLISH', 'REFUSED', 'DRAFT', y_start, y_end,
+          '[{"code": "PUB_WEEK_SPLIT", "severity": "REFUSE", "items": [{"label": "Ma · 7A: tors → mån"}]}]');
 
   -- The range lies inside its läsår.
   BEGIN
@@ -7949,24 +7955,33 @@ BEGIN
 END
 $$;
 
--- A TEACHER: the log and the snapshot, never the policy; no write.
+-- A TEACHER: the snapshot and its validity (app.publication_snapshot_ranges),
+-- never a row of the log — no gates, no refusal — and never the policy; no write.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27_teacher_sub'))::text, true);
 DO $$
-DECLARE n bigint;
+DECLARE n bigint; r record;
 BEGIN
   IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
     RAISE EXCEPTION 'publication: expected a TEACHER, resolved %', app.current_user_role();
   END IF;
-  SELECT count(*) INTO n FROM "TimetablePublications" WHERE id = current_setting('app.test_rls27_pub')::uuid;
-  IF n <> 1 THEN RAISE EXCEPTION 'publication: a teacher reads % of the publication, expected 1', n; END IF;
+  SELECT count(*) INTO n FROM "TimetablePublications";
+  IF n <> 0 THEN RAISE EXCEPTION 'publication: a teacher reads % row(s) of the log, gates and refusals included', n; END IF;
+  SELECT count(*) INTO n FROM app.publication_snapshot_ranges(
+    (SELECT "academicYearId" FROM "PublishedLessons" WHERE "publicationId" = current_setting('app.test_rls27_pub')::uuid));
+  IF n <> 1 THEN RAISE EXCEPTION 'publication: a teacher is given % snapshot range(s), expected 1 (no refusal)', n; END IF;
+  SELECT * INTO r FROM app.publication_snapshot_ranges(
+    (SELECT "academicYearId" FROM "PublishedLessons" WHERE "publicationId" = current_setting('app.test_rls27_pub')::uuid));
+  IF r.id IS DISTINCT FROM current_setting('app.test_rls27_pub')::uuid THEN
+    RAISE EXCEPTION 'publication: the snapshot range is %, not the publication', r.id;
+  END IF;
   SELECT count(*) INTO n FROM "PublishedLessons" WHERE "publicationId" = current_setting('app.test_rls27_pub')::uuid;
   IF n <> 1 THEN RAISE EXCEPTION 'publication: a teacher reads % published lesson(s), expected 1', n; END IF;
   SELECT count(*) INTO n FROM "PublicationSettings";
   IF n <> 0 THEN RAISE EXCEPTION 'publication: a teacher reads the school''s publish policy'; END IF;
   BEGIN
     INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
-    SELECT "schoolId", "academicYearId", 'PUBLISH', 'PUBLISHED', 'DIRECT', "validFrom", "validTo"
-      FROM "TimetablePublications" WHERE id = current_setting('app.test_rls27_pub')::uuid;
+    SELECT "schoolId", "academicYearId", 'PUBLISH', 'PUBLISHED', 'DIRECT', '2026-09-01', '2026-09-02'
+      FROM "PublishedLessons" WHERE "publicationId" = current_setting('app.test_rls27_pub')::uuid;
     RAISE EXCEPTION 'publication: a teacher published';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
@@ -7982,7 +7997,8 @@ BEGIN
     RAISE EXCEPTION 'publication: expected a STUDENT, resolved %', app.current_user_role();
   END IF;
   SELECT (SELECT count(*) FROM "TimetablePublications") + (SELECT count(*) FROM "PublishedLessons")
-       + (SELECT count(*) FROM "PublicationSettings") INTO n;
+       + (SELECT count(*) FROM "PublicationSettings")
+       + (SELECT count(*) FROM app.publication_snapshot_ranges((SELECT id FROM "AcademicYears" WHERE "isActive" LIMIT 1))) INTO n;
   IF n <> 0 THEN RAISE EXCEPTION 'publication: a pupil reads % publication row(s)', n; END IF;
 END
 $$;
@@ -8009,7 +8025,7 @@ BEGIN
   IF bad IS DISTINCT FROM 'publication_settings_admin_all:*,published_lessons_admin_erase:w,published_lessons_admin_insert:a,'
                           'published_lessons_admin_select:r,published_lessons_service_select:r,published_lessons_staff_select:r,'
                           'timetable_publications_admin_insert:a,timetable_publications_admin_select:r,'
-                          'timetable_publications_service_select:r,timetable_publications_staff_select:r' THEN
+                          'timetable_publications_service_select:r' THEN
     RAISE EXCEPTION 'publication: policies are %', bad;
   END IF;
   -- Every authenticated arm asks the role, in USING and in WITH CHECK.
@@ -8035,7 +8051,13 @@ BEGIN
     IF bad IS NOT NULL THEN
       RAISE EXCEPTION 'publication: % holds % on the snapshot', api_role, bad;
     END IF;
+    IF api_role <> 'app_authenticated' AND has_function_privilege(api_role, 'app.publication_snapshot_ranges(uuid)', 'EXECUTE') THEN
+      RAISE EXCEPTION 'publication: % may ask for the snapshot ranges', api_role;
+    END IF;
   END LOOP;
+  IF NOT has_function_privilege('app_authenticated', 'app.publication_snapshot_ranges(uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'publication: the API cannot ask for the snapshot ranges';
+  END IF;
 END $$;
 
 -- ---------------------------------------------------------------------------
