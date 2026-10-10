@@ -167,7 +167,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
   const range = view === "day" ? { from: date, to: date } : weekOf(date);
   const now = useMinuteClock();
 
-  const { data: board, isLoading } = useCoverBoard(range.from, range.to);
+  const { data: board, isLoading, dataUpdatedAt } = useCoverBoard(range.from, range.to);
   const { data: people } = usePeople();
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
@@ -181,7 +181,16 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
   const [proposalOpen, setProposalOpen] = useState(false);
   const [proposalMounted, setProposalMounted] = useState(false);
   const [cancelling, setCancelling] = useState<BoardItem | null>(null);
-  const [publishing, setPublishing] = useState(false);
+  const [confirmingBulk, setConfirmingBulk] = useState<"CANCELLED" | "UNDO" | null>(null);
+  // When a write met a DRAFT publish in progress (0 = no banner). The banner
+  // goes with the next read of the board after it — a realtime refetch on
+  // master_timetable_updated, the poll, another day — or the next write.
+  const [publishingSince, setPublishingSince] = useState(0);
+  const publishing = publishingSince > 0;
+  const setPublishing = (on: boolean) => setPublishingSince(on ? Date.now() : 0);
+  useEffect(() => {
+    if (publishingSince > 0 && dataUpdatedAt > publishingSince) setPublishingSince(0);
+  }, [dataUpdatedAt, publishingSince]);
 
   // The choice lives in the URL, written without navigating (reports-tabs.tsx).
   useEffect(() => {
@@ -457,7 +466,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
       {selected.size > 0 ? (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
           <span className="font-medium">{t("bulkSelected", { count: selected.size })}</span>
-          <Button size="sm" variant="outline" disabled={busy || eligible("CANCELLED") === 0} onClick={() => void runBulk("CANCELLED")}>
+          <Button size="sm" variant="outline" disabled={busy || eligible("CANCELLED") === 0} onClick={() => setConfirmingBulk("CANCELLED")}>
             {t("bulkCancel", { count: eligible("CANCELLED") })}
           </Button>
           <Button
@@ -468,7 +477,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
           >
             {t("bulkSupervised", { count: eligible("SUPERVISED_STUDY") })}
           </Button>
-          <Button size="sm" variant="outline" disabled={busy || eligible("UNDO") === 0} onClick={() => void runBulk("UNDO")}>
+          <Button size="sm" variant="outline" disabled={busy || eligible("UNDO") === 0} onClick={() => setConfirmingBulk("UNDO")}>
             {t("bulkUndo", { count: eligible("UNDO") })}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
@@ -533,6 +542,26 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
           const item = cancelling;
           setCancelling(null);
           if (item) void runDecision(item, "CANCELLED");
+        }}
+      />
+
+      {/* A bulk cancel tells every class and guardian; a bulk undo reopens
+          every lesson. Each is asked first, with the count, as one cancel is. */}
+      <ConfirmDialog
+        open={confirmingBulk !== null}
+        onOpenChange={(open) => !open && setConfirmingBulk(null)}
+        title={
+          confirmingBulk === "CANCELLED"
+            ? t("bulkCancelTitle", { count: eligible("CANCELLED") })
+            : t("bulkUndoTitle", { count: eligible("UNDO") })
+        }
+        description={confirmingBulk === "CANCELLED" ? t("bulkCancelBody") : t("bulkUndoBody")}
+        confirmLabel={confirmingBulk === "CANCELLED" ? t("cancel") : t("undo")}
+        loading={bulk.isPending}
+        onConfirm={() => {
+          const action = confirmingBulk;
+          setConfirmingBulk(null);
+          if (action) void runBulk(action);
         }}
       />
 
