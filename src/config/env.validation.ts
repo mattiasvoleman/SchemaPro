@@ -9,8 +9,17 @@ import {
   IsUrl,
   Max,
   Min,
+  ValidateIf,
   validateSync,
 } from 'class-validator';
+
+/** Unset, or set to nothing (`X=""` in an env file): both mean "not configured". */
+const isBlank = (value: unknown): boolean => value === undefined || value === null || value === '';
+
+export enum PushMode {
+  Off = 'off',
+  Expo = 'expo',
+}
 
 export enum NodeEnv {
   Development = 'development',
@@ -143,6 +152,36 @@ export class EnvironmentVariables {
   @IsString()
   @MinLength(32)
   PUBLIC_VIEWER_PROXY_KEY?: string;
+
+  /**
+   * Push to the mobile app through Expo's push service (src/notifications).
+   * `off` — the default, and what an unset variable means — makes push inert:
+   * GET /push/config answers {enabled:false}, registration is refused (409
+   * PUSH_DISABLED), no Expo request is made, no ticket stored, no receipt
+   * checked. `expo` turns it on; see docs/DEPLOYMENT.md for what must exist
+   * first (a data processing agreement, EAS credentials, a native build).
+   */
+  @IsEnum(PushMode)
+  PUSH_NOTIFICATIONS: PushMode = PushMode.Off;
+
+  /**
+   * Sent as a Bearer token only when set: Expo requires it once "enhanced
+   * push security" is enabled for the EAS project, and not otherwise. Empty
+   * is unset.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !isBlank(env.EXPO_ACCESS_TOKEN))
+  @IsString()
+  @MinLength(20)
+  EXPO_ACCESS_TOKEN?: string;
+
+  /**
+   * Expo's push API base (…/push/send and …/push/getReceipts beneath it).
+   * HTTPS only: a token and every recipient's device token travel in it.
+   * Empty, like unset (`EXPO_PUSH_API_URL=""` in .env.example), means Expo's own.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !isBlank(env.EXPO_PUSH_API_URL))
+  @IsUrl({ require_tld: true, require_protocol: true, protocols: ['https'] })
+  EXPO_PUSH_API_URL?: string;
 }
 
 export function validateEnv(

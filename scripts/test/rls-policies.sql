@@ -2748,11 +2748,13 @@ END $$;
 -- policy must carry. That rule needs 26 exemptions here — the service role
 -- crosses tenants by design, and a policy keyed on the caller's own id is
 -- already inside one school — and a rule with 26 exemptions rots into a list
--- nobody maintains. This one has a single exemption, from its no-policy half
--- only: `_prisma_migrations`, Prisma's own history, has row security on and no
--- policy on purpose, because no API role is meant to reach it at all (section
--- 14). A new table cannot be added without either satisfying the rule or
--- changing it on purpose.
+-- nobody maintains. This one has two exemptions, from its no-policy half
+-- only, and both for the same reason: no API role is meant to reach the table
+-- at all. `_prisma_migrations` is Prisma's own history (section 14);
+-- `PushTickets` (20261013110000) holds Expo receipt ids that only the
+-- SECURITY DEFINER app.push_* functions touch, with no grant to any API role
+-- (section 29f). A new table cannot be added without either satisfying the
+-- rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
 -- matching would otherwise pass as a clean run, which is how a previous
@@ -2788,7 +2790,7 @@ BEGIN
   SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO policyless
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
-    AND c.relname <> '_prisma_migrations'
+    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -9697,5 +9699,285 @@ BEGIN
   IF (SELECT proacl::text FROM pg_proc WHERE oid = 'app.delivery_opt_outs(uuid, uuid[], "NotificationType")'::regprocedure) ~ '(^|[{,])(=|authenticated=)X' THEN
     RAISE EXCEPTION 'optout: PUBLIC or authenticated holds EXECUTE on the delivery''s read';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 29d: a device token is its owner's (DevicePushTokens, 20261013110000).
+-- Written only by app.claim_device_push_token for the claims' own user; the
+-- owner reads and deletes their own rows; a claim takes a token over, across
+-- schools too; release deletes whichever row holds a token. The direct
+-- writes are refused as both authenticated and app_authenticated.
+-- 29f: PushTickets has no arm and no grant. 29g: the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls29d_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = app.current_school_id()
+                                                       AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls29d_guardian', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000004'), true);
+  PERFORM set_config('app.test_rls29d_school', app.current_school_id()::text, true);
+END $$;
+
+-- The guardian registers a device, and cannot write a row any other way.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE id uuid; again uuid; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'devices: expected the GUARDIAN'; END IF;
+  id := app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'IOS', 'sv');
+  again := app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'IOS', 'en');
+  IF id IS NULL OR id <> again THEN RAISE EXCEPTION 'devices: a second registration of the same token made a second row'; END IF;
+  SELECT count(*) INTO n FROM "DevicePushTokens" WHERE locale = 'en' AND "revokedAt" IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: the owner reads % live rows of theirs in English, not their one', n; END IF;
+  PERFORM set_config('app.test_rls29d_token_id', id::text, true);
+  BEGIN
+    PERFORM app.claim_device_push_token('ExponentPushToken[rls29dBBBBBBBB]', 'IOS', 'de');
+    RAISE EXCEPTION 'devices: a language nobody speaks was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.claim_device_push_token('fcm:not-an-expo-token', 'ANDROID', 'sv');
+    RAISE EXCEPTION 'devices: a token not in Expo''s format was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+END $$;
+
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'devices: expected to act as authenticated'; END IF;
+  BEGIN
+    INSERT INTO "DevicePushTokens" ("schoolId", "userId", token, platform)
+    VALUES (app.current_school_id(), app.current_user_id(), 'ExponentPushToken[rls29dCCCCCCCC]', 'IOS');
+    RAISE EXCEPTION 'devices: authenticated wrote a token row directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "DevicePushTokens" SET locale = 'sv' WHERE "userId" = app.current_user_id();
+    RAISE EXCEPTION 'devices: authenticated updated a token row directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.claim_device_push_token('ExponentPushToken[rls29dDDDDDDDD]', 'IOS', 'sv');
+    RAISE EXCEPTION 'devices: authenticated (PostgREST) may register a token';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.release_device_push_token('ExponentPushToken[rls29dAAAAAAAA]');
+    RAISE EXCEPTION 'devices: authenticated may release a token';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM app.push_targets(app.current_school_id(), ARRAY[app.current_user_id()], 'LESSON_CANCELLED', false);
+    RAISE EXCEPTION 'devices: authenticated may read push targets';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.push_settle(app.current_school_id(), '{}'::uuid[], '[]'::jsonb);
+    RAISE EXCEPTION 'devices: authenticated may settle tickets';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM app.push_due_receipts(1);
+    RAISE EXCEPTION 'devices: authenticated may claim receipts';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.push_receipts_settled('{}'::text[], '{}'::text[]);
+    RAISE EXCEPTION 'devices: authenticated may settle receipts';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- 29f
+  BEGIN
+    PERFORM count(*) FROM "PushTickets";
+    RAISE EXCEPTION 'devices: authenticated reads PushTickets';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'app_authenticated' THEN RAISE EXCEPTION 'devices: expected to act as app_authenticated'; END IF;
+  BEGIN
+    INSERT INTO "DevicePushTokens" ("schoolId", "userId", token, platform)
+    VALUES (app.current_school_id(), app.current_user_id(), 'ExponentPushToken[rls29dCCCCCCCC]', 'IOS');
+    RAISE EXCEPTION 'devices: the API wrote a token row directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "DevicePushTokens" SET locale = 'sv' WHERE "userId" = app.current_user_id();
+    RAISE EXCEPTION 'devices: the API updated a token row directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM count(*) FROM "PushTickets";
+    RAISE EXCEPTION 'devices: the API reads PushTickets directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PushTickets" (id, "schoolId", "tokenId")
+    VALUES ('rls29dticket00', app.current_school_id(), current_setting('app.test_rls29d_token_id')::uuid);
+    RAISE EXCEPTION 'devices: the API wrote a ticket directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- The delivery's functions, as the API calls them.
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls29d_school')::uuid;
+  g uuid := current_setting('app.test_rls29d_guardian')::uuid;
+  tok uuid := current_setting('app.test_rls29d_token_id')::uuid;
+  n bigint;
+  got text;
+BEGIN
+  SELECT string_agg(user_id::text || ':' || locale || ':' || timezone, ',') INTO got
+    FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', false);
+  IF got IS DISTINCT FROM g::text || ':en:' || (SELECT coalesce(timezone, 'Europe/Stockholm') FROM "Schools" WHERE id = school) AND got IS DISTINCT FROM g::text || ':en:Europe/Stockholm' THEN
+    RAISE EXCEPTION 'devices: the targets are %', got;
+  END IF;
+  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'TEACHER_ABSENCE_REPORTED', true);
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: a teacher''s absence report has a push target'; END IF;
+  SELECT count(*) INTO n FROM app.push_targets(gen_random_uuid(), ARRAY[g], 'LESSON_CANCELLED', false);
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: another school''s delivery reaches the guardian''s device'; END IF;
+  -- An opt-out silences the type, unless the school must deliver it.
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (g, school, 'LESSON_CANCELLED');
+  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', false);
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: an opted-out type still has a target'; END IF;
+  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: a required notice lost its target to an opt-out'; END IF;
+  -- Settling for another school changes nothing; for this one it revokes.
+  PERFORM app.push_settle(gen_random_uuid(), ARRAY[tok], '[]'::jsonb);
+  SELECT count(*) INTO n FROM "DevicePushTokens" WHERE id = tok AND "revokedAt" IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: another school''s settle revoked the guardian''s device'; END IF;
+  PERFORM app.push_settle(school, ARRAY[tok], jsonb_build_array(jsonb_build_object('id', 'rls29dticket01', 'tokenId', tok)));
+  SELECT count(*) INTO n FROM "DevicePushTokens" WHERE id = tok AND "revokedReason" = 'DEVICE_NOT_REGISTERED';
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: settle did not revoke the dead device'; END IF;
+  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: a revoked device is still a target'; END IF;
+  -- A fresh ticket is not due; settling receipts of unknown ids is harmless.
+  SELECT count(*) INTO n FROM app.push_due_receipts(1000) WHERE ticket_id = 'rls29dticket01';
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: a ticket was due at once'; END IF;
+  PERFORM app.push_receipts_settled(ARRAY['rls29dticket01', 'rls29dnothing'], ARRAY['rls29dnothing']);
+  -- A registration revives the device.
+  PERFORM app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'IOS', 'sv');
+  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: a new registration did not revive the device'; END IF;
+  -- At most ten live devices per person.
+  FOR n IN 1..11 LOOP
+    PERFORM app.claim_device_push_token(format('ExponentPushToken[rls29dmany%s]', lpad(n::text, 4, '0')), 'ANDROID', 'sv');
+  END LOOP;
+  SELECT count(*) INTO n FROM "DevicePushTokens";
+  IF n <> 10 THEN RAISE EXCEPTION 'devices: a person holds % devices, not ten', n; END IF;
+  -- Back to the one device for what follows.
+  DELETE FROM "DevicePushTokens" WHERE token LIKE 'ExponentPushToken[rls29dmany%';
+  PERFORM app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'IOS', 'sv');
+END $$;
+
+-- A teacher of the school: sees none of the guardian's, deletes none, and a
+-- claim of the same token takes the device over.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29d_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'devices: expected a TEACHER'; END IF;
+  SELECT count(*) INTO n FROM "DevicePushTokens";
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: a teacher reads % device(s) of somebody else', n; END IF;
+  DELETE FROM "DevicePushTokens" WHERE token = 'ExponentPushToken[rls29dAAAAAAAA]';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'devices: a teacher deleted somebody else''s device'; END IF;
+  PERFORM app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'ANDROID', 'sv');
+  SELECT count(*) INTO n FROM "DevicePushTokens" WHERE token = 'ExponentPushToken[rls29dAAAAAAAA]';
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: the teacher''s claim did not take the device'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "DevicePushTokens") <> 0 THEN RAISE EXCEPTION 'devices: the guardian still holds the device the teacher took'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "DevicePushTokens") <> 0 THEN RAISE EXCEPTION 'devices: the admin reads somebody''s devices'; END IF;
+END $$;
+
+-- Across schools: the second school's guardian claims the device; the teacher
+-- loses it, and nothing of the first school's row is said.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000005')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'devices: expected the second school''s GUARDIAN'; END IF;
+  PERFORM app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'IOS', 'en');
+  SELECT count(*) INTO n FROM "DevicePushTokens";
+  IF n <> 1 THEN RAISE EXCEPTION 'devices: the second school''s guardian reads % devices, not the one they took', n; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29d_teacher_sub'))::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "DevicePushTokens") <> 0 THEN RAISE EXCEPTION 'devices: the teacher kept a device another school took'; END IF;
+  -- Release: holding the token deletes whoever holds it (the logout that did
+  -- not reach the API), the other school's row included.
+  PERFORM app.release_device_push_token('ExponentPushToken[rls29dAAAAAAAA]');
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000005')::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "DevicePushTokens") <> 0 THEN RAISE EXCEPTION 'devices: a released device still has its row'; END IF;
+END $$;
+
+-- No principal at all: registration and release are refused.
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM app.claim_device_push_token('ExponentPushToken[rls29dEEEEEEEE]', 'IOS', 'sv');
+    RAISE EXCEPTION 'devices: a device was registered without a principal';
+  EXCEPTION WHEN SQLSTATE 'PU401' THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.release_device_push_token('ExponentPushToken[rls29dEEEEEEEE]');
+    RAISE EXCEPTION 'devices: a device was released without a principal';
+  EXCEPTION WHEN SQLSTATE 'PU401' THEN NULL;
+  END;
+END $$;
+
+-- 29f/29g: the catalogue.
+DO $$
+DECLARE bad text; api_role text; fn text;
+BEGIN
+  SELECT string_agg(tablename || '.' || policyname || ':' || cmd, ',' ORDER BY tablename, policyname) INTO bad
+    FROM pg_policies WHERE tablename IN ('DevicePushTokens', 'PushTickets');
+  IF bad IS DISTINCT FROM 'DevicePushTokens.device_push_tokens_own_delete:DELETE,DevicePushTokens.device_push_tokens_own_select:SELECT' THEN
+    RAISE EXCEPTION 'devices: the policies are %', bad;
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."PushTickets"'::regclass) THEN
+    RAISE EXCEPTION 'devices: PushTickets has no row-level security';
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(t || ':' || p, ', ') INTO bad
+      FROM (VALUES ('DevicePushTokens'), ('PushTickets')) AS x(t),
+           unnest(CASE
+                    WHEN api_role = 'anon' OR x.t = 'PushTickets' THEN ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+                    WHEN api_role = 'service_role' THEN ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+                    ELSE ARRAY['INSERT', 'UPDATE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] END) p
+     WHERE has_table_privilege(api_role, format('public.%I', x.t), p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'devices: % holds %', api_role, bad; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY[
+    'app.claim_device_push_token(text, "DevicePlatform", text)', 'app.release_device_push_token(text)',
+    'app.push_targets(uuid, uuid[], "NotificationType", boolean)', 'app.push_settle(uuid, uuid[], jsonb)',
+    'app.push_due_receipts(integer)', 'app.push_receipts_settled(text[], text[])'] LOOP
+    FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = api_role) AND has_function_privilege(api_role, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'devices: % may call %', api_role, fn;
+      END IF;
+    END LOOP;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'devices: the API may not call %', fn; END IF;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'devices: % is not SECURITY DEFINER', fn; END IF;
+  END LOOP;
 END $$;
 ROLLBACK;

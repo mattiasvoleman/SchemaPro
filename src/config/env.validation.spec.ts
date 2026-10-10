@@ -84,4 +84,28 @@ describe('validateEnv', () => {
         'See .env.example for the required configuration.',
     );
   });
+
+  describe('push', () => {
+    it('is off when nothing is set', () => {
+      expect(validateEnv(valid()).PUSH_NOTIFICATIONS).toBe('off');
+    });
+
+    it.each([
+      ['expo', { PUSH_NOTIFICATIONS: 'expo' }],
+      ['an access token of twenty characters', { EXPO_ACCESS_TOKEN: 'x'.repeat(20) }],
+      ['an https push URL', { EXPO_PUSH_API_URL: 'https://exp.host/--/api/v2/push' }],
+      ['the empty values .env.example ships', { PUSH_NOTIFICATIONS: 'off', EXPO_ACCESS_TOKEN: '', EXPO_PUSH_API_URL: '' }],
+    ])('accepts %s', (_label, extra) => {
+      expect(() => validateEnv({ ...valid(), ...extra })).not.toThrow();
+    });
+
+    it.each([
+      ['a mode it does not know', { PUSH_NOTIFICATIONS: 'fcm' }, /PUSH_NOTIFICATIONS/],
+      ['a short access token', { EXPO_ACCESS_TOKEN: 'x'.repeat(19) }, /EXPO_ACCESS_TOKEN/],
+      ['a push URL over plain http, even to localhost', { EXPO_PUSH_API_URL: 'http://127.0.0.1:9000/push' }, /EXPO_PUSH_API_URL/],
+      ['a push URL without a protocol', { EXPO_PUSH_API_URL: 'exp.host/--/api/v2/push' }, /EXPO_PUSH_API_URL/],
+    ])('refuses %s', (_label, extra, name) => {
+      expect(() => validateEnv({ ...valid(), ...extra })).toThrow(name);
+    });
+  });
 });
