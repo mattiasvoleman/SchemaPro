@@ -40,5 +40,7 @@ import { TimplanStageService } from './timplan-stage.service';
     TimplanRequirementsService,
     TimplanStageService,
   ],
+  // The publish gates PUB_UNPLACED and PUB_TIMPLAN read layers 2 and 1 (src/publication).
+  exports: [TimplanCoverageService],
 })
 export class TimplanModule {}

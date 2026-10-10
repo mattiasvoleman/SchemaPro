@@ -7835,3 +7835,204 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 27a: en publicering har en giltighet.
+--
+-- PublicationSettings, TimetablePublications and PublishedLessons
+-- (20261011090000). The admin writes the policy and the log; the log is
+-- append-only by privilege (no UPDATE, no DELETE for the API role); a
+-- range outside its läsår is refused by the constraint trigger (PB409); a
+-- snapshot row can only be erased on a person, never rewritten. A TEACHER
+-- reads the log and the snapshot (the published grundschema is theirs to
+-- see) and never the policy; a STUDENT and a GUARDIAN read none of the
+-- three. Asserted in the transaction that wrote the rows, then rolled back.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date; y_end date; pub uuid; lesson uuid; subj uuid; grp uuid; pupil uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'publication: expected an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id, "startDate", "endDate" INTO y, y_start, y_end FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' ORDER BY id LIMIT 1;
+
+  INSERT INTO "PublicationSettings" ("schoolId", "gateClashes") VALUES (school, 'REFUSE')
+  ON CONFLICT ("schoolId") DO UPDATE SET "gateClashes" = 'REFUSE';
+
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo",
+                                       "publishedByUserId", created, gates)
+  VALUES (school, y, 'PUBLISH', 'PUBLISHED', 'DRAFT', y_start, y_end, app.current_user_id(), 3, '[]')
+  RETURNING id INTO pub;
+
+  -- The range lies inside its läsår.
+  BEGIN
+    INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (school, y, 'PUBLISH', 'PUBLISHED', 'DIRECT', y_start - 1, y_end);
+    SET CONSTRAINTS ALL IMMEDIATE;
+    RAISE EXCEPTION 'publication: a range starting before its year was stored';
+  EXCEPTION WHEN SQLSTATE 'PB409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    VALUES (school, y, 'PUBLISH', 'PUBLISHED', 'DIRECT', y_end, y_start);
+    RAISE EXCEPTION 'publication: a reversed range was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  -- A refused attempt materialised nothing.
+  BEGIN
+    INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", created)
+    VALUES (school, y, 'PUBLISH', 'REFUSED', 'DIRECT', y_start, y_end, 1);
+    RAISE EXCEPTION 'publication: a refusal that created lessons was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  -- Append-only: no UPDATE, no DELETE for the API role.
+  BEGIN
+    UPDATE "TimetablePublications" SET created = 99 WHERE id = pub;
+    RAISE EXCEPTION 'publication: the log was rewritten';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "TimetablePublications" WHERE id = pub;
+    RAISE EXCEPTION 'publication: the log was deleted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  INSERT INTO "PublishedLessons" ("schoolId", "publicationId", "academicYearId", "masterLessonId", "subjectId", "studentGroupId",
+                                  "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "isParked", recurrence, "studentIds")
+  VALUES (school, pub, y, gen_random_uuid(), subj, grp, 1, '08:00', '09:00', false, true, false, 'ALL_WEEKS', ARRAY[pupil])
+  RETURNING id INTO lesson;
+  -- A snapshot row's year is its publication's.
+  BEGIN
+    INSERT INTO "PublishedLessons" ("schoolId", "publicationId", "academicYearId", "masterLessonId", "subjectId", "studentGroupId",
+                                    "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "isParked", recurrence)
+    VALUES (school, pub, gen_random_uuid(), gen_random_uuid(), subj, grp, 1, '08:00', '09:00', false, true, false, 'ALL_WEEKS');
+    RAISE EXCEPTION 'publication: a snapshot row of another year was stored';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- Only an erasure: a moved lesson is refused, a pupil scrubbed is not.
+  BEGIN
+    UPDATE "PublishedLessons" SET "dayOfWeek" = 2 WHERE id = lesson;
+    RAISE EXCEPTION 'publication: a published lesson was moved';
+  EXCEPTION WHEN SQLSTATE 'PB409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "PublishedLessons" SET "studentIds" = ARRAY[pupil, gen_random_uuid()] WHERE id = lesson;
+    RAISE EXCEPTION 'publication: a pupil was added to a published lesson';
+  EXCEPTION WHEN SQLSTATE 'PB409' THEN NULL;
+  END;
+  UPDATE "PublishedLessons" SET "studentIds" = '{}' WHERE id = lesson;
+  BEGIN
+    DELETE FROM "PublishedLessons" WHERE id = lesson;
+    RAISE EXCEPTION 'publication: a published lesson was deleted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  SELECT count(*) INTO n FROM "TimetablePublications" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'publication: the admin reads % publication(s) of another school', n;
+  END IF;
+
+  PERFORM set_config('app.test_rls27_pub', pub::text, true);
+  PERFORM set_config('app.test_rls27_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls27_student_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+END
+$$;
+
+-- A TEACHER: the log and the snapshot, never the policy; no write.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'publication: expected a TEACHER, resolved %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TimetablePublications" WHERE id = current_setting('app.test_rls27_pub')::uuid;
+  IF n <> 1 THEN RAISE EXCEPTION 'publication: a teacher reads % of the publication, expected 1', n; END IF;
+  SELECT count(*) INTO n FROM "PublishedLessons" WHERE "publicationId" = current_setting('app.test_rls27_pub')::uuid;
+  IF n <> 1 THEN RAISE EXCEPTION 'publication: a teacher reads % published lesson(s), expected 1', n; END IF;
+  SELECT count(*) INTO n FROM "PublicationSettings";
+  IF n <> 0 THEN RAISE EXCEPTION 'publication: a teacher reads the school''s publish policy'; END IF;
+  BEGIN
+    INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo")
+    SELECT "schoolId", "academicYearId", 'PUBLISH', 'PUBLISHED', 'DIRECT', "validFrom", "validTo"
+      FROM "TimetablePublications" WHERE id = current_setting('app.test_rls27_pub')::uuid;
+    RAISE EXCEPTION 'publication: a teacher published';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+
+-- A STUDENT and a GUARDIAN: none of the three.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27_student_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'publication: expected a STUDENT, resolved %', app.current_user_role();
+  END IF;
+  SELECT (SELECT count(*) FROM "TimetablePublications") + (SELECT count(*) FROM "PublishedLessons")
+       + (SELECT count(*) FROM "PublicationSettings") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'publication: a pupil reads % publication row(s)', n; END IF;
+END
+$$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'publication: expected a GUARDIAN, resolved %', app.current_user_role();
+  END IF;
+  SELECT (SELECT count(*) FROM "TimetablePublications") + (SELECT count(*) FROM "PublishedLessons")
+       + (SELECT count(*) FROM "PublicationSettings") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'publication: a guardian reads % publication row(s)', n; END IF;
+END
+$$;
+ROLLBACK;
+
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."PublicationSettings"'::regclass, 'public."TimetablePublications"'::regclass,
+                      'public."PublishedLessons"'::regclass);
+  IF bad IS DISTINCT FROM 'publication_settings_admin_all:*,published_lessons_admin_erase:w,published_lessons_admin_insert:a,'
+                          'published_lessons_admin_select:r,published_lessons_service_select:r,published_lessons_staff_select:r,'
+                          'timetable_publications_admin_insert:a,timetable_publications_admin_select:r,'
+                          'timetable_publications_service_select:r,timetable_publications_staff_select:r' THEN
+    RAISE EXCEPTION 'publication: policies are %', bad;
+  END IF;
+  -- Every authenticated arm asks the role, in USING and in WITH CHECK.
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."PublicationSettings"'::regclass, 'public."TimetablePublications"'::regclass,
+                      'public."PublishedLessons"'::regclass)
+     AND polname NOT LIKE '%service%'
+     AND (coalesce(pg_get_expr(polqual, polrelid), '') NOT LIKE '%current_user_role%' AND polcmd <> 'a'
+          OR (polcmd IN ('a', 'w', '*') AND coalesce(pg_get_expr(polwithcheck, polrelid), '') NOT LIKE '%current_user_role%'));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'publication: arms without the role: %', bad;
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."TimetablePublications"', p);
+    IF bad IS NOT NULL THEN
+      RAISE EXCEPTION 'publication: % holds % on the log', api_role, bad;
+    END IF;
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."PublishedLessons"', p);
+    IF bad IS NOT NULL THEN
+      RAISE EXCEPTION 'publication: % holds % on the snapshot', api_role, bad;
+    END IF;
+  END LOOP;
+END $$;

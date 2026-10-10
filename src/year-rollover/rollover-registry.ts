@@ -515,6 +515,20 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'TimplanStatementPublication',
     reason: 'The rows of a statement that is not carried.',
   },
+  /**
+   * Publicering (20261011090000): a publication says which grundschema was
+   * valid over which dates of ITS year. The new year has published nothing
+   * yet; its first publication starts its own timeline.
+   */
+  TimetablePublication: {
+    kind: 'SKIPPED',
+    reason: 'The old year’s publications and their validity stay with it; the new year is published on its own.',
+  },
+  PublishedLesson: {
+    kind: 'FOLLOWS',
+    parent: 'TimetablePublication',
+    reason: 'The lessons a publication of the old year published.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>

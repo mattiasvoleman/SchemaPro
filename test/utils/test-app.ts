@@ -45,6 +45,7 @@ import { HealthModule } from '../../src/health/health.module';
 import { StaffingModule } from '../../src/staffing/staffing.module';
 import { TimplanModule } from '../../src/timplan/timplan.module';
 import { YearRolloverModule } from '../../src/year-rollover/year-rollover.module';
+import { PublicationModule } from '../../src/publication/publication.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -150,6 +151,7 @@ const FEATURE_MODULES = [
   StaffingModule,
   TimplanModule,
   YearRolloverModule,
+  PublicationModule,
 ];
 
 /** Everything global AppModule applies, minus the throttler (see below). */

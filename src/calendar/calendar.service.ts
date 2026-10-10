@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { runsOn } from './lesson-recurrence';
@@ -60,6 +61,29 @@ export interface PublishResult {
 }
 
 /**
+ * The window a publish materialises: the request's dates clamped to the
+ * läsår, from today when no start is given. "Today" is the UTC day, a legacy
+ * quirk kept so the old route writes what it always wrote; POST /publications
+ * asks the same function, so its validity range is exactly the window the
+ * calendar was materialised over.
+ */
+export function publishWindow(
+  year: { startDate: Date; endDate: Date },
+  dto: { fromDate?: string; toDate?: string },
+  now: Date = new Date(),
+): { fromDate: string; toDate: string } {
+  const yearStart = toDateString(year.startDate);
+  const yearEnd = toDateString(year.endDate);
+  const today = toDateString(now);
+  const fromDate = clampDate(dto.fromDate ?? maxDate(yearStart, today), yearStart, yearEnd);
+  const toDate = clampDate(dto.toDate ?? yearEnd, yearStart, yearEnd);
+  if (fromDate > toDate) {
+    throw new BadRequestException('fromDate must not be after toDate.');
+  }
+  return { fromDate, toDate };
+}
+
+/**
  * Materializes the weekly `MasterLesson` template into concrete, dated
  * `CalendarLessons` — the records that schedule views, attendance and the
  * mobile app operate on.
@@ -99,526 +123,531 @@ export class CalendarService {
   async publish(dto: PublishScheduleDto, user: AuthenticatedUser): Promise<PublishResult> {
     const schoolId = requireSchoolId(user);
 
-    return this.prisma.withRls(
-      user,
-      async (tx) => {
-        const year = await tx.academicYear.findUnique({
-          where: { id: dto.academicYearId },
-          select: {
-            id: true,
-            startDate: true,
-            endDate: true,
-            school: { select: { timezone: true } },
-          },
-        });
-        if (!year) {
-          throw new NotFoundException('Academic year not found.');
+    return this.prisma.withRls(user, (tx) => this.materialise(tx, schoolId, dto), {
+      timeoutMs: 120_000,
+    });
+  }
+
+  /**
+   * publish() inside a transaction the CALLER holds: the one materialiser.
+   *
+   * POST /publications (src/publication) runs its gates, this, and its log
+   * row in one transaction, and its preview runs this in a transaction it
+   * rolls back — so the counts an admin is shown before publishing are this
+   * method's own, not an estimate of them. publish() is exactly this in a
+   * transaction of its own, so the legacy route writes what it always wrote.
+   */
+  async materialise(
+    tx: PrismaClient,
+    schoolId: string,
+    dto: PublishScheduleDto,
+  ): Promise<PublishResult> {
+    const year = await tx.academicYear.findUnique({
+      where: { id: dto.academicYearId },
+      select: {
+        id: true,
+        startDate: true,
+        endDate: true,
+        school: { select: { timezone: true } },
+      },
+    });
+    if (!year) {
+      throw new NotFoundException('Academic year not found.');
+    }
+
+    const timezone = year.school.timezone;
+    const { fromDate, toDate } = publishWindow(year, dto);
+
+    const masterLessons = await tx.masterLesson.findMany({
+      // A parked lesson is not on the timetable, so it is not on the
+      // calendar either. Its remembered slot is not a placement.
+      where: { academicYearId: dto.academicYearId, isParked: false },
+      select: {
+        id: true,
+        subjectId: true,
+        studentGroupId: true,
+        teacherId: true,
+    coTeacherId: true,
+    extraGroups: { select: { studentGroupId: true } },
+    participants: { select: { studentId: true } },
+        roomId: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+    if (masterLessons.length === 0) {
+      throw new BadRequestException(
+        'No master timetable exists for this academic year. Generate a schedule first.',
+      );
+    }
+
+    // Group templates by ISO weekday for fast per-date lookup.
+    const byWeekday = new Map<number, typeof masterLessons>();
+    for (const lesson of masterLessons) {
+      const list = byWeekday.get(lesson.dayOfWeek) ?? [];
+      list.push(lesson);
+      byWeekday.set(lesson.dayOfWeek, list);
+    }
+
+    // Existing materializations in the window (idempotency set).
+    const existing = await tx.calendarLesson.findMany({
+      where: {
+        masterLessonId: { in: masterLessons.map((lesson) => lesson.id) },
+        date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
+      },
+      select: { masterLessonId: true, date: true },
+    });
+    const existingKeys = new Set(
+      existing.map((row) => `${row.masterLessonId}:${toDateString(row.date)}`),
+    );
+
+    /*
+     * Every dated closure in the window, not only whole-day class holidays.
+     *
+     * This used to ask for STUDENT_GROUP rows and then throw away anything
+     * that was not a full day, so a teacher marked away on a Tuesday, or a
+     * room closed for two hours, was materialised over regardless: the
+     * school had said the lesson could not be held and the calendar said it
+     * would be.
+     *
+     * PREFERRED_FREE and PREFERRED_BUSY stay out on purpose. They are
+     * wishes the solver trades off, not statements that a date cannot be
+     * held, and treating a wish as a closure would silently delete lessons
+     * a school only nudged.
+     */
+    const closures = await tx.availabilityConstraint.findMany({
+      where: {
+        type: 'UNAVAILABLE',
+        date: { not: null, gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
+      },
+      select: {
+        resourceType: true,
+        userId: true,
+        roomId: true,
+        studentGroupId: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
+        date: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+    const closuresByDate = closuresByDateOf(closures);
+
+    /*
+     * Lov och studiedagar overlapping the window.
+     *
+     * A break is a named range belonging to the school rather than to a
+     * resource, which is exactly why it is a second query and not more
+     * rows in the one above: a constraint names ONE resource on ONE date
+     * and can say "åk 7 cannot be taught on the 26th", but nothing in
+     * `ConstraintResource` means "everybody", and a sportlov entered that
+     * way was a row per day per group.
+     *
+     * `kind` is not selected, and that is the point: HOLIDAY and STAFF_DAY
+     * suppress identically. What separates them is what the day MEANS for
+     * staff — a studiedag is a working day, a jullov is not — not whether
+     * anyone is taught, and nobody is taught on either. Do not add a branch
+     * on it here; the reports that count the two apart read the breaks.
+     */
+    const breaks = await tx.schoolBreak.findMany({
+      where: {
+        academicYearId: dto.academicYearId,
+        // Inclusive at both ends, so overlap is start<=windowEnd and
+        // end>=windowStart — not containment. A jullov that begins before
+        // the window still closes the days of it that fall inside.
+        startDate: { lte: parseUtcDate(toDate) },
+        endDate: { gte: parseUtcDate(fromDate) },
+      },
+      select: {
+        startDate: true,
+        endDate: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
+      },
+    });
+
+    /*
+     * Expanded onto local calendar days, clipped to the window.
+     *
+     * The dates are the unit the loop below walks in and the unit each
+     * `startsAt` is BUILT from, so a break and a lesson meet here as two
+     * "YYYY-MM-DD" strings and never as a range and an instant. Testing
+     * the instant against the range is the off-by-a-day this keeps out:
+     * 22:15Z on the 25th is a lesson at 00:15 on the 26th in Stockholm,
+     * and a lov starting the 26th has to take it. Same trap `coversTime`
+     * exists for, one level up.
+     *
+     * Expanding rather than scanning the ranges per date because a läsår
+     * holds a few dozen breaks against a couple of hundred dates, and the
+     * map keeps the shape of `closuresByDate` right above it.
+     */
+    const breakDays = breakDaysOf(breaks, fromDate, toDate);
+
+    // The year of each class, for GRADE_LEVEL closures and for breaks that
+    // narrow themselves to a span of years. Read only when something in the
+    // window actually asks the question, so an ordinary publish — no grade
+    // closures, a school-wide lov — still pays nothing for it.
+    //
+    // The rasts add a third reason to want it, and an unconditional one: a
+    // rast is declared for a SPAN OF YEARS and published to a CLASS, so the
+    // walk below cannot start without knowing which year each class is in.
+    const rasts = await tx.rast.findMany({
+      where: { school: { academicYears: { some: { id: dto.academicYearId } } } },
+      select: {
+        name: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    const gradeOfGroup = new Map<string, number | null>();
+    const classIds: string[] = [];
+    if (
+      rasts.length > 0 ||
+      closures.some((closure) => closure.resourceType === 'GRADE_LEVEL') ||
+      breaks.some(
+        (entry) => entry.minGradeLevel !== null || entry.maxGradeLevel !== null,
+      )
+    ) {
+      const groups = await tx.studentGroup.findMany({
+        where: { academicYearId: dto.academicYearId },
+        select: { id: true, gradeLevel: true, kind: true },
+      });
+      for (const group of groups) {
+        gradeOfGroup.set(group.id, group.gradeLevel);
+        // Classes only, and with a year. A teaching group is nobody's home
+        // and has no year of its own, so a rast published to it would be a
+        // second copy of a break its members already have through their
+        // class — the same answer the meal's own persist gives.
+        if (group.kind === 'CLASS' && typeof group.gradeLevel === 'number') {
+          classIds.push(group.id);
         }
+      }
+    }
 
-        const timezone = year.school.timezone;
-        const yearStart = toDateString(year.startDate);
-        const yearEnd = toDateString(year.endDate);
-        const today = toDateString(new Date());
+    /**
+     * Is this class inside the break — that is, off school that day?
+     *
+     * Both bounds null is the ordinary lov: the whole school, answered
+     * without asking any group about its year. A span narrows it to prao
+     * för åk 9 or a studiedag for the lower years, and then the group's own
+     * year has to sit inside it. A group that has no year — a nivågrupp
+     * drawn across several — cannot be shown to be inside, so its lesson
+     * survives: the same call the GRADE_LEVEL closure makes below, for the
+     * same reason, that erasing a lesson on a guess is the worse mistake.
+     */
+    const breakCoversGroup = (
+      entry: { minGradeLevel: number | null; maxGradeLevel: number | null },
+      studentGroupId: string,
+    ): boolean => breakCoversGrade(entry, gradeOfGroup.get(studentGroupId));
 
-        const fromDate = clampDate(dto.fromDate ?? maxDate(yearStart, today), yearStart, yearEnd);
-        const toDate = clampDate(dto.toDate ?? yearEnd, yearStart, yearEnd);
-        if (fromDate > toDate) {
-          throw new BadRequestException('fromDate must not be after toDate.');
-        }
+    // The class-level skips — the lov above and a dated class or grade
+    // closure — are publish-days.ts's, the one rule the timplan's
+    // projection walks the rest of the year by.
+    const skipContext: PublishDaysContext = { breakDays, closuresByDate, gradeOfGroup, timezone };
 
-        const masterLessons = await tx.masterLesson.findMany({
-          // A parked lesson is not on the timetable, so it is not on the
-          // calendar either. Its remembered slot is not a placement.
-          where: { academicYearId: dto.academicYearId, isParked: false },
-          select: {
-            id: true,
-            subjectId: true,
-            studentGroupId: true,
-            teacherId: true,
-        coTeacherId: true,
-        extraGroups: { select: { studentGroupId: true } },
-        participants: { select: { studentId: true } },
-            roomId: true,
-            recurrence: true,
-            startDate: true,
-            endDate: true,
-            dayOfWeek: true,
-            startTime: true,
-            endTime: true,
-          },
-        });
-        if (masterLessons.length === 0) {
-          throw new BadRequestException(
-            'No master timetable exists for this academic year. Generate a schedule first.',
-          );
-        }
+    let created = 0;
+    let cancelled = 0;
+    let skipped = 0;
+    const pendingCreates: Array<() => Promise<unknown>> = [];
 
-        // Group templates by ISO weekday for fast per-date lookup.
-        const byWeekday = new Map<number, typeof masterLessons>();
-        for (const lesson of masterLessons) {
-          const list = byWeekday.get(lesson.dayOfWeek) ?? [];
-          list.push(lesson);
-          byWeekday.set(lesson.dayOfWeek, list);
-        }
+    /*
+     * The meals, dated by the very same walk the lessons take.
+     *
+     * Deriving "which days does this school teach" a second time — in the
+     * pupil portal, the guardian portal and the day planner — is how the
+     * lov stops being honoured in two of the three. Here the break check
+     * below is the same object, the same `breakCoversGroup`, and the same
+     * date string.
+     *
+     * Their own table, not CalendarLessons: everything downstream of that
+     * one assumes teaching. SS12000 stamps every row `activityType:
+     * 'Undervisning'` and would report lunch to the kommun as a lesson, and
+     * the absence notice would tell a guardian their child was away from
+     * "Lunch". Both are read straight from the browser through PostgREST
+     * with no server DTO to filter at.
+     */
+    const sittings = await tx.lunchSitting.findMany({
+      where: { academicYearId: dto.academicYearId },
+      select: {
+        studentGroupId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+    const sittingsByWeekday = new Map<number, typeof sittings>();
+    for (const sitting of sittings) {
+      const list = sittingsByWeekday.get(sitting.dayOfWeek);
+      if (list) list.push(sitting);
+      else sittingsByWeekday.set(sitting.dayOfWeek, [sitting]);
+    }
+    let lunchesCreated = 0;
+    let rastsCreated = 0;
 
-        // Existing materializations in the window (idempotency set).
-        const existing = await tx.calendarLesson.findMany({
-          where: {
-            masterLessonId: { in: masterLessons.map((lesson) => lesson.id) },
-            date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
-          },
-          select: { masterLessonId: true, date: true },
-        });
-        const existingKeys = new Set(
-          existing.map((row) => `${row.masterLessonId}:${toDateString(row.date)}`),
-        );
+    /*
+     * The window's rasts are cleared before they are written.
+     *
+     * An upsert alone keeps a rast the school has DELETED: nothing would
+     * ever remove the row, and a pupil would go on being told about a break
+     * that no longer exists. Delete-then-create is safe here for the reason
+     * it is not safe for a lesson — a CalendarRast carries no attendance,
+     * no status and no participants, so there is nothing in it to lose.
+     *
+     * Scoped to this publish's own window and this year's classes, so a
+     * republish of one week does not touch another.
+     */
+    {
+      await tx.calendarRast.deleteMany({
+        where: {
+          studentGroup: { is: { academicYearId: dto.academicYearId } },
+          date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
+        },
+      });
+    }
 
-        /*
-         * Every dated closure in the window, not only whole-day class holidays.
-         *
-         * This used to ask for STUDENT_GROUP rows and then throw away anything
-         * that was not a full day, so a teacher marked away on a Tuesday, or a
-         * room closed for two hours, was materialised over regardless: the
-         * school had said the lesson could not be held and the calendar said it
-         * would be.
-         *
-         * PREFERRED_FREE and PREFERRED_BUSY stay out on purpose. They are
-         * wishes the solver trades off, not statements that a date cannot be
-         * held, and treating a wish as a closure would silently delete lessons
-         * a school only nudged.
-         */
-        const closures = await tx.availabilityConstraint.findMany({
-          where: {
-            type: 'UNAVAILABLE',
-            date: { not: null, gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
-          },
-          select: {
-            resourceType: true,
-            userId: true,
-            roomId: true,
-            studentGroupId: true,
-            minGradeLevel: true,
-            maxGradeLevel: true,
-            date: true,
-            startTime: true,
-            endTime: true,
-          },
-        });
-        const closuresByDate = closuresByDateOf(closures);
+    for (const date of iterateDates(fromDate, toDate)) {
+      const weekday = isoWeekday(date);
 
-        /*
-         * Lov och studiedagar overlapping the window.
-         *
-         * A break is a named range belonging to the school rather than to a
-         * resource, which is exactly why it is a second query and not more
-         * rows in the one above: a constraint names ONE resource on ONE date
-         * and can say "åk 7 cannot be taught on the 26th", but nothing in
-         * `ConstraintResource` means "everybody", and a sportlov entered that
-         * way was a row per day per group.
-         *
-         * `kind` is not selected, and that is the point: HOLIDAY and STAFF_DAY
-         * suppress identically. What separates them is what the day MEANS for
-         * staff — a studiedag is a working day, a jullov is not — not whether
-         * anyone is taught, and nobody is taught on either. Do not add a branch
-         * on it here; the reports that count the two apart read the breaks.
-         */
-        const breaks = await tx.schoolBreak.findMany({
-          where: {
-            academicYearId: dto.academicYearId,
-            // Inclusive at both ends, so overlap is start<=windowEnd and
-            // end>=windowStart — not containment. A jullov that begins before
-            // the window still closes the days of it that fall inside.
-            startDate: { lte: parseUtcDate(toDate) },
-            endDate: { gte: parseUtcDate(fromDate) },
-          },
-          select: {
-            startDate: true,
-            endDate: true,
-            minGradeLevel: true,
-            maxGradeLevel: true,
-          },
-        });
-
-        /*
-         * Expanded onto local calendar days, clipped to the window.
-         *
-         * The dates are the unit the loop below walks in and the unit each
-         * `startsAt` is BUILT from, so a break and a lesson meet here as two
-         * "YYYY-MM-DD" strings and never as a range and an instant. Testing
-         * the instant against the range is the off-by-a-day this keeps out:
-         * 22:15Z on the 25th is a lesson at 00:15 on the 26th in Stockholm,
-         * and a lov starting the 26th has to take it. Same trap `coversTime`
-         * exists for, one level up.
-         *
-         * Expanding rather than scanning the ranges per date because a läsår
-         * holds a few dozen breaks against a couple of hundred dates, and the
-         * map keeps the shape of `closuresByDate` right above it.
-         */
-        const breakDays = breakDaysOf(breaks, fromDate, toDate);
-
-        // The year of each class, for GRADE_LEVEL closures and for breaks that
-        // narrow themselves to a span of years. Read only when something in the
-        // window actually asks the question, so an ordinary publish — no grade
-        // closures, a school-wide lov — still pays nothing for it.
-        //
-        // The rasts add a third reason to want it, and an unconditional one: a
-        // rast is declared for a SPAN OF YEARS and published to a CLASS, so the
-        // walk below cannot start without knowing which year each class is in.
-        const rasts = await tx.rast.findMany({
-          where: { school: { academicYears: { some: { id: dto.academicYearId } } } },
-          select: {
-            name: true,
-            minGradeLevel: true,
-            maxGradeLevel: true,
-            dayOfWeek: true,
-            startTime: true,
-            endTime: true,
-          },
-        });
-
-        const gradeOfGroup = new Map<string, number | null>();
-        const classIds: string[] = [];
+      for (const sitting of sittingsByWeekday.get(weekday) ?? []) {
+        // The class is not in school, so there is no meal to serve — the
+        // same answer, and the same call, the lessons make below.
         if (
-          rasts.length > 0 ||
-          closures.some((closure) => closure.resourceType === 'GRADE_LEVEL') ||
-          breaks.some(
-            (entry) => entry.minGradeLevel !== null || entry.maxGradeLevel !== null,
+          (breakDays.get(date) ?? []).some((entry) =>
+            breakCoversGroup(entry, sitting.studentGroupId),
           )
         ) {
-          const groups = await tx.studentGroup.findMany({
-            where: { academicYearId: dto.academicYearId },
-            select: { id: true, gradeLevel: true, kind: true },
-          });
-          for (const group of groups) {
-            gradeOfGroup.set(group.id, group.gradeLevel);
-            // Classes only, and with a year. A teaching group is nobody's home
-            // and has no year of its own, so a rast published to it would be a
-            // second copy of a break its members already have through their
-            // class — the same answer the meal's own persist gives.
-            if (group.kind === 'CLASS' && typeof group.gradeLevel === 'number') {
-              classIds.push(group.id);
-            }
-          }
+          continue;
         }
-
-        /**
-         * Is this class inside the break — that is, off school that day?
-         *
-         * Both bounds null is the ordinary lov: the whole school, answered
-         * without asking any group about its year. A span narrows it to prao
-         * för åk 9 or a studiedag for the lower years, and then the group's own
-         * year has to sit inside it. A group that has no year — a nivågrupp
-         * drawn across several — cannot be shown to be inside, so its lesson
-         * survives: the same call the GRADE_LEVEL closure makes below, for the
-         * same reason, that erasing a lesson on a guess is the worse mistake.
-         */
-        const breakCoversGroup = (
-          entry: { minGradeLevel: number | null; maxGradeLevel: number | null },
-          studentGroupId: string,
-        ): boolean => breakCoversGrade(entry, gradeOfGroup.get(studentGroupId));
-
-        // The class-level skips — the lov above and a dated class or grade
-        // closure — are publish-days.ts's, the one rule the timplan's
-        // projection walks the rest of the year by.
-        const skipContext: PublishDaysContext = { breakDays, closuresByDate, gradeOfGroup, timezone };
-
-        let created = 0;
-        let cancelled = 0;
-        let skipped = 0;
-        const pendingCreates: Array<() => Promise<unknown>> = [];
-
         /*
-         * The meals, dated by the very same walk the lessons take.
+         * REPLACED, not skipped.
          *
-         * Deriving "which days does this school teach" a second time — in the
-         * pupil portal, the guardian portal and the day planner — is how the
-         * lov stops being honoured in two of the three. Here the break check
-         * below is the same object, the same `breakCoversGroup`, and the same
-         * date string.
+         * This used to read the already-materialised meals into a set and
+         * `continue` past every one of them, calling it "the same
+         * idempotency the lessons get from existingKeys". It is not the
+         * same, and the difference is the whole bug: a CalendarLesson may
+         * carry AttendanceRecords, so rewriting one would rewrite what
+         * happened and skipping is the only honest answer. A CalendarLunch
+         * carries no attendance, no status and no participants — nothing
+         * about it records the past — so when the sitting has moved, the
+         * published meal is simply out of date, and skipping it kept last
+         * month's lunch time on a pupil's phone for ever.
          *
-         * Their own table, not CalendarLessons: everything downstream of that
-         * one assumes teaching. SS12000 stamps every row `activityType:
-         * 'Undervisning'` and would report lunch to the kommun as a lesson, and
-         * the absence notice would tell a guardian their child was away from
-         * "Lunch". Both are read straight from the browser through PostgREST
-         * with no server DTO to filter at.
+         * Upsert rather than delete-then-create so the (group, date) unique
+         * key is what makes it idempotent, rather than an ordering this
+         * loop would have to maintain.
          */
-        const sittings = await tx.lunchSitting.findMany({
-          where: { academicYearId: dto.academicYearId },
-          select: {
-            studentGroupId: true,
-            dayOfWeek: true,
-            startTime: true,
-            endTime: true,
-          },
-        });
-        const sittingsByWeekday = new Map<number, typeof sittings>();
-        for (const sitting of sittings) {
-          const list = sittingsByWeekday.get(sitting.dayOfWeek);
-          if (list) list.push(sitting);
-          else sittingsByWeekday.set(sitting.dayOfWeek, [sitting]);
-        }
-        let lunchesCreated = 0;
-        let rastsCreated = 0;
-
-        /*
-         * The window's rasts are cleared before they are written.
-         *
-         * An upsert alone keeps a rast the school has DELETED: nothing would
-         * ever remove the row, and a pupil would go on being told about a break
-         * that no longer exists. Delete-then-create is safe here for the reason
-         * it is not safe for a lesson — a CalendarRast carries no attendance,
-         * no status and no participants, so there is nothing in it to lose.
-         *
-         * Scoped to this publish's own window and this year's classes, so a
-         * republish of one week does not touch another.
-         */
-        {
-          await tx.calendarRast.deleteMany({
-            where: {
-              studentGroup: { is: { academicYearId: dto.academicYearId } },
-              date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
-            },
-          });
-        }
-
-        for (const date of iterateDates(fromDate, toDate)) {
-          const weekday = isoWeekday(date);
-
-          for (const sitting of sittingsByWeekday.get(weekday) ?? []) {
-            // The class is not in school, so there is no meal to serve — the
-            // same answer, and the same call, the lessons make below.
-            if (
-              (breakDays.get(date) ?? []).some((entry) =>
-                breakCoversGroup(entry, sitting.studentGroupId),
-              )
-            ) {
-              continue;
-            }
-            /*
-             * REPLACED, not skipped.
-             *
-             * This used to read the already-materialised meals into a set and
-             * `continue` past every one of them, calling it "the same
-             * idempotency the lessons get from existingKeys". It is not the
-             * same, and the difference is the whole bug: a CalendarLesson may
-             * carry AttendanceRecords, so rewriting one would rewrite what
-             * happened and skipping is the only honest answer. A CalendarLunch
-             * carries no attendance, no status and no participants — nothing
-             * about it records the past — so when the sitting has moved, the
-             * published meal is simply out of date, and skipping it kept last
-             * month's lunch time on a pupil's phone for ever.
-             *
-             * Upsert rather than delete-then-create so the (group, date) unique
-             * key is what makes it idempotent, rather than an ordering this
-             * loop would have to maintain.
-             */
-            const startsAt = zonedTimeToUtc(
-              date,
-              timeToString(sitting.startTime),
-              timezone,
-            );
-            const endsAt = zonedTimeToUtc(date, timeToString(sitting.endTime), timezone);
-            pendingCreates.push(() =>
-              tx.calendarLunch.upsert({
-                where: {
-                  studentGroupId_date: {
-                    studentGroupId: sitting.studentGroupId,
-                    date: parseUtcDate(date),
-                  },
-                },
-                update: { startsAt, endsAt },
-                create: {
-                  schoolId,
-                  studentGroupId: sitting.studentGroupId,
-                  date: parseUtcDate(date),
-                  startsAt,
-                  endsAt,
-                },
-              }),
-            );
-            lunchesCreated++;
-          }
-
-          /*
-           * The rasts, in the same walk and through the same lov question.
-           *
-           * Resolved per class rather than per span because that is what a
-           * pupil reads, and resolved through rastsForSpan so the every-day and
-           * weekday rows compose by the ONE rule the engine also applies — a
-           * second reading of "which rasts does this stage have on a Friday"
-           * would be the third copy, and the one that drifts.
-           */
-          for (const studentGroupId of classIds) {
-            const grade = gradeOfGroup.get(studentGroupId);
-            if (typeof grade !== 'number') continue;
-            if (
-              (breakDays.get(date) ?? []).some((entry) =>
-                breakCoversGroup(entry, studentGroupId),
-              )
-            ) {
-              continue;
-            }
-            for (const rast of rastsForSpan(rasts, grade, weekday)) {
-              const startsAt = zonedTimeToUtc(date, timeToString(rast.startTime), timezone);
-              const endsAt = zonedTimeToUtc(date, timeToString(rast.endTime), timezone);
-              pendingCreates.push(() =>
-                tx.calendarRast.create({
-                  data: {
-                    schoolId,
-                    studentGroupId,
-                    name: rast.name,
-                    date: parseUtcDate(date),
-                    startsAt,
-                    endsAt,
-                  },
-                }),
-              );
-              rastsCreated++;
-            }
-          }
-
-          const templates = byWeekday.get(weekday);
-          if (!templates) continue;
-
-          for (const template of templates) {
-            // Alternating weeks and half-term subjects are decided here, when
-            // the weekly template becomes dated lessons — see
-            // lesson-recurrence.ts for the rule the conflict checker shares.
-            if (!runsOn(template, parseUtcDate(date))) continue;
-
-            // First, always: an already-materialised row may carry attendance,
-            // and rewriting it would rewrite what happened.
-            if (existingKeys.has(`${template.id}:${date}`)) {
-              skipped++;
-              continue;
-            }
-
-            /*
-             * Then the class itself, before anything is asked about teachers
-             * or rooms: a lov, or a dated closure of the class or its årskurs
-             * over the lesson's hours. The class is not in school, so there is
-             * no lesson to hold and nobody to cancel one for — and a class
-             * closure outranks a resource closure.
-             */
-            if (publishSkips(template, date, skipContext) !== null) {
-              skipped++;
-              continue;
-            }
-
-            const startsAt = zonedTimeToUtc(date, timeToString(template.startTime), timezone);
-            const endsAt = zonedTimeToUtc(date, timeToString(template.endTime), timezone);
-
-            /*
-             * Who is unavailable decides what to write, and the split is the
-             * point. If the CLASS is away — lov, studiedag, PRAO — nothing was
-             * written (above). If the teacher or the room is spoken for, the
-             * class is still here: the lesson is written CANCELLED so the
-             * pupils' schedule says what happened and the substitute workflow,
-             * which searches the calendar by teacher and date, can find it.
-             */
-            let blocked: 'teacher' | 'room' | null = null;
-            for (const closure of closuresByDate.get(date) ?? []) {
-              if (!coversTime(closure, date, startsAt, endsAt, timezone)) continue;
-
-              if (
-                closure.resourceType === 'TEACHER' &&
-                closure.userId !== null &&
-                (closure.userId === template.teacherId ||
-                  closure.userId === template.coTeacherId)
-              ) {
-                blocked = blocked ?? 'teacher';
-              }
-              if (
-                closure.resourceType === 'ROOM' &&
-                closure.roomId !== null &&
-                closure.roomId === template.roomId
-              ) {
-                blocked = blocked ?? 'room';
-              }
-            }
-
-            // Never the constraint's own `reason`: that field holds "sjukskriven",
-            // and `note` is read by every pupil and guardian. The cause goes
-            // beside it as a category, for the timplan's lost-minutes split.
-            const cancelledNote =
-              blocked === 'teacher' ? PUBLISH_NOTE_TEACHER_UNAVAILABLE : PUBLISH_NOTE_ROOM_UNAVAILABLE;
-            const cancelCause = blocked === 'teacher' ? 'TEACHER_UNAVAILABLE' : 'ROOM_UNAVAILABLE';
-
-            pendingCreates.push(() =>
-              tx.calendarLesson.create({
-                data: {
-                  schoolId,
-                  masterLessonId: template.id,
-                  subjectId: template.subjectId,
-                  studentGroupId: template.studentGroupId,
-                  roomId: template.roomId,
-                  date: parseUtcDate(date),
-                  startsAt,
-                  endsAt,
-                  status: blocked === null ? 'SCHEDULED' : 'CANCELLED',
-                  ...(blocked === null ? {} : { note: cancelledNote, cancelCause }),
-                  ...(template.extraGroups.length > 0
-                    ? {
-                        extraGroups: {
-                          create: template.extraGroups.map((entry) => ({
-                            schoolId,
-                            studentGroupId: entry.studentGroupId,
-                          })),
-                        },
-                      }
-                    : {}),
-                  ...(template.participants.length > 0
-                    ? {
-                        participants: {
-                          create: template.participants.map((entry) => ({
-                            schoolId,
-                            studentId: entry.studentId,
-                          })),
-                        },
-                      }
-                    : {}),
-                  ...(template.teacherId || template.coTeacherId
-                    ? {
-                        teachers: {
-                          create: [
-                            ...(template.teacherId
-                              ? [{ schoolId, teacherId: template.teacherId, role: 'LEAD' as const }]
-                              : []),
-                            ...(template.coTeacherId
-                              ? [
-                                  {
-                                    schoolId,
-                                    teacherId: template.coTeacherId,
-                                    role: 'ASSISTANT' as const,
-                                  },
-                                ]
-                              : []),
-                          ],
-                        },
-                      }
-                    : {}),
-                },
-                select: { id: true },
-              }),
-            );
-            if (blocked === null) created++;
-            else cancelled++;
-          }
-        }
-
-        // Insert in modest chunks to keep transaction round-trips reasonable.
-        for (let i = 0; i < pendingCreates.length; i += 50) {
-          await Promise.all(pendingCreates.slice(i, i + 50).map((run) => run()));
-        }
-
-        this.logger.log(
-          `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, lunches=${lunchesCreated}, rasts=${rastsCreated}, skipped=${skipped}]`,
+        const startsAt = zonedTimeToUtc(
+          date,
+          timeToString(sitting.startTime),
+          timezone,
         );
+        const endsAt = zonedTimeToUtc(date, timeToString(sitting.endTime), timezone);
+        pendingCreates.push(() =>
+          tx.calendarLunch.upsert({
+            where: {
+              studentGroupId_date: {
+                studentGroupId: sitting.studentGroupId,
+                date: parseUtcDate(date),
+              },
+            },
+            update: { startsAt, endsAt },
+            create: {
+              schoolId,
+              studentGroupId: sitting.studentGroupId,
+              date: parseUtcDate(date),
+              startsAt,
+              endsAt,
+            },
+          }),
+        );
+        lunchesCreated++;
+      }
 
-        return { created, cancelled, skipped, fromDate, toDate };
-      },
-      { timeoutMs: 120_000 },
+      /*
+       * The rasts, in the same walk and through the same lov question.
+       *
+       * Resolved per class rather than per span because that is what a
+       * pupil reads, and resolved through rastsForSpan so the every-day and
+       * weekday rows compose by the ONE rule the engine also applies — a
+       * second reading of "which rasts does this stage have on a Friday"
+       * would be the third copy, and the one that drifts.
+       */
+      for (const studentGroupId of classIds) {
+        const grade = gradeOfGroup.get(studentGroupId);
+        if (typeof grade !== 'number') continue;
+        if (
+          (breakDays.get(date) ?? []).some((entry) =>
+            breakCoversGroup(entry, studentGroupId),
+          )
+        ) {
+          continue;
+        }
+        for (const rast of rastsForSpan(rasts, grade, weekday)) {
+          const startsAt = zonedTimeToUtc(date, timeToString(rast.startTime), timezone);
+          const endsAt = zonedTimeToUtc(date, timeToString(rast.endTime), timezone);
+          pendingCreates.push(() =>
+            tx.calendarRast.create({
+              data: {
+                schoolId,
+                studentGroupId,
+                name: rast.name,
+                date: parseUtcDate(date),
+                startsAt,
+                endsAt,
+              },
+            }),
+          );
+          rastsCreated++;
+        }
+      }
+
+      const templates = byWeekday.get(weekday);
+      if (!templates) continue;
+
+      for (const template of templates) {
+        // Alternating weeks and half-term subjects are decided here, when
+        // the weekly template becomes dated lessons — see
+        // lesson-recurrence.ts for the rule the conflict checker shares.
+        if (!runsOn(template, parseUtcDate(date))) continue;
+
+        // First, always: an already-materialised row may carry attendance,
+        // and rewriting it would rewrite what happened.
+        if (existingKeys.has(`${template.id}:${date}`)) {
+          skipped++;
+          continue;
+        }
+
+        /*
+         * Then the class itself, before anything is asked about teachers
+         * or rooms: a lov, or a dated closure of the class or its årskurs
+         * over the lesson's hours. The class is not in school, so there is
+         * no lesson to hold and nobody to cancel one for — and a class
+         * closure outranks a resource closure.
+         */
+        if (publishSkips(template, date, skipContext) !== null) {
+          skipped++;
+          continue;
+        }
+
+        const startsAt = zonedTimeToUtc(date, timeToString(template.startTime), timezone);
+        const endsAt = zonedTimeToUtc(date, timeToString(template.endTime), timezone);
+
+        /*
+         * Who is unavailable decides what to write, and the split is the
+         * point. If the CLASS is away — lov, studiedag, PRAO — nothing was
+         * written (above). If the teacher or the room is spoken for, the
+         * class is still here: the lesson is written CANCELLED so the
+         * pupils' schedule says what happened and the substitute workflow,
+         * which searches the calendar by teacher and date, can find it.
+         */
+        let blocked: 'teacher' | 'room' | null = null;
+        for (const closure of closuresByDate.get(date) ?? []) {
+          if (!coversTime(closure, date, startsAt, endsAt, timezone)) continue;
+
+          if (
+            closure.resourceType === 'TEACHER' &&
+            closure.userId !== null &&
+            (closure.userId === template.teacherId ||
+              closure.userId === template.coTeacherId)
+          ) {
+            blocked = blocked ?? 'teacher';
+          }
+          if (
+            closure.resourceType === 'ROOM' &&
+            closure.roomId !== null &&
+            closure.roomId === template.roomId
+          ) {
+            blocked = blocked ?? 'room';
+          }
+        }
+
+        // Never the constraint's own `reason`: that field holds "sjukskriven",
+        // and `note` is read by every pupil and guardian. The cause goes
+        // beside it as a category, for the timplan's lost-minutes split.
+        const cancelledNote =
+          blocked === 'teacher' ? PUBLISH_NOTE_TEACHER_UNAVAILABLE : PUBLISH_NOTE_ROOM_UNAVAILABLE;
+        const cancelCause = blocked === 'teacher' ? 'TEACHER_UNAVAILABLE' : 'ROOM_UNAVAILABLE';
+
+        pendingCreates.push(() =>
+          tx.calendarLesson.create({
+            data: {
+              schoolId,
+              masterLessonId: template.id,
+              subjectId: template.subjectId,
+              studentGroupId: template.studentGroupId,
+              roomId: template.roomId,
+              date: parseUtcDate(date),
+              startsAt,
+              endsAt,
+              status: blocked === null ? 'SCHEDULED' : 'CANCELLED',
+              ...(blocked === null ? {} : { note: cancelledNote, cancelCause }),
+              ...(template.extraGroups.length > 0
+                ? {
+                    extraGroups: {
+                      create: template.extraGroups.map((entry) => ({
+                        schoolId,
+                        studentGroupId: entry.studentGroupId,
+                      })),
+                    },
+                  }
+                : {}),
+              ...(template.participants.length > 0
+                ? {
+                    participants: {
+                      create: template.participants.map((entry) => ({
+                        schoolId,
+                        studentId: entry.studentId,
+                      })),
+                    },
+                  }
+                : {}),
+              ...(template.teacherId || template.coTeacherId
+                ? {
+                    teachers: {
+                      create: [
+                        ...(template.teacherId
+                          ? [{ schoolId, teacherId: template.teacherId, role: 'LEAD' as const }]
+                          : []),
+                        ...(template.coTeacherId
+                          ? [
+                              {
+                                schoolId,
+                                teacherId: template.coTeacherId,
+                                role: 'ASSISTANT' as const,
+                              },
+                            ]
+                          : []),
+                      ],
+                    },
+                  }
+                : {}),
+            },
+            select: { id: true },
+          }),
+        );
+        if (blocked === null) created++;
+        else cancelled++;
+      }
+    }
+
+    // Insert in modest chunks to keep transaction round-trips reasonable.
+    for (let i = 0; i < pendingCreates.length; i += 50) {
+      await Promise.all(pendingCreates.slice(i, i + 50).map((run) => run()));
+    }
+
+    this.logger.log(
+      `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, lunches=${lunchesCreated}, rasts=${rastsCreated}, skipped=${skipped}]`,
     );
+
+    return { created, cancelled, skipped, fromDate, toDate };
   }
 }

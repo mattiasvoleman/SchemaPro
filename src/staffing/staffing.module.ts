@@ -45,5 +45,7 @@ import { TeacherDutiesService } from './teacher-duties.service';
     StaffingLoadService,
     TeacherDutiesService,
   ],
+  // The publish gate PUB_STAFFING_REFUSE reads the load report (src/publication).
+  exports: [StaffingLoadService],
 })
 export class StaffingModule {}
