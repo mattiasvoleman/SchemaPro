@@ -38,6 +38,8 @@ export interface DraftWindow {
   timezone: string;
   validFrom: string;
   validTo: string;
+  /** The year's last day: a validTo there splits no week, nothing follows it. */
+  yearEnd?: string;
   /** The year's masters, the draft, as published-grundschema.ts reads them. */
   masters: readonly PublishedMaster[];
   now: Date;
@@ -51,7 +53,10 @@ export interface DraftCarry {
   adopted: number;
   /** Rows the publish removes that carried a vikarie, a room change or a note. */
   lostDayOperations: LostDayOperation[];
-  /** Masters changing weekday across a validFrom that is not a Monday. */
+  /**
+   * Masters changing weekday across a validFrom that is not a Monday, or a
+   * validTo that is not a Sunday: that week's lesson is dropped or doubled.
+   */
   weekSplit: GateEntry[];
   /** The masters whose published rows moved or went: their classes are told. */
   changedMasterIds: string[];
@@ -99,6 +104,21 @@ export async function landingContextOf(
   };
 }
 
+/**
+ * Whether a master moving from weekday `a` to weekday `b` crosses an edge of
+ * the range that falls inside a week: validFrom after a Monday, or validTo
+ * before a Sunday (and before the year's last day, after which nothing is).
+ */
+export function crossesWeekEdge(
+  window: Pick<DraftWindow, 'validFrom' | 'validTo' | 'yearEnd'>,
+  a: number,
+  b: number,
+): boolean {
+  const fromDay = isoWeekday(window.validFrom);
+  const toDay = window.validTo === window.yearEnd ? 7 : isoWeekday(window.validTo);
+  return (fromDay !== 1 && a < fromDay !== b < fromDay) || (toDay !== 7 && a > toDay !== b > toDay);
+}
+
 /** Steps 3–5 of the publish: move what changed, then settle what the draft deleted. */
 export async function carryDraft(tx: PrismaClient, window: DraftWindow): Promise<DraftCarry> {
   const carry: DraftCarry = {
@@ -116,7 +136,12 @@ export async function carryDraft(tx: PrismaClient, window: DraftWindow): Promise
   const segments = effectiveSegments(await snapshotRanges(tx, window.academicYearId)).filter(
     (segment) => segment.to >= window.validFrom && segment.from <= window.validTo,
   );
-  const midWeek = isoWeekday(window.validFrom) !== 1;
+  // A week is split where the range begins or ends inside it. A changed
+  // master crosses such an edge when its old and its new weekday fall on
+  // opposite sides of it: the rows on the far side belong to another
+  // segment and are never written (propagate-template.ts, 'publish'), so the
+  // week keeps the old day's lesson as well as the new one, or neither.
+  const crossesEdge = (a: number, b: number): boolean => crossesWeekEdge(window, a, b);
   const split = new Set<string>();
   const changed = new Set<string>();
 
@@ -160,7 +185,7 @@ export async function carryDraft(tx: PrismaClient, window: DraftWindow): Promise
       carry.movedIds.push(...result.movedIds);
       carry.lostDayOperations.push(...result.lostDayOperations);
       if (result.moved + result.removed > 0) changed.add(after.id);
-      if (midWeek && before.dayOfWeek !== after.dayOfWeek && !split.has(after.id)) {
+      if (crossesEdge(before.dayOfWeek, after.dayOfWeek) && !split.has(after.id)) {
         split.add(after.id);
         carry.weekSplit.push({
           label: `${after.subject.name} · ${after.studentGroup.name}: ${WEEKDAY[before.dayOfWeek]} → ${WEEKDAY[after.dayOfWeek]}`,

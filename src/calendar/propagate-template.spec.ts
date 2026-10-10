@@ -141,6 +141,51 @@ describe('propagateTemplateChange', () => {
     expect(result.cancelled).toBe(1);
   });
 
+  it("'publish' shifts from the row's own weekday, so a row an earlier publish moved is not moved again", async () => {
+    // The snapshot says Tuesday, the template Wednesday; the 10-21 row already
+    // stands on Wednesday (an earlier, shorter publish carried it there).
+    tx.calendarLesson.findMany.mockResolvedValue([
+      { id: 'tue', date: day('2026-10-20'), roomId: OLD_ROOM, note: null, teachers: [] },
+      { id: 'already-wed', date: day('2026-10-21'), roomId: OLD_ROOM, note: null, teachers: [] },
+    ]);
+    await run('publish');
+    const dates = Object.fromEntries(
+      tx.calendarLesson.update.mock.calls.map(([arg]: [{ where: { id: string }; data: { date: Date } }]) => [arg.where.id, arg.data.date]),
+    );
+    expect(dates).toEqual({ tue: day('2026-10-21'), 'already-wed': day('2026-10-21') });
+  });
+
+  it("'publish' never lands a row outside the range: a weekday move across either edge removes it", async () => {
+    tx.calendarLesson.findMany.mockResolvedValue([
+      // Thursday 15 Oct → Monday 12 Oct, before the range's Tuesday start.
+      { id: 'across-from', date: day('2026-10-15'), roomId: OLD_ROOM, note: null, teachers: [] },
+      // Monday 26 Oct → Thursday 29 Oct, after the range's Wednesday end.
+      { id: 'across-to', date: day('2026-10-26'), roomId: OLD_ROOM, note: null, teachers: [] },
+    ]);
+    const result = await propagateTemplateChange(
+      tx as unknown as PrismaClient,
+      { ...before, dayOfWeek: 4 },
+      { ...after, dayOfWeek: 1 },
+      { timezone: 'Europe/Stockholm', schoolId: 'school', mode: 'publish', range: { from: '2026-10-13', to: '2026-10-28' }, landing: landing(), now: NOW },
+    );
+    // across-from lands on Mon 12 Oct; across-to on Mon 26 Oct, inside.
+    expect(result).toMatchObject({ moved: 1, removed: 1, movedIds: ['across-to'] });
+    expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['across-from'] } } });
+
+    tx = createTxMock();
+    tx.calendarLesson.findMany.mockResolvedValue([
+      { id: 'across-to', date: day('2026-10-26'), roomId: OLD_ROOM, note: null, teachers: [] },
+    ]);
+    const forward = await propagateTemplateChange(
+      tx as unknown as PrismaClient,
+      { ...before, dayOfWeek: 1 },
+      { ...after, dayOfWeek: 4 },
+      { timezone: 'Europe/Stockholm', schoolId: 'school', mode: 'publish', range: { from: '2026-10-13', to: '2026-10-28' }, landing: landing(), now: NOW },
+    );
+    expect(forward).toMatchObject({ moved: 0, removed: 1 });
+    expect(tx.calendarLesson.update).not.toHaveBeenCalled();
+  });
+
   it("'publish' never carries a row into the past", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([
       // Tuesday 13 Oct 08:00 → Wednesday is ahead, but a Monday move would not be.
