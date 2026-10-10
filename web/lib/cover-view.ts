@@ -160,7 +160,7 @@ const REFUSED_PICK = new Set(["BUSY_LESSON", "ABSENT", "ON_LESSON", "INACTIVE"])
 export function otherTeacherOptions<T extends { id: string }>(
   teachers: readonly T[],
   item: Pick<BoardItem, "teachers"> | null,
-  data: { candidates: { userId: string }[]; excluded: { userId: string; codes: { code: string }[] }[] } | undefined,
+  data: { candidates: { userId: string }[]; excluded: { userId: string; codes: CoverMessage[] }[] } | undefined,
 ): T[] {
   const left = new Set([
     ...(data?.candidates ?? []).map((candidate) => candidate.userId),

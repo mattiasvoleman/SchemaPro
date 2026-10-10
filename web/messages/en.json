@@ -3520,7 +3520,9 @@
       "POOL": "Substitute pool"
     },
     "total": "Total {minutes} min ({hours} hours)",
-    "privacy": "The files say who covered when – not who was away or why. No reason, no absence and no replaced teacher is in them."
+    "privacy": "The files say who covered when – not who was away or why. No reason, no absence and no replaced teacher is in them.",
+    "toCheckTitle": "Check before payroll",
+    "toCheckBody": "{count, plural, one {# cover} other {# covers}} stand in the calendar on a substitute who was registered away themself then. They are not in the files – correct the calendar if someone else held the lesson."
   },
   "teacherCover": {
     "title": "Cover and absence",

@@ -3520,7 +3520,9 @@
       "POOL": "Vikariepool"
     },
     "total": "Totalt {minutes} min ({hours} timmar)",
-    "privacy": "Filerna säger vem som vikarierade när – inte vem som var borta eller varför. Ingen orsak, ingen frånvaro och ingen ersatt lärare finns i dem."
+    "privacy": "Filerna säger vem som vikarierade när – inte vem som var borta eller varför. Ingen orsak, ingen frånvaro och ingen ersatt lärare finns i dem.",
+    "toCheckTitle": "Kontrollera innan lönen",
+    "toCheckBody": "{count, plural, one {# pass} other {# pass}} står i kalendern på en vikarie som själv var registrerad som borta då. De finns inte i filerna – rätta kalendern om någon annan höll lektionen."
   },
   "teacherCover": {
     "title": "Vikariepass och frånvaro",

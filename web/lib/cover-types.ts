@@ -190,6 +190,8 @@ export interface Hours {
   rows: HoursRow[];
   summary: { userId: string; kind: CoverPersonKind; lessons: number; minutes: number }[];
   planned: { userId: string; lessons: number; minutes: number }[];
+  /** Held covers credited to a substitute who was away themself: left out of `rows`, to check. */
+  toCheck: HoursRow[];
 }
 
 /** AvailabilityView: a window a pool member can work, dated or weekly. */

@@ -39,6 +39,10 @@ const span = (from: string, to: string) =>
 
 const MAX_DAYS = 93;
 
+/** 08:00 on the school's clock, as the payroll file writes it. */
+const clockIn = (iso: string, timeZone: string) =>
+  new Intl.DateTimeFormat("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
+
 /**
  * Vikarietimmar (`/admin/reports?tab=cover`): per substitute and period, the
  * held covers and their minutes — Fas 3's delivered credit to the SUBSTITUTE
@@ -48,6 +52,10 @@ const MAX_DAYS = 93;
  * Two CSV files for payroll, built on click (lib/cover-hours-export.ts is an
  * import() away). Neither names the replaced teacher, the absence or a
  * reason: payroll needs who worked when.
+ *
+ * A cover the calendar credits to a substitute who was themself registered
+ * away then is not in the files: it is listed under the table for the admin
+ * to check (and correct in the calendar), with the lesson only.
  */
 export function CoverHoursReport() {
   const t = useTranslations("coverHours");
@@ -73,6 +81,10 @@ export function CoverHoursReport() {
   };
   const planned = new Map((hours?.planned ?? []).map((line) => [line.userId, line]));
   const summary = [...(hours?.summary ?? [])].sort((a, b) => nameOf(a.userId).localeCompare(nameOf(b.userId), locale));
+  const toCheck = hours?.toCheck ?? [];
+  const timezone = school?.timezone ?? "Europe/Stockholm";
+  const subjectOf = new Map((subjects ?? []).map((s) => [s.id, s.name]));
+  const groupOf = new Map((groups ?? []).map((g) => [g.id, g.name]));
   const total = summary.reduce((sum, line) => sum + line.minutes, 0);
 
   const download = async (data: Hours, kind: "lektioner" | "summering") => {
@@ -194,6 +206,24 @@ export function CoverHoursReport() {
           </p>
         </div>
       )}
+      {toCheck.length > 0 ? (
+        <section aria-label={t("toCheckTitle")} className="rounded-md border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
+          <h3 className="font-medium">{t("toCheckTitle")}</h3>
+          <p className="text-muted-foreground">{t("toCheckBody", { count: toCheck.length })}</p>
+          <ul className="mt-2 space-y-0.5">
+            {toCheck.map((row) => (
+              <li key={`${row.lessonId}:${row.userId}`}>
+                {[
+                  nameOf(row.userId),
+                  `${row.date} ${clockIn(row.startsAt, timezone)}–${clockIn(row.endsAt, timezone)}`,
+                  subjectOf.get(row.subjectId) ?? "",
+                  groupOf.get(row.studentGroupId) ?? "",
+                ].join(" · ")}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <p className="text-xs text-muted-foreground">{t("privacy")}</p>
     </div>
   );

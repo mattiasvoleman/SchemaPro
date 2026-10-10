@@ -27,8 +27,16 @@ export interface HoursRow {
 export interface HoursResponse {
   from: string;
   to: string;
-  /** Held covers only (Fas 3's DELIVERED SUBSTITUTE rows). */
+  /** Held covers only (Fas 3's DELIVERED SUBSTITUTE rows): what payroll is sent. */
   rows: HoursRow[];
+  /**
+   * Held covers the calendar credits to a substitute who had an ACTIVE
+   * absence over the lesson themself — booked, then away, and nobody
+   * re-covered it before it ended. Fas 3 credits them (the statement is
+   * pinned); the payroll rows and the summary leave them out, and the admin
+   * checks them. Nothing here says why: the same shape as a row.
+   */
+  toCheck: HoursRow[];
   summary: { userId: string; kind: 'STAFF' | 'POOL'; lessons: number; minutes: number }[];
   /** Covers booked in the range that have not been held: shown, never exported. */
   planned: { userId: string; lessons: number; minutes: number }[];
@@ -101,7 +109,7 @@ export class CoverReportsService {
         );
       }
       const kindOf = await this.kinds(tx, years.map((year) => year.id));
-      const rows: HoursRow[] = found.map((row) => ({
+      const all: HoursRow[] = found.map((row) => ({
         lessonId: row.lessonId,
         userId: row.userId,
         kind: kindOf.of(row.userId),
@@ -113,6 +121,13 @@ export class CoverReportsService {
         studentGroupId: row.studentGroupId,
         roomId: row.roomId,
       }));
+      const away = await this.awayDuring(tx, found);
+      const wasAway = (row: HoursRow) =>
+        (away.get(row.userId) ?? []).some(
+          (span) => span.startsAt.getTime() < Date.parse(row.endsAt) && span.endsAt.getTime() > Date.parse(row.startsAt),
+        );
+      const rows = all.filter((row) => !wasAway(row));
+      const toCheck = all.filter(wasAway);
       const summary = new Map<string, HoursResponse['summary'][number]>();
       for (const row of rows) {
         const entry = summary.get(row.userId) ?? { userId: row.userId, kind: row.kind, lessons: 0, minutes: 0 };
@@ -140,8 +155,38 @@ export class CoverReportsService {
         planned.set(row.teacherId, entry);
       }
       const byUser = <T extends { userId: string }>(a: T, b: T) => a.userId.localeCompare(b.userId);
-      return { from, to, rows, summary: [...summary.values()].sort(byUser), planned: [...planned.values()].sort(byUser) };
+      return {
+        from,
+        to,
+        rows,
+        toCheck,
+        summary: [...summary.values()].sort(byUser),
+        planned: [...planned.values()].sort(byUser),
+      };
     });
+  }
+
+  /** The substitutes' ACTIVE absences over the rows' span: the period only, never the reason. */
+  private async awayDuring(
+    tx: PrismaClient,
+    rows: readonly SubstituteHoursRow[],
+  ): Promise<Map<string, { startsAt: Date; endsAt: Date }[]>> {
+    if (rows.length === 0) return new Map();
+    const first = new Date(Math.min(...rows.map((row) => row.startsAt.getTime())));
+    const last = new Date(Math.max(...rows.map((row) => row.endsAt.getTime())));
+    const absences =
+      (await tx.teacherAbsence.findMany({
+        where: {
+          status: 'ACTIVE',
+          userId: { in: [...new Set(rows.map((row) => row.userId))] },
+          startsAt: { lt: last },
+          endsAt: { gt: first },
+        },
+        select: { userId: true, startsAt: true, endsAt: true },
+      })) ?? [];
+    const byUser = new Map<string, { startsAt: Date; endsAt: Date }[]>();
+    for (const absence of absences) byUser.set(absence.userId, [...(byUser.get(absence.userId) ?? []), absence]);
+    return byUser;
   }
 
   /** POOL: a pool member without a post in any of the years; everybody else STAFF. */
