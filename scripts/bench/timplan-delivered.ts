@@ -46,7 +46,7 @@ import {
 } from '../../src/timplan/timplan-delivered.sql';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 
-interface Scale {
+export interface Scale {
   name: 'a' | 'b';
   classes: number;
   pupilsPerClass: number;
@@ -55,13 +55,13 @@ interface Scale {
   sharedPercent: number;
 }
 
-const SCALES: Record<'a' | 'b', Scale> = {
+export const SCALES: Record<'a' | 'b', Scale> = {
   a: { name: 'a', classes: 24, pupilsPerClass: 25, teachingGroups: 36, lessonsPerClass: 30, sharedPercent: 3 },
   b: { name: 'b', classes: 80, pupilsPerClass: 25, teachingGroups: 120, lessonsPerClass: 36, sharedPercent: 30 },
 };
 
-const YEAR_START = '2026-08-17';
-const YEAR_END = '2027-06-11';
+export const YEAR_START = '2026-08-17';
+export const YEAR_END = '2027-06-11';
 const LOV: [string, string][] = [
   ['2026-10-26', '2026-10-30'],
   ['2026-12-21', '2027-01-08'],
@@ -70,7 +70,7 @@ const LOV: [string, string][] = [
   ['2027-05-06', '2027-05-07'],
 ];
 
-async function seed(owner: Client, scale: Scale): Promise<{ schoolId: string; yearId: string; admin: string; teacher: string; classId: string }> {
+export async function seed(owner: Client, scale: Scale): Promise<{ schoolId: string; yearId: string; admin: string; teacher: string; classId: string }> {
   const slug = `bench-timplan-${scale.name}`;
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [slug]);
   const q = async <T extends object>(sql: string, params: unknown[] = []) => (await owner.query<T>(sql, params)).rows;
@@ -371,7 +371,10 @@ async function main(): Promise<void> {
   for (const name of which === 'both' ? (['a', 'b'] as const) : [which as 'a' | 'b']) await run(name);
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exit(1);
-});
+// Run as a script; imported (scripts/bench/timplan-stage.ts reuses the world), it runs nothing.
+if (require.main === module) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
