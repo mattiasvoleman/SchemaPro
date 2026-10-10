@@ -1,5 +1,6 @@
 import type { LocalTimplanStatus } from '@prisma/client';
 import { cohortYear } from '../common/timplan-coverage';
+import { cohortStartYear } from '../common/timplan-cohorts';
 
 /**
  * Timplan per årskurs (AcademicYearTimplans, timplan P2) carried into the new
@@ -120,10 +121,12 @@ export interface CohortTimplanInput {
   targetStartYear: number;
 }
 
-/** The term-year the cohort in årskurs g of a year starting HT `year` started åk 1. */
-export function cohortStartYear(gradeLevel: number, year: number): number {
-  return gradeLevel === 0 ? year + 1 : year - gradeLevel + 1;
-}
+/**
+ * The term-year the cohort in årskurs g of a year starting HT `year` started
+ * åk 1. Moved to src/common/timplan-cohorts.ts (timplan P4), where the stage
+ * module and its web mirror read it too; re-exported so this import holds.
+ */
+export { cohortStartYear } from '../common/timplan-cohorts';
 
 /**
  * Of the plans (newest decided first), the newest decided one of the latest
