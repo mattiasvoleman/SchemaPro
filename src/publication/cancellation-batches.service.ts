@@ -9,10 +9,14 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { todayInZone } from '../common/utils/time';
+import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
+import { runsOn } from '../calendar/lesson-recurrence';
+import { isoWeekday, timeToString } from '../calendar/publish-days';
+import { effectiveSegments } from './publication-validity';
+import { snapshotRanges } from './published-grundschema';
 import { RealtimeService } from '../realtime/realtime.service';
 import { checkScope, createCreditInTransaction } from '../timplan/timplan-credits.service';
-import { enterGrundschemaWrite } from './publish-mode';
+import { enterGrundschemaWrite, publishModeOf } from './publish-mode';
 import {
   selectLessons,
   selectionDigest,
@@ -81,6 +85,15 @@ export interface ReversePreview {
   reinstate: number;
   /** Rows whose room was booked while they were cancelled: left cancelled, and named. */
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: 'LESSON' | 'BOOKING' }>;
+  /**
+   * Rows whose lesson no longer runs at that slot: the grundschema has moved
+   * it (or deleted it) since the batch, and the lesson is where it runs now.
+   * The batch is all that kept such a row; reinstating it would give the
+   * class the lesson twice that week, and leaving it would keep an
+   * "Inställd" (and its lost minutes) for an event that was taken back. It
+   * is deleted, as a template change deletes a stale row, and named.
+   */
+  removedTemplateMoved: Array<{ lessonId: string; date: string }>;
   /** Rows the batch took that have begun, been held or been changed since: history. */
   notReinstatable: number;
   /** Credits dated today or later that the reversal deletes. */
@@ -302,14 +315,15 @@ export class CancellationBatchesService {
   }
 
   async reversePreview(id: string, user: AuthenticatedUser): Promise<ReversePreview> {
-    requireSchoolId(user);
+    const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const row = await this.requireBatch(tx, id);
       if (row.reversedAt !== null) throw reversed();
-      const plan = await reversePlan(tx, row, await this.todayOf(tx, row.academicYearId));
+      const plan = await reversePlan(tx, schoolId, row, await this.timezoneOf(tx, row.academicYearId));
       return {
         reinstate: plan.reinstate.length,
         skippedRoomTaken: plan.skipped,
+        removedTemplateMoved: plan.templateMoved,
         notReinstatable: plan.notReinstatable,
         creditsDeleted: plan.creditIds.length,
       };
@@ -320,7 +334,10 @@ export class CancellationBatchesService {
    * Takes the batch back: every row it cancelled that is still cancelled by
    * it and ahead goes back to SCHEDULED with the note it had, except a row
    * whose room was booked while it was free — that one stays cancelled and
-   * is named (a reinstated row would double-book the room). Its credits dated
+   * is named (a reinstated row would double-book the room). A row whose
+   * lesson the grundschema has moved since is deleted instead: the lesson is
+   * where it runs now, and the old slot would hold it twice that week. Its
+   * credits dated
    * today or later are deleted; a past one was a day already counted. Once.
    */
   async reverse(id: string, user: AuthenticatedUser): Promise<ReversePreview> {
@@ -329,7 +346,7 @@ export class CancellationBatchesService {
       await enterGrundschemaWrite(tx, schoolId);
       const row = await this.requireBatch(tx, id);
       if (row.reversedAt !== null) throw reversed();
-      const plan = await reversePlan(tx, row, await this.todayOf(tx, row.academicYearId));
+      const plan = await reversePlan(tx, schoolId, row, await this.timezoneOf(tx, row.academicYearId));
       const byNote = new Map<string | null, string[]>();
       for (const lesson of plan.reinstate) {
         const list = byNote.get(lesson.previousNote) ?? [];
@@ -340,6 +357,18 @@ export class CancellationBatchesService {
         await tx.calendarLesson.updateMany({
           where: { id: { in: lessonIds }, status: 'CANCELLED', cancelCause: row.cause },
           data: { status: 'SCHEDULED', cancelCause: null, note },
+        });
+      }
+      if (plan.templateMoved.length > 0) {
+        // The same guard the plan read them by, repeated in the write.
+        await tx.calendarLesson.deleteMany({
+          where: {
+            id: { in: plan.templateMoved.map((entry) => entry.lessonId) },
+            status: 'CANCELLED',
+            cancelCause: row.cause,
+            startsAt: { gt: new Date() },
+            attendanceRecords: { none: {} },
+          },
         });
       }
       if (plan.creditIds.length > 0) {
@@ -359,6 +388,7 @@ export class CancellationBatchesService {
         result: {
           reinstate: plan.reinstate.length,
           skippedRoomTaken: plan.skipped,
+          removedTemplateMoved: plan.templateMoved,
           notReinstatable: plan.notReinstatable,
           creditsDeleted: plan.creditIds.length,
         },
@@ -401,10 +431,6 @@ export class CancellationBatchesService {
       select: { school: { select: { timezone: true } } },
     });
     return year?.school.timezone ?? 'Europe/Stockholm';
-  }
-
-  private async todayOf(tx: PrismaClient, academicYearId: string): Promise<string> {
-    return asDay(todayInZone(await this.timezoneOf(tx, academicYearId)));
   }
 
   /** The year, its timezone and the school's today; the range must lie inside the year. */
@@ -666,7 +692,104 @@ export async function reapplyActiveBatches(
   return ids;
 }
 
-async function reversePlan(tx: PrismaClient, row: BatchRow, today: string) {
+/** A template as the slot check reads it: the master's, or a snapshot's row. */
+interface SlotTemplate {
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
+  recurrence: Prisma.MasterLessonGetPayload<{ select: { recurrence: true } }>['recurrence'];
+  startDate: Date | null;
+  endDate: Date | null;
+}
+
+const SLOT_SELECT = {
+  dayOfWeek: true,
+  startTime: true,
+  endTime: true,
+  recurrence: true,
+  startDate: true,
+  endDate: true,
+} as const;
+
+/**
+ * For each row, the published template it would run by on its date, or null
+ * when its lesson no longer has one. DIRECT: the master itself. DRAFT: the
+ * snapshot of the segment the date lies in (publication-validity.ts) — the
+ * draft is not what is published. A row whose master was deleted in a draft
+ * is keyed on its recorded id (PublicationPendingRemovals), as every
+ * published-key reader keys it.
+ */
+async function publishedTemplates(
+  tx: PrismaClient,
+  schoolId: string,
+  academicYearId: string,
+  rows: ReadonlyArray<{ id: string; date: Date; masterLessonId: string | null }>,
+): Promise<Map<string, SlotTemplate | null>> {
+  const out = new Map<string, SlotTemplate | null>();
+  if (rows.length === 0) return out;
+  const pending = new Map(
+    (
+      await tx.publicationPendingRemoval.findMany({
+        where: { calendarLessonId: { in: rows.filter((row) => row.masterLessonId === null).map((row) => row.id) } },
+        select: { calendarLessonId: true, masterLessonId: true },
+      })
+    ).map((entry) => [entry.calendarLessonId, entry.masterLessonId]),
+  );
+  const keyOf = (row: (typeof rows)[number]) => row.masterLessonId ?? pending.get(row.id) ?? null;
+  const ids = [...new Set(rows.map(keyOf).filter((id): id is string => id !== null))];
+  if ((await publishModeOf(tx, schoolId)) === 'DIRECT') {
+    const masters = new Map(
+      (await tx.masterLesson.findMany({ where: { id: { in: ids } }, select: { id: true, isParked: true, ...SLOT_SELECT } })).map(
+        (master) => [master.id, master],
+      ),
+    );
+    for (const row of rows) {
+      const master = masters.get(keyOf(row) ?? '');
+      out.set(row.id, master ?? null);
+    }
+    return out;
+  }
+  const segments = effectiveSegments(await snapshotRanges(tx, academicYearId));
+  const bySegment = new Map<string, Map<string, SlotTemplate>>();
+  for (const row of rows) {
+    const date = asDay(row.date);
+    const segment = segments.find((entry) => entry.from <= date && date <= entry.to);
+    const key = keyOf(row);
+    if (!segment || key === null) {
+      out.set(row.id, null);
+      continue;
+    }
+    let published = bySegment.get(segment.publicationId);
+    if (!published) {
+      published = new Map(
+        (
+          await tx.publishedLesson.findMany({
+            where: { publicationId: segment.publicationId, masterLessonId: { in: ids } },
+            select: { masterLessonId: true, ...SLOT_SELECT },
+          })
+        ).map((lesson) => [lesson.masterLessonId, lesson]),
+      );
+      bySegment.set(segment.publicationId, published);
+    }
+    out.set(row.id, published.get(key) ?? null);
+  }
+  return out;
+}
+
+/** Does the template run this row's lesson at exactly this date and slot? */
+function runsAt(template: SlotTemplate | null, row: { date: Date; startsAt: Date; endsAt: Date }, timezone: string): boolean {
+  if (template === null) return false;
+  const date = asDay(row.date);
+  return (
+    template.dayOfWeek === isoWeekday(date) &&
+    zonedTimeToUtc(date, timeToString(template.startTime), timezone).getTime() === row.startsAt.getTime() &&
+    zonedTimeToUtc(date, timeToString(template.endTime), timezone).getTime() === row.endsAt.getTime() &&
+    runsOn(template, row.date)
+  );
+}
+
+async function reversePlan(tx: PrismaClient, schoolId: string, row: BatchRow, timezone: string) {
+  const today = asDay(todayInZone(timezone));
   const lessons = await tx.cancellationBatchLesson.findMany({
     where: { batchId: row.id },
     select: {
@@ -680,6 +803,7 @@ async function reversePlan(tx: PrismaClient, row: BatchRow, today: string) {
           status: true,
           cancelCause: true,
           roomId: true,
+          masterLessonId: true,
           _count: { select: { attendanceRecords: true } },
         },
       },
@@ -694,9 +818,24 @@ async function reversePlan(tx: PrismaClient, row: BatchRow, today: string) {
       entry.calendarLesson._count.attendanceRecords === 0,
   );
   const skipped: ReversePreview['skippedRoomTaken'] = [];
+  const templateMoved: ReversePreview['removedTemplateMoved'] = [];
   const reinstate: Array<{ id: string; previousNote: string | null }> = [];
+  // The slot the lesson runs at NOW. A publish (or a DIRECT edit) since the
+  // batch moves the template, materialises the new day, and the batch takes
+  // that row too (S7); reinstating the old day's row as well would give the
+  // class the lesson twice that week, at a slot no timetable has any more.
+  const templates = await publishedTemplates(
+    tx,
+    schoolId,
+    row.academicYearId,
+    candidates.map((entry) => entry.calendarLesson),
+  );
   for (const entry of candidates) {
     const lesson = entry.calendarLesson;
+    if (!runsAt(templates.get(lesson.id) ?? null, lesson, timezone)) {
+      templateMoved.push({ lessonId: lesson.id, date: asDay(lesson.date) });
+      continue;
+    }
     if (lesson.roomId !== null) {
       // The room's other SCHEDULED lessons, and its live bookings (the
       // booking flow's own predicate: PENDING or APPROVED), over the slot.
@@ -735,6 +874,7 @@ async function reversePlan(tx: PrismaClient, row: BatchRow, today: string) {
   return {
     reinstate,
     skipped,
+    templateMoved,
     notReinstatable: lessons.length - candidates.length,
     creditIds: credits.map((entry) => entry.creditId),
   };

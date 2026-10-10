@@ -3112,6 +3112,7 @@
     "reverseBody": "Lektioner som avbokningen ställde in och som ligger framåt återställs, med sin tidigare anteckning. Dagar som har börjat rörs inte.",
     "reverseReinstate": "{count, plural, one {# lektion återställs} other {# lektioner återställs}}.",
     "reverseRoomTaken": "{count, plural, one {# lektion förblir inställd} other {# lektioner förblir inställda}}, eftersom salen har bokats eller fått en annan lektion under tiden:",
+    "reverseTemplateMoved": "{count, plural, one {# lektion tas bort} other {# lektioner tas bort}}, eftersom schemat har flyttat lektionen sedan avbokningen och veckan redan har den där den ligger nu:",
     "takenBy": {
       "LESSON": "en annan lektion",
       "BOOKING": "en lokalbokning"

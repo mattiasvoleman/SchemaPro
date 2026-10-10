@@ -3889,6 +3889,7 @@ async function runChecks(
   await weekEdgeChecks(owner, api);
   await mealChecks(owner, api);
   await batchChecks(owner, api);
+  await batchMoveChecks(owner, api);
   await viewerChecks(owner, api);
 }
 
@@ -5513,6 +5514,68 @@ async function mealChecks(owner: Client, api: PrismaService): Promise<void> {
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-maltider'`, [MARKER]);
+  }
+}
+
+/**
+ * A batch reversed after the grundschema moved one of its lessons. The
+ * publish moves the template and materialises the new day, which the batch
+ * still in force takes (S7); the old day's row stays cancelled by the batch.
+ * Reversing gives back only the row at the slot the lesson runs at now, and
+ * deletes the old slot's — else the class would have it twice that week, or
+ * an "Inställd" for an event taken back.
+ */
+async function batchMoveChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenPublicationSchool(owner, 'avbokning-flytt');
+  const { publications, calendar } = publicationServicesFor(api);
+  const drafts = new DraftService(
+    api,
+    calendar,
+    new RealScheduleVersionsService(api),
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+  );
+  const lessons = new MasterLessonsService(
+    api,
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+  );
+  const batches = new CancellationBatchesService(api, {
+    notifyLessonsChanged: async () => undefined,
+  } as unknown as RealtimeService);
+  const week = async () =>
+    (
+      await owner.query(
+        `SELECT date::text, to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'Dy HH24:MI') AS at, status::text
+           FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2 AND date BETWEEN '2096-11-05' AND '2096-11-11' ORDER BY date`,
+        [school.schoolId, school.monday],
+      )
+    ).rows.map((row) => `${row.date} ${row.at} ${row.status}`);
+  try {
+    await check('(pub-d) a reversal after a publish moved one of the batch\'s lessons gives back only the row where it runs now and deletes the old slot\'s', async () => {
+      await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-08-13' }, school.admin);
+      await drafts.switchMode('DRAFT', school.admin);
+      const selection = {
+        academicYearId: school.yearId,
+        name: 'Prao åk 7',
+        cause: 'EVENT' as const,
+        fromDate: '2096-11-05',
+        toDate: '2096-11-09',
+        scope: 'GROUPS' as const,
+        groupIds: [school.class7a],
+      };
+      const preview = await batches.preview(selection, school.admin);
+      const created = await batches.create({ ...selection, expectedDigest: preview.digest }, school.admin);
+      // Monday 08:00 → Tuesday 08:00, published from the batch's Monday on.
+      await lessons.update(school.monday, { dayOfWeek: 2 }, school.admin);
+      await publications.publish({ academicYearId: school.yearId, validFrom: '2096-10-15', acknowledgeWarnings: true }, school.admin);
+      assert.deepEqual(await week(), ['2096-11-05 Mon 08:00 CANCELLED', '2096-11-06 Tue 08:00 CANCELLED']);
+      const reversal = await batches.reversePreview(created.batch.id, school.admin);
+      assert.deepEqual(reversal.removedTemplateMoved.map((entry) => entry.date), ['2096-11-05']);
+      await batches.reverse(created.batch.id, school.admin);
+      assert.deepEqual(await week(), ['2096-11-06 Tue 08:00 SCHEDULED']);
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-avbokning-flytt'`, [MARKER]);
   }
 }
 

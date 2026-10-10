@@ -307,6 +307,8 @@ export interface CancellationBatch {
 export interface ReversePreview {
   reinstate: number;
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: "LESSON" | "BOOKING" }>;
+  /** Rows whose lesson the grundschema has moved since: deleted, the week has it where it runs now. */
+  removedTemplateMoved: Array<{ lessonId: string; date: string }>;
   notReinstatable: number;
   creditsDeleted: number;
 }
