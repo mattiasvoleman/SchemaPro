@@ -225,6 +225,10 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The link to Avbokning; next-intl's navigation pulls in the Next router.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
+}));
 /** A credit dialog whose chunk did not arrive: what the page's boundary catches. */
 const dialogLoad = vi.hoisted(() => ({ fails: false }));
 vi.mock("@/components/timplan/credit-dialog", async (importOriginal) => {

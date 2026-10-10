@@ -164,7 +164,8 @@
     "rasts": "Raster",
     "staffing": "Tjänstefördelning",
     "years": "Läsår",
-    "publishing": "Publicering"
+    "publishing": "Publicering",
+    "cancellations": "Avbokning"
   },
   "dashboard": {
     "title": "Översikt",
@@ -860,7 +861,9 @@
         "group": "Välj en grupp.",
         "noteLong": "Anteckningen kan vara högst 500 tecken."
       }
-    }
+    },
+    "cancellationsHint": "Ska lektionerna stå kvar som inställda, med dagens namn, och gå att ta tillbaka – prao, friluftsdag? Använd Avbokning i stället för ett lov.",
+    "cancellationsLink": "Till Avbokning"
   },
   "generate": {
     "title": "Generera schema",
@@ -3038,5 +3041,84 @@
       "CANCELLATION_SCOPE": "Urvalet träffar inga lektioner, eller anger inte vilka årskurser eller grupper det gäller.",
       "CANCELLATION_CREDIT": "En tillgodoräknad dag gäller hela dagar efter i dag. Ta bort tidsfönstret, eller lägg tiden som en egen tillgodoräkning."
     }
+  },
+  "cancellations": {
+    "title": "Avbokning",
+    "yearLabel": "Läsår",
+    "intro": "Ställ in lektioner för en dag, en vecka, en årskurs eller några klasser – prao, friluftsdag, studiedag. Lektionerna står kvar som inställda med dagens namn i anteckningen, så elever, vårdnadshavare och lärare ser varför, och avbokningen kan tas tillbaka. Lektioner som har börjat, redan är inställda eller har närvaro rörs aldrig.",
+    "formTitle": "Ny avbokning",
+    "name": "Namn",
+    "namePlaceholder": "Till exempel Prao åk 9",
+    "cause": "Orsak",
+    "causes": {
+      "EVENT": "Aktivitet (prao, friluftsdag, studiedag)",
+      "MANUAL": "Skolans beslut"
+    },
+    "fromDate": "Från och med",
+    "toDate": "Till och med",
+    "startTime": "Från klockan (valfritt)",
+    "endTime": "Till klockan (valfritt)",
+    "timeHint": "Utan tider gäller avbokningen hela dagarna. Med tider ställs de lektioner in som ligger helt eller delvis inom tidsfönstret.",
+    "scope": "Gäller",
+    "scopes": {
+      "SCHOOL": "Hela skolan",
+      "GRADES": "Årskurser",
+      "GROUPS": "Klasser och grupper"
+    },
+    "grades": "Årskurser",
+    "gradesHint": "En lektion ställs in när någon av dess klasser har en årskurs i spannet. En undervisningsgrupp utan egen årskurs räknas inte in; förhandsgranskningen namnger sådana grupper.",
+    "gradeRange": "Åk {min}–{max}",
+    "groups": "Klasser och grupper",
+    "credit": "Dagen räknas som undervisningstid",
+    "creditHint": "En aktivitet räknas annars som förlorad tid i Täckning. Med detta påslaget skrivs en tillgodoräkning för varje hel dag efter i dag. Gäller bara hela dagar.",
+    "creditMinutes": "Minuter per dag",
+    "creditSubject": "Ämne",
+    "creditNoSubject": "Inget ämne – räknas som undervisningstid",
+    "problems": {
+      "name": "Ge avbokningen ett namn, högst 120 tecken.",
+      "dates": "Välj första och sista dag.",
+      "order": "Sista dagen ligger före den första.",
+      "outsideYear": "Dagarna ska ligga inom läsåret.",
+      "tooLong": "En avbokning gäller högst 31 dagar.",
+      "time": "Ett tidsfönster har både början och slut, med början före slutet.",
+      "grades": "Den lägsta årskursen ligger över den högsta.",
+      "groups": "Välj minst en klass eller grupp.",
+      "creditPartialDay": "En tillgodoräknad dag gäller hela dagar; ta bort tidsfönstret.",
+      "creditMinutes": "Ange minuter per dag, mellan 1 och 600."
+    },
+    "preview": "Förhandsgranska",
+    "previewOutdated": "Formuläret har ändrats sedan förhandsgranskningen. Förhandsgranska igen.",
+    "confirm": "{count, plural, =0 {Ställ in lektioner} one {Ställ in # lektion} other {Ställ in # lektioner}}",
+    "previewTitle": "{count, plural, one {# lektion ställs in} other {# lektioner ställs in}}",
+    "excluded": "Lämnas orörda: {started} har börjat, {notScheduled} är redan inställda eller hållna, {attendance} har närvaro.",
+    "ungraded": "Grupper utan egen årskurs, som inte räknas in: {groups}.",
+    "creditDates": "{count, plural, one {# dag} other {# dagar}} räknas som undervisningstid: {dates}.",
+    "creditNoDates": "Ingen dag kan räknas som undervisningstid: bara hela dagar efter i dag med inställda lektioner räknas.",
+    "andMore": "och {count} till",
+    "created": "{count, plural, one {# lektion ställdes in} other {# lektioner ställdes in}}. Tillgodoräknade dagar: {credits}.",
+    "listTitle": "Avbokningar {year}",
+    "listNone": "Inga avbokningar för läsåret.",
+    "period": "Dagar",
+    "cancelledCount": "Inställda",
+    "creditsCount": "{count, plural, one {# tillgodoräknad dag} other {# tillgodoräknade dagar}}",
+    "state": "Läge",
+    "stateActive": "Gäller",
+    "stateReversed": "Tillbakatagen: {count} återställda, {skipped} kvar",
+    "addedSince": "{count, plural, one {# lektion har} other {# lektioner har}} tillkommit sedan avbokningen.",
+    "reapply": "Tillämpa igen",
+    "reapplied": "{count, plural, one {# lektion till ställdes in} other {# lektioner till ställdes in}}.",
+    "reverse": "Ta tillbaka",
+    "reverseTitle": "Ta tillbaka {name}",
+    "reverseBody": "Lektioner som avbokningen ställde in och som ligger framåt återställs, med sin tidigare anteckning. Dagar som har börjat rörs inte.",
+    "reverseReinstate": "{count, plural, one {# lektion återställs} other {# lektioner återställs}}.",
+    "reverseRoomTaken": "{count, plural, one {# lektion förblir inställd} other {# lektioner förblir inställda}}, eftersom salen har bokats eller fått en annan lektion under tiden:",
+    "takenBy": {
+      "LESSON": "en annan lektion",
+      "BOOKING": "en lokalbokning"
+    },
+    "reverseHistory": "{count, plural, one {# lektion har} other {# lektioner har}} börjat eller ändrats sedan och lämnas som de är.",
+    "reverseCredits": "{count, plural, one {# tillgodoräknad dag tas bort} other {# tillgodoräknade dagar tas bort}}.",
+    "reverseConfirm": "Ta tillbaka",
+    "reversed": "{count, plural, one {# lektion återställdes} other {# lektioner återställdes}}."
   }
 }

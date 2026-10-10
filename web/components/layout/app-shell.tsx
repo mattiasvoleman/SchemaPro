@@ -122,6 +122,11 @@ const ADMIN_NAV: NavSection[] = [
     labelKey: "operations",
     items: [
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
+      // Beside the day planner: both act on the dated calendar, one lesson
+      // at a time there, a day or a week of a year group here (prao,
+      // friluftsdag). The lov's icon, already in the shell — the nearest
+      // thing to it, and no new icon on every route's bill.
+      { labelKey: "cancellations", href: "/admin/cancellations", icon: CalendarOff },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
