@@ -106,6 +106,7 @@ import {
   type TimplanCredit,
 } from "@/lib/timplan-credit-queries";
 import type { BreakKind, SchoolBreak } from "@/lib/types";
+import { Link } from "@/i18n/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -474,6 +475,18 @@ export default function BreaksPage() {
       */}
       <p className="-mt-4 mb-4 max-w-prose text-sm leading-relaxed text-foreground">
         {t("intro")}
+      </p>
+      {/*
+        A lov removes the lessons; a prao week or a friluftsdag is usually
+        better as an avbokning, which keeps them as cancelled with the day's
+        name and can be taken back (/admin/cancellations). Said here, where a
+        school reaches for a lov out of habit.
+      */}
+      <p className="-mt-2 mb-4 max-w-prose text-sm leading-relaxed text-foreground">
+        {t("cancellationsHint")}{" "}
+        <Link href="/admin/cancellations" className="font-medium underline underline-offset-4">
+          {t("cancellationsLink")}
+        </Link>
       </p>
 
       {/*

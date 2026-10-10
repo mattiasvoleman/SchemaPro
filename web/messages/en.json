@@ -164,7 +164,8 @@
     "rasts": "Breaks",
     "staffing": "Staffing",
     "years": "School years",
-    "publishing": "Publishing"
+    "publishing": "Publishing",
+    "cancellations": "Bulk cancellation"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -860,7 +861,9 @@
         "group": "Choose a group.",
         "noteLong": "The note can be at most 500 characters."
       }
-    }
+    },
+    "cancellationsHint": "Should the lessons stay as cancelled, with the day's name, and be possible to take back – work experience, an outdoor day? Use Bulk cancellation instead of a holiday.",
+    "cancellationsLink": "To Bulk cancellation"
   },
   "generate": {
     "title": "Generate schedule",
@@ -3038,5 +3041,84 @@
       "CANCELLATION_SCOPE": "The selection matches no lessons, or does not say which year groups or groups it covers.",
       "CANCELLATION_CREDIT": "A credited day covers whole days after today. Remove the time window, or add the time as a credit of its own."
     }
+  },
+  "cancellations": {
+    "title": "Bulk cancellation",
+    "yearLabel": "School year",
+    "intro": "Cancel lessons for a day, a week, a year group or a few classes – work experience, an outdoor day, a staff day. The lessons stay as cancelled with the day's name in their note, so pupils, guardians and teachers see why, and the cancellation can be taken back. Lessons that have begun, are already cancelled or have attendance are never touched.",
+    "formTitle": "New cancellation",
+    "name": "Name",
+    "namePlaceholder": "For example Work experience year 9",
+    "cause": "Cause",
+    "causes": {
+      "EVENT": "Activity (work experience, outdoor day, staff day)",
+      "MANUAL": "The school's decision"
+    },
+    "fromDate": "From",
+    "toDate": "To",
+    "startTime": "From time (optional)",
+    "endTime": "To time (optional)",
+    "timeHint": "Without times the cancellation covers whole days. With times, the lessons that lie wholly or partly inside the window are cancelled.",
+    "scope": "Covers",
+    "scopes": {
+      "SCHOOL": "The whole school",
+      "GRADES": "Year groups",
+      "GROUPS": "Classes and groups"
+    },
+    "grades": "Year groups",
+    "gradesHint": "A lesson is cancelled when one of its classes has a year inside the span. A teaching group without a year of its own is not included; the preview names such groups.",
+    "gradeRange": "Years {min}–{max}",
+    "groups": "Classes and groups",
+    "credit": "The day counts as teaching time",
+    "creditHint": "Otherwise an activity counts as lost time in Coverage. With this on, a credit is written for every whole day after today. Whole days only.",
+    "creditMinutes": "Minutes per day",
+    "creditSubject": "Subject",
+    "creditNoSubject": "No subject – counts as teaching time",
+    "problems": {
+      "name": "Give the cancellation a name, at most 120 characters.",
+      "dates": "Choose the first and last day.",
+      "order": "The last day is before the first.",
+      "outsideYear": "The days must lie within the school year.",
+      "tooLong": "A cancellation covers at most 31 days.",
+      "time": "A time window has both a start and an end, the start before the end.",
+      "grades": "The lowest year is above the highest.",
+      "groups": "Choose at least one class or group.",
+      "creditPartialDay": "A credited day covers whole days; remove the time window.",
+      "creditMinutes": "Enter minutes per day, between 1 and 600."
+    },
+    "preview": "Preview",
+    "previewOutdated": "The form changed since the preview. Preview again.",
+    "confirm": "{count, plural, =0 {Cancel lessons} one {Cancel # lesson} other {Cancel # lessons}}",
+    "previewTitle": "{count, plural, one {# lesson is cancelled} other {# lessons are cancelled}}",
+    "excluded": "Left alone: {started} have begun, {notScheduled} are already cancelled or held, {attendance} have attendance.",
+    "ungraded": "Groups without a year of their own, not included: {groups}.",
+    "creditDates": "{count, plural, one {# day counts} other {# days count}} as teaching time: {dates}.",
+    "creditNoDates": "No day can count as teaching time: only whole days after today with cancelled lessons count.",
+    "andMore": "and {count} more",
+    "created": "{count, plural, one {# lesson was cancelled} other {# lessons were cancelled}}. Credited days: {credits}.",
+    "listTitle": "Cancellations {year}",
+    "listNone": "No cancellations for the school year.",
+    "period": "Days",
+    "cancelledCount": "Cancelled",
+    "creditsCount": "{count, plural, one {# credited day} other {# credited days}}",
+    "state": "State",
+    "stateActive": "In force",
+    "stateReversed": "Taken back: {count} restored, {skipped} left",
+    "addedSince": "{count, plural, one {# lesson has} other {# lessons have}} been added since the cancellation.",
+    "reapply": "Apply again",
+    "reapplied": "{count, plural, one {# more lesson was cancelled} other {# more lessons were cancelled}}.",
+    "reverse": "Take back",
+    "reverseTitle": "Take back {name}",
+    "reverseBody": "Lessons the cancellation cancelled that lie ahead are restored, with their earlier note. Days that have begun are not touched.",
+    "reverseReinstate": "{count, plural, one {# lesson is restored} other {# lessons are restored}}.",
+    "reverseRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room was booked or given another lesson meanwhile:",
+    "takenBy": {
+      "LESSON": "another lesson",
+      "BOOKING": "a room booking"
+    },
+    "reverseHistory": "{count, plural, one {# lesson has begun or changed since and is} other {# lessons have begun or changed since and are}} left as is.",
+    "reverseCredits": "{count, plural, one {# credited day is removed} other {# credited days are removed}}.",
+    "reverseConfirm": "Take back",
+    "reversed": "{count, plural, one {# lesson was restored} other {# lessons were restored}}."
   }
 }
