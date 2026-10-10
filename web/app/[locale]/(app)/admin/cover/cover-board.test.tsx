@@ -219,6 +219,18 @@ describe("Vikarietavla", () => {
     expect(toast.success).toHaveBeenCalledWith("Vikarie tillsatt");
   });
 
+  it("names each candidate briefly to a screen reader, with the reasons as its description, not inside the button", async () => {
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    await user.click(within(rowOf("Matematik")).getByRole("button", { name: /Tillsätt vikarie/ }));
+    const dialog = await screen.findByRole("dialog");
+    const bo = await within(dialog).findByRole("button", { name: "Bo Ek 52 p" });
+    expect(bo.querySelector("ul, li, p")).toBeNull();
+    expect(bo).toHaveAttribute("aria-pressed", "false");
+    expect(bo).toHaveAccessibleDescription(/Legitimerad i Matematik för åk 7–9.*Har håltimme/);
+  });
+
   it("cancels after a confirmation, as TEACHER_UNAVAILABLE on the gateway, with no reason and no note", async () => {
     post.mockResolvedValue({ lessonId: "l-ma", absenceId: "a-anna", warnings: [] });
     const user = userEvent.setup();
