@@ -20,8 +20,10 @@ import {
   lessonDiffers,
   readDraftMasters,
   readPublishedMasters,
+  readPublishedSittings,
   snapshotFor,
   snapshotMasters,
+  snapshotSittings,
   snapshotRanges,
   type PublishedMaster,
 } from './published-grundschema';
@@ -151,6 +153,7 @@ export class DraftService {
               select: { id: true },
             });
             await snapshotMasters(tx, { id: row.id, schoolId, academicYearId: year.id }, masters);
+            await snapshotSittings(tx, { id: row.id, schoolId, academicYearId: year.id });
             baselines.push({ academicYearId: year.id, publicationId: row.id, validFrom, validTo, lessonCount: masters.length });
           }
           await tx.publicationSettings.upsert({
@@ -313,7 +316,9 @@ export class DraftService {
    * published only part of the way. POST /publications would publish the
    * draft too; this materialises each published segment's own snapshot over
    * its part of [validFrom, validTo], never a day that has begun, and records
-   * a REFILL row that changes no validity. Its only gate is the meal's.
+   * a REFILL row that changes no validity. Its only gate is the meal's. The
+ * meals, too, are the segment's published ones (PublishedLunchSittings): the
+ * school's lunch sittings are part of the draft.
    */
   async refill(
     dto: { academicYearId: string; validFrom?: string; validTo?: string; acknowledgeWarnings?: boolean },
@@ -363,6 +368,8 @@ export class DraftService {
               endTime: row.endTime,
             }));
           if (templates.length === 0) continue;
+          // The meals as published with this segment, never the draft's sittings.
+          const sittings = await readPublishedSittings(tx, segment.publicationId);
           const result = await this.calendar.materialise(
             tx,
             schoolId,
@@ -371,7 +378,7 @@ export class DraftService {
               fromDate: segment.from > from ? segment.from : from,
               toDate: segment.to < to ? segment.to : to,
             },
-            { templates, notBefore: now },
+            { templates, sittings, notBefore: now },
           );
           total.created += result.created;
           total.cancelled += result.cancelled;

@@ -8545,3 +8545,97 @@ BEGIN
     RAISE EXCEPTION 'viewer: links are readable without a principal';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 27i: en publicering minns måltiderna.
+--
+-- PublishedLunchSittings (20261011130000): the meals a snapshot publication
+-- published, for a DRAFT school's refill. The admin inserts and reads; the
+-- table is append-only by privilege (no UPDATE, no DELETE for the API role);
+-- a row's year is its publication's. A TEACHER, a STUDENT and a GUARDIAN read
+-- none of it: families read their meals from CalendarLunches.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date; y_end date; pub uuid; grp uuid; meal uuid;
+BEGIN
+  SELECT id, "startDate", "endDate" INTO y, y_start, y_end FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "lessonCount")
+  VALUES (school, y, 'BASELINE', 'PUBLISHED', 'DRAFT', y_start, y_end, 0)
+  RETURNING id INTO pub;
+  INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime")
+  VALUES (school, pub, y, grp, 1, '11:30', '12:00')
+  RETURNING id INTO meal;
+  BEGIN
+    INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime")
+    VALUES (school, pub, gen_random_uuid(), grp, 2, '11:30', '12:00');
+    RAISE EXCEPTION 'meals: a snapshot meal of another year was stored';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime")
+    VALUES (school, pub, y, grp, 8, '11:30', '12:00');
+    RAISE EXCEPTION 'meals: a weekday 8 was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "PublishedLunchSittings" SET "startTime" = '12:30' WHERE id = meal;
+    RAISE EXCEPTION 'meals: a published meal was moved';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "PublishedLunchSittings" WHERE id = meal;
+    RAISE EXCEPTION 'meals: a published meal was deleted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM set_config('app.test_rls27i_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls27i_student_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+END
+$$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27i_teacher_sub'))::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'meals: expected a TEACHER'; END IF;
+  IF (SELECT count(*) FROM "PublishedLunchSittings") <> 0 THEN RAISE EXCEPTION 'meals: a teacher reads the snapshot meals'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27i_student_sub'))::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'meals: expected a STUDENT'; END IF;
+  IF (SELECT count(*) FROM "PublishedLunchSittings") <> 0 THEN RAISE EXCEPTION 'meals: a pupil reads the snapshot meals'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'meals: expected a GUARDIAN'; END IF;
+  IF (SELECT count(*) FROM "PublishedLunchSittings") <> 0 THEN RAISE EXCEPTION 'meals: a guardian reads the snapshot meals'; END IF;
+END $$;
+ROLLBACK;
+
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid = 'public."PublishedLunchSittings"'::regclass;
+  IF bad IS DISTINCT FROM 'published_lunch_sittings_admin_insert:a,published_lunch_sittings_admin_select:r' THEN
+    RAISE EXCEPTION 'meals: policies are %', bad;
+  END IF;
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid = 'public."PublishedLunchSittings"'::regclass
+     AND (coalesce(pg_get_expr(polqual, polrelid), '') NOT LIKE '%current_user_role%' AND polcmd <> 'a'
+          OR (polcmd = 'a' AND coalesce(pg_get_expr(polwithcheck, polrelid), '') NOT LIKE '%current_user_role%'));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'meals: arms without the role: %', bad; END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."PublishedLunchSittings"', p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'meals: % holds % on the snapshot meals', api_role, bad; END IF;
+  END LOOP;
+END $$;

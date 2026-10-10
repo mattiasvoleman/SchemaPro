@@ -185,6 +185,7 @@ model School {
   publicationSettings     PublicationSettings?
   timetablePublications   TimetablePublication[]
   publishedLessons        PublishedLesson[]
+  publishedLunchSittings  PublishedLunchSitting[]
 
   @@map("Schools")
 }
@@ -949,6 +950,7 @@ model TimetablePublication {
   academicYear AcademicYear      @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
   publishedBy  User?             @relation("TimetablePublisher", fields: [publishedByUserId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   lessons      PublishedLesson[]
+  lunchSittings PublishedLunchSitting[]
 
   @@unique([id, schoolId])
   @@unique([id, academicYearId, schoolId])
@@ -988,6 +990,27 @@ model PublishedLesson {
   @@unique([publicationId, masterLessonId])
   @@index([schoolId])
   @@map("PublishedLessons")
+}
+
+/// The lunch sittings a snapshot publication published (20261011130000):
+/// what a DRAFT school's refill materialises its meals from. No FK to the
+/// group; a reader drops a row whose group is gone. Append-only by privilege.
+model PublishedLunchSitting {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  publicationId  String   @db.Uuid
+  academicYearId String   @db.Uuid
+  studentGroupId String   @db.Uuid
+  dayOfWeek      Int
+  startTime      DateTime @db.Time(6)
+  endTime        DateTime @db.Time(6)
+
+  school      School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  publication TimetablePublication @relation(fields: [publicationId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: Cascade)
+
+  @@unique([publicationId, studentGroupId, dayOfWeek])
+  @@index([schoolId])
+  @@map("PublishedLunchSittings")
 }
 
 /// A calendar row whose template was deleted in a DRAFT school
