@@ -1262,6 +1262,23 @@ describe('YearRolloverService — activation', () => {
     expect(preview.problems.map((problem) => problem.code)).not.toContain('ROLLOVER_2028_RENUMBERING');
   });
 
+  it('says nothing of 2028 for a rollover from a year that already began in the new numbering: the double step is once', async () => {
+    // Övergångsbestämmelse 4 is a one-time step at HT 2028. A rollover from
+    // 2028/29 into 2029/30 promotes one årskurs, as every rollover does.
+    const rows = defaultRolloverRows();
+    const year = rows['academicYear']![0]!;
+    year['name'] = '2028/29';
+    year['startDate'] = new Date('2028-08-14T00:00:00.000Z');
+    year['endDate'] = new Date('2029-06-08T00:00:00.000Z');
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(
+      IDS.yearA,
+      { ...OPTIONS, name: '2029/30', startDate: '2029-08-13', endDate: '2030-06-07' },
+      admin,
+    );
+    expect(preview.problems.map((problem) => problem.code)).not.toContain('ROLLOVER_2028_RENUMBERING');
+  });
+
   it('refuses while the old year runs, a superseded year, a stale preview and a hidden year', async () => {
     const { world, service, yearB } = await rolled();
     const early = await service.previewActivation(yearB, admin, { today: '2027-06-11' });

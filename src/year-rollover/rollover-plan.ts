@@ -228,6 +228,9 @@ export interface RolloverPlan {
 
 const clock = (value: Date): string => value.toISOString().slice(11, 16);
 
+/** SFS 2025:729 applies to education after 30 June 2028 (övergångsbestämmelse 2). */
+const REFORM_2028_FROM = '2028-07-01';
+
 export function planRollover(source: RolloverSource, request: RolloverRequest): RolloverPlan {
   const options = {
     carryTeachingGroups: request.carryTeachingGroups ?? true,
@@ -272,8 +275,11 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   // the spring 2028 rollover. Until then the preview SAYS so, as a warning
   // that blocks nothing — every class's gradeLevel in a year from HT 2028
   // would otherwise be one too low without anybody being told. Not a write,
-  // so the planHash over the writes is unchanged.
-  if (Number(target.startDate.slice(0, 4)) >= 2028) {
+  // so the planHash over the writes is unchanged. Only for the rollover that
+  // CROSSES into the reform (source before 1 July 2028, target from it): the
+  // double step is once, and a rollover from 2028/29 into 2029/30 promotes
+  // one årskurs like any other.
+  if (sourceBounds.startDate < REFORM_2028_FROM && target.startDate >= REFORM_2028_FROM) {
     problems.push({
       code: 'ROLLOVER_2028_RENUMBERING',
       blocking: false,
