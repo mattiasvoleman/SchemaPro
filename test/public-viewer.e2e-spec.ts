@@ -32,6 +32,10 @@ describe('the public viewer (e2e)', () => {
     harness.tx.$queryRaw.mockImplementation(async (statement: { values: unknown[] }) =>
       statement.values[0] === tokenHashOf(TOKEN) ? [{ doc: DOC }] : [{ doc: null }],
     );
+    // Listen once: an unlistened server makes supertest open and close an
+    // ephemeral port per request, and across the 600 requests below a pooled
+    // keep-alive socket can meet a closed one ("socket hang up", or a hang).
+    await harness.app.listen(0, '127.0.0.1');
   });
   afterEach(async () => {
     await harness.close();
