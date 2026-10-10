@@ -1,14 +1,20 @@
-# SchemaPro integration API (SS12000-inspired)
+# SchemaPro integration API (SS12000)
 
-External systems (Vklass, IST, StudyBee, municipal registries) integrate via a
-REST API modeled on **SS12000:2020** naming and resources. It is intentionally
-a pragmatic subset — the mapping below is the contract.
+External systems (Vklass, IST, StudyBee, municipal registries) integrate in
+two ways. `/ss12000/v1` is a REST API modeled on **SS12000:2020** naming and
+resources, a pragmatic subset whose mapping below is the contract.
+`/ss12000/v2.0` is SS12000 2.1 in the standard's own shape (SIS OpenAPI
+2.1.0). SchemaPro also pulls the roster from an SS12000 source (the consumer,
+further down).
 
 ## Authentication
 
 Every request carries `X-API-Key: sp_…`. Keys are created per school in
 **Admin → Integrations** (plaintext shown once; SHA-256 stored). A key scopes
 every request to exactly one school. Rate limit: 120 req/min (imports 10/min).
+`/ss12000/v1` needs the key's scope `ss12000.v1` (the import
+`ss12000.v1.import`). Every key that existed before scopes holds both. The
+standard-shaped provider is `/ss12000/v2.0` (below).
 
 ```bash
 curl -H "X-API-Key: sp_..." https://<host>/ss12000/v1/persons?limit=100
@@ -105,6 +111,315 @@ active year) and guardian links are synced. Unknown emails are returned in
 `needsProvisioning` — create those accounts in **Admin → People** (Supabase
 identity provisioning stays an explicit admin action). Response:
 `{ updated, groupsCreated, guardianLinks, needsProvisioning }`.
+
+## SS12000 2.1 (v2.0): the provider
+
+`/ss12000/v2.0` implements **SIS TK450, *SS12000 OpenAPI 3.0*,
+`openapi_ss12000_version2_1_0.yaml`, `info.version` 2.1.0 (korrigendum
+augusti 2022)**, sha256
+`aee9a95a4c5bd25cebaf357d266592f94e9388ae785ee9ac3b58e1992acccd28`
+(<https://www.sis.se/globalassets/standardutveckling/tksidor/tk-450/openapi_ss12000_version2_1_0.yaml>,
+retrieved 2026-10-10; the SIS page lists 2.0.0 and 2.1.0 only). Below we call
+it S1. The server path mirrors S1's `servers.url` (`…/v2.0`) and IST's layout,
+so a consumer configured for an IST source appends the same resource paths to
+`https://<host>/ss12000/v2.0`. `/ss12000/v1` is unchanged beside it.
+
+Every schema and parameter the provider uses is generated from that file into
+`src/integration/ss12000-v2/s1-provider.generated.ts`
+(`scripts/ss12000/generate-s1-provider.cjs`). The contract spec walks every
+object the provider emits against it.
+
+### Authentication, scopes and limits
+
+S1's only security scheme is `BearerAuth` (http, bearer). The integration key
+is that bearer: `Authorization: Bearer sp_…`. `X-API-Key: sp_…` is also
+accepted. A key resolves to one school. A missing, malformed or revoked key
+answers **401** `{code: "UNAUTHENTICATED", …}` with `WWW-Authenticate: Bearer`;
+S1 has no 401, so this is SchemaPro's extension.
+
+Each key has **scopes** (`IntegrationApiKeys.scopes`, migration
+`20261014120000`):
+
+| Scope | Grants |
+|---|---|
+| `ss12000.v1` | `/ss12000/v1` (the house-shaped feeds above) |
+| `ss12000.v1.import` | `POST /ss12000/v1/import/persons` |
+| `organisations.read` | `/organisations*` |
+| `persons.read` | `/persons*`: pupils and staff |
+| `responsibles.read` | guardians in `/persons`, every `responsibles[]`, `expand=responsibleFor`. Without it guardians and their links do not exist for the key |
+| `groups.read` | `/groups*`; `expand=groupMemberships` on persons |
+| `duties.read` | `/duties*`; `expand=duties`, `expand=teachers`, `expand=assignmentRoles` |
+| `activities.read` | `/activities*`; `expand=activity` on calendar events |
+| `calendarEvents.read` | `/calendarEvents*` |
+| `rooms.read` | `/rooms*` |
+| `syllabuses.read` | `/syllabuses*`; `expand=syllabus` |
+| `subscriptions.write` | `/subscriptions*` |
+
+**Every key that existed before scopes holds `ss12000.v1` and
+`ss12000.v1.import`.** That is the column's default, so v1 behaves exactly as
+before for them. A key created without a choice gets the same. A new key can
+be read-only (v1 without the import) or v2-only. A v1 route whose scope the
+key lacks answers 403 in the house's body. A v2 resource, expand or
+subscription whose scope it lacks answers 403 `SCOPE_MISSING`.
+
+`expandReferenceNames=true` fills `displayName` only on references whose
+resource the key may read. A person's name needs `persons.read` (and a
+guardian's also `responsibles.read`), a group's needs `groups.read`, and so on.
+A `groups.read`-only key therefore never learns a pupil's name through a
+group's memberships.
+
+Limits: 120 requests a minute **per key**, not per address, so one consumer
+address serving many schools does not share one bucket. Before a key is known,
+600 attempts a minute per address. Past either limit the answer is 429
+`TOO_MANY_REQUESTS` with `Retry-After`.
+
+### Paging, filters, meta and errors
+
+* **Paging (S1 `limit`/`pageToken`).** Each list answers `{data, pageToken}`.
+  `pageToken: null` means there is nothing more. `limit` is optional; when it
+  is omitted the server picks 500, and it never goes above 1000. The token is
+  opaque and bound to the key and the operation. It carries every parameter of
+  the first request. S1 says a token "kan inte kombineras med andra filter men
+  väl med `limit`". Generated clients always resend required parameters, so
+  another parameter on a token request is accepted only if it equals the
+  token's value. Anything else is 400 `INVALID_PAGE_TOKEN`. That is how
+  `/calendarEvents` page 2 works with or without the window repeated.
+* **Order.** Without `sortkey`, objects come by id. Every sortkey breaks ties
+  by id, so a walk neither skips nor repeats an object that does not change
+  during it. `ModifiedDesc` can skip or repeat an object that is modified
+  mid-walk, which is inherent in sorting by a value that moves.
+* **Filters.** Every parameter S1 defines for an operation is accepted. A
+  filter on an attribute SchemaPro never holds (`civicNo`, `identifier.*`,
+  `eduPersonPrincipalName`, `organisationCode`, `municipalityCode`, `parent`,
+  the placement relationship types, the `civicNos` of a lookup) answers an
+  empty page, which is true. A parameter S1 does not define, or a value that
+  is not what S1's schema says, is 400 `INVALID_FILTER`. A sortkey on a field
+  SchemaPro never holds (`CivicNo*`, `SubjectCode*`, `Course*`) is 400
+  `SORTKEY_NOT_SUPPORTED`. Arrays are repeated parameters
+  (`?groupType=Klass&groupType=Undervisning`). Date filters on a value that is
+  not set always include the object, as S1's endDate filters say.
+* **meta.** `created` is the row's creation. `modified` comes from
+  `Ss12000EntityVersions` (migration `20261014130000`). Statement-level triggers
+  move it exactly when an attribute the object **directly** carries changes,
+  as S1's Meta definition requires. That includes list attributes (a class's
+  memberships, a pupil's enrolments and responsibles) and an emitted id
+  changing under the object. A phone number, an invitation or a nedsättning
+  moves nothing. An object unchanged since the migration is dated by its own
+  `updatedAt`.
+* **Errors.** S1's `Error {code, message}`. A 404 has no body. 400 codes are
+  `INVALID_FILTER`, `INVALID_ID`, `INVALID_PAGE_TOKEN`,
+  `SORTKEY_NOT_SUPPORTED` and `INVALID_BODY`. 503 `TOO_LARGE` is S1's
+  "Svaret är förstort" (a calendar lookup over 5000 events). The message never
+  echoes a value you sent. **Logs carry the method, the path and the status,
+  never the query string**, so a personnummer or a name in a filter never
+  reaches a log line.
+* **Incremental reads.** Read with `meta.modified.after` and
+  `/deletedEntities?after=`. **Overlap your cursor by ten minutes.** S1 is
+  silent on this, but a version is dated by its transaction's start, so a long
+  publish commits changes dated before it ended. Our own consumer does the
+  same.
+
+### Ids (S1 L5061: "ett enda namespace")
+
+| Object | Id |
+|---|---|
+| Person, PersonReference | the source's id when an admin linked the person (`Users.ss12000Id`), else SchemaPro's |
+| Group, GroupReference | the source's id when linked (`StudentGroups.ss12000Id`), else SchemaPro's |
+| Organisation | the source's skolenhet id when exactly one is chosen (organisationType `Skolenhet`, with its `schoolUnitCode`); with several, the school's own id as a `Skola`; with none, the school's own id as a `Skolenhet` |
+| Duty, DutyReference | the teacher's earliest live teaching-role duty at the source for the active year (`Ss12000DutyLinks`), else the post's id (`TeacherEmployments.id`, as v1). A teacher with a source duty and no post is referenced by that duty id in activities and events, but `/duties` serves posts only. A teacher with neither is left out |
+| Activity | the master lesson's id. An ad-hoc lesson's own Activity has a UUIDv5 (SchemaPro namespace, name `adhoc-activity:<lesson id>`) and never the lesson's id |
+| CalendarEvent, Room, Syllabus | SchemaPro's own |
+
+Path ids, filters and lookups accept any RFC 4122 uuid version, matched
+lowercased. IST's ids are not promised to be version 4. A link made after a
+consumer saw an object under SchemaPro's id buries the old id in
+`/deletedEntities`, so the consumer drops the duplicate.
+
+### Resources, field by field
+
+Only an S1 property is ever written, and an optional one only when SchemaPro
+holds a value for it.
+
+**Organisations** (`organisations.read`): `id`, `meta`, `displayName`
+(Schools.name), `organisationType`, `schoolUnitCode`, `schoolTypes` (the
+active year's timplans: GRUNDSKOLA→`GR`, its årskurs 0 →`FKLASS`,
+ANPASSAD_GRUNDSKOLA_AMNEN→`GRS`, ANPASSAD_GRUNDSKOLA_AMNESOMRADEN→`TR`,
+SPECIALSKOLA→`SP`, SAMESKOLA→`SAM`; 2.1.0 still names grundsärskola and
+träningsskola).
+
+**Persons** (`persons.read`; guardians need `responsibles.read`): active users.
+`givenName`, `familyName`, and `emails` with one entry: `Skola elev` for a
+pupil, `Skola personal` for staff, `Privat` for a guardian. A pupil with an
+open class segment and a derivable school type has `enrolments`: `enroledAt`,
+`schoolType`, `schoolYear` (only 0–10) and `startDate`. `startDate` is the
+start of the pupil's unbroken chain of class segments, so a class move is not
+a new enrolment, and there is no `endDate` while the pupil is active.
+`responsibles` holds `{person}` only; **`relationType` is omitted** because
+SchemaPro does not store it. **`eduPersonPrincipalNames` is omitted**: S1
+defines it as "spårbar, persistent och globalt unik", and an email address can
+change and be reused. v1 still sends the email there. Expands: `duties`,
+`responsibleFor`, `groupMemberships` (`{group: GroupFragment, startDate,
+endDate}`), and `placements`/`ownedPlacements` (always `[]`; SchemaPro has no
+förskola or fritids). `relationship.*` filters act on enrolment, duty,
+responsibleFor.enrolment and groupMembership relations.
+
+**Groups** (`groups.read`): classes and teaching groups of the **active and
+past** läsår. A rolled-over year that is not yet active is a draft and never
+leaves. `displayName`, `startDate`/`endDate` (the year's bounds), `groupType`
+(`Klass`/`Undervisning`), `schoolType` (from the year's timplan for the
+class's årskurs), and `organisation`. `groupMemberships`: a class lists its
+StudentEnrollments segments as `{person, startDate, endDate}`. The segment's
+exclusive end is turned into S1's inclusive one, and an open segment has no
+`endDate`. A teaching group lists `{person}` per member; no dates are held.
+`expand=assignmentRoles` gives the MENTORSKAP uppdrag as `Mentor`.
+
+**Duties** (`duties.read`): the active year's posts, built by the same
+`toSs12000Duty` as v1's `/duties`. `dutyPercent` and `hoursPerYear` are sent
+only when the school turned `shareEmploymentWithIntegrations` on. The
+nedsättning, the target and the note are never selected. The ids are then
+translated as above. `expand=person`.
+
+**Activities** (`activities.read`): **the published** weekly timetable of the
+active year. That is the live masters in DIRECT and the publication's snapshot
+valid now in DRAFT, read through the same `readGrundschema` as v1's
+`/activities`; a draft edit is never served, and parked lessons are not
+activities. `displayName` (`<subject> — <group>`, as in v1),
+`calendarEventsRequired`, `startDate`/`endDate` (the master's dates or the
+year's), `activityType` (`Undervisning` when the subject counts toward the
+timplan, else `Elevaktivitet`, S1's own example being mentorstid), `groups`,
+`teachers` (`[{duty}]`), `syllabus` (when the Syllabus is served), and
+`organisation`. An ad-hoc lesson is an Activity of its own, with
+`calendarEventsRequired: false` and its date as both bounds.
+**`minutesPlanned` is omitted**: no per-activity total over the period is
+computed.
+
+**CalendarEvents** (`calendarEvents.read`): the dated lessons (always the
+published calendar) of the active and past years. `startTime.onOrAfter` and
+`startTime.onOrBefore` are required (S1) and may span at most 400 days.
+Fields: `activity`, `startTime`, `endTime`, `cancelled`, `rooms`,
+`studentExceptions` (a pupil named on the lesson outside its groups), and
+`teacherExceptions`. The exceptions compare the event's teachers with its
+activity's. When the lesson has a vikarie, the event's teachers are the
+SUBSTITUTE rows (the vikarie participates, the planned teachers do not);
+otherwise every row counts. **Only the fact: never an absence, a reason, the
+lesson's note or a cancel cause.** `expand=activity`. `expand=attendance` is
+403: no scope grants attendance (see "Left out").
+
+**Rooms** (`rooms.read`): `displayName`, `seats` (capacity, when set),
+`owner`.
+
+**Syllabuses** (`syllabuses.read`): one per subject when the active year's
+timplans have exactly one school form (S1 requires `schoolType`). Fields:
+`subjectName`, `subjectDesignation` (the national code such as `MA`, not S1's
+`subjectCode` such as `GRGRMAT01`, which is never sent), and `official`. A
+school with none or several forms serves no Syllabus, and its activities carry
+no `syllabus`.
+
+**DeletedEntities**: `{data: {persons, groups, duties, activitites,
+calendarEvents, rooms, syllabuses, organisations}, pageToken}`. The keys are
+S1's own spellings, `activitites` included. The response has only the
+categories asked for that the key may read, with the ids removed after
+`after`. "Removed" means: a person deactivated or deleted, a group, room,
+subject or lesson deleted, a master deleted or parked (DIRECT) or absent from
+a new publication (DRAFT), a post deleted, an id superseded by a link, and
+the activities and duties of a year that stops being active. A future year's
+rows are never recorded. Tombstones are kept 400 days. A guardian's id may
+appear under `persons` for a key without `responsibles.read`: an id and
+nothing more.
+
+**Lookups**: S1's bodies, at most 1000 ids in all. `persons/lookup {ids,
+civicNos}` (civicNos match nothing). `organisations/lookup {ids,
+schoolUnitCodes, organisationCodes}`. `activities/lookup {ids, teachers,
+members}`. `calendarEvents/lookup {ids, activities, student, teacher}`, where
+`student` and `teacher` are arrays under singular names, as S1 has them. S1
+types the calendar lookup's answer `AttendancesArray`, an evident slip; it
+answers `CalendarEvent[]`. The rest take `{ids}`. Unknown keys or values that
+are not uuids are 400 `INVALID_BODY`.
+
+### Subscriptions (webhooks)
+
+S1's `/subscriptions`, for the key's own subscriptions only (another key's id
+is 404); `subscriptions.write`:
+
+* `POST /subscriptions` `{name, target, resourceTypes: [{resource: "Person"}, …]}`
+  answers **201** `Subscription {id, expires, name, target, resourceTypes}`.
+  `resourceTypes` takes S1's schema shape, `[{resource}]`. S1's own example
+  (`["Organsation","Person","Duty"]`, plain strings, misspelt) is
+  non-normative and answers 400. The resources are those the provider emits
+  (`Organisation`, `Person`, `Group`, `Duty`, `Activity`, `CalendarEvent`,
+  `Room`, `Syllabus`), each needing its read scope. `target` is https with no
+  userinfo or fragment, at most 2048 characters, and an address that passes
+  the sync's SSRF rules (no loopback, RFC 1918, CGNAT, link-local, ULA such as
+  `*.railway.internal`, multicast, or mapped and NAT64 forms of them). It is
+  vetted at creation and at every delivery, with the connection pinned to the
+  vetted address. **409 `WEBHOOK_SECRET_MISSING`** until the school has created
+  the key's signing secret; no unsigned notice is ever sent. 409
+  `SUBSCRIPTION_LIMIT` at ten live subscriptions per key.
+* `GET /subscriptions` (paged), `GET /subscriptions/{id}`.
+* `PATCH /subscriptions/{id}`, no body (S1: "Uppdatera expire time"), moves
+  `expires` 30 days ahead. It also lifts a suspension for failing deliveries,
+  never a pause the school made.
+* `DELETE /subscriptions/{id}` answers **204** and ends the subscription. The
+  row stays as the record.
+
+**The notice** is a POST to `target` with exactly S1's callback body:
+
+```json
+{"modifiedEntites": ["CalendarEvent", "Activity"], "deletedEntities": true}
+```
+
+`modifiedEntites` is S1's spelling. The notice carries no data and no id. Read
+the changes with `meta.modified.after` and `/deletedEntities`. At most one
+notice per subscription a minute, as S1 permits ("kan välja att skicka en notis
+för multipla förändringar"). The delivery watermark is a transaction-id
+horizon, not a time, so a change committed late is never skipped. Any 2xx is
+accepted (S1 names 200).
+
+**Signing** (a SchemaPro extension, in headers only):
+
+```
+X-SchemaPro-Delivery:  <uuid per attempt>
+X-SchemaPro-Timestamp: <unix seconds>
+X-SchemaPro-Signature: v1=<hex HMAC-SHA256(secret, timestamp + "." + raw body)>
+```
+
+The secret is per key, made by the school's admin (Admin → Integrations,
+`POST /api/v1/integration-keys/:id/webhook-secret`). It is shown once and
+stored sealed (AES-256-GCM with `INTEGRATION_SECRETS_KEY`, bound to the school
+and the key). When it is replaced, the previous secret keeps signing for 24
+hours and the header carries both (`v1=<new>,v1=<old>`). Verify like this:
+
+```js
+const { createHmac, timingSafeEqual } = require('node:crypto');
+function verify(secret, headers, rawBody) {
+  const timestamp = Number(headers['x-schemapro-timestamp']);
+  if (Math.abs(Date.now() / 1000 - timestamp) > 300) return false;
+  const expected = createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest();
+  return String(headers['x-schemapro-signature']).split(',').some((part) => {
+    const given = Buffer.from(part.trim().replace(/^v1=/, ''), 'hex');
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+}
+```
+
+**Retries.** Each attempt has 10 seconds and no redirects, and at most 64 KB
+of the answer is read and then dropped. After a failure the next attempt comes
+in 1 min, 5 min, 30 min and 2 h, then every 6 h, each ±20 %. After 72 hours of
+failure the subscription is suspended (the admin sees it; a PATCH lifts it). A
+revoked key's subscriptions are never notified. Every attempt is logged with
+its status, an outcome code and its duration, but no body and no header, and
+the log is kept 30 days. The school's admin can pause and resume a
+subscription.
+
+### Left out, with reasons
+
+| Item | Reason |
+|---|---|
+| `Placement` | S1 uses it for förskola and fritids only (`schoolType` FS, FTH, OPPFTH). SchemaPro holds no such data |
+| `Attendance`, `Absence`, `AttendanceEvent`, `AggregatedAttendance` | Pupils' absence is sensitive, and S1's Attendance carries reasons. It needs its own privacy design |
+| `Programme`, `StudyPlan`, `SchoolUnitOffering`, `Resource`, `Grade`, `/log`, `/statistics` | No source in SchemaPro |
+| A token endpoint for this provider | S1 requires only a bearer; the key is one. A JWT issuer would need a signing key of its own |
+| civicNo, addresses, phone numbers, securityMarking, middleName | Not stored, or not stored for this |
 
 ## Pulling the roster from a source (SS12000 consumer)
 
@@ -247,11 +562,12 @@ be tenant-scoped — the tenant is what it resolves — so the transaction sets
 (SELECT) and `integration_keys_service_touch` (UPDATE): non-revoked rows of
 `IntegrationApiKeys`, and no other table. A revoked key is invisible to the
 lookup, so revocation takes effect on the next request. The guard's UPDATE
-writes only `lastUsedAt`, but the policy does not hold it there: it names no
-column and no school, and its `WITH CHECK` asks only that the key stay
-unrevoked. Inside the lookup a statement can rewrite any column of any
-school's live key, `schoolId` and `keyHash` included; only revoking one is
-refused. The school id comes from the key row, never from request input.
+writes only `lastUsedAt`. The policy names no column and no school, and its
+`WITH CHECK` asks only that the key stay unrevoked. Since `20261014120000` a
+key carries its own reach (`scopes`), so a BEFORE UPDATE guard
+(`app.integration_key_lookup_writes_are_narrow`) refuses any other column
+inside the lookup (SQLSTATE SS403): the lookup reads scopes and never writes
+them. The school id comes from the key row, never from request input.
 
 **The service principal is tenant-scoped in the database.** There is no user,
 but integration requests do not run outside RLS: the API connects as
@@ -354,6 +670,23 @@ and no grant; only `app.ss12000_source_secrets` hands a ciphertext out, to the
 school's sync principal or SCHOOL_ADMIN, never to the service principal of these
 read endpoints. Every unlink of a guardian is recorded in
 `GuardianStudentHistory`. RLS suite §30 asserts all of it.
+
+**The provider's principal (v2.0).** Every v2 request runs in
+`withServicePrincipal(schoolId, fn, {keyId})`, which also sets
+`app.service_key_id`. The subscription arms name it, so a key reads, renews
+and ends only its own subscriptions. `20261014130000` added SELECT arms for
+the service principal on `StudentEnrollments`, `StudentGroupMembers`,
+`AcademicYearTimplans`, `LocalTimplans`, `Ss12000DutyLinks`,
+`Ss12000EntityVersions` and `Ss12000Tombstones`: what v2 emits, of its own
+school only. **There is no service arm on `Ss12000Sources`**, since an arm
+cannot restrict columns and the source's row holds its base and token URLs.
+`app.ss12000_provider_identity()` hands the principal the organisation ids and
+skolenhetskoder only. Versions and tombstones are written by triggers alone;
+the API holds SELECT. `IntegrationKeyWebhookSecrets` has RLS with no arm and
+no grant. Only the delivery context (no claims, no principal) receives a
+ciphertext, through `app.ss12000_webhook_secrets`. The delivery functions
+refuse every principal. RLS suite §31 asserts all of it, and the adapter
+probe's sp-a to sp-e check the provider against Postgres.
 
 Wire personnummer/civic numbers are intentionally not accepted or stored.
 
