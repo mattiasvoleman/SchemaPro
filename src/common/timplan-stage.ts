@@ -363,10 +363,14 @@ function stagesOfPupil(
     const version = stageKey === 'LAG_MELLAN' ? mellanVersion : versionOf(stageKey);
     const merged = stageKey === 'LAG_MELLAN';
 
-    // Per grade: what is known of it.
+    // Per grade: what is known of it. A recorded block that records no day
+    // (a grade sat wholly in a class since deleted, or in no class) says
+    // nothing about its grade: the grade is unrecorded, never a recorded 0 h
+    // that would complete the stage and read as a shortfall.
     const share = new Map<number, number>();
     const future = new Map<number, number>();
     for (const block of inStage) {
+      if (block.year.basis === 'RECORDED' && block.year.recordedPermille === 0) continue;
       const target = block.year.basis === 'RECORDED' ? share : future;
       target.set(block.versionGrade!, (target.get(block.versionGrade!) ?? 0) + block.year.recordedPermille);
     }

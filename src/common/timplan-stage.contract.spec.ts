@@ -43,8 +43,8 @@ interface CohortCase {
 const { cases, cohortCases } = fixture as unknown as { cases: FixtureCase[]; cohortCases: CohortCase[] };
 
 describe('stadiesummor agree with the shared fixture', () => {
-  it('has the 21 cases of the spec and the two boundary cases, and reaches every verdict code and every cell status', () => {
-    expect(cases.map((entry) => Number(entry.name.split('.')[0]))).toEqual(Array.from({ length: 23 }, (_, i) => i + 1));
+  it('has the 21 cases of the spec, the two boundary cases and the review’s cases, and reaches every verdict code and every cell status', () => {
+    expect(cases.map((entry) => Number(entry.name.split('.')[0]))).toEqual(Array.from({ length: 24 }, (_, i) => i + 1));
     const codes = new Set(cases.flatMap((entry) => entry.coverage.pupils.flatMap((pupil) => pupil.verdicts.map((verdict) => verdict.code))));
     expect([...codes].sort()).toEqual([
       'TIMPLAN_PUPIL_STAGE_BACKFILLED',

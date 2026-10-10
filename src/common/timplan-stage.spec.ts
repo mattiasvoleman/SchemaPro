@@ -201,6 +201,20 @@ describe('stadiesummor, case by case', () => {
     expect(codes(partly!)).toEqual(['TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED']);
   });
 
+  it('24: a grade wholly in a class since deleted is unrecorded: the stage is not judged, no 0 h shortfall', () => {
+    const [pupil] = run(24);
+    expect(stage(pupil!, 'HOG')).toMatchObject({
+      recordedGrades: [7, 9],
+      partlyRecordedGrades: [],
+      unrecordedGrades: [8],
+      complete: false,
+      classDeleted: true,
+    });
+    expect(cell(pupil!, 'HOG', 'MA')).toMatchObject({ status: 'UNRECORDED', projectedStatus: 'UNRECORDED', plannedShortfallHours: 0 });
+    expect(codes(pupil!)).toEqual(['TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED']);
+    expect(pupil!.verdicts[0]!.params).toMatchObject({ unrecordedGrades: '8', classDeleted: 1 });
+  });
+
   it('never refuses: an empty input is an empty answer', () => {
     expect(computePupilStages({ ...cases[0]!.input, pupils: [] })).toEqual({ asOfDate: cases[0]!.input.asOfDate, pupils: [] });
   });

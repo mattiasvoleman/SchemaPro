@@ -200,6 +200,12 @@ const cases: Case[] = [
     pupil(231, c6a, [year(y(2024), 2024, 4, mellan()), year(y(2025), 2025, 5, mellan(), { recordedPermille: 995 }), current(y(2026), 2026, 6, mellan())]),
     pupil(232, c6a, [year(y(2024), 2024, 4, mellan()), year(y(2025), 2025, 5, mellan(), { recordedPermille: 994 }), current(y(2026), 2026, 6, mellan())]),
   ] },
+  // A grade sat wholly in a class deleted since: recordedBlocksOfYear hands a
+  // block that records nothing (permille 0, no line). It is unrecorded, never
+  // a recorded 0 h that completes the stage and reads as a shortfall.
+  { name: '24. a whole grade in a class since deleted is unrecorded, never zero', activeHT: 2026, pupils: [
+    pupil(24, c7a, [year(y(2024), 2024, 7, hog()), year(y(2025), 2025, 8, [], { recordedPermille: 0, recordedFrom: null, classDeleted: true }), current(y(2026), 2026, 9, hog())]),
+  ] },
 ];
 
 const out = cases.map((c) => {
