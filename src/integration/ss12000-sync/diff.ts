@@ -276,6 +276,13 @@ export function computeDiff(input: DiffInput): DiffResult {
   const deletedPersons = new Set(roster.deleted?.persons ?? []);
   const deletedGroups = new Set(roster.deleted?.groups ?? []);
   const deletedDuties = new Set(roster.deleted?.duties ?? []);
+  // Ids deletedEntities names that nothing here is linked to: counted, ignored.
+  const linkedPeople = new Set(local.users.map((u) => u.ss12000Id).filter(Boolean));
+  const linkedGroups = new Set(local.groups.map((g) => g.ss12000Id).filter(Boolean));
+  const linkedDuties = new Set(local.dutyLinks.map((d) => d.ss12000DutyId));
+  bump('deleted', 'unlinkedPersons', [...deletedPersons].filter((id) => !linkedPeople.has(id)).length);
+  bump('deleted', 'unlinkedGroups', [...deletedGroups].filter((id) => !linkedGroups.has(id)).length);
+  bump('deleted', 'unlinkedDuties', [...deletedDuties].filter((id) => !linkedDuties.has(id)).length);
 
   // ---------------------------------------------------------------------
   // A3.4: an empty FULL fetch produces no diff.

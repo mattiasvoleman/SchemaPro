@@ -306,8 +306,10 @@ describe('computeDiff: deactivation and reactivation', () => {
 
   it('never infers a deactivation from absence in an INCREMENTAL run, only from deletedEntities', () => {
     const local = slice({ users: [user(1, { ss12000Id: ext(1) }), user(2, { ss12000Id: ext(2) })] });
-    const result = diff(roster({ mode: 'INCREMENTAL', people: [], deleted: { persons: [ext(2)], groups: [], duties: [] } }), local);
+    const result = diff(roster({ mode: 'INCREMENTAL', people: [], deleted: { persons: [ext(2), ext(77)], groups: [ext(78)], duties: [] } }), local);
     expect(only(result.changes, 'PERSON', 'DEACTIVATE').map((c) => [c.localId, c.after?.['reason']])).toEqual([[loc(2), 'DELETED_AT_SOURCE']]);
+    // An id nothing here is linked to is counted and ignored.
+    expect(result.counts['deleted']).toEqual({ unlinkedPersons: 1, unlinkedGroups: 1, unlinkedDuties: 0 });
   });
 
   it('does not deactivate an id deletedEntities lists that the same run also returns (INFO)', () => {
