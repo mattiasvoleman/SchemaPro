@@ -357,4 +357,32 @@ describe('buildReconciliation', () => {
       expect(result.groupLosses!.find((loss) => loss.studentGroupId === G7A)).toMatchObject({ cancelledEvent: 120 });
     });
   });
+
+  /*
+   * Vikarieplanering (review L): the board replaces only the absent lead and
+   * keeps the co-teacher (replacesTeacherId). Statement E reads the kept
+   * ASSISTANT row beside the SUBSTITUTE as DISPLACED, and the C rows give
+   * both grundschema slots coveredByOthers — the same credit for the
+   * co-teacher as the old PATCH's wipe of both rows, one displaced lesson
+   * more. Statement E is pinned and runs under the reader's RLS, which cannot
+   * read the cover decisions, so it is documented here rather than changed.
+   */
+  it('a co-teacher kept beside a vikarie is credited as when the old PATCH wiped them, one displaced lesson more', () => {
+    const slot = (personId: string, role: string): CreditRow => ({
+      kind: 'C', personId, role, subjectId: MA, studentGroupId: G7A, extraGroupIds: [], bucket: 'DELIVERED', minutes: 60, lessons: 1,
+    });
+    const wiped = buildReconciliation(base({ credits: [t(CY, 'SUBSTITUTE', 'DELIVERED', 60, 1), slot(ANNA, 'LEAD'), slot(BO, 'ASSISTANT')] }));
+    const kept = buildReconciliation(
+      base({ credits: [t(CY, 'SUBSTITUTE', 'DELIVERED', 60, 1), t(BO, 'ASSISTANT', 'DISPLACED', 60, 1), slot(ANNA, 'LEAD'), slot(BO, 'ASSISTANT')] }),
+    );
+    const credit = (result: ReturnType<typeof buildReconciliation>) => {
+      const bo = row(result, BO);
+      return { delivered: bo.delivered, coveredByOthers: bo.coveredByOthersMinutes, lost: bo.lostMinutes };
+    };
+    expect(credit(kept)).toEqual(credit(wiped));
+    expect(credit(kept)).toEqual({ delivered: 0, coveredByOthers: 30, lost: 0 });
+    expect(row(kept, BO).displacedLessons).toBe(1);
+    expect(row(wiped, BO).displacedLessons ?? 0).toBe(0);
+    expect(row(kept, CY)).toMatchObject({ delivered: 60, substituteMinutes: 60 });
+  });
 });
