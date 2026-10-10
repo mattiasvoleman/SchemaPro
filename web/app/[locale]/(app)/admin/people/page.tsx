@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, lazy, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
@@ -388,6 +388,18 @@ export default function PeoplePage() {
     workRules?.find((rule) => rule.userId === teacherId);
   const [workTimeFor, setWorkTimeFor] = useState<Person | null>(null);
   const [guardiansFor, setGuardiansFor] = useState<Person | null>(null);
+  // ?guardians=<pupil id> opens that pupil's guardians, once: the link the
+  // SS12000 diff review gives for a guardian the register no longer names
+  // (a sync never unlinks one; the admin does it here). Read after mount, as
+  // the staffing page reads ?year=, not with useSearchParams.
+  const [linkedPupilId, setLinkedPupilId] = useState<string | null>(null);
+  useEffect(() => setLinkedPupilId(new URLSearchParams(window.location.search).get("guardians")), []);
+  useEffect(() => {
+    if (!linkedPupilId || !people) return;
+    const pupil = people.find((person) => person.id === linkedPupilId && person.role === "STUDENT");
+    if (pupil) setGuardiansFor(pupil);
+    setLinkedPupilId(null);
+  }, [linkedPupilId, people]);
   const { data: studentGuardians } = useStudentGuardians(guardiansFor?.id ?? null);
   const guardianLinks = useGuardianLinkActions();
   const [newGuardianId, setNewGuardianId] = useState("");
