@@ -3476,6 +3476,7 @@
     "renameReason": "Byt namn",
     "saveReason": "Spara",
     "newReason": "Ny orsak",
+    "reasonLabelHint": "Listan syns för all personal, också vikariepoolen – skriv en kategori, aldrig ett namn eller en diagnos.",
     "addReason": "Lägg till orsak",
     "reasonSaved": "Orsaken är tillagd"
   },

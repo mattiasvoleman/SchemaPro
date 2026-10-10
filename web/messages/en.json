@@ -3476,6 +3476,7 @@
     "renameReason": "Rename",
     "saveReason": "Save",
     "newReason": "New reason",
+    "reasonLabelHint": "Every staff member sees the list, the substitute pool too – write a category, never a name or a diagnosis.",
     "addReason": "Add reason",
     "reasonSaved": "The reason is added"
   },

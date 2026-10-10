@@ -130,6 +130,7 @@ function ReasonRow({ reason }: { reason: AbsenceReason }) {
         >
           <Input
             aria-label={t("renameReason")}
+            aria-describedby="reason-label-hint"
             value={label}
             maxLength={60}
             onChange={(event) => setLabel(event.target.value)}
@@ -197,13 +198,24 @@ function ReasonsSection() {
       >
         <div className="flex-1 space-y-1">
           <Label htmlFor="new-reason">{t("newReason")}</Label>
-          <Input id="new-reason" value={label} maxLength={60} onChange={(event) => setLabel(event.target.value)} />
+          <Input
+            id="new-reason"
+            aria-describedby="reason-label-hint"
+            value={label}
+            maxLength={60}
+            onChange={(event) => setLabel(event.target.value)}
+          />
         </div>
         <Button type="submit" size="sm" variant="outline" disabled={!label.trim() || create.isPending}>
           <Plus />
           {t("addReason")}
         </Button>
       </form>
+      {/* The link from an absence to its reason is the admin's and the
+          teacher's; the list itself is every teacher's (they pick from it). */}
+      <p id="reason-label-hint" className="text-xs text-muted-foreground">
+        {t("reasonLabelHint")}
+      </p>
     </section>
   );
 }
