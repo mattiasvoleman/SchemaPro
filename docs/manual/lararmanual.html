@@ -51,6 +51,10 @@
     <li><span>5 · Boka lokal</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <li><span>6 · Notiser</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
     <li><span>7 · När du är vikarie</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
+    <ol>
+      <li><span>7.1 I vikariepoolen</span><span class="dots"></span><span class="pg" data-pg="s71"></span></li>
+      <li><span>7.2 När du själv är borta</span><span class="dots"></span><span class="pg" data-pg="s72"></span></li>
+    </ol>
     <li><span>8 · Vanliga frågor</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <li><span>9 · Snabbreferens</span><span class="dots"></span><span class="pg" data-pg="ch9"></span></li>
   </ol>
@@ -340,7 +344,9 @@
     <tbody>
       <tr><td class="k">Veckoschemat har ändrats</td><td>Titta på <span class="path">Mitt schema</span> — en lektion har flyttats eller ändrats.</td></tr>
       <tr><td class="k">Lektionen ställdes in</td><td>Ingen åtgärd. Lektionen visas som inställd i schemat.</td></tr>
-      <tr><td class="k">Lektionen har en vikarie</td><td>Ingen åtgärd om det gäller din frånvaro. Gäller det någon annans lektion, se kapitel 7.</td></tr>
+      <tr><td class="k">Lektionen har en vikarie</td><td>Ingen åtgärd om det gäller din frånvaro.</td></tr>
+      <tr><td class="k">Du vikarierar</td><td>Du är inbokad som vikarie på lektionen som nämns, med klass och sal. Se kapitel 7.</td></tr>
+      <tr><td class="k">Vikariepasset är avbokat</td><td>Du behöver inte komma. Lektionen försvinner ur ditt schema.</td></tr>
       <tr><td class="k">Lektionen har flyttat till en annan sal</td><td>Notera den nya salen. Salen i schemat är alltid den aktuella.</td></tr>
       <tr><td class="k">Din bokning godkändes eller avslogs</td><td>Vid avslag: boka en annan lokal eller tid.</td></tr>
     </tbody>
@@ -354,12 +360,21 @@
 <!-- ============================ 7 ============================ -->
 <section class="chapter" id="ch7">
   <h2><span class="num">7</span>När du är vikarie</h2>
-  <p class="lede">Att ta över en kollegas lektion.</p>
+  <p class="lede">Att ta över en kollegas lektion, och att själv vara borta.</p>
 
   <p>
-    Sätter administratören in dig som vikarie på en lektion dyker den upp i ditt
-    schema och i din närvarolista precis som dina egna lektioner. Du registrerar
-    närvaro på exakt samma sätt.
+    Sätter skolledningen in dig som vikarie på en lektion får du notisen
+    <em>Du vikarierar</em> med ämne, klass, sal och tid, och — om skolan
+    skickar e-post — samma sak som mejl. Lektionen dyker upp i ditt schema,
+    märkt <em>Vikarie</em>, och i din närvarolista precis som dina egna
+    lektioner. Du registrerar närvaro på exakt samma sätt. Notisen säger
+    aldrig vem du ersätter eller varför.
+  </p>
+  <p>
+    Under <span class="path">Vikariepass &amp; frånvaro › Mina
+    vikariepass</span> står dina vikariepass de närmaste fyra veckorna. Behövs
+    du inte längre får du notisen <em>Vikariepasset är avbokat</em>, och passet
+    försvinner ur listan och schemat.
   </p>
   <p>
     Vikariatet gäller den enskilda lektionen, inte kursen i stort. Ordinarie
@@ -373,6 +388,37 @@
       ska hållas är vikariatet inte registrerat i systemet. Hör av dig till
       administratören — utan registreringen kan du inte spara närvaro på
       lektionen.
+    </p>
+  </div>
+
+  <h3 id="s71"><span class="num">7.1</span>I vikariepoolen</h3>
+  <p>
+    Är du timvikarie står du i skolans vikariepool. Skolan föreslår dig bara
+    inom de tider som är angivna för dig. Dem ser och ändrar du själv under
+    <span class="path">Vikariepass &amp; frånvaro › Min tillgänglighet</span>:
+    varje vecka (till exempel tisdagar 08–15) eller ett enskilt datum. Utan
+    tider föreslås du inte.
+  </p>
+
+  <h3 id="s72"><span class="num">7.2</span>När du själv är borta</h3>
+  <p>
+    Under <span class="path">Vikariepass &amp; frånvaro › Min frånvaro</span>
+    ser du din registrerade frånvaro, med orsak, och hur många av dina
+    lektioner som har fått vikarie. Om skolan tillåter det kan du själv
+    <span class="ui">Anmäla frånvaro</span> från och med i dag — hela dagar
+    eller del av dag — <span class="ui">avsluta den i förtid</span> och
+    <span class="ui">återkalla</span> en anmälan innan den börjar (eller inom en
+    timme om inget har bestämts). Annars registrerar skolledningen frånvaron
+    som vanligt.
+  </p>
+  <div class="note">
+    <span class="label">Vem ser orsaken</span>
+    <p>
+      Orsaken väljs ur skolans lista eller lämnas som <em>Ange inte</em>, och
+      det finns inget fritextfält. Bara du och skolledningen ser den. Kollegor,
+      elever och vårdnadshavare ser som förut bara att en lektion har en vikarie
+      eller är inställd, och skolledningens notis om din anmälan säger inget om
+      orsaken.
     </p>
   </div>
 </section>
@@ -446,6 +492,7 @@
       <tr><td class="k">Vid inloggning</td><td>Läs notiser, kolla dagens lektioner</td><td>Klockan uppe till höger, <span class="path">Mitt schema</span></td></tr>
       <tr><td class="k">Varje lektion</td><td>Registrera närvaro under de första minuterna</td><td><span class="path">Närvaro</span></td></tr>
       <tr><td class="k">Vid behov</td><td>Boka lokal, avboka det du inte behöver</td><td><span class="path">Boka lokal</span></td></tr>
+      <tr><td class="k">När du är vikarie eller borta</td><td>Se dina vikariepass, din frånvaro och dina tider i poolen</td><td><span class="path">Vikariepass &amp; frånvaro</span></td></tr>
       <tr><td class="k">Veckovis</td><td>Titta framåt i schemat</td><td><span class="ui">Nästa vecka</span></td></tr>
     </tbody>
   </table>

@@ -174,7 +174,7 @@
       </tr>
       <tr>
         <td class="k">Lärare</td>
-        <td>Sitt eget schema och sin egen tjänst (endast läsa), registrerar närvaro, bokar lokal.</td>
+        <td>Sitt eget schema och sin egen tjänst (endast läsa), registrerar närvaro, bokar lokal, ser sina vikariepass och sin egen frånvaro med orsak.</td>
         <td>Egna lektioner och elever</td>
       </tr>
       <tr>
@@ -852,17 +852,19 @@
     <p>
       <strong>Frånvaro dras inte av.</strong> Undervisningstiden är det skolan
       erbjuder; att en elev var borta en lektion ändrar inte att lektionen
-      hölls. Frånvaron följs upp i närvaron (6.3).
+      hölls. Frånvaron följs upp i närvaron (6.5).
     </p>
     <table>
       <thead><tr><th style="width:44%">Rad i kalendern</th><th>Räknas som</th></tr></thead>
       <tbody>
         <tr><td class="k">Hållen, med lärare</td><td>Genomförd</td></tr>
-        <tr><td class="k">Inställd när läraren inte var tillgänglig</td><td>Förlorad: <em>Inställd – läraren inte tillgänglig</em>. Skrivs vid publicering för en lärarspärr, och när du ställer in från Lärarfrånvaro (6.2).</td></tr>
+        <tr><td class="k">Inställd när läraren inte var tillgänglig</td><td>Förlorad: <em>Inställd – läraren inte tillgänglig</em>. Skrivs vid publicering för en lärarspärr, och när du ställer in från Lärarfrånvaro eller Vikarietavlan (6.2–6.3).</td></tr>
         <tr><td class="k">Inställd när salen inte var tillgänglig</td><td>Förlorad: <em>Inställd – salen inte tillgänglig</em>, vid publicering.</td></tr>
         <tr><td class="k">Inställd av skolan</td><td>Förlorad: <em>Inställd av skolan</em>, när du ställer in i dagsplaneringen eller lektionslistan.</td></tr>
         <tr><td class="k">Inställd före den här versionen, med annan anteckning</td><td>Förlorad: <em>Inställd – orsak ej registrerad</em>.</td></tr>
         <tr><td class="k">Utan lärare</td><td>Förlorad, och redovisad för sig: <em>Utan lärare</em>.</td></tr>
+        <tr><td class="k">Självstudier under tillsyn</td><td>Förlorad: lektionen står utan lärare och räknas som <em>Utan lärare</em>. Självstudier är inte undervisningstid (6.3).</td></tr>
+        <tr><td class="k">Hållen av vikarie eller av medläraren</td><td>Genomförd. Vikarien krediteras lektionen i tjänstefördelningen.</td></tr>
         <tr><td class="k">Inställd på en lov- eller studiedag</td><td>Inte förlorad. Det händer när ett lov läggs in efter publiceringen.</td></tr>
         <tr><td class="k">Lov och stängda klassdagar</td><td>Ingen rad alls — varken genomförd eller förlorad. Ska dagen räknas används tillgodoräknad tid.</td></tr>
       </tbody>
@@ -1047,7 +1049,7 @@
   </p>
   <p>
     Ska dagens lektioner stå kvar som inställda i stället för att tas bort
-    som av ett lov, används <span class="path">Drift › Avbokning</span> (6.7),
+    som av ett lov, används <span class="path">Drift › Avbokning</span> (6.9),
     som kan skriva beslutet om tillgodoräknad tid i samma steg.
   </p>
   <div class="warn">
@@ -1730,7 +1732,7 @@
     <p>
       Ändrar du ett ämnes faktor ändras alla läsårs siffror under Faktor, även
       förra årets, och ändringen syns inte i lärarnas historik. Ta ut
-      samverkansfilen (6.6) före en ändring om ni behöver de gamla siffrorna.
+      samverkansfilen (6.8) före en ändring om ni behöver de gamla siffrorna.
       En faktor per grupp finns inte; radens procent på timplansposten
       (<span class="ui">Räknas för lärare (%)</span>) väger redan en grupp och ett ämne.
     </p>
@@ -2348,32 +2350,206 @@
   </p>
   <p>Använd dagsplaneringen för enstaka händelser under dagen.</p>
 
-  <h3><span class="num">6.2</span>Lärarfrånvaro</h3>
+  <h3 id="s62"><span class="num">6.2</span>Lärarfrånvaro</h3>
   <p>
-    Ska en lärare vara borta under flera dagar används
-    <span class="path">Drift › Lärarfrånvaro</span> i stället. Välj lärare och
-    datumintervall, så listas alla lektioner som behöver täckas. Du kan tilldela
-    vikarier lektion för lektion, eller ställa in samtliga visade lektioner på
-    en gång.
+    Ska en lärare vara borta registreras frånvaron under
+    <span class="path">Drift › Lärarfrånvaro</span>. Överst på sidan står
+    registret: pågående och kommande frånvaro (avslutad och återkallad med
+    <span class="ui">Visa avslutade</span>), med lärare, period, orsak, läge och
+    hur långt skolan har kommit med lektionerna — hur många som behöver
+    vikarie, har vikarie, är inställda eller hanterade på annat sätt.
   </p>
   <p>
-    En lektion som ställs in här registreras som <em>inställd – läraren inte
-    tillgänglig</em>, med anledningen du skriver som anteckning. En lektion som
-    ställs in i dagsplaneringen registreras som <em>inställd av skolan</em>.
-    Inställda lektioner och lektioner som står utan lärare räknas som förlorad
-    undervisningstid i Täckning (4.1), uppdelat efter orsak. En lektion med
-    vikarie räknas som genomförd.
+    <span class="ui">Registrera frånvaro</span> öppnar formuläret med läraren
+    och datumen du har valt nedanför. En frånvaro gäller hela dagar, eller del
+    av dag: en tid den första dagen och en tid den sista, eller ett tidsfönster
+    en enda dag. Den kan vara högst 186 dagar — längre frånvaro hör hemma i
+    tjänstefördelningen — och börja högst 30 dagar bakåt.
+  </p>
+  <p>
+    <strong>Inget ställs in automatiskt.</strong> Lärarens lektioner under
+    perioden hamnar på vikarietavlan (6.3) som <em>Behöver vikarie</em>, och
+    läraren står kvar på dem tills du har bestämt något. Elever och
+    vårdnadshavare ser alltså ingen skillnad förrän det finns en vikarie eller
+    en inställd lektion.
+  </p>
+
+  <h4>Orsaken, och vem som ser den</h4>
+  <p>
+    Orsaken väljs ur skolans lista — förvalen är <em>Sjukdom</em>,
+    <em>Vård av barn</em>, <em>Tjänsteresa</em>,
+    <em>Kompetensutveckling</em> och <em>Annat</em> — eller lämnas som
+    <em>Ange inte</em>. Det finns inget fritextfält: en kategori räcker för att
+    planera vikarier, och en anteckning om någons hälsa blir lätt ett
+    sjukregister som ingen har beslutat om.
+  </p>
+  <p>
+    Orsaken är känslig personuppgift. Den syns bara för administratörer och
+    för läraren själv — aldrig för kollegor, elever eller vårdnadshavare, och
+    aldrig på vikarietavlan, i notiser, e-post, exporter eller schemat. Det
+    kontrolleras i databasen, inte bara i sidorna. Kollegor ser som förut bara
+    att en lektion har en vikarie eller är inställd.
+  </p>
+
+  <h4>Ändra, avsluta i förtid, återkalla</h4>
+  <ul>
+    <li><span class="ui">Ändra</span> flyttar perioden eller byter orsak.
+      Faller lektioner som redan har en vikarie eller ett annat beslut utanför
+      den nya perioden frågar systemet om besluten ska ångras.</li>
+    <li><span class="ui">Avsluta i förtid</span> gäller från en dag och en tid
+      du väljer, även bakåt (”kom tillbaka i går”), men inte före frånvarons
+      början. Lektioner efter tidpunkten lämnar tavlan.</li>
+    <li><span class="ui">Återkalla</span> används när frånvaron registrerades
+      av misstag. Har lektioner som redan hållits beslut på sig går det inte —
+      avsluta i förtid i stället.</li>
+  </ul>
+
+  <h4>Förhandsvisningen nedanför</h4>
+  <p>
+    Under registret finns sidan som den alltid har sett ut: välj lärare och
+    datumintervall, så listas lektionerna med <span class="ui">Tilldela
+    vikarie</span>, <span class="ui">Byt sal</span>, <span class="ui">Ställ in
+    lektion</span> och <span class="ui">Ställ in alla visade</span>. En vikarie
+    eller en inställd lektion som du väljer här hamnar också på vikarietavlan
+    när läraren har en registrerad frånvaro. Fältet vid inställning heter
+    <em>Meddelande till elever och vårdnadshavare</em>, eftersom det syns för
+    klassen: skriv inte varför läraren är borta.
+  </p>
+
+  <h4>Lärarens egen anmälan</h4>
+  <p>
+    Under <span class="ui">Inställningar</span> kan skolan låta lärare anmäla
+    sin egen frånvaro (förval: av). Läraren anmäler då under
+    <span class="path">Vikariepass &amp; frånvaro</span> från och med i dag —
+    ”sjuk i dag” klockan sju går alltså bra — kan avsluta den i förtid och
+    återkalla en anmälan innan den börjar, eller inom en timme om inget har
+    bestämts. Orsaken kan läraren inte ändra efteråt; det gör en administratör.
+    Administratörerna får notisen <em>En lärare har anmält frånvaro</em>, utan
+    orsak.
   </p>
   <div class="note">
     <span class="label">Välj rätt verktyg</span>
     <p>
-      Dagsplanering för en enskild dag, Lärarfrånvaro för en period. Att gå
-      igenom en veckas sjukfrånvaro dag för dag i dagsplaneringen är onödigt
-      arbete.
+      Dagsplanering för en enskild händelse, Lärarfrånvaro för att registrera
+      vem som är borta, och Vikarietavlan för att ordna alla lektioner som
+      behöver vikarie, oavsett vems.
     </p>
   </div>
 
-  <h3><span class="num">6.3</span>Närvaro</h3>
+  <h3 id="s63"><span class="num">6.3</span>Vikarietavla</h3>
+  <p>
+    <span class="path">Drift › Vikarietavla</span> visar varje lektion som
+    berörs av en registrerad frånvaro, en dag eller en vecka i taget, med tid,
+    klass, ämne, sal, vem som är borta, status och vikarie. En samläst lektion
+    där båda lärarna är borta står med en rad per lärare. Överst syns dagens
+    eller veckans summa.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Status</th><th>Betyder</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Behöver vikarie</td><td>Inget är bestämt. Läraren står kvar på lektionen.</td></tr>
+      <tr><td class="k">Vikarie tillsatt</td><td>En vikarie håller lektionen. Står det <em>Vikarien är borttagen sedan beslutet</em> har någon tagit bort vikarien i efterhand, och lektionen behöver vikarie igen.</td></tr>
+      <tr><td class="k">Inställd</td><td>Lektionen är inställd. Orsaken står under, till exempel <em>Läraren kan inte</em> eller en avbokning för prao.</td></tr>
+      <tr><td class="k">Självstudier under tillsyn</td><td>Klassen har självstudier; lektionen står utan lärare och räknas som förlorad tid.</td></tr>
+      <tr><td class="k">Medläraren håller</td><td>En annan lärare på lektionen håller den ensam.</td></tr>
+      <tr><td class="k">Passerad utan beslut</td><td>Lektionen har hållits utan att något bestämdes. Den ändras inte i efterhand.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Besluten</h4>
+  <ul>
+    <li><span class="ui">Tillsätt vikarie</span> öppnar förslagen (nedan).
+      Vikarien får en notis och, om skolan skickar e-post, ett mejl med ämne,
+      klass, sal och tid — aldrig vem hen ersätter eller varför.</li>
+    <li><span class="ui">Ställ in</span> ställer in lektionen med orsaken att
+      läraren inte kan. Ingen anledning skickas till klassen. En lektion som
+      redan har börjat kan inte ställas in; tillsätt en vikarie eller välj
+      självstudier.</li>
+    <li><span class="ui">Självstudier under tillsyn</span> (under
+      <span class="ui">Fler val</span>) tar bort den frånvarande läraren från
+      lektionen och skriver det som anteckning, som klassen ser.</li>
+    <li><span class="ui">Medläraren håller</span> visas först när en annan
+      lärare finns kvar på lektionen.</li>
+    <li><span class="ui">Ångra</span> lägger tillbaka det beslutet ändrade —
+      den frånvarande läraren och en medlärare som togs bort — och en vikarie
+      som inte längre behövs får notisen att passet är avbokat. Flera beslut på
+      samma lektion ångras i omvänd ordning. Vill du byta beslut: ångra först.</li>
+  </ul>
+  <p>
+    Bocka i flera rader för att ställa in, ge självstudier eller ångra dem på
+    en gång; knapparna räknar bara de rader beslutet går att ta på. Ingenting
+    på en lektion som redan hållits ändras, varken här eller i bulk.
+  </p>
+
+  <h4>Förslagen</h4>
+  <p>
+    Förslagen bryter aldrig mot en hård regel: personen är ledig då (inga egna
+    lektioner, uppdrag, spärrar eller lokalbokningar), behåller sin lunch och
+    sin dygnsvila enligt arbetstidsreglerna, är inte själv frånvarande och har
+    — om hen står i vikariepoolen utan tjänst — sagt att hen kan just då. De
+    rangordnas efter behörighet i ämnet och årskursen, om personen känner
+    klassen (undervisar den, är mentor), om hen ändå är på skolan eller har en
+    håltimme, hur många vikariepass hen redan har haft den här veckan och
+    terminen, hur nära veckans riktmärke hen ligger, och skolans val för
+    vikariepoolen. Varje förslag säger sina skäl i klartext med poängen bredvid.
+  </p>
+  <p>
+    Under <span class="ui">Kan inte</span> står de som inte föreslås och
+    varför — en frånvarande kollega står som <em>Är själv frånvarande</em>, utan
+    orsak. Vill du ändå välja någon annan finns <span class="ui">Annan
+    lärare</span>: du får en varning för lunch, dygnsvila, tillgänglighet eller
+    behörighet, men vikarien sätts in. En lärare som själv är frånvarande kan
+    aldrig sättas in.
+  </p>
+
+  <h4>Fördela dagen</h4>
+  <p>
+    I dagsvyn gör <span class="ui">Fördela dagen</span> ett förslag för dagens
+    alla lektioner som behöver vikarie på en gång, med samma regler. De svåraste
+    lektionerna — de med minst antal möjliga vikarier — fördelas först, och en
+    person som får ett pass flyttas ner i resten av dagens förslag. Bocka ur
+    det du inte vill ha, eller uteslut en person och räkna om, och tillämpa
+    resten i ett svep. Har dagen ändrats sedan förslaget gjordes tillämpas
+    ingenting, och ett nytt förslag räknas fram.
+  </p>
+
+  <h4>Vikarieräknaren och två administratörer samtidigt</h4>
+  <p>
+    Bredvid tavlan står vikarieräknaren: hur många vikariepass var och en har
+    haft den här veckan och terminen, och veckans totala vikariepass. Samma
+    siffror sänker personens plats i förslagen, så att samma kollega inte får
+    alla pass. Arbetar två administratörer på tavlan samtidigt uppdateras den
+    för båda när någon bestämmer något. Har en lektion ändrats sedan du läste
+    tavlan säger systemet det i stället för att skriva över, och tavlan läses
+    om. Pågår en publicering säger tavlan det, och du försöker igen när den är klar.
+  </p>
+
+  <h3 id="s64"><span class="num">6.4</span>Vikariepoolen</h3>
+  <p>
+    Timvikarier och andra som tar vikariepass utan tjänst läggs in i
+    vikariepoolen under <span class="path">Lärarfrånvaro ›
+    Inställningar</span>. Lägg först in personen under Personer som lärare;
+    hen loggar in med inbjudan som andra lärare, eller nås på den e-post och
+    det telefonnummer som står där.
+  </p>
+  <ul>
+    <li><strong>Tider.</strong> En poolvikarie utan tjänst föreslås bara inom
+      de tider som har angetts — varje vecka (till exempel tisdagar
+      08–15) eller ett datum. Tiderna anger du under <span class="ui">Tider</span>,
+      eller vikarien själv under <span class="path">Vikariepass &amp;
+      frånvaro</span>. Utan tider föreslås hen aldrig.</li>
+    <li><strong>Rangordning.</strong> Skolan väljer om poolen ska användas
+      först, som all annan personal (förval), eller sist — då föreslås poolen
+      bara när ingen egen personal kan.</li>
+    <li><strong>Räknas.</strong> Poolvikariers pass räknas i vikarieräknaren
+      och i vikarietimmarna, men aldrig mot ett riktmärke. En lärare med tjänst
+      som också står i poolen räknas som vanlig personal.</li>
+    <li><strong>Behörigheter.</strong> En poolvikarie är lärare i SchemaPro och
+      ser det andra lärare ser: skolans schema, klasslistor och närvaro.
+      Inaktivera den som slutar.</li>
+  </ul>
+
+  <h3><span class="num">6.5</span>Närvaro</h3>
   <p>
     Läraren registrerar närvaro under <span class="path">Närvaro</span>, som
     visar dagens lektioner. I lektionsvyn markeras varje elev, med möjlighet att
@@ -2382,7 +2558,7 @@
     markerade.
   </p>
 
-  <h3><span class="num">6.4</span>Frånvaroanmälan och ledighet</h3>
+  <h3><span class="num">6.6</span>Frånvaroanmälan och ledighet</h3>
   <p>
     Vårdnadshavare anmäler frånvaro och ansöker om ledighet under
     <span class="path">Mina barn</span>. Frånvaroanmälan gäller omgående.
@@ -2399,7 +2575,7 @@
     </p>
   </div>
 
-  <h3><span class="num">6.5</span>Lokalbokningar</h3>
+  <h3><span class="num">6.7</span>Lokalbokningar</h3>
   <p>
     Lärare bokar lokaler under <span class="path">Boka lokal</span>. Beroende på
     salens inställningar godkänns bokningen direkt eller hamnar för granskning
@@ -2407,9 +2583,9 @@
     till schemat, så en sal som redan har lektion går inte att boka.
   </p>
 
-  <h3 id="s66"><span class="num">6.6</span>Rapporter</h3>
+  <h3 id="s68"><span class="num">6.8</span>Rapporter</h3>
   <p>
-    <span class="path">Drift › Rapporter</span> har två flikar. Fliken
+    <span class="path">Drift › Rapporter</span> har tre flikar. Fliken
     <span class="ui">Närvaro</span> visar närvarograd per klass och elev för en
     vald period, med klassens snitt som jämförelse, och kan exporteras som CSV.
   </p>
@@ -2543,7 +2719,35 @@
     </p>
   </div>
 
-  <h3 id="s67"><span class="num">6.7</span>Avbokning</h3>
+  <h4>Vikarietimmar</h4>
+  <p>
+    Fliken <span class="ui">Vikarietimmar</span> visar per person de
+    vikariepass som har hållits under en period du väljer (förval: förra
+    månaden, högst 93 dagar), i klockminuter och timmar, och bredvid de pass
+    som är bokade men inte hållna. Hållna pass är samma lektioner som
+    tjänstefördelningen krediterar vikarien med.
+  </p>
+  <p>
+    Två CSV-filer kan tas ut för lönen: <span class="ui">Exportera pass</span>
+    med en rad per pass (<em>Vikarie; E-post; Typ; Datum; Start; Slut;
+    Minuter; Ämne; Grupp; Sal</em>) och <span class="ui">Exportera
+    summering</span> med en rad per person (<em>Vikarie; E-post; Typ;
+    Lektioner; Minuter; Timmar</em>). Typ är <em>Personal</em> eller
+    <em>Vikariepool</em>, tiderna står i skolans tid, och filerna öppnas direkt
+    i Excel. Bokade pass exporteras aldrig. Personen anges med namn och
+    e-post, eftersom SchemaPro inte lagrar anställningsnummer.
+  </p>
+  <div class="note">
+    <span class="label">Varför den ersatta läraren inte står i filen</span>
+    <p>
+      Lönen behöver veta vem som arbetade när, inte vem som var borta eller
+      varför. En fil som skickas till ett lönekontor ska inte bli ett
+      sjukregister, så filerna saknar den ersatta läraren, frånvaron och
+      orsaken.
+    </p>
+  </div>
+
+  <h3 id="s69"><span class="num">6.9</span>Avbokning</h3>
   <p>
     <span class="path">Drift › Avbokning</span> ställer in många lektioner på
     en gång: en dag, en vecka, en årskurs eller några klasser, för prao, en
@@ -2726,7 +2930,7 @@
       <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.3).</td></tr>
       <tr><td class="k">Sensommar</td><td>Granska efter sommarens klassbyten</td><td>Klassbyten och nya elever efter genereringen kan ge krockar; de ritas i grundschemat. Justera, eller generera om med hög <span class="ui">Schemastabilitet</span>.</td></tr>
       <tr><td class="k">Före terminsstart</td><td>Spara version och publicera</td><td>Publicera hela terminen eller läsåret.</td></tr>
-      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Ta ut SCB-underlaget under <span class="path">Rapporter › Tjänstefördelning</span>, komplettera och kontrollera det (6.6).</td></tr>
+      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Ta ut SCB-underlaget under <span class="path">Rapporter › Tjänstefördelning</span>, komplettera och kontrollera det (6.8).</td></tr>
       <tr><td class="k">Löpande</td><td>Drift</td><td>Närvaro, vikarier, ledigheter, bokningar.</td></tr>
       <tr><td class="k">Vid större ändringar</td><td>Spara version, justera, generera om</td><td>Höj <span class="ui">Schemastabilitet</span> så att befintliga placeringar behålls.</td></tr>
       <tr><td class="k">Terminsslut</td><td>Exportera rapporter</td><td>Närvarostatistik per klass för arkivering, och tjänstefördelningens samverkansfil med planerat mot genomfört.</td></tr>
@@ -2982,6 +3186,16 @@
   <table>
     <thead><tr><th style="width:27%">Symtom</th><th style="width:33%">Trolig orsak</th><th>Åtgärd</th></tr></thead>
     <tbody>
+      <tr>
+        <td class="k">En lärare som är borta syns inte på vikarietavlan</td>
+        <td>Frånvaron är inte registrerad, bara förhandsvisad på Lärarfrånvaro.</td>
+        <td>Klicka på <span class="ui">Registrera frånvaro</span> (6.2).</td>
+      </tr>
+      <tr>
+        <td class="k">Ingen föreslås som vikarie</td>
+        <td>Alla som kunde är upptagna, frånvarande, skulle förlora lunch eller dygnsvila, eller står i poolen utan tider.</td>
+        <td>Se <span class="ui">Kan inte</span> i förslagen, ange poolvikariernas tider, eller välj under <span class="ui">Annan lärare</span> med varning (6.3).</td>
+      </tr>
       <tr>
         <td class="k">Knappen Generera schema går inte att klicka</td>
         <td>En förutsättning saknas.</td>
