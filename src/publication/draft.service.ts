@@ -111,7 +111,8 @@ export class DraftService {
    * read the same rows from the snapshot — an empty draft changes no answer.
    *
    * DRAFT → DIRECT is refused (409 PUBLISH_DRAFT_PENDING) while the draft
-   * differs from any snapshot still valid ahead, or a deleted lesson's
+   * differs from any snapshot still valid ahead, a läsår that has not ended
+   * has a grundschema and no publication at all, or a deleted lesson's
    * published rows are unsettled: in DIRECT the masters ARE what is published,
    * and switching would publish the draft without a gate. Publishing the
    * draft from today to the year's end is the way to make them equal.
@@ -172,7 +173,13 @@ export class DraftService {
         const pending = await tx.publicationPendingRemoval.count({ where: { schoolId } });
         for (const year of years) {
           const masters = new Map((await readDraftMasters(tx, year.id)).map((master) => [master.id, master]));
-          const future = effectiveSegments(await snapshotRanges(tx, year.id)).filter((segment) => segment.to >= today);
+          const ranges = await snapshotRanges(tx, year.id);
+          // A läsår whose grundschema was built in DRAFT and never published:
+          // in DIRECT its masters ARE what is published, so switching would
+          // publish all of it — to teachers, SS12000 and every reader — with
+          // no preview and no gate.
+          if (masters.size > 0 && ranges.length === 0) throw draftPending(year.name);
+          const future = effectiveSegments(ranges).filter((segment) => segment.to >= today);
           for (const segment of future) {
             const published = await readPublishedMasters(tx, segment.publicationId);
             const differs =

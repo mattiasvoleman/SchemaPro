@@ -5250,6 +5250,33 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.ok(discarded.restored >= 1);
       const state = await drafts.state(school.yearId, school.admin);
       assert.deepEqual([state.added.length, state.changed.length, state.removed.length], [0, 0, 0]);
+      // Next läsår's grundschema, built in DRAFT and never published: leaving
+      // DRAFT would publish it whole without a gate, so it is refused, named.
+      const next = await owner.query(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+         VALUES ($1, $2, '2097-08-12', '2098-06-10', false, now()) RETURNING id`,
+        [school.schoolId, `${MARKER} nästa`],
+      );
+      const nextGroup = await owner.query(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+         VALUES ($1, $2, $3, 8, 'CLASS', now()) RETURNING id`,
+        [school.schoolId, next.rows[0].id, `${MARKER} 8A`],
+      );
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+         VALUES ($1, $2, $3, $4, 2, '08:00', '09:00', now())`,
+        [school.schoolId, next.rows[0].id, school.subject, nextGroup.rows[0].id],
+      );
+      const teacherSeesNext = await api.withRls(school.teacher, (tx) => tx.masterLesson.count({ where: { academicYearId: next.rows[0].id } }));
+      assert.equal(teacherSeesNext, 0);
+      await assert.rejects(
+        drafts.switchMode('DIRECT', school.admin),
+        (error: unknown) =>
+          error instanceof ConflictException &&
+          JSON.stringify(error.getResponse()).includes('PUBLISH_DRAFT_PENDING') &&
+          JSON.stringify(error.getResponse()).includes(`${MARKER} nästa`),
+      );
+      await owner.query(`DELETE FROM "AcademicYears" WHERE id = $1`, [next.rows[0].id]);
       assert.equal((await drafts.switchMode('DIRECT', school.admin)).publishMode, 'DIRECT');
     });
   } finally {
