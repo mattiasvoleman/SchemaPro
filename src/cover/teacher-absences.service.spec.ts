@@ -168,7 +168,7 @@ describe('TeacherAbsencesService', () => {
       });
       const error = await service.create({ userId: ME, from: '2026-10-14', to: '2026-10-14' }, admin).catch((e: unknown) => e);
       const body = (error as { getResponse: () => Record<string, unknown> }).getResponse();
-      expect(body).toMatchObject({ code: 'ABSENCE_OVERLAPS', other: { id: 'other' } });
+      expect(body).toMatchObject({ code: 'ABSENCE_OVERLAPS', params: { otherAbsenceId: 'other' } });
       expect(tx.teacherAbsence.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ select: { id: true, startsAt: true, endsAt: true } }),
       );
@@ -266,7 +266,7 @@ describe('TeacherAbsencesService', () => {
       const error = await service.end(ABSENCE, { at: '2026-10-15T00:00:00Z' }, admin).catch((e: unknown) => e);
       expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({
         code: 'ABSENCE_HAS_DECISIONS',
-        decisions: [{ calendarLessonId: 'l-ahead', decision: 'SUPERVISED_STUDY' }],
+        params: { count: 1, lessonId: 'l-ahead', decision: 'SUPERVISED_STUDY' },
       });
       expect(tx.teacherAbsence.update).not.toHaveBeenCalled();
     });

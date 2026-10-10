@@ -429,7 +429,7 @@ function proposalStale(lessonId?: string): ConflictException {
   return new ConflictException({
     message: 'Dagen har ändrats sedan förslaget gjordes. Gör ett nytt förslag.',
     code: COVER_PROPOSAL_STALE,
-    ...(lessonId ? { lessonId } : {}),
+    ...(lessonId ? { params: { lessonId } } : {}),
   });
 }
 
