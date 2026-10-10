@@ -590,6 +590,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -635,6 +636,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -1450,6 +1452,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -1495,6 +1498,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -2334,6 +2338,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -3267,6 +3272,7 @@
         "complete": true,
         "recordedFrom": "2026-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -4009,6 +4015,7 @@
         "complete": false,
         "recordedFrom": "2025-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -4676,7 +4683,7 @@
         "schoolForm": "GRUNDSKOLA",
         "basis": "RECORDED",
         "recordedPermille": 1000,
-        "recordedFrom": "2026-10-10",
+        "recordedFrom": "2026-08-17",
         "backfilled": true,
         "classDeleted": false,
         "lines": [
@@ -4752,7 +4759,8 @@
           "atPlanMinutes": 0,
           "aheadMinutes": 384
          }
-        ]
+        ],
+        "historyFrom": "2026-10-10"
        }
       ]
      }
@@ -4798,6 +4806,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": true,
+        "historyFrom": "2026-10-10",
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -4843,6 +4852,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": true,
+        "historyFrom": "2026-10-10",
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -4937,7 +4947,8 @@
         "severity": "notice",
         "stage": "MELLAN",
         "params": {
-         "recordedFrom": "2024-08-17"
+         "recordedFrom": "2024-08-17",
+         "historyFrom": "2026-10-10"
         },
         "pupilId": "00000000-0000-4000-8000-000000000006"
        }
@@ -5922,6 +5933,7 @@
         "complete": true,
         "recordedFrom": "2021-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -6048,6 +6060,7 @@
         "complete": true,
         "recordedFrom": "2022-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -6577,6 +6590,7 @@
         "complete": true,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -7117,6 +7131,7 @@
         "complete": true,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -7218,6 +7233,7 @@
         "complete": false,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -8061,6 +8077,7 @@
         "complete": true,
         "recordedFrom": "2027-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -8758,6 +8775,7 @@
         "complete": true,
         "recordedFrom": "2021-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [],
@@ -8796,6 +8814,7 @@
         "complete": true,
         "recordedFrom": "2021-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -8841,6 +8860,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -9848,6 +9868,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -10732,6 +10753,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -11744,6 +11766,7 @@
         "complete": false,
         "recordedFrom": "2026-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -11790,6 +11813,7 @@
         "complete": true,
         "recordedFrom": "2026-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -11929,6 +11953,7 @@
         "complete": false,
         "recordedFrom": "2026-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -11976,6 +12001,7 @@
         "complete": false,
         "recordedFrom": "2026-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -12615,6 +12641,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -13154,6 +13181,7 @@
         "complete": false,
         "recordedFrom": "2026-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [],
@@ -13789,6 +13817,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": true,
         "distributionAssumed": false,
         "cells": [
@@ -14579,6 +14608,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -14625,6 +14655,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -15561,6 +15592,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -15704,6 +15736,7 @@
         "complete": false,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -15804,6 +15837,7 @@
         "complete": false,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -16306,6 +16340,7 @@
         "complete": false,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -16406,6 +16441,7 @@
         "complete": false,
         "recordedFrom": "2028-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": true,
         "cells": [
@@ -18002,6 +18038,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -18047,6 +18084,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -18174,6 +18212,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -18219,6 +18258,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -18377,6 +18417,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -18422,6 +18463,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -19529,6 +19571,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -19574,6 +19617,7 @@
         "complete": true,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -19702,6 +19746,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -19748,6 +19793,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [
@@ -20498,6 +20544,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": true,
         "distributionAssumed": false,
         "cells": [
@@ -21209,6 +21256,7 @@
         "complete": false,
         "recordedFrom": "2024-08-17",
         "backfilled": false,
+        "historyFrom": null,
         "classDeleted": false,
         "distributionAssumed": false,
         "cells": [

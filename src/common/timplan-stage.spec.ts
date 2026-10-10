@@ -91,7 +91,15 @@ describe('stadiesummor, case by case', () => {
   });
 
   it('6 and 17: a backfilled block and a deleted class are named', () => {
-    expect(codes(run(6)[0]!)).toContain('TIMPLAN_PUPIL_STAGE_BACKFILLED');
+    const [backfilled] = run(6);
+    expect(codes(backfilled!)).toContain('TIMPLAN_PUPIL_STAGE_BACKFILLED');
+    // The verdict and the stage name the span the class is assumed for: from
+    // the first recorded day to the day the history began.
+    expect(backfilled!.verdicts.find((verdict) => verdict.code === 'TIMPLAN_PUPIL_STAGE_BACKFILLED')!.params).toEqual({
+      recordedFrom: '2024-08-17',
+      historyFrom: '2026-10-10',
+    });
+    expect(stage(backfilled!, 'MELLAN')).toMatchObject({ backfilled: true, historyFrom: '2026-10-10' });
     const [deleted] = run(17);
     expect(stage(deleted!, 'HOG')).toMatchObject({ partlyRecordedGrades: [8], classDeleted: true, complete: false });
   });

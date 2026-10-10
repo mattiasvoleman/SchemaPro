@@ -908,7 +908,9 @@
     årskull (Timplaner per årskull, ovan). Tre tal per ämne:
     <em>planerat</em> är timplansposterna eleven hade under stadiets läsår och
     kommande årskursers timplan; <em>utfall</em> är genomförd och
-    tillgodoräknad tid, med samma definition som Genomfört mot schemalagt;
+    tillgodoräknad tid, med samma definition som Genomfört mot schemalagt, och
+    för dagar utan publicerat schema den planerade tiden (har skolan aldrig
+    publicerat något för ett läsår räknas hela det läsåret efter planen);
     <em>prognos</em> är utfallet plus resten av läsåret och kommande årskurser.
     Fliken räknar det aktiva läsåret, och bara skoladmin ser den.
   </p>
@@ -922,7 +924,10 @@
     har ingen klass i historiken från den dagen, och de dagarna räknas inte.
     Historiken började med den klass varje
     elev hade när den infördes; en flytt dessförinnan syns inte, och sådana
-    elever märks <em>antagen klass</em>. Historiken kan inte ändras för hand.
+    elever märks <em>antagen klass</em> med datumen klassen är antagen för.
+    En elev vars hemgrupp är en undervisningsgrupp i stället för en klass
+    räknas inte för de dagarna, på samma sätt som i Planerat och Genomfört.
+    Historiken kan inte ändras för hand.
   </p>
   <div class="note">
     <span class="label">Ett läsår före SchemaPro är aldrig noll</span>
@@ -979,11 +984,15 @@
     sparar en ögonblicksbild för det aktiva läsåret: varje elevs nuvarande
     stadium, ämne för ämne. Eleven ser den som ett kort på sin startsida och
     vårdnadshavaren ett kort per barn. Kortet visar timmar hittills, planerat
-    för hela stadiet och timplanens timmar där fördelningen är publicerad,
-    och när det uppdaterades. Är stadiet inte registrerat från början står
-    <em>Sedan 1 oktober 2026</em> i stället för <em>Hittills</em>, och
-    årskurserna som inte ingår namnges. Kortet har ingen bedömning och ingen
-    färg: det är skolan som följer upp siffrorna.
+    för stadiet och timplanens timmar, och när det uppdaterades (skolans
+    datum). Är stadiet inte registrerat från början, eller är klassen antagen
+    från när historiken började, står <em>Sedan 1 oktober 2026</em> i stället
+    för <em>Hittills</em>. Saknas någon årskurs står det vilka årskurser
+    <em>Planerat</em> gäller, och timplanens timmar för hela stadiet visas
+    inte bredvid. Årskurser utan historik och årskurser som ingen timplan bär
+    ännu namnges var för sig. För dagar utan publicerat schema räknas den
+    planerade tiden, och kortet säger det. Kortet har ingen bedömning och
+    ingen färg: det är skolan som följer upp siffrorna.
   </p>
   <p>
     Siffrorna ändras inte av sig själva. Tryck <span class="ui">Publicera igen</span>
@@ -992,7 +1001,8 @@
     läsår aktiveras slutar korten visas tills du publicerar för det nya
     läsåret. En elev ser bara sitt eget kort och en vårdnadshavare bara sina
     egna barns; lärare ser inga kort, och kortet innehåller inget om
-    lärarna.
+    lärarna. Vem som publicerade och hur många elever skolan har ser bara
+    skoladmin.
   </p>
 
   <h4>Tillgodoräknad tid</h4>

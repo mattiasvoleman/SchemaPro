@@ -249,11 +249,13 @@ function Publication({
           ? t("publicationNone")
           : current
             ? t("publicationCurrent", {
-                date: day(publication.publishedAt.slice(0, 10)),
+                // The school's day it was published (asOfDate), never the UTC day of the instant:
+                // a statement published at 00:30 Swedish time is not "published yesterday".
+                date: day(publication.asOfDate),
                 pupils: publication.pupils,
                 asOf: day(publication.asOfDate),
               })
-            : t("publicationOtherYear", { date: day(publication.publishedAt.slice(0, 10)) })}
+            : t("publicationOtherYear", { date: day(publication.asOfDate) })}
       </p>
       <p className="max-w-prose text-xs text-muted-foreground">{t("publicationHint")}</p>
       <div className="flex flex-wrap gap-2">
@@ -691,7 +693,11 @@ function VerdictText({
       );
     }
     case "TIMPLAN_PUPIL_STAGE_BACKFILLED":
-      return <>{tVerdict("backfilled", { from: from(p.recordedFrom) })}</>;
+      return p.historyFrom ? (
+        <>{tVerdict("backfilledUntil", { from: from(p.recordedFrom), until: day(String(p.historyFrom)) })}</>
+      ) : (
+        <>{tVerdict("backfilled", { from: from(p.recordedFrom) })}</>
+      );
     case "TIMPLAN_STAGE_VERSION_NOT_IN_REFERENCE":
       return <>{tVerdict("versionMissing", { stageTitle })}</>;
     case "TIMPLAN_STAGE_DISTRIBUTION_UNPUBLISHED":

@@ -54,9 +54,14 @@
 -- references NationalTimplanVersions(code) and subjectCode NationalSubjects
 -- (code), both RESTRICT (reference data is never deleted). recordedFrom is the
 -- first recorded day of the stage, so a card says "263 timmar sedan 1 oktober
--- 2026" whenever the stage is partly unrecorded, and never "hittills" for the
--- whole stage. plannedGrades are the stage's grades ahead that a plan
--- carries, unrecordedGrades those with no class history (or no plan ahead).
+-- 2026" whenever the stage is partly unrecorded or backfilled, and never
+-- "hittills" for the whole stage. plannedGrades are the stage's grades ahead
+-- that a plan carries; unrecordedGrades those with no class history (the
+-- past, "inte registrerad"); unplannedGrades those ahead that no plan carries
+-- yet ("ingen timplan ännu") — two different things a family is told apart.
+-- historyFrom, on a backfilled stage only (CHECK), is the day the class
+-- history began (20261010120000's backfill): the class before it is the one
+-- the pupil had that day, assumed rather than recorded, and the card says so.
 --
 -- CHECKs mirror what the module produces: hours 0..20000 to the tenth
 -- (numeric(6,1)), grades 0..10 and ordered, the five statuses by name.
@@ -137,7 +142,9 @@ CREATE TABLE "TimplanStatements" (
     "recordedFrom"          DATE,
     "plannedGrades"         INTEGER[] NOT NULL DEFAULT '{}',
     "unrecordedGrades"      INTEGER[] NOT NULL DEFAULT '{}',
+    "unplannedGrades"       INTEGER[] NOT NULL DEFAULT '{}',
     "backfilled"            BOOLEAN NOT NULL DEFAULT false,
+    "historyFrom"           DATE,
 
     CONSTRAINT "TimplanStatements_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "TimplanStatements_grades_are_sane" CHECK (
@@ -155,7 +162,10 @@ CREATE TABLE "TimplanStatements" (
     ),
     CONSTRAINT "TimplanStatements_grade_lists_are_sane" CHECK (
         "plannedGrades" <@ ARRAY[0,1,2,3,4,5,6,7,8,9,10] AND "unrecordedGrades" <@ ARRAY[0,1,2,3,4,5,6,7,8,9,10]
-    )
+        AND "unplannedGrades" <@ ARRAY[0,1,2,3,4,5,6,7,8,9,10]
+    ),
+    -- Only a backfilled stage has a day its history began.
+    CONSTRAINT "TimplanStatements_history_only_when_backfilled" CHECK ("historyFrom" IS NULL OR "backfilled")
 );
 
 CREATE UNIQUE INDEX "TimplanStatements_publicationId_studentId_stage_subjectCode_key"

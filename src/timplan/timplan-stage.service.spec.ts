@@ -102,10 +102,21 @@ describe('TimplanStageService', () => {
       const seven = cases.find((entry) => entry.name.startsWith('7.'))!;
       expect(statementRows(computePupilStages(seven.input))).toEqual([]); // finished stages: nothing
       expect(Object.keys(rows[0]!).sort()).toEqual([
-        'backfilled', 'complete', 'distributionPublished', 'gradesFrom', 'gradesTo', 'nationalHours', 'outcomeHours',
+        'backfilled', 'complete', 'distributionPublished', 'gradesFrom', 'gradesTo', 'historyFrom', 'nationalHours', 'outcomeHours',
         'plannedGrades', 'plannedHours', 'projectedHours', 'projectedStatus', 'recordedFrom', 'stage', 'status',
-        'studentId', 'subjectCode', 'unrecordedGrades', 'versionCode',
+        'studentId', 'subjectCode', 'unplannedGrades', 'unrecordedGrades', 'versionCode',
       ]);
+    });
+
+    it('keeps grades with no history apart from grades no plan carries yet, and carries the day a backfilled history began', () => {
+      const cases = (fixture as unknown as { cases: { name: string; input: StageInput }[] }).cases;
+      // Case 14's second pupil: åk 4 now, åk 5 planned, åk 6 carried by no plan.
+      const rows = statementRows(computePupilStages(cases.find((entry) => entry.name.startsWith('14.'))!.input));
+      const unplanned = rows.find((row) => row.stage === 'MELLAN' && row.unplannedGrades.length > 0)!;
+      expect(unplanned).toMatchObject({ unrecordedGrades: [], unplannedGrades: [6], complete: false });
+      // Case 6: backfilled from the year's start on 10 October.
+      const backfilled = statementRows(computePupilStages(cases.find((entry) => entry.name.startsWith('6.'))!.input))[0]!;
+      expect(backfilled).toMatchObject({ backfilled: true, historyFrom: new Date('2026-10-10T00:00:00.000Z') });
     });
   });
 
@@ -129,7 +140,9 @@ describe('TimplanStageService', () => {
       recordedFrom: new Date('2026-10-01T00:00:00.000Z'),
       plannedGrades: [6],
       unrecordedGrades: [4],
+      unplannedGrades: [],
       backfilled: true,
+      historyFrom: new Date('2026-10-10T00:00:00.000Z'),
     });
 
     it('reads a pupil’s OWN statement whatever studentId was sent, and never the publication row', async () => {
@@ -152,6 +165,9 @@ describe('TimplanStageService', () => {
             stage: 'MELLAN',
             recordedFrom: '2026-10-01',
             complete: false,
+            unrecordedGrades: [4],
+            unplannedGrades: [],
+            historyFrom: '2026-10-10',
             lines: [{ subjectCode: 'MA', subjectName: 'Matematik', nationalHours: 410, outcomeHours: 263, plannedHours: 413 }],
           },
         ],

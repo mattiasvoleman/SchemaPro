@@ -41,7 +41,9 @@ const mellan = (over: Partial<TeachingTimeStage> = {}): TeachingTimeStage => ({
   recordedFrom: "2024-08-17",
   plannedGrades: [],
   unrecordedGrades: [],
+  unplannedGrades: [],
   backfilled: false,
+  historyFrom: null,
   lines: [
     {
       subjectCode: "MA",
@@ -105,6 +107,38 @@ describe("TeachingTimeCard", () => {
     expect(within(card).getByRole("columnheader", { name: "teachingTime.since(1 oktober 2026)" })).toBeInTheDocument();
     expect(within(card).queryByRole("columnheader", { name: "teachingTime.soFar" })).not.toBeInTheDocument();
     expect(card).toHaveTextContent("teachingTime.unrecorded(4 och 5)");
+  });
+
+  it("never says 'Hittills' for a stage whose class was backfilled, and says until when the class is assumed", async () => {
+    // Recorded from the year's start, but the class before 10 October is the
+    // one the pupil had when the history began — not a recorded fact.
+    state.response = statement([mellan({ complete: true, backfilled: true, recordedFrom: "2026-08-17", historyFrom: "2026-10-10" })]);
+    show();
+    const card = await screen.findByRole("region", { name: "teachingTime.title" });
+    expect(within(card).queryByRole("columnheader", { name: "teachingTime.soFar" })).not.toBeInTheDocument();
+    expect(within(card).getByRole("columnheader", { name: "teachingTime.since(17 augusti 2026)" })).toBeInTheDocument();
+    expect(card).toHaveTextContent("teachingTime.backfilled(10 oktober 2026)");
+  });
+
+  it("labels a partial stage's planned figure with the grades it covers, and sets no whole-stage timplan beside it", async () => {
+    // Åk 4 is before SchemaPro: planned covers åk 5 and 6, the timplan's 410 h all three.
+    state.response = statement([mellan({ complete: false, recordedFrom: "2025-08-18", unrecordedGrades: [4], plannedGrades: [6] })]);
+    show();
+    const card = await screen.findByRole("region", { name: "teachingTime.title" });
+    expect(within(card).getByRole("columnheader", { name: "teachingTime.plannedGrades(5 och 6)" })).toBeInTheDocument();
+    expect(within(card).queryByRole("columnheader", { name: "teachingTime.planned" })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("columnheader", { name: "teachingTime.timplan" })).not.toBeInTheDocument();
+    expect(within(card).getByRole("row", { name: /Matematik/ })).not.toHaveTextContent("410 h");
+    expect(card).toHaveTextContent("teachingTime.timplanWhenComplete");
+  });
+
+  it("tells grades no plan carries yet apart from grades with no history", async () => {
+    state.response = statement([mellan({ complete: false, recordedFrom: "2025-08-18", unrecordedGrades: [4], unplannedGrades: [6] })]);
+    show();
+    const card = await screen.findByRole("region", { name: "teachingTime.title" });
+    expect(card).toHaveTextContent("teachingTime.unrecorded(4)");
+    expect(card).toHaveTextContent("teachingTime.unplanned(6)");
+    expect(card).not.toHaveTextContent("teachingTime.unrecorded(4 och 6)");
   });
 
   it("shows no timplan column where the national distribution is not published, and says so", async () => {

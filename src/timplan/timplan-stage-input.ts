@@ -103,6 +103,8 @@ export interface StageSegment {
   /** YYYY-MM-DD, exclusive; null is open. */
   to: string | null;
   source: 'RECORDED' | 'BACKFILL';
+  /** The school's day the row was written; for a BACKFILL row, the day the class history began. */
+  writtenOn?: string;
 }
 
 export interface StageYearBounds {
@@ -169,6 +171,7 @@ interface WindowPupil {
   homeGroupId: string;
   gradeLevel: number | null;
   source: StageSegment['source'];
+  writtenOn: string | null;
 }
 
 /**
@@ -216,7 +219,13 @@ export function recordedBlocksOfYear(
     const key = `${clipped.from}|${clipped.to}`;
     let window = windows.get(key);
     if (!window) windows.set(key, (window = { ...clipped, pupils: [] }));
-    window.pupils.push({ id: segment.studentId, homeGroupId: segment.studentGroupId, gradeLevel: segment.gradeLevel, source: segment.source });
+    window.pupils.push({
+      id: segment.studentId,
+      homeGroupId: segment.studentGroupId,
+      gradeLevel: segment.gradeLevel,
+      source: segment.source,
+      writtenOn: segment.writtenOn ?? null,
+    });
   }
 
   const blocks = new Map<string, Map<string, StageYearCells & { lineByCode: Map<string, StageLine> }>>();
@@ -294,7 +303,11 @@ export function recordedBlocksOfYear(
       }
       block.recordedPermille = Math.min(1000, block.recordedPermille + share);
       if (window.from < block.recordedFrom!) block.recordedFrom = window.from;
-      if (pupil.source === 'BACKFILL') block.backfilled = true;
+      if (pupil.source === 'BACKFILL') {
+        // The class before the day the history began is assumed, not recorded.
+        block.backfilled = true;
+        if (pupil.writtenOn !== null && (block.historyFrom ?? '') < pupil.writtenOn) block.historyFrom = pupil.writtenOn;
+      }
       for (const [lineKey, figure] of figures.get(pupil.id) ?? []) {
         const subjectId = lineKey === 'none' ? null : lineKey.slice('subject:'.length);
         const code = subjectId === null ? null : (codeOf.get(subjectId) ?? null);

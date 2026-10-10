@@ -131,8 +131,10 @@ const cases: Case[] = [
   { name: '5. åk 9 whose åk 7 is before SchemaPro: partly unrecorded, no shortfall verdict', activeHT: 2026, pupils: [
     pupil(5, c7a, [year(y(2025), 2025, 8, hog({ ma: 100 })), current(y(2026), 2026, 9, hog({ ma: 100 }))]),
   ] },
+  // The backfill wrote the current class from the year's start on the day the
+  // history began (10 October): the class before that day is assumed.
   { name: '6. a backfilled segment is named', activeHT: 2026, pupils: [
-    pupil(6, c6a, [year(y(2024), 2024, 4, mellan()), year(y(2025), 2025, 5, mellan()), current(y(2026), 2026, 6, mellan(), { backfilled: true, recordedFrom: '2026-10-10', recordedPermille: 1000 })]),
+    pupil(6, c6a, [year(y(2024), 2024, 4, mellan()), year(y(2025), 2025, 5, mellan()), current(y(2026), 2026, 6, mellan(), { backfilled: true, recordedFrom: '2026-08-17', historyFrom: '2026-10-10', recordedPermille: 1000 })]),
   ] },
   { name: '7. högstadiet finished June 2024 has no seeded lydelse; finished June 2025 reads bilaga 1', activeHT: 2026, pupils: [
     pupil(71, null, [year(y(2021), 2021, 7, hog()), year(y(2022), 2022, 8, hog()), year(y(2023), 2023, 9, hog())]),

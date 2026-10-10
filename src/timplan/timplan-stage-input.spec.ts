@@ -216,10 +216,17 @@ describe('recordedBlocksOfYear', () => {
     expect(projected(anna)).toBe(projected(bo));
   });
 
-  it('names a backfilled segment', () => {
+  it('names a backfilled segment, and the day the history began — the class before it is assumed', () => {
     const anna = id(101);
-    const segments = [seg(anna, g7a, '2026-08-17', null, { source: 'BACKFILL' })];
-    expect(recordedBlocksOfYear(read(), segments, '2026-10-10T08:00:00.000Z', '2026-10-10').get(anna)![0]!.backfilled).toBe(true);
+    const bo = id(102);
+    const segments = [
+      seg(anna, g7a, '2026-08-17', null, { source: 'BACKFILL', writtenOn: '2026-10-10' }),
+      seg(bo, g7a, '2026-08-17', null, { writtenOn: '2026-08-17' }),
+    ];
+    const blocks = recordedBlocksOfYear(read(), segments, '2026-10-10T08:00:00.000Z', '2026-10-10');
+    expect(blocks.get(anna)![0]).toMatchObject({ backfilled: true, historyFrom: '2026-10-10', recordedFrom: '2026-08-17' });
+    expect(blocks.get(bo)![0]!.backfilled).toBe(false);
+    expect(blocks.get(bo)![0]!.historyFrom ?? null).toBeNull();
   });
 });
 
