@@ -156,6 +156,18 @@ describe('CoverService', () => {
       });
     });
 
+    it('a stale SUBSTITUTE decision whose substitute is away themself: the new substitute takes THEIR row, and they are told', async () => {
+      world({ teachers: [{ teacherId: T, role: 'SUBSTITUTE' }] }, [decision({ substituteId: T })], [T]);
+
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUBSTITUTE', substituteId: S, expected: 'OPEN' }, testUser());
+
+      // One vikarie on the lesson, not the away one beside the new one.
+      expect(tx.calendarLessonTeacher.deleteMany).toHaveBeenCalledWith({
+        where: { calendarLessonId: LESSON, teacherId: { in: [T] } },
+      });
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, expect.objectContaining({ userIds: [T], type: 'LESSON_COVER_WITHDRAWN' }));
+    });
+
     it('COVER_STALE when the status the admin saw is not the status now, with the current one', async () => {
       world({ teachers: [] }, [decision({ decision: 'CO_TEACHER', substituteId: null })]);
       const error = await cover

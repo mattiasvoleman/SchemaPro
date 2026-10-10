@@ -27,6 +27,14 @@ import type { RankReason } from './cover-rank';
  *
  * Deterministic: every tie breaks by id, so the same input is the same
  * proposal.
+ *
+ * PAIRS, NOT LESSONS. The board's unit is the (absence, lesson) pair: a
+ * co-taught lesson whose two teachers are both away is two pairs of one
+ * lesson. Everything here is keyed by the pair, and a person already given
+ * one pair of a lesson is never feasible for another pair of it — the hard
+ * rules skip the lesson's own id when they look for an overlap, so without
+ * this the second pair would name the same person and the apply would fail
+ * on SUBSTITUTE_ON_LESSON.
  */
 
 export interface ProposalLesson {
@@ -75,22 +83,28 @@ const asPick = (lesson: ProposalLesson): PersonLesson => ({
   subjectId: '',
 });
 
+/** The pair's key: a lesson with two absent teachers is two pairs. */
+const keyOf = (lesson: { lessonId: string; absenceId: string }): string => `${lesson.lessonId}:${lesson.absenceId}`;
+
 export function proposeDay(lessons: readonly ProposalLesson[], deps: ProposalDeps): DayProposal {
   const picks = new Map<string, ProposalLesson[]>();
   const pickedOf = (userId: string) => (picks.get(userId) ?? []).map(asPick);
+  /** Feasible against `picked`; never a second pair of a lesson this person already has. */
   const feasible = (lesson: ProposalLesson, userId: string, picked: readonly PersonLesson[]) => {
+    if (picked.some((pick) => pick.id === lesson.target.id)) return false;
     const day = deps.day(userId);
     return day !== undefined && isFeasible(day, lesson.target, picked);
   };
 
   const initial = new Map(
-    lessons.map((lesson) => [lesson.lessonId, lesson.candidates.filter((userId) => feasible(lesson, userId, [])).length]),
+    lessons.map((lesson) => [keyOf(lesson), lesson.candidates.filter((userId) => feasible(lesson, userId, [])).length]),
   );
   const order = [...lessons].sort(
     (a, b) =>
-      initial.get(a.lessonId)! - initial.get(b.lessonId)! ||
+      initial.get(keyOf(a))! - initial.get(keyOf(b))! ||
       a.target.start - b.target.start ||
-      a.lessonId.localeCompare(b.lessonId),
+      a.lessonId.localeCompare(b.lessonId) ||
+      a.absenceId.localeCompare(b.absenceId),
   );
 
   const assigned = new Map<string, string>();
@@ -111,27 +125,27 @@ export function proposeDay(lessons: readonly ProposalLesson[], deps: ProposalDep
     unassigned.push({
       lessonId: lesson.lessonId,
       absenceId: lesson.absenceId,
-      why: initial.get(lesson.lessonId)! === 0 ? 'NO_FEASIBLE_CANDIDATE' : 'CONSUMED',
+      why: initial.get(keyOf(lesson))! === 0 ? 'NO_FEASIBLE_CANDIDATE' : 'CONSUMED',
     });
   }
 
   function give(userId: string, lesson: ProposalLesson): void {
     picks.set(userId, [...(picks.get(userId) ?? []), lesson]);
-    assigned.set(lesson.lessonId, userId);
+    assigned.set(keyOf(lesson), userId);
   }
 
   function take(userId: string, lesson: ProposalLesson): void {
     picks.set(
       userId,
-      (picks.get(userId) ?? []).filter((entry) => entry.lessonId !== lesson.lessonId),
+      (picks.get(userId) ?? []).filter((entry) => keyOf(entry) !== keyOf(lesson)),
     );
-    assigned.delete(lesson.lessonId);
+    assigned.delete(keyOf(lesson));
   }
 
   function repair(lesson: ProposalLesson): boolean {
     for (const c of [...lesson.candidates].sort()) {
-      for (const earlier of [...(picks.get(c) ?? [])].sort((a, b) => a.lessonId.localeCompare(b.lessonId))) {
-        const without = (picks.get(c) ?? []).filter((entry) => entry.lessonId !== earlier.lessonId).map(asPick);
+      for (const earlier of [...(picks.get(c) ?? [])].sort((a, b) => keyOf(a).localeCompare(keyOf(b)))) {
+        const without = (picks.get(c) ?? []).filter((entry) => keyOf(entry) !== keyOf(earlier)).map(asPick);
         if (!feasible(lesson, c, without)) continue;
         for (const other of [...earlier.candidates].sort()) {
           if (other === c) continue;
@@ -154,13 +168,13 @@ export function proposeDay(lessons: readonly ProposalLesson[], deps: ProposalDep
 
   const items: ProposalItem[] = [];
   for (const lesson of lessons) {
-    const userId = assigned.get(lesson.lessonId);
+    const userId = assigned.get(keyOf(lesson));
     if (!userId) continue;
     const others = pickedOf(userId).filter((pick) => pick.id !== lesson.target.id);
     const scored = deps.score(lesson, userId, others);
     items.push({ lessonId: lesson.lessonId, absenceId: lesson.absenceId, userId, score: scored.score, reasons: scored.reasons });
   }
-  items.sort((a, b) => a.lessonId.localeCompare(b.lessonId));
-  unassigned.sort((a, b) => a.lessonId.localeCompare(b.lessonId));
+  items.sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
+  unassigned.sort((a, b) => keyOf(a).localeCompare(keyOf(b)));
   return { items, unassigned };
 }
