@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { ApiError, apiRequest } from './api';
+import { loadLocale } from '../i18n/localeStore';
 import type { Locale } from '../i18n/translate';
 
 /**
@@ -21,13 +22,23 @@ import type { Locale } from '../i18n/translate';
  *
  * LOGOUT NEVER LEAVES THE DEVICE REGISTERED. unregisterOnLogout asks the
  * gateway to drop this device's row while the session still has its bearer,
- * with a 4-second limit so a dead network cannot hold the logout. If that
- * fails, the token is kept as `sp_push_release` and the phone's own
- * registration is dropped; at the next signed-in start, whoever signs in,
- * releasePending() asks the gateway to delete whichever row holds the token —
- * holding a device's token is the same authority claiming it already rests on.
- * Without that, A's row would live on and A's notices land on the device B
- * now holds.
+ * with a 4-second limit on the whole call (the bearer read included, which
+ * may itself try to refresh an expired session) so a dead network cannot hold
+ * the logout. If that fails, the token is kept as `sp_push_release` and the
+ * phone's own registration is dropped; at the next signed-in start, whoever
+ * signs in, releasePending() asks the gateway to delete whichever row holds
+ * the token — holding a device's token is the same authority claiming it
+ * already rests on. Without that, A's row would live on and A's notices land
+ * on the device B now holds.
+ *
+ * NOR DOES A SIGN-OUT THE APP DID NOT START. A session can end without the
+ * logout button: the refresh token revoked (a sign-out on the web is global),
+ * expired, or the account closed. releaseOnSignedOut() runs whenever a start
+ * finds no session: the stored token becomes `sp_push_release` and the
+ * phone's registration is dropped, so the lock screen stops showing A's
+ * notices at once. And startSignedIn() releases a stored token whose holder
+ * has not turned push on, whoever left it, before refreshing the signed-in
+ * person's own registration.
  */
 
 const ENABLED_PREFIX = 'sp_push_enabled_';
@@ -122,9 +133,10 @@ export async function disablePush(userId: string): Promise<void> {
   if (!token) return;
   try {
     await apiRequest<void>('/api/v1/devices/unregister', { method: 'POST', body: { token } });
+    await dropKey(TOKEN_KEY);
   } catch {
     // The row would otherwise outlive the choice; the next start releases it.
-    await SecureStore.setItemAsync(RELEASE_KEY, token, STORE_OPTIONS).catch(() => undefined);
+    await keepForRelease(token);
   }
 }
 
@@ -151,7 +163,10 @@ export async function refreshRegistration(userId: string, locale: Locale): Promi
 
 /**
  * Before the session ends. Never throws and never takes more than about four
- * seconds: a logout must always complete.
+ * seconds: a logout must always complete. The limit covers the whole call,
+ * not only the gateway's fetch: apiRequest first reads the bearer, and with
+ * an expired session that read is a refresh supabase-js retries for up to
+ * 30 seconds, which no abort signal reaches.
  */
 export async function unregisterOnLogout(userId: string): Promise<void> {
   const wasOn = await isPushEnabledFor(userId);
@@ -159,19 +174,47 @@ export async function unregisterOnLogout(userId: string): Promise<void> {
   const token = await readKey(TOKEN_KEY);
   if (!wasOn || !token) return;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UNREGISTER_TIMEOUT_MS);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve('timeout');
+    }, UNREGISTER_TIMEOUT_MS);
+  });
   try {
-    await apiRequest<void>('/api/v1/devices/unregister', {
-      method: 'POST',
-      body: { token },
-      signal: controller.signal,
-    });
+    const outcome = await Promise.race([
+      apiRequest<void>('/api/v1/devices/unregister', {
+        method: 'POST',
+        body: { token },
+        signal: controller.signal,
+      }).then(() => 'done' as const),
+      timedOut,
+    ]);
+    if (outcome === 'timeout') throw new Error('unregister timed out');
+    await dropKey(TOKEN_KEY);
   } catch {
-    await SecureStore.setItemAsync(RELEASE_KEY, token, STORE_OPTIONS).catch(() => undefined);
-    await Notifications.unregisterForNotificationsAsync().catch(() => undefined);
+    await keepForRelease(token);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The row stays on the gateway for now: released at the next signed-in start, and the phone stops receiving at once. */
+async function keepForRelease(token: string): Promise<void> {
+  await SecureStore.setItemAsync(RELEASE_KEY, token, STORE_OPTIONS).catch(() => undefined);
+  await dropKey(TOKEN_KEY);
+  await Notifications.unregisterForNotificationsAsync().catch(() => undefined);
+}
+
+/**
+ * A start that finds no session (restoreSession answered signed-out): the
+ * previous holder's session ended without the logout button. Their row is
+ * released at the next signed-in start; the phone stops receiving now.
+ */
+export async function releaseOnSignedOut(): Promise<void> {
+  const token = await readKey(TOKEN_KEY);
+  if (!token) return;
+  await keepForRelease(token);
 }
 
 /**
@@ -187,6 +230,51 @@ export async function releasePending(): Promise<void> {
     await dropKey(RELEASE_KEY);
   } catch {
     // Next start tries again.
+  }
+}
+
+/**
+ * At a signed-in start: first whatever an earlier logout or sign-out left
+ * for release; then a stored token whose signed-in holder has not turned push
+ * on (it can only be somebody else's, or a choice since withdrawn); then the
+ * signed-in person's own registration, in the language stored on the device
+ * (read here, not from the screen's context, which starts in Swedish before
+ * the stored choice has loaded).
+ */
+export async function startSignedIn(userId: string): Promise<PushOutcome> {
+  await releasePending();
+  const stored = await readKey(TOKEN_KEY);
+  // A release still pending here means the gateway cannot be reached: the
+  // stored token waits for the next start rather than overwrite it.
+  if (stored && !(await isPushEnabledFor(userId)) && !(await readKey(RELEASE_KEY))) {
+    await keepForRelease(stored);
+    await releasePending();
+  }
+  return refreshRegistration(userId, await loadLocale());
+}
+
+/**
+ * A tap on a notification the app has not yet acted on. expo-notifications
+ * keeps the last response until it is cleared, so without clearing it every
+ * later sign-in or role change in the same process would replay it.
+ */
+export function takeLastTap(): boolean {
+  try {
+    const response = Notifications.getLastNotificationResponse();
+    if (!response) return false;
+    Notifications.clearLastNotificationResponse();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A tap the running app's listener has acted on: never replayed. */
+export function forgetTap(): void {
+  try {
+    Notifications.clearLastNotificationResponse();
+  } catch {
+    // Nothing kept to replay.
   }
 }
 

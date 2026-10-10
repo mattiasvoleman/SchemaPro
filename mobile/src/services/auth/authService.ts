@@ -1,7 +1,7 @@
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { SecureTokenStore } from './secureTokenStore';
-import { unregisterOnLogout } from '../pushRegistration';
+import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import type { AuthState } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +58,26 @@ async function fetchProfile(authId: string): Promise<ProfileRow | null> {
   return data;
 }
 
+async function restore(): Promise<AuthState> {
+  const { data } = await getSupabase().auth.getSession();
+  if (!data.session) return SIGNED_OUT;
+
+  const cached = await SecureTokenStore.getTeacherSession();
+  if (cached) {
+    return { isAuthenticated: true, teacherId: cached.teacherId, role: cached.role };
+  }
+
+  // Cache miss (e.g. cleared keychain): resolve the profile online.
+  try {
+    const profile = await fetchProfile(data.session.user.id);
+    if (!profile) return SIGNED_OUT;
+    await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
+    return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
+  } catch {
+    return SIGNED_OUT;
+  }
+}
+
 export const AuthService = {
   async login(credentials: LoginCredentials): Promise<AuthState> {
     const supabase = getSupabase();
@@ -87,24 +107,22 @@ export const AuthService = {
     return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
   },
 
+  /**
+   * A start. When it finds no session, the previous holder's ended without
+   * the logout button (revoked, expired, closed), so this device is taken
+   * off their push here: logout() never ran (pushRegistration).
+   */
   async restoreSession(): Promise<AuthState> {
-    const { data } = await getSupabase().auth.getSession();
-    if (!data.session) return SIGNED_OUT;
-
-    const cached = await SecureTokenStore.getTeacherSession();
-    if (cached) {
-      return { isAuthenticated: true, teacherId: cached.teacherId, role: cached.role };
-    }
-
-    // Cache miss (e.g. cleared keychain): resolve the profile online.
+    let state: AuthState;
     try {
-      const profile = await fetchProfile(data.session.user.id);
-      if (!profile) return SIGNED_OUT;
-      await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
-      return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
-    } catch {
-      return SIGNED_OUT;
+      state = await restore();
+    } catch (error) {
+      // useSecureAuth treats a throw as signed out, too.
+      await releaseOnSignedOut();
+      throw error;
     }
+    if (!state.isAuthenticated) await releaseOnSignedOut();
+    return state;
   },
 
   async logout(): Promise<void> {

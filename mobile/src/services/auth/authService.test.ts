@@ -1,12 +1,15 @@
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
-import { unregisterOnLogout } from '../pushRegistration';
+import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import { SecureTokenStore } from './secureTokenStore';
 import { AuthError, AuthService } from './authService';
 
 jest.mock('../supabase', () => ({ getSupabase: jest.fn() }));
 jest.mock('../database/localDatabase', () => ({ clearCachedSchoolData: jest.fn(async () => undefined) }));
-jest.mock('../pushRegistration', () => ({ unregisterOnLogout: jest.fn(async () => undefined) }));
+jest.mock('../pushRegistration', () => ({
+  unregisterOnLogout: jest.fn(async () => undefined),
+  releaseOnSignedOut: jest.fn(async () => undefined),
+}));
 jest.mock('./secureTokenStore', () => ({
   SecureTokenStore: {
     getTeacherSession: jest.fn(),
@@ -26,6 +29,8 @@ const order: string[] = [];
 function supabase(options: {
   signIn?: { data: { user: { id: string } | null }; error: { message: string; status?: number; code?: string } | null };
   profile?: { id: string; role: string } | null;
+  session?: { user: { id: string } } | null;
+  getSessionThrows?: boolean;
 }) {
   const signOut = jest.fn(async () => {
     order.push('signOut');
@@ -34,7 +39,14 @@ function supabase(options: {
   for (const method of ['select', 'eq']) builder[method] = () => builder;
   builder['maybeSingle'] = async () => ({ data: options.profile ?? null, error: null });
   (getSupabase as jest.Mock).mockReturnValue({
-    auth: { signInWithPassword: jest.fn(async () => options.signIn), signOut },
+    auth: {
+      signInWithPassword: jest.fn(async () => options.signIn),
+      signOut,
+      getSession: jest.fn(async () => {
+        if (options.getSessionThrows) throw new Error('storage unreadable');
+        return { data: { session: options.session ?? null } };
+      }),
+    },
     from: () => builder,
   });
   return { signOut };
@@ -96,5 +108,31 @@ describe('AuthService.logout', () => {
     await AuthService.logout();
     expect(unregisterOnLogout).not.toHaveBeenCalled();
     expect(signOut).toHaveBeenCalled();
+  });
+});
+
+describe('AuthService.restoreSession', () => {
+  beforeEach(() => (releaseOnSignedOut as jest.Mock).mockClear());
+
+  it('takes the device off the previous holder’s push when the session ended without the logout button', async () => {
+    supabase({ session: null });
+    await expect(AuthService.restoreSession()).resolves.toMatchObject({ isAuthenticated: false });
+    expect(releaseOnSignedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('does the same when the profile is gone or the session cannot be read', async () => {
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue(null);
+    supabase({ session: { user: { id: 'auth-1' } }, profile: null });
+    await expect(AuthService.restoreSession()).resolves.toMatchObject({ isAuthenticated: false });
+    supabase({ getSessionThrows: true });
+    await expect(AuthService.restoreSession()).rejects.toThrow('storage unreadable');
+    expect(releaseOnSignedOut).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves push alone for a session that is still there', async () => {
+    supabase({ session: { user: { id: 'auth-1' } } });
+    (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER' });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER' });
+    expect(releaseOnSignedOut).not.toHaveBeenCalled();
   });
 });

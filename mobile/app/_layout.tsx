@@ -8,8 +8,9 @@ import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
 import {
   ensureAndroidChannel,
-  refreshRegistration,
-  releasePending,
+  forgetTap,
+  startSignedIn,
+  takeLastTap,
 } from '../src/services/pushRegistration';
 
 // A push that arrives while the app is open is shown as a banner and kept in
@@ -69,15 +70,17 @@ function AuthGate(): React.JSX.Element {
 // ─────────────────────────────────────────────────────────────────────────────
 // PushBridge — the signed-in side of push (services/pushRegistration.ts).
 //
-// At a signed-in start: release a token a failed logout left registered, then
-// refresh the signed-in person's OWN registration if they turned push on (never
-// asking the phone again). The Android channel follows the language. A tap on a
-// notification opens the role's Notiser tab — every role has one.
+// At a signed-in start (startSignedIn): release a token a failed logout or a
+// sign-out the app did not start left registered, then refresh the signed-in
+// person's OWN registration if they turned push on (never asking the phone
+// again), in the language stored on the device. The Android channel follows
+// the language. A tap on a notification opens the role's Notiser tab — every
+// role has one — and is then forgotten, so no later sign-in replays it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PushBridge(): null {
   const { authState } = useAuth();
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const router = useRouter();
   const userId = authState.isAuthenticated ? authState.teacherId : null;
   const role = authState.role;
@@ -88,23 +91,20 @@ function PushBridge(): null {
 
   useEffect(() => {
     if (!userId) return;
-    void (async () => {
-      await releasePending();
-      await refreshRegistration(userId, locale);
-    })();
-    // The locale is read at start only; Settings re-registers on a change.
-  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // The language is read from the device's store inside; Settings
+    // re-registers on a change.
+    void startSignedIn(userId);
+  }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
     const open = (): void => router.push(notificationsRoute(role));
-    const subscription = Notifications.addNotificationResponseReceivedListener(open);
+    const subscription = Notifications.addNotificationResponseReceivedListener(() => {
+      forgetTap();
+      open();
+    });
     // A tap that launched the app arrived before this listener existed.
-    void Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) open();
-      })
-      .catch(() => undefined);
+    if (takeLastTap()) open();
     return () => subscription.remove();
   }, [userId, role, router]);
 
