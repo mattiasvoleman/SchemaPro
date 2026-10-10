@@ -2,10 +2,12 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -16,6 +18,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { FamilyService } from './family.service';
+import { FamilyScheduleService, type FamilySchedule } from './family-schedule.service';
+import { FamilyScheduleQueryDto } from './dto/family-schedule.dto';
 import {
   CreateAbsenceReportDto,
   CreateGuardianLinkDto,
@@ -24,13 +28,32 @@ import {
 } from './dto/family.dto';
 
 /**
- * Guardian↔student links, absence reporting and leave requests.
- * Reads go straight to Supabase under RLS; mutations pass through here.
+ * Guardian↔student links, absence reporting and leave requests, and a
+ * child's schedule for the family. Most reads go straight to Supabase under
+ * RLS; mutations and the schedule (which needs the teacher labels only a
+ * SECURITY DEFINER function may give) pass through here.
  */
 @Controller('api/v1')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FamilyController {
-  constructor(private readonly family: FamilyService) {}
+  constructor(
+    private readonly family: FamilyService,
+    private readonly schedule: FamilyScheduleService,
+  ) {}
+
+  /**
+   * A child's published week as the school shows it to the family. A pupil
+   * reads their own week through RLS as before, and a teacher has the staff
+   * calendar; neither is a family.
+   */
+  @Get('family/schedule')
+  @Roles(Role.GUARDIAN, Role.SCHOOL_ADMIN)
+  childSchedule(
+    @Query() query: FamilyScheduleQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<FamilySchedule> {
+    return this.schedule.week(query, user);
+  }
 
   @Post('guardian-links')
   @Roles(Role.SCHOOL_ADMIN)

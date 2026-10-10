@@ -79,6 +79,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'CURRENT',
     why: 'pushes a dated lesson’s change to the people in its classes and groups as they are now',
   },
+  'src/family/family-schedule.service.ts': {
+    basis: 'CURRENT',
+    why: 'one child’s published week for the family: the child’s own row and teaching groups as they are; the home class only on dates its class history (ENROLLED) names',
+  },
 };
 
 /**
@@ -95,6 +99,8 @@ const ENROLLED: Record<string, string> = {
     'a past year’s rosters for planned and delivered coverage, when the history has rows for it (enrolmentBasisOf); rostersOfYear otherwise',
   'src/timplan/timplan-stage.service.ts':
     'stage totals: the active year’s pupils (their open segments) and every year they sat in, window by window; no roster basis is asked',
+  'src/family/family-schedule.service.ts':
+    'one child’s segments over one week: a lesson matched only through the home class is shown on the days the history names that class',
 };
 
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);
