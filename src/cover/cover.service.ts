@@ -541,7 +541,8 @@ function stale(current: string): ConflictException {
   return new ConflictException({
     message: 'Lektionen har ändrats sedan tavlan lästes. Läs om tavlan.',
     code: COVER_STALE,
-    current,
+    // params: the one place the error filter lets a value through, scalars only.
+    params: { current },
   });
 }
 
@@ -549,11 +550,12 @@ function notAffected(): NotFoundException {
   return new NotFoundException({ message: 'Lektionen berörs inte av frånvaron.', code: COVER_NOT_AFFECTED });
 }
 
-/** A bulk item's refusal, with the lesson it was about. */
+/** A bulk item's refusal, with the lesson it was about (in params, which the error filter passes). */
 function naming(error: unknown, lessonId: string): unknown {
   if (!(error instanceof HttpException)) return error;
   const body = error.getResponse();
-  const response = typeof body === 'object' && body !== null ? { ...(body as object), lessonId } : { message: body, lessonId };
-  return new HttpException(response, error.getStatus());
+  const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : { message: body };
+  const params = typeof record.params === 'object' && record.params !== null ? (record.params as Record<string, unknown>) : {};
+  return new HttpException({ ...record, params: { ...params, lessonId } }, error.getStatus());
 }
 

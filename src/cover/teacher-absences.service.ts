@@ -376,7 +376,7 @@ export class TeacherAbsencesService {
       throw new ConflictException({
         message: 'Beslut finns på lektioner som redan hållits. Avsluta frånvaron i förtid i stället.',
         code: ABSENCE_HAS_HELD_DECISIONS,
-        decisions: held.map((row) => ({ calendarLessonId: row.calendarLessonId, decision: row.decision })),
+        params: paramsOf(held),
       });
     }
     const ahead = outside.filter((row) => lessonOf.get(row.calendarLessonId)!.endsAt.getTime() > now.getTime());
@@ -385,7 +385,7 @@ export class TeacherAbsencesService {
       throw new ConflictException({
         message: 'Det finns beslut på lektioner som inte längre ingår. Ångra dem, eller skicka undoDecisions.',
         code: ABSENCE_HAS_DECISIONS,
-        decisions: ahead.map((row) => ({ calendarLessonId: row.calendarLessonId, decision: row.decision })),
+        params: paramsOf(ahead),
       });
     }
     // Undone newest first per lesson, under the lessons' locks.
@@ -437,7 +437,7 @@ export class TeacherAbsencesService {
       throw new ConflictException({
         message: 'Läraren är redan registrerad som frånvarande under en del av perioden.',
         code: ABSENCE_OVERLAPS,
-        other: { id: other.id, startsAt: other.startsAt.toISOString(), endsAt: other.endsAt.toISOString() },
+        params: { otherAbsenceId: other.id, startsAt: other.startsAt.toISOString(), endsAt: other.endsAt.toISOString() },
       });
     }
   }
@@ -572,6 +572,15 @@ function viewOf(row: AbsenceRow, now: Date, counts: AbsenceView['counts'] | unde
     createdAt: row.createdAt.toISOString(),
     counts: counts ?? { open: 0, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 },
   };
+}
+
+/**
+ * The decisions a 409 names, as the error filter's scalar params: how many,
+ * and the first lesson (the register opens the board on its day).
+ */
+function paramsOf(rows: { calendarLessonId: string; decision: string }[]): Record<string, string | number> {
+  const first = [...rows].sort((a, b) => a.calendarLessonId.localeCompare(b.calendarLessonId))[0]!;
+  return { count: rows.length, lessonId: first.calendarLessonId, decision: first.decision };
 }
 
 function selfReportOff(): ForbiddenException {

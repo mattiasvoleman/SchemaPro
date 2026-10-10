@@ -226,7 +226,7 @@ describe('CoverSuggestionsService', () => {
           { basis, items: [{ lessonId: LESSON, absenceId: ABSENCE, userId: S }, { lessonId: second, absenceId: ABSENCE, userId: S }] },
           testUser(),
         ),
-      ).rejects.toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', lessonId: second } });
+      ).rejects.toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', params: { lessonId: second } } });
       expect(cover.decideInTransaction).not.toHaveBeenCalled();
     });
   });

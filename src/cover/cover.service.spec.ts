@@ -161,7 +161,7 @@ describe('CoverService', () => {
       const error = await cover
         .decide(LESSON, { absenceId: ABSENCE, kind: 'CANCELLED', expected: 'OPEN' }, testUser())
         .catch((e: unknown) => e);
-      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'COVER_STALE', current: 'HANDLED' });
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'COVER_STALE', params: { current: 'HANDLED' } });
       expect(await codeOf(cover.decide(LESSON, { absenceId: ABSENCE, kind: 'CANCELLED', expected: 'HANDLED' }, testUser()))).toBe(
         'COVER_STALE',
       );
@@ -372,7 +372,7 @@ describe('CoverService', () => {
           testUser(),
         )
         .catch((e: unknown) => e);
-      expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({ code: 'COVER_LESSON_HELD', lessonId: LESSON_B });
+      expect((error as { getResponse: () => unknown }).getResponse()).toMatchObject({ code: 'COVER_LESSON_HELD', params: { lessonId: LESSON_B } });
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
       expect(realtime.notifyCoverBoardChanged).not.toHaveBeenCalled();
     });
