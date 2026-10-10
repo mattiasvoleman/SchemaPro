@@ -90,6 +90,12 @@ export interface PlannedCoverageInput {
   pupils: PlannedPupilInput[];
   /** False for a TEACHER's read: no pupil figure and no pupil verdict leaves. */
   includePupils: boolean;
+  /**
+   * Where `pupils` came from: absent for the rosters as every roster reader
+   * reads them (projected-rosters.ts); "ENROLLMENT" for a past year read from
+   * the class history (timplan P4), whose rosters are that year's own.
+   */
+  rostersFrom?: "ENROLLMENT";
 }
 
 export interface PlannedVerdict {
