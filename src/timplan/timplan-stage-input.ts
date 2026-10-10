@@ -50,7 +50,9 @@ import type { SegmentedAudienceRow } from './timplan-delivered.sql';
  * recordedPermille is the weekdays of the year the pupil sat in a class of
  * the block's årskurs over the year's weekdays. A segment whose class was
  * deleted counts nothing (the period is unrecorded, CLASS_DELETED), as do the
- * days the pupil was deactivated or not yet in the school.
+ * days the pupil was deactivated or not yet in the school, and the days their
+ * home group was a teaching group (HOME_NOT_A_CLASS: P2 and P3 count a pupil
+ * only from a CLASS home).
  *
  * ## A year nothing was published for
  *
@@ -187,14 +189,23 @@ export function recordedBlocksOfYear(
     membershipsOf.set(row.studentId, list);
   }
 
-  // The windows, and the pupils in each with their home in it.
+  // The windows, and the pupils in each with their home in it. A segment
+  // whose home is not a CLASS (Users.studentGroupId may name a teaching
+  // group, and the trigger records it) is unrecorded like a deleted class's:
+  // P2 and P3 count a pupil only from a CLASS home, so its figures would be
+  // empty, and an empty window recorded in full would read as 0 h.
   const windows = new Map<string, { from: string; to: string; pupils: WindowPupil[] }>();
   const deleted = new Set<string>();
+  const notClass = new Map<string, StageSegment>();
   for (const segment of segments) {
     const clipped = clipToYear(segment, year);
     if (!clipped) continue;
     if (segment.studentGroupId === null) {
       deleted.add(segment.studentId);
+      continue;
+    }
+    if (groupsById.get(segment.studentGroupId)?.kind !== 'CLASS') {
+      if (!notClass.has(segment.studentId)) notClass.set(segment.studentId, segment);
       continue;
     }
     const key = `${clipped.from}|${clipped.to}`;
@@ -309,26 +320,32 @@ export function recordedBlocksOfYear(
         // The attached plan's form for the årskurs, when the year attaches one.
         schoolForm: formOf(read, block.gradeLevel),
         classDeleted: deleted.has(pupilId),
+        ...(notClass.has(pupilId) ? { homeNotClass: true } : {}),
         lines: [...lineByCode.values()].sort((a, b) => ((a.code ?? '') < (b.code ?? '') ? -1 : (a.code ?? '') > (b.code ?? '') ? 1 : 0)),
       })),
     );
   }
-  // A pupil whose every segment this year is in a class since deleted: a
-  // block that records nothing, so the stage names the year.
-  for (const pupilId of deleted) {
+  // A pupil whose every segment this year is in a class since deleted, or in
+  // a home group that is not a class: a block that records nothing, so the
+  // stage names the year and leaves its grade unrecorded.
+  for (const pupilId of new Set([...deleted, ...notClass.keys()])) {
     if (out.has(pupilId)) continue;
-    const segment = segments.find((candidate) => candidate.studentId === pupilId && candidate.studentGroupId === null)!;
+    const segment =
+      segments.find((candidate) => candidate.studentId === pupilId && candidate.studentGroupId === null) ?? notClass.get(pupilId)!;
+    const gradeLevel =
+      segment.studentGroupId === null ? segment.gradeLevel : (groupsById.get(segment.studentGroupId)?.gradeLevel ?? segment.gradeLevel);
     out.set(pupilId, [
       {
         academicYearId: year.id,
         yearStartHT: htOf(year.startDate),
-        gradeLevel: segment.gradeLevel,
-        schoolForm: formOf(read, segment.gradeLevel),
+        gradeLevel,
+        schoolForm: formOf(read, gradeLevel),
         basis: 'RECORDED',
         recordedPermille: 0,
         recordedFrom: null,
         backfilled: segment.source === 'BACKFILL',
-        classDeleted: true,
+        classDeleted: deleted.has(pupilId),
+        ...(notClass.has(pupilId) ? { homeNotClass: true } : {}),
         lines: [],
       },
     ]);

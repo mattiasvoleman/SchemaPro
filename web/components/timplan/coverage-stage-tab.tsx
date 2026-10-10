@@ -687,6 +687,8 @@ function VerdictText({
       return <>{tVerdict("formChanged", { stageTitle })}</>;
     case "TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN":
       return <>{tVerdict("gradeUnknown", { year: yearOf(p.yearStartHT) })}</>;
+    case "TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS":
+      return <>{tVerdict("homeNotClass", { year: yearOf(p.yearStartHT) })}</>;
     case "TIMPLAN_PUPIL_STAGE_GRADE_REPEATED":
       return <>{tVerdict("gradeRepeated", { stageTitle, grade: gradeName(Number(p.gradeLevel)) })}</>;
     case "TIMPLAN_PUPIL_STAGE_PRESCHOOL_AFTER_2028":

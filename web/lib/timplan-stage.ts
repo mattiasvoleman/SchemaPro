@@ -92,6 +92,12 @@ export interface StageYearCells {
   backfilled: boolean;
   /** Some of the pupil's days this year were in a class since deleted (unrecorded). */
   classDeleted: boolean;
+  /**
+   * Some of the pupil's days this year had a home group that is not a class
+   * (a teaching group): unrecorded, as P2 and P3 count no pupil without a
+   * CLASS home. Absent when false.
+   */
+  homeNotClass?: boolean;
   lines: StageLine[];
 }
 
@@ -179,6 +185,7 @@ export type StageVerdictCode =
   | "TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN"
   | "TIMPLAN_PUPIL_STAGE_GRADE_REPEATED"
   | "TIMPLAN_PUPIL_STAGE_PRESCHOOL_AFTER_2028"
+  | "TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS"
   | "TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED";
 
 export interface StageVerdict {
@@ -218,14 +225,15 @@ const VERDICT_ORDER: Record<StageVerdictCode, number> = {
   TIMPLAN_STAGE_OLD_COHORT_DISTRIBUTION_ASSUMED: 2,
   TIMPLAN_PUPIL_STAGE_PRESCHOOL_AFTER_2028: 3,
   TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN: 4,
-  TIMPLAN_PUPIL_STAGE_GRADE_REPEATED: 5,
-  TIMPLAN_PUPIL_STAGE_FORM_CHANGED: 6,
-  TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED: 7,
-  TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED: 8,
-  TIMPLAN_PUPIL_STAGE_BACKFILLED: 9,
-  TIMPLAN_PUPIL_STAGE_BELOW_NATIONAL: 10,
-  TIMPLAN_PUPIL_STAGE_PROJECTED_BELOW_NATIONAL: 11,
-  TIMPLAN_PUPIL_STAGE_GROUP_MINIMUM_UNMET: 12,
+  TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS: 5,
+  TIMPLAN_PUPIL_STAGE_GRADE_REPEATED: 6,
+  TIMPLAN_PUPIL_STAGE_FORM_CHANGED: 7,
+  TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED: 8,
+  TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED: 9,
+  TIMPLAN_PUPIL_STAGE_BACKFILLED: 10,
+  TIMPLAN_PUPIL_STAGE_BELOW_NATIONAL: 11,
+  TIMPLAN_PUPIL_STAGE_PROJECTED_BELOW_NATIONAL: 12,
+  TIMPLAN_PUPIL_STAGE_GROUP_MINIMUM_UNMET: 13,
 };
 
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -278,6 +286,10 @@ function stagesOfPupil(
     const versionGrade = versionGradeOf(regime, year.yearStartHT, year.gradeLevel);
     return { year, versionGrade, base: baseStageOf(cut, versionGrade) };
   });
+  // A home group that is not a class, once per läsår: those days are unrecorded.
+  for (const ht of [...new Set(blocks.filter(({ year }) => year.basis === "RECORDED" && year.homeNotClass).map(({ year }) => year.yearStartHT))]) {
+    say({ code: "TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS", severity: "notice", params: { yearStartHT: ht } });
+  }
   for (const { year } of blocks) {
     if (year.basis !== "RECORDED" || year.recordedPermille === 0) continue;
     if (year.gradeLevel === null) {

@@ -79,6 +79,11 @@ export function describeStageVerdict(verdict: StageVerdict, subjectNames: Readon
       return `Klassen eleven gick i läsåret som började ${p.yearStartHT} har ingen årskurs, så året räknas inte till något stadium.`;
     case 'TIMPLAN_PUPIL_STAGE_GRADE_REPEATED':
       return `Eleven har gått åk ${p.gradeLevel} två gånger; båda läsåren räknas.`;
+    case 'TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS':
+      return (
+        `Läsåret som började ${p.yearStartHT} hade eleven en undervisningsgrupp i stället för en klass som hemgrupp; ` +
+        'de dagarna räknas som oregistrerade, inte som noll timmar.'
+      );
     case 'TIMPLAN_PUPIL_STAGE_PRESCHOOL_AFTER_2028':
       return `En klass med årskurs 0 läsåret som började ${p.yearStartHT}: förskoleklassen upphör 2028, så året räknas inte.`;
     case 'TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED':

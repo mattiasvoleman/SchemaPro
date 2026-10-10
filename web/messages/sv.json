@@ -2647,6 +2647,7 @@
         "TIMPLAN_STAGE_OLD_COHORT_DISTRIBUTION_ASSUMED": "Fördelningen antagen efter 2028",
         "TIMPLAN_PUPIL_STAGE_FORM_CHANGED": "Bytt skolform under stadiet",
         "TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN": "En klass utan årskurs",
+        "TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS": "Hemgrupp som inte är en klass",
         "TIMPLAN_PUPIL_STAGE_GRADE_REPEATED": "Gått om en årskurs",
         "TIMPLAN_PUPIL_STAGE_PRESCHOOL_AFTER_2028": "Förskoleklass efter 2028",
         "TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED": "Inga ämnen med nationell kod"
@@ -2725,6 +2726,7 @@
         "assumed": "{stageTitle}: från hösten 2028 jämförs med {version} enligt referensdata. Fördelningen för äldre årskullar efter 2028 är inte publicerad; SFS 2025:729 behåller bara totalen.",
         "formChanged": "{stageTitle}: stadiets läsår följer timplaner för olika skolformer, och jämförelsen görs med den senaste.",
         "gradeUnknown": "Klassen läsåret {year} har ingen årskurs, så året räknas inte till något stadium.",
+        "homeNotClass": "Läsåret {year} hade eleven en undervisningsgrupp i stället för en klass som hemgrupp. De dagarna räknas som oregistrerade, inte som noll timmar.",
         "gradeRepeated": "{stageTitle}: eleven har gått {grade} två gånger, och båda läsåren räknas.",
         "preschoolAfter2028": "Läsåret {year} gick eleven i en klass med årskurs 0. Förskoleklassen upphör 2028, så året räknas inte.",
         "subjectsUnmapped": "{stageTitle}: inget av elevens ämnen har en nationell ämneskod ({planned} planerat), så ingen nationell jämförelse görs."
