@@ -560,6 +560,23 @@ describe('rethrowPrismaError and the class history’s keys (timplan P4)', () =>
     }
   });
 
+  it('answers a class id that is not the school’s — another school’s or none — with the same 400, cause or no cause', () => {
+    const key = 'Users_studentGroupId_fkey';
+    for (const error of [
+      keyRefusal(key, `insert or update on table "Users" violates foreign key constraint "${key}"`, 'User'),
+      keyRefusal(key, '', 'User', false),
+    ]) {
+      expect(enrolmentClassKeyRefusal(error)).toBe('NOT_THE_SCHOOLS');
+      const thrown = answer(error);
+      expect(thrown).toBeInstanceOf(BadRequestException);
+      expect((thrown as BadRequestException).message).toBe('studentGroupId: klassen finns inte i skolan.');
+    }
+    // A class deleted under a pupil is SET NULL, never refused; any other side of the key is not this answer.
+    expect(
+      enrolmentClassKeyRefusal(keyRefusal(key, `update or delete on table "StudentGroups" violates foreign key constraint "${key}" on table "Users"`, 'StudentGroup')),
+    ).toBeNull();
+  });
+
   it('answers a class with history moved to another year with 409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY, cause or no cause', () => {
     const key = 'StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey';
     for (const error of [
