@@ -180,3 +180,24 @@ export function changedFields(before: DraftLesson, after: DraftLesson): ChangedF
 export function publicViewerUrl(origin: string, token: string): string {
   return `${origin.replace(/\/+$/, "")}/v/${token}`;
 }
+
+/**
+ * An instant from the gateway (toISOString, UTC) as the reader's clock and
+ * calendar say it. Slicing the ISO string showed a publish at 08:30 CEST as
+ * 06:30, and one at 00:30 on the day before. `timeZone` is for the tests;
+ * a page leaves it out and gets the browser's, which is the school's.
+ */
+export function formatInstant(
+  iso: string,
+  locale: string,
+  options: { withTime?: boolean; timeZone?: string } = {},
+): string {
+  const format = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    ...(options.withTime ? { hour: "2-digit", minute: "2-digit" } : {}),
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+  });
+  return format.format(new Date(iso));
+}

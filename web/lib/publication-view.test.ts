@@ -13,6 +13,7 @@ import {
   publicViewerUrl,
   segmentViews,
   tallyGates,
+  formatInstant,
 } from "@/lib/publication-view";
 
 const YEAR = { startDate: "2026-08-17", endDate: "2027-06-11" };
@@ -176,5 +177,14 @@ describe("tallyGates and publicViewerUrl", () => {
 
   it("builds the viewer's address from the origin, with no locale and no doubled slash", () => {
     expect(publicViewerUrl("https://schema.example.se/", "abc")).toBe("https://schema.example.se/v/abc");
+  });
+});
+
+describe("formatInstant", () => {
+  it("says the gateway's UTC instant in the school's clock, not as the UTC string", () => {
+    // 06:30Z is 08:30 in Stockholm in October; 22:30Z on the 11th is the 12th there.
+    expect(formatInstant("2026-10-12T06:30:00.000Z", "sv", { withTime: true, timeZone: "Europe/Stockholm" })).toBe("2026-10-12 08:30");
+    expect(formatInstant("2026-10-11T22:30:00.000Z", "sv", { timeZone: "Europe/Stockholm" })).toBe("2026-10-12");
+    expect(formatInstant("2026-10-12T06:30:00.000Z", "en", { withTime: true, timeZone: "Europe/Stockholm" })).toBe("12/10/2026, 08:30");
   });
 });
