@@ -106,6 +106,137 @@ active year) and guardian links are synced. Unknown emails are returned in
 identity provisioning stays an explicit admin action). Response:
 `{ updated, groupsCreated, guardianLinks, needsProvisioning }`.
 
+## Pulling the roster from a source (SS12000 consumer)
+
+The other direction: SchemaPro reads its pupils, staff, guardians and classes
+from the school's student register (IST, Edlevo or any other provider of the
+standard) instead of having them typed in twice. Nothing in the school changes
+until an admin applies a diff, or a nightly run the admin explicitly enabled
+applies the safe part of one. Nothing is ever deleted.
+
+**The standard.** SIS TK450, *SS12000 OpenAPI 3.0*,
+`openapi_ss12000_version2_1_0.yaml`, `info.version` 2.1.0 (korrigendum augusti
+2022), sha256 `aee9a95a4c5bd25cebaf357d266592f94e9388ae785ee9ac3b58e1992acccd28`
+(<https://www.sis.se/globalassets/standardutveckling/tksidor/tk-450/openapi_ss12000_version2_1_0.yaml>).
+SIS's SS 12000 page lists 2.0.0 and 2.1.0 only; 2.1.0 is the newest
+machine-readable API. Every path, parameter, enum and spelling the consumer
+uses is S1's, transcribed in `src/integration/ss12000-sync/s1.ts`.
+
+### The source
+
+`PUT /api/v1/ss12000-source` (SCHOOL_ADMIN) names one source per school:
+
+| field | rule |
+|---|---|
+| `baseUrl` | the provider's URL up to and including `/v2.0` (IST: `https://api.ist.com/ss12000v2-api/source/<id>/v2.0`). https, no user info, no query or fragment, no trailing slash |
+| `authKind` | `OAUTH2_CLIENT_CREDENTIALS`, `BEARER_TOKEN` or `MTLS_CLIENT_CERT` (below) |
+| `tokenUrl`, `clientId`, `tokenScope`, `tokenAuthStyle` | OAuth2 client credentials; `BASIC` (HTTP Basic) or `FORM` |
+| `organisationIds` | the source's ids of the skolenheter this school is, 0–5, chosen from what *Testa anslutning* lists |
+| `pageSize` | 100–2000 (IST suggests 1 000–2 000) |
+
+S1 says only how a token is *presented* (`securitySchemes.BearerAuth`), not how
+it is obtained:
+
+* **OAuth2 client credentials** — `POST tokenUrl`, `grant_type=client_credentials`,
+  the client in HTTP Basic or the form. IST EduCloud, *Fetch and use access token*
+  (2021-12-30): `https://skolid.se/connect/token`, `expires_in` 3600. The access
+  token lives in the API's memory until 60 s before it expires and is never stored.
+* **Static bearer token** issued by the provider.
+* **Client certificate** (mutual TLS), optionally with a bearer or an OAuth2
+  client on top: Tieto Edlevo per Skolon's support article (2025-02-27). Whether
+  Edlevo's endpoints are SS12000-shaped is not confirmed. Skolfederation's
+  Moa/MATF metadata is not implemented; the server is verified by the CA store.
+
+Credentials go in through `PUT /api/v1/ss12000-source/secrets/:kind`
+(`CLIENT_SECRET`, `BEARER_TOKEN`, `CLIENT_KEY_PEM`, `CLIENT_CERT_PEM`) and never
+come back out: `GET` answers `secrets: {kind: {setAt}}`. They are sealed with
+`INTEGRATION_SECRETS_KEY` (AES-256-GCM) and bound to the school, the source, the
+kind and the **host they are sent to**; changing that host clears them and the
+admin types them again, so a stored secret cannot be pointed at another host.
+Changing the organisations or the base host once people are linked answers 409
+`SS12000_SOURCE_RELINK_REQUIRED` unless `confirmRelink: true`; the next run is
+then FULL.
+
+Outbound calls are https only, refuse every non-public address (loopback, RFC
+1918, CGNAT, link-local and cloud metadata, ULA such as `*.railway.internal`,
+IPv4-mapped and NAT64 forms of them), are pinned to the vetted address, follow no
+redirect, time out after 30 s and read at most 32 MB. Errors are codes
+(`SS12000_TOKEN_REFUSED`, `SS12000_HTTP_403`, `SS12000_TLS_FAILED`, …); nothing
+the far side says is kept.
+
+### What a run reads
+
+Per organisation, with T the school's local today:
+
+1. `GET /organisations/{id}`
+2. `GET /persons?relationship.organisation={id}&relationship.entity.type=enrolment&relationship.endDate.onOrAfter=T` (pupils)
+3. the same with `relationship.entity.type=duty` (staff)
+4. the same with `relationship.entity.type=responsibleFor.enrolment` (guardians; a provider answering 400 is read through `/persons/lookup` instead)
+5. `GET /groups?organisation={id}&groupType=Klass&groupType=Undervisning&endDate.onOrAfter=T`
+6. `GET /duties?organisation={id}&endDate.onOrAfter=T`
+
+Pages per S1: filters and `limit` on the first request, `pageToken` and `limit`
+only after. An INCREMENTAL run adds `meta.modified.after` and reads
+`GET /deletedEntities?after=…&entities=Person&entities=Group&entities=Duty`.
+Anyone a pupil, a duty or a group names who was neither read nor linked is read
+through `POST /persons/lookup {ids}` (S1 `PersonsExpandedArray`). A provider that
+refuses an incremental filter makes the run FULL, and later runs too. A run
+whose fetch does not complete, or a FULL fetch with no pupils (or staff) while
+linked ones exist (`SS12000_SOURCE_EMPTY`), produces no diff.
+
+**Never kept:** civicNo, birth date, sex, addresses, phone numbers, photo, and
+the Duty's `dutyPercent`, `hoursPerYear` and signature. They are dropped when a
+record is parsed.
+
+### Mapping
+
+| SS12000 | SchemaPro | rule |
+|---|---|---|
+| `Person.id` | `Users.ss12000Id` | matched first, always |
+| `givenName` / `familyName` | `firstName` / `lastName` | UPDATE when different |
+| `emails[]` | `email` | `Skola elev` for a pupil, `Skola personal` for staff, `Privat` for a guardian; the first EPPN as fallback for pupils and staff |
+| enrolment at the organisation, active on T | role STUDENT (create only) | |
+| Duty at the organisation, active on T | role TEACHER (create only) | Lärare, Förstelärare, Speciallärare/specialpedagog selected; Lärarassistent, Fritidspedagog, Förskollärare for review; other roles deselected |
+| a pupil's `responsibles[]` | role GUARDIAN, `GuardianStudents` (origin SS12000) | `relationType` shown, not stored |
+| `Group.id`, `groupType` Klass / Undervisning | `StudentGroups.ss12000Id`, CLASS / TEACHING_GROUP | the active läsår only |
+| Klass `groupMemberships` active on T | `Users.studentGroupId` | through the role-guarded write; P4's trigger records the move (dated the school's today) |
+| Undervisning `groupMemberships` | `StudentGroupMembers` | added, never removed |
+| `Duty.id` | `Ss12000DutyLinks` | no HR figure; an ended duty gets `endedAt` |
+| `securityMarking` ≠ Ingen | — | every change for the person deselected, never automatic, not stored |
+
+Without a stored id, a LINK by email is proposed only for exactly one active
+local row with the same role and an address no other source person claims; a
+group LINK needs the same name, year and kind. Everything else is a named
+conflict for the admin.
+
+### Diff, apply, schedule
+
+* `POST /api/v1/ss12000-sync/runs {mode}` — *Synka nu*, 202 `{runId}`.
+* `GET /api/v1/ss12000-sync/runs`, `/runs/:id`, `/runs/:id/changes?entity&op&conflicts&cursor&limit`.
+* `POST /api/v1/ss12000-sync/runs/:id/apply {basisHash, select?, deselect?, confirmMassDeactivation?}` —
+  one transaction: the source locked (409 `SS12000_BUSY` after 10 s), the newest
+  `DIFF_READY` run only, its basis recomputed over the rows it locks (409
+  `SS12000_DIFF_STALE`), more deactivations than max(5, 10 %) of the linked
+  active people refused unless confirmed (409 `SS12000_MASS_DEACTIVATION`), the
+  cursors moved with it.
+* `POST /api/v1/ss12000-sync/runs/:id/discard`.
+* `GET /api/v1/ss12000-sync/provisioning` — linked, active people never invited.
+  *Bjud in valda* is the existing `POST /api/v1/users/invitations` (500 ids a
+  call): a new person is only ever a catalogue row with no identity and no mail
+  until an admin invites them.
+* `PATCH /api/v1/ss12000-source/schedule {scheduleEnabled, scheduleAutoApply, scheduleHourLocal, fullEveryDays}` —
+  a nightly run at or after the school-local hour (DST-safe), FULL every
+  `fullEveryDays`. With auto-apply on it applies only names, a class move, a
+  teaching-group add, a guardian link between linked unprotected people, a duty
+  link and a pupil's or guardian's deactivation, and stops at max(5, 2 %)
+  deactivations. It never creates, links, changes an email, reactivates or
+  deactivates staff. A manual diff younger than 24 h is not superseded: the
+  night records `SKIPPED` (`REVIEW_PENDING`).
+
+A run's `before`/`after` hold names and emails only while it is `DIFF_READY`;
+they are nulled the moment it reaches any other status, and a `DIFF_READY` run
+expires after 30 days.
+
 ## Security model
 
 **A key resolves to one school.** `IntegrationKeyGuard` hashes the
@@ -211,6 +342,18 @@ fallback `auth.uid()` raised on `''` until `20260914230000`, and every policy
 calling `app.current_school_id()` raised with it, so both helpers answered 500
 there. Supabase's own `auth.uid()` reads `''` as no user, and that migration
 leaves it untouched.
+
+**The consumer's principals.** The sync acts as
+`PrismaService.withSyncPrincipal` (`app.sync_school_id`, no claims): it reads its
+school's people, groups, links and source, and writes narrowly — guards refuse it
+anything but names, the class and the deactivation of a pupil or guardian on
+`Users`, the cursors on its source, inserts of memberships and guardian links,
+and duty links; it has no DELETE arm anywhere and cannot write an `ss12000Id`,
+which only an admin's own claims can. `Ss12000SourceSecrets` has RLS with no arm
+and no grant; only `app.ss12000_source_secrets` hands a ciphertext out, to the
+school's sync principal or SCHOOL_ADMIN, never to the service principal of these
+read endpoints. Every unlink of a guardian is recorded in
+`GuardianStudentHistory`. RLS suite §30 asserts all of it.
 
 Wire personnummer/civic numbers are intentionally not accepted or stored.
 
