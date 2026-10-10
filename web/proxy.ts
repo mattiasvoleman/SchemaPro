@@ -9,6 +9,19 @@ const PUBLIC_PATHS = ["/login", "/forgot-password", "/update-password", "/auth"]
 
 // Next.js 16 renamed the root "middleware" convention to "proxy".
 export async function proxy(request: NextRequest) {
+  // 0. Schemavisaren (app/v/[token]): public, locale-free, and never given a
+  //    cookie — so it returns before next-intl (which would redirect it under
+  //    /sv) and before the Supabase session refresh (which writes auth
+  //    cookies and sends anyone without a session to /login). The share link
+  //    is the secret: noindex and no-referrer keep it out of search engines
+  //    and out of the Referer of a link followed off the page.
+  if (request.nextUrl.pathname.startsWith("/v/")) {
+    const response = NextResponse.next();
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    return response;
+  }
+
   // 1. Locale detection / redirect / rewrite (next-intl).
   const response = intlMiddleware(request);
 

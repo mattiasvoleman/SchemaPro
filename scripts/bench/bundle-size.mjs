@@ -197,6 +197,11 @@ const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10;
 const TIERS = [
   // measured max 22.1KB (/[locale] locale-redirect page; error pages are 3.6KB)
   { name: 'system', budgetKb: 50, match: (r) => /^\/_/.test(r) || /^\/\[locale\]\/page$/.test(r) },
+  // measured 3.6KB (/v/[token], Schemavisaren, 2026-10-10): Next's own error
+  // and not-found boundaries and nothing of ours — the page is a server
+  // component and sends the week as HTML. A login-free page a family opens on
+  // a phone; anything that makes it ship script should fail here first.
+  { name: 'public', budgetKb: 5, match: (r) => /^\/v\//.test(r) },
   // measured max 96.6KB (all four auth pages are within 1KB of each other)
   { name: 'auth', budgetKb: 110, match: (r) => r.includes('/(auth)/') },
   // measured max 177.8KB (/admin/timetable)
