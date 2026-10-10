@@ -195,6 +195,41 @@ describe('CalendarLessonsService', () => {
       );
     });
 
+    it('TEACHER_UNAVAILABLE for a teacher with an absence records the board’s CANCELLED decision, so ending the absence early cannot leave it behind', async () => {
+      arrangeCancel({ teachers: [{ teacherId: TEACHER_ID, role: 'LEAD' }] });
+      tx.teacherAbsence.findMany.mockResolvedValue([{ id: 'abs-1', userId: TEACHER_ID }]);
+
+      await service.cancel(LESSON_ID, { reason: 'Sjuk', cause: 'TEACHER_UNAVAILABLE' }, testUser());
+
+      expect(tx.teacherAbsence.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'ACTIVE', userId: { in: [TEACHER_ID] }, startsAt: { lt: ENDS_AT }, endsAt: { gt: STARTS_AT } }),
+          select: { id: true, userId: true },
+        }),
+      );
+      expect(tx.teacherAbsenceCover.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          absenceId: 'abs-1',
+          calendarLessonId: LESSON_ID,
+          absentTeacherId: TEACHER_ID,
+          decision: 'CANCELLED',
+          removedTeachers: [],
+          substituteId: null,
+        }),
+      });
+    });
+
+    it('records no decision for another cause, or when nobody on the lesson is away', async () => {
+      arrangeCancel({ teachers: [{ teacherId: TEACHER_ID, role: 'LEAD' }] });
+      tx.teacherAbsence.findMany.mockResolvedValue([{ id: 'abs-1', userId: TEACHER_ID }]);
+      await service.cancel(LESSON_ID, { reason: 'Brandövning', cause: 'MANUAL' }, testUser());
+      expect(tx.teacherAbsenceCover.create).not.toHaveBeenCalled();
+
+      tx.teacherAbsence.findMany.mockResolvedValue([]);
+      await service.cancel(LESSON_ID, { cause: 'TEACHER_UNAVAILABLE' }, testUser());
+      expect(tx.teacherAbsenceCover.create).not.toHaveBeenCalled();
+    });
+
     it('keeps the existing note when no reason is given', async () => {
       arrangeCancel({ note: 'Bring calculators' });
 

@@ -189,6 +189,7 @@ export class CalendarLessonsService {
       await enterGrundschemaWrite(tx, requireSchoolId(user));
       const lesson = await this.requireLesson(tx, id);
       const updated = await this.cancelInTransaction(tx, lesson, dto);
+      if (dto.cause === 'TEACHER_UNAVAILABLE') await this.recordCancellation(tx, lesson, user);
 
       await this.realtime.notifyLessonChanged(tx, id);
       await this.notifyLessonAudience(tx, lesson, {
@@ -206,6 +207,46 @@ export class CalendarLessonsService {
     });
     this.boardChanged(board);
     return updated;
+  }
+
+  /**
+   * A cancel "because the teacher cannot come" from the old page or the day
+   * planner, for a teacher with an ACTIVE absence over the lesson, is that
+   * absence's CANCELLED decision — as the board's own cancel and as an
+   * assignment from the old page already are (recordAssignment). Without it
+   * the absence could be ended, shortened or withdrawn past the lesson and
+   * leave it cancelled with nothing on the board to undo. The period only;
+   * never the reason.
+   */
+  private async recordCancellation(tx: PrismaClient, lesson: LessonForAction, user: AuthenticatedUser): Promise<void> {
+    const teacherIds = (lesson.teachers ?? []).map((t) => t.teacherId);
+    if (teacherIds.length === 0) return;
+    const absences =
+      (await tx.teacherAbsence.findMany({
+        where: {
+          status: 'ACTIVE',
+          userId: { in: teacherIds },
+          startsAt: { lt: lesson.endsAt },
+          endsAt: { gt: lesson.startsAt },
+        },
+        select: { id: true, userId: true },
+        orderBy: { startsAt: 'asc' },
+      })) ?? [];
+    if (absences.length === 0) return;
+    const existing = await decisionsOn(tx, [lesson.id]);
+    for (const absence of absences) {
+      await writeDecision(tx, {
+        schoolId: lesson.schoolId,
+        absenceId: absence.id,
+        lessonId: lesson.id,
+        absentTeacherId: absence.userId,
+        decision: 'CANCELLED',
+        removed: [],
+        substituteId: null,
+        decidedByUserId: user.userId ?? null,
+        existing: existing.find((row) => row.absenceId === absence.id),
+      });
+    }
   }
 
   /**
