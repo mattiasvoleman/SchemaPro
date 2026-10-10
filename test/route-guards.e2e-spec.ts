@@ -18,7 +18,9 @@ import { createTestApp, type TestHarness } from './utils/test-app';
 /** Route paths that are deliberately reachable without a principal. */
 // public/v1/timetables: Schemavisaren, behind share links and its own rate
 // limit (src/publication/public-timetable.controller.ts).
-const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'ss12000/v1'];
+// ss12000/v2.0: the SS12000 2.1 provider, authenticated by an integration key
+// as S1's bearer and limited per key (src/integration/ss12000-v2), like v1.
+const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'ss12000/v1', 'ss12000/v2.0'];
 
 interface RouteInfo {
   controller: string;

@@ -113,6 +113,7 @@ import { PublicLinksService } from '../../src/publication/public-links.service';
 import { tokenHashOf } from '../../src/publication/public-token';
 import { familyPushChecks, sweepFamilySchool } from './probe-family-push';
 import { ss12000SyncChecks, sweepSs12000School } from './probe-ss12000-sync';
+import { ss12000ProviderChecks } from './probe-ss12000-provider';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -3915,6 +3916,7 @@ async function runChecks(
   await coverChecks(owner, api, open, appUrl);
   await familyPushChecks(owner, api, MARKER, check);
   await ss12000SyncChecks(owner, api, MARKER, check);
+  await ss12000ProviderChecks(owner, api, MARKER, check);
 }
 
 

@@ -69,21 +69,34 @@ export class SecretBox {
   }
 
   seal(plaintext: string, binding: SecretBinding): SealedSecret {
-    if (!this.current) throw new SecretBoxError('SS12000_SECRETS_NOT_CONFIGURED');
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.current.key, iv);
-    cipher.setAAD(aadOf(binding));
-    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-    return { ciphertext, iv, authTag: cipher.getAuthTag(), keyId: this.current.id };
+    return this.sealWith(plaintext, aadOf(binding));
   }
 
   /** The plaintext, or SS12000_SECRET_UNREADABLE for a wrong key, binding or tampered row. */
   open(sealed: SealedSecret, binding: SecretBinding): string {
+    return this.openWith(sealed, aadOf(binding));
+  }
+
+  /**
+   * The same box with an AAD the caller names: a key's webhook signing
+   * secret (20261014120000) is bound to `integration-key-webhook:<schoolId>:
+   * <keyId>` (ss12000-v2/signing.ts), not to a source.
+   */
+  sealWith(plaintext: string, aad: Buffer): SealedSecret {
+    if (!this.current) throw new SecretBoxError('SS12000_SECRETS_NOT_CONFIGURED');
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.current.key, iv);
+    cipher.setAAD(aad);
+    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    return { ciphertext, iv, authTag: cipher.getAuthTag(), keyId: this.current.id };
+  }
+
+  openWith(sealed: SealedSecret, aad: Buffer): string {
     const key = this.keys.get(sealed.keyId);
     if (!key) throw new SecretBoxError(this.current ? 'SS12000_SECRET_UNREADABLE' : 'SS12000_SECRETS_NOT_CONFIGURED');
     try {
       const decipher = createDecipheriv('aes-256-gcm', key, sealed.iv);
-      decipher.setAAD(aadOf(binding));
+      decipher.setAAD(aad);
       decipher.setAuthTag(sealed.authTag);
       return Buffer.concat([decipher.update(sealed.ciphertext), decipher.final()]).toString('utf8');
     } catch {

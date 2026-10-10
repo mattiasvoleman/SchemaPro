@@ -429,9 +429,11 @@ describe('Portal and platform surfaces (e2e)', () => {
     });
 
     it('scopes a valid key to its own school, not the caller-supplied one', async () => {
+      // Every key that existed before 20261014120000 holds these scopes.
       harness.tx['integrationApiKey']!['findFirst']!.mockResolvedValue({
         id: RECORD_ID,
         schoolId: SCHOOL_ID,
+        scopes: ['ss12000.v1', 'ss12000.v1.import'],
       });
       harness.tx['school']!['findUnique']!.mockResolvedValue({
         id: SCHOOL_ID,
@@ -457,7 +459,7 @@ describe('Portal and platform surfaces (e2e)', () => {
 
     describe('/duties (SS12000 2.1.0 Duty)', () => {
       const givenPosts = (share: boolean) => {
-        harness.tx['integrationApiKey']!['findFirst']!.mockResolvedValue({ id: RECORD_ID, schoolId: SCHOOL_ID });
+        harness.tx['integrationApiKey']!['findFirst']!.mockResolvedValue({ id: RECORD_ID, schoolId: SCHOOL_ID, scopes: ['ss12000.v1', 'ss12000.v1.import'] });
         harness.tx['academicYear']!['findFirst']!.mockResolvedValue({
           id: 'year-1',
           startDate: new Date('2026-08-17T00:00:00.000Z'),

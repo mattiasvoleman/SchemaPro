@@ -52,6 +52,13 @@ export interface OutboundRequest {
   body?: string;
   timeoutMs: number;
   maxBytes: number;
+  /**
+   * 'fail' (the sync's): a body over maxBytes fails the call
+   * (SS12000_RESPONSE_TOO_LARGE). 'discard' (a webhook receiver's answer,
+   * which nobody reads): the first maxBytes are kept, the rest is discarded
+   * and the status still counts.
+   */
+  overflow?: 'fail' | 'discard';
   /** TLS client certificate and key (MTLS_CLIENT_CERT), PEM. */
   cert?: string;
   key?: string;
@@ -306,6 +313,14 @@ export const sendOutbound: OutboundSender = async (req, policy) => {
         response.on('data', (chunk: Buffer) => {
           size += chunk.length;
           if (size > req.maxBytes) {
+            if (req.overflow === 'discard') {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              response.destroy();
+              resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) });
+              return;
+            }
             response.destroy();
             fail('SS12000_RESPONSE_TOO_LARGE');
             return;
