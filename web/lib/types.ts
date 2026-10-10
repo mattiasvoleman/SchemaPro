@@ -120,6 +120,13 @@ export interface NationalTimplanVersion {
   skolansValHours: number | null;
   reductionCapPercent: number | null;
   appliesFromCohortTerm: string;
+  /**
+   * How the lydelse applies (migration 20261010130000): SFS 2023:945 to the
+   * stadier a pupil had not finished when it came into force
+   * (övergångsbestämmelse 3), SFS 2025:729 to the cohorts starting from its
+   * term (övergångsbestämmelse 12). lib/timplan-cohorts.ts reads it.
+   */
+  appliesBy: "STAGES_NOT_COMPLETED" | "COHORTS_STARTING";
   supersededByCode: string | null;
   /** Empty for a lydelse whose fördelning is not published yet (SFS 2025:729). */
   entries: NationalTimplanEntry[];

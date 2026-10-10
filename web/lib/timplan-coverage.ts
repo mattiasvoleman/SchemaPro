@@ -225,7 +225,7 @@ export function planningWeeksInTenths(value: number | string | { toString(): str
 }
 
 /** The lydelse's first cohort year: 'HT2024' → 2024. */
-function cohortYear(term: string): number {
+export function cohortYear(term: string): number {
   const match = /^(?:HT|VT)(\d{4})$/.exec(term);
   return match ? Number(match[1]) : 0;
 }
@@ -288,6 +288,23 @@ interface CellAccumulator {
 
 const cellKey = (code: string, stage: TimplanStage): string => `${code}:${stage}`;
 
+/**
+ * The national cell a national code's minutes go to in a base stage: its
+ * TOP-LEVEL code (a child of an ämnesgrupp rolls into the group's cell), in
+ * the merged LAG_MELLAN cell when the version prints one for that code
+ * outside högstadiet. P1's roll-up, shared with the stage module
+ * (timplan-stage.ts), so a pupil's stage cells are cut exactly as a plan's.
+ */
+export function nationalCellOf(
+  code: string,
+  baseStage: BaseStage,
+  parentOf: ReadonlyMap<string, string | null>,
+  mergedCodes: ReadonlySet<string>,
+): { top: string; stage: TimplanStage } {
+  const top = parentOf.get(code) ?? code;
+  return { top, stage: baseStage !== "HOG" && mergedCodes.has(top) ? "LAG_MELLAN" : baseStage };
+}
+
 export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   const { version } = input;
   const weeks = input.planningWeeksTenths;
@@ -302,7 +319,6 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   }
 
   const parentOf = new Map(input.nationalSubjects.map((s) => [s.code, s.parentCode]));
-  const topOf = (code: string): string => parentOf.get(code) ?? code;
 
   // The version's printed cells: top-level codes become cells, child lines
   // become minima on their group's cell in the same stage.
@@ -363,9 +379,7 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     }
 
     const code = subject.nationalCode;
-    const top = topOf(code);
-    const stage: TimplanStage =
-      baseStage !== "HOG" && hasMergedCell.has(top) ? "LAG_MELLAN" : baseStage;
+    const { top, stage } = nationalCellOf(code, baseStage, parentOf, hasMergedCell);
     const cell = cells.get(cellKey(top, stage)) ?? newCell(top, stage, 0, false);
     cell.subjectIds.add(subject.id);
     if (TIMPLAN_ALTERNATIVE_CODES.includes(top)) {

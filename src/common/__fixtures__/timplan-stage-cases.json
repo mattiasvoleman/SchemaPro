@@ -17068,6 +17068,3107 @@
     ]
    },
    "classes": []
+  },
+  {
+   "name": "22. matematik 59, 60 and 61 minutes short over the stage: arithmetic, then a finding rounded up",
+   "input": {
+    "asOfDate": "2026-10-10",
+    "activeYearId": "00000000-0000-4000-8000-000000020260",
+    "versions": [
+     {
+      "code": "SFS2023:945/B1",
+      "schoolForm": "GRUNDSKOLA",
+      "totalHours": 6890,
+      "reductionCapPercent": 20,
+      "appliesFromCohortTerm": "HT2024",
+      "appliesBy": "STAGES_NOT_COMPLETED",
+      "entries": [
+       {
+        "subjectCode": "BL",
+        "stage": "LAG",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BL",
+        "stage": "MELLAN",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BL",
+        "stage": "HOG",
+        "hours": 100,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "EN",
+        "stage": "LAG",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "EN",
+        "stage": "MELLAN",
+        "hours": 220,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "EN",
+        "stage": "HOG",
+        "hours": 200,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "LAG_MELLAN",
+        "hours": 40,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "HOG",
+        "hours": 90,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "LAG",
+        "hours": 420,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "MELLAN",
+        "hours": 410,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "HOG",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "NO",
+        "stage": "LAG",
+        "hours": 145,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "NO",
+        "stage": "MELLAN",
+        "hours": 216,
+        "minimumHoursPerChild": 60,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "NO",
+        "stage": "HOG",
+        "hours": 289,
+        "minimumHoursPerChild": 80,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BI",
+        "stage": "MELLAN",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "FY",
+        "stage": "MELLAN",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "KE",
+        "stage": "MELLAN",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BI",
+        "stage": "HOG",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "FY",
+        "stage": "HOG",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "KE",
+        "stage": "HOG",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "LAG",
+        "hours": 680,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "MELLAN",
+        "hours": 520,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "HOG",
+        "hours": 290,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       }
+      ]
+     },
+     {
+      "code": "SFS2025:729",
+      "schoolForm": "GRUNDSKOLA",
+      "totalHours": 7424,
+      "reductionCapPercent": null,
+      "appliesFromCohortTerm": "HT2028",
+      "appliesBy": "COHORTS_STARTING",
+      "entries": []
+     },
+     {
+      "code": "SFS2022:1619/B2A",
+      "schoolForm": "ANPASSAD_GRUNDSKOLA_AMNEN",
+      "totalHours": 6890,
+      "reductionCapPercent": null,
+      "appliesFromCohortTerm": "HT2023",
+      "appliesBy": "STAGES_NOT_COMPLETED",
+      "entries": [
+       {
+        "subjectCode": "MA",
+        "stage": "LAG",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "MELLAN",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "HOG",
+        "hours": 415,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "HOG",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "LAG_MELLAN",
+        "hours": 230,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "HOG",
+        "hours": 295,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       }
+      ]
+     }
+    ],
+    "nationalSubjects": [
+     {
+      "code": "BI",
+      "name": "Biologi",
+      "parentCode": "NO"
+     },
+     {
+      "code": "BL",
+      "name": "Bild",
+      "parentCode": null
+     },
+     {
+      "code": "EN",
+      "name": "Engelska",
+      "parentCode": null
+     },
+     {
+      "code": "FY",
+      "name": "Fysik",
+      "parentCode": "NO"
+     },
+     {
+      "code": "HKK",
+      "name": "Hem- och konsumentkunskap",
+      "parentCode": null
+     },
+     {
+      "code": "KE",
+      "name": "Kemi",
+      "parentCode": "NO"
+     },
+     {
+      "code": "MA",
+      "name": "Matematik",
+      "parentCode": null
+     },
+     {
+      "code": "NO",
+      "name": "Naturorienterande ämnen",
+      "parentCode": null
+     },
+     {
+      "code": "SV_SVA",
+      "name": "Svenska eller svenska som andraspråk",
+      "parentCode": null
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000000221",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "years": [
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020240",
+        "yearStartHT": 2024,
+        "gradeLevel": 4,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8180,
+          "deliveredMinutes": 8180,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020250",
+        "yearStartHT": 2025,
+        "gradeLevel": 5,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2025-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8180,
+          "deliveredMinutes": 8180,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020260",
+        "yearStartHT": 2026,
+        "gradeLevel": 6,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2026-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8181,
+          "deliveredMinutes": 1636,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 6545
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 2092,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 8368
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 892,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 3568
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 332,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1328
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 109,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 437
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 96,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 384
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000222",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "years": [
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020240",
+        "yearStartHT": 2024,
+        "gradeLevel": 4,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8180,
+          "deliveredMinutes": 8180,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020250",
+        "yearStartHT": 2025,
+        "gradeLevel": 5,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2025-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8180,
+          "deliveredMinutes": 8180,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020260",
+        "yearStartHT": 2026,
+        "gradeLevel": 6,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2026-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8180,
+          "deliveredMinutes": 1636,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 6544
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 2092,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 8368
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 892,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 3568
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 332,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1328
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 109,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 437
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 96,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 384
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000223",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "years": [
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020240",
+        "yearStartHT": 2024,
+        "gradeLevel": 4,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8179,
+          "deliveredMinutes": 8179,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020250",
+        "yearStartHT": 2025,
+        "gradeLevel": 5,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2025-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8179,
+          "deliveredMinutes": 8179,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020260",
+        "yearStartHT": 2026,
+        "gradeLevel": 6,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2026-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8181,
+          "deliveredMinutes": 1636,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 6545
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 2092,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 8368
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 892,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 3568
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 332,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1328
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 109,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 437
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 96,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 384
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "coverage": {
+    "asOfDate": "2026-10-10",
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000000221",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "regime": "PRE_2028",
+      "cohortStartHT": 2021,
+      "schoolForm": "GRUNDSKOLA",
+      "stages": [
+       {
+        "stage": "LAG_MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         1,
+         2,
+         3,
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [
+         1,
+         2,
+         3
+        ],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": false,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "HKK",
+          "nationalHours": 40,
+          "plannedHours": 24,
+          "outcomeHours": 17.6,
+          "projectedHours": 24,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       },
+       {
+        "stage": "MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": true,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "BL",
+          "nationalHours": 80,
+          "plannedHours": 83,
+          "outcomeHours": 60.9,
+          "projectedHours": 83,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "EN",
+          "nationalHours": 220,
+          "plannedHours": 223,
+          "outcomeHours": 163.5,
+          "projectedHours": 223,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "MA",
+          "nationalHours": 410,
+          "plannedHours": 409,
+          "outcomeHours": 299.9,
+          "projectedHours": 409,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "NO",
+          "nationalHours": 216,
+          "plannedHours": 216.3,
+          "outcomeHours": 158.6,
+          "projectedHours": 216.3,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET",
+          "children": [
+           {
+            "code": "BI",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "FY",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "KE",
+            "minimumHours": 60,
+            "plannedHours": 63
+           }
+          ]
+         },
+         {
+          "code": "SV_SVA",
+          "nationalHours": 520,
+          "plannedHours": 523,
+          "outcomeHours": 383.5,
+          "projectedHours": 523,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       }
+      ],
+      "verdicts": []
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000000222",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "regime": "PRE_2028",
+      "cohortStartHT": 2021,
+      "schoolForm": "GRUNDSKOLA",
+      "stages": [
+       {
+        "stage": "LAG_MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         1,
+         2,
+         3,
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [
+         1,
+         2,
+         3
+        ],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": false,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "HKK",
+          "nationalHours": 40,
+          "plannedHours": 24,
+          "outcomeHours": 17.6,
+          "projectedHours": 24,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       },
+       {
+        "stage": "MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": true,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "BL",
+          "nationalHours": 80,
+          "plannedHours": 83,
+          "outcomeHours": 60.9,
+          "projectedHours": 83,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "EN",
+          "nationalHours": 220,
+          "plannedHours": 223,
+          "outcomeHours": 163.5,
+          "projectedHours": 223,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "MA",
+          "nationalHours": 410,
+          "plannedHours": 409,
+          "outcomeHours": 299.9,
+          "projectedHours": 409,
+          "plannedShortfallHours": 1,
+          "projectedShortfallHours": 1,
+          "protectedFromReduction": true,
+          "status": "BELOW",
+          "projectedStatus": "BELOW"
+         },
+         {
+          "code": "NO",
+          "nationalHours": 216,
+          "plannedHours": 216.3,
+          "outcomeHours": 158.6,
+          "projectedHours": 216.3,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET",
+          "children": [
+           {
+            "code": "BI",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "FY",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "KE",
+            "minimumHours": 60,
+            "plannedHours": 63
+           }
+          ]
+         },
+         {
+          "code": "SV_SVA",
+          "nationalHours": 520,
+          "plannedHours": 523,
+          "outcomeHours": 383.5,
+          "projectedHours": 523,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       }
+      ],
+      "verdicts": [
+       {
+        "code": "TIMPLAN_PUPIL_STAGE_BELOW_NATIONAL",
+        "severity": "warning",
+        "stage": "MELLAN",
+        "subjectCode": "MA",
+        "params": {
+         "versionCode": "SFS2023:945/B1",
+         "nationalHours": 410,
+         "hours": 409,
+         "shortfallHours": 1,
+         "withinCap": 0,
+         "capPercent": 20
+        },
+        "pupilId": "00000000-0000-4000-8000-000000000222"
+       },
+       {
+        "code": "TIMPLAN_PUPIL_STAGE_PROJECTED_BELOW_NATIONAL",
+        "severity": "warning",
+        "stage": "MELLAN",
+        "subjectCode": "MA",
+        "params": {
+         "versionCode": "SFS2023:945/B1",
+         "nationalHours": 410,
+         "hours": 409,
+         "shortfallHours": 1,
+         "withinCap": 0,
+         "capPercent": 20
+        },
+        "pupilId": "00000000-0000-4000-8000-000000000222"
+       }
+      ]
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000000223",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "regime": "PRE_2028",
+      "cohortStartHT": 2021,
+      "schoolForm": "GRUNDSKOLA",
+      "stages": [
+       {
+        "stage": "LAG_MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         1,
+         2,
+         3,
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [
+         1,
+         2,
+         3
+        ],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": false,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "HKK",
+          "nationalHours": 40,
+          "plannedHours": 24,
+          "outcomeHours": 17.6,
+          "projectedHours": 24,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       },
+       {
+        "stage": "MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": true,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "BL",
+          "nationalHours": 80,
+          "plannedHours": 83,
+          "outcomeHours": 60.9,
+          "projectedHours": 83,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "EN",
+          "nationalHours": 220,
+          "plannedHours": 223,
+          "outcomeHours": 163.5,
+          "projectedHours": 223,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "MA",
+          "nationalHours": 410,
+          "plannedHours": 409,
+          "outcomeHours": 299.9,
+          "projectedHours": 409,
+          "plannedShortfallHours": 1.1,
+          "projectedShortfallHours": 1.1,
+          "protectedFromReduction": true,
+          "status": "BELOW",
+          "projectedStatus": "BELOW"
+         },
+         {
+          "code": "NO",
+          "nationalHours": 216,
+          "plannedHours": 216.3,
+          "outcomeHours": 158.6,
+          "projectedHours": 216.3,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET",
+          "children": [
+           {
+            "code": "BI",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "FY",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "KE",
+            "minimumHours": 60,
+            "plannedHours": 63
+           }
+          ]
+         },
+         {
+          "code": "SV_SVA",
+          "nationalHours": 520,
+          "plannedHours": 523,
+          "outcomeHours": 383.5,
+          "projectedHours": 523,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       }
+      ],
+      "verdicts": [
+       {
+        "code": "TIMPLAN_PUPIL_STAGE_BELOW_NATIONAL",
+        "severity": "warning",
+        "stage": "MELLAN",
+        "subjectCode": "MA",
+        "params": {
+         "versionCode": "SFS2023:945/B1",
+         "nationalHours": 410,
+         "hours": 409,
+         "shortfallHours": 1.1,
+         "withinCap": 0,
+         "capPercent": 20
+        },
+        "pupilId": "00000000-0000-4000-8000-000000000223"
+       },
+       {
+        "code": "TIMPLAN_PUPIL_STAGE_PROJECTED_BELOW_NATIONAL",
+        "severity": "warning",
+        "stage": "MELLAN",
+        "subjectCode": "MA",
+        "params": {
+         "versionCode": "SFS2023:945/B1",
+         "nationalHours": 410,
+         "hours": 409,
+         "shortfallHours": 1.1,
+         "withinCap": 0,
+         "capPercent": 20
+        },
+        "pupilId": "00000000-0000-4000-8000-000000000223"
+       }
+      ]
+     }
+    ]
+   },
+   "classes": [
+    {
+     "studentGroupId": "00000000-0000-4000-8000-0000000c06a0",
+     "stage": "LAG_MELLAN",
+     "versionCodes": [
+      "SFS2023:945/B1"
+     ],
+     "pupils": 3,
+     "completePupils": 0,
+     "backfilledPupils": 0,
+     "cells": [
+      {
+       "code": "HKK",
+       "nationalHours": 40,
+       "pupils": 3,
+       "planned": {
+        "min": 24,
+        "median": 24,
+        "max": 24
+       },
+       "projected": {
+        "min": 24,
+        "median": 24,
+        "max": 24
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 3
+      }
+     ]
+    },
+    {
+     "studentGroupId": "00000000-0000-4000-8000-0000000c06a0",
+     "stage": "MELLAN",
+     "versionCodes": [
+      "SFS2023:945/B1"
+     ],
+     "pupils": 3,
+     "completePupils": 3,
+     "backfilledPupils": 0,
+     "cells": [
+      {
+       "code": "BL",
+       "nationalHours": 80,
+       "pupils": 3,
+       "planned": {
+        "min": 83,
+        "median": 83,
+        "max": 83
+       },
+       "projected": {
+        "min": 83,
+        "median": 83,
+        "max": 83
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 0
+      },
+      {
+       "code": "EN",
+       "nationalHours": 220,
+       "pupils": 3,
+       "planned": {
+        "min": 223,
+        "median": 223,
+        "max": 223
+       },
+       "projected": {
+        "min": 223,
+        "median": 223,
+        "max": 223
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 0
+      },
+      {
+       "code": "MA",
+       "nationalHours": 410,
+       "pupils": 3,
+       "planned": {
+        "min": 409,
+        "median": 409,
+        "max": 409
+       },
+       "projected": {
+        "min": 409,
+        "median": 409,
+        "max": 409
+       },
+       "belowNational": 2,
+       "projectedBelowNational": 2,
+       "unrecordedPupils": 0
+      },
+      {
+       "code": "NO",
+       "nationalHours": 216,
+       "pupils": 3,
+       "planned": {
+        "min": 216.3,
+        "median": 216.3,
+        "max": 216.3
+       },
+       "projected": {
+        "min": 216.3,
+        "median": 216.3,
+        "max": 216.3
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 0
+      },
+      {
+       "code": "SV_SVA",
+       "nationalHours": 520,
+       "pupils": 3,
+       "planned": {
+        "min": 523,
+        "median": 523,
+        "max": 523
+       },
+       "projected": {
+        "min": 523,
+        "median": 523,
+        "max": 523
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "23. a grade recorded at 995 per mille is recorded in full; at 994 it is partly recorded",
+   "input": {
+    "asOfDate": "2026-10-10",
+    "activeYearId": "00000000-0000-4000-8000-000000020260",
+    "versions": [
+     {
+      "code": "SFS2023:945/B1",
+      "schoolForm": "GRUNDSKOLA",
+      "totalHours": 6890,
+      "reductionCapPercent": 20,
+      "appliesFromCohortTerm": "HT2024",
+      "appliesBy": "STAGES_NOT_COMPLETED",
+      "entries": [
+       {
+        "subjectCode": "BL",
+        "stage": "LAG",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BL",
+        "stage": "MELLAN",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BL",
+        "stage": "HOG",
+        "hours": 100,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "EN",
+        "stage": "LAG",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "EN",
+        "stage": "MELLAN",
+        "hours": 220,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "EN",
+        "stage": "HOG",
+        "hours": 200,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "LAG_MELLAN",
+        "hours": 40,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "HOG",
+        "hours": 90,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "LAG",
+        "hours": 420,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "MELLAN",
+        "hours": 410,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "HOG",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "NO",
+        "stage": "LAG",
+        "hours": 145,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "NO",
+        "stage": "MELLAN",
+        "hours": 216,
+        "minimumHoursPerChild": 60,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "NO",
+        "stage": "HOG",
+        "hours": 289,
+        "minimumHoursPerChild": 80,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BI",
+        "stage": "MELLAN",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "FY",
+        "stage": "MELLAN",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "KE",
+        "stage": "MELLAN",
+        "hours": 60,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "BI",
+        "stage": "HOG",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "FY",
+        "stage": "HOG",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "KE",
+        "stage": "HOG",
+        "hours": 80,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "LAG",
+        "hours": 680,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "MELLAN",
+        "hours": 520,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "HOG",
+        "hours": 290,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": true
+       }
+      ]
+     },
+     {
+      "code": "SFS2025:729",
+      "schoolForm": "GRUNDSKOLA",
+      "totalHours": 7424,
+      "reductionCapPercent": null,
+      "appliesFromCohortTerm": "HT2028",
+      "appliesBy": "COHORTS_STARTING",
+      "entries": []
+     },
+     {
+      "code": "SFS2022:1619/B2A",
+      "schoolForm": "ANPASSAD_GRUNDSKOLA_AMNEN",
+      "totalHours": 6890,
+      "reductionCapPercent": null,
+      "appliesFromCohortTerm": "HT2023",
+      "appliesBy": "STAGES_NOT_COMPLETED",
+      "entries": [
+       {
+        "subjectCode": "MA",
+        "stage": "LAG",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "MELLAN",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "MA",
+        "stage": "HOG",
+        "hours": 415,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "SV_SVA",
+        "stage": "HOG",
+        "hours": 400,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "LAG_MELLAN",
+        "hours": 230,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       },
+       {
+        "subjectCode": "HKK",
+        "stage": "HOG",
+        "hours": 295,
+        "minimumHoursPerChild": null,
+        "protectedFromReduction": false
+       }
+      ]
+     }
+    ],
+    "nationalSubjects": [
+     {
+      "code": "BI",
+      "name": "Biologi",
+      "parentCode": "NO"
+     },
+     {
+      "code": "BL",
+      "name": "Bild",
+      "parentCode": null
+     },
+     {
+      "code": "EN",
+      "name": "Engelska",
+      "parentCode": null
+     },
+     {
+      "code": "FY",
+      "name": "Fysik",
+      "parentCode": "NO"
+     },
+     {
+      "code": "HKK",
+      "name": "Hem- och konsumentkunskap",
+      "parentCode": null
+     },
+     {
+      "code": "KE",
+      "name": "Kemi",
+      "parentCode": "NO"
+     },
+     {
+      "code": "MA",
+      "name": "Matematik",
+      "parentCode": null
+     },
+     {
+      "code": "NO",
+      "name": "Naturorienterande ämnen",
+      "parentCode": null
+     },
+     {
+      "code": "SV_SVA",
+      "name": "Svenska eller svenska som andraspråk",
+      "parentCode": null
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000000231",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "years": [
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020240",
+        "yearStartHT": 2024,
+        "gradeLevel": 4,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8260,
+          "deliveredMinutes": 8260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020250",
+        "yearStartHT": 2025,
+        "gradeLevel": 5,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 995,
+        "recordedFrom": "2025-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8260,
+          "deliveredMinutes": 8260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020260",
+        "yearStartHT": 2026,
+        "gradeLevel": 6,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2026-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8260,
+          "deliveredMinutes": 1652,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 6608
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 2092,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 8368
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 892,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 3568
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 332,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1328
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 109,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 437
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 96,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 384
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000232",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "years": [
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020240",
+        "yearStartHT": 2024,
+        "gradeLevel": 4,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8260,
+          "deliveredMinutes": 8260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020250",
+        "yearStartHT": 2025,
+        "gradeLevel": 5,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 994,
+        "recordedFrom": "2025-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8260,
+          "deliveredMinutes": 8260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 10460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 4460,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 1660,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 546,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 1260,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 480,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 0
+         }
+        ]
+       },
+       {
+        "academicYearId": "00000000-0000-4000-8000-000000020260",
+        "yearStartHT": 2026,
+        "gradeLevel": 6,
+        "schoolForm": "GRUNDSKOLA",
+        "basis": "RECORDED",
+        "recordedPermille": 1000,
+        "recordedFrom": "2026-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "lines": [
+         {
+          "code": "MA",
+          "plannedMinutes": 8260,
+          "deliveredMinutes": 1652,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 6608
+         },
+         {
+          "code": "SV_SVA",
+          "plannedMinutes": 10460,
+          "deliveredMinutes": 2092,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 8368
+         },
+         {
+          "code": "EN",
+          "plannedMinutes": 4460,
+          "deliveredMinutes": 892,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 3568
+         },
+         {
+          "code": "BL",
+          "plannedMinutes": 1660,
+          "deliveredMinutes": 332,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1328
+         },
+         {
+          "code": "NO",
+          "plannedMinutes": 546,
+          "deliveredMinutes": 109,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 437
+         },
+         {
+          "code": "BI",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "FY",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "KE",
+          "plannedMinutes": 1260,
+          "deliveredMinutes": 252,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 1008
+         },
+         {
+          "code": "HKK",
+          "plannedMinutes": 480,
+          "deliveredMinutes": 96,
+          "creditedMinutes": 0,
+          "atPlanMinutes": 0,
+          "aheadMinutes": 384
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "coverage": {
+    "asOfDate": "2026-10-10",
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000000231",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "regime": "PRE_2028",
+      "cohortStartHT": 2021,
+      "schoolForm": "GRUNDSKOLA",
+      "stages": [
+       {
+        "stage": "LAG_MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         1,
+         2,
+         3,
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [
+         1,
+         2,
+         3
+        ],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": false,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "HKK",
+          "nationalHours": 40,
+          "plannedHours": 24,
+          "outcomeHours": 17.6,
+          "projectedHours": 24,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       },
+       {
+        "stage": "MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         5,
+         6
+        ],
+        "partlyRecordedGrades": [],
+        "unrecordedGrades": [],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": true,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "BL",
+          "nationalHours": 80,
+          "plannedHours": 83,
+          "outcomeHours": 60.9,
+          "projectedHours": 83,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "EN",
+          "nationalHours": 220,
+          "plannedHours": 223,
+          "outcomeHours": 163.5,
+          "projectedHours": 223,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "MA",
+          "nationalHours": 410,
+          "plannedHours": 413,
+          "outcomeHours": 302.9,
+          "projectedHours": 413,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         },
+         {
+          "code": "NO",
+          "nationalHours": 216,
+          "plannedHours": 216.3,
+          "outcomeHours": 158.6,
+          "projectedHours": 216.3,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "MET",
+          "projectedStatus": "MET",
+          "children": [
+           {
+            "code": "BI",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "FY",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "KE",
+            "minimumHours": 60,
+            "plannedHours": 63
+           }
+          ]
+         },
+         {
+          "code": "SV_SVA",
+          "nationalHours": 520,
+          "plannedHours": 523,
+          "outcomeHours": 383.5,
+          "projectedHours": 523,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "MET",
+          "projectedStatus": "MET"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       }
+      ],
+      "verdicts": []
+     },
+     {
+      "pupilId": "00000000-0000-4000-8000-000000000232",
+      "homeGroupId": "00000000-0000-4000-8000-0000000c06a0",
+      "regime": "PRE_2028",
+      "cohortStartHT": 2021,
+      "schoolForm": "GRUNDSKOLA",
+      "stages": [
+       {
+        "stage": "LAG_MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         1,
+         2,
+         3,
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         6
+        ],
+        "partlyRecordedGrades": [
+         5
+        ],
+        "unrecordedGrades": [
+         1,
+         2,
+         3
+        ],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": false,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "HKK",
+          "nationalHours": 40,
+          "plannedHours": 24,
+          "outcomeHours": 17.6,
+          "projectedHours": 24,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       },
+       {
+        "stage": "MELLAN",
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "totalHours": 6890,
+        "grades": [
+         4,
+         5,
+         6
+        ],
+        "recordedGrades": [
+         4,
+         6
+        ],
+        "partlyRecordedGrades": [
+         5
+        ],
+        "unrecordedGrades": [],
+        "plannedGrades": [],
+        "unplannedGrades": [],
+        "current": true,
+        "complete": false,
+        "recordedFrom": "2024-08-17",
+        "backfilled": false,
+        "classDeleted": false,
+        "distributionAssumed": false,
+        "cells": [
+         {
+          "code": "BL",
+          "nationalHours": 80,
+          "plannedHours": 83,
+          "outcomeHours": 60.9,
+          "projectedHours": 83,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         },
+         {
+          "code": "EN",
+          "nationalHours": 220,
+          "plannedHours": 223,
+          "outcomeHours": 163.5,
+          "projectedHours": 223,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         },
+         {
+          "code": "MA",
+          "nationalHours": 410,
+          "plannedHours": 413,
+          "outcomeHours": 302.9,
+          "projectedHours": 413,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         },
+         {
+          "code": "NO",
+          "nationalHours": 216,
+          "plannedHours": 216.3,
+          "outcomeHours": 158.6,
+          "projectedHours": 216.3,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": false,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED",
+          "children": [
+           {
+            "code": "BI",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "FY",
+            "minimumHours": 60,
+            "plannedHours": 63
+           },
+           {
+            "code": "KE",
+            "minimumHours": 60,
+            "plannedHours": 63
+           }
+          ]
+         },
+         {
+          "code": "SV_SVA",
+          "nationalHours": 520,
+          "plannedHours": 523,
+          "outcomeHours": 383.5,
+          "projectedHours": 523,
+          "plannedShortfallHours": 0,
+          "projectedShortfallHours": 0,
+          "protectedFromReduction": true,
+          "status": "UNRECORDED",
+          "projectedStatus": "UNRECORDED"
+         }
+        ],
+        "unmapped": {
+         "plannedHours": 0,
+         "outcomeHours": 0,
+         "projectedHours": 0
+        }
+       }
+      ],
+      "verdicts": [
+       {
+        "code": "TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED",
+        "severity": "notice",
+        "stage": "MELLAN",
+        "params": {
+         "unrecordedGrades": "",
+         "partlyRecordedGrades": "5",
+         "unplannedGrades": "",
+         "recordedFrom": "2024-08-17",
+         "classDeleted": 0
+        },
+        "pupilId": "00000000-0000-4000-8000-000000000232"
+       }
+      ]
+     }
+    ]
+   },
+   "classes": [
+    {
+     "studentGroupId": "00000000-0000-4000-8000-0000000c06a0",
+     "stage": "LAG_MELLAN",
+     "versionCodes": [
+      "SFS2023:945/B1"
+     ],
+     "pupils": 2,
+     "completePupils": 0,
+     "backfilledPupils": 0,
+     "cells": [
+      {
+       "code": "HKK",
+       "nationalHours": 40,
+       "pupils": 2,
+       "planned": {
+        "min": 24,
+        "median": 24,
+        "max": 24
+       },
+       "projected": {
+        "min": 24,
+        "median": 24,
+        "max": 24
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 2
+      }
+     ]
+    },
+    {
+     "studentGroupId": "00000000-0000-4000-8000-0000000c06a0",
+     "stage": "MELLAN",
+     "versionCodes": [
+      "SFS2023:945/B1"
+     ],
+     "pupils": 2,
+     "completePupils": 1,
+     "backfilledPupils": 0,
+     "cells": [
+      {
+       "code": "BL",
+       "nationalHours": 80,
+       "pupils": 2,
+       "planned": {
+        "min": 83,
+        "median": 83,
+        "max": 83
+       },
+       "projected": {
+        "min": 83,
+        "median": 83,
+        "max": 83
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 1
+      },
+      {
+       "code": "EN",
+       "nationalHours": 220,
+       "pupils": 2,
+       "planned": {
+        "min": 223,
+        "median": 223,
+        "max": 223
+       },
+       "projected": {
+        "min": 223,
+        "median": 223,
+        "max": 223
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 1
+      },
+      {
+       "code": "MA",
+       "nationalHours": 410,
+       "pupils": 2,
+       "planned": {
+        "min": 413,
+        "median": 413,
+        "max": 413
+       },
+       "projected": {
+        "min": 413,
+        "median": 413,
+        "max": 413
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 1
+      },
+      {
+       "code": "NO",
+       "nationalHours": 216,
+       "pupils": 2,
+       "planned": {
+        "min": 216.3,
+        "median": 216.3,
+        "max": 216.3
+       },
+       "projected": {
+        "min": 216.3,
+        "median": 216.3,
+        "max": 216.3
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 1
+      },
+      {
+       "code": "SV_SVA",
+       "nationalHours": 520,
+       "pupils": 2,
+       "planned": {
+        "min": 523,
+        "median": 523,
+        "max": 523
+       },
+       "projected": {
+        "min": 523,
+        "median": 523,
+        "max": 523
+       },
+       "belowNational": 0,
+       "projectedBelowNational": 0,
+       "unrecordedPupils": 1
+      }
+     ]
+    }
+   ]
   }
  ],
  "cohortCases": [

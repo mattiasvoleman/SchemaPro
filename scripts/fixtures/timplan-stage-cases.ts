@@ -99,6 +99,12 @@ const mellan = (scale = 1, extra: StageLine[] = []) => [
   line('MA', (410 / 3 + 1) * scale), line('SV_SVA', 520 / 3 + 1), line('EN', 220 / 3 + 1), line('BL', 80 / 3 + 1),
   line('NO', 9.1), line('BI', 21), line('FY', 21), line('KE', 21), line('HKK', 8), ...extra,
 ];
+/** Three years of mellanstadiet whose matematik sums to `total` minutes exactly. */
+const mellanWithMa = (total: number): StageYearCells[] => {
+  const per = Math.floor(total / 3);
+  const ma = (minutes: number) => [line('MA', minutes / H), ...mellan().filter((l) => l.code !== 'MA')];
+  return [year(y(2024), 2024, 4, ma(per)), year(y(2025), 2025, 5, ma(per)), current(y(2026), 2026, 6, ma(total - 2 * per))];
+};
 const hog = (o: { ma?: number; bl?: number; bi?: number } = {}) => [
   line('MA', o.ma ?? 400 / 3 + 1), line('SV_SVA', 290 / 3 + 1), line('EN', 200 / 3 + 1), line('BL', o.bl ?? 100 / 3 + 1),
   line('NO', 15.5), line('BI', o.bi ?? 27), line('FY', 27), line('KE', 27), line('HKK', 30.5),
@@ -181,6 +187,18 @@ const cases: Case[] = [
   ] },
   { name: '21. a home class with no årskurs: the grade is unknown, no stage is guessed', activeHT: 2026, pupils: [
     pupil(21, c7a, [current(y(2026), 2026, null as unknown as number, [line('MA', 140)])]),
+  ] },
+  // The boundaries the module draws, so a mirror that moves one by a minute
+  // or a per mille fails the replay rather than agreeing on every value
+  // either side of it.
+  { name: '22. matematik 59, 60 and 61 minutes short over the stage: arithmetic, then a finding rounded up', activeHT: 2026, pupils: [
+    pupil(221, c6a, mellanWithMa(410 * H - 59)),
+    pupil(222, c6a, mellanWithMa(410 * H - 60)),
+    pupil(223, c6a, mellanWithMa(410 * H - 61)),
+  ] },
+  { name: '23. a grade recorded at 995 per mille is recorded in full; at 994 it is partly recorded', activeHT: 2026, pupils: [
+    pupil(231, c6a, [year(y(2024), 2024, 4, mellan()), year(y(2025), 2025, 5, mellan(), { recordedPermille: 995 }), current(y(2026), 2026, 6, mellan())]),
+    pupil(232, c6a, [year(y(2024), 2024, 4, mellan()), year(y(2025), 2025, 5, mellan(), { recordedPermille: 994 }), current(y(2026), 2026, 6, mellan())]),
   ] },
 ];
 

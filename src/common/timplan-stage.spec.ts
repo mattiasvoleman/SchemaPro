@@ -184,6 +184,23 @@ describe('stadiesummor, case by case', () => {
     expect(codes(pupil!)).toEqual(['TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN']);
   });
 
+  it('22: a shortfall under one hour is arithmetic; one hour is a finding, rounded up to the tenth', () => {
+    const [short59, short60, short61] = run(22);
+    expect(cell(short59!, 'MELLAN', 'MA')).toMatchObject({ status: 'MET', plannedShortfallHours: 0 });
+    expect(cell(short60!, 'MELLAN', 'MA')).toMatchObject({ status: 'BELOW', plannedShortfallHours: 1 });
+    // 61 minutes is 1,02 h: rounded UP, so planned + shortfall is never less than the national figure.
+    expect(cell(short61!, 'MELLAN', 'MA')).toMatchObject({ status: 'BELOW', plannedShortfallHours: 1.1 });
+    expect(codes(short59!)).toEqual([]);
+    expect(codes(short60!)).toEqual(['TIMPLAN_PUPIL_STAGE_BELOW_NATIONAL', 'TIMPLAN_PUPIL_STAGE_PROJECTED_BELOW_NATIONAL']);
+  });
+
+  it('23: a grade is recorded in full from 995 per mille, a day or two of rounding', () => {
+    const [full, partly] = run(23);
+    expect(stage(full!, 'MELLAN')).toMatchObject({ complete: true, recordedGrades: [4, 5, 6], partlyRecordedGrades: [] });
+    expect(stage(partly!, 'MELLAN')).toMatchObject({ complete: false, recordedGrades: [4, 6], partlyRecordedGrades: [5] });
+    expect(codes(partly!)).toEqual(['TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED']);
+  });
+
   it('never refuses: an empty input is an empty answer', () => {
     expect(computePupilStages({ ...cases[0]!.input, pupils: [] })).toEqual({ asOfDate: cases[0]!.input.asOfDate, pupils: [] });
   });

@@ -9,9 +9,12 @@ import type { CoverageNationalSubject, CoverageVersion } from "@/lib/timplan-cov
  * Built from the gateway's coverage fixture, which read it out of P0's
  * migration, so a test about "matematik lågstadiet, 420 h" is about the row
  * the database holds — not a number retyped here. The fixture carries the
- * columns the check needs; the three the endpoint adds (id, sfs, title) are
- * derived from the code, and a national subject's name is its code, which is
- * what the page falls back to when a name is missing anyway.
+ * columns the check needs; the four the endpoint adds (id, sfs, title,
+ * appliesBy) are derived from the code — appliesBy as migration
+ * 20261010130000 sets it: the tioårig grundskola's rows (SFS 2025:729) apply
+ * by cohort, every older lydelse by stage — and a national subject's name is
+ * its code, which is what the page falls back to when a name is missing
+ * anyway.
  */
 
 const { statute } = fixture as unknown as {
@@ -45,6 +48,7 @@ export const NATIONAL: NationalTimplans = {
       skolansValHours: version.skolansValHours,
       reductionCapPercent: version.reductionCapPercent,
       appliesFromCohortTerm: version.appliesFromCohortTerm,
+      appliesBy: version.code.startsWith("SFS2025:729") ? "COHORTS_STARTING" : "STAGES_NOT_COMPLETED",
       supersededByCode: null,
       entries: version.entries,
     }),
