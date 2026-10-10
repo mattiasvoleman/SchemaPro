@@ -12,7 +12,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/LocaleContext';
 import { useSync } from '../../context/SyncContext';
+import { formatDayHeading, formatTime } from '../../i18n/format';
 import { getSupabase } from '../../services/supabase';
 import { fetchRoster } from '../../services/roster';
 import { upsertCalendarLesson, upsertStudents } from '../../services/database/localDatabase';
@@ -34,8 +36,9 @@ interface ScheduleRow {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly status: string;
-  readonly subjectName: string;
-  readonly roomName: string;
+  /** Null when the lesson has no subject; the screen says "Lesson" in the reader's language. */
+  readonly subjectName: string | null;
+  readonly roomName: string | null;
   readonly studentGroupId: string;
 }
 
@@ -52,22 +55,9 @@ interface RawLessonRow {
   } | null;
 }
 
-function toDateString(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDayHeading(date: string): string {
-  const parsed = new Date(`${date}T12:00:00`);
-  return parsed.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' });
-}
-
 async function fetchSchedule(teacherId: string): Promise<ScheduleRow[]> {
-  const from = toDateString(new Date());
-  const to = toDateString(new Date(Date.now() + DAYS_AHEAD * 86_400_000));
+  const from = new Date().toISOString().slice(0, 10);
+  const to = new Date(Date.now() + DAYS_AHEAD * 86_400_000).toISOString().slice(0, 10);
 
   const { data, error } = await getSupabase()
     .from('CalendarLessonTeachers')
@@ -88,14 +78,17 @@ async function fetchSchedule(teacherId: string): Promise<ScheduleRow[]> {
       startsAt: lesson.startsAt,
       endsAt: lesson.endsAt,
       status: lesson.status,
-      subjectName: lesson.subject?.name ?? 'Lesson',
-      roomName: lesson.room?.name ?? '—',
+      subjectName: lesson.subject?.name ?? null,
+      roomName: lesson.room?.name ?? null,
       studentGroupId: lesson.studentGroupId,
     }))
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
 
-async function cacheLessonForAttendance(row: ScheduleRow): Promise<CalendarLesson> {
+async function cacheLessonForAttendance(
+  row: ScheduleRow,
+  fallback: { subject: string; room: string },
+): Promise<CalendarLesson> {
   const data = await fetchRoster(row.id, row.studentGroupId);
 
   const students = sortByDisplayName(
@@ -111,8 +104,8 @@ async function cacheLessonForAttendance(row: ScheduleRow): Promise<CalendarLesso
     id: row.id,
     startTime: row.startsAt,
     endTime: row.endsAt,
-    subjectName: row.subjectName,
-    roomName: row.roomName,
+    subjectName: row.subjectName ?? fallback.subject,
+    roomName: row.roomName ?? fallback.room,
     studentIds: students.map((student) => student.id),
   };
 
@@ -123,6 +116,7 @@ async function cacheLessonForAttendance(row: ScheduleRow): Promise<CalendarLesso
 
 export function ScheduleScreen(): React.JSX.Element {
   const { authState } = useAuth();
+  const { t, locale } = useI18n();
   const { setActiveLesson } = useSync();
   const router = useRouter();
 
@@ -139,9 +133,9 @@ export function ScheduleScreen(): React.JSX.Element {
       const fetched = await fetchSchedule(authState.teacherId);
       setRows(fetched);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load the schedule.');
+      setError(t('schedule.loadError'));
     }
-  }, [authState.teacherId]);
+  }, [authState.teacherId, t]);
 
   useEffect(() => {
     void load().finally(() => setIsLoading(false));
@@ -161,23 +155,26 @@ export function ScheduleScreen(): React.JSX.Element {
     }
     return [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, data]) => ({ title: formatDayHeading(date), data }));
-  }, [rows]);
+      .map(([date, data]) => ({ key: date, title: formatDayHeading(date, locale), data }));
+  }, [rows, locale]);
 
   const openLesson = useCallback(
     async (row: ScheduleRow): Promise<void> => {
       setOpeningId(row.id);
       try {
-        const lesson = await cacheLessonForAttendance(row);
+        const lesson = await cacheLessonForAttendance(row, {
+          subject: t('common.lesson'),
+          room: t('common.noValue'),
+        });
         setActiveLesson(lesson);
         router.push('/(app)/attendance');
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not open the lesson.');
+        setError(t('schedule.openError'));
       } finally {
         setOpeningId(null);
       }
     },
-    [router, setActiveLesson],
+    [router, setActiveLesson, t],
   );
 
   if (isLoading) {
@@ -193,8 +190,8 @@ export function ScheduleScreen(): React.JSX.Element {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Schedule</Text>
-        <Text style={styles.headerSubtitle}>Next {DAYS_AHEAD} days</Text>
+        <Text style={styles.headerTitle}>{t('schedule.title')}</Text>
+        <Text style={styles.headerSubtitle}>{t('schedule.nextDays', { count: DAYS_AHEAD })}</Text>
       </View>
 
       {error !== null && <Text style={styles.errorText}>{error}</Text>}
@@ -216,7 +213,7 @@ export function ScheduleScreen(): React.JSX.Element {
               onPress={() => void openLesson(item)}
               disabled={cancelled || openingId !== null}
               accessibilityRole="button"
-              accessibilityLabel={`Open ${item.subjectName} for attendance`}
+              accessibilityLabel={t('schedule.openA11y', { subject: item.subjectName ?? t('common.lesson') })}
             >
               <View style={styles.cardTime}>
                 <Text style={styles.cardTimeText}>{formatTime(item.startsAt)}</Text>
@@ -224,11 +221,12 @@ export function ScheduleScreen(): React.JSX.Element {
               </View>
               <View style={styles.cardBody}>
                 <Text style={styles.cardSubject} numberOfLines={1}>
-                  {item.subjectName}
+                  {item.subjectName ?? t('common.lesson')}
                 </Text>
                 <Text style={styles.cardMeta} numberOfLines={1}>
-                  {item.roomName}
-                  {cancelled ? '  ·  Cancelled' : ''}
+                  {cancelled
+                    ? `${item.roomName ?? t('common.noValue')}  ·  ${t('common.cancelled')}`
+                    : item.roomName ?? t('common.noValue')}
                 </Text>
               </View>
               {openingId === item.id ? (
@@ -241,10 +239,8 @@ export function ScheduleScreen(): React.JSX.Element {
         }}
         ListEmptyComponent={
           <View style={styles.center}>
-            <Text style={styles.emptyTitle}>No upcoming lessons</Text>
-            <Text style={styles.emptySubtitle}>
-              Published lessons for the next {DAYS_AHEAD} days will appear here.
-            </Text>
+            <Text style={styles.emptyTitle}>{t('schedule.emptyTitle')}</Text>
+            <Text style={styles.emptySubtitle}>{t('schedule.emptyBody', { count: DAYS_AHEAD })}</Text>
           </View>
         }
         contentContainerStyle={rows.length === 0 ? styles.listEmpty : styles.list}

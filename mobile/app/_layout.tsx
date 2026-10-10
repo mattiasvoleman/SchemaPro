@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
+import { LocaleProvider } from '../src/context/LocaleContext';
 import { NetworkProvider } from '../src/context/NetworkContext';
 import { SyncProvider } from '../src/context/SyncContext';
 
@@ -44,21 +45,24 @@ function AuthGate(): React.JSX.Element {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RootLayout — provider tree wired in dependency order:
-//   NetworkProvider  (no deps)
-//     └─ AuthProvider  (reads secure store on mount)
-//          └─ SyncProvider  (needs auth state to start workers)
-//               └─ AuthGate  (needs auth state for navigation guard)
+//   LocaleProvider  (no deps; every screen's words, the login's included)
+//     └─ NetworkProvider  (no deps)
+//          └─ AuthProvider  (reads secure store on mount)
+//               └─ SyncProvider  (needs auth state to start workers)
+//                    └─ AuthGate  (needs auth state for navigation guard)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function RootLayout(): React.JSX.Element {
   return (
-    <NetworkProvider>
-      <AuthProvider>
-        <SyncProvider>
-          <StatusBar style="light" />
-          <AuthGate />
-        </SyncProvider>
-      </AuthProvider>
-    </NetworkProvider>
+    <LocaleProvider>
+      <NetworkProvider>
+        <AuthProvider>
+          <SyncProvider>
+            <StatusBar style="light" />
+            <AuthGate />
+          </SyncProvider>
+        </AuthProvider>
+      </NetworkProvider>
+    </LocaleProvider>
   );
 }

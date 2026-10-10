@@ -14,6 +14,7 @@ import { useAuth } from './AuthContext';
 import type {
   CalendarLesson,
   CalendarLessonUpdatedPayload,
+  SyncProblem,
   SyncState,
   SyncStatus,
 } from '../types';
@@ -43,7 +44,7 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
     status: 'offline',
     lastSyncedAt: null,
     pendingCount: 0,
-    errorMessage: null,
+    problem: null,
   });
   const [activeLesson, setActiveLesson] = useState<CalendarLesson | null>(null);
   const [isDbReady, setIsDbReady] = useState(false);
@@ -61,12 +62,12 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
     if (!isDbReady || !authState.isAuthenticated) return;
 
     const worker = new AttendanceSyncWorker(
-      (status: SyncStatus, pendingCount: number, errorMessage: string | null) => {
+      (status: SyncStatus, pendingCount: number, problem: SyncProblem | null) => {
         setSyncState((prev) => ({
           ...prev,
           status,
           pendingCount,
-          errorMessage,
+          problem,
           lastSyncedAt:
             status === 'connected' && pendingCount === 0
               ? new Date().toISOString()

@@ -3,6 +3,13 @@ import * as Crypto from 'expo-crypto';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 
+export interface BiometricPrompt {
+  /** Why the OS is asking, shown in its dialog. */
+  readonly reason: string;
+  /** The dialog's cancel button. */
+  readonly cancelLabel: string;
+}
+
 export interface BiometricCapability {
   readonly isAvailable: boolean;
   readonly supportedTypes: LocalAuthentication.AuthenticationType[];
@@ -16,8 +23,11 @@ interface UseBiometricsReturn {
    * Returns `true` only if verified, `false` on failure/cancel.
    * MUST be called immediately before any sensitive write action
    * (submitting or altering an attendance report).
+   *
+   * The prompt's words come from the caller, in the reader's language: this
+   * hook has no catalogue of its own.
    */
-  readonly authenticate: (reason: string) => Promise<boolean>;
+  readonly authenticate: (prompt: BiometricPrompt) => Promise<boolean>;
 }
 
 // A device-local secret stored behind the keychain's own biometric gate
@@ -62,7 +72,7 @@ export function useBiometrics(): UseBiometricsReturn {
   }, []);
 
   const authenticate = useCallback(
-    async (reason: string): Promise<boolean> => {
+    async ({ reason, cancelLabel }: BiometricPrompt): Promise<boolean> => {
       setIsAuthenticating(true);
       try {
         const capability = await checkCapability();
@@ -75,7 +85,7 @@ export function useBiometrics(): UseBiometricsReturn {
         // 1) Explicit biometric-only challenge (clear prompt + intent).
         const result = await LocalAuthentication.authenticateAsync({
           promptMessage: reason,
-          cancelLabel: 'Cancel',
+          cancelLabel,
           disableDeviceFallback: true,
         });
         if (!result.success) {

@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { useSecureAuth } from '../hooks/useSecureAuth';
+import type { AuthErrorCode } from '../services/auth/authService';
 import type { AuthState } from '../types';
 
 interface AuthContextValue {
   readonly authState: AuthState;
   readonly isLoading: boolean;
-  readonly error: string | null;
+  readonly error: AuthErrorCode | null;
   readonly login: (email: string, password: string) => Promise<void>;
   readonly logout: () => Promise<void>;
 }

@@ -1,14 +1,14 @@
 import * as Network from 'expo-network';
 import { getAccessToken } from '../supabase';
 import { SecureTokenStore } from '../auth/secureTokenStore';
-import { assertSecureBaseUrl } from '../network/secureUrl';
+import { apiRequest } from '../api';
 import {
   getPendingAttendanceRecords,
   getPendingQueueCount,
   incrementRetryCount,
   markAttendanceRecordSynced,
 } from '../database/localDatabase';
-import type { AttendanceStatus, PendingAttendanceRecord, SyncStatus } from '../../types';
+import type { AttendanceStatus, PendingAttendanceRecord, SyncProblem, SyncStatus } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exponential backoff: delay = min(BASE * 2^retryCount, MAX_DELAY)
@@ -26,12 +26,17 @@ const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
 const POLL_INTERVAL_MS = 15_000;
 
-const API_BASE_URL = process.env['EXPO_PUBLIC_API_BASE_URL'];
+/**
+ * What went wrong, as a code the banner words in the reader's language. The
+ * worker used to hand the screen an English sentence; a code keeps the words
+ * in the catalogue and the worker free of them.
+ */
+export type { SyncProblem };
 
 export type SyncStatusCallback = (
   status: SyncStatus,
   pendingCount: number,
-  errorMessage: string | null,
+  problem: SyncProblem | null,
 ) => void;
 
 function backoffDelay(retryCount: number): number {
@@ -59,25 +64,19 @@ const STATUS_TO_API: Record<AttendanceStatus, string> = {
 /**
  * Pushes every pending record for one lesson as a single batch to
  * `POST /api/v1/attendance/report` — the idempotent ingestion endpoint the
- * gateway exposes (safe to retry from this offline queue).
+ * gateway exposes (safe to retry from this offline queue). Through the app's
+ * one gateway client (services/api.ts), which checks the base URL is TLS and
+ * throws on any status that is not a success.
  */
-async function pushLessonBatch(
+export async function pushLessonBatch(
   calendarLessonId: string,
   records: readonly PendingAttendanceRecord[],
   token: string,
 ): Promise<void> {
-  if (!API_BASE_URL) {
-    throw new Error('[SyncWorker] EXPO_PUBLIC_API_BASE_URL is not set.');
-  }
-  assertSecureBaseUrl(API_BASE_URL, 'EXPO_PUBLIC_API_BASE_URL');
-
-  const response = await fetch(`${API_BASE_URL}/api/v1/attendance/report`, {
+  await apiRequest<void>('/api/v1/attendance/report', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
+    token,
+    body: {
       calendarLessonId,
       records: records.map((record) => ({
         studentId: record.studentId,
@@ -87,14 +86,8 @@ async function pushLessonBatch(
         // the whole class was marked at once, hours after the lesson ended.
         recordedAt: record.timestamp,
       })),
-    }),
+    },
   });
-
-  if (!response.ok) {
-    throw new Error(
-      `[SyncWorker] Server rejected batch for lesson ${calendarLessonId} with status ${response.status}`,
-    );
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,7 +131,7 @@ export class AttendanceSyncWorker {
     // and still wrong — a badge that will not go down however much work you do.
     const session = await SecureTokenStore.getTeacherSession();
     if (!session) {
-      this.onStatusChange('error', 0, 'Session expired — please log in again.');
+      this.onStatusChange('error', 0, { code: 'SESSION_EXPIRED' });
       return;
     }
 
@@ -162,7 +155,7 @@ export class AttendanceSyncWorker {
     const token = await getAccessToken();
     if (!token) {
       this.isSyncing = false;
-      this.onStatusChange('error', records.length, 'Session expired — please log in again.');
+      this.onStatusChange('error', records.length, { code: 'SESSION_EXPIRED' });
       return;
     }
 
@@ -192,8 +185,10 @@ export class AttendanceSyncWorker {
       } catch (err) {
         await Promise.all(batch.map((record) => incrementRetryCount(record.id)));
         failureCount += batch.length;
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        console.error(`[SyncWorker] ${msg}`);
+        // The status only: a message can carry the gateway's words about a
+        // child, and this log is not the place for them.
+        const status = err instanceof Error && 'status' in err ? String((err as { status: unknown }).status) : 'network';
+        console.error(`[SyncWorker] Batch for lesson ${lessonId} failed (${status}).`);
       }
     }
 
@@ -201,11 +196,7 @@ export class AttendanceSyncWorker {
     const remaining = await getPendingQueueCount(session.teacherId);
 
     if (failureCount > 0 && remaining > 0) {
-      this.onStatusChange(
-        'error',
-        remaining,
-        `${failureCount} record(s) failed — will retry automatically.`,
-      );
+      this.onStatusChange('error', remaining, { code: 'RECORDS_FAILED', count: failureCount });
     } else {
       this.onStatusChange('connected', remaining, null);
     }

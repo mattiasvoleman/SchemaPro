@@ -12,31 +12,14 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { getSupabase } from '../../services/supabase';
+import { fetchChildren } from '../../services/children';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/LocaleContext';
 import type { AbsenceReportRow, AbsenceReportType, ChildRow } from '../../types';
 
 const TYPES: readonly AbsenceReportType[] = ['SICK', 'APPOINTMENT', 'OTHER'];
-const TYPE_LABELS: Record<AbsenceReportType, string> = {
-  SICK: 'Sick',
-  APPOINTMENT: 'Appointment',
-  OTHER: 'Other',
-};
-
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-async function fetchChildren(guardianId: string): Promise<ChildRow[]> {
-  const { data, error } = await getSupabase()
-    .from('GuardianStudents')
-    .select('id, student:Users!GuardianStudents_studentId_fkey(id, firstName, lastName)')
-    .eq('guardianId', guardianId);
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as unknown as ReadonlyArray<{
-    id: string;
-    student: { id: string; firstName: string; lastName: string };
-  }>;
-  return rows.map((row) => ({ linkId: row.id, ...row.student }));
 }
 
 async function fetchReports(): Promise<AbsenceReportRow[]> {
@@ -52,6 +35,7 @@ async function fetchReports(): Promise<AbsenceReportRow[]> {
 /** Guardian home: children overview + one-tap absence reporting. */
 export function GuardianHomeScreen(): React.JSX.Element {
   const { authState } = useAuth();
+  const { t } = useI18n();
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [reports, setReports] = useState<AbsenceReportRow[]>([]);
   const [selectedChild, setSelectedChild] = useState<string | null>(null);
@@ -73,10 +57,10 @@ export function GuardianHomeScreen(): React.JSX.Element {
       setReports(existing);
       setSelectedChild((current) => current ?? kids[0]?.id ?? null);
       setError(null);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Could not load.');
+    } catch {
+      setError(t('common.loadError'));
     }
-  }, [authState.teacherId]);
+  }, [authState.teacherId, t]);
 
   useEffect(() => {
     void load().finally(() => setIsLoading(false));
@@ -91,14 +75,14 @@ export function GuardianHomeScreen(): React.JSX.Element {
   const childName = useCallback(
     (id: string): string => {
       const child = children.find((entry) => entry.id === id);
-      return child ? `${child.firstName} ${child.lastName}` : '—';
+      return child ? `${child.firstName} ${child.lastName}` : t('common.noValue');
     },
-    [children],
+    [children, t],
   );
 
   const submit = useCallback(async () => {
     if (!selectedChild || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      Alert.alert('Absence', 'Pick a child and a date (YYYY-MM-DD).');
+      Alert.alert(t('guardian.alertTitle'), t('guardian.pickChildAndDate'));
       return;
     }
     setIsSubmitting(true);
@@ -117,17 +101,16 @@ export function GuardianHomeScreen(): React.JSX.Element {
         type,
       });
       if (insertError) throw new Error(insertError.message);
-      Alert.alert('Absence', 'Absence reported.');
+      Alert.alert(t('guardian.alertTitle'), t('guardian.reported'));
       await load();
     } catch (submitError) {
-      Alert.alert(
-        'Absence',
-        submitError instanceof Error ? submitError.message : 'Could not report.',
-      );
+      // The database's own refusal stays in the log; the reader gets a sentence.
+      console.warn(`[Guardian] Absence report failed: ${submitError instanceof Error ? submitError.name : 'unknown'}`);
+      Alert.alert(t('guardian.alertTitle'), t('guardian.reportFailed'));
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedChild, date, type, authState.teacherId, load]);
+  }, [selectedChild, date, type, authState.teacherId, load, t]);
 
   const removeReport = useCallback(
     async (id: string) => {
@@ -136,12 +119,12 @@ export function GuardianHomeScreen(): React.JSX.Element {
         .delete()
         .eq('id', id);
       if (deleteError) {
-        Alert.alert('Absence', deleteError.message);
+        Alert.alert(t('guardian.alertTitle'), t('guardian.reportFailed'));
         return;
       }
       await load();
     },
-    [load],
+    [load, t],
   );
 
   if (isLoading) {
@@ -162,21 +145,19 @@ export function GuardianHomeScreen(): React.JSX.Element {
         }
       >
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>My children</Text>
-          <Text style={styles.headerSubtitle}>Report absence for today or a coming day</Text>
+          <Text style={styles.headerTitle}>{t('guardian.title')}</Text>
+          <Text style={styles.headerSubtitle}>{t('guardian.subtitle')}</Text>
         </View>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         {children.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.emptyTitle}>No children linked</Text>
-            <Text style={styles.emptyBody}>
-              Ask the school administrator to link your account to your children.
-            </Text>
+            <Text style={styles.emptyTitle}>{t('guardian.noChildrenTitle')}</Text>
+            <Text style={styles.emptyBody}>{t('guardian.noChildrenBody')}</Text>
           </View>
         ) : (
           <View style={styles.card}>
-            <Text style={styles.label}>Child</Text>
+            <Text style={styles.label}>{t('guardian.child')}</Text>
             <View style={styles.chipRow}>
               {children.map((child) => (
                 <TouchableOpacity
@@ -191,23 +172,23 @@ export function GuardianHomeScreen(): React.JSX.Element {
                       selectedChild === child.id && styles.chipTextActive,
                     ]}
                   >
-                    {child.firstName} {child.lastName}
+                    {`${child.firstName} ${child.lastName}`}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <Text style={styles.label}>Date (full day)</Text>
+            <Text style={styles.label}>{t('guardian.dateLabel')}</Text>
             <TextInput
               style={styles.input}
               value={date}
               onChangeText={setDate}
-              placeholder="YYYY-MM-DD"
+              placeholder={t('guardian.datePlaceholder')}
               placeholderTextColor="#64748b"
               autoCapitalize="none"
             />
 
-            <Text style={styles.label}>Reason</Text>
+            <Text style={styles.label}>{t('guardian.reasonLabel')}</Text>
             <View style={styles.chipRow}>
               {TYPES.map((value) => (
                 <TouchableOpacity
@@ -217,7 +198,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
                   style={[styles.chip, type === value && styles.chipActive]}
                 >
                   <Text style={[styles.chipText, type === value && styles.chipTextActive]}>
-                    {TYPE_LABELS[value]}
+                    {t(`guardian.types.${value}`)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -232,36 +213,39 @@ export function GuardianHomeScreen(): React.JSX.Element {
               {isSubmitting ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.submitText}>Report absence</Text>
+                <Text style={styles.submitText}>{t('guardian.submit')}</Text>
               )}
             </TouchableOpacity>
           </View>
         )}
 
         <View style={styles.header}>
-          <Text style={styles.sectionTitle}>Reported absences</Text>
+          <Text style={styles.sectionTitle}>{t('guardian.reportsTitle')}</Text>
         </View>
         {reports.length === 0 ? (
-          <Text style={styles.emptyBody}>No absence reports yet.</Text>
+          <Text style={styles.emptyBody}>{t('guardian.reportsEmpty')}</Text>
         ) : (
           reports.map((report) => (
             <View key={report.id} style={styles.reportRow}>
               <View style={styles.reportInfo}>
                 <Text style={styles.reportName}>{childName(report.studentId)}</Text>
                 <Text style={styles.reportMeta}>
-                  {report.date.slice(0, 10)} · {TYPE_LABELS[report.type]}
-                  {report.startTime
-                    ? ` · ${report.startTime.slice(0, 5)}–${report.endTime?.slice(0, 5) ?? ''}`
-                    : ' · Full day'}
+                  {[
+                    report.date.slice(0, 10),
+                    t(`guardian.types.${report.type}`),
+                    report.startTime
+                      ? `${report.startTime.slice(0, 5)}–${report.endTime?.slice(0, 5) ?? ''}`
+                      : t('common.fullDay'),
+                  ].join(' · ')}
                 </Text>
               </View>
               {report.date.slice(0, 10) >= todayISO() ? (
                 <TouchableOpacity
                   accessibilityRole="button"
-                  accessibilityLabel="Delete report"
+                  accessibilityLabel={t('guardian.deleteA11y')}
                   onPress={() => void removeReport(report.id)}
                 >
-                  <Text style={styles.deleteText}>Delete</Text>
+                  <Text style={styles.deleteText}>{t('common.delete')}</Text>
                 </TouchableOpacity>
               ) : null}
             </View>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text, type ColorValue } from 'react-native';
 import { Tabs } from 'expo-router';
+import { useI18n } from '../../src/context/LocaleContext';
 
 function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: ColorValue }): React.JSX.Element {
   return <Text style={{ fontSize: 18, color }}>{glyph}</Text>;
@@ -12,6 +13,7 @@ function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: Co
  * Navigation guards are handled by AuthGate in the root _layout.tsx.
  */
 export default function AppLayout(): React.JSX.Element {
+  const { t } = useI18n();
   return (
     <Tabs
       screenOptions={{
@@ -27,14 +29,14 @@ export default function AppLayout(): React.JSX.Element {
       <Tabs.Screen
         name="schedule"
         options={{
-          title: 'Schedule',
+          title: t('tabs.schedule'),
           tabBarIcon: ({ color }) => <TabGlyph glyph="▦" color={color} />,
         }}
       />
       <Tabs.Screen
         name="attendance"
         options={{
-          title: 'Attendance',
+          title: t('tabs.attendance'),
           tabBarIcon: ({ color }) => <TabGlyph glyph="✓" color={color} />,
         }}
       />

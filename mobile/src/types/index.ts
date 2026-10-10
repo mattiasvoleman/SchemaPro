@@ -65,8 +65,13 @@ export interface SyncState {
   readonly status: SyncStatus;
   readonly lastSyncedAt: string | null; // ISO 8601
   readonly pendingCount: number;
-  readonly errorMessage: string | null;
+  /** What went wrong, as a code the banner words (services/sync SyncProblem). */
+  readonly problem: SyncProblem | null;
 }
+
+export type SyncProblem =
+  | { readonly code: 'SESSION_EXPIRED' }
+  | { readonly code: 'RECORDS_FAILED'; readonly count: number };
 
 // ─── Network ──────────────────────────────────────────────────────────────────
 
@@ -118,14 +123,20 @@ export interface LeaveRequestRow {
   readonly createdAt: string;
 }
 
+export type NotificationType =
+  | 'ABSENCE_UNREPORTED'
+  | 'LEAVE_DECIDED'
+  | 'LESSON_CANCELLED'
+  | 'LESSON_SUBSTITUTE'
+  | 'LESSON_ROOM_CHANGED'
+  | 'SCHEDULE_CHANGED'
+  | 'ROOM_BOOKING_DECIDED'
+  | 'TEACHER_ABSENCE_REPORTED'
+  | 'LESSON_COVER_WITHDRAWN';
+
 export interface NotificationRow {
   readonly id: string;
-  readonly type:
-    | 'ABSENCE_UNREPORTED'
-    | 'LEAVE_DECIDED'
-    | 'LESSON_CANCELLED'
-    | 'LESSON_SUBSTITUTE'
-    | 'SCHEDULE_CHANGED';
+  readonly type: NotificationType;
   readonly meta: Record<string, unknown> | null;
   readonly readAt: string | null;
   readonly createdAt: string;

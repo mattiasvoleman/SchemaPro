@@ -30,6 +30,7 @@ module.exports = {
     'src/services/**/*.ts',
     'src/utils/**/*.ts',
     'src/hooks/**/*.ts',
+    'src/i18n/**/*.ts',
     '!src/**/*.d.ts',
   ],
   coverageThreshold: {

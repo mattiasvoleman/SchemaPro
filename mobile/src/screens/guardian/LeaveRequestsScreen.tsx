@@ -12,7 +12,9 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { getSupabase } from '../../services/supabase';
+import { fetchChildren } from '../../services/children';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/LocaleContext';
 import type { ChildRow, LeaveRequestRow, LeaveRequestStatus } from '../../types';
 
 const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
@@ -23,19 +25,6 @@ const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-async function fetchChildren(guardianId: string): Promise<ChildRow[]> {
-  const { data, error } = await getSupabase()
-    .from('GuardianStudents')
-    .select('id, student:Users!GuardianStudents_studentId_fkey(id, firstName, lastName)')
-    .eq('guardianId', guardianId);
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as unknown as ReadonlyArray<{
-    id: string;
-    student: { id: string; firstName: string; lastName: string };
-  }>;
-  return rows.map((row) => ({ linkId: row.id, ...row.student }));
 }
 
 async function fetchLeaves(): Promise<LeaveRequestRow[]> {
@@ -51,6 +40,7 @@ async function fetchLeaves(): Promise<LeaveRequestRow[]> {
 /** Leave requests (ledighetsansökan): submit + follow decisions. */
 export function LeaveRequestsScreen(): React.JSX.Element {
   const { authState } = useAuth();
+  const { t } = useI18n();
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequestRow[]>([]);
   const [selectedChild, setSelectedChild] = useState<string | null>(null);
@@ -87,14 +77,14 @@ export function LeaveRequestsScreen(): React.JSX.Element {
   const childName = useCallback(
     (id: string): string => {
       const child = children.find((entry) => entry.id === id);
-      return child ? `${child.firstName} ${child.lastName}` : '—';
+      return child ? `${child.firstName} ${child.lastName}` : t('common.noValue');
     },
-    [children],
+    [children, t],
   );
 
   const submit = useCallback(async () => {
     if (!selectedChild || reason.trim().length < 3) {
-      Alert.alert('Leave', 'Pick a child and write a reason.');
+      Alert.alert(t('leave.alertTitle'), t('leave.pickChildAndReason'));
       return;
     }
     setIsSubmitting(true);
@@ -114,17 +104,15 @@ export function LeaveRequestsScreen(): React.JSX.Element {
       });
       if (error) throw new Error(error.message);
       setReason('');
-      Alert.alert('Leave', 'Leave request submitted.');
+      Alert.alert(t('leave.alertTitle'), t('leave.submitted'));
       await load();
     } catch (submitError) {
-      Alert.alert(
-        'Leave',
-        submitError instanceof Error ? submitError.message : 'Could not submit.',
-      );
+      console.warn(`[Leave] Request failed: ${submitError instanceof Error ? submitError.name : 'unknown'}`);
+      Alert.alert(t('leave.alertTitle'), t('leave.submitFailed'));
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedChild, startDate, endDate, reason, authState.teacherId, load]);
+  }, [selectedChild, startDate, endDate, reason, authState.teacherId, load, t]);
 
   if (isLoading) {
     return (
@@ -144,12 +132,12 @@ export function LeaveRequestsScreen(): React.JSX.Element {
         }
       >
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Leave requests</Text>
-          <Text style={styles.headerSubtitle}>Decided by the school administration</Text>
+          <Text style={styles.headerTitle}>{t('leave.title')}</Text>
+          <Text style={styles.headerSubtitle}>{t('leave.subtitle')}</Text>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.label}>Child</Text>
+          <Text style={styles.label}>{t('leave.child')}</Text>
           <View style={styles.chipRow}>
             {children.map((child) => (
               <TouchableOpacity
@@ -161,12 +149,12 @@ export function LeaveRequestsScreen(): React.JSX.Element {
                 <Text
                   style={[styles.chipText, selectedChild === child.id && styles.chipTextActive]}
                 >
-                  {child.firstName} {child.lastName}
+                  {`${child.firstName} ${child.lastName}`}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
-          <Text style={styles.label}>From (YYYY-MM-DD)</Text>
+          <Text style={styles.label}>{t('leave.from')}</Text>
           <TextInput
             style={styles.input}
             value={startDate}
@@ -174,7 +162,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             autoCapitalize="none"
             placeholderTextColor="#64748b"
           />
-          <Text style={styles.label}>To (YYYY-MM-DD)</Text>
+          <Text style={styles.label}>{t('leave.to')}</Text>
           <TextInput
             style={styles.input}
             value={endDate}
@@ -182,13 +170,13 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             autoCapitalize="none"
             placeholderTextColor="#64748b"
           />
-          <Text style={styles.label}>Reason</Text>
+          <Text style={styles.label}>{t('leave.reason')}</Text>
           <TextInput
             style={[styles.input, styles.multiline]}
             value={reason}
             onChangeText={setReason}
             multiline
-            placeholder="Family trip, …"
+            placeholder={t('leave.reasonPlaceholder')}
             placeholderTextColor="#64748b"
           />
           <TouchableOpacity
@@ -200,7 +188,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             {isSubmitting ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
-              <Text style={styles.submitText}>Submit request</Text>
+              <Text style={styles.submitText}>{t('leave.submit')}</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -210,15 +198,15 @@ export function LeaveRequestsScreen(): React.JSX.Element {
             <View style={styles.leaveHeader}>
               <Text style={styles.leaveName}>{childName(leave.studentId)}</Text>
               <Text style={[styles.leaveStatus, { color: STATUS_COLORS[leave.status] }]}>
-                {leave.status}
+                {t(`leave.status.${leave.status}`)}
               </Text>
             </View>
             <Text style={styles.leaveMeta}>
-              {leave.startDate.slice(0, 10)} – {leave.endDate.slice(0, 10)}
+              {`${leave.startDate.slice(0, 10)} – ${leave.endDate.slice(0, 10)}`}
             </Text>
             <Text style={styles.leaveReason}>{leave.reason}</Text>
             {leave.decisionNote ? (
-              <Text style={styles.leaveNote}>Note: {leave.decisionNote}</Text>
+              <Text style={styles.leaveNote}>{t('leave.note', { note: leave.decisionNote })}</Text>
             ) : null}
           </View>
         ))}
