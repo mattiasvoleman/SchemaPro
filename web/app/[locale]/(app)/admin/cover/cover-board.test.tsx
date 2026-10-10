@@ -7,7 +7,7 @@ import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import type { Board, BoardItem, Candidates, DayProposal } from "@/lib/cover-types";
 import { CoverBoard } from "./cover-board";
-import { shouldRefetch } from "./use-cover-realtime";
+import { REFETCHED_ON_EVENT, shouldRefetch } from "./use-cover-realtime";
 
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
@@ -332,6 +332,10 @@ describe("the board's realtime", () => {
   it("refetches on a cover change that touches the dates on screen, and not on one that does not", () => {
     expect(shouldRefetch("cover_board_updated", { from: "2030-10-16", to: "2030-10-16", changedAt: "x" }, window)).toBe(true);
     expect(shouldRefetch("cover_board_updated", { from: "2030-10-21", to: "2030-10-22" }, window)).toBe(false);
+  });
+
+  it("refetches an open candidate list too: another admin's booking can take one of its people", () => {
+    expect(REFETCHED_ON_EVENT.map((key) => key[0])).toEqual(["coverBoard", "coverCandidates"]);
   });
 
   it("refetches on a published or regenerated timetable, and on a payload it cannot read", () => {

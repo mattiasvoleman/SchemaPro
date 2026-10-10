@@ -3343,7 +3343,7 @@
     "title": "Assign substitute",
     "body": "{lesson}. The suggestions never break a hard rule: the person is free then, keeps lunch and daily rest, is not absent themselves and – in the substitute pool – has said they can.",
     "listLabel": "Suggested substitutes",
-    "empty": "Nobody can take the lesson without breaking a rule. Choose someone under Other teacher – you will get a warning.",
+    "empty": "Nobody can take the lesson without breaking a rule. Choose someone under Other teacher – you will be warned about what it breaks.",
     "pool": "Substitute pool",
     "score": "{score} pts",
     "counter": "{week} covers this week · {term} this term",
@@ -3351,7 +3351,7 @@
     "loadTarget": "{minutes} of {target} min this week",
     "excludedTitle": "Cannot ({count})",
     "other": "Other teacher",
-    "otherHint": "Outside the suggestions: you get a warning for anyone not free, qualified or available. An absent teacher can never be assigned.",
+    "otherHint": "Outside the suggestions: you get a warning if the person you choose is not qualified, loses lunch or daily rest, has a duty or a room booking then, or has not said they can come. Someone with a lesson of their own then, or who is absent themself, can never be assigned and is not listed.",
     "assign": "Assign"
   },
   "coverReasons": {
@@ -3422,6 +3422,7 @@
     "COVER_INVALID": "Something in the change no longer exists at the school.",
     "SUBSTITUTE_IS_ABSENT": "The substitute is absent themselves then.",
     "SUBSTITUTE_ON_LESSON": "The substitute already teaches the lesson.",
+    "SUBSTITUTE_HAS_LESSON": "The substitute has a lesson of their own then and cannot be assigned.",
     "PUBLISH_IN_PROGRESS": "A publish is in progress right now. Try again in a moment.",
     "ABSENCE_OVERLAPS": "The teacher is already registered as absent for part of the period.",
     "ABSENCE_HAS_DECISIONS": "{count, plural, one {# lesson already has} other {# lessons already have}} a decision. Undo them first.",

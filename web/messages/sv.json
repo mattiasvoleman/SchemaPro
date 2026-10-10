@@ -3343,7 +3343,7 @@
     "title": "Tillsätt vikarie",
     "body": "{lesson}. Förslagen bryter aldrig mot en hård regel: personen är ledig då, behåller lunch och dygnsvila, är inte själv frånvarande och – i vikariepoolen – har sagt att hen kan.",
     "listLabel": "Föreslagna vikarier",
-    "empty": "Ingen kan ta lektionen utan att bryta mot en regel. Välj någon under Annan lärare – du får en varning.",
+    "empty": "Ingen kan ta lektionen utan att bryta mot en regel. Välj någon under Annan lärare – du får en varning om vad som bryts.",
     "pool": "Vikariepoolen",
     "score": "{score} p",
     "counter": "{week} pass i veckan · {term} i terminen",
@@ -3351,7 +3351,7 @@
     "loadTarget": "{minutes} av {target} min i veckan",
     "excludedTitle": "Kan inte ({count})",
     "other": "Annan lärare",
-    "otherHint": "Utanför förslagen: den som inte är ledig, behörig eller tillgänglig får du en varning om. En frånvarande lärare kan aldrig tillsättas.",
+    "otherHint": "Utanför förslagen: om den du väljer inte är behörig, förlorar lunch eller dygnsvila, har ett uppdrag eller en lokalbokning då, eller inte har sagt att hen kan, får du en varning. Den som har en egen lektion då eller själv är frånvarande kan aldrig tillsättas och finns inte i listan.",
     "assign": "Tillsätt"
   },
   "coverReasons": {
@@ -3422,6 +3422,7 @@
     "COVER_INVALID": "Något i ändringen finns inte längre i skolan.",
     "SUBSTITUTE_IS_ABSENT": "Vikarien är själv frånvarande då.",
     "SUBSTITUTE_ON_LESSON": "Vikarien undervisar redan på lektionen.",
+    "SUBSTITUTE_HAS_LESSON": "Vikarien har en egen lektion då och kan inte tillsättas.",
     "PUBLISH_IN_PROGRESS": "En publicering pågår just nu. Försök igen om en stund.",
     "ABSENCE_OVERLAPS": "Läraren är redan registrerad som frånvarande under en del av perioden.",
     "ABSENCE_HAS_DECISIONS": "{count, plural, one {# lektion} other {# lektioner}} har redan ett beslut. Ångra dem först.",

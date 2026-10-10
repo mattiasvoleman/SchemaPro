@@ -497,7 +497,7 @@ describe('CalendarLessonsService', () => {
       expect(writes).toEqual([{}]);
     });
 
-    it('checks the substitute for overlap against other scheduled lessons only', async () => {
+    it('checks the substitute for overlap against other lessons that hold their time — scheduled or held, never cancelled', async () => {
       arrangeAssign();
 
       await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
@@ -506,7 +506,7 @@ describe('CalendarLessonsService', () => {
         expect.objectContaining({
           where: {
             id: { not: LESSON_ID },
-            status: 'SCHEDULED',
+            status: { in: ['SCHEDULED', 'COMPLETED'] },
             startsAt: { lt: ENDS_AT },
             endsAt: { gt: STARTS_AT },
             teachers: { some: { teacherId: SUB_ID } },
@@ -607,6 +607,16 @@ describe('CalendarLessonsService', () => {
       );
       expect(tx.calendarLessonTeacher.deleteMany).not.toHaveBeenCalled();
       expect(tx.calendarLessonTeacher.create).not.toHaveBeenCalled();
+    });
+
+    it('the clash carries a code, so the board and the old page can say it in Swedish', async () => {
+      arrangeAssign();
+      tx.calendarLesson.findFirst.mockResolvedValue({ id: 'clashing-lesson' });
+
+      const error = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'SUBSTITUTE_HAS_LESSON' });
     });
 
     it('refuses to reassign a completed lesson before looking anyone up', async () => {

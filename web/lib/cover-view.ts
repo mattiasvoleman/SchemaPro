@@ -146,6 +146,32 @@ export function bulkItems(
 
 export const pairKey = (item: Pick<BoardItem, "lessonId" | "absenceId">) => `${item.lessonId}:${item.absenceId}`;
 
+/**
+ * The hard rules the gateway REFUSES a manual pick on, rather than warning:
+ * a lesson of their own then (SUBSTITUTE_HAS_LESSON), away themself
+ * (SUBSTITUTE_IS_ABSENT), already on the lesson, not an active teacher.
+ */
+const REFUSED_PICK = new Set(["BUSY_LESSON", "ABSENT", "ON_LESSON", "INACTIVE"]);
+
+/**
+ * "Annan lärare": every active teacher not suggested and not on the lesson,
+ * less those the gateway would refuse — the rest are put in with a warning.
+ */
+export function otherTeacherOptions<T extends { id: string }>(
+  teachers: readonly T[],
+  item: Pick<BoardItem, "teachers"> | null,
+  data: { candidates: { userId: string }[]; excluded: { userId: string; codes: { code: string }[] }[] } | undefined,
+): T[] {
+  const left = new Set([
+    ...(data?.candidates ?? []).map((candidate) => candidate.userId),
+    ...(item?.teachers ?? []).map((teacher) => teacher.teacherId),
+    ...(data?.excluded ?? [])
+      .filter((entry) => entry.codes.some((code) => REFUSED_PICK.has(code.code)))
+      .map((entry) => entry.userId),
+  ]);
+  return teachers.filter((teacher) => !left.has(teacher.id));
+}
+
 /** Monday and Sunday of the ISO week containing `date` (YYYY-MM-DD). */
 export function weekOf(date: string): { from: string; to: string } {
   const day = new Date(`${date}T00:00:00.000Z`);

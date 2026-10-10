@@ -6,7 +6,7 @@ import { Loader2, Sparkles } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { useCoverCandidates } from "@/lib/cover-queries";
 import type { BoardItem, Candidate } from "@/lib/cover-types";
-import { reasonText } from "@/lib/cover-view";
+import { otherTeacherOptions, reasonText } from "@/lib/cover-view";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,7 +59,8 @@ function CandidateFacts({ candidate }: { candidate: Candidate }) {
  * Every suggestion keeps every hard rule (free then, lunch and daily rest
  * kept, not absent, inside a pool member's declared hours). A pick outside
  * them is still possible under "Annan lärare": the gateway warns, as it does
- * for behörighet, and refuses only an absent substitute.
+ * for behörighet — except for somebody with a lesson of their own then or
+ * away themself, whom it refuses and who is therefore not offered.
  */
 export function CandidatesDialog({
   item,
@@ -82,10 +83,7 @@ export function CandidatesDialog({
     setOther("");
   }, [item?.lessonId, item?.absenceId]);
 
-  const listed = new Set([
-    ...(data?.candidates ?? []).map((candidate) => candidate.userId),
-    ...(item?.teachers ?? []).map((teacher) => teacher.teacherId),
-  ]);
+  const others = otherTeacherOptions(teachers, item, data);
   const pick = chosen || other;
 
   return (
@@ -179,13 +177,11 @@ export function CandidatesDialog({
             }}
           >
             <option value="">{tCommon("select")}</option>
-            {teachers
-              .filter((teacher) => !listed.has(teacher.id))
-              .map((teacher) => (
-                <option key={teacher.id} value={teacher.id}>
-                  {teacher.name}
-                </option>
-              ))}
+            {others.map((teacher) => (
+              <option key={teacher.id} value={teacher.id}>
+                {teacher.name}
+              </option>
+            ))}
           </select>
           <p className="text-xs text-muted-foreground">{t("otherHint")}</p>
         </div>
