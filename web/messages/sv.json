@@ -2895,7 +2895,7 @@
       "PUB_RANGE_OVERLAP": "Giltigheten delar ett annat publicerat schema",
       "PUB_FROM_IN_PAST": "Giltigheten börjar före i dag",
       "PUB_LUNCH_NOT_SET": "Lunch är inte inställd",
-      "PUB_WEEK_SPLIT": "Giltigheten börjar mitt i en vecka",
+      "PUB_WEEK_SPLIT": "Giltigheten börjar eller slutar mitt i en vecka",
       "PUB_RANGE_GAP": "Skoldagar utan publicerat schema",
       "PUB_DAY_OPS_LOST": "Dagsändringar som försvinner"
     },
@@ -2919,7 +2919,7 @@
       "PUB_TIMPLAN": "{count, plural, one {# rad} other {# rader}} i timplanen ligger under nivån.",
       "PUB_RANGE_OVERLAP": "Giltigheten delar period med {count, plural, one {ett publicerat schema} other {# publicerade scheman}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# skoldag} other {# skoldagar}} framåt saknar publicerat schema.",
-      "PUB_WEEK_SPLIT": "Giltigheten börjar mitt i en vecka: {count, plural, one {# lektion} other {# lektioner}} kan försvinna eller hållas två gånger den veckan.",
+      "PUB_WEEK_SPLIT": "Giltigheten börjar eller slutar mitt i en vecka: {count, plural, one {# lektion} other {# lektioner}} kan försvinna eller hållas två gånger den veckan.",
       "PUB_DAY_OPS_LOST": "{count, plural, one {# dagsändring} other {# dagsändringar}} (vikarie, salsbyte, anteckning) försvinner med lektioner som tas bort.",
       "PUB_FROM_IN_PAST": "Giltigheten börjar före i dag, så dagar som redan varit kan få lektioner i efterhand.",
       "PUB_LUNCH_NOT_SET": "Lunch är inte inställd, så inga måltider publiceras.",

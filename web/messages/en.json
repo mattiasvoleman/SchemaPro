@@ -2895,7 +2895,7 @@
       "PUB_RANGE_OVERLAP": "Validity shares another published timetable",
       "PUB_FROM_IN_PAST": "Validity starts before today",
       "PUB_LUNCH_NOT_SET": "Lunch is not set up",
-      "PUB_WEEK_SPLIT": "Validity starts mid-week",
+      "PUB_WEEK_SPLIT": "Validity starts or ends mid-week",
       "PUB_RANGE_GAP": "School days without a published timetable",
       "PUB_DAY_OPS_LOST": "Day changes that disappear"
     },
@@ -2919,7 +2919,7 @@
       "PUB_TIMPLAN": "{count, plural, one {# line of the timplan is} other {# lines of the timplan are}} below level.",
       "PUB_RANGE_OVERLAP": "The validity shares its period with {count, plural, one {a published timetable} other {# published timetables}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# school day ahead has} other {# school days ahead have}} no published timetable.",
-      "PUB_WEEK_SPLIT": "The validity starts mid-week: {count, plural, one {# lesson} other {# lessons}} may disappear or be held twice that week.",
+      "PUB_WEEK_SPLIT": "The validity starts or ends mid-week: {count, plural, one {# lesson} other {# lessons}} may disappear or be held twice that week.",
       "PUB_DAY_OPS_LOST": "{count, plural, one {# day change} other {# day changes}} (substitute, room change, note) disappear with lessons that are removed.",
       "PUB_FROM_IN_PAST": "The validity starts before today, so days that have passed may get lessons afterwards.",
       "PUB_LUNCH_NOT_SET": "Lunch is not set up, so no meals are published.",

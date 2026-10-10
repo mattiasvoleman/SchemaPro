@@ -3885,6 +3885,7 @@ async function runChecks(
   await publicationChecks(owner, api);
   await draftChecks(owner, api);
   await equivalenceCheck(owner, api);
+  await weekEdgeChecks(owner, api);
   await batchChecks(owner, api);
   await viewerChecks(owner, api);
 }
@@ -5300,6 +5301,78 @@ async function equivalenceCheck(owner: Client, api: PrismaService): Promise<void
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-tvilling-a', $1 || '-tvilling-b')`, [MARKER]);
+  }
+}
+
+/**
+ * The edges of a DRAFT publish's range inside a week. A publish carries a
+ * changed master's rows only inside [validFrom, validTo]: a weekday move that
+ * would take a row across either edge removes it (that week's lesson is
+ * dropped, and PUB_WEEK_SPLIT said so), and never writes it into a day
+ * another publication owns. Two consecutive partial publishes then never
+ * carry one row twice — the shift is from the row's own weekday.
+ */
+async function weekEdgeChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenPublicationSchool(owner, 'veckokant');
+  const { publications, calendar } = publicationServicesFor(api);
+  const drafts = new DraftService(
+    api,
+    calendar,
+    new RealScheduleVersionsService(api),
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+  );
+  const lessons = new MasterLessonsService(
+    api,
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+  );
+  const rows = async (from: string, to: string, masterLessonId: string) =>
+    (
+      await owner.query(
+        `SELECT date::text, to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'Dy HH24:MI') AS at
+           FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2 AND date BETWEEN $3 AND $4 ORDER BY date`,
+        [school.schoolId, masterLessonId, from, to],
+      )
+    ).rows.map((row) => `${row.date} ${row.at}`);
+  try {
+    await check('(pub-f) a mid-week validTo drops the week\'s lesson, and the next publish carries no row twice', async () => {
+      await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-08-13' }, school.admin);
+      await drafts.switchMode('DRAFT', school.admin);
+      // Monday 08:00 → Thursday 08:00 in the draft.
+      await lessons.update(school.monday, { dayOfWeek: 4 }, school.admin);
+      // Mon 15 Oct .. Wed 21 Nov 2096: Mon 19 Nov's row would land on Thu 22 Nov.
+      const first = await publications.publish(
+        { academicYearId: school.yearId, validFrom: '2096-10-15', validTo: '2096-11-21', acknowledgeWarnings: true },
+        school.admin,
+      );
+      assert.ok(first.gates.some((gate) => gate.code === 'PUB_WEEK_SPLIT'), JSON.stringify(first.gates.map((gate) => gate.code)));
+      assert.deepEqual(await rows('2096-11-19', '2096-11-25', school.monday), []);
+      assert.deepEqual(await rows('2096-11-12', '2096-11-18', school.monday), ['2096-11-15 Thu 08:00']);
+      assert.deepEqual(await rows('2096-11-26', '2096-12-02', school.monday), ['2096-11-26 Mon 08:00']);
+      // The rest of the year from Thu 22 Nov: the BASELINE's Mondays move once.
+      await publications.publish({ academicYearId: school.yearId, validFrom: '2096-11-22', acknowledgeWarnings: true }, school.admin);
+      assert.deepEqual(await rows('2096-11-19', '2096-12-02', school.monday), ['2096-11-22 Thu 08:00', '2096-11-29 Thu 08:00']);
+      const weekend = await owner.query(
+        `SELECT date::text FROM "CalendarLessons" WHERE "schoolId" = $1 AND extract(isodow FROM date) >= 6`,
+        [school.schoolId],
+      );
+      assert.deepEqual(weekend.rows, []);
+    });
+
+    await check('(pub-f) a mid-week validFrom never writes a day before it: the week\'s lesson is dropped instead', async () => {
+      const before = await rows('2096-08-13', '2096-12-04', school.wednesday);
+      // Wednesday 10:00 → Monday 10:00, published from Wed 5 Dec.
+      await lessons.update(school.wednesday, { dayOfWeek: 1 }, school.admin);
+      const outcome = await publications.publish(
+        { academicYearId: school.yearId, validFrom: '2096-12-05', acknowledgeWarnings: true },
+        school.admin,
+      );
+      assert.ok(outcome.gates.some((gate) => gate.code === 'PUB_WEEK_SPLIT'));
+      assert.deepEqual(await rows('2096-08-13', '2096-12-04', school.wednesday), before);
+      assert.deepEqual(await rows('2096-12-05', '2096-12-16', school.wednesday), ['2096-12-10 Mon 10:00']);
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-veckokant'`, [MARKER]);
   }
 }
 

@@ -3,6 +3,7 @@ import { zonedTimeToUtc } from '../common/utils/time';
 import { runsOn } from './lesson-recurrence';
 import {
   coversTime,
+  isoWeekday,
   publishSkips,
   type PublishClosure,
   type PublishDaysContext,
@@ -40,7 +41,17 @@ import { PUBLISH_NOTE_ROOM_UNAVAILABLE, PUBLISH_NOTE_TEACHER_UNAVAILABLE } from 
  * have moved the row first and those operations would have been made on the
  * moved row; publishing later must not undo them. So in 'publish':
  *
- *   - only rows dated inside `range` (the segment being published) are asked;
+ *   - only rows dated inside `range` (the segment being published) are asked,
+ *     and a row only ever lands inside it: a weekday move that would carry it
+ *     across `from` or `to` makes it stale (removed) instead. The days on the
+ *     other side belong to another published segment, whose grundschema says
+ *     where that week's lesson is; writing into them is rewriting a
+ *     publication this one does not replace — and before `validFrom` it is
+ *     the very past-of-the-publication the house rule keeps. PUB_WEEK_SPLIT
+ *     names the masters this drops a week of;
+ *   - the shift is from the row's OWN weekday to the template's, not from the
+ *     snapshot's weekday: a row an earlier, shorter publish already carried
+ *     to the new day must not be carried the same distance again;
  *   - the date and the time are always written;
  *   - the room only on a row still in the room the template is leaving — the
  *     room optimisation's own rule (room-optimization.service.ts) — so a room
@@ -217,8 +228,17 @@ export async function propagateTemplateChange(
 
   for (const calendarLesson of futureLessons) {
     const newDate = new Date(calendarLesson.date);
-    newDate.setUTCDate(newDate.getUTCDate() + dayShift);
+    const shift = publishing
+      ? after.dayOfWeek - isoWeekday(calendarLesson.date.toISOString().slice(0, 10))
+      : dayShift;
+    newDate.setUTCDate(newDate.getUTCDate() + shift);
     const dateString = newDate.toISOString().slice(0, 10);
+
+    // 'publish': never out of the segment being published (see the header).
+    if (publishing && options.range && (dateString < options.range.from || dateString > options.range.to)) {
+      markStale(calendarLesson);
+      continue;
+    }
     const startsAt = zonedTimeToUtc(dateString, startHHMM, timezone);
     const endsAt = zonedTimeToUtc(dateString, endHHMM, timezone);
 

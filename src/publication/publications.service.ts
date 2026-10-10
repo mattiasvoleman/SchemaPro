@@ -471,6 +471,7 @@ export class PublicationsService {
           timezone: context.year.timezone,
           validFrom: context.validFrom,
           validTo: context.validTo,
+          yearEnd: context.year.end,
           masters,
           now,
         });
