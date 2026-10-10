@@ -48,6 +48,16 @@ export interface PushConfig {
   apiUrl: string;
 }
 
+export interface Ss12000Config {
+  /** INTEGRATION_SECRETS_KEY, decoded; undefined: credentials cannot be saved. */
+  secretsKey?: Buffer;
+  secretsKeyPrevious?: Buffer;
+  /** The background tick (SS12000_BACKGROUND, default on). */
+  background: boolean;
+  /** Loopback allowed for the client: SS12000_ALLOW_INSECURE_LOCAL=1 under NODE_ENV=test only. */
+  allowInsecureLocal: boolean;
+}
+
 export const DEFAULT_EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push';
 
 export interface Configuration {
@@ -59,6 +69,7 @@ export interface Configuration {
   supabase: SupabaseAdminConfig;
   publicViewer: PublicViewerConfig;
   push: PushConfig;
+  ss12000: Ss12000Config;
 }
 
 /**
@@ -108,6 +119,12 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
       enabled: env.PUSH_NOTIFICATIONS === PushMode.Expo,
       accessToken: env.EXPO_ACCESS_TOKEN && env.EXPO_ACCESS_TOKEN.length > 0 ? env.EXPO_ACCESS_TOKEN : undefined,
       apiUrl: (env.EXPO_PUSH_API_URL && env.EXPO_PUSH_API_URL.length > 0 ? env.EXPO_PUSH_API_URL : DEFAULT_EXPO_PUSH_API_URL).replace(/\/+$/, ''),
+    },
+    ss12000: {
+      secretsKey: env.INTEGRATION_SECRETS_KEY ? Buffer.from(env.INTEGRATION_SECRETS_KEY, 'base64') : undefined,
+      secretsKeyPrevious: env.INTEGRATION_SECRETS_KEY_PREVIOUS ? Buffer.from(env.INTEGRATION_SECRETS_KEY_PREVIOUS, 'base64') : undefined,
+      background: env.SS12000_BACKGROUND !== 'off',
+      allowInsecureLocal: env.SS12000_ALLOW_INSECURE_LOCAL === '1' && env.NODE_ENV === NodeEnv.Test,
     },
   };
 }

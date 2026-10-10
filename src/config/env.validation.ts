@@ -1,5 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import {
+  IsIn,
+  Matches,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -182,6 +184,38 @@ export class EnvironmentVariables {
   @ValidateIf((env: EnvironmentVariables) => !isBlank(env.EXPO_PUSH_API_URL))
   @IsUrl({ require_tld: true, require_protocol: true, protocols: ['https'] })
   EXPO_PUSH_API_URL?: string;
+
+  /**
+   * The key the SS12000 source's credentials are sealed with (AES-256-GCM,
+   * src/integration/ss12000-sync/secret-box.ts): base64 of exactly 32 bytes,
+   * `openssl rand -base64 32`. Unset: no credential can be saved (503
+   * SS12000_SECRETS_NOT_CONFIGURED) and nothing is ever stored in plaintext.
+   * Never in the database, never in a log.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !isBlank(env.INTEGRATION_SECRETS_KEY))
+  @Matches(/^[A-Za-z0-9+/]{43}=$/)
+  INTEGRATION_SECRETS_KEY?: string;
+
+  /** The key before the last rotation: still decrypts, never encrypts. Same shape. */
+  @ValidateIf((env: EnvironmentVariables) => !isBlank(env.INTEGRATION_SECRETS_KEY_PREVIOUS))
+  @Matches(/^[A-Za-z0-9+/]{43}=$/)
+  INTEGRATION_SECRETS_KEY_PREVIOUS?: string;
+
+  /**
+   * The SS12000 sync's background tick (nightly runs, housekeeping). `on`
+   * unless set to `off`; the test setup turns it off, and a scheduled run
+   * still happens only for a source whose admin enabled the schedule.
+   */
+  @IsIn(['on', 'off'])
+  SS12000_BACKGROUND: string = 'on';
+
+  /**
+   * Lets the SS12000 client connect to a loopback address (the tests' TLS
+   * mock provider). Refused unless NODE_ENV=test; https is never relaxed.
+   */
+  @ValidateIf((env: EnvironmentVariables) => !isBlank(env.SS12000_ALLOW_INSECURE_LOCAL))
+  @IsIn(['0', '1'])
+  SS12000_ALLOW_INSECURE_LOCAL?: string;
 }
 
 export function validateEnv(
@@ -196,9 +230,15 @@ export function validateEnv(
     whitelist: false,
   });
 
-  if (errors.length > 0) {
+  const offendingNames = errors.map((error) => error.property);
+  // The loopback escape hatch exists for the test suite alone.
+  if (validated.SS12000_ALLOW_INSECURE_LOCAL === '1' && validated.NODE_ENV !== NodeEnv.Test) {
+    offendingNames.push('SS12000_ALLOW_INSECURE_LOCAL');
+  }
+
+  if (offendingNames.length > 0) {
     // Surface only the offending variable names — never echo secret values.
-    const offending = errors.map((error) => error.property).join(', ');
+    const offending = offendingNames.join(', ');
     throw new Error(
       `Invalid or missing environment variables: ${offending}. ` +
         'See .env.example for the required configuration.',

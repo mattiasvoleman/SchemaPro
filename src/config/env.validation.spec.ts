@@ -85,6 +85,33 @@ describe('validateEnv', () => {
     );
   });
 
+  describe('SS12000 consumer', () => {
+    it.each([
+      ['a 32-byte base64 key and its predecessor', { INTEGRATION_SECRETS_KEY: Buffer.alloc(32, 1).toString('base64'), INTEGRATION_SECRETS_KEY_PREVIOUS: Buffer.alloc(32, 2).toString('base64') }],
+      ['the tick off', { SS12000_BACKGROUND: 'off' }],
+      ['the loopback override under NODE_ENV=test', { NODE_ENV: 'test', SS12000_ALLOW_INSECURE_LOCAL: '1' }],
+      ['empty values', { INTEGRATION_SECRETS_KEY: '', SS12000_ALLOW_INSECURE_LOCAL: '' }],
+    ])('accepts %s', (_label, extra) => {
+      expect(() => validateEnv({ ...valid(), ...extra })).not.toThrow();
+    });
+
+    it.each([
+      ['a key of 16 bytes', { INTEGRATION_SECRETS_KEY: Buffer.alloc(16, 1).toString('base64') }, /INTEGRATION_SECRETS_KEY/],
+      ['a key that is not base64', { INTEGRATION_SECRETS_KEY: 'x'.repeat(44) }, /INTEGRATION_SECRETS_KEY/],
+      ['a tick mode it does not know', { SS12000_BACKGROUND: 'maybe' }, /SS12000_BACKGROUND/],
+      ['the loopback override outside NODE_ENV=test', { NODE_ENV: 'production', SS12000_ALLOW_INSECURE_LOCAL: '1' }, /SS12000_ALLOW_INSECURE_LOCAL/],
+    ])('refuses %s, naming it and never echoing the value', (_label, extra, name) => {
+      let message = '';
+      try {
+        validateEnv({ ...valid(), ...extra });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(name);
+      for (const value of Object.values(extra)) if (String(value).length > 4) expect(message).not.toContain(String(value));
+    });
+  });
+
   describe('push', () => {
     it('is off when nothing is set', () => {
       expect(validateEnv(valid()).PUSH_NOTIFICATIONS).toBe('off');
