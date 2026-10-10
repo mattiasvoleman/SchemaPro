@@ -35,3 +35,11 @@ process.env['THROTTLE_TTL_SECONDS'] = '60';
 process.env['THROTTLE_LIMIT'] = '1000';
 // The public viewer trusts X-Viewer-Client-Ip only beside this key.
 process.env['PUBLIC_VIEWER_PROXY_KEY'] = 'test-viewer-proxy-key-of-at-least-32-chars';
+// The SS12000 sync (src/integration/ss12000-sync): no background tick in
+// tests — a spec that asserts the scheduler drives its tick itself — a test
+// key for the credentials' encryption (32 bytes, base64; obviously not a
+// production key), and loopback allowed for the TLS mock provider, which
+// env.validation refuses outside NODE_ENV=test.
+process.env['SS12000_BACKGROUND'] = 'off';
+process.env['SS12000_ALLOW_INSECURE_LOCAL'] = '1';
+process.env['INTEGRATION_SECRETS_KEY'] = Buffer.alloc(32, 7).toString('base64');

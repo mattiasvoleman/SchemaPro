@@ -67,7 +67,20 @@ describe('loadConfiguration', () => {
       publicViewer: { proxyKey: undefined },
       // Unset: push is off, and Expo's own address.
       push: { enabled: false, accessToken: undefined, apiUrl: 'https://exp.host/--/api/v2/push' },
+      // Unset: no credential can be sealed; the background tick runs; no loopback.
+      ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
     });
+  });
+
+  it('decodes the SS12000 secrets keys, turns the tick off only for off, and allows loopback only under NODE_ENV=test', () => {
+    const key = Buffer.alloc(32, 9).toString('base64');
+    const previous = Buffer.alloc(32, 8).toString('base64');
+    const on = loadConfiguration(env({ INTEGRATION_SECRETS_KEY: key, INTEGRATION_SECRETS_KEY_PREVIOUS: previous, SS12000_BACKGROUND: 'off' })).ss12000;
+    expect(on.secretsKey?.equals(Buffer.alloc(32, 9))).toBe(true);
+    expect(on.secretsKeyPrevious?.equals(Buffer.alloc(32, 8))).toBe(true);
+    expect(on.background).toBe(false);
+    expect(loadConfiguration(env({ SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(false);
+    expect(loadConfiguration(env({ NODE_ENV: NodeEnv.Test, SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(true);
   });
 
   it('turns push on only for PUSH_NOTIFICATIONS=expo, with the token when set and the URL without its trailing slash', () => {
