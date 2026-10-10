@@ -7,7 +7,7 @@ function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: Co
   return <Text style={{ fontSize: 18, color }}>{glyph}</Text>;
 }
 
-/** Guardian shell — children/absence reporting, leave requests, notifications. */
+/** Guardian shell — children and absence, each child's schedule, leave requests, notifications. */
 export default function GuardianLayout(): React.JSX.Element {
   const { t } = useI18n();
   return (
@@ -27,6 +27,13 @@ export default function GuardianLayout(): React.JSX.Element {
         options={{
           title: t('tabs.children'),
           tabBarIcon: ({ color }) => <TabGlyph glyph="⌂" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="schedule"
+        options={{
+          title: t('tabs.schedule'),
+          tabBarIcon: ({ color }) => <TabGlyph glyph="▦" color={color} />,
         }}
       />
       <Tabs.Screen
