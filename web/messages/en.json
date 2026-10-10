@@ -2731,6 +2731,20 @@
       }
     }
   },
+  "teachingTime": {
+    "title": "Teaching time",
+    "titleChild": "Teaching time – {name}",
+    "updated": "Updated {date}",
+    "stage": "{stage, select, LAG {Lower school} LAG_MELLAN {Lower and middle school} MELLAN {Middle school} other {Upper school}}, grades {from}–{to}",
+    "subject": "Subject",
+    "soFar": "So far",
+    "since": "Since {date}",
+    "planned": "Planned for the stage",
+    "timplan": "Timplan",
+    "unrecorded": "Grade {grades} is not part of the figures, because the time is not recorded in SchemaPro.",
+    "unpublished": "The national distribution by subject for this stage is not published yet, so the timplan's hours are not shown.",
+    "footer": "Teaching time is the time the school offers; absence is not subtracted. So far is delivered and credited time, and planned covers the whole stage according to the school's timplan.{versions, select, none {} other { The timplan's hours are SchemaPro's reference data ({versions}).}}"
+  },
   "timplanCohorts": {
     "title": "Timplans per cohort",
     "intro": "Which version each cohort's stages are compared with in Coverage › Stage, according to SchemaPro's reference data. These are the reference data's sources, not a legal ruling for an individual pupil. From autumn 2028 grades are read in the new numbering.",
