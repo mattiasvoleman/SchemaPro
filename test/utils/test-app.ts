@@ -234,6 +234,12 @@ export interface TestAppOptions {
    * other by execution order rather than by behaviour.
    */
   throttle?: boolean;
+  /**
+   * Further substitutions on the module before it compiles — for a spec
+   * whose out-of-process dependency is its own (the SS12000 sync's outbound
+   * trust: the local mock provider's test CA). Never the code under test.
+   */
+  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
 }
 
 export function asUser(user: Partial<AuthenticatedUser>): string {
@@ -282,7 +288,7 @@ export async function createTestApp(
     .overrideGuard(JwtAuthGuard)
     .useClass(HeaderAuthGuard);
 
-  const moduleRef = await builder.compile();
+  const moduleRef = await (options.configure ? options.configure(builder) : builder).compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>();
   // Production's body limits, applied the same way main.ts applies them: a
