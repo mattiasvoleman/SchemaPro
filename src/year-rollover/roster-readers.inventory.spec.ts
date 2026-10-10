@@ -49,6 +49,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'pupil clashes of a lesson placed by hand; rosterOf reads memberships as they are',
   },
   'src/timplan/timplan-coverage.service.ts': { basis: 'PROJECTED', why: 'planned coverage; memberships as they are' },
+  'src/publication/publication-gates.reader.ts': {
+    basis: 'PROJECTED',
+    why: 'PUB_CLASHES: pupils shared between groups, the board’s question asked of the whole year; memberships as they are',
+  },
   'src/year-rollover/activation-plan.ts': { basis: 'SOURCE', why: 'what the projection and the activation are computed from' },
   'src/year-rollover/rollover-source.ts': {
     basis: 'SOURCE',
@@ -336,7 +340,14 @@ describe('the roster-reader inventory', () => {
       // proposal (Fas 4) reads it for every row's grade span, in propose and
       // again under apply's locks, so a rolled year two steps ahead is refused
       // there as everywhere else.
+      //
+      // Publicering's gates ask the timplan layers and, under a REFUSE staffing
+      // mode, the load report, so a preview or a publish of a year two steps
+      // ahead answers the 409 those pages answer. The old POST /calendar/publish
+      // reaches them only for a school that has set a gate to REFUSE; with
+      // every gate at its default WARN it asks nothing and refuses nothing.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
+        'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
         'ImportController.importRequirements',
@@ -349,6 +360,8 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.proposeStaffing',
         'OptimizationController.startJob',
         'OptimizationController.trigger',
+        'PublicationsController.preview',
+        'PublicationsController.publish',
         'StaffingLoadController.delivered',
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',

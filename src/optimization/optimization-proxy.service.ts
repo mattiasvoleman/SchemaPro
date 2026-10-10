@@ -28,6 +28,7 @@ const lessonMinutes = (start: Date, end: Date): number => {
     time instanceof Date ? time.getUTCHours() * 60 + time.getUTCMinutes() : 0;
   return clock(end) - clock(start);
 };
+import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import type {
   AiEngineConflictAnalysis,
@@ -410,14 +411,7 @@ export class OptimizationProxyService {
       select: { unstaffedGeneration: true },
     });
     if (policy?.unstaffedGeneration !== 'REFUSE') return null;
-    const unstaffed = await tx.teachingRequirement.findMany({
-      where: { academicYearId, teacherId: null },
-      select: {
-        id: true,
-        subject: { select: { name: true } },
-        studentGroup: { select: { name: true } },
-      },
-    });
+    const unstaffed = await readUnstaffedRequirements(tx, academicYearId);
     if (unstaffed.length === 0) return null;
 
     const requirementAnonMap = new Map<string, string>();

@@ -33,6 +33,7 @@ import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { StaffingModule } from './staffing/staffing.module';
 import { TimplanModule } from './timplan/timplan.module';
+import { PublicationModule } from './publication/publication.module';
 import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import type { ThrottleConfig } from './config/configuration';
 
@@ -119,6 +120,7 @@ import type { ThrottleConfig } from './config/configuration';
     StaffingModule,
     TimplanModule,
     YearRolloverModule,
+    PublicationModule,
   ],
 
   providers: [

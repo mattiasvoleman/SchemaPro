@@ -103,6 +103,8 @@ import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.serv
 import { LunchSittingsService } from '../../src/resources/lunch-sittings.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 import type { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
+import { CalendarService } from '../../src/calendar/calendar.service';
+import { PublicationsService } from '../../src/publication/publications.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -3866,6 +3868,8 @@ async function runChecks(
     assert.equal((types.amount as Prisma.Decimal).toString(), '1.5');
     assert.deepEqual(types.doc, { a: [1, 'b'] });
   });
+
+  await publicationChecks(owner, api);
 }
 
 
@@ -4339,6 +4343,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // (u5)'s school, whole, for a run that stopped inside it.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-elevhistorik'`, [MARKER]);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
+  // The publicering checks' school, whole, for a run that stopped inside them.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-publicering'`, [MARKER]);
   // (u4)'s pupil, for a run that stopped before deleting it.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
@@ -4438,6 +4444,8 @@ interface Fas3School {
  */
 async function givenFas3School(owner: Client): Promise<Fas3School> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
+  // The publicering checks' school, whole, for a run that stopped inside them.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-publicering'`, [MARKER]);
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const DAY = 24 * 60 * 60 * 1000;
   const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
@@ -4762,3 +4770,223 @@ main().then(
     process.exitCode = 1;
   },
 );
+
+// ---- Publicering (migrations 20261011090000 onwards), in a school of its own.
+
+interface PublicationSchool {
+  schoolId: string;
+  yearId: string;
+  admin: AuthenticatedUser;
+  teacher: AuthenticatedUser;
+  class7a: string;
+  subject: string;
+  room: string;
+  teacherId: string;
+  /** Monday 08:00 with a room, Wednesday 10:00 without one. */
+  monday: string;
+  wednesday: string;
+}
+
+/**
+ * A school in 2096, so every day of its year lies ahead and nothing a check
+ * writes is ever "the past": an active year, 7A with two pupils, a teacher, a
+ * room, two weekly lessons and lunch switched on. Written as the owner; every
+ * assertion then runs through the real services as app_authenticated.
+ */
+async function givenPublicationSchool(owner: Client): Promise<PublicationSchool> {
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
+    (await owner.query<T>(sql, params)).rows[0];
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} publicering`, `${MARKER}-publicering`],
+  );
+  const person = (role: string, email: string, groupId: string | null = null) =>
+    one<{ id: string; authId: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'Publicering', $3::"UserRole", gen_random_uuid(), true, $4, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-pub-${email}@example.invalid`, role, groupId],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'admin');
+  const teacher = await person('TEACHER', 't1');
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, $2, '2096-08-13', '2097-06-11', true, now()) RETURNING id`,
+    [school.id, `${MARKER} publicering`],
+  );
+  const g7a = await one<{ id: string }>(
+    `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+     VALUES ($1, $2, $3, 7, 'CLASS', now()) RETURNING id`,
+    [school.id, year.id, `${MARKER} 7A`],
+  );
+  await person('STUDENT', 'p1', g7a.id);
+  await person('STUDENT', 'p2', g7a.id);
+  const subject = await one<{ id: string }>(
+    `INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`,
+    [school.id, `${MARKER} publicering matematik`],
+  );
+  const room = await one<{ id: string }>(
+    `INSERT INTO "Rooms" ("schoolId", name, capacity, "updatedAt") VALUES ($1, $2, 30, now()) RETURNING id`,
+    [school.id, `${MARKER} sal 1`],
+  );
+  await owner.query(
+    `INSERT INTO "LunchSettings" ("schoolId", "lunchEnabled", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+     VALUES ($1, true, '11:00', '13:00', 30, now())`,
+    [school.id],
+  );
+  const lesson = (day: number, start: string, end: string, roomId: string | null) =>
+    one<{ id: string }>(
+      `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::time, $9::time, now()) RETURNING id`,
+      [school.id, year.id, subject.id, g7a.id, teacher.id, roomId, day, start, end],
+    );
+  const monday = await lesson(1, '08:00', '09:00', room.id);
+  const wednesday = await lesson(3, '10:00', '11:00', null);
+  return {
+    schoolId: school.id,
+    yearId: year.id,
+    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN },
+    teacher: { authId: teacher.authId, userId: teacher.id, schoolId: school.id, role: Role.TEACHER },
+    class7a: g7a.id,
+    subject: subject.id,
+    room: room.id,
+    teacherId: teacher.id,
+    monday: monday.id,
+    wednesday: wednesday.id,
+  };
+}
+
+function publicationServicesFor(api: PrismaService): { calendar: CalendarService; publications: PublicationsService } {
+  const calendar = new CalendarService(api);
+  const publications = new PublicationsService(
+    api,
+    calendar,
+    new TimplanCoverageService(api),
+    new StaffingLoadService(api),
+  );
+  return { calendar, publications };
+}
+
+async function publicationChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenPublicationSchool(owner);
+  const { publications } = publicationServicesFor(api);
+  const rows = async (sql: string, params: unknown[] = [school.schoolId]) => (await owner.query(sql, params)).rows;
+  const calendarRows = (from: string, to: string) =>
+    rows(
+      `SELECT "masterLessonId", date::text, "startsAt", "endsAt", status::text, "roomId", "cancelCause"::text
+         FROM "CalendarLessons" WHERE "schoolId" = $1 AND date BETWEEN $2 AND $3 ORDER BY 1, 2`,
+      [school.schoolId, from, to],
+    );
+  try {
+    await check('(pub-a) a preview materialises in a transaction it rolls back: no lesson, no log row', async () => {
+      const preview = await publications.preview(
+        { academicYearId: school.yearId, validFrom: '2096-09-01', validTo: '2096-09-30' },
+        school.admin,
+      );
+      // Four Mondays and four Wednesdays in September 2096.
+      assert.equal(preview.result.created, 8);
+      assert.deepEqual(
+        preview.gates.map((gate) => [gate.code, gate.severity, gate.count]),
+        [['PUB_NO_ROOM', 'WARN', 1]],
+      );
+      assert.equal((await rows(`SELECT 1 FROM "CalendarLessons" WHERE "schoolId" = $1`)).length, 0);
+      assert.equal((await rows(`SELECT 1 FROM "TimetablePublications" WHERE "schoolId" = $1`)).length, 0);
+    });
+
+    await check('(pub-a) DIRECT publishes the window with its validity, and refuses a warning nobody acknowledged', async () => {
+      const range = { academicYearId: school.yearId, validFrom: '2096-09-01', validTo: '2096-09-30' };
+      await assert.rejects(publications.publish(range, school.admin), (error: unknown) =>
+        error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('PUBLISH_WARNINGS_UNACKNOWLEDGED'),
+      );
+      assert.equal((await rows(`SELECT 1 FROM "CalendarLessons" WHERE "schoolId" = $1`)).length, 0, 'the refused attempt left lessons');
+      const outcome = await publications.publish({ ...range, acknowledgeWarnings: true }, school.admin);
+      assert.equal(outcome.result.created, 8);
+      const [log] = await rows(
+        `SELECT kind::text, outcome::text, "publishMode"::text, "validFrom"::text, "validTo"::text, created, "acknowledgedWarnings"
+           FROM "TimetablePublications" WHERE "schoolId" = $1`,
+      );
+      assert.deepEqual(log, {
+        kind: 'PUBLISH',
+        outcome: 'PUBLISHED',
+        publishMode: 'DIRECT',
+        validFrom: '2096-09-01',
+        validTo: '2096-09-30',
+        created: 8,
+        acknowledgedWarnings: true,
+      });
+      assert.equal((await calendarRows('2096-09-01', '2096-09-30')).length, 8);
+    });
+
+    await check('(pub-a) the new DIRECT publish writes the rows the old route writes, byte for byte', async () => {
+      await publications.publish(
+        { academicYearId: school.yearId, validFrom: '2096-10-01', validTo: '2096-10-31', acknowledgeWarnings: true },
+        school.admin,
+      );
+      const viaNew = await calendarRows('2096-10-01', '2096-10-31');
+      await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND date BETWEEN '2096-10-01' AND '2096-10-31'`, [
+        school.schoolId,
+      ]);
+      const legacy = await publications.legacyPublish(
+        { academicYearId: school.yearId, fromDate: '2096-10-01', toDate: '2096-10-31' },
+        school.admin,
+      );
+      assert.deepEqual(Object.keys(legacy).sort(), ['cancelled', 'created', 'fromDate', 'skipped', 'toDate']);
+      assert.deepEqual(await calendarRows('2096-10-01', '2096-10-31'), viaNew);
+      const kinds = await rows(`SELECT kind::text FROM "TimetablePublications" WHERE "schoolId" = $1 ORDER BY "publishedAt", id`);
+      assert.deepEqual(kinds.map((row) => row.kind), ['PUBLISH', 'PUBLISH', 'LEGACY_PUBLISH']);
+    });
+
+    await check('(pub-a) a REFUSE the school set stops the publish, logs the refusal and writes no lesson', async () => {
+      await publications.upsertSettings({ gateMissingRoom: 'REFUSE' }, school.admin);
+      await assert.rejects(
+        publications.publish(
+          { academicYearId: school.yearId, validFrom: '2096-11-01', validTo: '2096-11-30', acknowledgeWarnings: true },
+          school.admin,
+        ),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('PUB_NO_ROOM'),
+      );
+      // The old route asks the same REFUSE, now that the school has one.
+      await assert.rejects(
+        publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-11-01', toDate: '2096-11-30' }, school.admin),
+        (error: unknown) => error instanceof ConflictException,
+      );
+      assert.equal((await calendarRows('2096-11-01', '2096-11-30')).length, 0);
+      const refused = await rows(
+        `SELECT kind::text, created, gates->0->>'code' AS code FROM "TimetablePublications" WHERE "schoolId" = $1 AND outcome = 'REFUSED' ORDER BY "publishedAt"`,
+      );
+      assert.deepEqual(refused, [
+        { kind: 'PUBLISH', created: 0, code: 'PUB_NO_ROOM' },
+        { kind: 'LEGACY_PUBLISH', created: 0, code: 'PUB_NO_ROOM' },
+      ]);
+      await publications.upsertSettings({ gateMissingRoom: 'WARN' }, school.admin);
+    });
+
+    await check('(pub-a) the timeline says which publication is valid when; a teacher cannot publish', async () => {
+      const timeline = await publications.timeline(school.yearId, school.admin);
+      assert.deepEqual(
+        timeline.segments.map((segment) => [segment.from, segment.to]),
+        [
+          ['2096-09-01', '2096-09-30'],
+          ['2096-10-01', '2096-10-31'],
+        ],
+      );
+      assert.equal(timeline.publications.length, 5);
+      await assert.rejects(
+        api.withRls(school.teacher, (tx) =>
+          tx.timetablePublication.create({
+            data: {
+              schoolId: school.schoolId,
+              academicYearId: school.yearId,
+              kind: 'PUBLISH',
+              outcome: 'PUBLISHED',
+              publishMode: 'DIRECT',
+              validFrom: new Date('2096-09-01T00:00:00Z'),
+              validTo: new Date('2096-09-02T00:00:00Z'),
+            },
+          }),
+        ),
+      );
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-publicering'`, [MARKER]);
+  }
+}

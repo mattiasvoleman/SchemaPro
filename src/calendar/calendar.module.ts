@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { CalendarController } from './calendar.controller';
 import { CalendarService } from './calendar.service';
 import { CalendarLessonsController } from './calendar-lessons.controller';
 import { CalendarLessonsService } from './calendar-lessons.service';
@@ -10,7 +9,8 @@ import { ScheduleVersionsService } from './schedule-versions.service';
 
 @Module({
   controllers: [
-    CalendarController,
+    // CalendarController (POST /calendar/publish) is registered by
+    // PublicationModule, which logs and gates it.
     CalendarLessonsController,
     MasterLessonsController,
     ScheduleVersionsController,
@@ -22,6 +22,6 @@ import { ScheduleVersionsService } from './schedule-versions.service';
     ScheduleVersionsService,
   ],
   // The room optimisation snapshots the year inside its own apply transaction.
-  exports: [ScheduleVersionsService],
+  exports: [ScheduleVersionsService, CalendarService],
 })
 export class CalendarModule {}

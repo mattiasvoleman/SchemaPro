@@ -179,6 +179,9 @@ model School {
   studentEnrollments      StudentEnrollment[]
   timplanStatementPublications TimplanStatementPublication[]
   timplanStatements       TimplanStatement[]
+  publicationSettings     PublicationSettings?
+  timetablePublications   TimetablePublication[]
+  publishedLessons        PublishedLesson[]
 
   @@map("Schools")
 }
@@ -258,6 +261,7 @@ model User {
   timplanStatements   TimplanStatement[]      @relation("StatementStudent")
   /// Statements this admin published; SET NULL when the admin is removed.
   publishedTimplanStatements TimplanStatementPublication[] @relation("StatementPublisher")
+  publishedTimetables        TimetablePublication[]        @relation("TimetablePublisher")
 
   // Guardian <-> student relations.
   guardianLinks       GuardianStudent[] @relation("GuardianSide")
@@ -833,6 +837,131 @@ model TimplanStatement {
   @@map("TimplanStatements")
 }
 
+// -----------------------------------------------------------------------------
+// Publicering (migration 20261011090000): the school's publish policy, the log
+// of what was published with its validity, and a DRAFT publication's lessons.
+// -----------------------------------------------------------------------------
+
+enum PublishMode {
+  /// Today's behaviour: every grundschema edit reaches the calendar at once.
+  DIRECT
+  /// Grundschema edits stay a draft, invisible to non-admins, until published.
+  DRAFT
+}
+
+enum PublishGateMode {
+  WARN
+  REFUSE
+}
+
+enum PublicationKind {
+  PUBLISH
+  LEGACY_PUBLISH
+  BASELINE
+  REFILL
+}
+
+enum PublicationOutcome {
+  PUBLISHED
+  REFUSED
+}
+
+/// At most one row per school; no row means every default (DIRECT, all WARN).
+model PublicationSettings {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId           String          @unique @db.Uuid
+  publishMode        PublishMode     @default(DIRECT)
+  gateClashes        PublishGateMode @default(WARN)
+  gateParked         PublishGateMode @default(WARN)
+  gateUnplaced       PublishGateMode @default(WARN)
+  gateUnstaffed      PublishGateMode @default(WARN)
+  gateMissingTeacher PublishGateMode @default(WARN)
+  gateMissingRoom    PublishGateMode @default(WARN)
+  gateStaffing       PublishGateMode @default(WARN)
+  gateTimplan        PublishGateMode @default(WARN)
+  gateOverlap        PublishGateMode @default(WARN)
+  gatePast           PublishGateMode @default(WARN)
+  gateLunch          PublishGateMode @default(WARN)
+  gateWeekSplit      PublishGateMode @default(WARN)
+  gateGap            PublishGateMode @default(WARN)
+  gateDayOpsLost     PublishGateMode @default(WARN)
+  createdAt          DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("PublicationSettings")
+}
+
+/// One publish attempt that reached the gates. Append-only by privilege.
+model TimetablePublication {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId             String             @db.Uuid
+  academicYearId       String             @db.Uuid
+  kind                 PublicationKind
+  outcome              PublicationOutcome
+  publishMode          PublishMode
+  validFrom            DateTime           @db.Date
+  validTo              DateTime           @db.Date
+  publishedAt          DateTime           @default(now()) @db.Timestamptz(6)
+  /// Cleared — that column only — when the publishing admin is removed.
+  publishedByUserId    String?            @db.Uuid
+  created              Int                @default(0)
+  cancelled            Int                @default(0)
+  skipped              Int                @default(0)
+  moved                Int                @default(0)
+  removed              Int                @default(0)
+  adopted              Int                @default(0)
+  /// The snapshot's size; null when nothing was snapshotted (DIRECT, REFUSED).
+  lessonCount          Int?
+  gates                Json               @default("[]")
+  acknowledgedWarnings Boolean            @default(false)
+
+  school       School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear      @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  publishedBy  User?             @relation("TimetablePublisher", fields: [publishedByUserId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  lessons      PublishedLesson[]
+
+  @@unique([id, schoolId])
+  @@unique([id, academicYearId, schoolId])
+  @@index([academicYearId, schoolId, publishedAt])
+  @@index([publishedByUserId, schoolId])
+  @@map("TimetablePublications")
+}
+
+/// The grundschema a DRAFT publication published. No FK to what it names:
+/// readers map a vanished reference the way the live key would have acted.
+model PublishedLesson {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String           @db.Uuid
+  publicationId  String           @db.Uuid
+  academicYearId String           @db.Uuid
+  masterLessonId String           @db.Uuid
+  subjectId      String           @db.Uuid
+  studentGroupId String           @db.Uuid
+  teacherId      String?          @db.Uuid
+  coTeacherId    String?          @db.Uuid
+  roomId         String?          @db.Uuid
+  dayOfWeek      Int
+  startTime      DateTime         @db.Time(6)
+  endTime        DateTime         @db.Time(6)
+  isLocked       Boolean
+  isGenerated    Boolean
+  isParked       Boolean
+  recurrence     LessonRecurrence
+  startDate      DateTime?        @db.Date
+  endDate        DateTime?        @db.Date
+  extraGroupIds  String[]         @default([]) @db.Uuid
+  studentIds     String[]         @default([]) @db.Uuid
+
+  school      School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  publication TimetablePublication @relation(fields: [publicationId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: Cascade)
+
+  @@unique([publicationId, masterLessonId])
+  @@index([schoolId])
+  @@map("PublishedLessons")
+}
+
 model AcademicYear {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
@@ -873,6 +1002,7 @@ model AcademicYear {
   studentEnrollments   StudentEnrollment[]
   /// The published "Undervisningstid" statement computed for this year.
   timplanStatementPublications TimplanStatementPublication[]
+  timetablePublications TimetablePublication[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.

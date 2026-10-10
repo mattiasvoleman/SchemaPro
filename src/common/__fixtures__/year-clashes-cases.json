@@ -1,0 +1,863 @@
+{
+  "cases": [
+    {
+      "name": "a teacher in two places at once",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:30",
+            "endTime": "09:30",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a co-teacher counts as the teacher",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": "t1",
+            "roomId": null,
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "back to back is no clash",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "09:00",
+            "endTime": "10:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {}
+    },
+    {
+      "name": "one room, two classes",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "odd and even weeks share the slot",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ODD_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "EVEN_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {}
+    },
+    {
+      "name": "two halves of the year share the slot",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": "2026-12-20"
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2027-01-07",
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {}
+    },
+    {
+      "name": "one class twice",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an extra class meets its own lesson",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7b",
+            "extraGroupIds": [
+              "7a"
+            ],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a class and a teaching group sharing pupils",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "ma71",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "p1",
+            "7a"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "p1",
+            "studentGroupId": "ma71"
+          }
+        ],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a named pupil whose class has a lesson",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "sva",
+            "extraGroupIds": [],
+            "studentIds": [
+              "p1"
+            ],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "p1",
+            "7a"
+          ]
+        ],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ombyte makes back to back a clash for the pupils only",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "idh",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "09:00",
+            "endTime": "10:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": [
+          {
+            "studentGroupId": "7a",
+            "subjectId": "idh",
+            "minutesBefore": 10,
+            "minutesAfter": 15
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "b",
+            "pupilBufferOnly": true
+          }
+        ],
+        "b": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "a",
+            "pupilBufferOnly": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "a teacher unavailable on mondays",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [
+          {
+            "type": "UNAVAILABLE",
+            "resourceType": "TEACHER",
+            "userId": "t1",
+            "roomId": null,
+            "studentGroupId": null,
+            "dayOfWeek": 1,
+            "date": null,
+            "startTime": "08:00",
+            "endTime": "12:00"
+          }
+        ],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "AVAILABILITY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a room closed on another weekday",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [
+          {
+            "type": "UNAVAILABLE",
+            "resourceType": "ROOM",
+            "userId": null,
+            "roomId": "r1",
+            "studentGroupId": null,
+            "dayOfWeek": 2,
+            "date": null,
+            "startTime": "08:00",
+            "endTime": "12:00"
+          }
+        ],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {}
+    },
+    {
+      "name": "a group rule with no weekday applies to every day",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 3,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": null,
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [
+          {
+            "type": "UNAVAILABLE",
+            "resourceType": "STUDENT_GROUP",
+            "userId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "dayOfWeek": null,
+            "date": null,
+            "startTime": "08:00",
+            "endTime": "12:00"
+          }
+        ],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "AVAILABILITY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a wish is not a closure, a dated closure is publish's",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [
+          {
+            "type": "PREFERRED_FREE",
+            "resourceType": "TEACHER",
+            "userId": "t1",
+            "roomId": null,
+            "studentGroupId": null,
+            "dayOfWeek": 1,
+            "date": null,
+            "startTime": "08:00",
+            "endTime": "12:00"
+          },
+          {
+            "type": "UNAVAILABLE",
+            "resourceType": "TEACHER",
+            "userId": "t1",
+            "roomId": null,
+            "studentGroupId": null,
+            "dayOfWeek": 1,
+            "date": "2026-10-12",
+            "startTime": "08:00",
+            "endTime": "12:00"
+          }
+        ],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {}
+    },
+    {
+      "name": "a clean week",
+      "input": {
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "b",
+            "subjectId": "ma",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": "r2",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "c",
+            "subjectId": "ma",
+            "dayOfWeek": 2,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "g-c",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": []
+      },
+      "clashes": {}
+    }
+  ]
+}
