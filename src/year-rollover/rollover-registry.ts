@@ -203,6 +203,11 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       kind: 'COPY',
       gradeLevel: 'PROMOTE_GRADE',
       predecessorId: 'SOURCE_ID',
+      // The SS12000 source's id of the old year's group (20261014100000).
+      // Never carried: next year's class is another group at the source, with
+      // its own id, and an id is unique per school. A sync LINKs the successor
+      // when the source has it (an admin's apply), by name within its year.
+      ss12000Id: 'DEFAULT',
       ...timestamps,
     },
   },
@@ -565,6 +570,15 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     kind: 'FOLLOWS',
     parent: 'CalendarLesson',
     reason: 'A dated lesson of the old year whose template a draft deleted; it stays with its lesson.',
+  },  /**
+   * Which SS12000 Duty a teacher held in the old year (20261014100000). A
+   * source's duties are its own records, dated by the source; the new year's
+   * links are what the next applied sync writes for the new active year.
+   */
+  Ss12000DutyLink: {
+    kind: 'SKIPPED',
+    reason:
+      'A teacher’s duty at the school’s student register is that register’s record for the year; the new year’s links come from the next sync.',
   },
 };
 

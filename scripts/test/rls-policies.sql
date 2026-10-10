@@ -2748,13 +2748,15 @@ END $$;
 -- policy must carry. That rule needs 26 exemptions here — the service role
 -- crosses tenants by design, and a policy keyed on the caller's own id is
 -- already inside one school — and a rule with 26 exemptions rots into a list
--- nobody maintains. This one has two exemptions, from its no-policy half
--- only, and both for the same reason: no API role is meant to reach the table
+-- nobody maintains. This one has three exemptions, from its no-policy half
+-- only, and all for the same reason: no API role is meant to reach the table
 -- at all. `_prisma_migrations` is Prisma's own history (section 14);
 -- `PushTickets` (20261013110000) holds Expo receipt ids that only the
 -- SECURITY DEFINER app.push_* functions touch, with no grant to any API role
--- (section 29f). A new table cannot be added without either satisfying the
--- rule or changing it on purpose.
+-- (section 29f); `Ss12000SourceSecrets` (20261014090000) holds the SS12000
+-- source's sealed credentials that only the app.ss12000_*secret* functions
+-- touch, likewise with no grant (section 30i). A new table cannot be added
+-- without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
 -- matching would otherwise pass as a clean run, which is how a previous
@@ -2790,7 +2792,7 @@ BEGIN
   SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO policyless
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
-    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets')
+    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -10009,6 +10011,586 @@ BEGIN
     END LOOP;
     IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'devices: the API may not call %', fn; END IF;
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'devices: % is not SECURITY DEFINER', fn; END IF;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 30: the SS12000 consumer (20261014090000–20261014110000). The school's
+-- source, its sealed credentials, the run log and its diff are the admin's
+-- and the sync principal's; nobody else reads a row, and no principal reads
+-- a credential except through app.ss12000_source_secrets, which hands it to
+-- the school's sync principal (no claims beside it) or its SCHOOL_ADMIN
+-- only. The sync principal reads its own school and writes narrowly: on
+-- Users names, the class and the deactivation of a pupil or guardian; on
+-- the source its cursors. It never deletes. An ss12000Id is written by an
+-- admin alone. A terminal run stays terminal, and its changes lose their
+-- names and emails at once. GuardianStudentHistory records every unlink.
+-- The scheduler's claim runs at or after the hour, once per local day,
+-- across both DST changes. Everything planted here is rolled back.
+--   30a the admin's round trip and the CHECKs; 30b the sync principal;
+--   30c another school's sync and admin; 30d TEACHER / STUDENT / GUARDIAN;
+--   30e the id guard against the v1 service principal; 30f the run log;
+--   30g guardian history; 30h the scheduler; 30i the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_rls30_school_b', :'school_b', true);
+
+-- 30a
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  src uuid;
+  run uuid;
+  stamped timestamptz;
+  n bigint;
+  yr uuid;
+  tg uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'ss30a: expected the admin'; END IF;
+  INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind", "tokenUrl", "clientId", "organisationIds")
+  VALUES (school, 'RLS 30', 'https://api.ist.example/ss12000v2-api/source/SE00100/v2.0', 'OAUTH2_CLIENT_CREDENTIALS',
+          'https://skolid.example/connect/token', 'rls30', ARRAY['aaaaaaaa-0000-4000-8000-000000000030']::uuid[])
+  RETURNING id INTO src;
+  PERFORM set_config('app.test_rls30_source', src::text, true);
+  PERFORM set_config('app.test_rls30_school', school::text, true);
+
+  -- The CHECKs mirror the DTO: https, no userinfo, no query, auto-apply needs the schedule, five organisations.
+  BEGIN
+    UPDATE "Ss12000Sources" SET "baseUrl" = 'http://api.ist.example/v2.0' WHERE id = src;
+    RAISE EXCEPTION 'ss30a: an http base URL was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "baseUrl" = 'https://user:pw@api.ist.example/v2.0' WHERE id = src;
+    RAISE EXCEPTION 'ss30a: credentials in a base URL were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "tokenUrl" = 'https://skolid.example/connect/token?client_secret=x' WHERE id = src;
+    RAISE EXCEPTION 'ss30a: a token URL with a query was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "scheduleAutoApply" = true WHERE id = src;
+    RAISE EXCEPTION 'ss30a: auto-apply was stored without the schedule';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "organisationIds" = array_fill('aaaaaaaa-0000-4000-8000-000000000030'::uuid, ARRAY[6]) WHERE id = src;
+    RAISE EXCEPTION 'ss30a: six organisations were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "authKind" = 'BEARER_TOKEN' WHERE id = src;
+    RAISE EXCEPTION 'ss30a: a static token kept an OAuth client';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- A credential goes in through the function and comes out as presence only.
+  stamped := app.ss12000_set_source_secret(src, 'CLIENT_SECRET', '\x0102030405'::bytea,
+                                           decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+  IF stamped IS NULL THEN RAISE EXCEPTION 'ss30a: the secret was not stored'; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_source_secret_presence(src);
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30a: presence reads % rows, not one', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_source_secrets(src);
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30a: the admin cannot read the ciphertext to test the connection'; END IF;
+  BEGIN
+    PERFORM app.ss12000_set_source_secret(src, 'CLIENT_SECRET', '\x01'::bytea, decode(repeat('00', 11), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+    RAISE EXCEPTION 'ss30a: an iv that is not GCM''s was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    PERFORM count(*) FROM "Ss12000SourceSecrets";
+    RAISE EXCEPTION 'ss30a: the admin reads the secrets table directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- "Synka nu" inserts a MANUAL RUNNING run; nothing else, and one at a time.
+  INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode") VALUES (school, src, 'MANUAL', 'FULL') RETURNING id INTO run;
+  PERFORM set_config('app.test_rls30_run', run::text, true);
+  BEGIN
+    INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode") VALUES (school, src, 'MANUAL', 'FULL');
+    RAISE EXCEPTION 'ss30a: a second RUNNING run of one source was stored';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode", "status") VALUES (school, src, 'SCHEDULED', 'FULL', 'SKIPPED');
+    RAISE EXCEPTION 'ss30a: the admin wrote a scheduled run';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "Ss12000SyncRuns" WHERE id = run;
+    RAISE EXCEPTION 'ss30a: the admin deleted a run';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "Ss12000Sources" WHERE id = src;
+    RAISE EXCEPTION 'ss30a: the admin deleted the source';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- A teaching group of the school, for the sync's membership insert below.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, "startDate" DESC LIMIT 1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, yr, 'RLS 30 Spanska', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  PERFORM set_config('app.test_rls30_group', tg::text, true);
+END $$;
+
+-- 30b: the sync principal of the same school, with no claims beside it.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls30_school'), true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls30_school')::uuid;
+  src uuid := current_setting('app.test_rls30_source')::uuid;
+  run uuid := current_setting('app.test_rls30_run')::uuid;
+  tg uuid := current_setting('app.test_rls30_group')::uuid;
+  pupil uuid; teacher uuid; admin uuid; guardian uuid;
+  n bigint;
+BEGIN
+  IF app.current_sync_school_id() IS DISTINCT FROM school OR app.current_user_id() IS NOT NULL THEN
+    RAISE EXCEPTION 'ss30b: expected the sync principal and no claims';
+  END IF;
+  SELECT count(*) INTO n FROM "Ss12000Sources";
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30b: the sync reads % sources, not its school''s one', n; END IF;
+  SELECT count(*) INTO n FROM "Users" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30b: the sync reads % users of another school', n; END IF;
+  SELECT count(*) INTO n FROM "Users";
+  IF n = 0 THEN RAISE EXCEPTION 'ss30b: the sync reads no user of its school'; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_source_secrets(src);
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30b: the sync cannot read its source''s credential'; END IF;
+
+  -- The source: cursors yes, configuration never.
+  UPDATE "Ss12000Sources" SET "modifiedCursor" = now(), "deletedCursor" = now(), "schoolUnitCodes" = ARRAY['12345678'] WHERE id = src;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30b: the sync could not move its cursors'; END IF;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "baseUrl" = 'https://evil.example/v2.0' WHERE id = src;
+    RAISE EXCEPTION 'ss30b: the sync repointed its source';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Sources" SET "scheduleEnabled" = true WHERE id = src;
+    RAISE EXCEPTION 'ss30b: the sync turned its own schedule on';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+
+  -- The diff: changes and the run's status.
+  INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, "externalId", "after", selected, "autoApplicable")
+  VALUES (run, school, 0, 'PERSON', 'UPDATE', 'bbbbbbbb-0000-4000-8000-000000000030', '{"firstName": "Ella", "lastName": "Ek"}', true, true);
+  BEGIN
+    INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, selected) VALUES (run, school, 1, 'PERSON', 'CONFLICT', true);
+    RAISE EXCEPTION 'ss30b: a conflict was stored selected';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, selected, "autoApplicable", "protectedIdentity")
+    VALUES (run, school, 2, 'PERSON', 'UPDATE', false, true, true);
+    RAISE EXCEPTION 'ss30b: a protected identity''s change was stored automatic';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "Ss12000SyncRuns" SET status = 'DIFF_READY', "basisHash" = repeat('a', 64), "fetchedAt" = now() WHERE id = run;
+
+  -- Users: names, class, deactivation of a pupil — and nothing else.
+  SELECT id INTO pupil FROM "Users" u WHERE u."schoolId" = school AND u.role = 'STUDENT' AND u."isActive"
+     AND NOT EXISTS (SELECT 1 FROM "GuardianStudents" gs JOIN "Users" g ON g.id = gs."guardianId"
+                      WHERE gs."studentId" = u.id AND g."authId" = '00000000-0000-4000-8000-000000000004')
+   ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO admin FROM "Users" WHERE "schoolId" = school AND role = 'SCHOOL_ADMIN' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO guardian FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000004';
+  IF pupil IS NULL OR teacher IS NULL OR admin IS NULL OR guardian IS NULL THEN RAISE EXCEPTION 'ss30b: the fixtures lack a pupil, teacher, admin or guardian'; END IF;
+  PERFORM set_config('app.test_rls30_pupil', pupil::text, true);
+
+  UPDATE "Users" SET "firstName" = 'Rls30', "lastName" = 'Synk' WHERE id = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30b: the sync could not update a pupil''s name'; END IF;
+  BEGIN
+    UPDATE "Users" SET email = 'rls30-moved@example.invalid' WHERE id = pupil;
+    RAISE EXCEPTION 'ss30b: the sync changed an email';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET role = 'TEACHER', "studentGroupId" = NULL WHERE id = pupil;
+    RAISE EXCEPTION 'ss30b: the sync changed a role';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "ss12000Id" = 'bbbbbbbb-0000-4000-8000-000000000031' WHERE id = pupil;
+    RAISE EXCEPTION 'ss30b: the sync linked a person';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "firstName" = 'Rls30' WHERE id = admin;
+    RAISE EXCEPTION 'ss30b: the sync touched an admin';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "isActive" = false WHERE id = teacher;
+    RAISE EXCEPTION 'ss30b: the sync deactivated a teacher';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  UPDATE "Users" SET "isActive" = false WHERE id = pupil;
+  BEGIN
+    UPDATE "Users" SET "isActive" = true WHERE id = pupil;
+    RAISE EXCEPTION 'ss30b: the sync reactivated somebody';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+    VALUES (school, 'rls30-new@example.invalid', 'Ny', 'Person', 'STUDENT', gen_random_uuid(), now());
+    RAISE EXCEPTION 'ss30b: the sync created a person';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- Memberships and guardian links: inserted, never deleted.
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, tg, pupil);
+  BEGIN
+    INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, tg, teacher);
+    RAISE EXCEPTION 'ss30b: the sync put a teacher in a teaching group';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId", origin) VALUES (school, guardian, pupil, 'SS12000');
+  DELETE FROM "GuardianStudents" WHERE "studentId" = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30b: the sync deleted % guardian links', n; END IF;
+  DELETE FROM "StudentGroupMembers" WHERE "studentId" = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30b: the sync deleted % memberships', n; END IF;
+
+  -- Duty links: upsert and end, never delete.
+  INSERT INTO "Ss12000DutyLinks" ("schoolId", "userId", "academicYearId", "ss12000DutyId", "dutyRole", "startDate", "updatedAt")
+  SELECT school, teacher, y.id, 'ffffffff-0000-4000-8000-000000000030', 'Lärare', y."startDate", now()
+    FROM "AcademicYears" y WHERE y."schoolId" = school ORDER BY y."isActive" DESC LIMIT 1;
+  BEGIN
+    UPDATE "Ss12000DutyLinks" SET "dutyRole" = 'Lärarinna' WHERE "ss12000DutyId" = 'ffffffff-0000-4000-8000-000000000030';
+    RAISE EXCEPTION 'ss30b: a duty role S1 does not define was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "Ss12000DutyLinks" SET "endedAt" = now() WHERE "ss12000DutyId" = 'ffffffff-0000-4000-8000-000000000030';
+  BEGIN
+    DELETE FROM "Ss12000DutyLinks" WHERE "ss12000DutyId" = 'ffffffff-0000-4000-8000-000000000030';
+    RAISE EXCEPTION 'ss30b: a duty link was deleted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- A service principal or a person's claims beside the sync: no credential.
+SELECT set_config('app.service_school_id', current_setting('app.test_rls30_school'), true);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM count(*) FROM app.ss12000_source_secrets(current_setting('app.test_rls30_source')::uuid);
+    RAISE EXCEPTION 'ss30b: a service principal read a credential';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+END $$;
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM count(*) FROM app.ss12000_source_secrets(current_setting('app.test_rls30_source')::uuid);
+    RAISE EXCEPTION 'ss30b: the sync read a credential with a person''s claims beside it';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.ss12000_set_source_secret(current_setting('app.test_rls30_source')::uuid, 'BEARER_TOKEN', '\x01'::bytea,
+                                          decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+    RAISE EXCEPTION 'ss30b: an admin wrote a credential while a sync principal was set';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+END $$;
+SELECT set_config('app.sync_school_id', '', true);
+
+-- 30c: another school's sync principal and admin see none of it.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls30_school_b'), true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "Ss12000Sources" WHERE id = current_setting('app.test_rls30_source')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s sync reads the source'; END IF;
+  SELECT count(*) INTO n FROM "Users" WHERE "schoolId" = current_setting('app.test_rls30_school')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s sync reads % users', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_source_secrets(current_setting('app.test_rls30_source')::uuid);
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s sync reads the credential'; END IF;
+  SELECT count(*) INTO n FROM "Ss12000SyncRuns";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s sync reads % runs', n; END IF;
+END $$;
+SELECT set_config('app.sync_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() = current_setting('app.test_rls30_school')::uuid THEN
+    RAISE EXCEPTION 'ss30c: expected the second school''s admin';
+  END IF;
+  SELECT count(*) INTO n FROM "Ss12000Sources";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s admin reads % sources', n; END IF;
+  SELECT count(*) INTO n FROM "Ss12000SyncRuns";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s admin reads % runs', n; END IF;
+  SELECT count(*) INTO n FROM "Ss12000SyncChanges";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s admin reads % changes', n; END IF;
+  BEGIN
+    PERFORM app.ss12000_set_source_secret(current_setting('app.test_rls30_source')::uuid, 'CLIENT_SECRET', '\x01'::bytea,
+                                          decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+    RAISE EXCEPTION 'ss30c: another school''s admin wrote a credential of this source';
+  EXCEPTION WHEN SQLSTATE 'SS404' THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM app.ss12000_source_secrets(current_setting('app.test_rls30_source')::uuid);
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30c: another school''s admin reads this source''s credential'; END IF;
+END $$;
+
+-- 30d: a TEACHER, a STUDENT and a GUARDIAN of the school read none of it, and
+-- the credential functions refuse them; the admin's read in the same
+-- transaction is what makes each zero mean something.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "Ss12000Sources") + (SELECT count(*) FROM "Ss12000SyncRuns") + (SELECT count(*) FROM "Ss12000SyncChanges")
+       + (SELECT count(*) FROM "Ss12000DutyLinks") INTO n;
+  IF n < 4 THEN RAISE EXCEPTION 'ss30d: the admin reads only % of the planted rows', n; END IF;
+  PERFORM set_config('app.test_rls30_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls30_student_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+END $$;
+CREATE TEMP TABLE rls30_subs (sub text, role text) ON COMMIT DROP;
+INSERT INTO rls30_subs VALUES
+  (current_setting('app.test_rls30_teacher_sub'), 'TEACHER'),
+  (current_setting('app.test_rls30_student_sub'), 'STUDENT'),
+  ('00000000-0000-4000-8000-000000000004', 'GUARDIAN');
+DO $$
+DECLARE who record; n bigint;
+BEGIN
+  FOR who IN SELECT sub, role FROM rls30_subs LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who.sub)::text, true);
+    IF app.current_user_role()::text IS DISTINCT FROM who.role THEN RAISE EXCEPTION 'ss30d: expected a %', who.role; END IF;
+    SELECT (SELECT count(*) FROM "Ss12000Sources") + (SELECT count(*) FROM "Ss12000SyncRuns") + (SELECT count(*) FROM "Ss12000SyncChanges")
+         + (SELECT count(*) FROM "Ss12000DutyLinks") + (SELECT count(*) FROM "GuardianStudentHistory") INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'ss30d: a % reads % rows of the sync', who.role, n; END IF;
+    BEGIN
+      PERFORM count(*) FROM app.ss12000_source_secrets(current_setting('app.test_rls30_source')::uuid);
+      RAISE EXCEPTION 'ss30d: a % read a credential', who.role;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+    BEGIN
+      PERFORM count(*) FROM app.ss12000_source_secret_presence(current_setting('app.test_rls30_source')::uuid);
+      RAISE EXCEPTION 'ss30d: a % read which credentials exist', who.role;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+    BEGIN
+      PERFORM app.ss12000_clear_source_secrets(current_setting('app.test_rls30_source')::uuid, ARRAY['CLIENT_SECRET']::"Ss12000SecretKind"[]);
+      RAISE EXCEPTION 'ss30d: a % cleared a credential', who.role;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+    UPDATE "Ss12000Sources" SET name = 'taken' WHERE id = current_setting('app.test_rls30_source')::uuid;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'ss30d: a % renamed the source', who.role; END IF;
+  END LOOP;
+END $$;
+
+-- 30e: an id is an admin's to write — not the v1 import's service principal.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls30_school'), true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  UPDATE "Users" SET "firstName" = "firstName" WHERE id = current_setting('app.test_rls30_pupil')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30e: the v1 service principal can no longer update a user (the import)'; END IF;
+  BEGIN
+    UPDATE "Users" SET "ss12000Id" = 'bbbbbbbb-0000-4000-8000-000000000032' WHERE id = current_setting('app.test_rls30_pupil')::uuid;
+    RAISE EXCEPTION 'ss30e: the service principal linked a person';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "ss12000Id" = 'eeeeeeee-0000-4000-8000-000000000032' WHERE id = current_setting('app.test_rls30_group')::uuid;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'ss30e: the service principal linked a group'; END IF;
+  EXCEPTION WHEN SQLSTATE 'SS403' OR insufficient_privilege THEN NULL;
+  END;
+END $$;
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  UPDATE "Users" SET "ss12000Id" = 'bbbbbbbb-0000-4000-8000-000000000033', "isActive" = true WHERE id = current_setting('app.test_rls30_pupil')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30e: the admin could not link (and reactivate) a person'; END IF;
+  BEGIN
+    UPDATE "Users" SET "ss12000Id" = 'bbbbbbbb-0000-4000-8000-000000000033'
+     WHERE id = (SELECT id FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+                    AND id <> current_setting('app.test_rls30_pupil')::uuid ORDER BY id LIMIT 1);
+    RAISE EXCEPTION 'ss30e: one source id was linked to two people';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+END $$;
+
+-- 30f: a terminal run stays terminal, and its changes carry no person data.
+DO $$
+DECLARE run uuid := current_setting('app.test_rls30_run')::uuid; n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "Ss12000SyncChanges" WHERE "runId" = run AND "after" IS NOT NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30f: the diff holds % changes with a payload before the apply', n; END IF;
+  UPDATE "Ss12000SyncRuns" SET status = 'APPLIED', "appliedAt" = now() WHERE id = run;
+  SELECT count(*) INTO n FROM "Ss12000SyncChanges" WHERE "runId" = run AND ("before" IS NOT NULL OR "after" IS NOT NULL OR "protectedIdentity");
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30f: an applied run kept % payloads', n; END IF;
+  SELECT count(*) INTO n FROM "Ss12000SyncChanges" WHERE "runId" = run AND op = 'UPDATE' AND "externalId" IS NOT NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30f: the minimisation lost the op and the id'; END IF;
+  BEGIN
+    UPDATE "Ss12000SyncRuns" SET status = 'DISCARDED' WHERE id = run;
+    RAISE EXCEPTION 'ss30f: a finished run changed status';
+  EXCEPTION WHEN SQLSTATE 'SS409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000SyncChanges" SET "after" = '{"email": "x@y.se"}' WHERE "runId" = run;
+    RAISE EXCEPTION 'ss30f: a finished run''s change took a payload again';
+  EXCEPTION WHEN SQLSTATE 'SS409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000SyncChanges" SET op = 'DEACTIVATE' WHERE "runId" = run;
+    RAISE EXCEPTION 'ss30f: a change was rewritten';
+  EXCEPTION WHEN SQLSTATE 'SS409' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "Ss12000SyncChanges" WHERE "runId" = run;
+    RAISE EXCEPTION 'ss30f: the admin deleted a change';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- 30g: every unlink is recorded, and only by the trigger.
+DO $$
+DECLARE g uuid; c uuid; n bigint;
+BEGIN
+  SELECT gs."guardianId", gs."studentId" INTO g, c FROM "GuardianStudents" gs
+    JOIN "Users" u ON u.id = gs."guardianId" WHERE u."authId" = '00000000-0000-4000-8000-000000000004' ORDER BY gs."studentId" LIMIT 1;
+  IF g IS NULL THEN RAISE EXCEPTION 'ss30g: the fixture guardian has no link'; END IF;
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = g AND "studentId" = c;
+  SELECT count(*) INTO n FROM "GuardianStudentHistory"
+   WHERE "guardianId" = g AND "studentId" = c AND "unlinkedById" = app.current_user_id() AND origin = 'MANUAL';
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30g: the unlink left % history rows naming the admin', n; END IF;
+  BEGIN
+    INSERT INTO "GuardianStudentHistory" ("schoolId", "guardianId", "studentId", origin, "linkedAt") VALUES (app.current_school_id(), g, c, 'MANUAL', now());
+    RAISE EXCEPTION 'ss30g: the API wrote history directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "GuardianStudentHistory";
+    RAISE EXCEPTION 'ss30g: the API deleted history';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- 30h: the scheduler's claim, with no principal, across both DST changes in
+-- Europe/Stockholm, and the housekeeping of stale and expired runs.
+DO $$
+BEGIN
+  IF (SELECT timezone FROM "Schools" WHERE id = app.current_school_id()) IS DISTINCT FROM 'Europe/Stockholm' THEN
+    RAISE EXCEPTION 'ss30h: the DST assertions need a school in Europe/Stockholm';
+  END IF;
+  UPDATE "Ss12000Sources" SET "scheduleEnabled" = true, "scheduleHourLocal" = 2, "lastScheduledLocalDate" = NULL
+   WHERE id = current_setting('app.test_rls30_source')::uuid;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE src uuid := current_setting('app.test_rls30_source')::uuid; n bigint; is_full boolean;
+BEGIN
+  IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'ss30h: expected no principal'; END IF;
+  -- 2027-03-28 00:30Z is 01:30 CET: before the hour.
+  SELECT count(*) INTO n FROM app.ss12000_due_sources(50, '2027-03-28 00:30:00+00') WHERE source_id = src;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30h: claimed before the hour'; END IF;
+  -- 01:30Z is 03:30 CEST: 02:00 never happened that night, and ">=" still runs it.
+  SELECT count(*), bool_and(full_due) INTO n, is_full FROM app.ss12000_due_sources(50, '2027-03-28 01:30:00+00') WHERE source_id = src;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30h: the spring-forward night was skipped'; END IF;
+  IF NOT is_full THEN RAISE EXCEPTION 'ss30h: a source never run fully was not due FULL'; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_due_sources(50, '2027-03-28 20:00:00+00') WHERE source_id = src;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30h: claimed twice in one local day'; END IF;
+  -- Autumn: 2027-10-31 00:30Z is 02:30 CEST, 01:30Z the repeated 02:30 CET — one run.
+  SELECT count(*) INTO n FROM app.ss12000_due_sources(50, '2027-10-31 00:30:00+00') WHERE source_id = src;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss30h: the autumn night did not run'; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_due_sources(50, '2027-10-31 01:30:00+00') WHERE source_id = src;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss30h: the repeated autumn hour ran again'; END IF;
+END $$;
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls30_school'), true);
+DO $$
+DECLARE stale uuid; ready uuid;
+BEGIN
+  INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode", "startedAt")
+  VALUES (current_setting('app.test_rls30_school')::uuid, current_setting('app.test_rls30_source')::uuid, 'SCHEDULED', 'FULL', now() - interval '1 hour')
+  RETURNING id INTO stale;
+  PERFORM set_config('app.test_rls30_stale', stale::text, true);
+  INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode", status, "basisHash", "fetchedAt")
+  VALUES (current_setting('app.test_rls30_school')::uuid, current_setting('app.test_rls30_source')::uuid, 'SCHEDULED', 'FULL', 'DIFF_READY', repeat('b', 64), now() - interval '31 days')
+  RETURNING id INTO ready;
+  PERFORM set_config('app.test_rls30_ready', ready::text, true);
+END $$;
+SELECT set_config('app.sync_school_id', '', true);
+DO $$
+DECLARE s integer; e integer;
+BEGIN
+  SELECT stale, expired INTO s, e FROM app.ss12000_housekeeping();
+  IF s < 1 OR e < 1 THEN RAISE EXCEPTION 'ss30h: housekeeping found % stale and % expired runs', s, e; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  IF (SELECT status::text || ':' || "statusCode" FROM "Ss12000SyncRuns" WHERE id = current_setting('app.test_rls30_stale')::uuid) <> 'FETCH_FAILED:STALE' THEN
+    RAISE EXCEPTION 'ss30h: a run a dead process left was not marked STALE';
+  END IF;
+  IF (SELECT status::text || ':' || "statusCode" FROM "Ss12000SyncRuns" WHERE id = current_setting('app.test_rls30_ready')::uuid) <> 'DISCARDED:EXPIRED' THEN
+    RAISE EXCEPTION 'ss30h: a month-old diff was not expired';
+  END IF;
+END $$;
+
+-- 30i: the catalogue. No arm and no privilege on the credentials; no DELETE
+-- privilege for the API on the sync's tables; history read-only; every
+-- function SECURITY DEFINER and executable by the API alone.
+DO $$
+DECLARE bad text; api_role text; fn text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'Ss12000SourceSecrets') THEN RAISE EXCEPTION 'ss30i: the secrets table has an arm'; END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."Ss12000SourceSecrets"'::regclass) THEN RAISE EXCEPTION 'ss30i: the secrets table has no RLS'; END IF;
+  SELECT string_agg(policyname || ':' || cmd, ',' ORDER BY policyname) INTO bad FROM pg_policies WHERE tablename = 'Ss12000Sources';
+  IF bad IS DISTINCT FROM 'ss12000_sources_admin_insert:INSERT,ss12000_sources_admin_select:SELECT,ss12000_sources_admin_update:UPDATE,ss12000_sources_sync_select:SELECT,ss12000_sources_sync_update:UPDATE' THEN
+    RAISE EXCEPTION 'ss30i: the source''s arms are % (no service arm, no DELETE)', bad;
+  END IF;
+  SELECT string_agg(tablename || '.' || policyname, ', ') INTO bad FROM pg_policies
+   WHERE coalesce(qual, '') || coalesce(with_check, '') LIKE '%current_sync_school_id()%' AND cmd NOT IN ('SELECT', 'INSERT', 'UPDATE');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'ss30i: the sync may delete through %', bad; END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."Ss12000SourceSecrets"', p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'ss30i: % holds % on the secrets', api_role, bad; END IF;
+    SELECT string_agg(t || ':' || p, ', ') INTO bad
+      FROM unnest(ARRAY['Ss12000Sources', 'Ss12000SyncRuns', 'Ss12000SyncChanges', 'Ss12000DutyLinks', 'GuardianStudentHistory']) t,
+           unnest(ARRAY['DELETE', 'TRUNCATE']) p
+     WHERE has_table_privilege(api_role, format('public.%I', t), p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'ss30i: % holds %', api_role, bad; END IF;
+    IF has_table_privilege(api_role, 'public."GuardianStudentHistory"', 'INSERT') OR has_table_privilege(api_role, 'public."GuardianStudentHistory"', 'UPDATE') THEN
+      RAISE EXCEPTION 'ss30i: % may write guardian history', api_role;
+    END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY[
+    'app.ss12000_set_source_secret(uuid, "Ss12000SecretKind", bytea, bytea, bytea, text)',
+    'app.ss12000_clear_source_secrets(uuid, "Ss12000SecretKind"[])',
+    'app.ss12000_source_secrets(uuid)',
+    'app.ss12000_source_secret_presence(uuid)',
+    'app.ss12000_due_sources(integer, timestamptz)',
+    'app.ss12000_housekeeping(timestamptz)'] LOOP
+    FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = api_role) AND has_function_privilege(api_role, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'ss30i: % may call %', api_role, fn;
+      END IF;
+    END LOOP;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'ss30i: the API may not call %', fn; END IF;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'ss30i: % is not SECURITY DEFINER', fn; END IF;
   END LOOP;
 END $$;
 ROLLBACK;

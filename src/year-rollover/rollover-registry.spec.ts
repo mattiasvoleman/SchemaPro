@@ -235,7 +235,8 @@ describe('the rollover registry', () => {
     // TeacherEmploymentLog (staffing Fas 3) are the tables added since, and
     // are asserted beside it — skipped, not counted — so fa4a3d6's own list
     // stays pinned byte for byte. The statement tables (timplan P4) likewise,
-    // and the publication log and its snapshots (Publicering).
+    // the publication log and its snapshots (Publicering), and the SS12000
+    // duty links (20261014100000).
     const skipped = skippedModels();
     const added = [
       'TimplanCredit',
@@ -250,13 +251,14 @@ describe('the rollover registry', () => {
       'CancellationBatchCredit',
       'PublicTimetableLink',
       'PublicationPendingRemoval',
+      'Ss12000DutyLink',
     ];
     expect(
       createHash('sha256')
         .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.slice(-12)).toEqual([
+    expect(skipped.slice(-13)).toEqual([
       expect.objectContaining({ model: 'TimplanCredit', counted: false }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', counted: false }),
       expect.objectContaining({ model: 'TimplanStatementPublication', counted: false }),
@@ -269,6 +271,7 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'CancellationBatchCredit', counted: false }),
       expect.objectContaining({ model: 'PublicTimetableLink', counted: false }),
       expect.objectContaining({ model: 'PublicationPendingRemoval', counted: false }),
+      expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
     ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
     expect(carriedModels().map(({ model }) => model)).toEqual([
