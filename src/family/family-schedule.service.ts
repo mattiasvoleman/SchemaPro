@@ -145,7 +145,22 @@ export class FamilyScheduleService {
       const timezone = await schoolTimezone(tx, schoolId);
       const today = await this.schoolToday(tx, timezone);
       const { from, to } = isoWeekOf(query.week ?? today);
-      const bounds = await this.assertWeekInRange(tx, from, to, today);
+      const { bounds, pastYear } = await this.assertWeekInRange(tx, from, to, today);
+      if (pastYear) {
+        // Today's own week after the active year has ended (the summer):
+        // nothing is published past the year, so the week is empty rather
+        // than a 400 the pages would show before the reader did anything.
+        return {
+          student: { id: child.id, firstName: child.firstName },
+          week: { from, to, isoWeek: isoWeekLabel(from) },
+          today,
+          bounds,
+          timezone,
+          lessons: [],
+          lunches: [],
+          rasts: [],
+        };
+      }
 
       const home = child.studentGroupId;
       const teaching = (
@@ -269,22 +284,33 @@ export class FamilyScheduleService {
    * shown. Paging through history would rebuild a record of cancellations;
    * a week past the year has nothing published. Without an active year only
    * the first bound applies.
+   *
+   * One exception: the week holding today is always answered, empty when it
+   * starts past the year (`pastYear`). Between the year's end and the next
+   * year's activation the default request would otherwise be a 400 that no
+   * reader can step out of.
    */
   private async assertWeekInRange(
     tx: PrismaClient,
     from: string,
     to: string,
     today: string,
-  ): Promise<{ earliest: string; latest: string | null }> {
+  ): Promise<{ bounds: { earliest: string; latest: string | null }; pastYear: boolean }> {
     const year = await tx.academicYear.findFirst({ where: { isActive: true }, select: { endDate: true } });
     const yearEnd = year ? asDay(year.endDate) : null;
-    if (to < shiftDay(today, -7) || (yearEnd !== null && from > yearEnd)) {
+    const thisWeek = isoWeekOf(today).from;
+    const pastYear = yearEnd !== null && from > yearEnd;
+    if (to < shiftDay(today, -7) || (pastYear && from !== thisWeek)) {
       throw new BadRequestException({ message: 'Veckan ligger utanför det som går att visa.', code: WEEK_OUT_OF_RANGE });
     }
     // The same rule read as Mondays: the week holding today − 7 is the first
     // whose Sunday is not before it, the week holding the year's last day the
-    // last that starts inside the year.
-    return { earliest: isoWeekOf(shiftDay(today, -7)).from, latest: yearEnd === null ? null : isoWeekOf(yearEnd).from };
+    // last that starts inside the year; this week is always one of them.
+    const lastWeek = isoWeekOf(shiftDay(today, -7)).from;
+    const earliest = yearEnd !== null && lastWeek > yearEnd ? thisWeek : lastWeek;
+    const yearsLast = yearEnd === null ? null : isoWeekOf(yearEnd).from;
+    const latest = yearsLast === null ? null : yearsLast < thisWeek ? thisWeek : yearsLast;
+    return { bounds: { earliest, latest }, pastYear };
   }
 
   /**

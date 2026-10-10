@@ -143,6 +143,32 @@ describe('FamilyScheduleService', () => {
     expect((await run()).bounds.latest).toBeNull();
   });
 
+  it('answers today’s own week empty, not 400, when the school’s today is past the active year (the summer)', async () => {
+    today = '2027-07-01';
+    const result = await run();
+    expect(result.week).toEqual({ from: '2027-06-28', to: '2027-07-04', isoWeek: '2027-W26' });
+    expect(result.lessons).toEqual([]);
+    expect(result.lunches).toEqual([]);
+    expect(result.rasts).toEqual([]);
+    // Nothing either side may be asked for: last week is past the year too.
+    expect(result.bounds).toEqual({ earliest: '2027-06-28', latest: '2027-06-28' });
+    // Nothing past the year is read: the viewer's rule, a week past the year has nothing published.
+    expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
+    expect(tx.calendarLunch.findMany).not.toHaveBeenCalled();
+    // The same week asked by name answers the same; the week before or after does not.
+    await expect(run('2027-06-30')).resolves.toMatchObject({ week: { from: '2027-06-28' }, lessons: [] });
+    await expect(run('2027-06-21')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(run('2027-07-05')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('lets the first week past the year step back to the year’s last week', async () => {
+    today = '2027-06-14';
+    const result = await run();
+    expect(result.week.from).toBe('2027-06-14');
+    expect(result.bounds).toEqual({ earliest: '2027-06-07', latest: '2027-06-14' });
+    await expect(run('2027-06-07')).resolves.toMatchObject({ week: { from: '2027-06-07' } });
+  });
+
   it('shows last week, and the year’s last week, and any week without an active year', async () => {
     await expect(run('2026-10-05')).resolves.toMatchObject({ week: { from: '2026-10-05' } });
     await expect(run('2027-06-07')).resolves.toMatchObject({ week: { from: '2027-06-07' } });
