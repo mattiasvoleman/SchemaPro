@@ -13,7 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDayHeading, shiftDate } from '../../i18n/format';
 import { ApiError } from '../../services/api';
-import { fetchChildren } from '../../services/children';
+import { childListState, fetchChildren, scheduleChildren } from '../../services/children';
 import {
   canStep,
   familyDays,
@@ -48,6 +48,7 @@ export function ChildScheduleScreen(): React.JSX.Element {
   const [week, setWeek] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<FamilySchedule | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [childrenFailed, setChildrenFailed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   // The answer that may still land on screen: a slow answer for a child or a
@@ -59,11 +60,12 @@ export function ChildScheduleScreen(): React.JSX.Element {
   const loadChildren = useCallback(async () => {
     if (!authState.teacherId) return;
     try {
-      setChildren(await fetchChildren(authState.teacherId));
+      setChildren(scheduleChildren(await fetchChildren(authState.teacherId)));
+      setChildrenFailed(false);
     } catch {
-      setError(t('common.loadError'));
+      setChildrenFailed(true);
     }
-  }, [authState.teacherId, t]);
+  }, [authState.teacherId]);
 
   const loadWeek = useCallback(async () => {
     if (!selected) return;
@@ -110,7 +112,9 @@ export function ChildScheduleScreen(): React.JSX.Element {
     setWeek(shiftDate(shown.week.from, 7 * direction));
   };
 
-  if (isLoading) {
+  const listState = childListState({ loading: isLoading, failed: childrenFailed, count: children.length });
+
+  if (listState === 'LOADING') {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
@@ -121,12 +125,23 @@ export function ChildScheduleScreen(): React.JSX.Element {
   }
 
   if (!selected) {
+    // A failed read says so and can be pulled to retry (common.loadError says
+    // how); only a read that answered no children says none are linked.
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>{t('guardian.noChildrenTitle')}</Text>
-          <Text style={styles.emptyBody}>{t('guardian.noChildrenBody')}</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={styles.center}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
+        >
+          {listState === 'FAILED' ? (
+            <Text style={styles.errorText}>{t('common.loadError')}</Text>
+          ) : (
+            <>
+              <Text style={styles.emptyTitle}>{t('guardian.noChildrenTitle')}</Text>
+              <Text style={styles.emptyBody}>{t('guardian.noChildrenBody')}</Text>
+            </>
+          )}
+        </ScrollView>
       </SafeAreaView>
     );
   }
