@@ -15,10 +15,13 @@
 // own, because a class average hides the one pupil in two teaching groups who
 // gets nothing.
 //
-// TODAY'S ROSTERS, SAID ON THE TAB (R28). A pupil's minutes follow the class
-// and groups they are in today — there is no roster history until P4 — so a
-// pupil who changed class in October carries the new class's year. That is
-// stated permanently under the header, not only in the manual.
+// WHOSE ROSTERS, SAID ON THE TAB (R28). In the active year a pupil's minutes
+// follow the class and groups they are in today, so a pupil who changed
+// class in October carries the new class's year. A past year is read from
+// the class history (timplan P4) once the history has rows for it — the
+// gateway then sends no TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS — and its
+// pupils are that year's own. Which of the two is stated permanently under
+// the header, not only in the manual.
 //
 // ATTENDANCE IS NOT SUBTRACTED: undervisningstid is the school's offer, and
 // frånvaro the pupil's. The definition sentence says so.
@@ -69,7 +72,15 @@ function useHours(): (minutes: number) => string {
 const deltaOf = (line: DeliveredLineSummary): number =>
   line.projectedMinutes - (line.plannedYearMinutes - line.unrecordedMinutes);
 
-export function CoverageDeliveredTab({ year, linkedGroup, groupName, subjects, pupilName, gradeName }: CoverageTabProps) {
+export function CoverageDeliveredTab({
+  year,
+  historyRosters = false,
+  linkedGroup,
+  groupName,
+  subjects,
+  pupilName,
+  gradeName,
+}: CoverageTabProps) {
   const t = useTranslations("timplanCoverage");
   const hoursOf = useHours();
   const overview = useDeliveredCoverage(year.id);
@@ -106,7 +117,11 @@ export function CoverageDeliveredTab({ year, linkedGroup, groupName, subjects, p
           ? ` · ${t("delivered.publishedThrough", { from: coverage.published.from, through: coverage.published.through })}`
           : ""}
       </p>
-      <p className="font-medium">{t("delivered.rosterNote")}</p>
+      <p className="font-medium">
+        {historyRosters && !coverage.verdicts.some((v) => v.code === "TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS")
+          ? t("delivered.rosterNoteHistory")
+          : t("delivered.rosterNote")}
+      </p>
       <p className="max-w-prose text-xs leading-relaxed">{t("delivered.definition")}</p>
     </section>
   );

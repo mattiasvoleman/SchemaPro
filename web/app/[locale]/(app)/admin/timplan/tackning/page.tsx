@@ -4,7 +4,10 @@
 // planerat mot timplan (P2, below), schemalagt mot planerat and genomfört mot
 // schemalagt (P3, components/timplan/coverage-scheduled-tab.tsx and
 // coverage-delivered-tab.tsx, each fetched with lazy() the first time its tab
-// is chosen, so this route carries only the tab strip for them).
+// is chosen, so this route carries only the tab strip for them) — and a
+// fourth, Stadium (P4, components/timplan/coverage-stage-tab.tsx, lazy on the
+// same terms): each pupil's hours over the whole stadium across läsår, from
+// the class history, against the lydelse of the pupil's cohort.
 //
 // THE TABLIST SITS ABOVE EVERY LOADING AND EMPTY STATE (R27). The planned
 // layer's "no classes" or "no year" is about that layer; a year with no
@@ -105,15 +108,23 @@ const lazyDeliveredTab = () =>
       default: module.CoverageDeliveredTab,
     })),
   );
+const lazyStageTab = () =>
+  lazy(() =>
+    import("@/components/timplan/coverage-stage-tab").then((module) => ({
+      default: module.CoverageStageTab,
+    })),
+  );
 let CoverageScheduledTab = lazyScheduledTab();
 let CoverageDeliveredTab = lazyDeliveredTab();
+let CoverageStageTab = lazyStageTab();
 
-const LAYERS = ["planned", "scheduled", "delivered"] as const;
+const LAYERS = ["planned", "scheduled", "delivered", "stage"] as const;
 type Layer = (typeof LAYERS)[number];
 const LAYER_LABEL: Record<Layer, string> = {
   planned: "layerPlanned",
   scheduled: "layerScheduled",
   delivered: "layerDelivered",
+  stage: "layerStage",
 };
 
 /**
@@ -161,6 +172,10 @@ export default function TimplanCoveragePage() {
   const yearId =
     chosenYear ?? linkedYear ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
   const year = years?.find((entry) => entry.id === yearId) ?? null;
+  // The gateway's enrolmentBasisOf: a year not active that began before the
+  // active one has its pupils read from the class history (timplan P4).
+  const activeYear = years?.find((entry) => entry.isActive) ?? null;
+  const historyRosters = !!(year && activeYear && !year.isActive && year.startDate < activeYear.startDate);
 
   const [chosenLayer, setChosenLayer] = useState<Layer | null>(null);
   // Undecided until the deep link has been read, so a link to another tab
@@ -314,6 +329,7 @@ export default function TimplanCoveragePage() {
             onError={() => {
               CoverageScheduledTab = lazyScheduledTab();
               CoverageDeliveredTab = lazyDeliveredTab();
+              CoverageStageTab = lazyStageTab();
               setTabLoad((state) => ({ ...state, failed: true }));
             }}
           >
@@ -328,8 +344,19 @@ export default function TimplanCoveragePage() {
                 pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
                 gradeName={gradeName}
               />
-            ) : (
+            ) : layer === "delivered" ? (
               <CoverageDeliveredTab
+                key={year.id}
+                year={year}
+                historyRosters={historyRosters}
+                linkedGroup={linkedGroup}
+                groupName={(id) => groupName.get(id) ?? id}
+                subjects={subjects ?? []}
+                pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
+                gradeName={gradeName}
+              />
+            ) : (
+              <CoverageStageTab
                 key={year.id}
                 year={year}
                 linkedGroup={linkedGroup}

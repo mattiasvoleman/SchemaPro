@@ -32,4 +32,7 @@ export const TIMPLAN_COVERAGE_KEYS = {
     ["timplanCoverage", academicYearId, "scheduled", studentGroupId ?? ""] as const,
   delivered: (academicYearId: string, studentGroupId: string | null) =>
     ["timplanCoverage", academicYearId, "delivered", studentGroupId ?? ""] as const,
+  /** The Stadium tab (timplan P4); the overview carries the school's publication too. */
+  stage: (academicYearId: string, studentGroupId: string | null) =>
+    ["timplanCoverage", academicYearId, "stage", studentGroupId ?? ""] as const,
 } as const;
