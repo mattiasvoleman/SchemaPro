@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createTranslator } from "next-intl";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
-import { layoutDay } from "@/lib/day-lanes";
+import { layoutClusters } from "@/lib/day-lanes";
 import {
   isIndex,
   placement,
@@ -32,7 +32,7 @@ import {
  * school chose (signature, name, or nothing).
  *
  * A SERVER COMPONENT with no client code of its own: the week is laid out
- * here (lib/day-lanes.ts, the timetable's own lane rule) and sent as HTML, so
+ * here (lib/day-lanes.ts, lanes per overlap cluster) and sent as HTML, so
  * a phone on a slow connection gets the week in one response and the page's
  * JavaScript is Next's runtime alone. The same HTML is the print view: one
  * A4 page, landscape, without the navigation.
@@ -104,6 +104,7 @@ export default async function PublicTimetablePage({
 function Message({ title, body }: { title: string; body: string }) {
   return (
     <div className="space-y-2 py-16 text-center">
+      <title>{title}</title>
       <h1 className="text-xl font-semibold">{title}</h1>
       <p>{body}</p>
     </div>
@@ -124,6 +125,7 @@ function LanguageLink({ token, query, locale, t }: { token: string; query: Parti
 function IndexView({ document, token, locale, t }: { document: PublicIndex; token: string; locale: string; t: Translate }) {
   return (
     <div className="space-y-4">
+      <title>{`${t(`index.${document.kind}`)} – ${document.school}`}</title>
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <p className="text-sm">{document.school}</p>
@@ -151,13 +153,22 @@ function IndexView({ document, token, locale, t }: { document: PublicIndex; toke
   );
 }
 
-function lessonText(lesson: PublicLesson, t: Translate): { main: string; detail: string } {
+/**
+ * A lesson's line under its subject: what the page's own target is not.
+ * A class's week leaves out the class (it is the page's title) and puts the
+ * room first, so the room survives when a narrow block clips the line; a
+ * room's week leaves out the room, a teacher's week the teacher.
+ */
+function lessonText(lesson: PublicLesson, t: Translate, page: Pick<PublicWeek, "kind" | "title">): { main: string; detail: string } {
   if (lesson.busy) return { main: t("busy"), detail: "" };
-  const groups = (lesson.groups ?? []).map((group) => group ?? t("group")).join(", ");
-  return {
-    main: lesson.subject ?? "",
-    detail: [groups, lesson.room ?? null, (lesson.teachers ?? []).join(", ") || null].filter(Boolean).join(" · "),
-  };
+  const groupNames = (lesson.groups ?? [])
+    .filter((group) => !(page.kind === "GROUP" && group === page.title))
+    .map((group) => group ?? t("group"));
+  const groups = groupNames.join(", ") || null;
+  const room = page.kind === "ROOM" ? null : lesson.room ?? null;
+  const teachers = (lesson.teachers ?? []).filter((label) => !(page.kind === "TEACHER" && label === page.title)).join(", ") || null;
+  const parts = page.kind === "GROUP" ? [room, teachers, groups] : [groups, room, teachers];
+  return { main: lesson.subject ?? "", detail: parts.filter(Boolean).join(" · ") };
 }
 
 function WeekView({
@@ -190,6 +201,7 @@ function WeekView({
 
   return (
     <div className="space-y-3 print:space-y-1">
+      <title>{`${document.title} – ${t("week", { week })}`}</title>
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <p className="text-sm">
@@ -253,7 +265,7 @@ function WeekView({
                       );
                     }
                     const lesson = (entry as { lesson: PublicLesson }).lesson;
-                    const text = lessonText(lesson, t);
+                    const text = lessonText(lesson, t, document);
                     return (
                       <li key={`l-${index}`} className={`px-3 py-1.5 ${lesson.cancelled ? "text-neutral-600" : ""}`}>
                         <span className="tabular-nums">
@@ -279,6 +291,7 @@ function WeekView({
         {days.map((day) => (
           <h2
             key={`h-${day.date}`}
+            id={`day-${day.date}`}
             className="min-w-0 truncate border-b border-l px-2 py-1 text-sm font-semibold print:text-[10px]"
           >
             {dayName(day.date)} <span className="font-normal">{short(day.date)}</span>
@@ -296,7 +309,7 @@ function WeekView({
           ))}
         </div>
         {days.map((day) => {
-          const lessons = layoutDay(timed(day.lessons));
+          const lessons = layoutClusters(timed(day.lessons));
           return (
             <div key={day.date} className="relative h-[40rem] border-l print:h-[145mm]">
               {hours.slice(1, -1).map((hour) => (
@@ -319,11 +332,15 @@ function WeekView({
                   </div>
                 );
               })}
-              {lessons.length === 0 ? <p className="sr-only">{t("noLessons")}</p> : null}
-              <ol>
+              {lessons.length === 0 ? (
+                <p className="sr-only">
+                  {dayName(day.date)} {short(day.date)}: {t("noLessons")}
+                </p>
+              ) : null}
+              <ol aria-labelledby={`day-${day.date}`}>
                 {lessons.map((lesson, index) => {
                   const at = placement(lesson, span);
-                  const text = lessonText(lesson, t);
+                  const text = lessonText(lesson, t, document);
                   return (
                     <li
                       key={`${lesson.start}-${index}`}

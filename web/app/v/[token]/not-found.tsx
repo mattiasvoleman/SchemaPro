@@ -10,6 +10,7 @@ import en from "@/messages/en.json";
 export default function ViewerNotFound() {
   return (
     <main className="mx-auto max-w-xl space-y-6 px-4 py-16 text-center">
+      <title>{`${sv.publicViewer.notFoundTitle} · ${en.publicViewer.notFoundTitle}`}</title>
       <div className="space-y-2">
         <h1 className="text-xl font-semibold">{sv.publicViewer.notFoundTitle}</h1>
         <p>{sv.publicViewer.notFoundBody}</p>

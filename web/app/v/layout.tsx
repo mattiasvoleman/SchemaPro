@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import "../globals.css";
 
 /*
@@ -17,14 +18,20 @@ import "../globals.css";
  * fetch the page never sees the noindex either.
  */
 export const metadata: Metadata = {
-  title: "Schema",
   robots: { index: false, follow: false, nocache: true },
   referrer: "no-referrer",
 };
 
-export default function ViewerLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+/*
+ * The page's title is the page's own (<title> in app/v/[token]: "7A – Vecka
+ * 42"), hoisted by React; a layout title would sit beside it. The document's
+ * language is the one ?lang= asked for: proxy.ts passes it as x-viewer-lang,
+ * since a layout is not given the search params.
+ */
+export default async function ViewerLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const lang = (await headers()).get("x-viewer-lang") === "en" ? "en" : "sv";
   return (
-    <html lang="sv">
+    <html lang={lang}>
       <body className="min-h-screen bg-white font-sans text-neutral-900 antialiased">{children}</body>
     </html>
   );

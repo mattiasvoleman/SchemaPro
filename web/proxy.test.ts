@@ -31,6 +31,12 @@ describe("proxy", () => {
     expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("set-cookie")).toBeNull();
+    // The layout's <html lang>: Swedish unless ?lang=en, whatever the browser sent.
+    expect(response.headers.get("x-middleware-request-x-viewer-lang")).toBe("sv");
+    const english = await proxy(
+      new NextRequest(`https://schema.example.se/v/${"A".repeat(43)}?lang=en`, { headers: { "x-viewer-lang": "xx" } }),
+    );
+    expect(english.headers.get("x-middleware-request-x-viewer-lang")).toBe("en");
   });
 
   it("still sends a visitor without a session from an app page to the login", async () => {
