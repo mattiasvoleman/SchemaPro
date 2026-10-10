@@ -3886,6 +3886,7 @@ async function runChecks(
   await draftChecks(owner, api);
   await equivalenceCheck(owner, api);
   await weekEdgeChecks(owner, api);
+  await mealChecks(owner, api);
   await batchChecks(owner, api);
   await viewerChecks(owner, api);
 }
@@ -5373,6 +5374,120 @@ async function weekEdgeChecks(owner: Client, api: PrismaService): Promise<void> 
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-veckokant'`, [MARKER]);
+  }
+}
+
+/**
+ * The meals in DRAFT (20261011130000). The lunch sittings are part of the
+ * draft and the calendar's meals are the published ones: a regeneration in
+ * DRAFT leaves the meals pupils and guardians read alone; a refill writes the
+ * meals its segment published, never a draft sitting; a DRAFT publish
+ * replaces its window's meals from the sittings it publishes.
+ */
+async function mealChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenPublicationSchool(owner, 'maltider');
+  const { publications, calendar } = publicationServicesFor(api);
+  const drafts = new DraftService(
+    api,
+    calendar,
+    new RealScheduleVersionsService(api),
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+  );
+  const one = async (sql: string, params: unknown[]) => (await owner.query(sql, params)).rows[0];
+  const pupil = await one(
+    `SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT' ORDER BY email LIMIT 1`,
+    [school.schoolId],
+  );
+  const guardian = await one(
+    `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+     VALUES ($1, $2, 'Probe', 'Vårdnadshavare', 'GUARDIAN', gen_random_uuid(), true, now()) RETURNING id, "authId"`,
+    [school.schoolId, `${MARKER}-maltider-g1@example.invalid`],
+  );
+  await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [
+    school.schoolId,
+    guardian.id,
+    pupil.id,
+  ]);
+  for (let day = 1; day <= 5; day++) {
+    await owner.query(
+      `INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", headcount, "isGenerated", "updatedAt")
+       VALUES ($1, $2, $3, $4, '11:30', '12:00', 2, true, now())`,
+      [school.schoolId, school.yearId, school.class7a, day],
+    );
+  }
+  const student = { authId: pupil.authId, userId: pupil.id, schoolId: school.schoolId, role: Role.STUDENT };
+  const parent = { authId: guardian.authId, userId: guardian.id, schoolId: school.schoolId, role: Role.GUARDIAN };
+  const mealsSeenBy = (user: AuthenticatedUser, from = '2096-08-13', to = '2097-06-11') =>
+    api.withRls(user, (tx) =>
+      tx.calendarLunch
+        .findMany({
+          where: { date: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) } },
+          select: { date: true, startsAt: true, endsAt: true },
+          orderBy: { date: 'asc' },
+        })
+        .then((rows) => rows.map((row) => `${row.date.toISOString().slice(0, 10)} ${row.startsAt.toISOString().slice(11, 16)}`)),
+    );
+  try {
+    await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-08-13' }, school.admin);
+    await drafts.switchMode('DRAFT', school.admin);
+    const published = { student: await mealsSeenBy(student), guardian: await mealsSeenBy(parent) };
+    assert.ok(published.student.length > 150, `${published.student.length} meals`);
+
+    await check('(pub-g) a regeneration in DRAFT leaves the published meals a pupil and a guardian read as they were', async () => {
+      const proxy = new OptimizationProxyService(
+        api,
+        { post: () => { throw new Error('the engine was called'); } } as never,
+        { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+      );
+      // The engine's answer: no lessons, and 7A eating at 12:30 on Tuesdays only.
+      await api.withRls(school.admin, (tx) =>
+        (proxy as unknown as {
+          persistMasterLessons: (...args: unknown[]) => Promise<unknown>;
+        }).persistMasterLessons(
+          tx,
+          school.yearId,
+          school.admin,
+          { status: 'OPTIMAL', lessons: [] },
+          [],
+          new Map(),
+          new Map(),
+          [{ studentGroupId: school.class7a, dayOfWeek: 2, startTime: '12:30:00', endTime: '13:00:00' }],
+          new Map([[school.class7a, 2]]),
+        ),
+      );
+      assert.deepEqual({ student: await mealsSeenBy(student), guardian: await mealsSeenBy(parent) }, published);
+    });
+
+    await check('(pub-g) a refill writes the meals its segment published, never the draft\'s sittings', async () => {
+      await owner.query(
+        `DELETE FROM "CalendarLunches" WHERE "schoolId" = $1 AND date BETWEEN '2096-11-05' AND '2096-11-11'`,
+        [school.schoolId],
+      );
+      await drafts.refill(
+        { academicYearId: school.yearId, validFrom: '2096-11-05', validTo: '2096-11-11', acknowledgeWarnings: true },
+        school.admin,
+      );
+      assert.deepEqual(
+        await mealsSeenBy(student, '2096-11-05', '2096-11-11'),
+        published.student.filter((meal) => meal >= '2096-11-05' && meal < '2096-11-12'),
+      );
+    });
+
+    await check('(pub-g) a DRAFT publish replaces its window\'s meals with the sittings it publishes', async () => {
+      await publications.publish(
+        { academicYearId: school.yearId, validFrom: '2096-11-12', validTo: '2096-11-18', acknowledgeWarnings: true },
+        school.admin,
+      );
+      // 13 Nov 2096 is a Tuesday: the draft's one sitting, 12:30 Stockholm.
+      assert.deepEqual(await mealsSeenBy(student, '2096-11-12', '2096-11-18'), ['2096-11-13 11:30']);
+      // Outside the window the published meals stand.
+      assert.deepEqual(
+        await mealsSeenBy(student, '2096-11-19', '2096-11-25'),
+        published.student.filter((meal) => meal >= '2096-11-19' && meal < '2096-11-26'),
+      );
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-maltider'`, [MARKER]);
   }
 }
 

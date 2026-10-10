@@ -619,6 +619,20 @@ describe('OptimizationProxyService', () => {
       expect(call[0].where.date.gte).toBeInstanceOf(Date);
     });
 
+    it("in DRAFT leaves the published meals alone: the regeneration is a draft, the calendar's meals are what families read", async () => {
+      tx.$queryRaw.mockResolvedValueOnce([{ mode: 'DRAFT' }]);
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        { ...oneRequirement(1), lunches: [sitting()] },
+      );
+
+      // The draft's sittings are written (RLS hides them from non-admins) …
+      expect(tx.lunchSitting.createMany).toHaveBeenCalledTimes(1);
+      // … and neither the published lessons nor the published meals move.
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.calendarLunch.deleteMany).not.toHaveBeenCalled();
+    });
+
     it('leaves a meal that has already been eaten alone', async () => {
       await persist({ status: 'OPTIMAL', lessons: [placement()] }, oneRequirement(1));
 

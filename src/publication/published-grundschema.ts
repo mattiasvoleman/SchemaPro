@@ -296,3 +296,51 @@ export async function snapshotMasters(
   const { count } = await tx.publishedLesson.createMany({ data });
   return count;
 }
+
+/**
+ * Writes the year's lunch sittings as a publication's snapshot
+ * (PublishedLunchSittings, 20261011130000): in DRAFT they are part of the
+ * draft, and a refill must restore the meals that were published.
+ */
+export async function snapshotSittings(
+  tx: PrismaClient,
+  publication: { id: string; schoolId: string; academicYearId: string },
+): Promise<number> {
+  const sittings = await tx.lunchSitting.findMany({
+    where: { academicYearId: publication.academicYearId },
+    select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
+    orderBy: [{ studentGroupId: 'asc' }, { dayOfWeek: 'asc' }],
+  });
+  if (sittings.length === 0) return 0;
+  const { count } = await tx.publishedLunchSitting.createMany({
+    data: sittings.map((sitting) => ({
+      schoolId: publication.schoolId,
+      publicationId: publication.id,
+      academicYearId: publication.academicYearId,
+      ...sitting,
+    })),
+  });
+  return count;
+}
+
+/** A publication's meals, a row whose group is gone dropped (the live CASCADE). */
+export async function readPublishedSittings(
+  tx: PrismaClient,
+  publicationId: string,
+): Promise<Array<{ studentGroupId: string; dayOfWeek: number; startTime: Date; endTime: Date }>> {
+  const rows = await tx.publishedLunchSitting.findMany({
+    where: { publicationId },
+    select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
+    orderBy: [{ studentGroupId: 'asc' }, { dayOfWeek: 'asc' }],
+  });
+  if (rows.length === 0) return [];
+  const groups = new Set(
+    (
+      await tx.studentGroup.findMany({
+        where: { id: { in: [...new Set(rows.map((row) => row.studentGroupId))] } },
+        select: { id: true },
+      })
+    ).map((group) => group.id),
+  );
+  return rows.filter((row) => groups.has(row.studentGroupId));
+}

@@ -29,7 +29,7 @@ const lessonMinutes = (start: Date, end: Date): number => {
   return clock(end) - clock(start);
 };
 import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
-import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { enterGrundschemaWrite, type PublishMode } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import type {
   AiEngineConflictAnalysis,
@@ -1877,7 +1877,7 @@ export class OptimizationProxyService {
      * asked the engine, which has no sittings to replace them with.
      */
     if (lunches !== null) {
-      await this.replaceSittings(tx, schoolId, academicYearId, lunches, headcountByGroup, today);
+      await this.replaceSittings(tx, schoolId, academicYearId, lunches, headcountByGroup, today, mode);
     }
 
     // Append a REGENERATE entry to the schedule audit trail.
@@ -1912,6 +1912,7 @@ export class OptimizationProxyService {
     lunches: AiEngineLunch[],
     headcountByGroup: Map<string, number>,
     today: Date,
+    mode: PublishMode = 'DIRECT',
   ): Promise<void> {
     /*
      * The solver's rows only. A meal the school placed by hand is an
@@ -2041,6 +2042,12 @@ export class OptimizationProxyService {
      * future is deleted all the same, because a meal that was eaten is a fact
      * about a day that has been.
      */
+    // Not in DRAFT. The regeneration is a draft, and the meals on the
+    // calendar are the published ones that pupils, guardians and the viewer
+    // read; the sittings written above are the draft's, hidden from them by
+    // RLS until a publish, which replaces the meals of its own window from
+    // them (PublicationsService.attempt).
+    if (mode === 'DRAFT') return;
     await tx.calendarLunch.deleteMany({
       where: {
         studentGroup: { is: { academicYearId } },

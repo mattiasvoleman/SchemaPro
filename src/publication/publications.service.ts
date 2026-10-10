@@ -20,7 +20,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { carryDraft, draftWindow } from './draft-publish';
 import { reapplyActiveBatches } from './cancellation-batches.service';
-import { readDraftMasters, snapshotMasters, type PublishedMaster } from './published-grundschema';
+import { readDraftMasters, snapshotMasters, snapshotSittings, type PublishedMaster } from './published-grundschema';
 import { enterPublication } from './publish-mode';
 import {
   DEFAULT_GATE_POLICY,
@@ -389,6 +389,7 @@ export class PublicationsService {
           });
           if (run.masters) {
             await snapshotMasters(tx, { id: row.id, schoolId, academicYearId: dto.academicYearId }, run.masters);
+            await snapshotSittings(tx, { id: row.id, schoolId, academicYearId: dto.academicYearId });
             await this.tellClasses(tx, schoolId, run.masters, run.changedMasterIds ?? []);
           }
           return {
@@ -474,6 +475,16 @@ export class PublicationsService {
           yearEnd: context.year.end,
           masters,
           now,
+        });
+        // The draft's lunch sittings are published with it. Their meals in the
+        // window are replaced, as a DIRECT regeneration clears every future
+        // meal for the next publish to re-derive: a sitting the draft dropped
+        // takes its published meals with it rather than leaving them for ever.
+        await tx.calendarLunch.deleteMany({
+          where: {
+            studentGroup: { is: { academicYearId: context.year.id } },
+            date: { gte: new Date(`${context.validFrom}T00:00:00.000Z`), lte: new Date(`${context.validTo}T00:00:00.000Z`) },
+          },
         });
         result = await this.calendar.materialise(tx, schoolId, this.windowDto(context), { notBefore: now });
         draft = {

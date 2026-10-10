@@ -89,8 +89,22 @@ export interface MaterialiseOptions {
    * The caller leaves the parked ones out, as the default read does.
    */
   templates?: MaterialiseTemplate[];
+  /**
+   * The meals to materialise instead of the year's lunch sittings: the
+   * refill's PUBLISHED snapshot of them (PublishedLunchSittings), since in
+   * DRAFT the sittings are the draft as much as the masters are.
+   */
+  sittings?: MaterialiseSitting[];
   /** Write no lesson starting at or before this instant (DRAFT never writes the past). */
   notBefore?: Date;
+}
+
+/** One lunch sitting as materialise reads it. */
+export interface MaterialiseSitting {
+  studentGroupId: string;
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
 }
 
 /**
@@ -409,7 +423,7 @@ export class CalendarService {
      * "Lunch". Both are read straight from the browser through PostgREST
      * with no server DTO to filter at.
      */
-    const sittings = await tx.lunchSitting.findMany({
+    const sittings: MaterialiseSitting[] = options.sittings ?? await tx.lunchSitting.findMany({
       where: { academicYearId: dto.academicYearId },
       select: {
         studentGroupId: true,
