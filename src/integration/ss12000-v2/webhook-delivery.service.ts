@@ -13,6 +13,8 @@ import { vetTarget } from './subscriptions.service';
 
 /** The tick: at most one notice per subscription a minute, as S1 permits ("kan välja att skicka en notis för multipla förändringar"). */
 export const WEBHOOK_INTERVAL_MS = 60_000;
+/** The purge of old tombstones and delivery rows, and the release of stale claims. */
+export const HOUSEKEEPING_INTERVAL_MS = 60 * 60_000;
 /** Subscriptions claimed per tick, and how many are posted at once. */
 export const WEBHOOKS_PER_TICK = 50;
 export const WEBHOOK_CONCURRENCY = 5;
@@ -65,8 +67,8 @@ interface SealedRow {
  * On the scheduler's pattern: an unref'd one-minute interval off when
  * SS12000_BACKGROUND=off, a tick that never overlaps itself, and SECURITY
  * DEFINER functions in a transaction with no principal:
- *   1. app.ss12000_provider_housekeeping(): tombstones after 400 days,
- *      delivery rows after 30, stale claims released;
+ *   1. hourly, app.ss12000_provider_housekeeping(): tombstones after 400
+ *      days, delivery rows after 30, stale claims released;
  *   2. app.ss12000_due_notifications(50): live, unexpired, unsuspended
  *      subscriptions of live keys with versions or tombstones in their
  *      resource types below the xid horizon (FOR UPDATE SKIP LOCKED);
@@ -88,6 +90,7 @@ export class Ss12000WebhookDeliveryService implements OnModuleInit, OnModuleDest
   private readonly logger = new Logger(Ss12000WebhookDeliveryService.name);
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
+  private lastHousekeeping = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -123,9 +126,14 @@ export class Ss12000WebhookDeliveryService implements OnModuleInit, OnModuleDest
   }
 
   private async pass(): Promise<void> {
-    await this.prisma.withDeliveryService((tx) =>
-      tx.$queryRaw(Prisma.sql`SELECT tombstones, deliveries, released FROM app.ss12000_provider_housekeeping()`),
-    );
+    // Hourly, not every minute: the purge reads the tombstones by age across
+    // schools, and an hour more or less of a 400-day retention is nothing.
+    if (Date.now() - this.lastHousekeeping >= HOUSEKEEPING_INTERVAL_MS) {
+      await this.prisma.withDeliveryService((tx) =>
+        tx.$queryRaw(Prisma.sql`SELECT tombstones, deliveries, released FROM app.ss12000_provider_housekeeping()`),
+      );
+      this.lastHousekeeping = Date.now();
+    }
     const due = await this.prisma.withDeliveryService((tx) =>
       tx.$queryRaw<Due[]>(
         Prisma.sql`SELECT subscription_id, school_id, key_id, target, modified, deleted, watermark_to, attempts, failing_since
