@@ -10,28 +10,10 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { getSupabase } from '../../services/supabase';
+import { notificationText } from '../../services/notificationText';
+import { useI18n } from '../../context/LocaleContext';
+import { formatDateTime } from '../../i18n/format';
 import type { NotificationRow } from '../../types';
-
-function renderText(entry: NotificationRow): string {
-  const meta = entry.meta ?? {};
-  const str = (key: string): string => String(meta[key] ?? '');
-  switch (entry.type) {
-    case 'ABSENCE_UNREPORTED':
-      return `${str('studentName')} was marked absent from ${str('subjectName')} on ${str('date')} without a prior report.`;
-    case 'LEAVE_DECIDED':
-      return `Leave for ${str('studentName')} (${str('startDate')} – ${str('endDate')}) was ${
-        str('status') === 'APPROVED' ? 'approved' : 'rejected'
-      }.`;
-    case 'LESSON_CANCELLED':
-      return `${str('subjectName')} on ${new Date(str('startsAt')).toLocaleString()} was cancelled.`;
-    case 'LESSON_SUBSTITUTE':
-      return `${str('subjectName')} on ${new Date(str('startsAt')).toLocaleString()} has a substitute teacher.`;
-    case 'SCHEDULE_CHANGED':
-      return `The weekly schedule for ${str('subjectName')} was changed.`;
-    default:
-      return 'Notification';
-  }
-}
 
 async function fetchNotifications(): Promise<NotificationRow[]> {
   const { data, error } = await getSupabase()
@@ -43,8 +25,13 @@ async function fetchNotifications(): Promise<NotificationRow[]> {
   return (data ?? []) as NotificationRow[];
 }
 
-/** In-app notification inbox (RLS: own rows only). */
+/**
+ * In-app notification inbox (RLS: own rows only), for every role — the tab a
+ * push opens. Each row is worded by services/notificationText.ts, all nine
+ * types in the reader's language.
+ */
 export function NotificationsScreen(): React.JSX.Element {
+  const { t, locale } = useI18n();
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -89,12 +76,14 @@ export function NotificationsScreen(): React.JSX.Element {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Notifications</Text>
-          {unread > 0 ? <Text style={styles.headerSubtitle}>{unread} unread</Text> : null}
+          <Text style={styles.headerTitle}>{t('notifications.title')}</Text>
+          {unread > 0 ? (
+            <Text style={styles.headerSubtitle}>{t('notifications.unread', { count: unread })}</Text>
+          ) : null}
         </View>
         {unread > 0 ? (
           <TouchableOpacity accessibilityRole="button" onPress={() => void markAllRead()}>
-            <Text style={styles.markRead}>Mark all read</Text>
+            <Text style={styles.markRead}>{t('notifications.markAllRead')}</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -106,13 +95,13 @@ export function NotificationsScreen(): React.JSX.Element {
         }
         renderItem={({ item }) => (
           <View style={[styles.card, item.readAt === null && styles.cardUnread]}>
-            <Text style={styles.cardText}>{renderText(item)}</Text>
-            <Text style={styles.cardMeta}>{new Date(item.createdAt).toLocaleString()}</Text>
+            <Text style={styles.cardText}>{notificationText(item, t, locale)}</Text>
+            <Text style={styles.cardMeta}>{formatDateTime(item.createdAt, locale)}</Text>
           </View>
         )}
         ListEmptyComponent={
           <View style={styles.center}>
-            <Text style={styles.emptyTitle}>No notifications yet</Text>
+            <Text style={styles.emptyTitle}>{t('notifications.empty')}</Text>
           </View>
         }
       />

@@ -10,11 +10,14 @@ import {
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/LocaleContext';
 import { useSync } from '../../context/SyncContext';
+import { formatTimeRange } from '../../i18n/format';
+import type { Translate } from '../../i18n';
 import { useBiometrics } from '../../hooks/useBiometrics';
 import { useOfflineAttendance } from '../../hooks/useOfflineAttendance';
 import { getStudentsByIds } from '../../services/database/localDatabase';
-import type { AttendanceStatus, Student, SyncStatus } from '../../types';
+import type { AttendanceStatus, Student, SyncProblem, SyncStatus } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -38,25 +41,27 @@ const STATUS_COLORS: Record<AttendanceStatus, string> = {
   excused: '#8b5cf6',
 };
 
-const STATUS_LABELS: Record<AttendanceStatus, string> = {
-  present: 'P',
-  absent:  'A',
-  late:    'L',
-  excused: 'E',
-};
-
 type SyncConfig = {
-  readonly label: string;
   readonly color: string;
   readonly dotChar: string;
 };
 
+// The words are the catalogue's (attendance.sync.*); only colour and glyph here.
 const SYNC_STATUS_CONFIG: Record<SyncStatus, SyncConfig> = {
-  connected: { label: 'Connected',              color: '#22c55e', dotChar: '●' },
-  offline:   { label: 'Offline · cached data',  color: '#f59e0b', dotChar: '◌' },
-  syncing:   { label: 'Syncing…',               color: '#3b82f6', dotChar: '↻' },
-  error:     { label: 'Sync Error',             color: '#ef4444', dotChar: '✕' },
+  connected: { color: '#22c55e', dotChar: '●' },
+  offline:   { color: '#f59e0b', dotChar: '◌' },
+  syncing:   { color: '#3b82f6', dotChar: '↻' },
+  error:     { color: '#ef4444', dotChar: '✕' },
 };
+
+/** The banner's line: the status, what is waiting, and what went wrong. */
+export function syncBannerText(t: Translate, status: SyncStatus, pendingCount: number, problem: SyncProblem | null): string {
+  const parts = [t(`attendance.sync.${status}`)];
+  if (pendingCount > 0) parts.push(t('attendance.pending', { count: pendingCount }));
+  if (problem?.code === 'SESSION_EXPIRED') parts.push(t('attendance.syncErrors.SESSION_EXPIRED'));
+  if (problem?.code === 'RECORDS_FAILED') parts.push(t('attendance.syncErrors.RECORDS_FAILED', { count: problem.count }));
+  return parts.join(' · ');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
@@ -65,13 +70,12 @@ const SYNC_STATUS_CONFIG: Record<SyncStatus, SyncConfig> = {
 interface SyncBannerProps {
   readonly status: SyncStatus;
   readonly pendingCount: number;
-  readonly errorMessage: string | null;
+  readonly problem: SyncProblem | null;
 }
 
-function SyncBanner({ status, pendingCount, errorMessage }: SyncBannerProps): React.JSX.Element {
+function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.JSX.Element {
+  const { t } = useI18n();
   const cfg = SYNC_STATUS_CONFIG[status];
-  const pendingLabel = pendingCount > 0 ? ` · ${pendingCount} pending` : '';
-  const errLabel = errorMessage ? ` · ${errorMessage}` : '';
 
   return (
     <View
@@ -82,7 +86,7 @@ function SyncBanner({ status, pendingCount, errorMessage }: SyncBannerProps): Re
     >
       <Text style={[styles.bannerDot, { color: cfg.color }]}>{cfg.dotChar}</Text>
       <Text style={[styles.bannerText, { color: cfg.color }]} numberOfLines={1}>
-        {cfg.label}{pendingLabel}{errLabel}
+        {syncBannerText(t, status, pendingCount, problem)}
       </Text>
     </View>
   );
@@ -94,6 +98,7 @@ interface StudentRowProps {
 }
 
 function StudentRow({ item, onStatusChange }: StudentRowProps): React.JSX.Element {
+  const { t } = useI18n();
   return (
     <View style={styles.row}>
       <Text style={styles.rowName} numberOfLines={1}>
@@ -111,11 +116,14 @@ function StudentRow({ item, onStatusChange }: StudentRowProps): React.JSX.Elemen
               ]}
               onPress={() => onStatusChange(item.student.id, s)}
               accessibilityRole="button"
-              accessibilityLabel={`Mark ${item.student.displayName} as ${s}`}
+              accessibilityLabel={t('attendance.markA11y', {
+                name: item.student.displayName,
+                status: t(`attendance.statusName.${s}`),
+              })}
               accessibilityState={{ selected: isActive }}
             >
               <Text style={[styles.statusBtnLabel, isActive && styles.statusBtnLabelActive]}>
-                {STATUS_LABELS[s]}
+                {t(`attendance.statusLetter.${s}`)}
               </Text>
             </TouchableOpacity>
           );
@@ -141,6 +149,7 @@ function StudentRow({ item, onStatusChange }: StudentRowProps): React.JSX.Elemen
 export function AttendanceScreen(): React.JSX.Element {
   const { activeLesson, syncState, triggerManualSync } = useSync();
   const { authState } = useAuth();
+  const { t } = useI18n();
   const { authenticate, isAuthenticating } = useBiometrics();
   const { enqueue, isSubmitting } = useOfflineAttendance();
 
@@ -183,22 +192,22 @@ export function AttendanceScreen(): React.JSX.Element {
     const unrecorded = students.filter((s) => !attendanceMap.has(s.id));
     if (unrecorded.length > 0) {
       Alert.alert(
-        'Incomplete Attendance',
-        `${unrecorded.length} student(s) still need a status. Mark everyone before submitting.`,
+        t('attendance.incompleteTitle'),
+        t('attendance.incompleteBody', { count: unrecorded.length }),
       );
       return;
     }
 
     // ── Biometric gate ──────────────────────────────────────────────────────
     setIsBiometricPending(true);
-    const verified = await authenticate('Verify your identity to submit attendance');
+    const verified = await authenticate({
+      reason: t('attendance.biometricReason'),
+      cancelLabel: t('common.cancel'),
+    });
     setIsBiometricPending(false);
 
     if (!verified) {
-      Alert.alert(
-        'Authentication Required',
-        'Biometric verification failed. Attendance was not submitted.',
-      );
+      Alert.alert(t('attendance.authRequiredTitle'), t('attendance.authRequiredBody'));
       return;
     }
 
@@ -214,13 +223,12 @@ export function AttendanceScreen(): React.JSX.Element {
       // Immediately attempt to push the queue if online.
       await triggerManualSync();
 
-      Alert.alert('Submitted', 'Attendance recorded and queued for sync.');
+      Alert.alert(t('attendance.submittedTitle'), t('attendance.submittedBody'));
       setAttendanceMap(new Map());
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Submission failed';
-      Alert.alert('Error', message);
+    } catch {
+      Alert.alert(t('attendance.errorTitle'), t('attendance.submitFailed'));
     }
-  }, [activeLesson, authState.teacherId, students, attendanceMap, authenticate, enqueue, triggerManualSync]);
+  }, [activeLesson, authState.teacherId, students, attendanceMap, authenticate, enqueue, triggerManualSync, t]);
 
   const renderItem = useCallback(
     ({ item }: { item: StudentAttendanceItem }): React.JSX.Element => (
@@ -244,13 +252,11 @@ export function AttendanceScreen(): React.JSX.Element {
         <SyncBanner
           status={syncState.status}
           pendingCount={syncState.pendingCount}
-          errorMessage={syncState.errorMessage}
+          problem={syncState.problem}
         />
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No Active Lesson</Text>
-          <Text style={styles.emptySubtitle}>
-            Select a lesson from your schedule to begin taking attendance.
-          </Text>
+          <Text style={styles.emptyTitle}>{t('attendance.noLessonTitle')}</Text>
+          <Text style={styles.emptySubtitle}>{t('attendance.noLessonBody')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -262,21 +268,17 @@ export function AttendanceScreen(): React.JSX.Element {
       <SyncBanner
         status={syncState.status}
         pendingCount={syncState.pendingCount}
-        errorMessage={syncState.errorMessage}
+        problem={syncState.problem}
       />
 
       {/* ── Lesson Header ──────────────────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerSubject}>{activeLesson.subjectName}</Text>
         <Text style={styles.headerMeta}>
-          {activeLesson.roomName}
-          {'  ·  '}
-          {new Date(activeLesson.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          {' – '}
-          {new Date(activeLesson.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          {`${activeLesson.roomName}  ·  ${formatTimeRange(activeLesson.startTime, activeLesson.endTime)}`}
         </Text>
         <Text style={styles.headerProgress}>
-          {attendanceMap.size} / {students.length} recorded
+          {t('attendance.recorded', { done: attendanceMap.size, total: students.length })}
         </Text>
       </View>
 
@@ -306,15 +308,13 @@ export function AttendanceScreen(): React.JSX.Element {
           onPress={() => { void handleSubmit(); }}
           disabled={!allRecorded || isBusy}
           accessibilityRole="button"
-          accessibilityLabel="Submit attendance — requires biometric verification"
+          accessibilityLabel={t('attendance.submitA11y')}
           accessibilityState={{ disabled: !allRecorded || isBusy }}
         >
           {isBiometricPending ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.submitBtnText}>
-              Submit Attendance  ·  FaceID / TouchID
-            </Text>
+            <Text style={styles.submitBtnText}>{t('attendance.submit')}</Text>
           )}
         </TouchableOpacity>
       </View>

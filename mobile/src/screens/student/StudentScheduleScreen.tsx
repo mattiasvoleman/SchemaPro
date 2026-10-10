@@ -14,6 +14,8 @@ import {
   toSections,
   type ScheduleEntry,
 } from '../../services/schedule';
+import { useI18n } from '../../context/LocaleContext';
+import { formatDayHeading, formatTimeRange } from '../../i18n/format';
 
 /**
  * Student weekly schedule: lessons and meals, in the order they are lived.
@@ -26,13 +28,10 @@ import {
  * when the logic lives here instead.
  */
 
-const hhmm = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-const timeRange = (startsAt: string, endsAt: string) =>
-  `${hhmm(startsAt)} – ${hhmm(endsAt)}`;
+const DAYS_AHEAD = 7;
 
 export function StudentScheduleScreen(): React.JSX.Element {
+  const { t, locale } = useI18n();
   const [rows, setRows] = useState<ScheduleEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -42,10 +41,10 @@ export function StudentScheduleScreen(): React.JSX.Element {
     try {
       setRows(await fetchSchedule());
       setError(null);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Could not load.');
+    } catch {
+      setError(t('common.loadError'));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load().finally(() => setIsLoading(false));
@@ -65,13 +64,9 @@ export function StudentScheduleScreen(): React.JSX.Element {
         // this string: two days can render the same label under a locale that
         // omits the year, and a SectionList given two sections with one key
         // drops one of them.
-        title: new Date(`${section.date}T00:00:00`).toLocaleDateString(undefined, {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'short',
-        }),
+        title: formatDayHeading(section.date, locale),
       })),
-    [rows],
+    [rows, locale],
   );
 
   if (isLoading) {
@@ -87,8 +82,8 @@ export function StudentScheduleScreen(): React.JSX.Element {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My schedule</Text>
-        <Text style={styles.headerSubtitle}>Next 7 days</Text>
+        <Text style={styles.headerTitle}>{t('studentSchedule.title')}</Text>
+        <Text style={styles.headerSubtitle}>{t('schedule.nextDays', { count: DAYS_AHEAD })}</Text>
       </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <SectionList
@@ -105,15 +100,15 @@ export function StudentScheduleScreen(): React.JSX.Element {
             return (
               <View style={[styles.card, styles.cardRast]}>
                 <Text style={styles.cardTitleRast}>{item.name}</Text>
-                <Text style={styles.cardMeta}>{timeRange(item.startsAt, item.endsAt)}</Text>
+                <Text style={styles.cardMeta}>{formatTimeRange(item.startsAt, item.endsAt)}</Text>
               </View>
             );
           }
           if (item.kind === 'LUNCH') {
             return (
               <View style={[styles.card, styles.cardLunch]}>
-                <Text style={styles.cardTitleLunch}>Lunch</Text>
-                <Text style={styles.cardMeta}>{timeRange(item.startsAt, item.endsAt)}</Text>
+                <Text style={styles.cardTitleLunch}>{t('common.lunch')}</Text>
+                <Text style={styles.cardMeta}>{formatTimeRange(item.startsAt, item.endsAt)}</Text>
               </View>
             );
           }
@@ -121,19 +116,21 @@ export function StudentScheduleScreen(): React.JSX.Element {
           return (
             <View style={[styles.card, cancelled && styles.cardCancelled]}>
               <Text style={[styles.cardTitle, cancelled && styles.cancelledText]}>
-                {item.subject?.name ?? 'Lesson'}
-                {cancelled ? ' · CANCELLED' : ''}
+                {cancelled
+                  ? `${item.subject?.name ?? t('common.lesson')} · ${t('common.cancelled')}`
+                  : item.subject?.name ?? t('common.lesson')}
               </Text>
               <Text style={styles.cardMeta}>
-                {timeRange(item.startsAt, item.endsAt)}
-                {item.room?.name ? ` · ${item.room.name}` : ''}
+                {item.room?.name
+                  ? `${formatTimeRange(item.startsAt, item.endsAt)} · ${item.room.name}`
+                  : formatTimeRange(item.startsAt, item.endsAt)}
               </Text>
             </View>
           );
         }}
         ListEmptyComponent={
           <View style={styles.center}>
-            <Text style={styles.emptyTitle}>Nothing in the next 7 days</Text>
+            <Text style={styles.emptyTitle}>{t('studentSchedule.empty', { count: DAYS_AHEAD })}</Text>
           </View>
         }
       />
@@ -152,7 +149,8 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontSize: 13,
     fontWeight: '700',
-    textTransform: 'capitalize',
+    // No textTransform: 'capitalize' would write "Tisdag 13 Oktober", and a
+    // Swedish month takes no capital.
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 6,

@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react';
-import { AuthService } from '../services/auth/authService';
+import { AuthError, AuthService, type AuthErrorCode } from '../services/auth/authService';
 import type { AuthState } from '../types';
 
 interface UseSecureAuthReturn {
   readonly authState: AuthState;
   readonly isLoading: boolean;
-  readonly error: string | null;
+  /** Why the last login failed, as a code the login screen words. */
+  readonly error: AuthErrorCode | null;
   readonly login: (email: string, password: string) => Promise<void>;
   readonly logout: () => Promise<void>;
   readonly restoreSession: () => Promise<void>;
@@ -24,7 +25,7 @@ const INITIAL_STATE: AuthState = {
 export function useSecureAuth(): UseSecureAuthReturn {
   const [authState, setAuthState] = useState<AuthState>(INITIAL_STATE);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AuthErrorCode | null>(null);
 
   const login = useCallback(async (email: string, password: string): Promise<void> => {
     setIsLoading(true);
@@ -33,8 +34,7 @@ export function useSecureAuth(): UseSecureAuthReturn {
       const state = await AuthService.login({ email, password });
       setAuthState(state);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Login failed';
-      setError(message);
+      setError(err instanceof AuthError ? err.code : 'LOGIN_FAILED');
       throw err;
     } finally {
       setIsLoading(false);

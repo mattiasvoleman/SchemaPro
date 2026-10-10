@@ -24,6 +24,29 @@ interface ProfileRow {
 
 const SIGNED_OUT: AuthState = { isAuthenticated: false, teacherId: null, role: null };
 
+export type AuthErrorCode = 'INVALID_CREDENTIALS' | 'NO_PROFILE' | 'LOGIN_FAILED';
+
+/**
+ * A failed login, as a code the login screen words in the reader's language.
+ * Supabase's own message is English prose written for a developer; it is
+ * kept as the Error's message for a log, never shown.
+ */
+export class AuthError extends Error {
+  constructor(
+    readonly code: AuthErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
+/** Supabase answers bad credentials with 400 and "invalid_credentials". */
+function loginFailure(error: { message?: string; status?: number; code?: string } | null): AuthError {
+  const invalid = error?.code === 'invalid_credentials' || error?.status === 400;
+  return new AuthError(invalid ? 'INVALID_CREDENTIALS' : 'LOGIN_FAILED', error?.message ?? 'Login failed.');
+}
+
 async function fetchProfile(authId: string): Promise<ProfileRow | null> {
   const { data, error } = await getSupabase()
     .from('Users')
@@ -43,13 +66,18 @@ export const AuthService = {
       password: credentials.password,
     });
     if (error || !data.user) {
-      throw new Error(error?.message ?? 'Login failed.');
+      throw loginFailure(error);
     }
 
-    const profile = await fetchProfile(data.user.id);
+    let profile: ProfileRow | null;
+    try {
+      profile = await fetchProfile(data.user.id);
+    } catch (profileError) {
+      throw new AuthError('LOGIN_FAILED', profileError instanceof Error ? profileError.message : 'Profile read failed.');
+    }
     if (!profile) {
       await supabase.auth.signOut();
-      throw new Error('No SchemaPro profile is linked to this account.');
+      throw new AuthError('NO_PROFILE', 'No SchemaPro profile is linked to this account.');
     }
 
     // Cache the profile so restoreSession() works with no connectivity.

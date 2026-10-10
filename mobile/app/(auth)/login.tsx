@@ -10,9 +10,14 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../../src/context/AuthContext';
+import { useI18n } from '../../src/context/LocaleContext';
+
+/** The logo's letters: a mark, the same in every language. */
+const BRAND_MARK = 'SP';
 
 export default function LoginScreen(): React.JSX.Element {
   const { login, isLoading, error } = useAuth();
+  const { t, locale, setLocale } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -26,16 +31,16 @@ export default function LoginScreen(): React.JSX.Element {
       <View style={styles.inner}>
         {/* ── Brand ────────────────────────────────────────────────────── */}
         <View style={styles.brand}>
-          <Text style={styles.brandMark}>SP</Text>
+          <Text style={styles.brandMark}>{BRAND_MARK}</Text>
         </View>
-        <Text style={styles.title}>SchemaPro</Text>
-        <Text style={styles.subtitle}>Teacher Portal</Text>
+        <Text style={styles.title}>{t('login.title')}</Text>
+        <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
 
         {/* ── Form ─────────────────────────────────────────────────────── */}
         <View style={styles.form}>
           <TextInput
             style={styles.input}
-            placeholder="School email"
+            placeholder={t('login.email')}
             placeholderTextColor="#475569"
             value={email}
             onChangeText={setEmail}
@@ -47,7 +52,7 @@ export default function LoginScreen(): React.JSX.Element {
           />
           <TextInput
             style={styles.input}
-            placeholder="Password"
+            placeholder={t('login.password')}
             placeholderTextColor="#475569"
             value={password}
             onChangeText={setPassword}
@@ -60,7 +65,7 @@ export default function LoginScreen(): React.JSX.Element {
           />
 
           {error !== null && (
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>{t(`authErrors.${error}`)}</Text>
           )}
 
           <TouchableOpacity
@@ -68,19 +73,27 @@ export default function LoginScreen(): React.JSX.Element {
             onPress={() => { void login(email, password); }}
             disabled={!canSubmit}
             accessibilityRole="button"
-            accessibilityLabel="Log in"
+            accessibilityLabel={t('login.submitA11y')}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.loginBtnText}>Log In</Text>
+              <Text style={styles.loginBtnText}>{t('login.submit')}</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.disclaimer}>
-          Access is restricted to authorised school staff only.
-        </Text>
+        <Text style={styles.disclaimer}>{t('login.disclaimer')}</Text>
+
+        {/* The language before anything else: a reader who does not read
+            Swedish must be able to find the switch without reading Swedish. */}
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => void setLocale(locale === 'sv' ? 'en' : 'sv')}
+          style={styles.languageBtn}
+        >
+          <Text style={styles.languageText}>{t('login.otherLanguage')}</Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
@@ -161,7 +174,17 @@ const styles = StyleSheet.create({
   disclaimer: {
     marginTop: 32,
     fontSize: 12,
-    color: '#334155',
+    color: '#64748b',
     textAlign: 'center',
+  },
+  languageBtn: {
+    marginTop: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  languageText: {
+    fontSize: 13,
+    color: '#6366f1',
+    fontWeight: '600',
   },
 });
