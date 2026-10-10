@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   ArgumentsHost,
   Catch,
@@ -51,6 +51,20 @@ function safeParams(value: unknown): Record<string, string | number> | undefined
  * response. Internal details (stack traces, SQL, Prisma metadata, PII) are
  * logged server-side under a correlation id but NEVER returned to the client.
  */
+/**
+ * A Schemavisaren share token is a bearer credential: whoever holds the URL
+ * reads the timetable until the link is revoked, which is why the database
+ * keeps only its sha256. A 429 or a 500 on that route must not write it to
+ * the log drain or echo it in `instance`. The path segment is replaced by the
+ * first 6 hex digits of its sha256 — enough to match a line to a link's
+ * stored hash, never enough to open it.
+ */
+export function redactShareToken(url: string): string {
+  return url.replace(/(\/public\/v1\/timetables\/)([^/?#]+)/, (_match, prefix: string, token: string) =>
+    `${prefix}sha256:${createHash('sha256').update(token).digest('hex').slice(0, 6)}…`,
+  );
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -68,7 +82,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       title: normalized.title,
       status: normalized.status,
       detail: normalized.detail,
-      instance: request.originalUrl ?? request.url,
+      instance: redactShareToken(request.originalUrl ?? request.url),
       traceId,
       ...(normalized.errors ? { errors: normalized.errors } : {}),
       ...(normalized.code ? { code: normalized.code } : {}),
@@ -240,7 +254,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     request: Request,
   ): void {
     // Log method + path + status only. Never log the request body (may contain PII).
-    const context = `${request.method} ${request.url} -> ${normalized.status} [trace=${traceId}]`;
+    const context = `${request.method} ${redactShareToken(request.url)} -> ${normalized.status} [trace=${traceId}]`;
 
     if (normalized.status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       const stack = exception instanceof Error ? exception.stack : undefined;

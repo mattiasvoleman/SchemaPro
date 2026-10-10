@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
-import { HttpExceptionFilter } from './http-exception.filter';
+import { HttpExceptionFilter, redactShareToken } from './http-exception.filter';
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -333,5 +333,19 @@ describe('HttpExceptionFilter', () => {
     filter.catch(new NotFoundException(), host);
 
     expect(body().instance).toBe('/api/v1/rooms');
+  });
+  it("never writes a Schemavisaren share token to the log or echoes it in instance", () => {
+    const token = 'klass7AklasS7AklasS7AklasS7AklasS7AklasS7Ak';
+    request.method = 'GET';
+    request.url = `/public/v1/timetables/${token}?date=2026-02-30`;
+    request.originalUrl = request.url;
+    filter.catch(new HttpException('Too Many Requests', HttpStatus.TOO_MANY_REQUESTS), host);
+    filter.catch(new Error('boom'), host);
+    const logged = [...logger.warn.mock.calls, ...logger.error.mock.calls].map((call) => String(call[0])).join('\n');
+    const instances = response.json.mock.calls.map((call) => (call[0] as ProblemDetails).instance).join('\n');
+    expect(logged).not.toContain(token);
+    expect(instances).not.toContain(token);
+    expect(logged).toMatch(/\/public\/v1\/timetables\/sha256:[0-9a-f]{6}…\?date=2026-02-30 -> 429/);
+    expect(redactShareToken('/api/v1/calendar/lessons?x=1')).toBe('/api/v1/calendar/lessons?x=1');
   });
 });
