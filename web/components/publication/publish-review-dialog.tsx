@@ -35,6 +35,7 @@ import {
   usePublishTimetable,
 } from "@/lib/publication-queries";
 import { publicationErrorText } from "@/lib/publication-messages";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   currentSegment,
   defaultPublishWindow,
@@ -105,7 +106,13 @@ export function PublishReviewDialog({
     ? { validFrom: edited.validFrom ?? defaults.validFrom, validTo: edited.validTo ?? defaults.validTo }
     : null;
   const valid = range !== null && year !== null && isWindowValid(range, year);
-  const preview = usePublicationPreview(open && valid && year ? { academicYearId: year.id, ...range! } : null);
+  // The dry run follows the dates once they stand still (600 ms): typing a
+  // date commits each parseable value, and each dry run in DRAFT holds the
+  // school's publication lock and counts against the publish limit.
+  const asked = useDebouncedValue(open && valid && year ? { academicYearId: year.id, ...range! } : null, 600);
+  const preview = usePublicationPreview(asked);
+  const previewIsForRange =
+    asked !== null && range !== null && asked.validFrom === range.validFrom && asked.validTo === range.validTo;
 
   const names = useMemo<LessonNames>(() => {
     const byId = <T extends { id: string }>(rows: readonly T[] | undefined) =>
@@ -135,7 +142,7 @@ export function PublishReviewDialog({
   };
 
   const doPublish = async () => {
-    if (!preview.data || !year || !range) return;
+    if (!preview.data || !year || !range || !previewIsForRange) return;
     setProblem(null);
     try {
       const outcome = await publish.mutateAsync({
@@ -271,7 +278,7 @@ export function PublishReviewDialog({
           </Button>
           <Button
             onClick={doPublish}
-            disabled={!result || result.refused || preview.isFetching || publish.isPending}
+            disabled={!result || result.refused || preview.isFetching || !previewIsForRange || publish.isPending}
           >
             {publish.isPending ? (
               <>

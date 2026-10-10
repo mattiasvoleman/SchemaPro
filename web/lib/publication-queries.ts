@@ -94,7 +94,9 @@ export function usePublicationPreview(window: PublicationWindow | null) {
     retry: false,
     refetchOnWindowFocus: false,
     staleTime: 0,
-    queryFn: () => api.post<PublicationPreview>("/api/v1/publications/preview", window),
+    // The signal cancels a dry run the window has moved past: in DRAFT each one
+    // holds the school's publication lock, and an edit waits behind it.
+    queryFn: ({ signal }) => api.post<PublicationPreview>("/api/v1/publications/preview", window, signal),
   });
 }
 
