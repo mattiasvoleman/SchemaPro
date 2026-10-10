@@ -8036,3 +8036,264 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 27b–f: ett utkast syns bara för admin.
+--
+-- 20261011100000. In DRAFT every arm of MasterLessons, MasterLessonGroups,
+-- MasterLessonStudents and LunchSittings that admits somebody other than the
+-- admin admits nobody; in DIRECT each admits whom it always admitted. The
+-- catalog is asserted from pg_policies, so a forgotten or a future arm fails
+-- here as it fails the migration (b). Deleting a master in DRAFT records its
+-- future rows, and nobody but the trigger writes the record (c). The lock
+-- functions refuse another school (d). A cascade from a läsår records
+-- nothing and does not fail (f).
+-- ---------------------------------------------------------------------------
+
+-- 27b, the catalog: no arm but the admin's reads without the predicate.
+DO $$
+DECLARE bad text;
+BEGIN
+  SELECT string_agg(tablename || '.' || policyname, ', ' ORDER BY tablename, policyname) INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND tablename IN ('MasterLessons', 'MasterLessonGroups', 'MasterLessonStudents', 'LunchSittings')
+     AND cmd IN ('SELECT', 'ALL')
+     AND policyname NOT LIKE '%admin_all'
+     AND coalesce(qual, '') NOT LIKE '%grundschema_is_live%';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'draft: arms without the predicate: %', bad;
+  END IF;
+  -- The two arms 20260713150000 generated through format() are among them.
+  IF (SELECT count(*) FROM pg_policies WHERE policyname IN ('masterlessongroups_staff_select', 'masterlessonstudents_staff_select')
+        AND qual LIKE '%grundschema_is_live%') <> 2 THEN
+    RAISE EXCEPTION 'draft: the generated staff arms lack the predicate';
+  END IF;
+END $$;
+
+-- 27b, behaviour: a lesson with an extra class, a named pupil and a meal,
+-- read by every role in DIRECT and then in DRAFT, in one rolled-back
+-- transaction.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; subj uuid; home uuid; extra uuid; pupil uuid; m uuid;
+BEGIN
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO subj FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  -- The fixture guardian's child and their class, so the student and the
+  -- guardian arms have something to admit.
+  SELECT u.id, u."studentGroupId" INTO pupil, home FROM "Users" u
+    JOIN "GuardianStudents" gs ON gs."studentId" = u.id
+    JOIN "Users" g ON g.id = gs."guardianId" AND g."authId" = '00000000-0000-4000-8000-000000000004'
+   WHERE u."schoolId" = school AND u.role = 'STUDENT' AND u."isActive" AND u."studentGroupId" IS NOT NULL
+   ORDER BY u."authId" LIMIT 1;
+  IF pupil IS NULL THEN
+    RAISE EXCEPTION 'draft: the fixture guardian has no child with a class in the primary school';
+  END IF;
+  SELECT id INTO extra FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y AND id <> home ORDER BY id LIMIT 1;
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (school, y, subj, home, 6, '07:00', '07:30', now()) RETURNING id INTO m;
+  INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId") VALUES (school, m, extra);
+  INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId") VALUES (school, m, pupil);
+  DELETE FROM "LunchSittings" WHERE "studentGroupId" = home AND "dayOfWeek" = 6;
+  INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (school, y, home, 6, '11:00', '11:30', now());
+  PERFORM set_config('app.test_rls27b_lesson', m::text, true);
+  PERFORM set_config('app.test_rls27b_home', home::text, true);
+  PERFORM set_config('app.test_rls27b_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls27b_pupil_sub', (SELECT "authId"::text FROM "Users" WHERE id = pupil), true);
+  PERFORM set_config('app.test_rls27b_guardian_sub', (SELECT g."authId"::text FROM "GuardianStudents" gs
+    JOIN "Users" g ON g.id = gs."guardianId" WHERE gs."studentId" = pupil AND g."isActive" LIMIT 1), true);
+END $$;
+
+CREATE TEMP TABLE rls27b_seen (phase text, who text, lessons int, groups int, pupils int, meals int) ON COMMIT DROP;
+GRANT ALL ON rls27b_seen TO PUBLIC;
+
+-- What each role sees, written to the temp table by one function-like block per role.
+SELECT set_config('app.test_rls27b_phase', 'DIRECT', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_teacher_sub'))::text, true);
+INSERT INTO rls27b_seen SELECT current_setting('app.test_rls27b_phase'), 'TEACHER',
+  (SELECT count(*) FROM "MasterLessons" WHERE id = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonGroups" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonStudents" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = current_setting('app.test_rls27b_home')::uuid AND "dayOfWeek" = 6);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_pupil_sub'))::text, true);
+INSERT INTO rls27b_seen SELECT current_setting('app.test_rls27b_phase'), 'STUDENT',
+  (SELECT count(*) FROM "MasterLessons" WHERE id = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonGroups" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonStudents" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = current_setting('app.test_rls27b_home')::uuid AND "dayOfWeek" = 6);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_guardian_sub'))::text, true);
+INSERT INTO rls27b_seen SELECT current_setting('app.test_rls27b_phase'), 'GUARDIAN', 0, 0, 0,
+  (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = current_setting('app.test_rls27b_home')::uuid AND "dayOfWeek" = 6);
+
+-- The school goes DRAFT, in this transaction only.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+INSERT INTO "PublicationSettings" ("schoolId", "publishMode") VALUES (app.current_school_id(), 'DRAFT')
+ON CONFLICT ("schoolId") DO UPDATE SET "publishMode" = 'DRAFT';
+
+SELECT set_config('app.test_rls27b_phase', 'DRAFT', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_teacher_sub'))::text, true);
+INSERT INTO rls27b_seen SELECT current_setting('app.test_rls27b_phase'), 'TEACHER',
+  (SELECT count(*) FROM "MasterLessons" WHERE id = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonGroups" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonStudents" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = current_setting('app.test_rls27b_home')::uuid AND "dayOfWeek" = 6);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_pupil_sub'))::text, true);
+INSERT INTO rls27b_seen SELECT current_setting('app.test_rls27b_phase'), 'STUDENT',
+  (SELECT count(*) FROM "MasterLessons" WHERE id = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonGroups" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "MasterLessonStudents" WHERE "masterLessonId" = current_setting('app.test_rls27b_lesson')::uuid),
+  (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = current_setting('app.test_rls27b_home')::uuid AND "dayOfWeek" = 6);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_guardian_sub'))::text, true);
+INSERT INTO rls27b_seen SELECT current_setting('app.test_rls27b_phase'), 'GUARDIAN', 0, 0, 0,
+  (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = current_setting('app.test_rls27b_home')::uuid AND "dayOfWeek" = 6);
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE got text; admin_sees int;
+BEGIN
+  SELECT string_agg(format('%s/%s:%s,%s,%s,%s', phase, who, lessons, groups, pupils, meals), ' ' ORDER BY phase DESC, who)
+    INTO got FROM rls27b_seen;
+  -- DIRECT: as before the migration. The teacher reads the lesson, its
+  -- extra class, its pupil and the meal; the pupil their own lesson, row and
+  -- meal; the guardian their child's meal. DRAFT: nobody reads any of it.
+  IF got IS DISTINCT FROM
+     'DRAFT/GUARDIAN:0,0,0,0 DRAFT/STUDENT:0,0,0,0 DRAFT/TEACHER:0,0,0,0 '
+     'DIRECT/GUARDIAN:0,0,0,1 DIRECT/STUDENT:1,0,1,1 DIRECT/TEACHER:1,1,1,1' THEN
+    RAISE EXCEPTION 'draft: who sees what is %', got;
+  END IF;
+  -- The admin reads and writes the draft as before.
+  SELECT count(*) INTO admin_sees FROM "MasterLessons" WHERE id = current_setting('app.test_rls27b_lesson')::uuid;
+  IF admin_sees <> 1 THEN RAISE EXCEPTION 'draft: the admin reads % of their own draft lesson', admin_sees; END IF;
+  IF app.current_school_grundschema_is_live() THEN RAISE EXCEPTION 'draft: a DRAFT school reads as live'; END IF;
+END $$;
+
+-- 27c: a master deleted in DRAFT records its future rows, every status, and
+-- nothing else writes the record.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  m uuid := current_setting('app.test_rls27b_lesson')::uuid;
+  future_a uuid; future_b uuid; past uuid; n bigint;
+BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  SELECT school, m, "subjectId", "studentGroupId", current_date + 14, now() + interval '14 days', now() + interval '14 days 30 minutes', 'SCHEDULED', now()
+    FROM "MasterLessons" WHERE id = m RETURNING id INTO future_a;
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt")
+  SELECT school, m, "subjectId", "studentGroupId", current_date + 21, now() + interval '21 days', now() + interval '21 days 30 minutes', 'CANCELLED', 'MANUAL', now()
+    FROM "MasterLessons" WHERE id = m RETURNING id INTO future_b;
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  SELECT school, m, "subjectId", "studentGroupId", current_date - 7, now() - interval '7 days', now() - interval '7 days' + interval '30 minutes', 'SCHEDULED', now()
+    FROM "MasterLessons" WHERE id = m RETURNING id INTO past;
+  BEGIN
+    INSERT INTO "PublicationPendingRemovals" ("calendarLessonId", "schoolId", "academicYearId", "masterLessonId", reconcilable)
+    SELECT future_a, school, "academicYearId", m, true FROM "MasterLessons" WHERE id = m;
+    RAISE EXCEPTION 'draft: the admin wrote a pending removal';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "MasterLessons" WHERE id = m;
+  IF (SELECT string_agg(format('%s:%s', CASE "calendarLessonId" WHEN future_a THEN 'a' WHEN future_b THEN 'b' ELSE 'past' END, reconcilable), ','
+                        ORDER BY reconcilable DESC)
+        FROM "PublicationPendingRemovals" WHERE "masterLessonId" = m) IS DISTINCT FROM 'a:t,b:f' THEN
+    RAISE EXCEPTION 'draft: the deleted lesson recorded % rather than its two future rows',
+      (SELECT coalesce(string_agg(format('%s:%s', CASE "calendarLessonId" WHEN future_a THEN 'a' WHEN future_b THEN 'b' ELSE 'past' END, reconcilable), ','), 'nothing')
+         FROM "PublicationPendingRemovals" WHERE "masterLessonId" = m);
+  END IF;
+  -- The rows stay, their key nulled by the foreign key.
+  SELECT count(*) INTO n FROM "CalendarLessons" WHERE id IN (future_a, future_b, past) AND "masterLessonId" IS NULL;
+  IF n <> 3 THEN RAISE EXCEPTION 'draft: % of the three rows kept, nulled', n; END IF;
+  -- A deleted calendar row takes its record with it.
+  DELETE FROM "CalendarLessons" WHERE id = future_a;
+  SELECT count(*) INTO n FROM "PublicationPendingRemovals" WHERE "calendarLessonId" = future_a;
+  IF n <> 0 THEN RAISE EXCEPTION 'draft: a deleted row''s record outlived it'; END IF;
+  PERFORM set_config('app.test_rls27c_pending', future_b::text, true);
+END $$;
+
+-- A TEACHER reads the record (ids only, for the published key); a pupil does not.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PublicationPendingRemovals" WHERE "calendarLessonId" = current_setting('app.test_rls27c_pending')::uuid;
+  IF n <> 1 THEN RAISE EXCEPTION 'draft: a teacher reads % of the pending record', n; END IF;
+  BEGIN
+    DELETE FROM "PublicationPendingRemovals";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'draft: a teacher deleted % pending record(s)', n; END IF;
+  END;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27b_pupil_sub'))::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "PublicationPendingRemovals") <> 0 THEN
+    RAISE EXCEPTION 'draft: a pupil reads a pending record';
+  END IF;
+END $$;
+
+-- 27d: the lock functions take only the caller's own school.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_rls27f_other', :'school_b', true);
+DO $$
+BEGIN
+  IF app.enter_grundschema_write(app.current_school_id()) <> 'DRAFT' THEN
+    RAISE EXCEPTION 'draft: the writer''s entry did not answer DRAFT';
+  END IF;
+  BEGIN
+    PERFORM app.enter_publication(current_setting('app.test_rls27f_other', true)::uuid);
+    RAISE EXCEPTION 'draft: a school took another school''s lock';
+  EXCEPTION WHEN SQLSTATE 'PB403' THEN NULL;
+  END;
+  IF current_setting('lock_timeout') <> '0' THEN
+    RAISE EXCEPTION 'draft: the entry left lock_timeout at %', current_setting('lock_timeout');
+  END IF;
+END $$;
+
+-- 27f: deleting a DRAFT läsår with future published rows cascades, records
+-- nothing at depth > 1, and does not fail.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; g uuid; m uuid; n bigint;
+BEGIN
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'rls27f utkastår', current_date + 400, current_date + 700, false, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (school, y, 'rls27f 7A', 7, 'CLASS', now()) RETURNING id INTO g;
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  SELECT school, y, id, g, 1, '08:00', '09:00', now() FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1
+  RETURNING id INTO m;
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, m, "subjectId", g, current_date + 410, now() + interval '410 days', now() + interval '410 days 1 hour', now()
+    FROM "MasterLessons" WHERE id = m;
+  DELETE FROM "AcademicYears" WHERE id = y;
+  SELECT count(*) INTO n FROM "PublicationPendingRemovals" WHERE "masterLessonId" = m;
+  IF n <> 0 THEN RAISE EXCEPTION 'draft: a cascade recorded % pending row(s)', n; END IF;
+END $$;
+ROLLBACK;
+
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid = 'public."PublicationPendingRemovals"'::regclass;
+  IF bad IS DISTINCT FROM 'publication_pending_removals_admin_delete:d,publication_pending_removals_admin_select:r,'
+                          'publication_pending_removals_service_select:r,publication_pending_removals_staff_select:r' THEN
+    RAISE EXCEPTION 'draft: pending removal policies are %', bad;
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['INSERT', 'UPDATE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."PublicationPendingRemovals"', p);
+    IF bad IS NOT NULL THEN
+      RAISE EXCEPTION 'draft: % holds % on the pending removals', api_role, bad;
+    END IF;
+  END LOOP;
+  IF has_function_privilege('anon', 'app.enter_publication(uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'draft: anon may take the publication lock';
+  END IF;
+END $$;

@@ -14,6 +14,8 @@ import { weeksCanOverlap } from '../calendar/lesson-recurrence';
 import { reconcilableLessons } from '../calendar/master-lessons.service';
 import { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { PrismaService } from '../database/prisma.service';
+import { requireSchoolId } from '../common/utils/request-context';
+import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { RealtimeService } from '../realtime/realtime.service';
 import type {
   ApplyRoomChangesDto,
@@ -255,7 +257,11 @@ export class RoomOptimizationService {
    * returned, undo one. One RLS transaction, all or nothing.
    */
   async apply(dto: ApplyRoomChangesDto, user: AuthenticatedUser): Promise<RoomApplyResult> {
-    const { result, schoolId } = await this.prisma.withRls(user, async (tx) => {
+    const { result, schoolId, mode } = await this.prisma.withRls(user, async (tx) => {
+      // The publication lock and the mode, first (publish-mode.ts): in DRAFT
+      // the moved rooms are a draft, and the calendar keeps its rooms until a
+      // publish carries them over — by the same from-room rule as below.
+      const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
       // One apply per year at a time, taken before anything is read. withRls
       // runs READ COMMITTED, so without it two applies from one basis — a
       // double click, two admins on one proposal — both read the same state,
@@ -329,6 +335,7 @@ export class RoomOptimizationService {
         // goes back and a date moved by hand in between stays where it was put.
         // A date that sat in the to-room by hand BEFORE the apply cannot be
         // told apart from one this moved, and goes back with them.
+        if (mode === 'DRAFT') continue;
         const published = await tx.calendarLesson.updateMany({
           where: { ...reconcilableLessons(lessonIds), roomId: pair[0]!.fromRoomId },
           data: { roomId: pair[0]!.toRoomId },
@@ -372,13 +379,15 @@ export class RoomOptimizationService {
           versionId: version.id,
         },
         schoolId: state.schoolId,
+        mode,
       };
     });
 
     this.logger.log(
       `Room changes applied [academicYearId=${dto.academicYearId}, updated=${result.updated}, calendarUpdated=${result.calendarUpdated}, version=${result.versionId}]`,
     );
-    this.realtime.notifyMasterTimetableChanged(schoolId);
+    if (mode === 'DRAFT') this.realtime.notifyMasterTimetableChanged(schoolId, { draft: true });
+    else this.realtime.notifyMasterTimetableChanged(schoolId);
     return result;
   }
 

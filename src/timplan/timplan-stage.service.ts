@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type SchoolForm } from '@prisma/client';
+import { Prisma, type PrismaClient, type SchoolForm } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -28,6 +28,7 @@ import {
 } from '../common/timplan-stage';
 import { readPlannedRows } from './timplan-coverage.service';
 import { readSegmentedDeliveredRows } from './timplan-delivered.sql';
+import { readGrundschema } from '../publication/published-grundschema';
 import { publishBreaksOf, readPublishClosures } from './publish-context';
 import {
   boundariesOf,
@@ -246,7 +247,7 @@ export class TimplanStageService {
              WHERE "schoolId" = ${schoolId}::uuid
                FOR UPDATE
           `;
-          const computed = await computeStages(tx, dto.academicYearId, now, null);
+          const computed = await computeStages(tx, dto.academicYearId, now, null, { forFamilies: { schoolId } });
           if (!computed.isActiveYear) {
             throw new ConflictException({
               message: 'Undervisningstiden publiceras för det aktiva läsåret. Välj det och publicera igen.',
@@ -461,6 +462,13 @@ export async function computeStages(
   academicYearId: string,
   now: Date,
   groupId: string | null,
+  /**
+   * The statements go to pupils and guardians: in a DRAFT school they are
+   * computed from the PUBLISHED grundschema, never the admin's draft
+   * (published-grundschema.ts, forFamilies). The overview, the admin's own
+   * page, reads the draft.
+   */
+  options: { forFamilies?: { schoolId: string } } = {},
 ): Promise<ComputedStages> {
   const year = await tx.academicYear.findUnique({
     where: { id: academicYearId },
@@ -574,13 +582,25 @@ export async function computeStages(
     const breaks = publishBreaksOf(rows.closures);
     const creditRows = credits.map((row) => ({ ...row, date: asDay(row.date) }));
     const boundaries = boundariesOf(yearSegments, bounds);
+    const families =
+      options.forFamilies && candidate.id === academicYearId
+        ? await readGrundschema(
+            tx as PrismaClient,
+            { role: Role.SCHOOL_ADMIN, schoolId: options.forFamilies.schoolId },
+            candidate.id,
+            () => readMasterRows(tx, candidate.id),
+            { forFamilies: true, timezone },
+          )
+        : null;
     const delivered = await readSegmentedDeliveredRows(
       tx,
       window,
       deliveredDatesToAsk(creditRows, breaks, bounds, asOfDate),
       boundaries,
+      families?.source.kind === 'PUBLISHED' ? { publicationId: families.source.publicationId } : null,
     );
-    const masters = candidate.id === academicYearId ? await readMasters(tx, candidate.id) : [];
+    const masters =
+      candidate.id !== academicYearId ? [] : families ? families.rows.map(toDeliveredMaster) : await readMasters(tx, candidate.id);
     const read: StageYearRead = {
       year: bounds,
       planned: { year: { startDate: bounds.startDate, endDate: bounds.endDate }, ...rows },
@@ -688,7 +708,11 @@ function mostCommon<T>(values: readonly T[]): T {
 }
 
 async function readMasters(tx: Prisma.TransactionClient, academicYearId: string): Promise<DeliveredMasterLesson[]> {
-  const masters = await tx.masterLesson.findMany({
+  return (await readMasterRows(tx, academicYearId)).map(toDeliveredMaster);
+}
+
+function readMasterRows(tx: Prisma.TransactionClient, academicYearId: string) {
+  return tx.masterLesson.findMany({
     where: { academicYearId },
     select: {
       id: true,
@@ -708,7 +732,10 @@ async function readMasters(tx: Prisma.TransactionClient, academicYearId: string)
     },
     orderBy: { id: 'asc' },
   });
-  return masters.map((row) => ({
+}
+
+function toDeliveredMaster(row: Awaited<ReturnType<typeof readMasterRows>>[number]): DeliveredMasterLesson {
+  return {
     id: row.id,
     studentGroupId: row.studentGroupId,
     subjectId: row.subjectId,
@@ -723,5 +750,5 @@ async function readMasters(tx: Prisma.TransactionClient, academicYearId: string)
     startDate: asDayOrNull(row.startDate),
     endDate: asDayOrNull(row.endDate),
     isParked: row.isParked,
-  }));
+  };
 }

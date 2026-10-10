@@ -84,7 +84,7 @@ function school() {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 26 statements (27 before, the refusal’s scan gone)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 27 statements (26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -93,6 +93,9 @@ describe('the active year’s statement budget', () => {
     );
     await service.update('f5000000-0000-4000-8000-000000000001', { dayOfWeek: 2, teacherId: IDS.anna }, admin);
     expect(statementsOf(world.calls)).toEqual([
+      // Publicering: app.enter_grundschema_write — the shared publication
+      // lock and the school's mode, one statement, first (publish-mode.ts).
+      '$queryRaw.$queryRaw',
       'masterLesson.findUnique',
       'masterLesson.findUnique › extraGroups',
       'masterLesson.findUnique › participants',

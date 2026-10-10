@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -15,6 +16,11 @@ import type { PublishScheduleDto } from '../calendar/dto/publish-schedule.dto';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
 import { readCheckPolicy } from '../staffing/staffing-enforcement';
 import { TimplanCoverageService } from '../timplan/timplan-coverage.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { carryDraft, draftWindow } from './draft-publish';
+import { readDraftMasters, snapshotMasters, type PublishedMaster } from './published-grundschema';
+import { enterPublication } from './publish-mode';
 import {
   DEFAULT_GATE_POLICY,
   GATE_POLICY_KEYS,
@@ -93,6 +99,8 @@ export interface PublicationPreview {
   validTo: string;
   /** What the calendar would answer: the materialiser's own counts, rolled back. */
   result: PublishResult;
+  /** DRAFT: what carrying the draft over moves, removes and adopts. */
+  draft?: DraftCounts;
   gates: GateItem[];
   refused: boolean;
   needsAcknowledgement: boolean;
@@ -103,6 +111,7 @@ export interface PublicationPreview {
 export interface PublicationOutcome {
   publication: PublicationRow;
   result: PublishResult;
+  draft?: DraftCounts;
   gates: GateItem[];
 }
 
@@ -110,6 +119,21 @@ export interface PublicationOutcome {
 export const PUBLISH_GATES_REFUSED = 'PUBLISH_GATES_REFUSED';
 export const PUBLISH_WARNINGS_UNACKNOWLEDGED = 'PUBLISH_WARNINGS_UNACKNOWLEDGED';
 export const PUBLISH_STALE = 'PUBLISH_STALE';
+export const PUBLISH_MODE_DRAFT = 'PUBLISH_MODE_DRAFT';
+export const PUBLISH_FROM_IN_PAST = 'PUBLISH_FROM_IN_PAST';
+export const PUBLISH_RANGE_EMPTY = 'PUBLISH_RANGE_EMPTY';
+export const PUBLISH_DRAFT_PENDING = 'PUBLISH_DRAFT_PENDING';
+export const PUBLISH_NOT_DRAFT = 'PUBLISH_NOT_DRAFT';
+export const PUBLISH_NOTHING_PUBLISHED = 'PUBLISH_NOTHING_PUBLISHED';
+
+/** What a DRAFT publish did beside materialising. */
+export interface DraftCounts {
+  moved: number;
+  removed: number;
+  adopted: number;
+  /** Rows moved onto a closure and written CANCELLED. */
+  cancelledByMove: number;
+}
 
 /** Thrown inside a transaction to roll it back while carrying its answer out. */
 class Rollback<T> extends Error {
@@ -183,6 +207,8 @@ export class PublicationsService {
     private readonly calendar: CalendarService,
     private readonly coverage: TimplanCoverageService,
     private readonly load: StaffingLoadService,
+    private readonly notifications: NotificationsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -249,8 +275,8 @@ export class PublicationsService {
 
   /**
    * Everything a publish would do and say, in a transaction that is rolled
-   * back: the gates, and the materialiser's own counts. Nothing is written,
-   * not even a log row.
+   * back: the gates, and the materialiser's own counts (in DRAFT also what the
+   * draft moves, adopts and removes). Nothing is written, not even a log row.
    */
   async preview(dto: PublicationRangeDto, user: AuthenticatedUser): Promise<PublicationPreview> {
     const schoolId = requireSchoolId(user);
@@ -259,37 +285,18 @@ export class PublicationsService {
       this.prisma.withRls(
         user,
         async (tx) => {
-          const context = await this.contextOf(tx, schoolId, dto);
-          let result: PublishResult;
-          const findings: GateFinding[] = [...external, ...(await this.internalFindings(tx, user, context))];
-          try {
-            result = await this.calendar.materialise(tx, schoolId, this.windowDto(context));
-          } catch (error) {
-            // The database refused the dry run (a booked room, a key): the
-            // publish would be refused the same way, so it is a REFUSE gate
-            // rather than an error page.
-            if (error instanceof Rollback) throw error;
-            const message = error instanceof Error ? error.message : String(error);
-            findings.push({
-              code: 'PUB_CALENDAR_REFUSED',
-              count: 1,
-              entries: [{ label: message.slice(0, 300) }],
-            });
-            result = { created: 0, cancelled: 0, skipped: 0, fromDate: context.validFrom, toDate: context.validTo };
-          }
-          findings.push(nothingFinding(result));
-          const gates = settleGates(findings, context.policy);
-          const verdict = gateVerdict(gates);
+          const attempt = await this.attempt(tx, user, schoolId, dto, external, { dryRun: true });
           throw new Rollback<PublicationPreview>({
             academicYearId: dto.academicYearId,
-            publishMode: context.mode,
-            validFrom: context.validFrom,
-            validTo: context.validTo,
-            result,
-            gates,
-            refused: verdict.refused,
-            needsAcknowledgement: verdict.needsAcknowledgement,
-            digest: context.digest,
+            publishMode: attempt.context.mode,
+            validFrom: attempt.context.validFrom,
+            validTo: attempt.context.validTo,
+            result: attempt.result,
+            ...(attempt.draft ? { draft: attempt.draft } : {}),
+            gates: attempt.gates,
+            refused: attempt.verdict.refused,
+            needsAcknowledgement: attempt.verdict.needsAcknowledgement,
+            digest: attempt.context.digest,
           });
         },
         { timeoutMs: 120_000 },
@@ -301,7 +308,7 @@ export class PublicationsService {
     const schoolId = requireSchoolId(user);
     const external = await this.externalFindings(dto.academicYearId, schoolId, user);
     type Attempt =
-      | { kind: 'published'; outcome: PublicationOutcome }
+      | { kind: 'published'; outcome: PublicationOutcome; mode: PublishModeName }
       | { kind: 'refused'; gates: GateItem[]; context: PublishContext }
       | { kind: 'unacknowledged'; gates: GateItem[] };
 
@@ -309,19 +316,11 @@ export class PublicationsService {
       this.prisma.withRls(
         user,
         async (tx): Promise<Attempt> => {
-          const context = await this.contextOf(tx, schoolId, dto);
-          if (dto.expectedDigest && dto.expectedDigest !== context.digest) {
-            throw new ConflictException({
-              message:
-                'Grundschemat eller publiceringarna har ändrats sedan förhandsgranskningen. Granska igen innan du publicerar.',
-              code: PUBLISH_STALE,
-            });
-          }
-          const findings = [...external, ...(await this.internalFindings(tx, user, context))];
-          const result = await this.calendar.materialise(tx, schoolId, this.windowDto(context));
-          findings.push(nothingFinding(result));
-          const gates = settleGates(findings, context.policy);
-          const verdict = gateVerdict(gates);
+          const run = await this.attempt(tx, user, schoolId, dto, external, {
+            dryRun: false,
+            expectedDigest: dto.expectedDigest,
+          });
+          const { context, result, gates, verdict, draft } = run;
           if (verdict.refused) throw new Rollback<Attempt>({ kind: 'refused', gates, context });
           if (verdict.needsAcknowledgement && dto.acknowledgeWarnings !== true) {
             throw new Rollback<Attempt>({ kind: 'unacknowledged', gates });
@@ -337,14 +336,26 @@ export class PublicationsService {
               validTo: new Date(`${context.validTo}T00:00:00.000Z`),
               publishedByUserId: user.userId ?? null,
               created: result.created,
-              cancelled: result.cancelled,
+              cancelled: result.cancelled + (draft?.cancelledByMove ?? 0),
               skipped: result.skipped,
+              moved: draft?.moved ?? 0,
+              removed: draft?.removed ?? 0,
+              adopted: draft?.adopted ?? 0,
+              lessonCount: run.masters ? run.masters.length : null,
               gates: gates as unknown as Prisma.InputJsonValue,
               acknowledgedWarnings: gates.some((gate) => gate.severity === 'WARN'),
             },
             select: PUBLICATION_SELECT,
           });
-          return { kind: 'published', outcome: { publication: toRow(row), result, gates } };
+          if (run.masters) {
+            await snapshotMasters(tx, { id: row.id, schoolId, academicYearId: dto.academicYearId }, run.masters);
+            await this.tellClasses(tx, schoolId, run.masters, run.changedMasterIds ?? []);
+          }
+          return {
+            kind: 'published',
+            mode: context.mode,
+            outcome: { publication: toRow(row), result, ...(draft ? { draft } : {}), gates },
+          };
         },
         { timeoutMs: 120_000 },
       ),
@@ -353,8 +364,10 @@ export class PublicationsService {
     if (attempt.kind === 'published') {
       const { publication } = attempt.outcome;
       this.logger.log(
-        `Timetable published [publication=${publication.id}, ${publication.validFrom}..${publication.validTo}, created=${publication.created}]`,
+        `Timetable published [publication=${publication.id}, ${publication.validFrom}..${publication.validTo}, created=${publication.created}, moved=${publication.moved}, removed=${publication.removed}]`,
       );
+      // A DRAFT publish is the moment the staff room hears of the draft.
+      if (attempt.mode === 'DRAFT') this.realtime.notifyMasterTimetableChanged(schoolId);
       return attempt.outcome;
     }
     if (attempt.kind === 'unacknowledged') {
@@ -370,6 +383,133 @@ export class PublicationsService {
   }
 
   /**
+   * One attempt, preview or publish, inside the caller's transaction: the
+   * context (and in DRAFT the exclusive publication lock, before the masters
+   * are read), the gates, the calendar work, and the gates that can only be
+   * known after it. Nothing here writes the log or the snapshot.
+   */
+  private async attempt(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    schoolId: string,
+    dto: PublicationRangeDto,
+    external: GateFinding[],
+    options: { dryRun: boolean; expectedDigest?: string },
+  ): Promise<{
+    context: PublishContext;
+    result: PublishResult;
+    draft?: DraftCounts;
+    masters?: PublishedMaster[];
+    changedMasterIds?: string[];
+    gates: GateItem[];
+    verdict: ReturnType<typeof gateVerdict>;
+  }> {
+    const context = await this.contextOf(tx, schoolId, dto);
+    if (options.expectedDigest && options.expectedDigest !== context.digest) {
+      throw new ConflictException({
+        message:
+          'Grundschemat eller publiceringarna har ändrats sedan förhandsgranskningen. Granska igen innan du publicerar.',
+        code: PUBLISH_STALE,
+      });
+    }
+    const findings: GateFinding[] = [...external, ...(await this.internalFindings(tx, user, context))];
+    const empty: PublishResult = { created: 0, cancelled: 0, skipped: 0, fromDate: context.validFrom, toDate: context.validTo };
+    let result = empty;
+    let draft: DraftCounts | undefined;
+    let masters: PublishedMaster[] | undefined;
+    let changedMasterIds: string[] | undefined;
+    try {
+      if (context.mode === 'DRAFT') {
+        const now = new Date();
+        masters = await readDraftMasters(tx, context.year.id);
+        const carry = await carryDraft(tx, {
+          schoolId,
+          academicYearId: context.year.id,
+          timezone: context.year.timezone,
+          validFrom: context.validFrom,
+          validTo: context.validTo,
+          masters,
+          now,
+        });
+        result = await this.calendar.materialise(tx, schoolId, this.windowDto(context), { notBefore: now });
+        draft = { moved: carry.moved, removed: carry.removed, adopted: carry.adopted, cancelledByMove: carry.cancelled };
+        changedMasterIds = carry.changedMasterIds;
+        findings.push(
+          { code: 'PUB_WEEK_SPLIT', count: carry.weekSplit.length, entries: carry.weekSplit, params: { validFrom: context.validFrom } },
+          {
+            code: 'PUB_DAY_OPS_LOST',
+            count: carry.lostDayOperations.length,
+            entries: carry.lostDayOperations.map((operation) => ({
+              label: `${operation.date}: ${[
+                operation.substitute ? 'vikarie' : null,
+                operation.roomChanged ? 'ändrad sal' : null,
+                operation.note ? 'anteckning' : null,
+              ]
+                .filter(Boolean)
+                .join(', ')}`,
+              calendarLessonId: operation.calendarLessonId,
+            })),
+          },
+        );
+      } else {
+        result = await this.calendar.materialise(tx, schoolId, this.windowDto(context));
+      }
+    } catch (error) {
+      if (!options.dryRun || error instanceof Rollback) throw error;
+      // The database refused the dry run (a booked room, a key): the publish
+      // would be refused the same way, so it is a REFUSE gate rather than an
+      // error page.
+      const message = error instanceof Error ? error.message : String(error);
+      findings.push({ code: 'PUB_CALENDAR_REFUSED', count: 1, entries: [{ label: message.slice(0, 300) }] });
+      result = empty;
+    }
+    const changedNothing =
+      result.created + result.cancelled + (draft ? draft.moved + draft.removed + draft.adopted : 0) === 0;
+    findings.push({ code: 'PUB_NOTHING_TO_PUBLISH', count: changedNothing ? 1 : 0, info: true });
+    const gates = settleGates(findings, context.policy);
+    return { context, result, draft, masters, changedMasterIds, gates, verdict: gateVerdict(gates) };
+  }
+
+  /**
+   * A DRAFT publish tells each class whose published lessons moved or went,
+   * as DIRECT's update() tells it per edit — once per recipient here, with
+   * the first changed lesson that reaches them, since one publish may carry
+   * many edits and a notice per edit would be a pile of them.
+   */
+  private async tellClasses(
+    tx: PrismaClient,
+    schoolId: string,
+    masters: readonly PublishedMaster[],
+    changedMasterIds: readonly string[],
+  ): Promise<void> {
+    const byId = new Map(masters.map((master) => [master.id, master]));
+    const told = new Set<string>();
+    for (const id of changedMasterIds) {
+      const master = byId.get(id);
+      if (!master) continue;
+      const recipients = (
+        await this.notifications.recipientsForGroups(tx, [
+          master.studentGroupId,
+          ...master.extraGroups.map((entry) => entry.studentGroupId),
+        ])
+      ).filter((userId) => !told.has(userId));
+      if (recipients.length === 0) continue;
+      for (const userId of recipients) told.add(userId);
+      await this.notifications.notifyUsers(tx, {
+        schoolId,
+        userIds: recipients,
+        type: 'SCHEDULE_CHANGED',
+        meta: {
+          subjectName: master.subject.name,
+          dayOfWeek: master.dayOfWeek,
+          startTime: master.startTime.toISOString().slice(11, 16),
+          endTime: master.endTime.toISOString().slice(11, 16),
+        },
+      });
+    }
+  }
+
+  /**
    * The old POST /calendar/publish: the same writes and the same answer as
    * before, plus a LEGACY_PUBLISH log row in the same transaction. Its gates
    * are asked only when the school has set one to REFUSE — a school that has
@@ -381,6 +521,15 @@ export class PublicationsService {
     const policy = await this.prisma.queryWithRls(user, (db) =>
       db.publicationSettings.findUnique({ where: { schoolId } }),
     );
+    if (toSettings(policy).publishMode === 'DRAFT') {
+      // The old route materialises the masters — in DRAFT, the draft. It has
+      // no validity, no gate and no snapshot to keep a draft apart from what
+      // is published, so a DRAFT school publishes through POST /publications.
+      throw new ConflictException({
+        message: 'Skolan publicerar via utkast. Publicera från Publicering, där utkastet granskas först.',
+        code: PUBLISH_MODE_DRAFT,
+      });
+    }
     const gated = refusesAnything(toSettings(policy));
     const external = gated ? await this.externalFindings(dto.academicYearId, schoolId, user) : [];
 
@@ -482,8 +631,36 @@ export class PublicationsService {
   private async contextOf(tx: PrismaClient, schoolId: string, dto: PublicationRangeDto): Promise<PublishContext> {
     const year = await this.requireYear(tx, dto.academicYearId);
     const settings = toSettings(await tx.publicationSettings.findUnique({ where: { schoolId } }));
-    const window = publishWindow(year, { fromDate: dto.validFrom, toDate: dto.validTo });
     const today = asDay(todayInZone(year.timezone));
+    let window: { fromDate: string; toDate: string };
+    let pendingIds: string[] = [];
+    if (settings.publishMode === 'DRAFT') {
+      // The exclusive publication lock, before the masters are read: no
+      // grundschema write lands between what this reads and what it writes
+      // (publish-mode.ts). A DIRECT publish takes none.
+      await enterPublication(tx, schoolId);
+      const draft = draftWindow({ start: asDay(year.startDate), end: asDay(year.endDate) }, today, dto);
+      if ('error' in draft) {
+        throw new BadRequestException({
+          message:
+            draft.error === 'PAST'
+              ? `Ett utkast publiceras från i dag (${today}) eller senare; det som redan har hänt skrivs aldrig om.`
+              : 'Giltighetsintervallet är tomt.',
+          code: draft.error === 'PAST' ? PUBLISH_FROM_IN_PAST : PUBLISH_RANGE_EMPTY,
+          params: { today },
+        });
+      }
+      window = { fromDate: draft.validFrom, toDate: draft.validTo };
+      pendingIds = (
+        await tx.publicationPendingRemoval.findMany({
+          where: { academicYearId: dto.academicYearId },
+          select: { calendarLessonId: true },
+          orderBy: { calendarLessonId: 'asc' },
+        })
+      ).map((row) => row.calendarLessonId);
+    } else {
+      window = publishWindow(year, { fromDate: dto.validFrom, toDate: dto.validTo });
+    }
     const lessons = await readGateLessons(tx, dto.academicYearId);
     const publications = await tx.timetablePublication.findMany({
       where: { academicYearId: dto.academicYearId, outcome: 'PUBLISHED' },
@@ -503,7 +680,7 @@ export class PublicationsService {
       today,
       lessons,
       ranges,
-      digest: digestOf(dto.academicYearId, window, lessons, ranges),
+      digest: digestOf(dto.academicYearId, window, lessons, ranges, pendingIds),
     };
   }
 
@@ -700,14 +877,6 @@ function countsForValidity(row: PublicationRow): boolean {
   return row.outcome === 'PUBLISHED' && row.kind !== 'REFILL';
 }
 
-function nothingFinding(result: PublishResult): GateFinding {
-  return {
-    code: 'PUB_NOTHING_TO_PUBLISH',
-    count: result.created + result.cancelled === 0 ? 1 : 0,
-    info: true,
-  };
-}
-
 function refusedConflict(gates: GateItem[], publicationId: string): ConflictException {
   return new ConflictException({
     message:
@@ -730,6 +899,7 @@ function digestOf(
   window: { fromDate: string; toDate: string },
   lessons: readonly GateLesson[],
   ranges: readonly PublicationRange[],
+  pendingIds: readonly string[] = [],
 ): string {
   const hash = createHash('sha256');
   hash.update(JSON.stringify([academicYearId, window.fromDate, window.toDate]));
@@ -755,5 +925,6 @@ function digestOf(
     );
   }
   hash.update(JSON.stringify(ranges.map((range) => range.id)));
+  if (pendingIds.length > 0) hash.update(JSON.stringify(pendingIds));
   return hash.digest('hex');
 }

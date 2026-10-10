@@ -399,7 +399,12 @@ describe('StaffingLoadService', () => {
 
       const answer = await service.delivered(query({ from: '2026-09-01', to: '2026-09-30' }), teacher);
 
-      const e = queryRaw.mock.calls[1]![0] as { sql: string; values: unknown[] };
+      // This teacher reads no master lesson, so the mode is asked first
+      // (published-grundschema.ts: DIRECT here, so the live read stands).
+      const e = queryRaw.mock.calls.map((call) => call[0] as { sql: string; values: unknown[] }).find((statement) =>
+        statement.sql.includes(`SELECT 'T'`),
+      )!;
+      expect(queryRaw.mock.calls[0]![0].sql).toContain('app.school_publish_mode');
       expect(e.sql).not.toContain(`SELECT 'G'`);
       expect(e.values).toContain(ME);
       expect(answer.groupLosses).toEqual([]);

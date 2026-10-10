@@ -189,6 +189,11 @@ export function givenStaffingWorld(
       handle.order.push('lock');
       return Promise.resolve(employments.filter((row) => ids.includes(row.id)).map(({ id }) => ({ id })));
     }
+    // A grundschema writer's first statement: the publication lock and the
+    // school's mode (src/publication/publish-mode.ts). DIRECT in this world.
+    if (sql.includes('app.enter_grundschema_write') || sql.includes('app.school_publish_mode')) {
+      return Promise.resolve([{ mode: 'DIRECT' }]);
+    }
     if (fallback) return fallback(...call);
     throw new Error(`Unexpected raw statement: ${sql}`);
   });

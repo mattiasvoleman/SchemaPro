@@ -29,6 +29,7 @@ const lessonMinutes = (start: Date, end: Date): number => {
   return clock(end) - clock(start);
 };
 import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
+import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import type {
   AiEngineConflictAnalysis,
@@ -1658,6 +1659,12 @@ export class OptimizationProxyService {
     /** groupId → children seated, so the kitchen's list needs no re-derivation. */
     headcountByGroup: Map<string, number>,
   ): Promise<void> {
+    // First, before anything is read: the publication lock and the mode
+    // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
+    // A principal with no tenant is refused below, before anything is
+    // deleted, with the message it has always had; it takes no lock.
+    const mode = user.schoolId ? await enterGrundschemaWrite(tx, user.schoolId) : 'DIRECT';
+
     // Neither verdict yields lessons, so both must bail out *before* the
     // delete-and-recreate below — otherwise a run that produced nothing would
     // wipe the school's existing unlocked timetable.
@@ -1832,14 +1839,20 @@ export class OptimizationProxyService {
      */
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
-    const { count: removedCalendarLessons } = await tx.calendarLesson.deleteMany({
-      where: {
-        masterLesson: { is: { academicYearId, NOT: preservedWhere } },
-        status: 'SCHEDULED',
-        date: { gte: today },
-        attendanceRecords: { none: {} },
-      },
-    });
+    // Not in DRAFT: the regeneration is a draft, its published rows stay, and
+    // the delete below records them (PublicationPendingRemovals) for the next
+    // publish to adopt or remove.
+    const { count: removedCalendarLessons } =
+      mode === 'DRAFT'
+        ? { count: 0 }
+        : await tx.calendarLesson.deleteMany({
+            where: {
+              masterLesson: { is: { academicYearId, NOT: preservedWhere } },
+              status: 'SCHEDULED',
+              date: { gte: today },
+              attendanceRecords: { none: {} },
+            },
+          });
 
     const { count: removedUnlocked } = await tx.masterLesson.deleteMany({
       where: { academicYearId, NOT: preservedWhere },

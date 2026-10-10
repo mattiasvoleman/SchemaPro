@@ -246,9 +246,12 @@ describe('RealtimeGateway', () => {
       await connect(client);
 
       expect(client.disconnect).not.toHaveBeenCalled();
+      // An admin also joins the admins' room, where a DRAFT school's draft
+      // edits are announced (Publicering); a teacher does not (below).
       expect(client.join).toHaveBeenCalledWith([
         `user:${USER_ID}`,
         `staff:${SCHOOL_ID}`,
+        `admin:${SCHOOL_ID}`,
       ]);
       // Presence label is "First L." — never the full surname or an email.
       expect(client.data['profile']).toEqual({
@@ -481,6 +484,12 @@ describe('RealtimeGateway', () => {
       expect(emit).toHaveBeenCalledWith(MASTER_TIMETABLE_UPDATED_EVENT, {
         changedAt: '2026-08-07T09:30:00.000Z',
       });
+    });
+
+    it('announces a draft edit to the admins only', () => {
+      gateway.emitMasterTimetableUpdated(SCHOOL_ID, 'admin');
+      expect(server.to).toHaveBeenCalledWith(`admin:${SCHOOL_ID}`);
+      expect(server.to).not.toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
     });
   });
 

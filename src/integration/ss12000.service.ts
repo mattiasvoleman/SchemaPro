@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dutyEmploymentSelect, toSs12000Duty, type Ss12000Duty } from './ss12000-duties';
 
 /**
@@ -280,28 +281,49 @@ export class Ss12000Service {
           },
         }),
       ]);
+      // A DRAFT school (Publicering, 20261011100000) shows the service no
+      // master lesson: the kommun reads the PUBLISHED weekly timetable, from
+      // the snapshot, in the same order and shape. Asked only when the live
+      // read found nothing, so DIRECT sends the statements it always sent.
+      if (totalCount === 0) {
+        const published = await this.publishedActivities(tx, schoolId);
+        if (published !== null) {
+          return {
+            totalCount: published.length,
+            limit: take,
+            offset: skip,
+            data: published.slice(skip, skip + take).map(toActivity),
+          };
+        }
+      }
       return {
         totalCount,
         limit: take,
         offset: skip,
-        data: lessons.map((lesson) => ({
-          id: lesson.id,
-          displayName: `${lesson.subject.name} — ${lesson.studentGroup.name}`,
-          activityType: 'Undervisning',
-          subject: { id: lesson.subject.id, displayName: lesson.subject.name },
-          groupIds: [
-            lesson.studentGroup.id,
-            ...lesson.extraGroups.map((entry) => entry.studentGroupId),
-          ],
-          teacherIds: [lesson.teacherId, lesson.coTeacherId].filter(Boolean),
-          studentIds: lesson.participants.map((entry) => entry.studentId),
-          roomId: lesson.roomId,
-          dayOfWeek: lesson.dayOfWeek,
-          startTime: toHHMMSS(lesson.startTime),
-          endTime: toHHMMSS(lesson.endTime),
-        })),
+        data: lessons.map(toActivity),
       };
     });
+  }
+
+  /**
+   * The published weekly timetable of the active year, for a DRAFT school:
+   * null in DIRECT (the masters are read as they are). Parked lessons are
+   * not activities, as in the live read; ordered by (dayOfWeek, startTime,
+   * id) — the live read's order with the id as the tie it leaves open.
+   */
+  private async publishedActivities(tx: PrismaClient, schoolId: string): Promise<PublishedMaster[] | null> {
+    const year = await tx.academicYear.findFirst({ where: { schoolId, isActive: true }, select: { id: true } });
+    if (!year) return null;
+    const { rows, source } = await readGrundschema(tx, { role: null, schoolId }, year.id, async () => [] as PublishedMaster[]);
+    if (source.kind === 'LIVE') return null;
+    return rows
+      .filter((row) => !row.isParked)
+      .sort(
+        (a, b) =>
+          a.dayOfWeek - b.dayOfWeek ||
+          a.startTime.getTime() - b.startTime.getTime() ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
   }
 
   /** Dated lessons (the "lesson export" consumed by Vklass-style systems). */
@@ -346,13 +368,28 @@ export class Ss12000Service {
           },
         }),
       ]);
+      // The published key (Publicering, 20261011100000): a lesson whose
+      // template a DRAFT school deleted keeps that template as its activity
+      // until a publish settles it. Asked only of a page holding a row with
+      // no master lesson, so a page without one sends what it always sent.
+      const orphans = lessons.filter((lesson) => lesson.masterLessonId === null).map((lesson) => lesson.id);
+      const pendingKey = new Map(
+        orphans.length === 0
+          ? []
+          : (
+              await tx.publicationPendingRemoval.findMany({
+                where: { calendarLessonId: { in: orphans } },
+                select: { calendarLessonId: true, masterLessonId: true },
+              })
+            ).map((row) => [row.calendarLessonId, row.masterLessonId]),
+      );
       return {
         totalCount,
         limit: take,
         offset: skip,
         data: lessons.map((lesson) => ({
           id: lesson.id,
-          activityId: lesson.masterLessonId,
+          activityId: lesson.masterLessonId ?? pendingKey.get(lesson.id) ?? null,
           startTime: lesson.startsAt.toISOString(),
           endTime: lesson.endsAt.toISOString(),
           cancelled: lesson.status === 'CANCELLED',
@@ -605,3 +642,32 @@ function toHHMMSS(time: Date): string {
 
 // Re-exported so the controller can type the system transaction if needed.
 export type SystemTx = PrismaClient;
+
+/** One master lesson — live, or a published snapshot's — as an SS12000 activity. */
+function toActivity(lesson: {
+  id: string;
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  roomId: string | null;
+  subject: { id: string; name: string };
+  studentGroup: { id: string; name: string };
+  extraGroups: { studentGroupId: string }[];
+  participants: { studentId: string }[];
+}) {
+  return {
+    id: lesson.id,
+    displayName: `${lesson.subject.name} — ${lesson.studentGroup.name}`,
+    activityType: 'Undervisning',
+    subject: { id: lesson.subject.id, displayName: lesson.subject.name },
+    groupIds: [lesson.studentGroup.id, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+    teacherIds: [lesson.teacherId, lesson.coTeacherId].filter(Boolean),
+    studentIds: lesson.participants.map((entry) => entry.studentId),
+    roomId: lesson.roomId,
+    dayOfWeek: lesson.dayOfWeek,
+    startTime: toHHMMSS(lesson.startTime),
+    endTime: toHHMMSS(lesson.endTime),
+  };
+}

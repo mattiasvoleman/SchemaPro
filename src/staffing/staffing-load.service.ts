@@ -15,6 +15,7 @@ import type { YearBounds } from './teaching-weeks';
 import { toScheduledRequirements, type ScheduledMaster } from './scheduled-load';
 import { buildReconciliation, type StaffingReconciliation } from './staffing-reconciliation';
 import { readPublishedSpans, staffingCreditStatement, type StaffingCreditRow } from '../timplan/timplan-delivered.sql';
+import { readGrundschema } from '../publication/published-grundschema';
 import { publishBreaksOf, readPublishClosures } from '../timplan/publish-context';
 import { todayInZone } from '../common/utils/time';
 import { addDays } from '../common/year-rollover';
@@ -160,7 +161,12 @@ export class StaffingLoadService {
       throw new BadRequestException('from: periodens början ligger efter dess slut.');
     }
     return this.prisma.withRls(user, async (tx) => {
-      const masters = await readMasters(tx, query.academicYearId);
+      // A teacher in a DRAFT school reads the published grundschema, and the
+      // calendar on its published key (published-grundschema.ts).
+      const { rows: masters, source } = await readGrundschema(tx, { role: user.role, schoolId }, query.academicYearId, () =>
+        readMasters(tx, query.academicYearId),
+      );
+      const key = source.kind === 'PUBLISHED' ? { publicationId: source.publicationId } : null;
       const read = await readLoadInput(tx, user, query.academicYearId, schoolId, {
         alsoGroupIds: masterGroupIds(masters),
       });
@@ -198,11 +204,11 @@ export class StaffingLoadService {
 
       const window = { academicYearId: query.academicYearId, yearStart: year.startDate, yearEnd: year.endDate, asOf: now };
       const closures = await readPublishClosures(tx, window);
-      const spans = await readPublishedSpans(tx, window);
+      const spans = await readPublishedSpans(tx, window, key);
       const credits =
         spans.published === null
           ? []
-          : await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, { from, to }, own));
+          : await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, { from, to }, own, key));
       const groups = await tx.studentGroup.findMany({
         where: { academicYearId: query.academicYearId },
         select: { id: true, gradeLevel: true, kind: true },
@@ -321,7 +327,9 @@ export class StaffingLoadService {
     academicYearId: string,
     user: AuthenticatedUser,
   ): Promise<{ year: YearBounds; input: LoadInput }> {
-    const masters = await readMasters(tx, academicYearId);
+    const { rows: masters } = await readGrundschema(tx, { role: user.role, schoolId: requireSchoolId(user) }, academicYearId, () =>
+      readMasters(tx, academicYearId),
+    );
     const read = await readLoadInput(tx, user, academicYearId, requireSchoolId(user), {
       alsoGroupIds: masterGroupIds(masters),
     });

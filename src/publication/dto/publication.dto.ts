@@ -92,3 +92,23 @@ const _everyGateHasAField: Record<(typeof GATE_POLICY_KEYS)[number], GateKeysOfD
   gateDayOpsLost: 'gateDayOpsLost',
 };
 void _everyGateHasAField;
+
+/** POST /publication-settings/mode: the switch records a BASELINE (DraftService). */
+export class SwitchPublishModeDto {
+  @IsIn(['DIRECT', 'DRAFT'], { message: "publishMode: 'DIRECT' eller 'DRAFT'." })
+  publishMode!: 'DIRECT' | 'DRAFT';
+}
+
+/** POST /publications/refill: a DRAFT school fills the calendar from what is published. */
+export class RefillPublicationDto extends PublicationRangeDto {
+  @IsOptional()
+  @IsBoolean()
+  acknowledgeWarnings?: boolean;
+}
+
+/** POST /publications/discard. */
+export class DiscardDraftDto {
+  @Transform(lower)
+  @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
+  academicYearId!: string;
+}

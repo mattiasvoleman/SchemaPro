@@ -20,10 +20,13 @@ export class RealtimeService {
   /**
    * Broadcasts that the master timetable of a school changed (create/update/
    * delete/regenerate/restore). Collaborating admin clients refetch on it.
+   * `draft`: the school is in DRAFT and the change is a draft, so only its
+   * admins hear of it; the staff room hears when it is published.
    */
-  notifyMasterTimetableChanged(schoolId: string): void {
+  notifyMasterTimetableChanged(schoolId: string, options: { draft?: boolean } = {}): void {
     try {
-      this.gateway.emitMasterTimetableUpdated(schoolId);
+      if (options.draft) this.gateway.emitMasterTimetableUpdated(schoolId, 'admin');
+      else this.gateway.emitMasterTimetableUpdated(schoolId);
     } catch {
       this.logger.warn(`Realtime timetable broadcast failed [school=${schoolId}]`);
     }
