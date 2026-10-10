@@ -2870,6 +2870,7 @@
     "refillBody": "Writes the published timetable (not the draft) into the calendar again for the period, for example after a holiday was shortened or a closure removed. Days that have begun are left alone, and a lesson that already exists is not created twice.",
     "refill": "Refill",
     "refillAnyway": "Refill anyway",
+    "refillWarnings": "The refill has warnings. Read them and choose \"Refill anyway\" to go on:",
     "refilled": "{count, plural, one {# lesson was} other {# lessons were}} written into the calendar.",
     "logTitle": "Log ({count})",
     "logPublishedAt": "Published",

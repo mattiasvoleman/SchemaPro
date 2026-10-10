@@ -2870,6 +2870,7 @@
     "refillBody": "Skriver det publicerade schemat (inte utkastet) i kalendern igen för perioden, till exempel när ett lov har kortats eller en stängning tagits bort. Dagar som har börjat lämnas orörda, och en lektion som redan finns skapas inte två gånger.",
     "refill": "Fyll på",
     "refillAnyway": "Fyll på ändå",
+    "refillWarnings": "Påfyllningen har varningar. Läs dem och välj \"Fyll på ändå\" för att fortsätta:",
     "refilled": "{count, plural, one {# lektion skrevs} other {# lektioner skrevs}} i kalendern.",
     "logTitle": "Logg ({count})",
     "logPublishedAt": "Publicerad",
