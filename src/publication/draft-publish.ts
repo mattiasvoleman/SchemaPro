@@ -196,6 +196,7 @@ export async function carryDraft(tx: PrismaClient, window: DraftWindow): Promise
   }
 
   const pending = await settlePendingRemovals(tx, window);
+  await releasePublishedPast(tx, window);
   carry.adopted = pending.adopted;
   carry.removed += pending.removed;
   carry.lostDayOperations.push(...pending.lostDayOperations);
@@ -324,6 +325,29 @@ async function settlePendingRemovals(
     await tx.calendarLesson.deleteMany({ where: { id: { in: remove } } });
   }
   return { adopted, removed: remove.length, lostDayOperations, changedMasterIds: [...changedMasterIds] };
+}
+
+/**
+ * The rows that have begun of a lesson this publish leaves out. The trigger
+ * records every row of a template deleted in a draft, the past ones too
+ * (20261011132000), so that a reader keyed on the published key — SS12000's
+ * activityId, the teacher's delivered figures — sees no draft. A row that
+ * has begun is never moved or deleted; once the deletion is published it is
+ * what DIRECT makes it the moment a template goes, an orphan, and its record
+ * is released.
+ */
+export async function releasePublishedPast(
+  tx: PrismaClient,
+  window: Pick<DraftWindow, 'academicYearId' | 'masters' | 'now'>,
+): Promise<number> {
+  const { count } = await tx.publicationPendingRemoval.deleteMany({
+    where: {
+      academicYearId: window.academicYearId,
+      masterLessonId: { notIn: window.masters.map((master) => master.id) },
+      calendarLesson: { is: { startsAt: { lte: window.now } } },
+    },
+  });
+  return count;
 }
 
 /** The window a DRAFT publish may cover: never a day that has begun. */

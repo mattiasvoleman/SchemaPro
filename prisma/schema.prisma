@@ -1014,15 +1014,17 @@ model PublishedLunchSitting {
 }
 
 /// A calendar row whose template was deleted in a DRAFT school
-/// (20261011100000). Written only by the trigger on MasterLessons; the next
-/// publish adopts, deletes or leaves the row, and its record with it.
+/// (20261011100000; every row, the past too, since 20261011132000). Written
+/// only by the trigger on MasterLessons; the next publish adopts, deletes or
+/// leaves the row, and releases a past row once the deletion is published.
 model PublicationPendingRemoval {
   calendarLessonId String   @id @db.Uuid
   schoolId         String   @db.Uuid
   academicYearId   String   @db.Uuid
   /// The deleted template's id: the row's published key until it is settled.
   masterLessonId   String   @db.Uuid
-  /// Whether the row was still SCHEDULED when its template was deleted.
+  /// Whether a publish could still move or delete the row when its template
+  /// was deleted: SCHEDULED, not begun, no attendance.
   reconcilable     Boolean
   recordedAt       DateTime @default(now()) @db.Timestamptz(6)
 

@@ -8196,7 +8196,9 @@ BEGIN
   IF app.current_school_grundschema_is_live() THEN RAISE EXCEPTION 'draft: a DRAFT school reads as live'; END IF;
 END $$;
 
--- 27c: a master deleted in DRAFT records its future rows, every status, and
+-- 27c: a master deleted in DRAFT records every row, every status, the past
+-- too (20261011132000: a held row keeps its published key until the deletion
+-- is published), reconcilable only where a publish may still move it — and
 -- nothing else writes the record.
 DO $$
 DECLARE
@@ -8221,9 +8223,9 @@ BEGIN
   END;
   DELETE FROM "MasterLessons" WHERE id = m;
   IF (SELECT string_agg(format('%s:%s', CASE "calendarLessonId" WHEN future_a THEN 'a' WHEN future_b THEN 'b' ELSE 'past' END, reconcilable), ','
-                        ORDER BY reconcilable DESC)
-        FROM "PublicationPendingRemovals" WHERE "masterLessonId" = m) IS DISTINCT FROM 'a:t,b:f' THEN
-    RAISE EXCEPTION 'draft: the deleted lesson recorded % rather than its two future rows',
+                        ORDER BY reconcilable DESC, CASE "calendarLessonId" WHEN future_a THEN 1 WHEN future_b THEN 2 ELSE 3 END)
+        FROM "PublicationPendingRemovals" WHERE "masterLessonId" = m) IS DISTINCT FROM 'a:t,b:f,past:f' THEN
+    RAISE EXCEPTION 'draft: the deleted lesson recorded % rather than its three rows, only the scheduled future one reconcilable',
       (SELECT coalesce(string_agg(format('%s:%s', CASE "calendarLessonId" WHEN future_a THEN 'a' WHEN future_b THEN 'b' ELSE 'past' END, reconcilable), ','), 'nothing')
          FROM "PublicationPendingRemovals" WHERE "masterLessonId" = m);
   END IF;

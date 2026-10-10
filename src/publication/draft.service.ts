@@ -214,7 +214,11 @@ export class DraftService {
           .filter((row) => before.has(row.id) && lessonDiffers(before.get(row.id)!, row))
           .map((row) => ({ before: view(before.get(row.id)!), after: view(row) })),
         removed: published.filter((row) => !after.has(row.id)).map(view),
-        pendingRemovals: await tx.publicationPendingRemoval.count({ where: { academicYearId } }),
+        // Rows a publish will adopt or remove: not those that have begun,
+        // which are recorded only to keep their published key (20261011132000).
+        pendingRemovals: await tx.publicationPendingRemoval.count({
+          where: { academicYearId, calendarLesson: { is: { startsAt: { gt: new Date() } } } },
+        }),
       };
     });
   }
