@@ -8952,10 +8952,15 @@ BEGIN
     RAISE EXCEPTION 'cover: a teacher backdated an absence';
   EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
   END;
-  -- Ending early, not before now.
-  UPDATE "TeacherAbsences" SET "endsAt" = now() + interval '1 hour' WHERE id = started;
-  GET DIAGNOSTICS n = ROW_COUNT;
-  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not end their absence early'; END IF;
+  -- Ending early past a decision: the decision sits on a lesson in 2095,
+  -- ahead and outside the shortened period, which only the admin may undo
+  -- (20261012130000; the API's ABSENCE_HAS_DECISIONS). Ending early where
+  -- nothing is left behind is 28h's.
+  BEGIN
+    UPDATE "TeacherAbsences" SET "endsAt" = now() + interval '1 hour' WHERE id = started;
+    RAISE EXCEPTION 'cover: a teacher ended their absence early past a decision still ahead';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
   INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "reasonId")
   VALUES (school, me, today + interval '3 days', today + interval '4 days', me, current_setting('app.test_rls28_sick')::uuid)
   RETURNING id INTO own;
@@ -9016,6 +9021,66 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not take back today''s absence within the hour'; END IF;
 END $$;
 
+-- 28h: what a teacher writes straight against the database never goes past
+-- the school's decisions, and the clock is the database's (20261012130000).
+-- T1 registers an absence in 2095 around the lessons 28b planted (l on 1
+-- March), with a forged createdAt; the admin decides on l; T1 then cannot
+-- withdraw it (before it starts, within the hour — a decision references
+-- it), cannot end it before l, but can end it after l; and a withdrawal of
+-- an absence without decisions stores the database's withdrawnAt and
+-- updatedAt, not the forged ones.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t1_sub'))::text, true);
+DO $$
+DECLARE own uuid; forged timestamptz;
+BEGIN
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "createdAt", "updatedAt")
+  VALUES (app.current_school_id(), app.current_user_id(), timestamptz '2095-02-28 00:00 UTC', timestamptz '2095-03-05 00:00 UTC',
+          app.current_user_id(), now() + interval '10 years', now() - interval '1 year')
+  RETURNING id, "createdAt" INTO own, forged;
+  IF forged IS DISTINCT FROM now() THEN RAISE EXCEPTION 'cover: a teacher stored createdAt %', forged; END IF;
+  IF (SELECT "updatedAt" FROM "TeacherAbsences" WHERE id = own) IS DISTINCT FROM now() THEN
+    RAISE EXCEPTION 'cover: a teacher stored their own updatedAt';
+  END IF;
+  PERFORM set_config('app.test_rls28_own_2095', own::text, true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers")
+SELECT app.current_school_id(), current_setting('app.test_rls28_own_2095')::uuid, l.id, current_setting('app.test_rls28_t1')::uuid,
+       'CO_TEACHER', jsonb_build_array(jsonb_build_object('teacherId', current_setting('app.test_rls28_t1'), 'role', 'LEAD'))
+  FROM "CalendarLessons" l WHERE l."schoolId" = app.current_school_id() AND l.date = DATE '2095-03-01';
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t1_sub'))::text, true);
+DO $$
+DECLARE
+  own uuid := current_setting('app.test_rls28_own_2095')::uuid;
+  other uuid; n bigint; stamped timestamptz; touched timestamptz;
+BEGIN
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = own;
+    RAISE EXCEPTION 'cover: a teacher withdrew an absence a decision references';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherAbsences" SET "endsAt" = timestamptz '2095-03-01 00:00 UTC' WHERE id = own;
+    RAISE EXCEPTION 'cover: a teacher ended an absence before a decided lesson still ahead';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  UPDATE "TeacherAbsences" SET "endsAt" = timestamptz '2095-03-02 00:00 UTC' WHERE id = own;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not end early with the decided lesson still inside'; END IF;
+
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+  VALUES (app.current_school_id(), app.current_user_id(), timestamptz '2095-04-01 00:00 UTC', timestamptz '2095-04-02 00:00 UTC', app.current_user_id())
+  RETURNING id INTO other;
+  UPDATE "TeacherAbsences"
+     SET status = 'WITHDRAWN', "withdrawnAt" = now() - interval '1 day', "withdrawnByUserId" = app.current_user_id(),
+         "updatedAt" = now() - interval '1 year'
+   WHERE id = other
+  RETURNING "withdrawnAt", "updatedAt" INTO stamped, touched;
+  IF stamped IS DISTINCT FROM now() OR touched IS DISTINCT FROM now() THEN
+    RAISE EXCEPTION 'cover: a teacher backdated a withdrawal to % (updatedAt %)', stamped, touched;
+  END IF;
+END $$;
+
 -- 28f: a pupil and a guardian see nothing of any of the six tables, and write nothing.
 SELECT set_config('app.test_rls28_who', 'pupil', true);
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_pupil_sub'))::text, true);
@@ -9073,17 +9138,33 @@ BEGIN
                              'SubstitutePoolMembers', 'SubstituteAvailabilities')
     ) x
    WHERE NOT x.shaped
-      OR EXISTS (
-        SELECT 1 FROM unnest(x.arms) e
-         WHERE e NOT LIKE '%current_school_id()%'
-            OR NOT (
-                 e LIKE '%current_user_role()%= ''SCHOOL_ADMIN''::"UserRole"%'
-              OR (e LIKE '%current_user_role()%= ''TEACHER''::"UserRole"%' AND e LIKE '%current_user_id()%')
-              OR (x.policyname IN ('teacher_absence_reasons_staff_select', 'cover_settings_staff_select')
-                  AND e LIKE '%current_user_role()%= ''TEACHER''::"UserRole"%')
-            )
-      );
+      OR EXISTS (SELECT 1 FROM unnest(x.arms) e WHERE NOT app.cover_policy_arm_is_narrow(x.tablename, x.policyname, e));
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'cover: arms reach an absence or the pool for somebody else: %', bad; END IF;
+
+  -- The rule refuses what the review showed the old LIKE let through: an arm
+  -- for every teacher that merely mentions current_user_id(), an own arm
+  -- widened with OR, a negated admin arm, the catalogue arm's shape on a
+  -- table that is not a catalogue, and an own arm anchored to the wrong
+  -- column; and it passes the real arms' shapes.
+  SELECT string_agg(name, ', ' ORDER BY name) INTO bad
+    FROM (VALUES
+      ('peek', 'TeacherAbsences', 'teacher_absences_colleague_peek',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = ''TEACHER''::"UserRole") AND (( SELECT app.current_user_id() AS current_user_id) IS NOT NULL))', false),
+      ('widened', 'TeacherAbsences', 'teacher_absences_own_select',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = ''TEACHER''::"UserRole") AND (("userId" = ( SELECT app.current_user_id() AS current_user_id)) OR true))', false),
+      ('negated', 'TeacherAbsenceCovers', 'teacher_absence_covers_admin_all',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (NOT (( SELECT app.current_user_role() AS current_user_role) = ''SCHOOL_ADMIN''::"UserRole")))', false),
+      ('catalogue elsewhere', 'TeacherAbsences', 'teacher_absence_reasons_staff_select',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = ''TEACHER''::"UserRole"))', false),
+      ('wrong column', 'TeacherAbsenceCovers', 'teacher_absence_covers_own_select',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = ''TEACHER''::"UserRole") AND ("decidedByUserId" = ( SELECT app.current_user_id() AS current_user_id)))', false),
+      ('own', 'TeacherAbsenceCovers', 'teacher_absence_covers_own_select',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = ''TEACHER''::"UserRole") AND ("absentTeacherId" = ( SELECT app.current_user_id() AS current_user_id)))', true),
+      ('catalogue', 'CoverSettings', 'cover_settings_staff_select',
+       '(("schoolId" = ( SELECT app.current_school_id() AS current_school_id)) AND (( SELECT app.current_user_role() AS current_user_role) = ''TEACHER''::"UserRole"))', true)
+    ) AS t(name, tbl, pol, arm, narrow)
+   WHERE app.cover_policy_arm_is_narrow(tbl, pol, arm) IS DISTINCT FROM narrow;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'cover: the leak rule judged wrongly: %', bad; END IF;
 
   SELECT string_agg(tablename || '.' || policyname || ':' || cmd, ',' ORDER BY tablename, policyname) INTO bad
     FROM pg_policies
@@ -9116,6 +9197,9 @@ BEGIN
     IF has_function_privilege('anon', fn, 'EXECUTE') THEN RAISE EXCEPTION 'cover: anon may call %', fn; END IF;
     IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'cover: the API may not call %', fn; END IF;
   END LOOP;
+  IF has_function_privilege('anon', 'app.cover_policy_arm_is_narrow(text, text, text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'cover: anon may call the leak rule';
+  END IF;
   FOREACH fn IN ARRAY ARRAY['app.teacher_absences_own_writes_are_narrow()', 'app.substitute_pool_member_is_a_teacher()'] LOOP
     IF has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'cover: the API may call the trigger %', fn; END IF;
   END LOOP;

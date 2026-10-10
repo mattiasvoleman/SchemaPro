@@ -10,7 +10,7 @@ import { asUser, createTestApp, type TestHarness } from './utils/test-app';
  *
  * The database is mocked, as in every e2e spec; what the rows do under RLS
  * is section 28 of scripts/test/rls-policies.sql, and the services'
- * transactions against Postgres are the adapter probe's (æ1–æ12).
+ * transactions against Postgres are the adapter probe's (æ1–æ14).
  */
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
