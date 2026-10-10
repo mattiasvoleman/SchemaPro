@@ -77,6 +77,8 @@ describe('the family schedule (e2e)', () => {
     expect(response.body).toEqual({
       student: { id: OWN_CHILD, firstName: 'Ella' },
       week: { from: '2026-10-12', to: '2026-10-18', isoWeek: '2026-W42' },
+      today: '2026-10-14',
+      bounds: { earliest: '2026-10-05', latest: '2027-06-07' },
       timezone: 'Europe/Stockholm',
       lessons: [
         {
