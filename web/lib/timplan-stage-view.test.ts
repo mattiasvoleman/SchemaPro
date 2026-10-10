@@ -21,6 +21,7 @@ const row = (studentGroupId: string, stage: ClassStageSummary["stage"], pupils: 
     code,
     nationalHours: null,
     pupils,
+    compared: pupils,
     planned: { min: 0, median: 0, max: 0 },
     projected: { min: 0, median: 0, max: 0 },
     belowNational: 0,

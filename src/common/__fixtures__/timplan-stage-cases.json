@@ -742,16 +742,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
-       "projected": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -772,6 +765,7 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 83,
         "median": 83,
@@ -790,6 +784,7 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 223,
         "median": 223,
@@ -808,6 +803,7 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 413,
         "median": 413,
@@ -826,6 +822,7 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 216.3,
         "median": 216.3,
@@ -844,6 +841,7 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 523,
         "median": 523,
@@ -1635,16 +1633,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
-       "projected": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -1665,6 +1656,7 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 83,
         "median": 83,
@@ -1683,6 +1675,7 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 223,
         "median": 223,
@@ -1701,6 +1694,7 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 371.7,
         "median": 371.7,
@@ -1719,6 +1713,7 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 216.3,
         "median": 216.3,
@@ -1737,6 +1732,7 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 523,
         "median": 523,
@@ -2488,6 +2484,7 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 90,
         "median": 90,
@@ -2506,6 +2503,7 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 203,
         "median": 203,
@@ -2524,6 +2522,7 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 91.5,
         "median": 91.5,
@@ -2542,6 +2541,7 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 403,
         "median": 403,
@@ -2560,6 +2560,7 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 289.5,
         "median": 289.5,
@@ -2578,6 +2579,7 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 293,
         "median": 293,
@@ -3394,6 +3396,7 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 103,
         "median": 103,
@@ -3412,6 +3415,7 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 203,
         "median": 203,
@@ -3430,6 +3434,7 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 91.5,
         "median": 91.5,
@@ -3448,6 +3453,7 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 403,
         "median": 403,
@@ -3466,6 +3472,7 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 289.5,
         "median": 289.5,
@@ -3484,6 +3491,7 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 293,
         "median": 293,
@@ -4134,16 +4142,9 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
-       "planned": {
-        "min": 68.7,
-        "median": 68.7,
-        "max": 68.7
-       },
-       "projected": {
-        "min": 68.7,
-        "median": 68.7,
-        "max": 68.7
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -4152,16 +4153,9 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
-       "planned": {
-        "min": 135.3,
-        "median": 135.3,
-        "max": 135.3
-       },
-       "projected": {
-        "min": 135.3,
-        "median": 135.3,
-        "max": 135.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -4170,16 +4164,9 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
-       "planned": {
-        "min": 61,
-        "median": 61,
-        "max": 61
-       },
-       "projected": {
-        "min": 61,
-        "median": 61,
-        "max": 61
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -4188,16 +4175,9 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
-       "planned": {
-        "min": 200,
-        "median": 200,
-        "max": 200
-       },
-       "projected": {
-        "min": 200,
-        "median": 200,
-        "max": 200
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -4206,16 +4186,9 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
-       "planned": {
-        "min": 193,
-        "median": 193,
-        "max": 193
-       },
-       "projected": {
-        "min": 193,
-        "median": 193,
-        "max": 193
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -4224,16 +4197,9 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
-       "planned": {
-        "min": 195.3,
-        "median": 195.3,
-        "max": 195.3
-       },
-       "projected": {
-        "min": 195.3,
-        "median": 195.3,
-        "max": 195.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -4994,16 +4960,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
-       "projected": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -5024,6 +4983,7 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 83,
         "median": 83,
@@ -5042,6 +5002,7 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 223,
         "median": 223,
@@ -5060,6 +5021,7 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 413,
         "median": 413,
@@ -5078,6 +5040,7 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 216.3,
         "median": 216.3,
@@ -5096,6 +5059,7 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 523,
         "median": 523,
@@ -6678,6 +6642,7 @@
        "code": "MA",
        "nationalHours": null,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 560,
         "median": 560,
@@ -6696,6 +6661,7 @@
        "code": "SV_SVA",
        "nationalHours": null,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 230,
         "median": 230,
@@ -7394,6 +7360,7 @@
        "code": "BL",
        "nationalHours": 60,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -7412,6 +7379,7 @@
        "code": "EN",
        "nationalHours": 60,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -7430,6 +7398,7 @@
        "code": "MA",
        "nationalHours": 420,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 420,
         "median": 420,
@@ -7448,6 +7417,7 @@
        "code": "NO",
        "nationalHours": 145,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -7466,6 +7436,7 @@
        "code": "SV_SVA",
        "nationalHours": 680,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 681,
         "median": 681,
@@ -7496,16 +7467,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -8226,6 +8190,7 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 103,
         "median": 103,
@@ -8244,6 +8209,7 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 203,
         "median": 203,
@@ -8262,6 +8228,7 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 91.5,
         "median": 91.5,
@@ -8280,6 +8247,7 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 403,
         "median": 403,
@@ -8298,6 +8266,7 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 289.5,
         "median": 289.5,
@@ -8316,6 +8285,7 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 293,
         "median": 293,
@@ -9169,6 +9139,7 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 36,
         "median": 36,
@@ -9199,6 +9170,7 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -9217,6 +9189,7 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -9235,6 +9208,7 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -9253,6 +9227,7 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -9271,6 +9246,7 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -10035,6 +10011,7 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 103,
         "median": 103,
@@ -10053,6 +10030,7 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 203,
         "median": 203,
@@ -10071,6 +10049,7 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 91.5,
         "median": 91.5,
@@ -10089,6 +10068,7 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 403,
         "median": 403,
@@ -10107,6 +10087,7 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 253.5,
         "median": 253.5,
@@ -10125,6 +10106,7 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 293,
         "median": 293,
@@ -10869,6 +10851,7 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 103,
         "median": 103,
@@ -10887,6 +10870,7 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 203,
         "median": 203,
@@ -10905,6 +10889,7 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 91.5,
         "median": 91.5,
@@ -10923,6 +10908,7 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 403,
         "median": 403,
@@ -10941,6 +10927,7 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 289.5,
         "median": 289.5,
@@ -10959,6 +10946,7 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 383,
         "median": 383,
@@ -12118,16 +12106,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 2,
-       "planned": {
-        "min": 16,
-        "median": 20,
-        "max": 24
-       },
-       "projected": {
-        "min": 16,
-        "median": 20,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 2
@@ -12148,14 +12129,15 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 2,
+       "compared": 1,
        "planned": {
-        "min": 55.3,
-        "median": 69.2,
+        "min": 83,
+        "median": 83,
         "max": 83
        },
        "projected": {
-        "min": 55.3,
-        "median": 69.2,
+        "min": 83,
+        "median": 83,
         "max": 83
        },
        "belowNational": 0,
@@ -12166,14 +12148,15 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 2,
+       "compared": 1,
        "planned": {
-        "min": 148.7,
-        "median": 185.9,
+        "min": 223,
+        "median": 223,
         "max": 223
        },
        "projected": {
-        "min": 148.7,
-        "median": 185.9,
+        "min": 223,
+        "median": 223,
         "max": 223
        },
        "belowNational": 0,
@@ -12184,14 +12167,15 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 2,
+       "compared": 1,
        "planned": {
-        "min": 275.3,
-        "median": 344.2,
+        "min": 413,
+        "median": 413,
         "max": 413
        },
        "projected": {
-        "min": 275.3,
-        "median": 344.2,
+        "min": 413,
+        "median": 413,
         "max": 413
        },
        "belowNational": 0,
@@ -12202,14 +12186,15 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 2,
+       "compared": 1,
        "planned": {
-        "min": 144.2,
-        "median": 180.3,
+        "min": 216.3,
+        "median": 216.3,
         "max": 216.3
        },
        "projected": {
-        "min": 144.2,
-        "median": 180.3,
+        "min": 216.3,
+        "median": 216.3,
         "max": 216.3
        },
        "belowNational": 0,
@@ -12220,14 +12205,15 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 2,
+       "compared": 1,
        "planned": {
-        "min": 348.7,
-        "median": 435.9,
+        "min": 523,
+        "median": 523,
         "max": 523
        },
        "projected": {
-        "min": 348.7,
-        "median": 435.9,
+        "min": 523,
+        "median": 523,
         "max": 523
        },
        "belowNational": 0,
@@ -12761,6 +12747,7 @@
        "code": "HKK",
        "nationalHours": 295,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -12779,6 +12766,7 @@
        "code": "MA",
        "nationalHours": 415,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 420,
         "median": 420,
@@ -12797,6 +12785,7 @@
        "code": "SV_SVA",
        "nationalHours": 400,
        "pupils": 1,
+       "compared": 1,
        "planned": {
         "min": 0,
         "median": 0,
@@ -13933,16 +13922,9 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
-       "planned": {
-        "min": 89.3,
-        "median": 89.3,
-        "max": 89.3
-       },
-       "projected": {
-        "min": 89.3,
-        "median": 89.3,
-        "max": 89.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -13951,16 +13933,9 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
-       "planned": {
-        "min": 175.9,
-        "median": 175.9,
-        "max": 175.9
-       },
-       "projected": {
-        "min": 175.9,
-        "median": 175.9,
-        "max": 175.9
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -13969,16 +13944,9 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
-       "planned": {
-        "min": 79.3,
-        "median": 79.3,
-        "max": 79.3
-       },
-       "projected": {
-        "min": 79.3,
-        "median": 79.3,
-        "max": 79.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -13987,16 +13955,9 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
-       "planned": {
-        "min": 349.3,
-        "median": 349.3,
-        "max": 349.3
-       },
-       "projected": {
-        "min": 349.3,
-        "median": 349.3,
-        "max": 349.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14005,16 +13966,9 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
-       "planned": {
-        "min": 250.9,
-        "median": 250.9,
-        "max": 250.9
-       },
-       "projected": {
-        "min": 250.9,
-        "median": 250.9,
-        "max": 250.9
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14023,16 +13977,9 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
-       "planned": {
-        "min": 253.9,
-        "median": 253.9,
-        "max": 253.9
-       },
-       "projected": {
-        "min": 253.9,
-        "median": 253.9,
-        "max": 253.9
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14799,16 +14746,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
-       "projected": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14829,16 +14769,9 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 1,
-       "planned": {
-        "min": 83,
-        "median": 83,
-        "max": 83
-       },
-       "projected": {
-        "min": 83,
-        "median": 83,
-        "max": 83
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14847,16 +14780,9 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 1,
-       "planned": {
-        "min": 223,
-        "median": 223,
-        "max": 223
-       },
-       "projected": {
-        "min": 223,
-        "median": 223,
-        "max": 223
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14865,16 +14791,9 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 1,
-       "planned": {
-        "min": 413,
-        "median": 413,
-        "max": 413
-       },
-       "projected": {
-        "min": 413,
-        "median": 413,
-        "max": 413
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14883,16 +14802,9 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 1,
-       "planned": {
-        "min": 216.3,
-        "median": 216.3,
-        "max": 216.3
-       },
-       "projected": {
-        "min": 216.3,
-        "median": 216.3,
-        "max": 216.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -14901,16 +14813,9 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 1,
-       "planned": {
-        "min": 523,
-        "median": 523,
-        "max": 523
-       },
-       "projected": {
-        "min": 523,
-        "median": 523,
-        "max": 523
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -15973,16 +15878,9 @@
        "code": "BL",
        "nationalHours": 60,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -15991,16 +15889,9 @@
        "code": "EN",
        "nationalHours": 60,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16009,16 +15900,9 @@
        "code": "MA",
        "nationalHours": 420,
        "pupils": 1,
-       "planned": {
-        "min": 280,
-        "median": 280,
-        "max": 280
-       },
-       "projected": {
-        "min": 280,
-        "median": 280,
-        "max": 280
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16027,16 +15911,9 @@
        "code": "NO",
        "nationalHours": 145,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16045,16 +15922,9 @@
        "code": "SV_SVA",
        "nationalHours": 680,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16075,16 +15945,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16608,16 +16471,9 @@
        "code": "BL",
        "nationalHours": 60,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16626,16 +16482,9 @@
        "code": "EN",
        "nationalHours": 60,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16644,16 +16493,9 @@
        "code": "MA",
        "nationalHours": 420,
        "pupils": 1,
-       "planned": {
-        "min": 140,
-        "median": 140,
-        "max": 140
-       },
-       "projected": {
-        "min": 140,
-        "median": 140,
-        "max": 140
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16662,16 +16504,9 @@
        "code": "NO",
        "nationalHours": 145,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16680,16 +16515,9 @@
        "code": "SV_SVA",
        "nationalHours": 680,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -16710,16 +16538,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 1,
-       "planned": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
-       "projected": {
-        "min": 0,
-        "median": 0,
-        "max": 0
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -18739,16 +18560,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 3,
-       "planned": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
-       "projected": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 3
@@ -18769,6 +18583,7 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 3,
+       "compared": 3,
        "planned": {
         "min": 83,
         "median": 83,
@@ -18787,6 +18602,7 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 3,
+       "compared": 3,
        "planned": {
         "min": 223,
         "median": 223,
@@ -18805,6 +18621,7 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 3,
+       "compared": 3,
        "planned": {
         "min": 409,
         "median": 409,
@@ -18823,6 +18640,7 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 3,
+       "compared": 3,
        "planned": {
         "min": 216.3,
         "median": 216.3,
@@ -18841,6 +18659,7 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 3,
+       "compared": 3,
        "planned": {
         "min": 523,
         "median": 523,
@@ -20050,16 +19869,9 @@
        "code": "HKK",
        "nationalHours": 40,
        "pupils": 2,
-       "planned": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
-       "projected": {
-        "min": 24,
-        "median": 24,
-        "max": 24
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 2
@@ -20080,6 +19892,7 @@
        "code": "BL",
        "nationalHours": 80,
        "pupils": 2,
+       "compared": 1,
        "planned": {
         "min": 83,
         "median": 83,
@@ -20098,6 +19911,7 @@
        "code": "EN",
        "nationalHours": 220,
        "pupils": 2,
+       "compared": 1,
        "planned": {
         "min": 223,
         "median": 223,
@@ -20116,6 +19930,7 @@
        "code": "MA",
        "nationalHours": 410,
        "pupils": 2,
+       "compared": 1,
        "planned": {
         "min": 413,
         "median": 413,
@@ -20134,6 +19949,7 @@
        "code": "NO",
        "nationalHours": 216,
        "pupils": 2,
+       "compared": 1,
        "planned": {
         "min": 216.3,
         "median": 216.3,
@@ -20152,6 +19968,7 @@
        "code": "SV_SVA",
        "nationalHours": 520,
        "pupils": 2,
+       "compared": 1,
        "planned": {
         "min": 523,
         "median": 523,
@@ -20814,16 +20631,9 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
-       "planned": {
-        "min": 68.7,
-        "median": 68.7,
-        "max": 68.7
-       },
-       "projected": {
-        "min": 68.7,
-        "median": 68.7,
-        "max": 68.7
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -20832,16 +20642,9 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
-       "planned": {
-        "min": 135.3,
-        "median": 135.3,
-        "max": 135.3
-       },
-       "projected": {
-        "min": 135.3,
-        "median": 135.3,
-        "max": 135.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -20850,16 +20653,9 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
-       "planned": {
-        "min": 61,
-        "median": 61,
-        "max": 61
-       },
-       "projected": {
-        "min": 61,
-        "median": 61,
-        "max": 61
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -20868,16 +20664,9 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
-       "planned": {
-        "min": 268.7,
-        "median": 268.7,
-        "max": 268.7
-       },
-       "projected": {
-        "min": 268.7,
-        "median": 268.7,
-        "max": 268.7
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -20886,16 +20675,9 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
-       "planned": {
-        "min": 193,
-        "median": 193,
-        "max": 193
-       },
-       "projected": {
-        "min": 193,
-        "median": 193,
-        "max": 193
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -20904,16 +20686,9 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
-       "planned": {
-        "min": 195.3,
-        "median": 195.3,
-        "max": 195.3
-       },
-       "projected": {
-        "min": 195.3,
-        "median": 195.3,
-        "max": 195.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -21575,16 +21350,9 @@
        "code": "BL",
        "nationalHours": 100,
        "pupils": 1,
-       "planned": {
-        "min": 68.7,
-        "median": 68.7,
-        "max": 68.7
-       },
-       "projected": {
-        "min": 68.7,
-        "median": 68.7,
-        "max": 68.7
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -21593,16 +21361,9 @@
        "code": "EN",
        "nationalHours": 200,
        "pupils": 1,
-       "planned": {
-        "min": 135.3,
-        "median": 135.3,
-        "max": 135.3
-       },
-       "projected": {
-        "min": 135.3,
-        "median": 135.3,
-        "max": 135.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -21611,16 +21372,9 @@
        "code": "HKK",
        "nationalHours": 90,
        "pupils": 1,
-       "planned": {
-        "min": 61,
-        "median": 61,
-        "max": 61
-       },
-       "projected": {
-        "min": 61,
-        "median": 61,
-        "max": 61
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -21629,16 +21383,9 @@
        "code": "MA",
        "nationalHours": 400,
        "pupils": 1,
-       "planned": {
-        "min": 268.7,
-        "median": 268.7,
-        "max": 268.7
-       },
-       "projected": {
-        "min": 268.7,
-        "median": 268.7,
-        "max": 268.7
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -21647,16 +21394,9 @@
        "code": "NO",
        "nationalHours": 289,
        "pupils": 1,
-       "planned": {
-        "min": 193,
-        "median": 193,
-        "max": 193
-       },
-       "projected": {
-        "min": 193,
-        "median": 193,
-        "max": 193
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
@@ -21665,16 +21405,9 @@
        "code": "SV_SVA",
        "nationalHours": 290,
        "pupils": 1,
-       "planned": {
-        "min": 195.3,
-        "median": 195.3,
-        "max": 195.3
-       },
-       "projected": {
-        "min": 195.3,
-        "median": 195.3,
-        "max": 195.3
-       },
+       "compared": 0,
+       "planned": null,
+       "projected": null,
        "belowNational": 0,
        "projectedBelowNational": 0,
        "unrecordedPupils": 1
