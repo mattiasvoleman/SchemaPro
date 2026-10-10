@@ -1059,11 +1059,16 @@ describe("master lesson mutations", () => {
 });
 
 describe("useLessonActions", () => {
+  // coverBoard: a vikarie or a cancel from the day planner or the old
+  // absence page lands on the cover board (Vikarietavla), whose pairs — and
+  // the register's counts and the counter, under the same prefix — are read
+  // off the very rows these writes change.
   const dayViewKeys = [
     ["dayLessons"],
     ["calendarLessons"],
     ["teacherLessons"],
     ["teacherAbsenceLessons"],
+    ["coverBoard"],
   ];
 
   it("cancel sends an empty body when no reason is given", async () => {
