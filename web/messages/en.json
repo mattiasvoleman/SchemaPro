@@ -2679,7 +2679,7 @@
       "showWarnedPupils": "Show only pupils with warnings",
       "pupilsHint": "Listed here are pupils with a warning: planned or projected below the timplan, or below the minimum time in a science or social-studies subject. Notices, such as a stage being only partly recorded, show under Show all pupils.",
       "pupilsNone": "No pupil in the class has a warning.",
-      "cohort": "{regime, select, REFORMED_2028 {began grade 1 in autumn {ht}, ten-year compulsory school} other {began grade 1 in autumn {ht}}}",
+      "cohort": "{regime, select, REFORMED_2028 {began grade 1 in autumn {ht}, new numbering from autumn 2028} other {began grade 1 in autumn {ht}}}",
       "cohortUnknown": "cohort unknown",
       "currentStage": "now",
       "gradesRecorded": "recorded grade {grades}",
@@ -2724,7 +2724,7 @@
         "partClassDeleted": "a class the pupil was in has been deleted",
         "backfilled": "The class before {from} is assumed from where the pupil was when the class history began; a move before then does not show.",
         "backfilledUntil": "The class from {from} to {until} is assumed: it is the class the pupil had when the class history began, and a move before then does not show.",
-        "versionMissing": "{stageTitle}: the version that applies is older than the reference data, so no national comparison is made.",
+        "versionMissing": "{regime, select, REFORMED_2028 {{stageTitle}: the version from autumn 2028 for the pupil's school form is not in the reference data, so no national comparison is made.} other {{stageTitle}: the version that applies is older than the reference data, so no national comparison is made.}}",
         "unpublished": "{stageTitle}: according to the reference data ({version}) the total is {total}, but the distribution by subject is not published, so the stage is not compared subject by subject.",
         "assumed": "{stageTitle}: from autumn 2028 it is compared with {version} according to the reference data. The distribution for older cohorts after 2028 is not published; SFS 2025:729 keeps only the total.",
         "formChanged": "{stageTitle}: the stage's years follow timplans for different school forms, and the comparison uses the latest.",
@@ -2757,9 +2757,9 @@
   "timplanCohorts": {
     "title": "Timplans per cohort",
     "intro": "Which version each cohort's stages are compared with in Coverage › Stage, according to SchemaPro's reference data. These are the reference data's sources, not a legal ruling for an individual pupil. From autumn 2028 grades are read in the new numbering.",
-    "cohort": "{regime, select, REFORMED_2028 {Grade 1 in autumn {ht}, ten-year compulsory school} other {Grade 1 in autumn {ht}}}",
+    "cohort": "{regime, select, REFORMED_2028 {Grade 1 in autumn {ht}, new numbering from autumn 2028} other {Grade 1 in autumn {ht}}}",
     "noClasses": "no class yet",
-    "stageVersion": "{stage, select, LAG {Lower school} MELLAN {Middle school} other {Upper school}}: {state, select, missing {older version, not in the reference data} unpublished {{version}, total only — the distribution is not published} assumed {{version}, distribution assumed after 2028} other {{version}}}",
+    "stageVersion": "{stage, select, LAG {Lower school} MELLAN {Middle school} other {Upper school}}: {state, select, missing {older version, not in the reference data} missingReformed {the version from autumn 2028 is not in the reference data} unpublished {{version}, total only — the distribution is not published} assumed {{version}, distribution assumed after 2028} other {{version}}}",
     "sources": "Sources, read 10 October 2026: SFS 2023:945 (annexes 1, 3 and 4) applies to stages not completed by 1 July 2024. SFS 2025:729 (issued 19 June 2025) introduces the ten-year compulsory school with 7,424 hours for cohorts starting grade 1 in autumn 2028; pupils already in school move up one extra grade and keep 6,890 hours in total (transitional provisions 4 and 12). Under SFS 2026:1243 (Govt. Bill 2025/26:194) timplans become part of the curricula, and the distribution by subject is expected in a curriculum ordinance after the Swedish National Agency for Education's proposals of 14 May 2027 (U2026/01483). The rollover into a year from autumn 2028 still moves classes up one grade only."
   },
   "uppdrag": {
