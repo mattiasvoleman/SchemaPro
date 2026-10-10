@@ -442,6 +442,109 @@ describe('SS12000 sync (e2e)', () => {
     });
   });
 
+  describe('edges', () => {
+    const configured = async (patch: object = {}) => {
+      await as().put('/api/v1/ss12000-source', sourceBody({ organisationIds: [ORG], ...patch }));
+      await as().put('/api/v1/ss12000-source/secrets/CLIENT_SECRET', { value: SECRET });
+    };
+    const runOnce = async () => {
+      const started = await as().post('/api/v1/ss12000-sync/runs', { mode: 'INCREMENTAL' });
+      expect(started.body.mode).toBe('FULL');
+      await sync().whenIdle();
+      return (await as().get(`/api/v1/ss12000-sync/runs/${started.body.runId}`)).body;
+    };
+    const missing = '99999999-0000-4000-8000-0000000000ff';
+
+    it('answers 404 for a run, a discard, an apply, a test and a schedule with nothing behind them', async () => {
+      expect((await as().get(`/api/v1/ss12000-sync/runs/${missing}`)).body.code).toBe('SS12000_RUN_NOT_FOUND');
+      expect((await as().post('/api/v1/ss12000-source/test')).body.code).toBe('SS12000_SOURCE_NOT_FOUND');
+      expect((await as().patch('/api/v1/ss12000-source/schedule', { scheduleEnabled: true })).body.code).toBe('SS12000_SOURCE_NOT_FOUND');
+      expect((await as().put('/api/v1/ss12000-source/secrets/BEARER_TOKEN', { value: 'token-1234' })).body.code).toBe('SS12000_SOURCE_NOT_FOUND');
+      expect((await as().delete('/api/v1/ss12000-source/secrets/BEARER_TOKEN')).body.code).toBe('SS12000_SOURCE_NOT_FOUND');
+      expect((await as().post('/api/v1/ss12000-sync/runs', { mode: 'FULL' })).body.code).toBe('SS12000_SOURCE_NOT_FOUND');
+      expect((await as().post(`/api/v1/ss12000-sync/runs/${missing}/apply`, { basisHash: 'f'.repeat(64) })).body.code).toBe('SS12000_SOURCE_NOT_FOUND');
+      await configured();
+      expect((await as().post(`/api/v1/ss12000-sync/runs/${missing}/apply`, { basisHash: 'f'.repeat(64) })).body.code).toBe('SS12000_RUN_NOT_FOUND');
+      expect((await as().post(`/api/v1/ss12000-sync/runs/${missing}/discard`)).body.code).toBe('SS12000_RUN_NOT_FOUND');
+    });
+
+    it('clears a credential, refuses a client secret without a token URL, and refuses a disabled source', async () => {
+      await configured();
+      expect((await as().delete('/api/v1/ss12000-source/secrets/CLIENT_SECRET')).body).toEqual({ kind: 'CLIENT_SECRET', cleared: true });
+      expect(w.secrets.size).toBe(0);
+      await as().put('/api/v1/ss12000-source', sourceBody({ authKind: 'BEARER_TOKEN', tokenUrl: null, clientId: null, organisationIds: [ORG] }));
+      expect((await as().put('/api/v1/ss12000-source/secrets/CLIENT_SECRET', { value: SECRET })).body.code).toBe('SS12000_SOURCE_NO_TOKEN_URL');
+      await as().put('/api/v1/ss12000-source', sourceBody({ enabled: false, organisationIds: [ORG] }));
+      expect((await as().post('/api/v1/ss12000-sync/runs', { mode: 'FULL' })).body.code).toBe('SS12000_SOURCE_DISABLED');
+    });
+
+    it('runs FULL when asked for an incremental run with no cursor, and pages the changes', async () => {
+      await configured();
+      const run = await runOnce();
+      const first = await as().get(`/api/v1/ss12000-sync/runs/${run.id}/changes?limit=2`);
+      expect(first.body.data).toHaveLength(2);
+      expect(first.body.nextCursor).toBe(first.body.data[1].seq);
+      const next = await as().get(`/api/v1/ss12000-sync/runs/${run.id}/changes?limit=500&cursor=${first.body.nextCursor}`);
+      expect(next.body.data[0].seq).toBe(first.body.nextCursor + 1);
+      expect(next.body.nextCursor).toBeNull();
+      const conflicts = await as().get(`/api/v1/ss12000-sync/runs/${run.id}/changes?conflicts=true&entity=PERSON`);
+      expect(conflicts.body.data.every((c: { conflictCode: string | null }) => c.conflictCode !== null)).toBe(true);
+    });
+
+    it('records a failed apply as APPLY_FAILED with nothing half-written, and a lock it waited out as 409 BUSY', async () => {
+      await configured();
+      const run = await runOnce();
+      harness.tx.$queryRaw.mockRejectedValueOnce(Object.assign(new Error('lock'), { meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } }));
+      expect((await as().post(`/api/v1/ss12000-sync/runs/${run.id}/apply`, { basisHash: run.basisHash })).body).toMatchObject({ status: 409, code: 'SS12000_BUSY' });
+      expect(w.runs.find((r) => r['id'] === run.id)).toMatchObject({ status: 'DIFF_READY' });
+      harness.tx.user.createMany.mockRejectedValueOnce(Object.assign(new Error('dup'), { meta: { driverAdapterError: { cause: { originalCode: '23505' } } } }));
+      expect((await as().post(`/api/v1/ss12000-sync/runs/${run.id}/apply`, { basisHash: run.basisHash })).body).toMatchObject({ status: 409, code: 'SS12000_APPLY_FAILED' });
+      expect(w.runs.find((r) => r['id'] === run.id)).toMatchObject({ status: 'APPLY_FAILED', statusCode: 'SS12000_APPLY_23505' });
+    });
+
+    it('marks a run whose source was switched off meanwhile FETCH_FAILED, and leaves a run that is not RUNNING alone', async () => {
+      await configured();
+      const runId = '99999999-0000-4000-8000-0000000000aa';
+      w.runs.push({ id: runId, schoolId: SCHOOL, sourceId: w.source!['id'], status: 'RUNNING', trigger: 'MANUAL', mode: 'FULL', startedAt: new Date() });
+      w.source!['enabled'] = false;
+      await sync().execute(runId, SCHOOL, { autoApply: false });
+      expect(w.runs.find((r) => r['id'] === runId)).toMatchObject({ status: 'FETCH_FAILED', statusCode: 'SS12000_SOURCE_DISABLED' });
+      expect(provider.dataRequests()).toHaveLength(0);
+      await sync().execute(runId, SCHOOL, { autoApply: false });
+      expect(w.runs.find((r) => r['id'] === runId)).toMatchObject({ statusCode: 'SS12000_SOURCE_DISABLED' });
+    });
+
+    it('stops the nightly auto-apply at max(5, 2 %) deactivations and leaves the diff to the admin', async () => {
+      await configured();
+      await as().patch('/api/v1/ss12000-source/schedule', { scheduleEnabled: true, scheduleAutoApply: true });
+      for (let i = 0; i < 7; i++) {
+        w.users.push({
+          id: `10000${String(i).padStart(3, '0')}-0000-4000-8000-000000000000`, schoolId: SCHOOL, role: 'STUDENT', firstName: 'G', lastName: String(i),
+          email: `g${i}@skola.se`, ss12000Id: `bbbbbbbb-2222-4000-8000-00000000000${i}`, isActive: true, updatedAt: new Date(0),
+        });
+      }
+      w.due = [{ source_id: w.source!['id'] as string, school_id: SCHOOL, full_due: true }];
+      await harness.app.get(Ss12000SchedulerService).tick();
+      expect(w.runs[0]).toMatchObject({ status: 'DIFF_READY', autoApplyBlockedReason: 'MASS_DEACTIVATION', autoApplied: false });
+      expect(w.changes.some((c) => c['applied'])).toBe(false);
+    });
+
+    it('leaves a nightly diff whose basis moved before the auto-apply for the admin', async () => {
+      await configured();
+      await as().patch('/api/v1/ss12000-source/schedule', { scheduleEnabled: true, scheduleAutoApply: true });
+      const source = w.source!;
+      const runId = await sync().startScheduledRun(source['id'] as string, SCHOOL, true);
+      expect(runId).not.toBeNull();
+      const run = w.runs.find((r) => r['id'] === runId)!;
+      expect(run['status']).toBe('DIFF_READY');
+      // Somebody else's write moved the school; the auto-apply then refuses quietly.
+      run['status'] = 'DIFF_READY';
+      run['basisHash'] = '0'.repeat(64);
+      await sync().autoApply(runId!, SCHOOL);
+      expect(w.changes.filter((c) => c['runId'] === runId).some((c) => c['applied'])).toBe(false);
+    });
+  });
+
   it('never let a credential out: no response and no log line of this file carried one', () => {
     expect(responses.length).toBeGreaterThan(20);
     for (const text of [...responses, ...logs.lines]) {
