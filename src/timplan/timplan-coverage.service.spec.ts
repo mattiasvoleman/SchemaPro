@@ -130,6 +130,7 @@ describe('TimplanCoverageService', () => {
   });
 
   describe('a past year with class history (timplan P4)', () => {
+    const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
     const past = () => {
       givenTheYear();
       tx.academicYear.findUnique.mockResolvedValue({
@@ -146,17 +147,17 @@ describe('TimplanCoverageService', () => {
       // Bo moved 8A → nowhere (a class since deleted); Cleo, deactivated
       // since, sat in 8A all year. Anna is in 8A.
       tx.studentEnrollment.findMany.mockResolvedValue([
-        { studentId: ANNA, studentGroupId: CLASS_ID },
-        { studentId: BO, studentGroupId: CLASS_ID },
-        { studentId: BO, studentGroupId: null },
-        { studentId: VISITOR, studentGroupId: CLASS_ID },
+        { studentId: ANNA, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2027-06-12') },
+        { studentId: BO, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2026-11-02') },
+        { studentId: BO, studentGroupId: null, validFrom: day('2026-11-02'), validTo: day('2027-06-12') },
+        { studentId: VISITOR, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2027-06-12') },
       ]);
 
       const answer = await service.planned({ academicYearId: YEAR_ID }, testUser());
 
       expect(tx.studentEnrollment.findMany).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID },
-        select: { studentId: true, studentGroupId: true },
+        select: { studentId: true, studentGroupId: true, validFrom: true, validTo: true },
         orderBy: [{ studentId: 'asc' }, { validFrom: 'asc' }],
       });
       // Not today's rows: no home read by class, and memberships of exactly these pupils, active or not.
@@ -166,6 +167,25 @@ describe('TimplanCoverageService', () => {
         select: { studentId: true, studentGroupId: true },
       });
       expect(answer).toMatchObject({ pupilCount: 2, pupilsOutsideClasses: 1 });
+    });
+
+    it('counts no straggler: a segment from the ended year’s end + 1 holds no day of it, and its pupil sat there never', async () => {
+      past();
+      // Placed in the ended year's 8A in the summer, before the activation
+      // moved them on: the trigger opened the segment at endDate + 1
+      // (2027-06-12) and the activation closed it. The stage view clips it
+      // away (clipToYear); the planned and delivered layers must agree.
+      tx.studentEnrollment.findMany.mockResolvedValue([
+        { studentId: ANNA, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2027-06-12') },
+        { studentId: BO, studentGroupId: CLASS_ID, validFrom: day('2026-08-17'), validTo: day('2027-06-12') },
+        { studentId: VISITOR, studentGroupId: CLASS_ID, validFrom: day('2027-06-12'), validTo: day('2027-08-16') },
+      ]);
+      const answer = await service.planned({ academicYearId: YEAR_ID }, testUser());
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: [GROUP_ID] }, studentId: { in: [ANNA, BO] } },
+        select: { studentId: true, studentGroupId: true },
+      });
+      expect(answer).toMatchObject({ pupilCount: 2 });
     });
 
     it('keeps today’s rosters for a past year the history says nothing about, and for the active year asks nothing more', async () => {
