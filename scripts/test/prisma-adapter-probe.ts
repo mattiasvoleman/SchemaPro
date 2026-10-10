@@ -3888,6 +3888,7 @@ async function runChecks(
   await equivalenceCheck(owner, api);
   await weekEdgeChecks(owner, api);
   await mealChecks(owner, api);
+  await pastRowChecks(owner, api);
   await batchChecks(owner, api);
   await batchMoveChecks(owner, api);
   await viewerChecks(owner, api);
@@ -4820,7 +4821,11 @@ interface PublicationSchool {
  * room, two weekly lessons and lunch switched on. Written as the owner; every
  * assertion then runs through the real services as app_authenticated.
  */
-async function givenPublicationSchool(owner: Client, suffix = 'publicering'): Promise<PublicationSchool> {
+async function givenPublicationSchool(
+  owner: Client,
+  suffix = 'publicering',
+  dates: { start: string; end: string } = { start: '2096-08-13', end: '2097-06-11' },
+): Promise<PublicationSchool> {
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
     (await owner.query<T>(sql, params)).rows[0];
   const school = await one<{ id: string }>(
@@ -4837,8 +4842,8 @@ async function givenPublicationSchool(owner: Client, suffix = 'publicering'): Pr
   const teacher = await person('TEACHER', 't1');
   const year = await one<{ id: string }>(
     `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-     VALUES ($1, $2, '2096-08-13', '2097-06-11', true, now()) RETURNING id`,
-    [school.id, `${MARKER} publicering`],
+     VALUES ($1, $2, $3, $4, true, now()) RETURNING id`,
+    [school.id, `${MARKER} publicering`, dates.start, dates.end],
   );
   const g7a = await one<{ id: string }>(
     `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
@@ -5576,6 +5581,100 @@ async function batchMoveChecks(owner: Client, api: PrismaService): Promise<void>
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-avbokning-flytt'`, [MARKER]);
+  }
+}
+
+/**
+ * A school with a past (20261011132000). The 2096 school above has none, so
+ * it cannot see what a draft delete does to rows that have been held: the
+ * calendar's ON DELETE SET NULL takes their key at once. The trigger records
+ * them too, so every reader on the published key — SS12000 calendarEvents,
+ * the teacher's delivered figures — answers as before until the deletion is
+ * published, and the publish then releases them as DIRECT's orphans.
+ */
+async function pastRowChecks(owner: Client, api: PrismaService): Promise<void> {
+  // Eight weeks back to the Monday, thirty-eight weeks ahead: today is inside.
+  const monday = new Date();
+  monday.setUTCHours(0, 0, 0, 0);
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) - 56);
+  const end = new Date(monday);
+  end.setUTCDate(end.getUTCDate() + 7 * 38 - 3);
+  const dates = { start: monday.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  const school = await givenPublicationSchool(owner, 'dagens', dates);
+  const { publications, calendar } = publicationServicesFor(api);
+  const drafts = new DraftService(
+    api,
+    calendar,
+    new RealScheduleVersionsService(api),
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+  );
+  const lessons = new MasterLessonsService(
+    api,
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+  );
+  const ss12000 = new Ss12000Service(api);
+  const load = new StaffingLoadService(api);
+  const stable = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => (key === 'asOf' ? undefined : v)));
+  const reads = async () =>
+    stable({
+      events: await ss12000.calendarEvents(school.schoolId, dates.start, dates.end, '500'),
+      delivered: await load.delivered({ academicYearId: school.yearId, from: dates.start, to: dates.end }, school.teacher),
+    });
+  const pastWednesdays = async () =>
+    (
+      await owner.query(
+        `SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND "startsAt" <= now()
+            AND extract(isodow FROM date) = 3`,
+        [school.schoolId],
+      )
+    ).rows[0].n as number;
+  try {
+    await check('(pub-b) a draft delete on a school with a past changes no published key of a held lesson until it is published', async () => {
+      await publications.legacyPublish({ academicYearId: school.yearId, fromDate: dates.start }, school.admin);
+      // A substitute on one held Wednesday, so statement C has a past row to key.
+      await owner.query(
+        `UPDATE "CalendarLessonTeachers" SET role = 'SUBSTITUTE' WHERE "calendarLessonId" = (
+           SELECT id FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2 AND "startsAt" <= now() ORDER BY date LIMIT 1)`,
+        [school.schoolId, school.wednesday],
+      );
+      const held = await pastWednesdays();
+      assert.ok(held >= 7, `${held} held Wednesdays`);
+      await drafts.switchMode('DRAFT', school.admin);
+      const before = await reads();
+      await lessons.remove(school.wednesday, school.admin);
+      assert.deepEqual(await reads(), before);
+      const recorded = await owner.query(
+        `SELECT count(*) FILTER (WHERE cl."startsAt" <= now())::int AS past, count(*) FILTER (WHERE NOT p.reconcilable AND cl."startsAt" <= now())::int AS kept
+           FROM "PublicationPendingRemovals" p JOIN "CalendarLessons" cl ON cl.id = p."calendarLessonId" WHERE p."schoolId" = $1`,
+        [school.schoolId],
+      );
+      assert.deepEqual(recorded.rows[0], { past: held, kept: held });
+      // The draft state counts only what a publish will settle.
+      const state = await drafts.state(school.yearId, school.admin);
+      const ahead = await owner.query(
+        `SELECT count(*)::int AS n FROM "PublicationPendingRemovals" p JOIN "CalendarLessons" cl ON cl.id = p."calendarLessonId"
+          WHERE p."schoolId" = $1 AND cl."startsAt" > now()`,
+        [school.schoolId],
+      );
+      assert.equal(state.pendingRemovals, ahead.rows[0].n);
+    });
+
+    await check('(pub-b) the publish of the deletion releases the held rows: they are DIRECT\'s orphans, and nothing is left pending', async () => {
+      await publications.publish({ academicYearId: school.yearId, acknowledgeWarnings: true }, school.admin);
+      const left = await owner.query(`SELECT count(*)::int AS n FROM "PublicationPendingRemovals" WHERE "schoolId" = $1`, [
+        school.schoolId,
+      ]);
+      assert.equal(left.rows[0].n, 0);
+      // The held Wednesdays now answer as DIRECT answers for a deleted template.
+      const events = await ss12000.calendarEvents(school.schoolId, dates.start, dates.end, '500');
+      const held = events.data.filter((event) => new Date(event.startTime) <= new Date() && new Date(event.startTime).getUTCDay() === 3);
+      assert.ok(held.length >= 7);
+      assert.ok(held.every((event) => event.activityId === null), JSON.stringify(held.slice(0, 2)));
+      assert.equal((await drafts.switchMode('DIRECT', school.admin)).publishMode, 'DIRECT');
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-dagens'`, [MARKER]);
   }
 }
 
