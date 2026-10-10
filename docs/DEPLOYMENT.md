@@ -173,6 +173,9 @@ Run it with (see `.env.example` for the full annotated list):
 | `AI_ENGINE_TIMEOUT_MS` | `90000` (must exceed the solver timeout) |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |
 | `PUBLIC_VIEWER_PROXY_KEY` | optional, at least 32 random characters, the **same value as on the web app**. Schemavisaren (`/v/<token>`) is fetched by the web server, so without it every family shares the web server's rate-limit bucket (120 a minute); with it the API trusts the viewer's address the web server forwards |
+| `PUSH_NOTIFICATIONS` | `off` (the default, and what unset means) or `expo`. Off, push is inert: `GET /api/v1/push/config` answers `{enabled:false}`, the app never asks for permission, registration is refused (409 `PUSH_DISABLED`), no Expo request is made and no receipt is checked. Turn it on only as in §8.1 |
+| `EXPO_ACCESS_TOKEN` | optional, at least 20 characters; sent as a Bearer to Expo only when set, which Expo requires once *enhanced push security* is on for the EAS project |
+| `EXPO_PUSH_API_URL` | optional, `https` only; defaults to `https://exp.host/--/api/v2/push` |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -252,6 +255,36 @@ npx eas build --platform all # store/TestFlight builds via EAS
 
 \* Note: `expo-secure-store` and biometrics require a development build
 (`npx expo run:ios` / `run:android`) rather than Expo Go.
+
+### 8.1 Turning push on
+
+Push to the app is off until all of this is done, in this order. Nothing in
+production changes before the last step.
+
+1. **A data processing agreement and a basis for the transfer.** A push
+   passes through Expo (650 Industries, USA), Apple (APNs) and Google (FCM).
+   The school, as personuppgiftsansvarig, needs a data processing agreement
+   that covers Expo as a sub-processor, and a lawful basis for the transfer
+   to a third country, *before* push is turned on. The texts are minimised
+   (no name, no subject, group or room, no free text; see
+   `src/notifications/push-messages.ts`), but a device token and the fact
+   of a notice are still personal data.
+2. **An EAS project and credentials**: FCM V1 credentials (Android) and an
+   APNs key (iOS, a paid Apple developer account) uploaded to EAS.
+3. **A new native build** of the app with `EXPO_PUBLIC_EAS_PROJECT_ID` set to
+   the EAS project's id (the `expo-notifications` config plugin needs a new
+   binary; remote push does not work in Expo Go on Android). Without the id
+   the app reports push as unavailable and registers nothing.
+4. **The API**: `PUSH_NOTIFICATIONS=expo` (plus `EXPO_ACCESS_TOKEN` if enhanced
+   push security is on). The receipt checker starts with it: every five
+   minutes, in-process, safe across instances (each ticket is claimed with
+   `SKIP LOCKED`).
+
+Turning it off again is `PUSH_NOTIFICATIONS=off`: nothing more is sent and no
+receipt is checked; registered devices stay in `DevicePushTokens` until their
+owners log out, another account takes the device, or push is turned on again
+and the housekeeping removes the stale ones (30 days after Expo said the
+device is gone, 180 days unseen).
 
 ---
 

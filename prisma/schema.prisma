@@ -1951,6 +1951,47 @@ model NotificationOptOut {
   @@map("NotificationOptOuts")
 }
 
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+
+/// One installation of the mobile app that may receive push (20261013110000).
+/// UNIQUE(token): a token has one owner, and a registration takes it over.
+/// Written only through app.claim_device_push_token; the owner reads and
+/// deletes their own rows (RLS). The (userId, schoolId) key to Users, the
+/// token-format and locale CHECKs live in the migration.
+model DevicePushToken {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String         @db.Uuid
+  userId        String         @db.Uuid
+  token         String         @unique
+  platform      DevicePlatform
+  /// 'sv' or 'en': the language the push is written in.
+  locale        String         @default("sv")
+  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
+  lastSeenAt    DateTime       @default(now()) @db.Timestamptz(6)
+  revokedAt     DateTime?      @db.Timestamptz(6)
+  /// 'DEVICE_NOT_REGISTERED', set with revokedAt.
+  revokedReason String?
+
+  @@unique([id, schoolId])
+  @@map("DevicePushTokens")
+}
+
+/// An Expo receipt id awaiting its check (at most 24 h). RLS with no arm and
+/// no grant: only the app.push_* functions touch it.
+model PushTicket {
+  id        String    @id
+  schoolId  String    @db.Uuid
+  tokenId   String    @db.Uuid
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  claimedAt DateTime? @db.Timestamptz(6)
+
+  @@index([tokenId, schoolId])
+  @@map("PushTickets")
+}
+
 // -----------------------------------------------------------------------------
 // Availability / scheduling constraints (consumed by the OR-Tools engine)
 // -----------------------------------------------------------------------------

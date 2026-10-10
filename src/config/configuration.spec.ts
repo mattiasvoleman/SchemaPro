@@ -2,7 +2,7 @@
 // Nest's bootstrap normally loads it first.
 import 'reflect-metadata';
 import { loadConfiguration } from './configuration';
-import { NodeEnv, type EnvironmentVariables } from './env.validation';
+import { NodeEnv, PushMode, type EnvironmentVariables } from './env.validation';
 
 /*
  * loadConfiguration is the only reader of the environment. What it gets wrong
@@ -65,6 +65,21 @@ describe('loadConfiguration', () => {
       },
       // Unset: the viewer trusts no forwarded address.
       publicViewer: { proxyKey: undefined },
+      // Unset: push is off, and Expo's own address.
+      push: { enabled: false, accessToken: undefined, apiUrl: 'https://exp.host/--/api/v2/push' },
+    });
+  });
+
+  it('turns push on only for PUSH_NOTIFICATIONS=expo, with the token when set and the URL without its trailing slash', () => {
+    expect(loadConfiguration(env({ PUSH_NOTIFICATIONS: PushMode.Off })).push.enabled).toBe(false);
+    const on = loadConfiguration(
+      env({ PUSH_NOTIFICATIONS: PushMode.Expo, EXPO_ACCESS_TOKEN: 't'.repeat(24), EXPO_PUSH_API_URL: 'https://push.example.invalid/api//' }),
+    ).push;
+    expect(on).toEqual({ enabled: true, accessToken: 't'.repeat(24), apiUrl: 'https://push.example.invalid/api' });
+    expect(loadConfiguration(env({ PUSH_NOTIFICATIONS: PushMode.Expo, EXPO_ACCESS_TOKEN: '', EXPO_PUSH_API_URL: '' })).push).toEqual({
+      enabled: true,
+      accessToken: undefined,
+      apiUrl: 'https://exp.host/--/api/v2/push',
     });
   });
 

@@ -1,4 +1,4 @@
-import { EnvironmentVariables, NodeEnv } from './env.validation';
+import { EnvironmentVariables, NodeEnv, PushMode } from './env.validation';
 
 export interface AppConfig {
   nodeEnv: NodeEnv;
@@ -39,6 +39,17 @@ export interface PublicViewerConfig {
   proxyKey?: string;
 }
 
+export interface PushConfig {
+  /** PUSH_NOTIFICATIONS=expo. False: nothing about push leaves the process. */
+  enabled: boolean;
+  /** Bearer for Expo's enhanced push security; undefined sends none. */
+  accessToken?: string;
+  /** Without a trailing slash: `${apiUrl}/send`, `${apiUrl}/getReceipts`. */
+  apiUrl: string;
+}
+
+export const DEFAULT_EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push';
+
 export interface Configuration {
   app: AppConfig;
   database: DatabaseConfig;
@@ -47,6 +58,7 @@ export interface Configuration {
   throttle: ThrottleConfig;
   supabase: SupabaseAdminConfig;
   publicViewer: PublicViewerConfig;
+  push: PushConfig;
 }
 
 /**
@@ -91,6 +103,11 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     publicViewer: {
       proxyKey: env.PUBLIC_VIEWER_PROXY_KEY && env.PUBLIC_VIEWER_PROXY_KEY.length > 0 ? env.PUBLIC_VIEWER_PROXY_KEY : undefined,
+    },
+    push: {
+      enabled: env.PUSH_NOTIFICATIONS === PushMode.Expo,
+      accessToken: env.EXPO_ACCESS_TOKEN && env.EXPO_ACCESS_TOKEN.length > 0 ? env.EXPO_ACCESS_TOKEN : undefined,
+      apiUrl: (env.EXPO_PUSH_API_URL && env.EXPO_PUSH_API_URL.length > 0 ? env.EXPO_PUSH_API_URL : DEFAULT_EXPO_PUSH_API_URL).replace(/\/+$/, ''),
     },
   };
 }
