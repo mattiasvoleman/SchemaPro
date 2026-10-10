@@ -14,7 +14,10 @@
 // "bara totalen"; an old cohort read against bilaga 1 after 2028 says the
 // distribution is assumed (SFS 2025:729 övergångsbestämmelse 12 keeps only the
 // total). Individual exceptions ("annat beslutas", övergångsbestämmelse 4)
-// are not modelled, and the sentence does not pretend they are.
+// are not modelled, and the sentence does not pretend they are. The reformed
+// cohort is named by its numbering, not as "tioårig grundskola": the rows
+// carry no school form, and specialskolan has eleven grades, sameskolan
+// seven.
 //
 // A <details>, closed: it is a reference the admin opens when a class's
 // version is in question, not a warning.
@@ -44,9 +47,13 @@ export function CohortNotice({ rows, className }: { rows: readonly CohortNoticeR
                   t("stageVersion", {
                     stage: stage.stage,
                     version: stage.versionCode ? versionText(stage.versionCode) : "",
+                    // A reformed cohort's missing version is the 2028 one (specialskolan's
+                    // 8 604 h is unseeded), never an "older" one.
                     state:
                       stage.versionCode === null
-                        ? "missing"
+                        ? row.regime === "REFORMED_2028"
+                          ? "missingReformed"
+                          : "missing"
                         : !stage.distributionPublished
                           ? "unpublished"
                           : stage.assumed

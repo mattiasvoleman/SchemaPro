@@ -699,7 +699,7 @@ function VerdictText({
         <>{tVerdict("backfilled", { from: from(p.recordedFrom) })}</>
       );
     case "TIMPLAN_STAGE_VERSION_NOT_IN_REFERENCE":
-      return <>{tVerdict("versionMissing", { stageTitle })}</>;
+      return <>{tVerdict("versionMissing", { stageTitle, regime: String(p.regime ?? "") })}</>;
     case "TIMPLAN_STAGE_DISTRIBUTION_UNPUBLISHED":
       return <>{tVerdict("unpublished", { stageTitle, version: versionText(String(p.versionCode)), total: h(p.totalHours) })}</>;
     case "TIMPLAN_STAGE_OLD_COHORT_DISTRIBUTION_ASSUMED":

@@ -62,7 +62,9 @@ export function describeStageVerdict(verdict: StageVerdict, subjectNames: Readon
             'klasshistoriken började föras, och en flytt före dess syns inte.'
         : `Klassen före ${p.recordedFrom} är enligt läget när klasshistoriken började föras; en flytt före dess syns inte.`;
     case 'TIMPLAN_STAGE_VERSION_NOT_IN_REFERENCE':
-      return `Den timplan som gäller för ${stage} för den här eleven är äldre än SchemaPros referensdata, så ingen nationell jämförelse görs.`;
+      return p.regime === 'REFORMED_2028'
+        ? `Lydelsen från hösten 2028 som gäller för ${stage} i elevens skolform finns inte i SchemaPros referensdata, så ingen nationell jämförelse görs.`
+        : `Den timplan som gäller för ${stage} för den här eleven är äldre än SchemaPros referensdata, så ingen nationell jämförelse görs.`;
     case 'TIMPLAN_STAGE_DISTRIBUTION_UNPUBLISHED':
       return (
         `Enligt referensdata (${p.versionCode}) är totalen ${h(p.totalHours)}, men fördelningen på ämnen är inte publicerad; ` +
