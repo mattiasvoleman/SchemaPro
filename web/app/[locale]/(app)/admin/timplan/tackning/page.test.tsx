@@ -82,13 +82,19 @@ vi.mock("@/components/timplan/coverage-scheduled-tab", () => ({
   ),
 }));
 vi.mock("@/components/timplan/coverage-delivered-tab", () => ({
-  CoverageDeliveredTab: (props: { year: { id: string }; linkedGroup: string | null }) => {
+  CoverageDeliveredTab: (props: { year: { id: string }; linkedGroup: string | null; historyRosters?: boolean }) => {
     // Stands in for a chunk that did not arrive: what the boundary catches.
     if (state.tabFails) throw new Error("Loading chunk failed");
     return (
-      <p>delivered-tab {props.year.id} {props.linkedGroup ?? "none"}</p>
+      <p>delivered-tab {props.year.id} {props.linkedGroup ?? "none"} {props.historyRosters ? "history" : "today"}</p>
     );
   },
+}));
+// The P4 tab likewise (components/timplan/coverage-stage-tab.test.tsx).
+vi.mock("@/components/timplan/coverage-stage-tab", () => ({
+  CoverageStageTab: (props: { year: { id: string }; linkedGroup: string | null }) => (
+    <p>stage-tab {props.year.id} {props.linkedGroup ?? "none"}</p>
+  ),
 }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
@@ -229,7 +235,7 @@ describe("TimplanCoveragePage", () => {
     expect(screen.queryByText(/^pupilsTitle/)).not.toBeInTheDocument();
   });
 
-  it("puts the three layers in a tablist above every empty state, so a year without classes still reaches them", async () => {
+  it("puts the four layers in a tablist above every empty state, so a year without classes still reaches them", async () => {
     state.case = {
       ...state.case,
       response: { ...state.case.response, groups: [], cells: [], pupils: [] },
@@ -237,14 +243,16 @@ describe("TimplanCoveragePage", () => {
     const user = userEvent.setup();
     render(<TimplanCoveragePage />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["layerPlanned", "layerScheduled", "layerDelivered"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["layerPlanned", "layerScheduled", "layerDelivered", "layerStage"]);
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     // The planned layer's own empty state, inside its panel, under the tabs.
     expect(within(screen.getByRole("tabpanel")).getByText("noClassesTitle")).toBeInTheDocument();
     await user.click(tabs[2]!);
     expect(screen.getAllByRole("tab")[2]).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByText("delivered-tab y-1 none")).toBeInTheDocument();
+    expect(await screen.findByText("delivered-tab y-1 none today")).toBeInTheDocument();
     expect(screen.queryByText("noClassesTitle")).not.toBeInTheDocument();
+    await user.click(screen.getAllByRole("tab")[3]!);
+    expect(await screen.findByText("stage-tab y-1 none")).toBeInTheDocument();
   });
 
   it("moves between tabs with the arrow keys, Home and End, focus following", async () => {
@@ -257,7 +265,8 @@ describe("TimplanCoveragePage", () => {
     expect(screen.getAllByRole("tab")[0]).toHaveAttribute("tabindex", "-1");
     expect(await screen.findByText("scheduled-tab y-1 none")).toBeInTheDocument();
     await user.keyboard("{End}");
-    expect(screen.getAllByRole("tab")[2]).toHaveFocus();
+    expect(screen.getAllByRole("tab")[3]).toHaveFocus();
+    expect(await screen.findByText("stage-tab y-1 none")).toBeInTheDocument();
     await user.keyboard("{ArrowRight}");
     expect(screen.getAllByRole("tab")[0]).toHaveFocus();
     await user.keyboard("{ArrowLeft}{Home}");
@@ -281,7 +290,7 @@ describe("TimplanCoveragePage", () => {
       render(<TimplanCoveragePage />);
       expect(await screen.findByText("loadFailed")).toBeInTheDocument();
       // The page is still there: its tablist, and the other tabs reachable.
-      expect(screen.getAllByRole("tab")).toHaveLength(3);
+      expect(screen.getAllByRole("tab")).toHaveLength(4);
       state.tabFails = false;
       await user.click(screen.getAllByRole("tab")[2]!);
       expect(await screen.findByText(/^delivered-tab y-1/)).toBeInTheDocument();
@@ -289,6 +298,19 @@ describe("TimplanCoveragePage", () => {
       state.tabFails = false;
       quiet.mockRestore();
     }
+  });
+
+  it("tells the delivered tab a past year is read from the class history, and the active one by today's rosters", async () => {
+    window.history.replaceState(null, "", "/admin/timplan/tackning?year=y-0&layer=delivered");
+    render(<TimplanCoveragePage />);
+    expect(await screen.findByText("delivered-tab y-0 none history")).toBeInTheDocument();
+  });
+
+  it("opens the Stadium tab from a deep link", async () => {
+    window.history.replaceState(null, "", `/admin/timplan/tackning?layer=stage&group=${id(303)}`);
+    render(<TimplanCoveragePage />);
+    expect(await screen.findByText(`stage-tab y-1 ${id(303)}`)).toBeInTheDocument();
+    expect(screen.getAllByRole("tab")[3]).toHaveAttribute("aria-selected", "true");
   });
 
   it("ignores a layer it does not know and shows the planned one", () => {

@@ -42,6 +42,13 @@ const TONE: Record<ScheduleTone, string> = {
 
 export interface CoverageTabProps {
   year: { id: string; name: string };
+  /**
+   * The gateway reads this year's pupils from the class history (timplan P4):
+   * a year that is not the active one and began before it
+   * (enrolmentBasisOf in src/timplan/timplan-coverage.service.ts) — when the
+   * history has rows for it, which the absence of the past-year notice says.
+   */
+  historyRosters?: boolean;
   /** The group the deep link opened, until another is chosen. */
   linkedGroup: string | null;
   groupName: (id: string) => string;

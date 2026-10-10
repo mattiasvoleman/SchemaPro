@@ -259,6 +259,23 @@ describe("CoverageDeliveredTab", () => {
     expect(within(section).queryByRole("button", { name: "timplanCoverage.showAllPupils" })).not.toBeInTheDocument();
   });
 
+  it("says a past year is counted by its class history, unless the history has nothing for it", () => {
+    state.delivered[""] = DELIVERED_OVERVIEW;
+    const { unmount } = render(<CoverageDeliveredTab {...props(subjects)} historyRosters />);
+    expect(screen.getByText("timplanCoverage.delivered.rosterNoteHistory")).toBeInTheDocument();
+    expect(screen.queryByText("timplanCoverage.delivered.rosterNote")).not.toBeInTheDocument();
+    unmount();
+    state.delivered[""] = {
+      ...DELIVERED_OVERVIEW,
+      verdicts: [
+        ...DELIVERED_OVERVIEW.verdicts,
+        { code: "TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS", severity: "notice", params: { yearEnd: "2026-06-12" }, message: "" },
+      ],
+    } as DeliveredCoverageResponse;
+    render(<CoverageDeliveredTab {...props(subjects)} historyRosters />);
+    expect(screen.getByText("timplanCoverage.delivered.rosterNote")).toBeInTheDocument();
+  });
+
   it("says nothing is published, with the roster note still there, and draws no table", () => {
     state.delivered[""] = DELIVERED_UNPUBLISHED;
     render(<CoverageDeliveredTab {...props(subjects)} />);
