@@ -111,6 +111,12 @@ import { CancellationBatchesService } from '../../src/publication/cancellation-b
 import { PublicLinksService } from '../../src/publication/public-links.service';
 import { tokenHashOf } from '../../src/publication/public-token';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
+import { CoverService } from '../../src/cover/cover.service';
+import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
+import { CoverSettingsService } from '../../src/cover/cover-settings.service';
+import { CoverSuggestionsService } from '../../src/cover/cover-suggestions.service';
+import { CoverReportsService } from '../../src/cover/cover-reports.service';
+import { readActiveStaffIds } from '../../src/staffing/staff-candidates';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -3903,6 +3909,7 @@ async function runChecks(
   await batchChecks(owner, api);
   await batchMoveChecks(owner, api);
   await viewerChecks(owner, api);
+  await coverChecks(owner, api, open, appUrl);
 }
 
 
@@ -4346,6 +4353,7 @@ async function findFixture(owner: Client): Promise<Fixture> {
 /** Removes what the probe writes. Narrow enough to touch nothing else. */
 async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query('DELETE FROM "RoomBookings" WHERE title = $1', [MARKER]);
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Duties first: TeacherDuties_take_their_block deletes each one's slot with
   // it (the service writes the slot's reason as the bare word "Uppdrag", so a
   // reason match could not find them, and must not: it would take the seed's).
@@ -4794,6 +4802,466 @@ async function check(label: string, body: () => Promise<void>): Promise<void> {
     throw new ProbeFailure(label, error);
   }
   console.log(`ok   ${label}`);
+}
+
+// ---------------------------------------------------------------------------
+// Vikarieplanering (20261012090000–20261012120000): absences, the board, its
+// decisions and undo, the suggestions, the day proposal and its apply, the
+// hour statement against Fas 3, the pool's place in readActiveStaffIds, the
+// per-teacher lock under two connections, and the reason nowhere it must
+// not be. In a school of its own, swept whole.
+// ---------------------------------------------------------------------------
+
+interface CoverSchool {
+  schoolId: string;
+  yearId: string;
+  admin: AuthenticatedUser;
+  teacher: (who: { id: string; authId: string }) => AuthenticatedUser;
+  a: { id: string; authId: string };
+  b: { id: string; authId: string };
+  s1: { id: string; authId: string };
+  s2: { id: string; authId: string };
+  pool: { id: string; authId: string };
+  class7a: string;
+  class8a: string;
+  ma: string;
+  /** The coming school day the absence covers, and the lessons on it. */
+  day: string;
+  x1: string;
+  x2: string;
+  x3: string;
+  y1: string;
+  y2: string;
+  /** A lesson three days ago, held. */
+  held: string;
+  heldDay: string;
+}
+
+async function givenCoverSchool(owner: Client): Promise<CoverSchool> {
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
+  const DAY = 24 * 60 * 60 * 1000;
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const dayAt = (offset: number) => new Date(today.getTime() + offset * DAY).toISOString().slice(0, 10);
+  // A weekday at least two days ahead, so nothing about it has begun.
+  let offset = 2;
+  while ([0, 6].includes(new Date(`${dayAt(offset)}T00:00:00.000Z`).getUTCDay())) offset++;
+  const day = dayAt(offset);
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} vikarie`, `${MARKER}-vikarie`],
+  );
+  const person = (role: string, email: string) =>
+    one<{ id: string; authId: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'Vikarie', $3::"UserRole", gen_random_uuid(), true, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-vik-${email}@example.invalid`, role],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'admin');
+  const a = await person('TEACHER', 'a');
+  const b = await person('TEACHER', 'b');
+  const s1 = await person('TEACHER', 's1');
+  const s2 = await person('TEACHER', 's2');
+  const pool = await person('TEACHER', 'pool');
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    [school.id, `${MARKER} vikarie`, dayAt(-60), dayAt(200)],
+  );
+  const group = (name: string, grade: number) =>
+    one<{ id: string }>(
+      `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+       VALUES ($1, $2, $3, 'CLASS', $4, now()) RETURNING id`,
+      [school.id, year.id, name, grade],
+    );
+  const class7a = await group('7A', 7);
+  const class8a = await group('8A', 8);
+  // A subject weighed 1.5: the hour statement pays the clock, not the weight.
+  const ma = await one<{ id: string }>(
+    `INSERT INTO "Subjects" ("schoolId", name, "loadFactor", "updatedAt") VALUES ($1, 'Matematik', 1.5, now()) RETURNING id`,
+    [school.id],
+  );
+  for (const who of [a, b, s1, s2]) {
+    await owner.query(
+      `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES ($1, $2, $3, 100, now())`,
+      [school.id, who.id, year.id],
+    );
+  }
+  await owner.query(`INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId") VALUES ($1, $2)`, [school.id, pool.id]);
+  await owner.query(
+    `INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", date, "startTime", "endTime") VALUES ($1, $2, $3::date, '08:00', '16:00')`,
+    [school.id, pool.id, day],
+  );
+  await owner.query(
+    `INSERT INTO "TeacherSubjectQualifications" ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+     VALUES ($1, $2, $3, 7, 9, 'LEGITIMATION', now())`,
+    [school.id, s2.id, ma.id],
+  );
+  const lesson = async (date: string, start: string, end: string, groupId: string, rows: [{ id: string }, string][]) => {
+    const row = await one<{ id: string }>(
+      `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+       VALUES ($1, $2, $3, $4::date, ($4::date + $5::time) AT TIME ZONE 'Europe/Stockholm', ($4::date + $6::time) AT TIME ZONE 'Europe/Stockholm', 'SCHEDULED', now())
+       RETURNING id`,
+      [school.id, ma.id, groupId, date, start, end],
+    );
+    for (const [who, role] of rows) {
+      await owner.query(
+        `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, $4::"TeacherAssignmentRole")`,
+        [school.id, row.id, who.id, role],
+      );
+    }
+    return row.id;
+  };
+  const x1 = await lesson(day, '09:00', '10:00', class7a.id, [[a, 'LEAD'], [b, 'ASSISTANT']]);
+  const x2 = await lesson(day, '10:00', '11:00', class7a.id, [[a, 'LEAD']]);
+  const x3 = await lesson(day, '11:00', '12:00', class8a.id, [[a, 'LEAD']]);
+  await lesson(day, '09:00', '10:00', class8a.id, [[s1, 'LEAD']]);
+  const y1 = await lesson(day, '13:00', '14:00', class7a.id, [[b, 'LEAD']]);
+  const y2 = await lesson(day, '13:30', '14:30', class8a.id, [[b, 'LEAD']]);
+  const heldDay = dayAt(-3);
+  const held = await lesson(heldDay, '09:00', '10:00', class7a.id, [[a, 'LEAD']]);
+  const principal = (who: { id: string; authId: string }, role: Role) => ({ authId: who.authId, userId: who.id, schoolId: school.id, role });
+  return {
+    schoolId: school.id,
+    yearId: year.id,
+    admin: principal(admin, Role.SCHOOL_ADMIN),
+    teacher: (who) => principal(who, Role.TEACHER),
+    a,
+    b,
+    s1,
+    s2,
+    pool,
+    class7a: class7a.id,
+    class8a: class8a.id,
+    ma: ma.id,
+    day,
+    x1,
+    x2,
+    x3,
+    y1,
+    y2,
+    held,
+    heldDay,
+  };
+}
+
+async function coverChecks(owner: Client, api: PrismaService, open: (url: string) => PrismaService, appUrl: string): Promise<void> {
+  const school = await givenCoverSchool(owner);
+  const realtime = {
+    notifyLessonChanged: async () => undefined,
+    notifyLessonsChanged: async () => undefined,
+    notifyCoverBoardChanged: () => undefined,
+  } as unknown as RealtimeService;
+  const notifications = new NotificationsService();
+  const calendar = new CalendarLessonsService(api, realtime, notifications);
+  const cover = new CoverService(api, realtime, notifications, calendar);
+  const absences = new TeacherAbsencesService(api, realtime, notifications, cover);
+  const settings = new CoverSettingsService(api);
+  const suggestions = new CoverSuggestionsService(api, cover);
+  const reports = new CoverReportsService(api, cover);
+  const rowsOf = async (lesson: string) =>
+    (
+      await owner.query<{ teacherId: string; role: string }>(
+        `SELECT "teacherId", role::text AS role FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1 ORDER BY role, "teacherId"`,
+        [lesson],
+      )
+    ).rows.map((r) => [r.teacherId, r.role]);
+  const codeOf = (error: unknown) => {
+    const body = (error as { getResponse?: () => unknown }).getResponse?.() as { code?: string } | undefined;
+    return body?.code ?? summarise(error);
+  };
+  const outputs: unknown[] = [];
+  let reasonId = '';
+  let absenceId = '';
+
+  try {
+    await check('(æ1) an admin registers an absence through the real adapter: the school’s categories appear, the day’s lessons are derived OPEN, and a teacher without self-report is refused by the service and by RLS', async () => {
+      const reasons = await settings.reasons(school.admin);
+      assert.deepEqual(reasons.map((r) => r.builtin), ['SICK', 'CHILD_CARE', 'WORK_TRAVEL', 'PROFESSIONAL_DEVELOPMENT', 'OTHER']);
+      assert.equal((await settings.reasons(school.admin)).length, 5, 'ensureDefaultReasons wrote the list twice');
+      reasonId = reasons[0]!.id;
+      const created = await absences.create({ userId: school.a.id, from: school.day, to: school.day, reasonId }, school.admin);
+      absenceId = created.id;
+      assert.equal(created.wholeDays, true);
+      const [listed] = await absences.list({}, school.admin);
+      assert.equal(listed?.reasonId, reasonId);
+      assert.deepEqual(listed?.counts, { open: 3, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 });
+
+      await assert.rejects(
+        absences.create({ userId: school.a.id, from: school.day, to: school.day }, school.teacher(school.a)),
+        (error: unknown) => codeOf(error) === 'ABSENCE_SELF_REPORT_OFF',
+      );
+      // The database says the same, whatever the service says.
+      await assert.rejects(
+        api.withRls(school.teacher(school.b), (tx) =>
+          tx.teacherAbsence.create({
+            data: { schoolId: school.schoolId, userId: school.b.id, startsAt: new Date(Date.now() + 86_400_000), endsAt: new Date(Date.now() + 2 * 86_400_000), createdByUserId: school.b.id },
+          }),
+        ),
+        (error: unknown) => /row-level security|42501/.test(summarise(error)),
+      );
+      // A colleague reads neither the absence nor its reason.
+      const seen = await api.withRls(school.teacher(school.b), (tx) => tx.teacherAbsence.count());
+      assert.equal(seen, 0);
+      // An overlapping second absence is a 409 naming the period, never the reason.
+      await assert.rejects(
+        absences.create({ userId: school.a.id, from: school.day, to: school.day }, school.admin),
+        (error: unknown) => {
+          const body = (error as { getResponse: () => Record<string, unknown> }).getResponse();
+          return body.code === 'ABSENCE_OVERLAPS' && !JSON.stringify(body).includes(reasonId);
+        },
+      );
+    });
+
+    await check('(æ2) the board derives the day’s pairs under the admin’s RLS and carries no reason; a TEACHER principal sees no absence and so no pair', async () => {
+      const board = await cover.board(school.day, school.day, school.admin);
+      outputs.push(board);
+      assert.deepEqual(
+        board.items.map((item) => [item.lessonId, item.status, item.absentRole]),
+        [
+          [school.x1, 'OPEN', 'LEAD'],
+          [school.x2, 'OPEN', 'LEAD'],
+          [school.x3, 'OPEN', 'LEAD'],
+        ],
+      );
+      assert.deepEqual(board.summary, { open: 3, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 });
+      const asTeacher = await cover.board(school.day, school.day, school.teacher(school.b));
+      assert.deepEqual([asTeacher.items, asTeacher.absences], [[], []]);
+    });
+
+    await check('(æ3) candidates never break a hard rule: the busy teacher and the absent one are excluded with their codes, the pool member inside their window is offered', async () => {
+      const x1 = await suggestions.candidates(school.x1, school.admin);
+      outputs.push(x1);
+      const excluded = new Map(x1.excluded.map((entry) => [entry.userId, entry.codes.map((c) => c.code)]));
+      assert.deepEqual(excluded.get(school.s1.id), ['BUSY_LESSON']);
+      assert.deepEqual(excluded.get(school.a.id), ['ON_LESSON', 'ABSENT']);
+      assert.deepEqual(excluded.get(school.b.id), ['ON_LESSON']);
+      const offered = x1.candidates.map((c) => c.userId);
+      assert.ok(offered.includes(school.s2.id) && offered.includes(school.pool.id), JSON.stringify(x1.candidates));
+      // The legitimerad colleague ahead of the pool vikarie.
+      assert.equal(x1.candidates[0]!.userId, school.s2.id);
+      assert.equal(x1.candidates[0]!.qualificationKind, 'LEGITIMATION');
+      assert.equal(x1.candidates.find((c) => c.userId === school.pool.id)!.kind, 'POOL');
+    });
+
+    await check('(æ4) a board decision replaces only the absent teacher: the co-teacher stays, the decision holds exactly the removed row, the board says COVERED, and Ångra puts it back', async () => {
+      await cover.decide(school.x1, { absenceId, kind: 'SUBSTITUTE', substituteId: school.s2.id, expected: 'OPEN' }, school.admin);
+      assert.deepEqual(await rowsOf(school.x1), [[school.b.id, 'ASSISTANT'], [school.s2.id, 'SUBSTITUTE']]);
+      const [decision] = (
+        await owner.query<{ removedTeachers: unknown; decision: string; substituteId: string }>(
+          `SELECT "removedTeachers", decision::text, "substituteId" FROM "TeacherAbsenceCovers" WHERE "calendarLessonId" = $1`,
+          [school.x1],
+        )
+      ).rows;
+      assert.deepEqual(decision, { removedTeachers: [{ teacherId: school.a.id, role: 'LEAD' }], decision: 'SUBSTITUTE', substituteId: school.s2.id });
+      const board = await cover.board(school.day, school.day, school.admin);
+      assert.equal(board.items.find((item) => item.lessonId === school.x1)?.status, 'COVERED');
+      // The substitute's own notice: their cover, group and room, no reason.
+      const notices = (
+        await owner.query<{ type: string; meta: Record<string, unknown> }>(
+          `SELECT type::text, meta FROM "Notifications" WHERE "userId" = $1 ORDER BY "createdAt"`,
+          [school.s2.id],
+        )
+      ).rows;
+      assert.deepEqual(notices.map((n) => [n.type, Object.keys(n.meta).sort()]), [
+        ['LESSON_SUBSTITUTE', ['cover', 'groupName', 'roomName', 'startsAt', 'subjectName']],
+      ]);
+      // A stale expectation is refused and writes nothing.
+      await assert.rejects(
+        cover.decide(school.x1, { absenceId, kind: 'CANCELLED', expected: 'OPEN' }, school.admin),
+        (error: unknown) => codeOf(error) === 'COVER_STALE',
+      );
+      await cover.undo(school.x1, absenceId, school.admin);
+      assert.deepEqual(await rowsOf(school.x1), [[school.b.id, 'ASSISTANT'], [school.a.id, 'LEAD']]);
+      const withdrawn = (
+        await owner.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM "Notifications" WHERE "userId" = $1 AND type = 'LESSON_COVER_WITHDRAWN'`,
+          [school.s2.id],
+        )
+      ).rows[0]!.n;
+      assert.equal(withdrawn, 1, 'the removed substitute was not told');
+    });
+
+    await check('(æ5) the old PATCH without replacesTeacherId wipes both teachers as before, records the decision with both, and the board’s Ångra restores the co-teacher too', async () => {
+      await calendar.assignSubstitute(school.x1, { teacherId: school.s2.id }, school.admin);
+      assert.deepEqual(await rowsOf(school.x1), [[school.s2.id, 'SUBSTITUTE']]);
+      const [decision] = (
+        await owner.query<{ removedTeachers: { teacherId: string; role: string }[] }>(
+          `SELECT "removedTeachers" FROM "TeacherAbsenceCovers" WHERE "calendarLessonId" = $1`,
+          [school.x1],
+        )
+      ).rows;
+      assert.deepEqual(
+        [...decision!.removedTeachers].sort((p, q) => p.role.localeCompare(q.role)),
+        [{ teacherId: school.b.id, role: 'ASSISTANT' }, { teacherId: school.a.id, role: 'LEAD' }],
+      );
+      await cover.undo(school.x1, absenceId, school.admin);
+      assert.deepEqual(await rowsOf(school.x1), [[school.b.id, 'ASSISTANT'], [school.a.id, 'LEAD']]);
+    });
+
+    await check('(æ6) självstudier and the co-teacher: the note is the constant and comes back on undo; CO_TEACHER needs somebody present; a cancel writes TEACHER_UNAVAILABLE and undo reinstates', async () => {
+      await cover.decide(school.x2, { absenceId, kind: 'SUPERVISED_STUDY', expected: 'OPEN' }, school.admin);
+      const note = async (id: string) =>
+        (await owner.query<{ note: string | null; status: string; cause: string | null }>(
+          `SELECT note, status::text, "cancelCause"::text AS cause FROM "CalendarLessons" WHERE id = $1`,
+          [id],
+        )).rows[0]!;
+      assert.equal((await note(school.x2)).note, 'Självstudier under tillsyn');
+      assert.deepEqual(await rowsOf(school.x2), []);
+      await assert.rejects(
+        cover.decide(school.x3, { absenceId, kind: 'CO_TEACHER', expected: 'OPEN' }, school.admin),
+        (error: unknown) => codeOf(error) === 'CO_TEACHER_MISSING',
+      );
+      await cover.bulk(
+        { action: 'UNDO', items: [{ lessonId: school.x2, absenceId, expected: 'HANDLED' }] },
+        school.admin,
+      );
+      assert.equal((await note(school.x2)).note, null);
+      await cover.decide(school.x3, { absenceId, kind: 'CANCELLED', expected: 'OPEN' }, school.admin);
+      assert.deepEqual(await note(school.x3), { note: null, status: 'CANCELLED', cause: 'TEACHER_UNAVAILABLE' });
+      await cover.undo(school.x3, absenceId, school.admin);
+      assert.deepEqual(await note(school.x3), { note: null, status: 'SCHEDULED', cause: null });
+    });
+
+    await check('(æ7) Fördela dagen proposes the open lessons within the rules, apply writes them in one transaction, and a basis that moved is a 409 that writes nothing', async () => {
+      const proposal = await suggestions.proposal(school.day, [], school.admin);
+      outputs.push(proposal);
+      assert.deepEqual(proposal.items.map((item) => item.lessonId).sort(), [school.x1, school.x2, school.x3].sort());
+      assert.equal(proposal.unassigned.length, 0);
+      await assert.rejects(
+        suggestions.apply(school.day, { basis: '0'.repeat(64), items: proposal.items.map(({ lessonId, absenceId: abs, userId }) => ({ lessonId, absenceId: abs, userId })) }, school.admin),
+        (error: unknown) => codeOf(error) === 'COVER_PROPOSAL_STALE',
+      );
+      assert.equal((await owner.query(`SELECT 1 FROM "TeacherAbsenceCovers" WHERE "absenceId" = $1`, [absenceId])).rowCount, 0);
+      await suggestions.apply(
+        school.day,
+        { basis: proposal.basis, items: proposal.items.map(({ lessonId, absenceId: abs, userId }) => ({ lessonId, absenceId: abs, userId })) },
+        school.admin,
+      );
+      const board = await cover.board(school.day, school.day, school.admin);
+      assert.deepEqual(board.summary, { open: 0, covered: 3, cancelled: 0, handled: 0, passedOpen: 0 });
+      // Every apply's decisions undone, newest first per lesson.
+      for (const item of proposal.items) await cover.undo(item.lessonId, absenceId, school.admin);
+    });
+
+    await check('(æ8) two admins putting one substitute on two overlapping lessons cannot both pass: the per-teacher lock waits, and the second is a 409', async () => {
+      const other = open(withConnectionLimit(appUrl, 1));
+      await other.onModuleInit();
+      const rival = new CalendarLessonsService(other, realtime, notifications);
+      const touched = deferred<number>();
+      const release = deferred<void>();
+      const holder = api.withRls(school.admin, async (tx) => {
+        await calendar.assignInTransaction(tx, school.y1, school.s1.id, school.b.id, school.admin);
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        touched.resolve(pid);
+        await release.promise;
+      });
+      const holderSettled = holder.then(() => null, (error: unknown) => error);
+      const pid = await Promise.race([
+        touched.promise,
+        holderSettled.then((error) => {
+          throw error ?? new Error('the holder committed before it parked');
+        }),
+      ]);
+      const rivalSettled = rival
+        .assignSubstitute(school.y2, { teacherId: school.s1.id }, school.admin)
+        .then(() => null, (error: unknown) => error);
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',
+          [pid],
+        );
+        if (rows[0]!.n > 0) break;
+        if (tries > 500) throw new Error('the second assignment never waited on the first one’s lock');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      const [holderError, rivalError] = await Promise.all([holderSettled, rivalSettled]);
+      assert.equal(holderError, null, `the holder failed: ${summarise(holderError)}`);
+      assert.ok(rivalError instanceof ConflictException, `the rival passed or failed otherwise: ${summarise(rivalError)}`);
+      assert.deepEqual(await rowsOf(school.y2), [[school.b.id, 'LEAD']]);
+    });
+
+    await check('(æ9) the hour statement through the real adapter equals statement E’s DELIVERED SUBSTITUTE rows in raw minutes on a subject weighed 1.5, and a withdrawal with a held decision is refused', async () => {
+      // A second absence of A over the held day (an admin may backdate 30 days),
+      // and the old PATCH covering the held lesson: efterregistrering, as today.
+      const past = await absences.create({ userId: school.a.id, from: school.heldDay, to: school.heldDay }, school.admin);
+      await calendar.assignSubstitute(school.held, { teacherId: school.s1.id }, school.admin);
+      const from = school.heldDay;
+      const to = new Date().toISOString().slice(0, 10);
+      const hours = await reports.hours(from, to, undefined, school.admin);
+      outputs.push(hours);
+      assert.deepEqual(hours.rows.map((row) => [row.lessonId, row.userId, row.minutes, row.kind]), [[school.held, school.s1.id, 60, 'STAFF']]);
+      const e = await api.withRls(school.admin, (tx) =>
+        tx.$queryRaw<{ kind: string; personId: string; role: string; bucket: string; minutes: number }[]>(
+          staffingCreditStatement(
+            {
+              academicYearId: school.yearId,
+              yearStart: from,
+              yearEnd: to,
+              asOf: new Date(),
+            },
+            { from, to },
+            null,
+          ),
+        ),
+      );
+      const substituteMinutes = e
+        .filter((row) => row.kind === 'T' && row.role === 'SUBSTITUTE' && row.bucket === 'DELIVERED')
+        .reduce((sum, row) => sum + Number(row.minutes), 0);
+      assert.equal(hours.summary.reduce((sum, row) => sum + row.minutes, 0), substituteMinutes);
+      await assert.rejects(absences.withdraw(past.id, true, school.admin), (error: unknown) => codeOf(error) === 'ABSENCE_HAS_HELD_DECISIONS');
+      const counter = await reports.counter(school.day, school.admin);
+      outputs.push(counter);
+      assert.ok(counter.rows.some((row) => row.userId === school.pool.id && row.kind === 'POOL'));
+    });
+
+    await check('(æ10) readActiveStaffIds leaves out a pool member without a post that year, keeps one with a post, and is one statement', async () => {
+      const ids = await api.withRls(school.admin, (tx) => readActiveStaffIds(tx, school.yearId));
+      assert.ok(!ids.includes(school.pool.id) && ids.includes(school.s1.id));
+      await owner.query(
+        `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES ($1, $2, $3, 20, now())`,
+        [school.schoolId, school.pool.id, school.yearId],
+      );
+      const sent = await statementsDuring(() => api.withRls(school.admin, (tx) => readActiveStaffIds(tx, school.yearId)));
+      assert.equal(sent.filter((statement) => /^SELECT "public"\."Users"/.test(statement)).length, 1);
+      assert.ok((await api.withRls(school.admin, (tx) => readActiveStaffIds(tx, school.yearId))).includes(school.pool.id));
+    });
+
+    await check('(æ11) self-report on: a teacher registers today’s absence, cannot change its reason (TA403), withdraws it within the hour, and the admins are told without a reason', async () => {
+      await settings.putSettings({ poolPreference: 'NEUTRAL', teacherSelfReport: true }, school.admin);
+      const today = new Date().toISOString().slice(0, 10);
+      const own = await absences.create({ userId: school.b.id, from: today, to: today, reasonId }, school.teacher(school.b));
+      await assert.rejects(
+        api.withRls(school.teacher(school.b), (tx) => tx.teacherAbsence.update({ where: { id: own.id }, data: { reasonId: null } })),
+        (error: unknown) => /TA403/.test(summarise(error)),
+      );
+      await absences.withdraw(own.id, false, school.teacher(school.b));
+      const told = (
+        await owner.query<{ meta: Record<string, unknown> }>(
+          `SELECT meta FROM "Notifications" WHERE type = 'TEACHER_ABSENCE_REPORTED' AND "schoolId" = $1`,
+          [school.schoolId],
+        )
+      ).rows;
+      assert.equal(told.length, 1);
+      assert.deepEqual(Object.keys(told[0]!.meta).sort(), ['absenceId', 'endsAt', 'startsAt']);
+    });
+
+    await check('(æ12) no output of the board, the candidates, the proposal, the hours or the counter, and no notice, carries the reason', async () => {
+      const metas = (
+        await owner.query<{ meta: unknown }>(`SELECT meta FROM "Notifications" WHERE "schoolId" = $1`, [school.schoolId])
+      ).rows;
+      const text = JSON.stringify([outputs, metas]);
+      assert.ok(!text.includes(reasonId), 'a reason id left the absence register');
+      // The ranking's own "reasons" (why a candidate ranks where it does) are
+      // not an absence's; a "reason" or a "reasonId" key would be.
+      assert.ok(!/"reason(Id)?":/.test(text), 'a reason field left the absence register');
+      const sickLabel = 'SICK';
+      assert.ok(!text.includes(sickLabel), 'a reason category left the absence register');
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
+  }
 }
 
 main().then(
@@ -6057,6 +6525,34 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.equal(await view(room.token, null, '2019-10-14'), null);
       assert.equal(await view(klass.token, null, '2097-09-01'), null);
       assert.ok(await view(klass.token, null, '2097-06-09'));
+    });
+
+    await check('(pub-e) självstudier under tillsyn (Vikarieplanering) is no new leak: a class\'s week names no teacher on it and carries no note', async () => {
+      // Wednesday's lesson, its teacher put back as LEAD: the class's week
+      // names them by signature.
+      const [target] = (
+        await owner.query<{ id: string }>(
+          `SELECT id FROM "CalendarLessons" WHERE "schoolId" = $1 AND "studentGroupId" = $2 AND date = '2096-10-03'`,
+          [school.schoolId, school.class7a],
+        )
+      ).rows;
+      assert.ok(target, 'the class has no Wednesday lesson');
+      await owner.query(`UPDATE "CalendarLessonTeachers" SET role = 'LEAD' WHERE "calendarLessonId" = $1`, [target.id]);
+      const wednesday = async () => {
+        const doc = (await view(klass.token)) as { days: Array<{ date: string; lessons: Array<Record<string, unknown>> }> };
+        secrets(doc);
+        return { doc, lessons: doc.days.find((entry) => entry.date === '2096-10-03')?.lessons ?? [] };
+      };
+      const before = await wednesday();
+      assert.deepEqual(before.lessons.map((entry) => entry.teachers), [['ANLI']]);
+      // What the board's SUPERVISED_STUDY writes: the absent teacher's row
+      // gone and the constant note.
+      await owner.query(`DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1`, [target.id]);
+      await owner.query(`UPDATE "CalendarLessons" SET note = 'Självstudier under tillsyn' WHERE id = $1`, [target.id]);
+      const { doc, lessons } = await wednesday();
+      assert.deepEqual(lessons.map((entry) => [entry.teachers, entry.cancelled]), [[[], false]]);
+      assert.ok(!JSON.stringify(doc).includes('Självstudier'), 'the viewer carried the note');
+      assert.ok(!JSON.stringify(doc).includes('ANLI'), 'the viewer named the absent teacher');
     });
 
     await check('(pub-e) the link list says which links answer, by the same rule as the viewer, and why the others do not', async () => {

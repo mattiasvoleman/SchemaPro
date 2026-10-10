@@ -8663,3 +8663,463 @@ BEGIN
     IF bad IS NOT NULL THEN RAISE EXCEPTION 'meals: % holds % on the snapshot meals', api_role, bad; END IF;
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 28: vikarieplanering.
+--
+-- TeacherAbsenceReasons, TeacherAbsences, CoverSettings (20261012090000),
+-- TeacherAbsenceCovers (20261012100000), SubstitutePoolMembers and
+-- SubstituteAvailabilities (20261012110000). An absence's reason is health
+-- data: the admin and the absent teacher read it, nobody else does —
+-- not a colleague by any join, not a pupil, not a guardian, not another
+-- school. A self-reporting teacher writes their own absence only while the
+-- school allows it, from today, and may then only end it early or withdraw
+-- it (the guard, TA403). The person of an absence is fixed (TA409); a
+-- decision names the absence's own person (composite key); a pool member is
+-- a TEACHER (SP409). The CHECKs mirror the DTOs, the EXCLUDE refuses two
+-- ACTIVE absences at once, and the catalogue guard of each migration is
+-- re-asserted here, in USING and WITH CHECK. What the public viewer shows of
+-- a lesson handled as självstudier is the adapter probe's to assert (pub-e),
+-- as every viewer answer is.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- 28a: the second school's rows, written by its own admin.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  t uuid; a uuid; l uuid;
+BEGIN
+  SELECT id INTO t FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000001';
+  SELECT id INTO l FROM "CalendarLessons" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  IF t IS NULL OR l IS NULL THEN RAISE EXCEPTION 'cover: the second school has no teacher or lesson to plant on'; END IF;
+  INSERT INTO "TeacherAbsenceReasons" ("schoolId", label) VALUES (school, 'rls28 b-orsak');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt") VALUES (school, t, now() + interval '1 day', now() + interval '2 days')
+  RETURNING id INTO a;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers")
+  VALUES (school, a, l, t, 'CO_TEACHER', jsonb_build_array(jsonb_build_object('teacherId', t, 'role', 'LEAD')));
+  INSERT INTO "CoverSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId") VALUES (school, t);
+  INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", "dayOfWeek", "startTime", "endTime") VALUES (school, t, 1, '08:00', '12:00');
+END $$;
+
+-- 28b: the primary school's admin plants an absence with its reason, a
+-- decision, a pool member and the settings — and meets every refusal the
+-- database owes the admin too.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_rls28_school_b', :'school_b', true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  t1 uuid; t2 uuid; sick uuid; a uuid; l uuid; pupil uuid; n bigint;
+BEGIN
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1;
+  IF t2 IS NULL OR pupil IS NULL THEN RAISE EXCEPTION 'cover: the primary school lacks two teachers or a pupil'; END IF;
+  -- Two lessons of its own, far ahead: l carries the decision, l2 the refusals.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, (SELECT id FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         (SELECT id FROM "StudentGroups" WHERE "schoolId" = school ORDER BY id LIMIT 1),
+         DATE '2095-03-01' + k, timestamptz '2095-03-01 08:00 UTC' + k * interval '1 day', timestamptz '2095-03-01 09:00 UTC' + k * interval '1 day', now()
+    FROM generate_series(0, 1) AS k;
+  SELECT id INTO l FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2095-03-01';
+
+  -- The isolation half: nothing of the second school is visible.
+  SELECT (SELECT count(*) FROM "TeacherAbsenceReasons" WHERE "schoolId" <> school)
+       + (SELECT count(*) FROM "TeacherAbsences" WHERE "schoolId" <> school)
+       + (SELECT count(*) FROM "TeacherAbsenceCovers" WHERE "schoolId" <> school)
+       + (SELECT count(*) FROM "CoverSettings" WHERE "schoolId" <> school)
+       + (SELECT count(*) FROM "SubstitutePoolMembers" WHERE "schoolId" <> school)
+       + (SELECT count(*) FROM "SubstituteAvailabilities" WHERE "schoolId" <> school) INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: an admin reads % row(s) of another school', n; END IF;
+
+  -- The school's categories, as the service ensures them: twice is once.
+  FOR n IN 1..2 LOOP
+    INSERT INTO "TeacherAbsenceReasons" ("schoolId", "builtin", "sortOrder")
+    SELECT school, b::"AbsenceReasonBuiltin", (o * 10)::int
+      FROM unnest(ARRAY['SICK', 'CHILD_CARE', 'WORK_TRAVEL', 'PROFESSIONAL_DEVELOPMENT', 'OTHER']) WITH ORDINALITY AS u(b, o)
+    ON CONFLICT ("schoolId", "builtin") WHERE "builtin" IS NOT NULL DO NOTHING;
+  END LOOP;
+  SELECT count(*) INTO n FROM "TeacherAbsenceReasons" WHERE "schoolId" = school AND "builtin" IS NOT NULL;
+  IF n <> 5 THEN RAISE EXCEPTION 'cover: the built-ins are % rows, not five', n; END IF;
+  SELECT id INTO sick FROM "TeacherAbsenceReasons" WHERE "schoolId" = school AND "builtin" = 'SICK';
+
+  -- CHECKs on the list.
+  BEGIN
+    INSERT INTO "TeacherAbsenceReasons" ("schoolId", label) VALUES (school, repeat('x', 61));
+    RAISE EXCEPTION 'cover: a 61-character label was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherAbsenceReasons" ("schoolId", "builtin", label) VALUES (school, 'OTHER', 'both');
+    RAISE EXCEPTION 'cover: a reason with both a built-in and a label was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- T1 away since yesterday until the day after tomorrow, sick; a decision on a lesson.
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId", "createdByUserId")
+  VALUES (school, t1, now() - interval '1 day', now() + interval '2 days', sick, me) RETURNING id INTO a;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers", "decidedByUserId")
+  VALUES (school, a, l, t1, 'CO_TEACHER', jsonb_build_array(jsonb_build_object('teacherId', t1, 'role', 'LEAD')), me);
+
+  -- A decision always names the absence's own person.
+  BEGIN
+    INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers")
+    SELECT school, a, id, t2, 'CO_TEACHER', jsonb_build_array(jsonb_build_object('teacherId', t2, 'role', 'LEAD'))
+      FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2095-03-02';
+    RAISE EXCEPTION 'cover: a decision named somebody other than the absence''s person';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- removedTeachers: a list, and somebody removed unless it is a cancellation.
+  BEGIN
+    INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers")
+    SELECT school, a, id, t1, 'SUBSTITUTE', '[]'::jsonb FROM "CalendarLessons" WHERE "schoolId" = school AND date = DATE '2095-03-02';
+    RAISE EXCEPTION 'cover: a SUBSTITUTE decision removing nobody was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- The person of an absence is fixed, for the admin too.
+  BEGIN
+    UPDATE "TeacherAbsences" SET "userId" = t2 WHERE id = a;
+    RAISE EXCEPTION 'cover: an absence changed person';
+  EXCEPTION WHEN SQLSTATE 'TA409' THEN NULL;
+  END;
+
+  -- Two ACTIVE absences of one person never overlap; a WITHDRAWN one may.
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt") VALUES (school, t1, now(), now() + interval '1 hour');
+    RAISE EXCEPTION 'cover: two active absences of one person overlap';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", status, "withdrawnAt")
+  VALUES (school, t1, now(), now() + interval '1 hour', 'WITHDRAWN', now());
+
+  -- Half a year: 186 days and the DST hour pass, a day more does not.
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (school, t2, timestamptz '2090-08-17 00:00 Europe/Stockholm', timestamptz '2091-02-19 00:00 Europe/Stockholm');
+  IF (SELECT "endsAt" - "startsAt" FROM "TeacherAbsences" WHERE "userId" = t2 AND "startsAt" = timestamptz '2090-08-17 00:00 Europe/Stockholm')
+     <> interval '186 days 01:00' THEN
+    RAISE EXCEPTION 'cover: the DST-spanning half year is not 186 days and an hour';
+  END IF;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+    VALUES (school, t2, timestamptz '2092-08-17 00:00 Europe/Stockholm', timestamptz '2093-02-20 00:00 Europe/Stockholm');
+    RAISE EXCEPTION 'cover: 187 days were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- The pool: a TEACHER only.
+  INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId", "createdByUserId") VALUES (school, t2, me);
+  BEGIN
+    INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId") VALUES (school, pupil);
+    RAISE EXCEPTION 'cover: a pupil joined the pool';
+  EXCEPTION WHEN SQLSTATE 'SP409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId") VALUES (school, me);
+    RAISE EXCEPTION 'cover: an admin joined the pool';
+  EXCEPTION WHEN SQLSTATE 'SP409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", date, "dayOfWeek", "startTime", "endTime")
+    VALUES (school, t2, current_date, 1, '08:00', '12:00');
+    RAISE EXCEPTION 'cover: a window with both a date and a weekday was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  INSERT INTO "CoverSettings" ("schoolId", "teacherSelfReport") VALUES (school, false)
+  ON CONFLICT ("schoolId") DO UPDATE SET "teacherSelfReport" = false;
+
+  PERFORM set_config('app.test_rls28_t1', t1::text, true);
+  PERFORM set_config('app.test_rls28_t2', t2::text, true);
+  PERFORM set_config('app.test_rls28_admin', me::text, true);
+  PERFORM set_config('app.test_rls28_absence', a::text, true);
+  PERFORM set_config('app.test_rls28_sick', sick::text, true);
+  PERFORM set_config('app.test_rls28_t1_sub', (SELECT "authId"::text FROM "Users" WHERE id = t1), true);
+  PERFORM set_config('app.test_rls28_t2_sub', (SELECT "authId"::text FROM "Users" WHERE id = t2), true);
+  PERFORM set_config('app.test_rls28_pupil_sub', (SELECT "authId"::text FROM "Users" WHERE id = pupil), true);
+END $$;
+
+-- 28c: a colleague. The categories and the switches, yes; any absence, any
+-- reason, any decision, by any route, no.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'cover: expected a TEACHER'; END IF;
+  -- Their own absence (28b's half year) is theirs; T1's is not.
+  SELECT count(*) INTO n FROM "TeacherAbsences" WHERE "userId" <> app.current_user_id();
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a colleague reads % absence(s) of somebody else', n; END IF;
+  SELECT count(*) INTO n FROM "TeacherAbsenceCovers";
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a colleague reads % decision(s)', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers" t
+    JOIN "TeacherAbsences" a ON a."userId" = t."teacherId"
+   WHERE a."reasonId" IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a colleague reaches a reason through the calendar'; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers" t
+   WHERE EXISTS (SELECT 1 FROM "TeacherAbsences" a WHERE a."userId" = t."teacherId" AND a."userId" <> app.current_user_id());
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a colleague learns who is away through a subselect'; END IF;
+  SELECT count(*) INTO n FROM "TeacherAbsenceReasons";
+  IF n < 5 THEN RAISE EXCEPTION 'cover: a colleague reads % of the school''s categories', n; END IF;
+  SELECT count(*) INTO n FROM "CoverSettings";
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a colleague reads % settings row(s)', n; END IF;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (app.current_school_id(), current_setting('app.test_rls28_t1')::uuid, now() + interval '5 days', now() + interval '6 days', app.current_user_id());
+    RAISE EXCEPTION 'cover: a colleague registered somebody else''s absence';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "TeacherAbsences" SET "endsAt" = now() + interval '3 hours' WHERE id = current_setting('app.test_rls28_absence')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a colleague updated % absence(s) of somebody else', n; END IF;
+  BEGIN
+    INSERT INTO "TeacherAbsenceReasons" ("schoolId", label) VALUES (app.current_school_id(), 'rls28 lärarens');
+    RAISE EXCEPTION 'cover: a teacher wrote the school''s categories';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- A pool member writes their own window, nobody else's.
+  INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (app.current_school_id(), app.current_user_id(), 2, '08:00', '16:00');
+  BEGIN
+    INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), current_setting('app.test_rls28_t1')::uuid, 2, '08:00', '16:00');
+    RAISE EXCEPTION 'cover: a member wrote somebody else''s window';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "SubstitutePoolMembers";
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a member reads % membership row(s), not their own one', n; END IF;
+END $$;
+
+-- 28d: the absent teacher reads their own absence, its reason and their
+-- decisions; with self-report off they cannot write; a non-member writes no
+-- window.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t1_sub'))::text, true);
+DO $$
+DECLARE n bigint; reason uuid;
+BEGIN
+  SELECT "reasonId" INTO reason FROM "TeacherAbsences" WHERE id = current_setting('app.test_rls28_absence')::uuid;
+  IF reason IS DISTINCT FROM current_setting('app.test_rls28_sick')::uuid THEN RAISE EXCEPTION 'cover: the absent teacher does not read their reason'; END IF;
+  SELECT count(*) INTO n FROM "TeacherAbsenceCovers";
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: the absent teacher reads % decision(s), not their one', n; END IF;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (app.current_school_id(), app.current_user_id(), now() + interval '5 days', now() + interval '6 days', app.current_user_id());
+    RAISE EXCEPTION 'cover: a teacher registered their own absence with self-report off';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", "dayOfWeek", "startTime", "endTime")
+    VALUES (app.current_school_id(), app.current_user_id(), 2, '08:00', '16:00');
+    RAISE EXCEPTION 'cover: a teacher outside the pool wrote a window';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+END $$;
+
+-- The school allows self-report.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+UPDATE "CoverSettings" SET "teacherSelfReport" = true WHERE "schoolId" = app.current_school_id();
+
+-- 28e: self-report, and what the guard lets a teacher do with it.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t1_sub'))::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  started uuid := current_setting('app.test_rls28_absence')::uuid;
+  tz text := (SELECT timezone FROM "Schools" WHERE id = app.current_school_id());
+  today timestamptz := (app.school_today()::timestamp AT TIME ZONE tz);
+  own uuid; n bigint;
+BEGIN
+  -- Not the person, not the creator, not yesterday.
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (school, current_setting('app.test_rls28_t2')::uuid, today + interval '10 days', today + interval '11 days', me);
+    RAISE EXCEPTION 'cover: a teacher registered a colleague''s absence';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (school, me, today + interval '10 days', today + interval '11 days', current_setting('app.test_rls28_admin')::uuid);
+    RAISE EXCEPTION 'cover: a teacher spoofed the creator';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (school, me, today - interval '1 day', today + interval '20 days', me);
+    RAISE EXCEPTION 'cover: a teacher backdated an absence';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  -- Ending early, not before now.
+  UPDATE "TeacherAbsences" SET "endsAt" = now() + interval '1 hour' WHERE id = started;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not end their absence early'; END IF;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId", "reasonId")
+  VALUES (school, me, today + interval '3 days', today + interval '4 days', me, current_setting('app.test_rls28_sick')::uuid)
+  RETURNING id INTO own;
+
+  -- The guard on the started one: no later end, no end before now, no new
+  -- reason, no withdrawal (a decision sits on it).
+  BEGIN
+    UPDATE "TeacherAbsences" SET "endsAt" = now() + interval '5 days' WHERE id = started;
+    RAISE EXCEPTION 'cover: a teacher extended their absence';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherAbsences" SET "endsAt" = now() - interval '1 minute' WHERE id = started;
+    RAISE EXCEPTION 'cover: a teacher ended their absence in the past';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherAbsences" SET "reasonId" = NULL WHERE id = started;
+    RAISE EXCEPTION 'cover: a teacher changed their reason';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = me WHERE id = started;
+    RAISE EXCEPTION 'cover: a teacher withdrew a started absence with a decision on it';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  -- …but withdraws one that has not begun, as themself only.
+  BEGIN
+    UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = current_setting('app.test_rls28_admin')::uuid
+     WHERE id = own;
+    RAISE EXCEPTION 'cover: a teacher withdrew in the admin''s name';
+  EXCEPTION WHEN SQLSTATE 'TA403' THEN NULL;
+  END;
+  UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = me, "updatedAt" = now() WHERE id = own;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not withdraw an absence that has not begun'; END IF;
+  -- A teacher deletes nothing.
+  DELETE FROM "TeacherAbsences" WHERE id = own;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a teacher deleted an absence'; END IF;
+END $$;
+
+-- "Sjuk i dag": a whole day from today's school-local midnight, reported
+-- now, is accepted; and the teacher who pressed the wrong day takes it back
+-- within the hour, nothing having been decided on it.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_t2_sub'))::text, true);
+DO $$
+DECLARE
+  tz text := (SELECT timezone FROM "Schools" WHERE id = app.current_school_id());
+  today timestamptz := (app.school_today()::timestamp AT TIME ZONE tz);
+  own uuid; n bigint;
+BEGIN
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+  VALUES (app.current_school_id(), app.current_user_id(), today, today + interval '1 day', app.current_user_id())
+  RETURNING id INTO own;
+  UPDATE "TeacherAbsences" SET status = 'WITHDRAWN', "withdrawnAt" = now(), "withdrawnByUserId" = app.current_user_id() WHERE id = own;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'cover: a teacher could not take back today''s absence within the hour'; END IF;
+END $$;
+
+-- 28f: a pupil and a guardian see nothing of any of the six tables, and write nothing.
+SELECT set_config('app.test_rls28_who', 'pupil', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls28_pupil_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'cover: expected a STUDENT'; END IF;
+  SELECT (SELECT count(*) FROM "TeacherAbsenceReasons") + (SELECT count(*) FROM "TeacherAbsences")
+       + (SELECT count(*) FROM "TeacherAbsenceCovers") + (SELECT count(*) FROM "CoverSettings")
+       + (SELECT count(*) FROM "SubstitutePoolMembers") + (SELECT count(*) FROM "SubstituteAvailabilities") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a pupil reads % row(s)', n; END IF;
+  BEGIN
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId")
+    VALUES (app.current_school_id(), app.current_user_id(), now() + interval '1 day', now() + interval '2 days', app.current_user_id());
+    RAISE EXCEPTION 'cover: a pupil wrote an absence';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'cover: expected a GUARDIAN'; END IF;
+  SELECT (SELECT count(*) FROM "TeacherAbsenceReasons") + (SELECT count(*) FROM "TeacherAbsences")
+       + (SELECT count(*) FROM "TeacherAbsenceCovers") + (SELECT count(*) FROM "CoverSettings")
+       + (SELECT count(*) FROM "SubstitutePoolMembers") + (SELECT count(*) FROM "SubstituteAvailabilities") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'cover: a guardian reads % row(s)', n; END IF;
+  BEGIN
+    INSERT INTO "CoverSettings" ("schoolId", "teacherSelfReport") VALUES (app.current_school_id(), true)
+    ON CONFLICT ("schoolId") DO UPDATE SET "teacherSelfReport" = true;
+    RAISE EXCEPTION 'cover: a guardian wrote the settings';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- 28g: the catalogue of every migration's guard, re-asserted — USING and
+-- WITH CHECK alike, a permissive arm for authenticated, and no arm but the
+-- admin's, a TEACHER's own (current_user_id) or the two catalogue arms.
+-- Then the grants and the helpers' EXECUTE.
+DO $$
+DECLARE bad text; api_role text; fn text;
+BEGIN
+  SELECT string_agg(tablename || '.' || policyname, ', ' ORDER BY tablename, policyname) INTO bad
+    FROM (
+      SELECT p.tablename, p.policyname,
+             (p.roles = '{authenticated}'::name[] AND p.permissive = 'PERMISSIVE') AS shaped,
+             ARRAY_REMOVE(ARRAY[
+               CASE WHEN p.cmd <> 'INSERT' THEN coalesce(p.qual, '') END,
+               CASE WHEN p.cmd IN ('INSERT', 'UPDATE', 'ALL') THEN coalesce(p.with_check, p.qual, '') END
+             ], NULL) AS arms
+        FROM pg_policies p
+       WHERE p.schemaname = 'public'
+         AND p.tablename IN ('TeacherAbsenceReasons', 'TeacherAbsences', 'CoverSettings', 'TeacherAbsenceCovers',
+                             'SubstitutePoolMembers', 'SubstituteAvailabilities')
+    ) x
+   WHERE NOT x.shaped
+      OR EXISTS (
+        SELECT 1 FROM unnest(x.arms) e
+         WHERE e NOT LIKE '%current_school_id()%'
+            OR NOT (
+                 e LIKE '%current_user_role()%= ''SCHOOL_ADMIN''::"UserRole"%'
+              OR (e LIKE '%current_user_role()%= ''TEACHER''::"UserRole"%' AND e LIKE '%current_user_id()%')
+              OR (x.policyname IN ('teacher_absence_reasons_staff_select', 'cover_settings_staff_select')
+                  AND e LIKE '%current_user_role()%= ''TEACHER''::"UserRole"%')
+            )
+      );
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'cover: arms reach an absence or the pool for somebody else: %', bad; END IF;
+
+  SELECT string_agg(tablename || '.' || policyname || ':' || cmd, ',' ORDER BY tablename, policyname) INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND tablename IN ('TeacherAbsenceReasons', 'TeacherAbsences', 'CoverSettings', 'TeacherAbsenceCovers',
+                       'SubstitutePoolMembers', 'SubstituteAvailabilities');
+  IF bad IS DISTINCT FROM
+     'CoverSettings.cover_settings_admin_all:ALL,CoverSettings.cover_settings_staff_select:SELECT,'
+     'SubstituteAvailabilities.substitute_availabilities_admin_all:ALL,SubstituteAvailabilities.substitute_availabilities_own_all:ALL,'
+     'SubstitutePoolMembers.substitute_pool_members_admin_all:ALL,SubstitutePoolMembers.substitute_pool_members_own_select:SELECT,'
+     'TeacherAbsenceCovers.teacher_absence_covers_admin_all:ALL,TeacherAbsenceCovers.teacher_absence_covers_own_select:SELECT,'
+     'TeacherAbsenceReasons.teacher_absence_reasons_admin_all:ALL,TeacherAbsenceReasons.teacher_absence_reasons_staff_select:SELECT,'
+     'TeacherAbsences.teacher_absences_admin_all:ALL,TeacherAbsences.teacher_absences_own_insert:INSERT,'
+     'TeacherAbsences.teacher_absences_own_select:SELECT,TeacherAbsences.teacher_absences_own_update:UPDATE' THEN
+    RAISE EXCEPTION 'cover: the policies are %', bad;
+  END IF;
+
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(t || ':' || p, ', ') INTO bad
+      FROM unnest(ARRAY['TeacherAbsenceReasons', 'TeacherAbsences', 'CoverSettings', 'TeacherAbsenceCovers',
+                        'SubstitutePoolMembers', 'SubstituteAvailabilities']) t,
+           unnest(CASE api_role
+                    WHEN 'anon' THEN ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+                    WHEN 'service_role' THEN ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+                    ELSE ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] END) p
+     WHERE has_table_privilege(api_role, format('public.%I', t), p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'cover: % holds %', api_role, bad; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.cover_self_report_allowed()', 'app.school_today()'] LOOP
+    IF has_function_privilege('anon', fn, 'EXECUTE') THEN RAISE EXCEPTION 'cover: anon may call %', fn; END IF;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'cover: the API may not call %', fn; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.teacher_absences_own_writes_are_narrow()', 'app.substitute_pool_member_is_a_teacher()'] LOOP
+    IF has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'cover: the API may call the trigger %', fn; END IF;
+  END LOOP;
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.cover_self_report_allowed()'::regprocedure) THEN
+    RAISE EXCEPTION 'cover: the self-report helper is not SECURITY DEFINER';
+  END IF;
+END $$;
