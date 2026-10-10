@@ -464,17 +464,30 @@ export class TeacherAbsencesService {
     return row;
   }
 
-  /** A self-report: the school's active admins are told, with the period and never the reason. */
+  /**
+   * A self-report: the school's active admins are told who and when — the
+   * teacher's name (their own row, read under their RLS), the period and
+   * whether it is whole days, so the bell can say "Karin Ek, 12 okt" — and
+   * never why.
+   */
   private async tellAdmins(user: AuthenticatedUser, row: AbsenceRow): Promise<void> {
     const schoolId = requireSchoolId(user);
     await this.prisma
       .withRls(user, async (tx) => {
         const admins = await tx.user.findMany({ where: { role: 'SCHOOL_ADMIN', isActive: true }, select: { id: true } });
+        const teacher = await tx.user.findUnique({ where: { id: row.userId }, select: { firstName: true, lastName: true } });
         await this.notifications.notifyUsers(tx, {
           schoolId,
           userIds: admins.map((admin) => admin.id),
           type: 'TEACHER_ABSENCE_REPORTED',
-          meta: { absenceId: row.id, startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString() },
+          meta: {
+            absenceId: row.id,
+            userId: row.userId,
+            teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}`.trim() : '',
+            startsAt: row.startsAt.toISOString(),
+            endsAt: row.endsAt.toISOString(),
+            wholeDays: row.wholeDays,
+          },
         });
       })
       .catch(() => this.logger.warn(`Absence report notice failed [absence=${row.id}]`));

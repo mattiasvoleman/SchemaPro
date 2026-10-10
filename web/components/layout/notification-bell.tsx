@@ -98,12 +98,16 @@ export function NotificationBell() {
         if (entry.type === "LESSON_COVER_WITHDRAWN") return t("lessonCoverWithdrawn", own);
         return meta.cover === true ? t("lessonSubstituteCover", own) : t("lessonSubstitute", { subject: own.subject, when });
       }
-      case "TEACHER_ABSENCE_REPORTED":
-        // The period only: the reason is never in a notice.
-        return t("teacherAbsenceReported", {
-          from: new Date(str("startsAt")).toLocaleString(),
-          to: new Date(str("endsAt")).toLocaleString(),
-        });
+      case "TEACHER_ABSENCE_REPORTED": {
+        // Who and when; the reason is never in a notice. Whole days end at
+        // the midnight after the last day, which is said as that last day.
+        const days = meta.wholeDays === true;
+        const at = (iso: string, end: boolean) =>
+          days ? new Date(Date.parse(iso) - (end ? 1 : 0)).toLocaleDateString() : new Date(iso).toLocaleString();
+        const from = at(str("startsAt"), false);
+        const to = at(str("endsAt"), true);
+        return t("teacherAbsenceReported", { teacher: str("teacherName") || "—", period: from === to ? from : `${from} – ${to}` });
+      }
       case "LESSON_ROOM_CHANGED":
         return t("lessonRoomChanged", {
           subject: str("subjectName"),

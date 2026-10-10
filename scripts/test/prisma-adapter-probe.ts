@@ -5244,7 +5244,8 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
         )
       ).rows;
       assert.equal(told.length, 1);
-      assert.deepEqual(Object.keys(told[0]!.meta).sort(), ['absenceId', 'endsAt', 'startsAt']);
+      assert.deepEqual(Object.keys(told[0]!.meta).sort(), ['absenceId', 'endsAt', 'startsAt', 'teacherName', 'userId', 'wholeDays']);
+      assert.equal(told[0]!.meta.teacherName, 'Probe Vikarie');
     });
 
     await check('(æ12) no output of the board, the candidates, the proposal, the hours or the counter, and no notice, carries the reason', async () => {

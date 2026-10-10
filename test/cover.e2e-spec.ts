@@ -161,7 +161,7 @@ describe('Vikarieplanering (e2e)', () => {
       // The admins are told the period, never the reason.
       const notice = harness.tx.notification.createMany.mock.calls.at(-1)![0] as { data: { type: string; meta: object }[] };
       expect(notice.data[0]).toMatchObject({ type: 'TEACHER_ABSENCE_REPORTED' });
-      expect(Object.keys(notice.data[0]!.meta).sort()).toEqual(['absenceId', 'endsAt', 'startsAt']);
+      expect(Object.keys(notice.data[0]!.meta).sort()).toEqual(['absenceId', 'endsAt', 'startsAt', 'teacherName', 'userId', 'wholeDays']);
     });
   });
 

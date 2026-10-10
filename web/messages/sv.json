@@ -1410,7 +1410,7 @@
     "roomBookingRejected": "Din bokning av {room} den {when} avslogs.",
     "lessonSubstituteCover": "Du vikarierar: {subject} den {when}, {group}, {room}.",
     "lessonCoverWithdrawn": "Vikariepasset är avbokat: {subject} den {when}, {group}, {room}. Du behöver inte komma.",
-    "teacherAbsenceReported": "En lärare har anmält frånvaro {from} – {to}. Se Lärarfrånvaro."
+    "teacherAbsenceReported": "{teacher} har anmält frånvaro {period}. Se Lärarfrånvaro."
   },
   "integrations": {
     "title": "Integrationer",
