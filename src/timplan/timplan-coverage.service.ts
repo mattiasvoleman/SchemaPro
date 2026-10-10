@@ -323,6 +323,24 @@ export async function readScheduledInput(
 }
 
 /**
+ * Whether a läsår's rosters are read from the class history (timplan P4):
+ * a year that is not the active one and began before it. Structural, like
+ * rostersOfYear's basis — never by today — and it covers both chains (R4)
+ * and schools that never roll over but move pupils by hand (R2's past
+ * years). rostersOfYear and the routes reaching it are untouched: the
+ * enrolment basis is decided here, in the reader of planned and delivered
+ * time, and only when the history has rows for the year.
+ */
+export function enrolmentBasisOf(
+  year: { isActive: boolean; startDate: Date | string },
+  activeYear: { startDate: Date | string } | null | undefined,
+): boolean {
+  if (year.isActive || !activeYear) return false;
+  const day = (value: Date | string) => (typeof value === 'string' ? value : asDay(value));
+  return day(year.startDate) < day(activeYear.startDate);
+}
+
+/**
  * The year's rows, as the pure module wants them. Null when RLS hides the
  * year. One statement after another in the caller's transaction (a
  * transaction is one connection; see load-input.ts on Promise.all).
@@ -338,9 +356,27 @@ export async function readPlannedInput(
     select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
   });
   if (!year) return null;
+  // A past year with class history reads ITS rosters (timplan P4): each
+  // pupil's last segment that year is their home class, and a pupil
+  // deactivated since still sat there, so is counted. A past year the
+  // history says nothing about reads today's rosters, as before, and P3
+  // says so (TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS). The active year asks
+  // nothing more.
+  let enrolled: { studentId: string; studentGroupId: string | null }[] | null = null;
+  if (!year.isActive) {
+    const active = await tx.academicYear.findFirst({ where: { isActive: true }, select: { startDate: true } });
+    if (enrolmentBasisOf(year, active)) {
+      const segments = await tx.studentEnrollment.findMany({
+        where: { academicYearId },
+        select: { studentId: true, studentGroupId: true },
+        orderBy: [{ studentId: 'asc' }, { validFrom: 'asc' }],
+      });
+      if (segments.length > 0) enrolled = segments;
+    }
+  }
   // The pupils as the year's activation would place them, for a rolled year
-  // not yet activated (projected-rosters.ts); the active year asks nothing more.
-  const basis = await rostersOfYear(tx, viewer, academicYearId, year);
+  // not yet activated (projected-rosters.ts).
+  const basis = enrolled ? null : await rostersOfYear(tx, viewer, academicYearId, year);
 
   const attachments = await tx.academicYearTimplan.findMany({
     where: { academicYearId },
@@ -388,15 +424,22 @@ export async function readPlannedInput(
 
   const classIds = groups.filter((g) => g.kind === 'CLASS').map((g) => g.id);
   const teachingIds = groups.filter((g) => g.kind === 'TEACHING_GROUP').map((g) => g.id);
-  const homes =
-    classIds.length === 0
+  // From the history: the last segment each pupil had in the year (ordered by
+  // validFrom), its class or none (a class since deleted).
+  const lastHome = new Map<string, string | null>();
+  for (const segment of enrolled ?? []) lastHome.set(segment.studentId, segment.studentGroupId);
+  const homes = enrolled
+    ? [...lastHome].map(([id, studentGroupId]) => ({ id, studentGroupId }))
+    : classIds.length === 0
       ? []
-      : await readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, classIds);
+      : await readHomePupils(tx, basis!, { role: 'STUDENT', isActive: true }, classIds);
   const memberships =
     teachingIds.length === 0
       ? []
       : await tx.studentGroupMember.findMany({
-          where: { studentGroupId: { in: teachingIds }, student: { isActive: true } },
+          where: enrolled
+            ? { studentGroupId: { in: teachingIds }, studentId: { in: [...lastHome.keys()] } }
+            : { studentGroupId: { in: teachingIds }, student: { isActive: true } },
           select: { studentId: true, studentGroupId: true },
         });
 
@@ -429,5 +472,6 @@ export async function readPlannedInput(
     })),
     pupils: [...pupils.values()],
     includePupils,
+    ...(enrolled ? { rostersFrom: 'ENROLLMENT' as const } : {}),
   };
 }

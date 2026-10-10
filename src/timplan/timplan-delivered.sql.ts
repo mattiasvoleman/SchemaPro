@@ -174,6 +174,62 @@ export function audienceStatement(window: DeliveredWindow): Prisma.Sql {
 }
 
 /**
+ * A + B cut at the dates a pupil changed class (timplan P4's stage totals):
+ * the same CTE, byte for byte, and one more grouping column, "segment" — the
+ * number of `boundaries` (sorted, distinct) on or before the lesson's date,
+ * width_bucket's answer. A pupil who moved 7A → 7B on 2 November reads 7A's
+ * rows of segment 0 and 7B's of segment 1, from one scan of the year,
+ * whatever the number of moves. With no boundary every row is segment 0 and
+ * the statement is audienceStatement's plus a constant.
+ */
+export function segmentedAudienceStatement(window: DeliveredWindow, boundaries: string[]): Prisma.Sql {
+  const segment =
+    boundaries.length === 0
+      ? Prisma.sql`0`
+      : Prisma.sql`width_bucket("date", ${boundaries}::date[])`;
+  return Prisma.sql`
+    WITH l AS (${deliveredLessons(window)})
+    SELECT "studentGroupId", "subjectId", "bucket", "extraGroupIds", "studentIds",
+           ${segment}::int AS "segment",
+           SUM("minutes")::int AS "minutes", COUNT(*)::int AS "lessons"
+      FROM l
+     GROUP BY 1, 2, 3, 4, 5, 6
+  `;
+}
+
+/** An A + B row with the segment its lessons fall in. */
+export type SegmentedAudienceRow = DeliveredAudienceRow & { segment: number };
+
+/**
+ * readDeliveredRows with the audiences cut at `boundaries`
+ * (segmentedAudienceStatement). The same statements in the same order; C
+ * first, and nothing else when nothing is published.
+ */
+export async function readSegmentedDeliveredRows(
+  tx: Prisma.TransactionClient,
+  window: DeliveredWindow,
+  dates: string[],
+  boundaries: string[],
+): Promise<Omit<DeliveredRows, 'audiences'> & { audiences: SegmentedAudienceRow[] }> {
+  const { horizon, published, publishedDays } = await readPublishedSpans(tx, window);
+  if (published === null) {
+    return { audiences: [], horizon: [], published: null, publishedDays: [], dates: [] };
+  }
+  const audiences = await tx.$queryRaw<
+    { studentGroupId: string; subjectId: string; bucket: string; extraGroupIds: string[]; studentIds: string[]; segment: number; minutes: number; lessons: number }[]
+  >(segmentedAudienceStatement(window, boundaries));
+  const byDate =
+    dates.length === 0 ? [] : await tx.$queryRaw<DeliveredDateRow[]>(datesStatement(window, dates));
+  return {
+    audiences: audiences.map((row) => ({ ...row, bucket: row.bucket as DeliveredBucket })),
+    horizon,
+    published,
+    publishedDays,
+    dates: byDate,
+  };
+}
+
+/**
  * C: per master lesson, how many of its rows have not ended, and its first and
  * last dated row (every status and subject — a row occupies its date whatever
  * became of it): the per-lesson horizon the projection walks from (R1). The

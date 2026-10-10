@@ -1,6 +1,7 @@
 import { computePlannedCoverage, type PlannedGroup, type PlannedPupilInput, type PlannedRequirement, type PlannedSubject } from './timplan-planned';
 import {
   computeDeliveredCoverage,
+  deliveredPupilFigures,
   deliveredDatesToAsk,
   plannedMinutesBetween,
   type DeliveredAudienceRow,
@@ -602,5 +603,65 @@ describe('genomfört mot schemalagt — review findings', () => {
     for (const g of [girls, both]) {
       expect(coverage.groups.find((s) => s.studentGroupId === g.id)!.lines.map((l) => l.key)).toEqual([`subject:${S.IDH}`]);
     }
+  });
+});
+
+describe('every pupil’s figures, for the stage totals (timplan P4)', () => {
+  const sevenA = group('7A');
+  const ma7 = group('Ma7', 'TEACHING_GROUP', null);
+  const input = (extra: Partial<DeliveredCoverageInput['planned']> = {}) => ({
+    planned: {
+      groups: [sevenA, ma7],
+      requirements: [req(sevenA, S.MA, 3, 60), req(ma7, S.MA, 1, 60)],
+      pupils: [pupil(sevenA), pupil(sevenA, [ma7])],
+      ...extra,
+    },
+    audiences: [row(sevenA, S.MA, 'DELIVERED', 20), row(ma7, S.MA, 'DELIVERED', 6)],
+    drillGroupId: sevenA.id,
+  });
+  const fromSink = (overrides: ReturnType<typeof input>) =>
+    deliveredPupilFigures({
+      horizon: [],
+      dates: [],
+      masterLessons: [],
+      publish: { breaks: BREAKS, closures: [], timezone: 'Europe/Stockholm' },
+      credits: [],
+      asOf: AS_OF,
+      asOfDate: AS_OF_DATE,
+      published: { from: '2026-08-17', through: '2026-10-23' },
+      ...overrides,
+      planned: { year: YEAR, closures: CLOSURES, plans: [], attachments: [], subjects: SUBJECTS, includePupils: true, ...overrides.planned },
+    } as DeliveredCoverageInput);
+
+  it('are the drill-down’s own figures, for every pupil, not only those with a finding', () => {
+    const one = input();
+    const coverage = compute(one);
+    const figures = fromSink(one);
+    const [plain, extra] = one.planned.pupils;
+    expect([...figures.keys()].sort()).toEqual([plain!.id, extra!.id].sort());
+    for (const listed of coverage.pupils!) {
+      for (const line of listed.lines) {
+        const mine = figures.get(listed.pupilId)!.get(line.key)!;
+        expect(mine).toMatchObject({ plannedYear: line.plannedYearMinutes, delivered: line.deliveredMinutes, credited: line.creditedMinutes, atPlan: line.unrecordedMinutes });
+        expect(mine.delivered + mine.credited + mine.ahead).toBe(line.projectedMinutes);
+      }
+    }
+    // The pupil in Ma7 reads both groups' lessons in the one line.
+    expect(figures.get(extra!.id)!.get(`subject:${S.MA}`)!.delivered).toBe(26 * 60);
+  });
+
+  it('leave the coverage untouched, and are empty when nothing is published', () => {
+    expect(computeDeliveredCoverage).toBeDefined();
+    expect(fromSink({ ...input(), published: null } as never).size).toBe(0);
+  });
+
+  it('a past year read from the class history does not say its rosters are today’s', () => {
+    const past = { year: { startDate: '2025-08-18', endDate: '2026-06-12' } };
+    expect(compute({ ...input(past), published: { from: '2025-08-18', through: '2026-06-12' } }).verdicts.map((v) => v.code)).toContain(
+      'TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS',
+    );
+    expect(
+      compute({ ...input({ ...past, rostersFrom: 'ENROLLMENT' }), published: { from: '2025-08-18', through: '2026-06-12' } }).verdicts.map((v) => v.code),
+    ).not.toContain('TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS');
   });
 });
