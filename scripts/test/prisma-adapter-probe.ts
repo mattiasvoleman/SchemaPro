@@ -510,7 +510,7 @@ async function runChecks(
 
   // ---- (g) the exclusion constraint through RoomBookingsService
   await check('(g) an overlapping room booking is a 409, not a 500', async () => {
-    const bookings = new RoomBookingsService(api, new NotificationsService(api, new NotificationDeliveryService()));
+    const bookings = new RoomBookingsService(api, new NotificationsService(api, new NotificationDeliveryService(api)));
     const booking = (slot: typeof SLOT) =>
       ({ roomId: fixture.roomId, title: MARKER, ...slot }) as CreateRoomBookingDto;
 
@@ -4953,7 +4953,7 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
     notifyLessonsChanged: async () => undefined,
     notifyCoverBoardChanged: () => undefined,
   } as unknown as RealtimeService;
-  const notifications = new NotificationsService(api, new NotificationDeliveryService());
+  const notifications = new NotificationsService(api, new NotificationDeliveryService(api));
   const calendar = new CalendarLessonsService(api, realtime, notifications);
   const cover = new CoverService(api, realtime, notifications, calendar);
   const absences = new TeacherAbsencesService(api, realtime, notifications, cover);

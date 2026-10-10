@@ -1935,6 +1935,22 @@ model Notification {
   @@map("Notifications")
 }
 
+/// "Do not e-mail or push me this type" (20261013100000). No row = send; the
+/// in-app row is always written. Own rows only (RLS); never
+/// ABSENCE_UNREPORTED or TEACHER_ABSENCE_REPORTED (CHECKs). The (userId,
+/// schoolId) key to Users lives in the migration; the delivery reads the rows
+/// through app.delivery_opt_outs.
+model NotificationOptOut {
+  userId    String           @db.Uuid
+  schoolId  String           @db.Uuid
+  type      NotificationType
+  createdAt DateTime         @default(now()) @db.Timestamptz(6)
+
+  @@id([userId, type])
+  @@index([schoolId, type])
+  @@map("NotificationOptOuts")
+}
+
 // -----------------------------------------------------------------------------
 // Availability / scheduling constraints (consumed by the OR-Tools engine)
 // -----------------------------------------------------------------------------
