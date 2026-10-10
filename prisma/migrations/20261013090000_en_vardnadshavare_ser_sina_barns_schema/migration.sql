@@ -50,11 +50,25 @@
 -- check (any role holding a GuardianStudents row would match it), and its
 -- reach is a subset of the new arm's.
 --
--- A guardian of two children reading CalendarLessons directly (PostgREST)
--- now gets both children's lessons together. The endpoint splits them per
--- child; the arm is the boundary that holds if the endpoint's filter is
--- wrong: whatever the endpoint does, it can only return the caller's own
--- children's lessons.
+-- ## Only through the endpoint
+--
+-- The three lesson arms (CalendarLessons, CalendarLessonGroups,
+-- CalendarLessonStudents) are granted TO app_authenticated, the API's role,
+-- and not TO authenticated, PostgREST's. A lesson row carries more than a
+-- family is told: CalendarLessons.note is the free text a cancellation was
+-- given (the teacher-absence page writes the admin's own reason there),
+-- cancelCause says TEACHER_UNAVAILABLE, and the rows go back a whole year.
+-- That is a colleague's absence record, the same HR signal the missing
+-- teacher-row arm (below) withholds. FamilyScheduleService answers a
+-- whitelist (no note, no cause, no teacher id), only from the previous week
+-- onward, and only on the dates a moved child was in the class; none of
+-- that holds for a direct read. With the arms on app_authenticated, the
+-- endpoint is the only way a family reads a lesson, and the arm is the
+-- boundary on WHICH lessons it may read: whatever the endpoint does, it can
+-- only return the caller's own children's lessons. Nothing on the web or in
+-- the app reads these tables as a guardian through PostgREST (the old arm
+-- never answered one). The meal arms carry no free text and stay on
+-- authenticated, as they were.
 --
 -- ## No arm on CalendarLessonTeachers
 --
@@ -131,14 +145,19 @@
 -- ## Grants and the guard
 --
 -- No table grant changes. The helpers: REVOKE ALL FROM PUBLIC (a function
--- is created executable by PUBLIC), then EXECUTE to authenticated and
--- app_authenticated, because a policy runs as whoever reads. The label
--- function: EXECUTE to app_authenticated only; PUBLIC, anon, authenticated
--- and service_role revoked. All guarded on pg_roles, as in 20261012090000.
+-- is created executable by PUBLIC), then EXECUTE to whoever reads through
+-- an arm that calls them, because a policy runs as whoever reads: the
+-- child, class and group helpers to authenticated and app_authenticated
+-- (the meal arms are authenticated's), current_guardian_lesson_ids() to
+-- app_authenticated only (only the lesson arm and the label function call
+-- it). The label function: EXECUTE to app_authenticated only; PUBLIC,
+-- anon, authenticated and service_role revoked. All guarded on pg_roles, as
+-- in 20261012090000.
 --
 -- The migration ends with GUARDIAN_REACH over the six tables: every arm that
--- reaches a guardian is a permissive arm for authenticated with the role
--- check, the school check and a current_guardian_ helper, and
+-- reaches a guardian is a permissive SELECT arm with the role check, the
+-- school check and a current_guardian_ helper; the three lesson arms are
+-- for app_authenticated alone and the two meal arms for authenticated; and
 -- CalendarLessonTeachers has none.
 
 -- ---------------------------------------------------------------------------
@@ -208,32 +227,43 @@ COMMENT ON FUNCTION app.current_guardian_lesson_ids() IS
 -- ---------------------------------------------------------------------------
 
 DROP POLICY IF EXISTS "calendar_lessons_guardian_teaching_group_select" ON "CalendarLessons";
-CREATE POLICY "calendar_lessons_guardian_select" ON "CalendarLessons"
-    FOR SELECT TO "authenticated"
-    USING (
-        (select app.current_user_role()) = 'GUARDIAN'
-        AND "schoolId" = (select app.current_school_id())
-        AND (
-            "studentGroupId" = ANY ((select app.current_guardian_group_ids())::uuid[])
-            OR "id" = ANY ((select app.current_guardian_lesson_ids())::uuid[])
-        )
-    );
 
-CREATE POLICY "calendar_lesson_groups_guardian_select" ON "CalendarLessonGroups"
-    FOR SELECT TO "authenticated"
-    USING (
-        (select app.current_user_role()) = 'GUARDIAN'
-        AND "schoolId" = (select app.current_school_id())
-        AND "studentGroupId" = ANY ((select app.current_guardian_group_ids())::uuid[])
-    );
+-- The three lesson arms are for the API's role alone (app_authenticated),
+-- never for PostgREST's (authenticated): see "Only through the endpoint"
+-- above. Created only where the role exists; where it does not, no arm is
+-- created and a guardian reads no lesson, which is the safe side.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
+    CREATE POLICY "calendar_lessons_guardian_select" ON "CalendarLessons"
+        FOR SELECT TO "app_authenticated"
+        USING (
+            (select app.current_user_role()) = 'GUARDIAN'
+            AND "schoolId" = (select app.current_school_id())
+            AND (
+                "studentGroupId" = ANY ((select app.current_guardian_group_ids())::uuid[])
+                OR "id" = ANY ((select app.current_guardian_lesson_ids())::uuid[])
+            )
+        );
 
-CREATE POLICY "calendar_lesson_students_guardian_select" ON "CalendarLessonStudents"
-    FOR SELECT TO "authenticated"
-    USING (
-        (select app.current_user_role()) = 'GUARDIAN'
-        AND "schoolId" = (select app.current_school_id())
-        AND "studentId" = ANY ((select app.current_guardian_child_ids())::uuid[])
-    );
+    CREATE POLICY "calendar_lesson_groups_guardian_select" ON "CalendarLessonGroups"
+        FOR SELECT TO "app_authenticated"
+        USING (
+            (select app.current_user_role()) = 'GUARDIAN'
+            AND "schoolId" = (select app.current_school_id())
+            AND "studentGroupId" = ANY ((select app.current_guardian_group_ids())::uuid[])
+        );
+
+    CREATE POLICY "calendar_lesson_students_guardian_select" ON "CalendarLessonStudents"
+        FOR SELECT TO "app_authenticated"
+        USING (
+            (select app.current_user_role()) = 'GUARDIAN'
+            AND "schoolId" = (select app.current_school_id())
+            AND "studentId" = ANY ((select app.current_guardian_child_ids())::uuid[])
+        );
+  END IF;
+END
+$$;
 
 DROP POLICY IF EXISTS "calendar_lunches_guardian_select" ON "CalendarLunches";
 CREATE POLICY "calendar_lunches_guardian_select" ON "CalendarLunches"
@@ -328,7 +358,7 @@ DECLARE
   r text;
 BEGIN
   FOREACH fn IN ARRAY ARRAY['app.current_guardian_child_ids()', 'app.current_guardian_class_ids()',
-                            'app.current_guardian_group_ids()', 'app.current_guardian_lesson_ids()'] LOOP
+                            'app.current_guardian_group_ids()'] LOOP
     FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
       IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
         EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO %I', fn, r);
@@ -342,6 +372,14 @@ BEGIN
   END LOOP;
   FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON FUNCTION app.current_guardian_lesson_ids() FROM %I', r);
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
+    GRANT EXECUTE ON FUNCTION app.current_guardian_lesson_ids() TO "app_authenticated";
+  END IF;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
       EXECUTE format('REVOKE ALL ON FUNCTION app.family_lesson_staff(uuid[]) FROM %I', r);
     END IF;
   END LOOP;
@@ -353,9 +391,10 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- GUARDIAN_REACH: every arm on the six tables that can answer a guardian is
--- a permissive arm for authenticated that checks the role GUARDIAN and the
--- school and keys on a current_guardian_ helper; CalendarLessonTeachers has
--- no such arm at all. An arm reaches a guardian if its name says so or its
+-- a permissive SELECT arm that checks the role GUARDIAN and the school and
+-- keys on a current_guardian_ helper; the lesson tables' arms are for
+-- app_authenticated alone (never PostgREST's authenticated), the meal
+-- tables' for authenticated; CalendarLessonTeachers has no such arm at all. An arm reaches a guardian if its name says so or its
 -- expression mentions the role, a helper or the link table.
 -- ---------------------------------------------------------------------------
 
@@ -375,14 +414,15 @@ BEGIN
            p.tablename = 'CalendarLessonTeachers'
         OR p.cmd <> 'SELECT'
         OR p.permissive <> 'PERMISSIVE'
-        OR p.roles <> '{authenticated}'::name[]
+        OR p.roles <> CASE WHEN p.tablename IN ('CalendarLunches', 'CalendarRasts')
+                           THEN '{authenticated}'::name[] ELSE '{app_authenticated}'::name[] END
         OR coalesce(p.qual, '') NOT LIKE '%current_user_role()%= ''GUARDIAN''::"UserRole"%'
         OR coalesce(p.qual, '') NOT LIKE '%current_school_id()%'
         OR coalesce(p.qual, '') NOT LIKE '%current_guardian_%'
         OR coalesce(p.qual, '') LIKE '%GuardianStudents%'
      );
   IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'GUARDIAN_REACH: these arms reach a guardian without the role, the school and a child helper, or reach a lesson''s teacher rows: %', bad;
+    RAISE EXCEPTION 'GUARDIAN_REACH: these arms reach a guardian without the role, the school and a child helper, or for the wrong database role, or reach a lesson''s teacher rows: %', bad;
   END IF;
 END
 $$;
