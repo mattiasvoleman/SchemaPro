@@ -5260,6 +5260,69 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
       const sickLabel = 'SICK';
       assert.ok(!text.includes(sickLabel), 'a reason category left the absence register');
     });
+
+    await check('(æ13) a cancel from the old page "because the teacher cannot come" is the absence’s decision: ending the absence before the lesson is a 409, and undoDecisions holds the lesson again', async () => {
+      const away = await absences.create({ userId: school.b.id, from: school.day, to: school.day }, school.admin);
+      await calendar.cancel(school.y2, { cause: 'TEACHER_UNAVAILABLE' }, school.admin);
+      const decided = (
+        await owner.query<{ decision: string; removed: unknown }>(
+          `SELECT decision::text, "removedTeachers" AS removed FROM "TeacherAbsenceCovers" WHERE "absenceId" = $1 AND "calendarLessonId" = $2`,
+          [away.id, school.y2],
+        )
+      ).rows;
+      assert.deepEqual(decided, [{ decision: 'CANCELLED', removed: [] }]);
+      // 09:00 UTC is 10 or 11 in Stockholm: before y2 (13:30), after the day began.
+      const early = `${school.day}T09:00:00.000Z`;
+      await assert.rejects(absences.end(away.id, { at: early }, school.admin), (error: unknown) => codeOf(error) === 'ABSENCE_HAS_DECISIONS');
+      await absences.end(away.id, { at: early, undoDecisions: true }, school.admin);
+      const y2 = (
+        await owner.query<{ status: string; cause: string | null }>(`SELECT status::text, "cancelCause"::text AS cause FROM "CalendarLessons" WHERE id = $1`, [school.y2])
+      ).rows[0];
+      assert.deepEqual(y2, { status: 'SCHEDULED', cause: null });
+    });
+
+    await check('(æ14) straight through the adapter, a teacher cannot withdraw an absence a decision references (TA403), and the database stamps createdAt and withdrawnAt', async () => {
+      const later = new Date(`${school.day}T00:00:00.000Z`);
+      later.setUTCDate(later.getUTCDate() + 7);
+      const day = later.toISOString().slice(0, 10);
+      const own = await api.withRls(school.teacher(school.s2), (tx) =>
+        tx.teacherAbsence.create({
+          data: {
+            schoolId: school.schoolId,
+            userId: school.s2.id,
+            startsAt: new Date(`${day}T00:00:00.000Z`),
+            endsAt: new Date(`${day}T22:00:00.000Z`),
+            createdByUserId: school.s2.id,
+            createdAt: new Date(Date.now() + 10 * 365 * 86_400_000),
+          },
+          select: { id: true, createdAt: true },
+        }),
+      );
+      assert.ok(Math.abs(own.createdAt.getTime() - Date.now()) < 60_000, `createdAt stored as ${own.createdAt.toISOString()}`);
+      await owner.query(
+        `INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "removedTeachers")
+         VALUES ($1, $2, $3, $4, 'CO_TEACHER', jsonb_build_array(jsonb_build_object('teacherId', $5::text, 'role', 'LEAD')))`,
+        [school.schoolId, own.id, school.y1, school.s2.id, school.s2.id],
+      );
+      await assert.rejects(
+        api.withRls(school.teacher(school.s2), (tx) =>
+          tx.teacherAbsence.update({
+            where: { id: own.id },
+            data: { status: 'WITHDRAWN', withdrawnAt: new Date(), withdrawnByUserId: school.s2.id },
+          }),
+        ),
+        (error: unknown) => /TA403/.test(summarise(error)),
+      );
+      await owner.query(`DELETE FROM "TeacherAbsenceCovers" WHERE "absenceId" = $1`, [own.id]);
+      const withdrawn = await api.withRls(school.teacher(school.s2), (tx) =>
+        tx.teacherAbsence.update({
+          where: { id: own.id },
+          data: { status: 'WITHDRAWN', withdrawnAt: new Date('2001-01-01T00:00:00.000Z'), withdrawnByUserId: school.s2.id },
+          select: { withdrawnAt: true },
+        }),
+      );
+      assert.ok(Math.abs(withdrawn.withdrawnAt!.getTime() - Date.now()) < 60_000, `withdrawnAt stored as ${withdrawn.withdrawnAt?.toISOString()}`);
+    });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   }
