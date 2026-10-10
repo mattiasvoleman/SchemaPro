@@ -2583,6 +2583,33 @@
       den ser vårdnadshavaren en tom sida.
     </p>
   </div>
+  <h4>Barnets schema</h4>
+  <p>
+    På <span class="path">Mina barn</span> och under fliken
+    <span class="path">Schema</span> i appen ser en vårdnadshavare varje barns
+    vecka, ett barn i taget, i dag eller hela veckan. Det är det
+    <em>publicerade</em> schemat, aldrig ett utkast (5.7): tid, ämne, sal,
+    läraren som skolan visar, om lektionen är inställd eller har vikarie, och
+    klassens lunch och raster. Tiderna är skolans, var vårdnadshavaren än
+    befinner sig. Veckor visas från förra veckan och till läsårets slut.
+  </p>
+  <ul>
+    <li><strong>Läraren</strong> visas som skolan har valt för Schemavisaren
+      (7.1): signatur, namn eller inte alls, och förvalet är inte alls. En
+      lärare som aldrig ska visas syns inte heller här, och inte heller en
+      lärare som har slutat. En inställd lektion och en lektion med vikarie
+      namnger ingen lärare. Där står bara <em>Inställd</em> eller
+      <em>Vikarie</em>, aldrig vem vikarien ersätter eller varför.</li>
+    <li><strong>Vad som inte visas</strong>: anteckningar (till exempel
+      <em>Inställd: Prao åk 9</em>), orsaker, frånvaro och andra elever.</li>
+    <li><strong>Lektionerna barnet undervisas i</strong>: klassens, de
+      undervisningsgrupper barnet går i och lektioner där barnet är
+      namngivet. Ett syskons lektioner hamnar inte under fel barn.</li>
+    <li><strong>Ett barn som bytt klass i veckan</strong>: dagarna före bytet
+      visar varken den gamla eller den nya klassens lektioner, bara
+      undervisningsgrupper och namngivna lektioner. Från bytet visas den nya
+      klassen. Undervisningsgrupperna räknas som de är i dag.</li>
+  </ul>
 
   <h3><span class="num">6.7</span>Lokalbokningar</h3>
   <p>
@@ -2819,8 +2846,59 @@
     lektioner i avbokningens dagar som inställda direkt. Har lektioner ändå
     tillkommit visar listan <em>N lektioner har tillkommit sedan
     avbokningen</em> med <span class="ui">Tillämpa igen</span>. Avbokningar
-    skickar ingen notis. Anteckningen på varje lektion är det elever och
-    vårdnadshavare läser.
+    skickar ingen notis. Anteckningen på varje lektion är det elever läser.
+    Vårdnadshavarnas schema visar bara att lektionen är inställd, utan
+    anteckningen.
+  </p>
+
+  <h3 id="s610"><span class="num">6.10</span>Notiser, e-post och push</h3>
+  <p>
+    Notiserna i SchemaPro skrivs alltid och är skolans egen förteckning. Vad
+    som dessutom skickas som e-post och som push i appen väljer var och en
+    själv, per typ: på webben under klockan (<span class="ui">Välj vad som
+    skickas till dig</span>) och i appen under
+    <span class="path">Inställningar</span>. Ingen kan välja åt någon annan,
+    inte heller administratören.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Roll</th><th>Kan välja bort</th><th style="width:30%">Skickas alltid</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, vikarie, bytt sal, ändrat schema, beslut om ledighet</td><td>Oanmäld frånvaro</td></tr>
+      <tr><td class="k">Elev</td><td>Inställd lektion, vikarie, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, vikarier på mina lektioner, bytt sal, beslut om lokalbokning</td><td>Egna vikariepass och avbokade vikariepass</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Oanmäld frånvaro skickas alltid, eftersom skolan ska underrätta
+    vårdnadshavarna samma dag. En lärares egna vikariepass och avbokningar
+    skickas alltid, eftersom vikarietavlan (6.3) räknar med att den inbokade
+    får veta. Notisen <em>En lärare har anmält frånvaro</em> lämnar aldrig
+    SchemaPro: den mejlas inte och skickas inte som push.
+  </p>
+  <div class="warn">
+    <span class="label">Push är avstängt tills skolan har gjort klart</span>
+    <p>
+      Push går genom Expo (650 Industries, USA), Apple och Google. Innan push
+      slås på behöver skolan, som personuppgiftsansvarig, ett
+      personuppgiftsbiträdesavtal som omfattar Expo och en grund för
+      överföringen till tredje land. Därefter krävs ett EAS-projekt med
+      nycklar, en ny version av appen och inställningen
+      <code>PUSH_NOTIFICATIONS=expo</code> (DEPLOYMENT.md §8.1). Fram till
+      dess fungerar allt som förut och appen frågar ingen om push.
+    </p>
+  </div>
+  <p>
+    En push säger aldrig en persons namn, inte ens barnets, och aldrig ett
+    ämne, en grupp eller en sal. Sådana namn kan avslöja känsliga uppgifter,
+    och en push syns på en låst skärm. Pushen säger vad som hänt och när,
+    till exempel <em>En lektion</em> följt av dag och tid <em>är
+    inställd</em>. Detaljerna står i notisen bakom inloggningen. Flera
+    ändringar som görs på en gång blir en push per person och typ.
+  </p>
+  <p>
+    Två luckor gäller både notiser, e-post och push: en inställd lektion
+    eller en vikarie i en undervisningsgrupp (inte en klass) når ingen
+    vårdnadshavare, och en avbokning (6.9) skickar ingen notis alls.
   </p>
 </section>
 
@@ -2902,7 +2980,8 @@
       de visar aldrig inställda lektioner eller vem som är vikarie, eftersom det
       kan avslöja frånvaro. Av samma skäl namnger klassens och salens veckor
       ingen lärare på en inställd lektion, och aldrig en vikarie: en lektion
-      som en vikarie håller visas utan lärare.</li>
+      som en vikarie håller visas utan lärare. Samma val gäller schemat som
+      inloggade vårdnadshavare ser för sina barn (6.6).</li>
     <li><strong>Vilka veckor</strong>: en länk visar veckor inom sitt läsår,
       från förra veckan och framåt. Äldre veckor visas inte, så att ingen kan
       bläddra bakåt genom ett helt läsårs inställda lektioner.</li>
@@ -2911,7 +2990,8 @@
       länk, så att ingen elev kan pekas ut. En lektion för namngivna elever
       syns i salens vecka bara som upptagen tid.</li>
     <li><strong>Lärare som aldrig visas</strong>: en lärare med skyddad
-      identitet markeras här och syns då inte någonstans i Schemavisaren.</li>
+      identitet markeras här och syns då inte någonstans i Schemavisaren och
+      inte i vårdnadshavarnas schema.</li>
   </ul>
   <p>
     En <strong>länk</strong> gäller en klass, en lärare eller en sal, eller är
