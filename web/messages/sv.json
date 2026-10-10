@@ -2731,6 +2731,20 @@
       }
     }
   },
+  "teachingTime": {
+    "title": "Undervisningstid",
+    "titleChild": "Undervisningstid – {name}",
+    "updated": "Uppdaterad {date}",
+    "stage": "{stage, select, LAG {Lågstadiet} LAG_MELLAN {Låg- och mellanstadiet} MELLAN {Mellanstadiet} other {Högstadiet}}, åk {from}–{to}",
+    "subject": "Ämne",
+    "soFar": "Hittills",
+    "since": "Sedan {date}",
+    "planned": "Planerat för stadiet",
+    "timplan": "Timplanen",
+    "unrecorded": "Åk {grades} ingår inte i siffrorna, eftersom tiden inte finns registrerad i SchemaPro.",
+    "unpublished": "Den nationella fördelningen per ämne för stadiet är inte publicerad ännu, så timplanens timmar visas inte.",
+    "footer": "Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och planerat gäller hela stadiet enligt skolans timplan.{versions, select, none {} other { Timplanens timmar är SchemaPros referensdata ({versions}).}}"
+  },
   "timplanCohorts": {
     "title": "Timplaner per årskull",
     "intro": "Vilken lydelse varje årskulls stadier jämförs med i Täckning › Stadium, enligt SchemaPros referensdata. Det är referensdatans källor, inte ett lagbesked för en enskild elev. Från hösten 2028 läses årskurserna i den nya numreringen.",

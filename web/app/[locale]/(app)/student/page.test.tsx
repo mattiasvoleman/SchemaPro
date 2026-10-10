@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   lunches: [] as unknown[],
   rasts: [] as unknown[],
   groupId: "g-41" as string | null,
+  role: "STUDENT",
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -34,7 +35,7 @@ vi.mock("@/components/profile-context", () => ({
       id: "p-1",
       authId: "a-1",
       schoolId: "s-1",
-      role: "STUDENT",
+      role: state.role,
       firstName: "Alva",
       lastName: "Elev",
       email: "alva@skola.se",
@@ -42,6 +43,11 @@ vi.mock("@/components/profile-context", () => ({
     },
     school: null,
   }),
+}));
+
+// The card is its own lazy file with its own test (components/teaching-time-card.test.tsx).
+vi.mock("@/components/teaching-time-card", () => ({
+  TeachingTimeCard: ({ studentId }: { studentId: string }) => <p>teaching-time {studentId}</p>,
 }));
 
 vi.mock("next-intl", () => ({
@@ -76,6 +82,7 @@ beforeEach(() => {
   cleanup();
   vi.setSystemTime(new Date(`${MONDAY}T09:00:00.000Z`));
   state.groupId = "g-41";
+  state.role = "STUDENT";
   state.lessons = [
     {
       id: "l-1",
@@ -179,5 +186,19 @@ describe("the pupil's rasts", () => {
     render(<StudentSchedulePage />);
     expect(screen.queryByText("schedule.noLessons")).toBeNull();
     expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(1);
+  });
+});
+
+describe("the pupil's Undervisningstid card", () => {
+  it("is the pupil's own, loaded after the week", async () => {
+    render(<StudentSchedulePage />);
+    expect(await screen.findByText("teaching-time p-1")).toBeInTheDocument();
+  });
+
+  it("is not asked for by anyone else who opens the page", async () => {
+    state.role = "TEACHER";
+    render(<StudentSchedulePage />);
+    await screen.findAllByText("lunch.bandLabel");
+    expect(screen.queryByText(/^teaching-time/)).not.toBeInTheDocument();
   });
 });

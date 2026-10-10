@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarX2, Loader2, Send, Trash2, Users } from "lucide-react";
@@ -38,6 +38,20 @@ import {
 } from "@/components/ui/select";
 
 const TYPES: AbsenceReportType[] = ["SICK", "APPOINTMENT", "OTHER"];
+
+/*
+ * "Undervisningstid" (timplan P4): each child's hours over their current
+ * stadium, as the school published them. Fetched after the page with lazy()
+ * — this route is in the core tier, and the card is not what the page is
+ * for — and a chunk that does not arrive renders nothing: an optional card
+ * must never take the absence report away.
+ */
+const TeachingTimeCard = lazy(() =>
+  import("@/components/teaching-time-card").then(
+    (module) => ({ default: module.TeachingTimeCard }),
+    () => ({ default: () => null }),
+  ),
+);
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -395,6 +409,17 @@ export default function GuardianPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* One card per child, each read under the guardian's own RLS: the
+          statement's rows exist for a guardian only for their own children,
+          so a child of another family is not even asked for. */}
+      {profile.role === "GUARDIAN" && (children ?? []).length > 0 ? (
+        <Suspense fallback={null}>
+          {(children ?? []).map((child) => (
+            <TeachingTimeCard key={child.id} studentId={child.id} childName={child.firstName} />
+          ))}
+        </Suspense>
+      ) : null}
     </div>
   );
 }

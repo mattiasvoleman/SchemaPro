@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   useCalendarLessons,
@@ -19,6 +19,20 @@ import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile } from "@/components/profile-context";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
+
+/*
+ * "Undervisningstid" (timplan P4): the pupil's hours over their current
+ * stadium, as the school published them. Fetched after the page with lazy()
+ * — this route is in the core tier, and the card is not what the page is
+ * for — and a chunk that does not arrive renders nothing: an optional card
+ * must never take the week away.
+ */
+const TeachingTimeCard = lazy(() =>
+  import("@/components/teaching-time-card").then(
+    (module) => ({ default: module.TeachingTimeCard }),
+    () => ({ default: () => null }),
+  ),
+);
 
 export default function StudentSchedulePage() {
   const t = useTranslations("schedule");
@@ -93,6 +107,14 @@ export default function StudentSchedulePage() {
         isLoading={isLoading}
         bands={lunchBands}
       />
+      {/* A pupil's own card only: any role may open this page, and the
+          gateway answers a STUDENT with their own statement whatever is
+          asked. A teacher is refused the route, so nobody else asks. */}
+      {profile.role === "STUDENT" ? (
+        <Suspense fallback={null}>
+          <TeachingTimeCard studentId={profile.id} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
