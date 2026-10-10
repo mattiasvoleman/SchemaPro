@@ -21,12 +21,40 @@ import { createPgAdapter } from './pool-config';
  */
 const BATCH_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 15_000 } as const;
 
+/**
+ * What one `withRls` transaction carries beside its client: the hooks that run
+ * once it has committed, and state a service keeps for the length of the
+ * transaction (the notification outbox). Keyed by the transaction client in a
+ * module-level WeakMap, so it needs no constructor (the spec builds the
+ * service with Object.create) and is gone with the client.
+ */
+interface CommitScope {
+  hooks: Array<() => Promise<void>>;
+  locals: Map<object, unknown>;
+}
+
+const COMMIT_SCOPES = new WeakMap<object, CommitScope>();
+const commitLogger = new Logger('PrismaService');
+
 /** The connecting role's RLS-relevant privileges, read from `pg_roles`. */
 interface ConnectionRole {
   name: string;
   rolsuper: boolean;
   rolbypassrls: boolean;
   unforcedOwnedTables: number;
+}
+
+/** Schedules a committed transaction's hooks, each on its own, after the current turn. */
+function runAfterCommit(scope: CommitScope): void {
+  for (const hook of scope.hooks) {
+    setImmediate(() => {
+      Promise.resolve()
+        .then(hook)
+        .catch((error: unknown) =>
+          commitLogger.warn(`An after-commit hook failed [${error instanceof Error ? error.name : 'unknown'}]`),
+        );
+    });
+  }
 }
 
 /**
@@ -214,14 +242,66 @@ export class PrismaService
     fn: (tx: PrismaClient) => Promise<T>,
     options?: { timeoutMs?: number },
   ): Promise<T> {
-    return this.$transaction(
+    const scope: CommitScope = { hooks: [], locals: new Map() };
+    const result = await this.$transaction(
       async (tx) => {
+        COMMIT_SCOPES.set(tx, scope);
         await this.claimsFor(tx, user.authId);
         return fn(tx as unknown as PrismaClient);
       },
       {
         timeout: options?.timeoutMs ?? 15_000,
       },
+    );
+    runAfterCommit(scope);
+    return result;
+  }
+
+  /**
+   * Runs `hook` once the `withRls` transaction `tx` belongs to has COMMITTED,
+   * on a later turn of the event loop so the response is never held for it;
+   * a rolled-back transaction drops its hooks unrun. A hook's failure is
+   * logged by name and swallowed: nothing after a commit can undo it.
+   *
+   * Answers false for a client no `withRls` opened (a service principal's,
+   * the public viewer's, a plain transaction): the caller decides what that
+   * means, and must never run the work before a commit instead.
+   */
+  onCommit(tx: PrismaClient, hook: () => Promise<void>): boolean {
+    const scope = COMMIT_SCOPES.get(tx);
+    if (!scope) return false;
+    scope.hooks.push(hook);
+    return true;
+  }
+
+  /**
+   * State kept for the length of one `withRls` transaction under `key`,
+   * created by `init` on first use; undefined outside one. NotificationsService
+   * keeps its outbox here, so every notice of one transaction is delivered by
+   * one hook.
+   */
+  commitLocal<T>(tx: PrismaClient, key: object, init: () => T): T | undefined {
+    const scope = COMMIT_SCOPES.get(tx);
+    if (!scope) return undefined;
+    if (!scope.locals.has(key)) scope.locals.set(key, init());
+    return scope.locals.get(key) as T;
+  }
+
+  /**
+   * The delivery's door (NotificationDeliveryService, PushReceiptsService): a
+   * transaction with no principal — RLS answers nothing in it — and a 5 s
+   * statement_timeout, in which the only things worth doing are the
+   * SECURITY DEFINER delivery functions (app.delivery_opt_outs, app.push_*),
+   * each of which takes its school as an argument the gateway decided.
+   * Shaped like withPublicViewer.
+   */
+  async withDeliveryService<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET LOCAL statement_timeout = '5s'`;
+        return fn(tx as unknown as PrismaClient);
+      },
+      { timeout: 10_000 },
     );
   }
 

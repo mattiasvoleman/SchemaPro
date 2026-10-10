@@ -49,6 +49,7 @@ import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-
 import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
+import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import { readYearBoundsForShare } from '../../src/resources/academic-year-bounds';
 import { AcademicYearsService } from '../../src/resources/academic-years.service';
 import { AvailabilityConstraintsService } from '../../src/resources/availability-constraints.service';
@@ -509,7 +510,7 @@ async function runChecks(
 
   // ---- (g) the exclusion constraint through RoomBookingsService
   await check('(g) an overlapping room booking is a 409, not a 500', async () => {
-    const bookings = new RoomBookingsService(api, new NotificationsService());
+    const bookings = new RoomBookingsService(api, new NotificationsService(api, new NotificationDeliveryService()));
     const booking = (slot: typeof SLOT) =>
       ({ roomId: fixture.roomId, title: MARKER, ...slot }) as CreateRoomBookingDto;
 
@@ -4952,7 +4953,7 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
     notifyLessonsChanged: async () => undefined,
     notifyCoverBoardChanged: () => undefined,
   } as unknown as RealtimeService;
-  const notifications = new NotificationsService();
+  const notifications = new NotificationsService(api, new NotificationDeliveryService());
   const calendar = new CalendarLessonsService(api, realtime, notifications);
   const cover = new CoverService(api, realtime, notifications, calendar);
   const absences = new TeacherAbsencesService(api, realtime, notifications, cover);

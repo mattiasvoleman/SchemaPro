@@ -16,6 +16,9 @@ export interface PrismaMock {
   withServicePrincipal: jest.Mock;
   withSystemTransaction: jest.Mock;
   withPublicViewer: jest.Mock;
+  withDeliveryService: jest.Mock;
+  onCommit: jest.Mock;
+  commitLocal: jest.Mock;
 }
 
 /**
@@ -66,7 +69,8 @@ export function createTxMock(): TxMock {
 /**
  * A `PrismaService` stand-in whose `withRls` / `withSystemTransaction` invoke
  * the caller's callback with `tx` directly. Services under test therefore run
- * their real transaction bodies without a database.
+ * their real transaction bodies without a database. `withRls` also keeps
+ * PrismaService's after-commit contract (onCommit, commitLocal).
  */
 export function createPrismaMock(tx: TxMock): PrismaMock {
   // Always a promise, as every real method is: callers chain `.catch(...)` on
@@ -75,13 +79,50 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
   const run = <T>(fn: (client: PrismaClient) => Promise<T>) =>
     Promise.resolve(fn(tx as unknown as PrismaClient));
 
+  // After-commit hooks, as PrismaService keeps them, but on a stack rather
+  // than per client: every transaction here is the same `tx` (26 assertions
+  // across the specs say toHaveBeenCalledWith(tx, ...), and a per-call
+  // Object.create(tx) would fail them all), so the innermost open withRls is
+  // the one a hook belongs to. Its hooks run after its callback resolves, on
+  // a later turn as production's do, and are dropped when it throws.
+  const scopes: Array<{ hooks: Array<() => Promise<void>>; locals: Map<object, unknown> }> = [];
+  const withRls = async <T>(fn: (client: PrismaClient) => Promise<T>): Promise<T> => {
+    const scope = { hooks: [] as Array<() => Promise<void>>, locals: new Map<object, unknown>() };
+    scopes.push(scope);
+    let result: T;
+    try {
+      result = await fn(tx as unknown as PrismaClient);
+    } finally {
+      scopes.splice(scopes.lastIndexOf(scope), 1);
+    }
+    for (const hook of scope.hooks) {
+      setImmediate(() => {
+        void Promise.resolve().then(hook).catch(() => undefined);
+      });
+    }
+    return result;
+  };
+
   return {
     onModuleInit: jest.fn(),
     onModuleDestroy: jest.fn(),
     withRls: jest.fn(
       <T>(_user: AuthenticatedUser, fn: (client: PrismaClient) => Promise<T>) =>
-        run(fn),
+        withRls(fn),
     ),
+    onCommit: jest.fn((_tx: unknown, hook: () => Promise<void>) => {
+      const scope = scopes[scopes.length - 1];
+      if (!scope) return false;
+      scope.hooks.push(hook);
+      return true;
+    }),
+    commitLocal: jest.fn(<T>(_tx: unknown, key: object, init: () => T): T | undefined => {
+      const scope = scopes[scopes.length - 1];
+      if (!scope) return undefined;
+      if (!scope.locals.has(key)) scope.locals.set(key, init());
+      return scope.locals.get(key) as T;
+    }),
+    withDeliveryService: jest.fn(run),
     // The batch helpers take a statement rather than a callback body, but the
     // statement is built from the client they are handed, so `tx` stands in.
     queryWithRls: jest.fn(

@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { PrismaService } from '../database/prisma.service';
+import { NotificationDeliveryService } from './notification-delivery.service';
+import type { OutboxEntry } from './notification-outbox';
 
 export type NotificationKind =
   | 'ABSENCE_UNREPORTED'
@@ -14,22 +18,37 @@ export type NotificationKind =
 
 const MAX_RECIPIENTS = 500;
 
+/** Where a transaction's outbox is kept (PrismaService.commitLocal). */
+const OUTBOX = {};
+
 /**
- * In-app notifications, optionally mirrored to email.
+ * In-app notifications, mirrored to e-mail after the commit.
  *
- * Rows are written inside the caller's RLS transaction (staff-insert policy).
- * Email delivery is best-effort and fire-and-forget via Resend's HTTP API —
- * configured with `RESEND_API_KEY` + `EMAIL_FROM`; when unset, email is
- * skipped and only the in-app inbox is used. No SDK dependency: plain fetch.
+ * Rows are written inside the caller's RLS transaction (staff-insert policy)
+ * with ids the gateway gives them, and never read back: a TEACHER may insert
+ * a notification for a pupil's guardian but not SELECT it, and an INSERT …
+ * RETURNING applies the SELECT arms to the new rows, so createManyAndReturn
+ * would fail every attendance submit that tells a guardian (RLS 29h).
+ *
+ * Everything beyond the inbox happens after the commit: the notice joins the
+ * transaction's outbox, and one PrismaService.onCommit hook hands the whole
+ * outbox to NotificationDeliveryService once the transaction has committed.
+ * A rolled-back write tells nobody.
  */
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly delivery: NotificationDeliveryService,
+  ) {}
+
   /**
-   * Writes one notification per recipient. When `email` is set, recipient
-   * addresses are resolved inside the transaction and mails are dispatched
-   * after the call returns (never blocking or failing the mutation).
+   * Writes one notification per recipient. When the notice has somewhere to
+   * go beyond the inbox, e-mail addresses are resolved inside the
+   * transaction (as (userId, address) pairs) and the notice is delivered
+   * after the commit — never blocking or failing the mutation.
    */
   async notifyUsers(
     tx: PrismaClient,
@@ -44,24 +63,47 @@ export class NotificationsService {
     const userIds = [...new Set(options.userIds)].slice(0, MAX_RECIPIENTS);
     if (userIds.length === 0) return 0;
 
-    await tx.notification.createMany({
-      data: userIds.map((userId) => ({
-        schoolId: options.schoolId,
-        userId,
-        type: options.type,
-        meta: options.meta as Prisma.InputJsonValue,
-      })),
-    });
+    const rows = userIds.map((userId) => ({
+      id: randomUUID(),
+      schoolId: options.schoolId,
+      userId,
+      type: options.type,
+      meta: options.meta as Prisma.InputJsonValue,
+    }));
+    await tx.notification.createMany({ data: rows });
 
-    if (options.email && process.env.RESEND_API_KEY) {
-      const recipients = await tx.user.findMany({
-        where: { id: { in: userIds }, isActive: true },
-        select: { email: true },
-      });
-      const addresses = recipients.map((r) => r.email).filter(Boolean);
-      // Fire-and-forget: email must never fail or delay the mutation.
-      void this.sendEmails(addresses, options.email.subject, options.email.body);
+    if (!this.delivery.wants({ type: options.type, email: options.email })) return userIds.length;
+
+    const emailRecipients =
+      options.email && this.delivery.emailConfigured()
+        ? (
+            await tx.user.findMany({
+              where: { id: { in: userIds }, isActive: true },
+              select: { id: true, email: true },
+            })
+          ).map((r) => ({ userId: r.id, email: r.email }))
+        : [];
+
+    const outbox = this.prisma.commitLocal<OutboxEntry[]>(tx, OUTBOX, () => {
+      const entries: OutboxEntry[] = [];
+      this.prisma.onCommit(tx, async () => this.delivery.enqueue(entries));
+      return entries;
+    });
+    if (!outbox) {
+      // Not a withRls transaction: there is no commit to wait for, and
+      // delivering now could tell somebody about a write that never lands.
+      this.logger.warn(`Notice not delivered: no transaction to wait for [type=${options.type}]`);
+      return userIds.length;
     }
+    outbox.push({
+      schoolId: options.schoolId,
+      type: options.type,
+      meta: options.meta,
+      recipients: rows.map((row) => ({ userId: row.userId, notificationId: row.id })),
+      ...(options.email
+        ? { email: { subject: options.email.subject, body: options.email.body, recipients: emailRecipients } }
+        : {}),
+    });
 
     return userIds.length;
   }
@@ -99,38 +141,5 @@ export class NotificationsService {
       select: { guardianId: true },
     });
     return links.map((link) => link.guardianId);
-  }
-
-  private async sendEmails(
-    addresses: string[],
-    subject: string,
-    body: string,
-  ): Promise<void> {
-    const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.EMAIL_FROM ?? 'SchemaPro <noreply@schemapro.app>';
-    if (!apiKey || addresses.length === 0) return;
-
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from,
-          // BCC so recipients never see each other's addresses.
-          to: [from.replace(/^.*<|>$/g, '')],
-          bcc: addresses,
-          subject,
-          text: body,
-        }),
-      });
-      if (!response.ok) {
-        this.logger.warn(`Email dispatch failed [status=${response.status}]`);
-      }
-    } catch {
-      this.logger.warn('Email dispatch failed [network]');
-    }
   }
 }

@@ -9517,3 +9517,40 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 29h: why notifyUsers never reads its rows back. A TEACHER may insert a
+-- notice for a pupil's guardian (the staff insert arm), and may not SELECT
+-- it (notifications_own_select: the recipient's). INSERT … RETURNING applies
+-- the SELECT arms to the new rows, so createManyAndReturn would fail every
+-- attendance submit that tells a guardian; the gateway gives the rows their
+-- ids and calls createMany.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls29h_guardian', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000004'), true);
+  PERFORM set_config('app.test_rls29h_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = app.current_school_id()
+                                                       AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29h_teacher_sub'))::text, true);
+DO $$
+DECLARE g uuid := current_setting('app.test_rls29h_guardian')::uuid; got uuid; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'notices: expected a TEACHER'; END IF;
+  INSERT INTO "Notifications" (id, "schoolId", "userId", type, meta)
+  VALUES (gen_random_uuid(), app.current_school_id(), g, 'ABSENCE_UNREPORTED', '{}'::jsonb);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'notices: a teacher could not write a guardian''s notice'; END IF;
+  BEGIN
+    INSERT INTO "Notifications" ("schoolId", "userId", type, meta)
+    VALUES (app.current_school_id(), g, 'ABSENCE_UNREPORTED', '{}'::jsonb) RETURNING id INTO got;
+    RAISE EXCEPTION 'notices: a teacher read back a guardian''s notice (%), so RETURNING is no longer the reason', got;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "Notifications" WHERE "userId" = g;
+  IF n <> 0 THEN RAISE EXCEPTION 'notices: a teacher reads % of a guardian''s notices', n; END IF;
+END $$;
+ROLLBACK;
