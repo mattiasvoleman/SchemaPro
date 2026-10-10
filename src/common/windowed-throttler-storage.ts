@@ -58,8 +58,29 @@ const secondsUntil = (instant: number, now: number): number =>
  */
 export class WindowedThrottlerStorage implements ThrottlerStorage {
   private readonly entries = new Map<string, Entry>();
+  /** The size at which the next new key first sweeps the idle ones away. */
+  private sweepAt: number;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  /**
+   * `sweepAbove` (opt-in; absent, nothing is ever swept, as before): a store
+   * whose keys a caller chooses — the public viewer's per-link bucket, keyed
+   * on whatever token the path carries — must not grow for ever. When a new
+   * key would take the map to that size, every key with no hit inside its
+   * window and no block in force is dropped first; such a key answers exactly
+   * as a fresh one would, so nothing a caller sees changes. The next sweep
+   * waits until the map has doubled, so the work stays amortised O(1).
+   */
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly options: { sweepAbove?: number } = {},
+  ) {
+    this.sweepAt = options.sweepAbove ?? Number.POSITIVE_INFINITY;
+  }
+
+  /** How many keys are held: for the tests that bound it. */
+  get size(): number {
+    return this.entries.size;
+  }
 
   async increment(
     key: string,
@@ -105,6 +126,7 @@ export class WindowedThrottlerStorage implements ThrottlerStorage {
   private entryFor(id: string, now: number, ttl: number): Entry {
     let entry = this.entries.get(id);
     if (!entry) {
+      if (this.entries.size >= this.sweepAt) this.sweepIdle(now);
       entry = {
         expiries: [],
         head: 0,
@@ -115,6 +137,14 @@ export class WindowedThrottlerStorage implements ThrottlerStorage {
       this.entries.set(id, entry);
     }
     return entry;
+  }
+
+  private sweepIdle(now: number): void {
+    for (const [id, entry] of this.entries) {
+      const lastExpiry = entry.expiries.length > 0 ? entry.expiries[entry.expiries.length - 1]! : 0;
+      if (lastExpiry <= now && (!entry.isBlocked || entry.blockExpiresAt <= now)) this.entries.delete(id);
+    }
+    this.sweepAt = Math.max(this.options.sweepAbove ?? 0, this.entries.size * 2);
   }
 
   /**
