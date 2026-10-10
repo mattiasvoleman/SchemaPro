@@ -1,8 +1,8 @@
-import { ReportsTabs, type ReportTab } from "./reports-tabs";
+import { ReportsTabs, reportTabOf } from "./reports-tabs";
 
 /**
- * /admin/reports?tab=närvaro|tjanstefordelning — Närvaro and, since staffing
- * Fas 3, Tjänstefördelning.
+ * /admin/reports?tab=staffing|cover — Närvaro and, since staffing Fas 3,
+ * Tjänstefördelning; since Vikarieplanering, Vikarietimmar.
  *
  * A server component for one reason, the one /admin/years/rollover gives: it
  * reads `tab` off the request and hands it down, so the client shell never
@@ -16,6 +16,5 @@ export default async function ReportsPage({
   searchParams: Promise<{ tab?: string | string[] }>;
 }) {
   const { tab } = await searchParams;
-  const initial: ReportTab = tab === "staffing" ? "staffing" : "attendance";
-  return <ReportsTabs initialTab={initial} />;
+  return <ReportsTabs initialTab={reportTabOf(typeof tab === "string" ? tab : undefined)} />;
 }

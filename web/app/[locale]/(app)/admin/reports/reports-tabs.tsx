@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AttendanceReport } from "./attendance-report";
 
-export type ReportTab = "attendance" | "staffing";
+export type ReportTab = "attendance" | "staffing" | "cover";
 
 /**
  * The Tjänstefördelning tab: React.lazy, as the staffing drawer is (not
@@ -19,6 +19,20 @@ const StaffingReport = lazy(() =>
 );
 
 /**
+ * Vikarietimmar, lazy for the same reason: the hour statement for payroll is
+ * a few admins' monthly read, and its CSV builder is a further import() on
+ * the export click.
+ */
+const CoverHoursReport = lazy(() =>
+  import("./cover-hours-report").then((module) => ({ default: module.CoverHoursReport })),
+);
+
+/** A `?tab=` value as a tab; anything unknown is Närvaro. */
+export function reportTabOf(value: string | null | undefined): ReportTab {
+  return value === "staffing" || value === "cover" ? value : "attendance";
+}
+
+/**
  * The two reports under one page. The tab is remembered in the URL
  * (`?tab=staffing`), written with history.replaceState so switching neither
  * navigates nor adds a history entry; page.tsx reads it back on a reload.
@@ -28,7 +42,7 @@ export function ReportsTabs({ initialTab }: { initialTab: ReportTab }) {
   const [tab, setTab] = useState<ReportTab>(initialTab);
 
   const choose = (value: string) => {
-    const next: ReportTab = value === "staffing" ? "staffing" : "attendance";
+    const next: ReportTab = reportTabOf(value);
     setTab(next);
     const url = new URL(window.location.href);
     if (next === "attendance") url.searchParams.delete("tab");
@@ -42,13 +56,14 @@ export function ReportsTabs({ initialTab }: { initialTab: ReportTab }) {
         <TabsList aria-label={t("label")}>
           <TabsTrigger value="attendance">{t("attendance")}</TabsTrigger>
           <TabsTrigger value="staffing">{t("staffing")}</TabsTrigger>
+          <TabsTrigger value="cover">{t("cover")}</TabsTrigger>
         </TabsList>
       </Tabs>
       {tab === "attendance" ? (
         <AttendanceReport />
       ) : (
         <Suspense fallback={<Skeleton className="h-72 w-full" />}>
-          <StaffingReport />
+          {tab === "staffing" ? <StaffingReport /> : <CoverHoursReport />}
         </Suspense>
       )}
     </div>
