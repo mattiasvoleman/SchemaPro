@@ -454,4 +454,17 @@ describe("TimplanPage: Timplaner per årskull", () => {
     expect(notice).not.toHaveTextContent(/Ma-grupp|9A/);
     expect(notice).toHaveTextContent("sources");
   });
+
+  it("keeps the notice on screen while a dialog's chunk loads: the two do not share a Suspense boundary", async () => {
+    const user = userEvent.setup();
+    render(<TimplanPage />);
+    // The summary is what shows of the closed <details>.
+    const notice = await screen.findByText("title", { selector: "summary" });
+    expect(notice).toBeVisible();
+    // Timplan per årskurs is lazy: its first open suspends until the chunk is in.
+    await user.click(screen.getByRole("button", { name: /yearTimplansButton/ }));
+    expect(notice).toBeVisible();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(notice).toBeVisible();
+  });
 });
