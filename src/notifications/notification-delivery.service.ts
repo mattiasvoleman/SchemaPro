@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../database/prisma.service';
 import type { OutboxBatch, OutboxEntry } from './notification-outbox';
+import { NEVER_EXTERNAL, deliveredRegardless } from './notification-types';
+import type { NotificationKind } from './notifications.service';
 
 /** Pending batches beyond which a new one is refused (logged; the in-app rows are already committed). */
 export const MAX_PENDING_BATCHES = 1000;
@@ -22,8 +26,12 @@ export const MAX_PENDING_BATCHES = 1000;
  * when the last has finished. The queue is bounded (MAX_PENDING_BATCHES).
  *
  * E-mail is one BCC mail per notifyUsers call, with the caller's subject and
- * body, unchanged. Configured with `RESEND_API_KEY` + `EMAIL_FROM`; when unset
- * nothing is sent and nothing is queued.
+ * body, unchanged, minus the recipients who opted out of the type
+ * (NotificationOptOuts, read by userId through app.delivery_opt_outs in
+ * withDeliveryService) — except for the notices the school must deliver
+ * (deliveredRegardless). Configured with `RESEND_API_KEY` + `EMAIL_FROM`;
+ * when unset nothing is sent and nothing is queued. TEACHER_ABSENCE_REPORTED
+ * never leaves the inbox.
  */
 @Injectable()
 export class NotificationDeliveryService {
@@ -31,8 +39,11 @@ export class NotificationDeliveryService {
   private readonly queue: OutboxBatch[] = [];
   private running: Promise<void> | null = null;
 
+  constructor(private readonly prisma: PrismaService) {}
+
   /** Whether an entry of this shape has anywhere to go beyond the in-app inbox. */
-  wants(entry: { type: string; email?: unknown }): boolean {
+  wants(entry: { type: NotificationKind; email?: unknown }): boolean {
+    if (NEVER_EXTERNAL.has(entry.type)) return false;
     return Boolean(entry.email) && this.emailConfigured();
   }
 
@@ -75,9 +86,24 @@ export class NotificationDeliveryService {
   }
 
   private async email(entry: OutboxEntry): Promise<void> {
-    if (!entry.email || !this.emailConfigured()) return;
-    const addresses = entry.email.recipients.map((r) => r.email).filter(Boolean);
+    if (!entry.email || !this.emailConfigured() || NEVER_EXTERNAL.has(entry.type)) return;
+    const withAddress = entry.email.recipients.filter((r) => Boolean(r.email));
+    if (withAddress.length === 0) return;
+    const optedOut = deliveredRegardless(entry.type, entry.meta)
+      ? new Set<string>()
+      : await this.optOuts(entry.schoolId, withAddress.map((r) => r.userId), entry.type);
+    const addresses = withAddress.filter((r) => !optedOut.has(r.userId)).map((r) => r.email);
     await this.sendEmails(addresses, entry.email.subject, entry.email.body);
+  }
+
+  /** Who of `userIds` said no to `type` outside the app (NotificationOptOuts). */
+  private async optOuts(schoolId: string, userIds: string[], type: NotificationKind): Promise<Set<string>> {
+    const rows = await this.prisma.withDeliveryService((tx) =>
+      tx.$queryRaw<{ user_id: string }[]>(
+        Prisma.sql`SELECT u::text AS user_id FROM app.delivery_opt_outs(${schoolId}::uuid, ${userIds}::uuid[], ${type}::"NotificationType") AS u`,
+      ),
+    );
+    return new Set((rows ?? []).map((row) => row.user_id));
   }
 
   private async sendEmails(addresses: string[], subject: string, body: string): Promise<void> {

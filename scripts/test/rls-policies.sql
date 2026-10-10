@@ -9554,3 +9554,148 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'notices: a teacher reads % of a guardian''s notices', n; END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 29e: a person's choice of what leaves SchemaPro is theirs alone
+-- (NotificationOptOuts, 20261013100000). Own rows for every role, no admin
+-- arm, no UPDATE; never the unreported absence or a teacher's absence report
+-- (CHECKs). The refusals are asserted as both roles: authenticated
+-- (PostgREST) and app_authenticated (the API, a member of authenticated).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls29e_teacher', (SELECT id::text FROM "Users" WHERE "schoolId" = app.current_school_id()
+                                                   AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls29e_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = current_setting('app.test_rls29e_teacher')::uuid), true);
+  PERFORM set_config('app.test_rls29e_guardian', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000004'), true);
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (app.current_user_id(), app.current_school_id(), 'LESSON_ROOM_CHANGED');
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE me uuid := app.current_user_id(); school uuid := app.current_school_id(); n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'optout: expected the GUARDIAN'; END IF;
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'LESSON_CANCELLED');
+  SELECT count(*) INTO n FROM "NotificationOptOuts";
+  IF n <> 1 THEN RAISE EXCEPTION 'optout: the guardian reads % rows, not their own one (the admin''s is there)', n; END IF;
+  BEGIN
+    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'ABSENCE_UNREPORTED');
+    RAISE EXCEPTION 'optout: the unreported absence was silenced';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (me, school, 'TEACHER_ABSENCE_REPORTED');
+    RAISE EXCEPTION 'optout: a type that never leaves the inbox was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+END $$;
+
+-- The refusals, as each role.
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE me uuid := app.current_user_id(); n bigint;
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'optout: expected to act as authenticated'; END IF;
+  BEGIN
+    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type)
+    VALUES (current_setting('app.test_rls29e_teacher')::uuid, app.current_school_id(), 'LESSON_CANCELLED');
+    RAISE EXCEPTION 'optout: authenticated chose for somebody else';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "NotificationOptOuts" SET type = 'SCHEDULE_CHANGED' WHERE "userId" = me;
+    RAISE EXCEPTION 'optout: authenticated updated a choice';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.delivery_opt_outs(app.current_school_id(), ARRAY[me], 'LESSON_CANCELLED');
+    RAISE EXCEPTION 'optout: authenticated may call the delivery''s read';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+DO $$
+DECLARE me uuid := app.current_user_id(); n bigint; got uuid[];
+BEGIN
+  IF current_user <> 'app_authenticated' THEN RAISE EXCEPTION 'optout: expected to act as app_authenticated'; END IF;
+  BEGIN
+    INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type)
+    VALUES (current_setting('app.test_rls29e_teacher')::uuid, app.current_school_id(), 'LESSON_CANCELLED');
+    RAISE EXCEPTION 'optout: the API chose for somebody else';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "NotificationOptOuts" SET type = 'SCHEDULE_CHANGED' WHERE "userId" = me;
+    RAISE EXCEPTION 'optout: the API updated a choice';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Deleting somebody else's row deletes nothing.
+  DELETE FROM "NotificationOptOuts" WHERE "userId" <> me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'optout: the guardian deleted % row(s) of somebody else', n; END IF;
+  -- The delivery's read, as the API calls it: the guardian's choice, by user.
+  SELECT array_agg(u) INTO got FROM app.delivery_opt_outs(app.current_school_id(), ARRAY[me, current_setting('app.test_rls29e_teacher')::uuid], 'LESSON_CANCELLED') u;
+  IF got IS DISTINCT FROM ARRAY[me] THEN RAISE EXCEPTION 'optout: the delivery read %', got; END IF;
+  SELECT count(*) INTO n FROM app.delivery_opt_outs(app.current_school_id(), ARRAY[me], 'SCHEDULE_CHANGED');
+  IF n <> 0 THEN RAISE EXCEPTION 'optout: a type not chosen reads as chosen'; END IF;
+END $$;
+
+-- The admin and a teacher read none of the guardian's; the other school's guardian none at all.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "NotificationOptOuts" WHERE "userId" <> app.current_user_id();
+  IF n <> 0 THEN RAISE EXCEPTION 'optout: the admin reads % choice(s) of somebody else', n; END IF;
+  DELETE FROM "NotificationOptOuts" WHERE "userId" = current_setting('app.test_rls29e_guardian')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'optout: the admin deleted a guardian''s choice'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls29e_teacher_sub'))::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'optout: expected a TEACHER'; END IF;
+  IF (SELECT count(*) FROM "NotificationOptOuts") <> 0 THEN RAISE EXCEPTION 'optout: a teacher reads somebody''s choices'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000005')::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'optout: expected the second school''s GUARDIAN'; END IF;
+  IF (SELECT count(*) FROM "NotificationOptOuts") <> 0 THEN RAISE EXCEPTION 'optout: another school''s guardian reads choices'; END IF;
+END $$;
+
+-- The catalogue: three own arms, the grants, the function's ACL.
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(policyname || ':' || cmd, ',' ORDER BY policyname) INTO bad FROM pg_policies WHERE tablename = 'NotificationOptOuts';
+  IF bad IS DISTINCT FROM 'notification_opt_outs_own_delete:DELETE,notification_opt_outs_own_insert:INSERT,notification_opt_outs_own_select:SELECT' THEN
+    RAISE EXCEPTION 'optout: the policies are %', bad;
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(CASE api_role
+                    WHEN 'anon' THEN ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+                    WHEN 'service_role' THEN ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']
+                    ELSE ARRAY['UPDATE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] END) p
+     WHERE has_table_privilege(api_role, 'public."NotificationOptOuts"', p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'optout: % holds %', api_role, bad; END IF;
+  END LOOP;
+  IF NOT has_table_privilege('app_authenticated', 'public."NotificationOptOuts"', 'SELECT, INSERT, DELETE') THEN
+    RAISE EXCEPTION 'optout: the API cannot read, write and delete its own choices';
+  END IF;
+  FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = api_role)
+       AND has_function_privilege(api_role, 'app.delivery_opt_outs(uuid, uuid[], "NotificationType")', 'EXECUTE') THEN
+      RAISE EXCEPTION 'optout: % may call the delivery''s read', api_role;
+    END IF;
+  END LOOP;
+  IF (SELECT proacl::text FROM pg_proc WHERE oid = 'app.delivery_opt_outs(uuid, uuid[], "NotificationType")'::regprocedure) ~ '(^|[{,])(=|authenticated=)X' THEN
+    RAISE EXCEPTION 'optout: PUBLIC or authenticated holds EXECUTE on the delivery''s read';
+  END IF;
+END $$;
+ROLLBACK;

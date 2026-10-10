@@ -32,7 +32,7 @@ describe('NotificationsService', () => {
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    delivery = new NotificationDeliveryService();
+    delivery = new NotificationDeliveryService(prisma as unknown as PrismaService);
     service = new NotificationsService(prisma as unknown as PrismaService, delivery);
     for (const key of ENV_KEYS) {
       savedEnv[key] = process.env[key];
