@@ -8,7 +8,12 @@ import type { Scope } from './scopes';
 
 /** Per key: v1's 120 a minute, now counted per key and not per address (A5.10). */
 export const PER_KEY = { limit: 120, ttl: 60_000 };
-/** Per address, before a key is resolved: bounds what unknown keys cost the database. */
+/**
+ * Per address, FAILED attempts only (no key, a malformed one, an unknown or
+ * revoked one): bounds what guessing costs the database. A request whose key
+ * resolves never counts here, so one consumer address serving many schools
+ * is limited per key alone (A5.10).
+ */
 export const PER_ADDRESS = { limit: 600, ttl: 60_000 };
 
 export interface Ss12000V2Request extends Request {
@@ -39,9 +44,11 @@ export function presentedKey(request: Request): string | null {
  *
  * The global ThrottlerGuard keys on req.ip, so one Vklass address serving
  * many schools would share one bucket; v2 skips it and counts per key here
- * (120 a minute), after a per-address bound on attempts (600 a minute)
- * that keeps unknown keys from costing a lookup each without end. Both
- * stores sweep idle keys. A refusal is 429 with Retry-After.
+ * (120 a minute). A per-address bound (600 a minute) counts only attempts
+ * that FAIL to authenticate, so unknown keys cannot cost a lookup each
+ * without end; once an address is over it, its requests are refused before
+ * the lookup until the window passes. Both stores sweep idle keys. A refusal
+ * is 429 with Retry-After.
  */
 @Injectable()
 export class Ss12000V2Guard implements CanActivate {
@@ -49,19 +56,32 @@ export class Ss12000V2Guard implements CanActivate {
   // once (as a provider and as the controller's injectable).
   private static addresses = new WindowedThrottlerStorage(Date.now, { sweepAbove: 10_000 });
   private static keys = new WindowedThrottlerStorage(Date.now, { sweepAbove: 10_000 });
+  /** Addresses over the failed-attempt bound, until when (ms). */
+  private static blocked = new Map<string, number>();
 
   constructor(private readonly prisma: PrismaService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Ss12000V2Request>();
     const response = context.switchToHttp().getResponse<Response>();
-    const byAddress = await Ss12000V2Guard.addresses.increment(`ip:${request.ip ?? 'unknown'}`, PER_ADDRESS.ttl, PER_ADDRESS.limit, PER_ADDRESS.ttl, 'v2-address');
-    if (byAddress.isBlocked) this.refuse(response, byAddress.timeToBlockExpire);
+    const address = `ip:${request.ip ?? 'unknown'}`;
+    const until = Ss12000V2Guard.blocked.get(address);
+    if (until !== undefined) {
+      if (until > Date.now()) this.refuse(response, Math.ceil((until - Date.now()) / 1000));
+      Ss12000V2Guard.blocked.delete(address);
+    }
 
     const key = presentedKey(request);
-    if (!key) throw v2Errors.unauthenticated();
-    const resolved = await resolveIntegrationKey(this.prisma, key, { touch: true });
-    if (!resolved) throw v2Errors.unauthenticated();
+    const resolved = key ? await resolveIntegrationKey(this.prisma, key, { touch: true }) : null;
+    if (!resolved) {
+      const failed = await Ss12000V2Guard.addresses.increment(address, PER_ADDRESS.ttl, PER_ADDRESS.limit, PER_ADDRESS.ttl, 'v2-address');
+      if (failed.isBlocked) {
+        if (Ss12000V2Guard.blocked.size > 10_000) Ss12000V2Guard.blocked.clear();
+        Ss12000V2Guard.blocked.set(address, Date.now() + failed.timeToBlockExpire * 1000);
+        this.refuse(response, failed.timeToBlockExpire);
+      }
+      throw v2Errors.unauthenticated();
+    }
 
     const byKey = await Ss12000V2Guard.keys.increment(resolved.id, PER_KEY.ttl, PER_KEY.limit, PER_KEY.ttl, 'v2-key');
     if (byKey.isBlocked) this.refuse(response, byKey.timeToBlockExpire);
@@ -74,6 +94,7 @@ export class Ss12000V2Guard implements CanActivate {
   static resetCounters(): void {
     Ss12000V2Guard.addresses = new WindowedThrottlerStorage(Date.now, { sweepAbove: 10_000 });
     Ss12000V2Guard.keys = new WindowedThrottlerStorage(Date.now, { sweepAbove: 10_000 });
+    Ss12000V2Guard.blocked = new Map();
   }
 
   private refuse(response: Response, seconds: number): never {

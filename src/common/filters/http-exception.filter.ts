@@ -60,9 +60,22 @@ function safeParams(value: unknown): Record<string, string | number> | undefined
  * stored hash, never enough to open it.
  */
 export function redactShareToken(url: string): string {
-  return url.replace(/(\/public\/v1\/timetables\/)([^/?#]+)/, (_match, prefix: string, token: string) =>
-    `${prefix}sha256:${createHash('sha256').update(token).digest('hex').slice(0, 6)}…`,
+  return withoutSs12000Query(
+    url.replace(/(\/public\/v1\/timetables\/)([^/?#]+)/, (_match, prefix: string, token: string) =>
+      `${prefix}sha256:${createHash('sha256').update(token).digest('hex').slice(0, 6)}…`,
+    ),
   );
+}
+
+/**
+ * Under /ss12000/v2.0 a query can carry a personnummer, a name or an email
+ * (civicNo=, nameContains=, eduPersonPrincipalName=; A1.4). The v2
+ * controller's own filter logs path and status only, but a request no v2
+ * route matches (an S1 endpoint SchemaPro does not serve, a wrong method)
+ * lands here: the query is dropped from the log line and from `instance`.
+ */
+export function withoutSs12000Query(url: string): string {
+  return /^[^?#]*\/ss12000\/v2\.0(?:[/?#]|$)/.test(url) ? url.replace(/[?#].*$/, '') : url;
 }
 
 @Catch()

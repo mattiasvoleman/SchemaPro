@@ -348,4 +348,25 @@ describe('HttpExceptionFilter', () => {
     expect(logged).toMatch(/\/public\/v1\/timetables\/sha256:[0-9a-f]{6}…\?date=2026-02-30 -> 429/);
     expect(redactShareToken('/api/v1/calendar/lessons?x=1')).toBe('/api/v1/calendar/lessons?x=1');
   });
+  it('never logs or echoes the query of an /ss12000/v2.0 request no v2 route matched (personnummer, name)', () => {
+    request.method = 'GET';
+    request.url = '/ss12000/v2.0/placements?child=bbbbbbbb-0000-4000-8000-000000000001&civicNo=201001012384&nameContains=Ella';
+    request.originalUrl = request.url;
+    filter.catch(new NotFoundException('Cannot GET'), host);
+    request.method = 'DELETE';
+    request.url = '/ss12000/v2.0/persons?civicNo=201001012384#x';
+    request.originalUrl = request.url;
+    filter.catch(new HttpException('Method Not Allowed', HttpStatus.METHOD_NOT_ALLOWED), host);
+    const logged = [...logger.warn.mock.calls, ...logger.error.mock.calls].map((call) => String(call[0])).join('\n');
+    const instances = response.json.mock.calls.map((call) => (call[0] as ProblemDetails).instance).join('\n');
+    for (const leaked of ['201001012384', 'Ella', 'child=']) {
+      expect(logged).not.toContain(leaked);
+      expect(instances).not.toContain(leaked);
+    }
+    expect(logged).toContain('GET /ss12000/v2.0/placements -> 404');
+    expect(instances).toContain('/ss12000/v2.0/persons');
+    // Every other route keeps its query in the log, as before.
+    expect(redactShareToken('/api/v1/ss12000/persons?limit=5')).toBe('/api/v1/ss12000/persons?limit=5');
+    expect(redactShareToken('/ss12000/v2.0x?civicNo=1')).toBe('/ss12000/v2.0x?civicNo=1');
+  });
 });

@@ -200,6 +200,11 @@ export function parseQuery(operation: string, raw: Record<string, unknown>, keyI
   for (const [name, value] of Object.entries(given)) {
     if (!same(value, params[name])) throw v2Errors.invalidPageToken();
   }
+  // A token always carries what the first request had to: one without a
+  // required parameter (calendarEvents' window) was never ours.
+  for (const [name, spec] of Object.entries(specs)) {
+    if (spec.required && params[name] === undefined) throw v2Errors.invalidPageToken();
+  }
   return { params, limit, after: token.a };
 }
 
