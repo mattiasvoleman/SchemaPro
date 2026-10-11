@@ -4,19 +4,22 @@
  * schedule through the real FamilyScheduleService (ey-a), its teacher labels
  * against the public viewer's (ey-b), delivery after the commit as a TEACHER
  * and as an ADMIN with Expo stubbed at fetch (ey-c), the device registry,
- * tickets, receipts and housekeeping through the real functions (ey-d), and
- * the guardian's read timed for the record (ey-e). In a school of its own
+ * tickets, receipts and housekeeping through the real functions (ey-d), the
+ * guardian's read timed for the record (ey-e), and a pupil's own leave
+ * request through the real FamilyService (ey-f). In a school of its own
  * (slug <marker>-familj), swept whole before and after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { performance } from 'node:perf_hooks';
+import { ForbiddenException } from '@nestjs/common';
 import type { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { FamilyScheduleService, type FamilySchedule } from '../../src/family/family-schedule.service';
+import { FamilyService } from '../../src/family/family.service';
 import { DevicesService } from '../../src/notifications/devices.service';
 import { ExpoPushClient, resetExpoPacing } from '../../src/notifications/expo-push.client';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
@@ -487,6 +490,28 @@ export async function familyPushChecks(owner: Client, api: PrismaService, marker
       assert.equal((await owner.query(`SELECT 1 FROM "DevicePushTokens" WHERE token = $1`, [TOKEN])).rowCount, 0);
       await devices.unregister({ token: TEACHER_TOKEN }, school.teacher);
       assert.equal((await owner.query(`SELECT 1 FROM "DevicePushTokens" WHERE token = $1`, [TEACHER_TOKEN])).rowCount, 0);
+    });
+
+    // 20261015130000: before it, the pupil's own request was a 42501 here, which the gateway answered 500.
+    await check('(ey-f) a pupil files their own leave request through the real FamilyService, never their sibling’s; the guardian reads it, and the admin’s approval writes the absence and tells the pupil alone', async () => {
+      const family = new FamilyService(api, notifications);
+      const pupil: AuthenticatedUser = { authId: school.child.authId, userId: school.child.id, schoolId: school.schoolId, role: Role.STUDENT };
+      const start = addDays(school.today, 30);
+      const made = await family.createLeaveRequest({ studentId: school.child.id, startDate: start, endDate: addDays(start, 1), reason: 'Probe: elevens egen' }, pupil);
+      assert.equal(made.status, 'PENDING');
+      await assert.rejects(
+        family.createLeaveRequest({ studentId: school.sibling.id, startDate: start, endDate: start, reason: 'Probe: syskonets' }, pupil),
+        ForbiddenException,
+      );
+      const filed = await owner.query(`SELECT "studentId", "requestedById", status FROM "LeaveRequests" WHERE "schoolId" = $1`, [school.schoolId]);
+      assert.deepEqual(filed.rows, [{ studentId: school.child.id, requestedById: school.child.id, status: 'PENDING' }]);
+      const seen = await api.withRls(school.guardian, (tx) => tx.leaveRequest.findMany({ select: { id: true } }));
+      assert.deepEqual(seen, [{ id: made.id }], 'the guardian does not read the request their child filed');
+      const decided = await family.decideLeaveRequest(made.id, { status: 'APPROVED' }, school.admin);
+      await settle();
+      assert.equal(decided.absenceDays, 2);
+      const told = await owner.query(`SELECT "userId" FROM "Notifications" WHERE "schoolId" = $1 AND type = 'LEAVE_DECIDED'`, [school.schoolId]);
+      assert.deepEqual(told.rows, [{ userId: school.child.id }]);
     });
   } finally {
     globalThis.fetch = savedFetch;

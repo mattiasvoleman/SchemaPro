@@ -48,7 +48,7 @@ export class CreateAbsenceReportDto {
   note?: string;
 }
 
-/** A guardian requests leave (ledighetsansökan) for a child. */
+/** A guardian requests leave (ledighetsansökan) for a child, or a pupil for themselves. */
 export class CreateLeaveRequestDto {
   @IsUUID('4')
   studentId!: string;
