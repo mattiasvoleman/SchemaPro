@@ -498,6 +498,92 @@ describe('computeDiff: guardians and duties', () => {
   });
 });
 
+describe('computeDiff: review findings (2026-10-11)', () => {
+  it('names no local row on the dependants of a LINK the admin may deselect: name, class, group and guardian travel by source id', () => {
+    // k3: P5's address is held by a different local pupil, G3's by an
+    // unrelated local guardian, and the source's 7C name-matches a local 7C.
+    const people = [
+      adult(ext(30), 'Gull', 'Fem', 'g3@hem.se', 'Privat'),
+      pupil(ext(5), 'Per', 'Fem', 'p5@skola.se', { responsibles: [{ personId: ext(30), securityMarking: null, relationType: 'Vårdnadshavare' }] }),
+    ];
+    const local = slice({
+      users: [
+        user(1, { email: 'p5@skola.se', firstName: 'Lisa', lastName: 'Annan' }),
+        user(2, { email: 'g3@hem.se', role: 'GUARDIAN', firstName: 'Fel', lastName: 'Förälder' }),
+      ],
+      groups: [{ id: loc(70), name: '7C', kind: 'CLASS', academicYearId: YEAR, gradeLevel: 7, ss12000Id: null, updatedAt: new Date('2026-09-01T00:00:00Z') }],
+    });
+    const result = diff(roster({ people, groups: [group(ext(70), '7C', 'Klass', [ext(5)]), group(ext(71), 'MA7', 'Undervisning', [ext(5)])] }), local);
+    // The LINKs themselves name the matched row: that is what the admin decides on.
+    expect(only(result.changes, 'PERSON', 'LINK').map((c) => [c.externalId, c.localId])).toEqual([
+      [ext(5), loc(1)],
+      [ext(30), loc(2)],
+    ]);
+    expect(only(result.changes, 'GROUP', 'LINK').map((c) => c.localId)).toEqual([loc(70)]);
+    // Nothing that depends on them does.
+    const dependants = result.changes.filter((c) => !['LINK', 'RELINK'].includes(c.op));
+    expect(dependants.length).toBeGreaterThanOrEqual(5);
+    for (const change of dependants) {
+      expect(change.localId).toBeNull();
+      expect(change.after?.['groupLocalId'] ?? null).toBeNull();
+      expect(change.after?.['guardianLocalId'] ?? null).toBeNull();
+      expect(change.after?.['guardianName'] ?? null).toBeNull();
+    }
+    expect(only(result.changes, 'PERSON', 'UPDATE').map((c) => c.externalId).sort()).toEqual([ext(30), ext(5)].sort());
+  });
+
+  it('treats a refused person record as present: PERSON_RECORD_INVALID for the linked one, and absence-based deactivations wait for the admin', () => {
+    // k12/k13: P3's record was refused by the parser (an empty givenName).
+    const local = slice({
+      users: [
+        user(1, { ss12000Id: ext(1), firstName: 'Kvar', lastName: 'Elev', email: 'kvar@skola.se' }),
+        user(3, { ss12000Id: ext(3) }),
+        user(4, { ss12000Id: ext(4) }),
+        user(10, { ss12000Id: ext(10), role: 'GUARDIAN' }),
+      ],
+    });
+    const result = diff(
+      roster({ people: [pupil(ext(1), 'Kvar', 'Elev', 'kvar@skola.se')], invalid: [{ entity: 'PERSON', externalId: ext(3) }] }),
+      local,
+    );
+    expect(only(result.changes, 'PERSON', 'CONFLICT')).toEqual([
+      expect.objectContaining({ conflictCode: 'PERSON_RECORD_INVALID', externalId: ext(3), localId: loc(3), selected: false, autoApplicable: false }),
+    ]);
+    const off = only(result.changes, 'PERSON', 'DEACTIVATE');
+    expect(off.map((c) => [c.localId, c.after?.['reason'], c.conflictCode, c.selected, c.autoApplicable])).toEqual([
+      [loc(4), 'ABSENT_FROM_SOURCE', 'ROSTER_HAS_INVALID_RECORDS', false, false],
+      [loc(10), 'NO_ACTIVE_CHILD', 'ROSTER_HAS_INVALID_RECORDS', false, false],
+    ]);
+    // Evidence other than absence still counts in full.
+    const gone = diff(
+      roster({ people: [pupil(ext(1), 'Kvar', 'Elev', 'kvar@skola.se', { personStatus: 'Avliden' })], invalid: [{ entity: 'PERSON', externalId: ext(3) }] }),
+      slice({ users: [user(1, { ss12000Id: ext(1) })] }),
+    );
+    expect(only(gone.changes, 'PERSON', 'DEACTIVATE')).toEqual([expect.objectContaining({ conflictCode: null, selected: true, autoApplicable: true })]);
+  });
+
+  it('calls a linked person\'s new address and a new person claiming it both PERSON_EMAIL_TAKEN, so the apply never hits the unique key', () => {
+    // k14
+    const people = [pupil(ext(1), 'Förnamn', 'Efternamn', 'shared@skola.se'), pupil(ext(7), 'Ny', 'Elev', 'shared@skola.se')];
+    const result = diff(roster({ people }), slice({ users: [user(1, { ss12000Id: ext(1) })] }));
+    expect(result.changes.map((c) => [c.externalId, c.op, c.conflictCode])).toEqual([
+      [ext(1), 'CONFLICT', 'PERSON_EMAIL_TAKEN'],
+      [ext(7), 'CONFLICT', 'PERSON_EMAIL_TAKEN'],
+    ]);
+  });
+
+  it('names the holder of a duty that ends because it is absent at the source', () => {
+    const local = slice({
+      users: [user(1, { role: 'TEACHER', ss12000Id: ext(1) })],
+      dutyLinks: [{ id: loc(500), userId: loc(1), academicYearId: YEAR, ss12000DutyId: ext(52), dutyRole: 'Förstelärare', startDate: '2026-08-01', endDate: null, ended: false }],
+    });
+    const result = diff(roster({ people: [adult(ext(1), 'Förnamn', 'Efternamn', 'user1@skola.se', 'Skola personal')], duties: [duty(ext(50), ext(1))] }), local);
+    expect(only(result.changes, 'DUTY_LINK', 'END')).toEqual([
+      expect.objectContaining({ localId: loc(500), after: expect.objectContaining({ userLocalId: loc(1), personExternalId: ext(1), reason: 'ABSENT_FROM_SOURCE' }) }),
+    ]);
+  });
+});
+
 describe('brakeTripped', () => {
   it('trips above max(floor, percent of the linked active people)', () => {
     const five = Array.from({ length: 5 }, () => ({ op: 'DEACTIVATE' as const }));

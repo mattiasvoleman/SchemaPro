@@ -37,7 +37,11 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  * (a pupil not returned by the enrolment fetch, staff with no active duty, a
  * guardian no active pupil names), deletedEntities, every enrolment at the
  * skolenhet ended, or personStatus Avliden / Utvandrad. Staff deactivation
- * is never automatic. REACTIVATE only undoes a deactivation an applied sync
+ * is never automatic. A record the parser refused is not an absence: a
+ * linked person whose record was refused is PERSON_RECORD_INVALID, and while
+ * any person record of the run was refused, a deactivation inferred from
+ * absence (ABSENT_FROM_SOURCE, NO_ACTIVE_CHILD — the refused record may be
+ * the child) is ROSTER_HAS_INVALID_RECORDS: deselected, never automatic. REACTIVATE only undoes a deactivation an applied sync
  * made; one an admin made is PERSON_DEACTIVATED_LOCALLY.
  *
  * LOCAL EDITS WIN. A name or class that differs while the row was edited
@@ -152,8 +156,21 @@ export const REVIEW_DUTY_ROLES: readonly DutyRole[] = ['Lärarassistent', 'Friti
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * Who a source person or group is here. `localId` is the row it is or would
+ * be matched to, used only to compare (is the pupil already in that class?);
+ * a change carries it as a write target only when `linked` — the row holds
+ * the source id already. A LINK or RELINK the admin may still deselect is
+ * not a link: its dependants travel by the SOURCE id alone and the apply
+ * resolves them only through a link or create applied in the same apply,
+ * so a deselected match never receives a name, a class, a group, a guardian
+ * or a duty.
+ */
 type Plan = { localId: string | null; role: LocalRole; linked: boolean };
 type GroupPlan = { localId: string | null; name: string; kind: 'CLASS' | 'TEACHING_GROUP'; linked: boolean };
+/** The local row a change may name as its target: only one already linked. */
+const target = (plan: { localId: string | null; linked: boolean } | null | undefined): string | null =>
+  plan?.linked ? plan.localId : null;
 
 /** The email SchemaPro would store for a person in `role`, per S1 Email.type; null when none. */
 export function pickEmail(person: S1Person, role: LocalRole): string | null {
@@ -274,6 +291,10 @@ export function computeDiff(input: DiffInput): DiffResult {
   }
 
   const deletedPersons = new Set(roster.deleted?.persons ?? []);
+  // Person records the parser refused: present at the source, unreadable here.
+  const invalidPersons = new Set(
+    roster.invalid.filter((record) => record.entity === 'PERSON' && record.externalId).map((record) => record.externalId as string),
+  );
   const deletedGroups = new Set(roster.deleted?.groups ?? []);
   const deletedDuties = new Set(roster.deleted?.duties ?? []);
   // Ids deletedEntities names that nothing here is linked to: counted, ignored.
@@ -316,10 +337,20 @@ export function computeDiff(input: DiffInput): DiffResult {
     .filter((person) => derivedRoles(person.id).length > 0)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-  // Who claims which address in this run, among the unlinked: two claims is ambiguity.
+  // Who claims which address in this run: every unlinked person's address,
+  // and every NEW address a linked person would be updated to. Two claims on
+  // one address is ambiguity (or a clash), never two rows written with it —
+  // Users is unique on (schoolId, email), and a clash would fail the whole
+  // apply on every run until somebody found the pair.
   const claims = new Map<string, number>();
   for (const person of inScope) {
-    if (usersByExt.has(person.id)) continue;
+    const linked = usersByExt.get(person.id);
+    if (linked) {
+      if (!linked.isActive || linked.role === 'SCHOOL_ADMIN') continue;
+      const next = pickEmail(person, linked.role);
+      if (next && next !== linked.email.trim().toLowerCase()) claims.set(next, (claims.get(next) ?? 0) + 1);
+      continue;
+    }
     const roles = derivedRoles(person.id);
     const email = pickEmail(person, roles[0]!);
     if (email) claims.set(email, (claims.get(email) ?? 0) + 1);
@@ -372,7 +403,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       const email = pickEmail(person, linked.role);
       if (email && email !== linked.email.trim().toLowerCase()) {
         const holders = (usersByEmail.get(email) ?? []).filter((u) => u.id !== linked.id);
-        if (holders.length > 0) {
+        if (holders.length > 0 || (claims.get(email) ?? 0) > 1) {
           note('PERSON', 'CONFLICT', 'PERSON_EMAIL_TAKEN', person.id, linked.id, { email }, isProt);
         } else {
           push({
@@ -430,8 +461,9 @@ export function computeDiff(input: DiffInput): DiffResult {
       });
       plans.set(person.id, { localId: match.id, role: match.role, linked: false });
       if (match.role !== 'SCHOOL_ADMIN' && (match.firstName !== person.givenName || match.lastName !== person.familyName)) {
+        // Written only if the LINK beside it is applied: no local id here.
         push({
-          entity: 'PERSON', op: 'UPDATE', externalId: person.id, localId: match.id,
+          entity: 'PERSON', op: 'UPDATE', externalId: person.id, localId: null,
           before: { firstName: match.firstName, lastName: match.lastName },
           after: { firstName: person.givenName, lastName: person.familyName, middleName: person.middleName },
           conflictCode: null, selected: true, autoApplicable: false, protectedIdentity: isProt,
@@ -476,6 +508,10 @@ export function computeDiff(input: DiffInput): DiffResult {
     else if (record && (record.personStatus === 'Avliden' || record.personStatus === 'Utvandrad')) reason = 'PERSON_STATUS';
     else if (record && user.role === 'STUDENT' && enrolmentsHere(record).length > 0 && enrolmentsHere(record).every((e) => e.endDate !== null && e.endDate < today)) {
       reason = 'ENROLMENT_ENDED';
+    } else if (full && invalidPersons.has(ext)) {
+      // Refused, not absent: the person is there, their record is not readable.
+      note('PERSON', 'CONFLICT', 'PERSON_RECORD_INVALID', ext, user.id, { role: user.role, firstName: user.firstName, lastName: user.lastName });
+      continue;
     } else if (full) {
       const present =
         user.role === 'STUDENT'
@@ -486,14 +522,17 @@ export function computeDiff(input: DiffInput): DiffResult {
       if (!present) reason = user.role === 'GUARDIAN' ? 'NO_ACTIVE_CHILD' : 'ABSENT_FROM_SOURCE';
     }
     if (!reason) continue;
+    // Absence is only evidence when every record was read.
+    const doubtful = invalidPersons.size > 0 && (reason === 'ABSENT_FROM_SOURCE' || reason === 'NO_ACTIVE_CHILD');
     push({
       entity: 'PERSON', op: 'DEACTIVATE', externalId: ext, localId: user.id,
       before: { isActive: true, firstName: user.firstName, lastName: user.lastName, role: user.role },
       after: { isActive: false, reason },
-      conflictCode: null, selected: true,
+      conflictCode: doubtful ? 'ROSTER_HAS_INVALID_RECORDS' : null,
+      selected: !doubtful,
       // Staff are never deactivated automatically: a wrong end date at the
       // source would lock a teacher out the next morning.
-      autoApplicable: user.role === 'STUDENT' || user.role === 'GUARDIAN',
+      autoApplicable: !doubtful && (user.role === 'STUDENT' || user.role === 'GUARDIAN'),
       protectedIdentity: protectedIds.has(ext),
     });
   }
@@ -615,23 +654,23 @@ export function computeDiff(input: DiffInput): DiffResult {
     if (user && (!user.isActive || deactivating.has(user.id))) continue;
     const isProt = protectedIds.has(personId);
     if (classes.length > 1) {
-      note('CLASS_MEMBERSHIP', 'CONFLICT', 'MEMBERSHIP_MULTIPLE_CLASSES', personId, user?.id ?? null,
+      note('CLASS_MEMBERSHIP', 'CONFLICT', 'MEMBERSHIP_MULTIPLE_CLASSES', personId, target(plan),
         { groups: classes.map((g) => ({ id: g.id, name: g.displayName })) }, isProt);
       continue;
     }
-    const target = classes[0]!;
-    const groupPlan = groupPlans.get(target.id);
+    const klass = classes[0]!;
+    const groupPlan = groupPlans.get(klass.id);
     if (!groupPlan) {
-      note('CLASS_MEMBERSHIP', 'CONFLICT', 'MEMBERSHIP_CLASS_NOT_LINKED', personId, user?.id ?? null, { groupName: target.displayName }, isProt);
+      note('CLASS_MEMBERSHIP', 'CONFLICT', 'MEMBERSHIP_CLASS_NOT_LINKED', personId, target(plan), { groupName: klass.displayName }, isProt);
       continue;
     }
     if (user && groupPlan.localId && user.studentGroupId === groupPlan.localId) continue;
     const localEdit = user ? editedLocally(user.updatedAt) && user.studentGroupId !== null : false;
     const current = user?.studentGroupId ? local.groups.find((g) => g.id === user.studentGroupId) : undefined;
     push({
-      entity: 'CLASS_MEMBERSHIP', op: 'MOVE', externalId: personId, localId: user?.id ?? null,
-      before: { studentGroupId: user?.studentGroupId ?? null, groupName: current?.name ?? null },
-      after: { groupExternalId: target.id, groupLocalId: groupPlan.localId, groupName: groupPlan.name },
+      entity: 'CLASS_MEMBERSHIP', op: 'MOVE', externalId: personId, localId: target(plan),
+      before: { studentGroupId: plan.linked ? user?.studentGroupId ?? null : null, groupName: plan.linked ? current?.name ?? null : null },
+      after: { groupExternalId: klass.id, groupLocalId: target(groupPlan), groupName: groupPlan.name },
       conflictCode: localEdit ? 'LOCAL_EDIT_SINCE_LAST_SYNC' : null,
       selected: !localEdit,
       autoApplicable: !localEdit && plan.linked && groupPlan.linked,
@@ -656,9 +695,9 @@ export function computeDiff(input: DiffInput): DiffResult {
       if (user && (!user.isActive || deactivating.has(user.id))) continue;
       if (user && groupPlan.localId && membersOf.has(`${groupPlan.localId}|${user.id}`)) continue;
       push({
-        entity: 'GROUP_MEMBERSHIP', op: 'ADD', externalId: membership.personId, localId: user?.id ?? null,
+        entity: 'GROUP_MEMBERSHIP', op: 'ADD', externalId: membership.personId, localId: target(plan),
         before: null,
-        after: { groupExternalId: group.id, groupLocalId: groupPlan.localId, groupName: groupPlan.name },
+        after: { groupExternalId: group.id, groupLocalId: target(groupPlan), groupName: groupPlan.name },
         conflictCode: null, selected: true,
         autoApplicable: plan.linked && groupPlan.linked,
         protectedIdentity: protectedIds.has(membership.personId),
@@ -690,33 +729,33 @@ export function computeDiff(input: DiffInput): DiffResult {
       const guardian = plans.get(responsible.personId);
       const isProt = protectedIds.has(pupil.id) || protectedIds.has(responsible.personId);
       if (!guardian) {
-        note('RESPONSIBLE', 'CONFLICT', 'RESPONSIBLE_NOT_PROVISIONED', pupil.id, pupilUser?.id ?? null,
+        note('RESPONSIBLE', 'CONFLICT', 'RESPONSIBLE_NOT_PROVISIONED', pupil.id, target(plan),
           { guardianExternalId: responsible.personId, relationType: responsible.relationType }, isProt);
         continue;
       }
       if (guardian.role !== 'GUARDIAN') {
-        note('RESPONSIBLE', 'INFO', 'PERSON_MULTIPLE_ROLES', pupil.id, pupilUser?.id ?? null,
-          { guardianExternalId: responsible.personId, guardianLocalId: guardian.localId }, isProt);
+        note('RESPONSIBLE', 'INFO', 'PERSON_MULTIPLE_ROLES', pupil.id, target(plan),
+          { guardianExternalId: responsible.personId, guardianLocalId: target(guardian) }, isProt);
         continue;
       }
       if (pupilUser && guardian.localId && linksOf.has(`${guardian.localId}|${pupilUser.id}`)) continue;
       const guardianUser = guardian.localId ? usersById.get(guardian.localId) : undefined;
       if (guardianUser && (!guardianUser.isActive || deactivating.has(guardianUser.id))) continue;
       push({
-        entity: 'RESPONSIBLE', op: 'ADD', externalId: pupil.id, localId: pupilUser?.id ?? null,
+        entity: 'RESPONSIBLE', op: 'ADD', externalId: pupil.id, localId: target(plan),
         before: null,
         after: {
           guardianExternalId: responsible.personId,
-          guardianLocalId: guardian.localId,
+          guardianLocalId: target(guardian),
           relationType: responsible.relationType,
-          guardianName: guardianUser ? `${guardianUser.firstName} ${guardianUser.lastName}` : null,
+          guardianName: guardianUser && guardian.linked ? `${guardianUser.firstName} ${guardianUser.lastName}` : null,
         },
         conflictCode: null, selected: true,
         autoApplicable: plan.linked && guardian.linked,
         protectedIdentity: isProt,
       });
     }
-    if (!pupilUser) continue;
+    if (!pupilUser || !plan.linked) continue;
     // A link to a guardian the source knows but no longer names for this child.
     for (const link of local.guardianLinks) {
       if (link.studentId !== pupilUser.id) continue;
@@ -745,7 +784,7 @@ export function computeDiff(input: DiffInput): DiffResult {
       const isProt = protectedIds.has(duty.personId);
       const after = {
         personExternalId: duty.personId,
-        userLocalId: holder.localId,
+        userLocalId: target(holder),
         dutyRole: duty.dutyRole,
         startDate: duty.startDate,
         endDate: duty.endDate,
@@ -790,7 +829,15 @@ export function computeDiff(input: DiffInput): DiffResult {
       const holder = usersById.get(link.userId);
       push({
         entity: 'DUTY_LINK', op: 'END', externalId: link.ss12000DutyId, localId: link.id,
-        before: { endDate: link.endDate }, after: { ended: true, reason: deletedDuties.has(link.ss12000DutyId) ? 'DELETED_AT_SOURCE' : 'ABSENT_FROM_SOURCE' },
+        before: { endDate: link.endDate },
+        // Whose duty ends, so the review can name them: the link's own row.
+        after: {
+          ended: true,
+          reason: deletedDuties.has(link.ss12000DutyId) ? 'DELETED_AT_SOURCE' : 'ABSENT_FROM_SOURCE',
+          userLocalId: link.userId,
+          personExternalId: holder?.ss12000Id ?? null,
+          dutyRole: link.dutyRole,
+        },
         conflictCode: null, selected: true, autoApplicable: true,
         protectedIdentity: holder?.ss12000Id ? protectedIds.has(holder.ss12000Id) : false,
       });

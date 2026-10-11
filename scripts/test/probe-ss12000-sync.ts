@@ -10,7 +10,10 @@
  * auto-apply under the sync principal's guards: a rename and a class move
  * yes, a create and a teacher's deactivation never (ss-e), the admin's rest
  * and the reactivation rule (ss-f), a stale basis refused (ss-g), and no
- * credential in any table but the sealed one, or in a log line (ss-h). In a
+ * credential in any table but the sealed one, or in a log line (ss-h); a
+ * LINK the admin deselects leaves the matched row untouched by every change
+ * that depended on it (ss-i), and an INCREMENTAL run sees a class move made
+ * only in the groups (ss-j). In a
  * school of its own (slug <marker>-ss12000), swept whole before and after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
@@ -43,6 +46,7 @@ const ORG = 'aaaaaaaa-5500-4000-8000-000000000001';
 const P1 = 'bbbbbbbb-5500-4000-8000-000000000001';
 const P2 = 'bbbbbbbb-5500-4000-8000-000000000002';
 const P3 = 'bbbbbbbb-5500-4000-8000-000000000003';
+const P4 = 'bbbbbbbb-5500-4000-8000-000000000004';
 const G1 = 'cccccccc-5500-4000-8000-000000000001';
 const T1 = 'dddddddd-5500-4000-8000-000000000001';
 const T2 = 'dddddddd-5500-4000-8000-000000000002';
@@ -303,6 +307,63 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
       });
       const still = await latestRun();
       assert.equal(still.status, 'DIFF_READY', 'a refused apply changed the run');
+    });
+
+    await check('(ss-i) a LINK the admin deselects gives the matched row nothing: no name, no class, no group, no guardian', async () => {
+      await sync.discard(admin, (await latestRun()).id);
+      // A different local pupil holds the address the source gives P4 (a reused school address).
+      const lisa = await person('STUDENT', 'p4.fyra@ekskolan.example', 'Lisa', 'Annan');
+      provider.world.persons.push(s1Pupil(P4, 'Per', 'Fyra', 'p4.fyra@ekskolan.example', ORG, { responsibles: [{ id: G1 }] }));
+      provider.world.groups[0] = s1Group(C7A, '7A', 'Klass', ORG, [P2, P4]);
+      provider.world.groups[2] = s1Group(TG, 'Spanska 7', 'Undervisning', ORG, [P1, P4]);
+      const run = await manualRun('FULL');
+      assert.equal(run.status, 'DIFF_READY', `the run ended ${run.status} ${run.statusCode ?? ''}`);
+      const link = await one<{ id: string; localId: string }>(
+        `SELECT id, "localId" FROM "Ss12000SyncChanges" WHERE "runId" = $1 AND op = 'LINK' AND "externalId" = $2`,
+        [run.id, P4],
+      );
+      assert.equal(link.localId, lisa.id, 'the address match was not proposed as a LINK');
+      const dependants = await one<{ n: number; named: number }>(
+        `SELECT count(*)::int AS n, count(*) FILTER (WHERE "localId" IS NOT NULL)::int AS named
+           FROM "Ss12000SyncChanges" WHERE "runId" = $1 AND "externalId" = $2 AND op <> 'LINK' AND selected`,
+        [run.id, P4],
+      );
+      assert.ok(dependants.n >= 3, `expected a name, a class, a group and a guardian change for P4, got ${dependants.n}`);
+      assert.equal(dependants.named, 0, 'a dependant of an unapplied LINK names the matched row');
+      await sync.apply(admin, run.id, { basisHash: run.basisHash, deselect: [link.id] });
+      const after = await one<{ firstName: string; studentGroupId: string | null; ss12000Id: string | null; links: number; groups: number }>(
+        `SELECT u."firstName", u."studentGroupId", u."ss12000Id",
+                (SELECT count(*)::int FROM "GuardianStudents" g WHERE g."studentId" = u.id) AS links,
+                (SELECT count(*)::int FROM "StudentGroupMembers" m WHERE m."studentId" = u.id) AS groups
+           FROM "Users" u WHERE u.id = $1`,
+        [lisa.id],
+      );
+      assert.deepEqual(after, { firstName: 'Lisa', studentGroupId: null, ss12000Id: null, links: 0, groups: 0 });
+      const skipped = await one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Ss12000SyncChanges" WHERE "runId" = $1 AND "externalId" = $2 AND NOT applied`,
+        [run.id, P4],
+      );
+      assert.equal(skipped.n, dependants.n + 1, 'a dependant of the deselected LINK was applied');
+    });
+
+    await check('(ss-j) an INCREMENTAL run sees a class move made only in the groups, and the cursor does not pass it', async () => {
+      const ella = await userByExt(P1);
+      const c7a = await groupByExt(C7A);
+      assert.notEqual(ella.studentGroupId, c7a.id);
+      // P1 moves 7B -> 7A: S1's groupMemberships belong to Group, so only the groups change.
+      const now = new Date().toISOString();
+      provider.world.persons = provider.world.persons.filter((p) => p['id'] !== P4);
+      provider.world.groups[0] = s1Group(C7A, '7A', 'Klass', ORG, [P1, P2], { modified: now });
+      provider.world.groups[1] = s1Group(C7B, '7B', 'Klass', ORG, [P3], { modified: now });
+      provider.world.groups[2] = s1Group(TG, 'Spanska 7', 'Undervisning', ORG, [P1]);
+      const run = await manualRun('INCREMENTAL');
+      const mode = await one<{ mode: string }>(`SELECT mode::text FROM "Ss12000SyncRuns" WHERE id = $1`, [run.id]);
+      assert.equal(mode.mode, 'INCREMENTAL');
+      const move = await one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Ss12000SyncChanges" WHERE "runId" = $1 AND entity = 'CLASS_MEMBERSHIP' AND op = 'MOVE' AND "externalId" = $2`,
+        [run.id, P1],
+      );
+      assert.equal(move.n, 1, `the INCREMENTAL run (${run.status}) dropped the class move`);
     });
 
     await check('(ss-h) no credential in any row but the sealed one, and none in a log line', async () => {
