@@ -40,6 +40,8 @@ describe('organisations', () => {
     const [many] = (await service.listOrganisations(caller(), {})).data;
     expect(many).toMatchObject({ id: W.school, organisationType: 'Skola' });
     expect(many!['schoolUnitCode']).toBeUndefined();
+    // S1: schoolTypes "Anges endast för organisationselement typen Skolenhet".
+    expect(many!['schoolTypes']).toBeUndefined();
     world.identity.organisation_ids = [];
     world.identity.school_unit_codes = [];
     const [none] = (await service.listOrganisations(caller(), {})).data;
@@ -70,8 +72,9 @@ describe('persons', () => {
     // An open membership has no endDate, and S1 always includes those.
     expect(await by({ 'relationship.entity.type': 'groupMembership', 'relationship.endDate.onOrBefore': '2026-12-31' })).toEqual([W.p1Source, W.p2, W.p3, W.p4].sort());
     expect(await by({ 'relationship.entity.type': 'groupMembership', 'relationship.startDate.onOrBefore': '2026-01-01' })).toEqual([W.p1Source, W.p4].sort());
+    // P1 has been enrolled since 2025-08-18: moving up over the summer is not a new enrolment.
     expect(await by({ 'relationship.organisation': W.org, 'relationship.startDate.onOrAfter': '2026-08-17', 'relationship.entity.type': 'enrolment' })).toEqual(
-      [W.p1Source, W.p2, W.p3, W.p4].sort(),
+      [W.p2, W.p3, W.p4].sort(),
     );
     expect(await by({ 'relationship.organisation': 'aaaaaaaa-0000-4000-8000-000000000999' })).toEqual([]);
     expect(await by({ 'relationship.entity.type': 'responsibleFor.placement' })).toEqual([]);
@@ -162,6 +165,53 @@ describe('duties', () => {
     expect(ids(await service.listDuties(caller(), {}))).toEqual([]);
     expect(ids(await service.listActivities(caller(), {}))).toEqual([]);
     expect(ids(await service.listSyllabuses(caller(), {}))).toEqual([]);
+  });
+});
+
+describe('review findings (2026-10-11)', () => {
+  it('a Duty under the source\'s id carries the source\'s role and dates, and none of SchemaPro\'s HR figures', async () => {
+    const { world, service } = setup();
+    world.policy['shareEmploymentWithIntegrations'] = true;
+    world.dutyLinks[0]!['dutyRole'] = 'Förstelärare';
+    world.dutyLinks[0]!['startDate'] = new Date('2026-08-20T00:00:00Z');
+    world.employments.push({
+      id: '40000000-0000-4000-8000-000000000009', schoolId: W.school, userId: W.t2, academicYearId: W.year, employmentPercent: 50, reductionPercent: 0,
+      signature: 'TV', contractKind: 'FERIE', note: null, teachingTargetMinutesPerWeek: null,
+      createdAt: new Date('2026-06-01T08:00:00Z'), updatedAt: new Date('2026-09-30T08:00:00Z'),
+    });
+    const linked = await service.getDuty(caller(), W.duty2Source, {});
+    expect(linked).toMatchObject({ id: W.duty2Source, dutyRole: 'Förstelärare', startDate: '2026-08-20' });
+    expect(linked['endDate']).toBeUndefined();
+    expect(linked['dutyPercent']).toBeUndefined();
+    expect(linked['hoursPerYear']).toBeUndefined();
+    // SchemaPro's own post keeps toSs12000Duty's shape and the opt-in's figures.
+    const own = await service.getDuty(caller(), W.emp1, {});
+    expect(own).toMatchObject({ dutyRole: 'Lärare', startDate: '2026-08-17', endDate: '2027-06-11', dutyPercent: 80 });
+    // A post with no version row is dated by its creation: an HR-only edit moves no meta.modified.
+    expect((linked['meta'] as { modified: string }).modified).toBe('2026-06-01T08:00:00.000Z');
+  });
+
+  it('a co-teacher still on the lesson beside a substitute participates; only the replaced teacher is out', async () => {
+    const { world, service } = setup();
+    // The cover replaced Tove (LEAD) with Tea: assignInTransaction removed Tove's row only.
+    const rows = world.lessonTeachers.filter((row) => row['calendarLessonId'] === W.l1);
+    rows.find((row) => row['teacherId'] === W.t1)!['teacherId'] = W.t3;
+    rows.find((row) => row['teacherId'] === W.t3)!['role'] = 'SUBSTITUTE';
+    const event = await service.getCalendarEvent(caller(), W.l1, {});
+    // Tor (ASSISTANT, linked duty) still teaches; Tea has no duty to name.
+    expect(event['teacherExceptions']).toEqual([{ duty: { id: W.emp1 }, participates: false }]);
+  });
+
+  it('an enrolment starts where the unbroken chain starts, over the summer between two läsår but not over a gap inside one', async () => {
+    const { world, service } = setup();
+    const p1 = await service.getPerson(caller(), W.p1Source, {});
+    expect(p1['enrolments']).toEqual([expect.objectContaining({ schoolYear: 7, startDate: '2025-08-18' })]);
+    // A gap inside the year is a new enrolment.
+    world.enrollments.push(
+      { schoolId: W.school, studentId: W.p2, academicYearId: W.pastYear, studentGroupId: W.c6a, gradeLevel: 6, validFrom: new Date('2025-08-18T00:00:00Z'), validTo: new Date('2026-03-01T00:00:00Z') },
+    );
+    const p2 = await service.getPerson(caller(), W.p2, {});
+    expect(p2['enrolments']).toEqual([expect.objectContaining({ startDate: '2026-08-17' })]);
   });
 });
 

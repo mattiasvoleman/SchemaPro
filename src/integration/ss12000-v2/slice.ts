@@ -92,6 +92,7 @@ export interface DutyLinkRow {
   ss12000DutyId: string;
   dutyRole: string;
   startDate: Date;
+  endDate: Date | null;
 }
 
 /** A master lesson — live in DIRECT, the active snapshot's in DRAFT — as an Activity's source. */
@@ -336,7 +337,7 @@ export class SchoolSlice {
     async () =>
       (await this.tx.ss12000DutyLink.findMany({
         where: { schoolId: this.schoolId, endedAt: null },
-        select: { id: true, userId: true, academicYearId: true, ss12000DutyId: true, dutyRole: true, startDate: true },
+        select: { id: true, userId: true, academicYearId: true, ss12000DutyId: true, dutyRole: true, startDate: true, endDate: true },
       })) as DutyLinkRow[],
   );
 

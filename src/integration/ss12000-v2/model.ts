@@ -81,6 +81,8 @@ export class IdSpace {
   private readonly groupIn = new Map<string, string>();
   private readonly dutyOut = new Map<string, string>();
   private readonly dutyIn = new Map<string, { userId: string; yearId: string }>();
+  /** The source's own Duty behind an emitted id that is the source's (A5.5). */
+  private readonly dutyLinkOut = new Map<string, { dutyRole: string; startDate: Date; endDate: Date | null }>();
 
   constructor(input: {
     schoolId: string;
@@ -89,7 +91,7 @@ export class IdSpace {
     users: UserRow[];
     groups: GroupRow[];
     employments: EmploymentRow[];
-    links: { userId: string; academicYearId: string; ss12000DutyId: string; dutyRole: string; startDate: Date; id: string }[];
+    links: { userId: string; academicYearId: string; ss12000DutyId: string; dutyRole: string; startDate: Date; endDate?: Date | null; id: string }[];
   }) {
     const single = input.organisationIds.length === 1 ? input.organisationIds[0]! : null;
     this.organisationId = single ?? input.schoolId;
@@ -112,7 +114,9 @@ export class IdSpace {
       .sort((a, b) => a.startDate.getTime() - b.startDate.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     for (const link of links) {
       const key = `${link.userId}:${link.academicYearId}`;
-      if (!this.dutyOut.has(key)) this.dutyOut.set(key, link.ss12000DutyId.toLowerCase());
+      if (this.dutyOut.has(key)) continue;
+      this.dutyOut.set(key, link.ss12000DutyId.toLowerCase());
+      this.dutyLinkOut.set(key, { dutyRole: link.dutyRole, startDate: link.startDate, endDate: link.endDate ?? null });
     }
     for (const post of input.employments) {
       const key = `${post.userId}:${post.academicYearId}`;
@@ -141,6 +145,10 @@ export class IdSpace {
   }
   dutyFrom(emitted: string): { userId: string; yearId: string } | null {
     return this.dutyIn.get(emitted) ?? null;
+  }
+  /** The source's role and dates when the emitted Duty id is the source's; null for SchemaPro's own post id. */
+  dutyLink(userId: string, yearId: string): { dutyRole: string; startDate: Date; endDate: Date | null } | null {
+    return this.dutyLinkOut.get(`${userId}:${yearId}`) ?? null;
   }
 }
 
@@ -294,6 +302,9 @@ export class Model {
    * "Startdatum för inskrivningen" (S1), not the class's: the validFrom of
    * the first segment of the pupil's unbroken chain (validTo of one equal to
    * validFrom of the next), so a class move is not a new enrolment (A1.8).
+   * Moving up a year is not one either: the summer between two consecutive
+   * läsår — the rollover closes the old class at the old year's end and
+   * opens the new one at the new year's start — does not break the chain.
    * schoolYear only within S1's 0..10; schoolType (required) from the year's
    * timplan for the grade — none derivable, no Enrolment. No endDate while
    * the pupil is active.
@@ -312,7 +323,7 @@ export class Model {
         if (openAt < 0) continue;
         const open = sorted[openAt]!;
         let first = openAt;
-        while (first > 0 && sorted[first - 1]!.validTo && dayOf(sorted[first - 1]!.validTo!) === dayOf(sorted[first]!.validFrom)) first--;
+        while (first > 0 && this.continues(sorted[first - 1]!, sorted[first]!)) first--;
         const schoolType = this.types.of(open.academicYearId, open.gradeLevel);
         if (!schoolType) continue;
         out.set(pupilId, {
@@ -324,6 +335,30 @@ export class Model {
       }
       return out;
     })());
+  }
+
+  /**
+   * Whether `next` continues `prev`'s enrolment: back to back, or across the
+   * gap between two consecutive läsår (prev ends at or after its year's end,
+   * next starts at or before the following year's start, no year between).
+   */
+  private continues(
+    prev: { validTo: Date | null; academicYearId: string },
+    next: { validFrom: Date; academicYearId: string },
+  ): boolean {
+    if (!prev.validTo) return false;
+    const end = dayOf(prev.validTo);
+    const start = dayOf(next.validFrom);
+    if (end === start) return true;
+    if (prev.academicYearId === next.academicYearId || end > start) return false;
+    const before = this.yearBounds(prev.academicYearId);
+    const after = this.yearBounds(next.academicYearId);
+    if (!before || !after || before.endDate >= after.startDate) return false;
+    const between = [...this.yearsById.values()].some((year) => {
+      const day = dayOf(year.startDate);
+      return day > before.endDate && day < after.startDate;
+    });
+    return !between && end >= before.endDate && start <= after.startDate;
   }
 
   // --- duties ---------------------------------------------------------------
@@ -385,12 +420,28 @@ export class Model {
     const out: Ss12000Duty = {
       ...raw,
       id: this.ids.duty(post.userId, post.academicYearId) ?? raw.id,
-      meta: version ? metaOf(version, post.createdAt, post.updatedAt) : raw.meta,
+      // Without a version row, the post's creation: its updatedAt also moves
+      // on HR-only edits (employmentPercent, contractKind) that leave the
+      // Duty unchanged when the Fas 3 opt-in is off.
+      meta: version ? metaOf(version, post.createdAt, post.updatedAt) : { ...raw.meta, modified: raw.meta.created },
       person: person ?? { id: raw.person.id },
       dutyAt: this.organisationRef(),
     };
     delete out.assignmentRole;
     if (assignmentRole && assignmentRole.length > 0) out.assignmentRole = assignmentRole;
+    // Under the SOURCE's Duty id (S1's one namespace, L5061) the object must
+    // not contradict the source's: its role and dates are the source's, as
+    // the link stored them, and SchemaPro's own HR figures stay out — the
+    // source holds its own under that id.
+    const link = this.ids.dutyLink(post.userId, post.academicYearId);
+    if (link) {
+      out.dutyRole = link.dutyRole as Ss12000Duty['dutyRole'];
+      out.startDate = dayOf(link.startDate);
+      if (link.endDate) out.endDate = dayOf(link.endDate);
+      else delete (out as Partial<Ss12000Duty>).endDate;
+      delete out.dutyPercent;
+      delete out.hoursPerYear;
+    }
     return out;
   }
 
