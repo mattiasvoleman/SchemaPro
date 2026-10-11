@@ -94,6 +94,8 @@ export function LeaveRequestsScreen(): React.JSX.Element {
         .select('schoolId')
         .eq('id', selectedChild)
         .single();
+      // No status or decision column: leave_requests_guardian_insert admits
+      // only an undecided request (20261015140000). The school decides it.
       const { error } = await getSupabase().from('LeaveRequests').insert({
         schoolId: (profile as { schoolId: string }).schoolId,
         studentId: selectedChild,
