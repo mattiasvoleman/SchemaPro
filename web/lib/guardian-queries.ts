@@ -39,7 +39,7 @@ export function useMyChildren(guardianUserId: string | null) {
       const { data, error } = await supabase
         .from("GuardianStudents")
         .select(
-          "id, studentId, student:Users!GuardianStudents_studentId_fkey(id, role, firstName, lastName, email, phone, isActive, studentGroupId)",
+          "id, studentId, student:Users!GuardianStudents_studentId_schoolId_fkey(id, role, firstName, lastName, email, phone, isActive, studentGroupId)",
         )
         .eq("guardianId", guardianUserId!);
       if (error) throw new Error(error.message);
