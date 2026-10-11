@@ -1,0 +1,39 @@
+-- En lärare läser inte ledighetens anledning.
+--
+-- 20260713170100 gave every TEACHER of the school a SELECT arm on whole
+-- LeaveRequests rows (leave_requests_staff_select). The reason column is
+-- free text a guardian or an adult pupil writes to the school: a trip, but
+-- also a funeral or a hospital visit. The arm handed it to every teacher of
+-- the school, about every pupil.
+--
+-- The API never did. family.controller.ts lets only GUARDIAN, STUDENT and
+-- SCHOOL_ADMIN file a request and only SCHOOL_ADMIN decide one, and no
+-- gateway route lists them. But web and mobile read the table straight
+-- through PostgREST (useLeaveRequests in web/lib/guardian-queries.ts, the
+-- app's LeaveRequestsScreen), so `authenticated` holds SELECT on it
+-- (20260806000000) and has to keep it. The policy is the only fence, and a
+-- teacher's own Supabase session passed it. Reproduced on a throwaway
+-- database at main: SET ROLE authenticated with a TEACHER's claims read a
+-- pupil's "begravning" although the teacher had no tie to the pupil.
+--
+-- No teacher-facing reader uses the arm. Attendance shows granted leave as
+-- Anmäld frånvaro from the full-day AbsenceReports the admin's approval
+-- writes (FamilyService.decideLeaveRequest), whose note is "Approved leave"
+-- and never the reason. The decision's notification goes to the requester
+-- only. SS12000, the roster readers and the teacher's schedule do not read
+-- the table. So nothing takes the arm's place, not even a definer function
+-- with dates and status: the absence rows already carry what attendance
+-- needs.
+--
+--   * leave_requests_staff_select is dropped. Its SCHOOL_ADMIN half was
+--     already leave_requests_admin_all's, which reads and writes every row
+--     of the school. The guardian, student and insert arms are unchanged.
+--   * A TEACHER reads no row of the table, the pupil's mentor included.
+--     The mentor's decision on leave (roadmap: Mentorns ledighetsbeslut)
+--     will add an arm for the mentor's own pupils as a decision of its own;
+--     this migration does not anticipate it.
+--
+-- scripts/test/rls-policies.sql section 32 asserts this under the API's role
+-- and under `authenticated`, and lists the table's arms.
+
+DROP POLICY "leave_requests_staff_select" ON "LeaveRequests";
