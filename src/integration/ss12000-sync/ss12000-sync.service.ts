@@ -219,8 +219,14 @@ export class Ss12000SyncService {
           const slice = await readLocalSlice(tx, schoolId, { lock: false });
           slice.lastAppliedAt = fresh.lastAppliedAt;
           const diff = computeDiff({ roster, local: slice, today, organisationIds: fresh.organisationIds });
-          const counts = { ...diff.counts, fetch: { ...stats, invalid: roster.invalid.length } };
-          const errors = roster.invalid.slice(0, 200).map((record) => ({ code: 'INVALID_RECORD', entity: record.entity, externalId: record.externalId }));
+          const counts = {
+            ...diff.counts,
+            fetch: { ...stats, invalid: roster.invalid.length, ...(roster.lookup.refused ? { lookupUnresolved: roster.lookup.unresolved } : {}) },
+          };
+          const errors = [
+            ...(roster.lookup.refused ? [{ code: 'SS12000_LOOKUP_REFUSED', entity: 'PERSON', externalId: null }] : []),
+            ...roster.invalid.map((record) => ({ code: 'INVALID_RECORD', entity: record.entity, externalId: record.externalId })),
+          ].slice(0, 200);
           const codes = roster.organisations.map((organisation) => organisation.schoolUnitCode).filter((code): code is string => code !== null);
           await tx.ss12000Source.update({
             where: { id: fresh.id },
@@ -338,7 +344,12 @@ export class Ss12000SyncService {
         const source = await tx.ss12000Source.findFirst({ where: { id: run.sourceId, schoolId } });
         if (!source) return 'NOT_APPLICABLE';
         const slice = await readLocalSlice(tx, schoolId, { lock: true });
-        if (basisHash(slice, source) !== run.basisHash) return 'STALE';
+        // Every outcome that leaves the run for the admin says why on the
+        // run, so the history tells "auto-apply was off" from "it refused".
+        if (basisHash(slice, source) !== run.basisHash) {
+          await tx.ss12000SyncRun.update({ where: { id: runId }, data: { autoApplyBlockedReason: 'STALE' } });
+          return 'STALE';
+        }
         const changes = await tx.ss12000SyncChange.findMany({ where: { runId, schoolId }, orderBy: { seq: 'asc' } });
         const auto = changes.filter((change) => !change.applied && change.selected && change.autoApplicable && !NOTES.has(change.op));
         const linkedActive = slice.users.filter((user) => user.ss12000Id && user.isActive).length;
@@ -348,7 +359,10 @@ export class Ss12000SyncService {
         }
         const pendingForAdmin = changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !change.autoApplicable);
         // Nothing the night may make, and something the admin must: it waits.
-        if (auto.length === 0 && pendingForAdmin) return 'NOTHING';
+        if (auto.length === 0 && pendingForAdmin) {
+          await tx.ss12000SyncRun.update({ where: { id: runId }, data: { autoApplyBlockedReason: 'REVIEW_REQUIRED' } });
+          return 'NOTHING';
+        }
         const stamp = new Date();
         // Nothing at all to make (conflicts only, say) falls through to
         // APPLIED below with nothing written, so a standing conflict does not
@@ -381,13 +395,17 @@ export class Ss12000SyncService {
           });
           return 'APPLIED';
         }
-        // The rest waits for the admin, against the school as it is now.
+        // The rest waits for the admin, against the school as it is now. The
+        // run says when it wrote: appliedAt is when its changes were last
+        // applied, so a deactivation made tonight reads as the sync's (A2.3)
+        // and not as an admin's, also once a newer run supersedes this one.
         await tx.ss12000Source.update({ where: { id: source.id }, data: { lastAppliedAt: stamp } });
         const after = await readLocalSlice(tx, schoolId, { lock: false });
         await tx.ss12000SyncRun.update({
           where: { id: runId },
           data: {
             autoApplied: true,
+            appliedAt: stamp,
             basisHash: basisHash(after, source),
             errors: errors as Prisma.InputJsonValue,
             counts: { ...asObject(run.counts), applied: { auto: outcome.applied.length, skipped: outcome.skipped.length } } as Prisma.InputJsonValue,

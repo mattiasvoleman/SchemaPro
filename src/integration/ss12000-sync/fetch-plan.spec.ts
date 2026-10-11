@@ -163,6 +163,36 @@ describe('fetchRoster: the fetch plan against a local TLS mock provider', () => 
     expect(roster.persons.has(PUPIL)).toBe(true);
   });
 
+  it('INCREMENTAL: looks up a LINKED pupil a changed group names, whose own record did not change (a class move)', async () => {
+    // k7: the move from 7B to 7A modifies the groups, not the Person.
+    const MOVED = 'bbbbbbbb-0000-4000-8000-000000000003';
+    provider.world.persons.push(s1Pupil(MOVED, 'Flytt', 'Ad', 'flytt@skola.se', ORG, { modified: '2026-01-01T10:00:00Z' }));
+    provider.world.groups = [s1Group(CLASS, '7A', 'Klass', ORG, [MOVED], { modified: '2026-10-09T10:00:00Z' })];
+    const roster = await fetchRoster(
+      client,
+      input({
+        mode: 'INCREMENTAL',
+        modifiedCursor: new Date('2026-10-01T00:00:00Z'),
+        deletedCursor: new Date('2026-10-01T00:00:00Z'),
+        linkedPersonIds: new Set([MOVED, GUARDIAN]),
+      }),
+    );
+    expect(roster.mode).toBe('INCREMENTAL');
+    expect(roster.persons.has(MOVED)).toBe(true);
+    // A linked guardian named only through responsibles is still never looked up.
+    expect(provider.lookups).toEqual([[MOVED]]);
+  });
+
+  it('FULL: goes on when the lookup is refused, and says how many ids stayed unresolved', async () => {
+    provider.faults.refuseLookup = true;
+    const roster = await fetchRoster(client, input());
+    expect(roster.mode).toBe('FULL');
+    expect(roster.lookup).toEqual({ refused: true, unresolved: 1 });
+    expect(roster.persons.has(OUTSIDER)).toBe(false);
+    const fine = await fetchRoster(client, input({ linkedPersonIds: new Set([OUTSIDER]) }));
+    expect(fine.lookup).toEqual({ refused: false, unresolved: 0 });
+  });
+
   it('throws the code of a failure, so no diff is made from a half-read roster', async () => {
     await client.authenticate();
     provider.faults.serverError = true;

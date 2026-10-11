@@ -72,6 +72,8 @@ export class MockSs12000Provider {
   world: MockWorld = { organisations: [], persons: [], groups: [], duties: [], deleted: { persons: [], groups: [], duties: [] } };
   faults: MockFaults = {};
   readonly requests: MockRequest[] = [];
+  /** The ids of every POST /persons/lookup, in order. */
+  readonly lookups: string[][] = [];
   tokensIssued = 0;
   private server: Server | null = null;
   private readonly tokens = new Set<string>();
@@ -169,7 +171,9 @@ export class MockSs12000Provider {
     const q = url.searchParams;
     if (req.method === 'POST' && path === '/persons/lookup') {
       if (this.faults.refuseLookup) return send(res, 403, { code: 'FORBIDDEN', message: 'no lookup' });
-      const ids = new Set(((JSON.parse(body || '{}') as { ids?: string[] }).ids ?? []).map((id) => id.toLowerCase()));
+      const asked = ((JSON.parse(body || '{}') as { ids?: string[] }).ids ?? []).map((id) => id.toLowerCase());
+      this.lookups.push(asked);
+      const ids = new Set(asked);
       return send(res, 200, this.world.persons.filter((p) => ids.has(String(p['id']).toLowerCase())));
     }
     if (req.method !== 'GET') return send(res, 405, null);
