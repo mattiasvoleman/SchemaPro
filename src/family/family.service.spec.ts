@@ -704,6 +704,25 @@ describe('FamilyService', () => {
       expect(tx.absenceReport.create).toHaveBeenCalledTimes(1);
     });
 
+    it('writes neither the family’s reason nor the decision note onto the absences teachers read', async () => {
+      // A teacher reads no LeaveRequests row (20261015090000): granted leave
+      // reaches attendance only as these absences, so they must not carry it.
+      arrangePending();
+
+      await service.decideLeaveRequest(
+        REQUEST_ID,
+        { status: 'APPROVED', note: 'Beviljas, begravningen är på fredag' },
+        testUser(),
+      );
+
+      expect(tx.leaveRequest.findUnique.mock.calls[0][0].select).not.toHaveProperty('reason');
+      expect(tx.absenceReport.create).toHaveBeenCalledTimes(3);
+      for (const [{ data }] of tx.absenceReport.create.mock.calls as [{ data: { note: string } }][]) {
+        expect(data.note).toBe('Approved leave');
+        expect(JSON.stringify(data)).not.toMatch(/Family trip|begravningen/);
+      }
+    });
+
     it('rejects without creating any absence reports, carrying the note', async () => {
       arrangePending();
 

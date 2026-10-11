@@ -11027,6 +11027,175 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Section 32: ledighetsansökningar (LeaveRequests, 20260713170100 and
+-- 20261015090000).
+--
+-- A request's reason is what a family wrote to the school: a trip, but also a
+-- funeral, a hospital visit or a hearing. The admin who decides reads it, and
+-- so do the pupil's guardians and the pupil. No TEACHER reads any row of the
+-- table, not even the pupil's mentor, by any role or join: a teacher learns of
+-- granted leave from the full-day AbsenceReports the decision writes
+-- ("Approved leave", never the reason), which attendance shows as Anmäld
+-- frånvaro. Web and mobile read the table straight through PostgREST, so the
+-- teacher and the guardian are asserted under `authenticated` as well as under
+-- the API's role.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- 32a: the second school's request, written by its own admin.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE pupil uuid;
+BEGIN
+  SELECT id INTO pupil FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000002';
+  IF pupil IS NULL THEN RAISE EXCEPTION 'leave: the second school has no pupil to plant on'; END IF;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), pupil, app.current_user_id(), DATE '2095-05-04', DATE '2095-05-05', 'rls32 b-skolans anledning');
+END $$;
+
+-- 32b: the primary school's admin files two requests, one of them approved
+-- with the absence the decision writes, makes a teacher the mentor of the
+-- guardian's child, and reads every reason of the school and none of another.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  child uuid; class uuid; other uuid; teacher uuid; n bigint; r text;
+BEGIN
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs JOIN "Users" g ON g.id = gs."guardianId"
+   WHERE g."authId" = '00000000-0000-4000-8000-000000000004' ORDER BY gs."studentId" LIMIT 1;
+  SELECT "studentGroupId" INTO class FROM "Users" WHERE id = child;
+  SELECT id INTO other FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND id <> child ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  IF child IS NULL OR class IS NULL OR other IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'leave: the primary school lacks the guardian''s child with a class, another pupil or a teacher';
+  END IF;
+  IF (SELECT "authId" FROM "Users" WHERE id = child) IS NULL THEN RAISE EXCEPTION 'leave: the guardian''s child cannot sign in'; END IF;
+
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  SELECT school, teacher, g."academicYearId", 'MENTORSKAP', 'Mentor rls32', 60, g.id, now() FROM "StudentGroups" g WHERE g.id = class;
+
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, status, "decidedById", "decidedAt")
+  VALUES (school, other, me, DATE '2095-05-04', DATE '2095-05-04', 'rls32 begravning', 'APPROVED', me, now());
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (school, other, me, DATE '2095-05-04', 'OTHER', 'Approved leave');
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, child, me, DATE '2095-05-11', DATE '2095-05-12', 'rls32 läkarbesök');
+
+  SELECT reason INTO r FROM "LeaveRequests" WHERE "studentId" = other AND reason LIKE 'rls32 %';
+  IF r IS DISTINCT FROM 'rls32 begravning' THEN RAISE EXCEPTION 'leave: the admin reads the reason %', coalesce(r, 'NULL'); END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE reason LIKE 'rls32 %';
+  IF n <> 2 THEN RAISE EXCEPTION 'leave: the admin reads % of the school''s two requests', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: the admin reads % request(s) of another school', n; END IF;
+
+  PERFORM set_config('app.test_rls32_child', child::text, true);
+  PERFORM set_config('app.test_rls32_other', other::text, true);
+  PERFORM set_config('app.test_rls32_child_sub', (SELECT "authId"::text FROM "Users" WHERE id = child), true);
+  PERFORM set_config('app.test_rls32_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
+END $$;
+
+-- 32c: the guardian files a request through PostgREST's role, as the app
+-- does, and reads both of their child's requests with the reason, under
+-- either role, and nobody else's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE child uuid := current_setting('app.test_rls32_child')::uuid; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'leave: expected the GUARDIAN'; END IF;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), child, app.current_user_id(), DATE '2095-05-18', DATE '2095-05-22', 'rls32 familjeresa');
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" = child AND reason IN ('rls32 läkarbesök', 'rls32 familjeresa');
+  IF n <> 2 THEN RAISE EXCEPTION 'leave: through PostgREST''s role the guardian reads % of their child''s two requests', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" <> child;
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: through PostgREST''s role the guardian reads % request(s) of another pupil', n; END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+DO $$
+DECLARE child uuid := current_setting('app.test_rls32_child')::uuid; n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" = child AND reason IN ('rls32 läkarbesök', 'rls32 familjeresa');
+  IF n <> 2 THEN RAISE EXCEPTION 'leave: the guardian reads % of their child''s two requests', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" <> child;
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: the guardian reads % request(s) of another pupil', n; END IF;
+END $$;
+
+-- 32d: the pupil reads their own two requests and nobody else's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls32_child_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'leave: expected the STUDENT'; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" = app.current_user_id() AND reason LIKE 'rls32 %';
+  IF n <> 2 THEN RAISE EXCEPTION 'leave: the pupil reads % of their own two requests', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" <> app.current_user_id();
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: the pupil reads % request(s) of somebody else', n; END IF;
+END $$;
+
+-- 32e: the child's mentor reads no request and no reason, by a count, a join
+-- or a subselect, under the API's role or PostgREST's, and writes none. What
+-- they do read is the approved leave's absence, which names no reason.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls32_teacher_sub'))::text, true);
+DO $$
+DECLARE
+  child uuid := current_setting('app.test_rls32_child')::uuid;
+  other uuid := current_setting('app.test_rls32_other')::uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'leave: expected a TEACHER'; END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "userId" = app.current_user_id() AND kind = 'MENTORSKAP' AND label = 'Mentor rls32';
+  IF n <> 1 THEN RAISE EXCEPTION 'leave: the teacher is not the child''s mentor, so the case proves less than it says'; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests";
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: a teacher reads % leave request(s)', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE reason IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: a teacher reads % reason(s)', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" a JOIN "LeaveRequests" l ON l."studentId" = a."studentId";
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: a teacher reaches % request(s) through an absence', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" a
+   WHERE EXISTS (SELECT 1 FROM "LeaveRequests" l WHERE l."studentId" = a."studentId" AND l.reason LIKE 'rls32 %');
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: a teacher learns who asked for leave through a subselect'; END IF;
+  UPDATE "LeaveRequests" SET status = 'APPROVED' WHERE "studentId" = child;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: a teacher decided % request(s)', n; END IF;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (app.current_school_id(), child, app.current_user_id(), DATE '2095-05-25', DATE '2095-05-25', 'rls32 lärarens');
+    RAISE EXCEPTION 'leave: a teacher filed a leave request';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" = other AND date = DATE '2095-05-04' AND note = 'Approved leave';
+  IF n <> 1 THEN RAISE EXCEPTION 'leave: a teacher reads % absence(s) of the approved leave, not its one', n; END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'leave: expected a TEACHER'; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests";
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: through PostgREST''s role a teacher reads % leave request(s)', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" a
+   WHERE EXISTS (SELECT 1 FROM "LeaveRequests" l WHERE l."studentId" = a."studentId");
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: through PostgREST''s role a teacher learns who asked for leave through a subselect'; END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+-- 32f: the catalogue. Exactly these arms; the pupil's own insert is section
+-- 34's, and the mentor's decision on the roadmap adds its own here, as a
+-- decision, not as a staff-wide read.
+DO $$
+DECLARE arms text;
+BEGIN
+  SELECT string_agg(policyname, ',' ORDER BY policyname) INTO arms
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveRequests';
+  IF arms IS DISTINCT FROM 'leave_requests_admin_all,leave_requests_guardian_insert,leave_requests_guardian_select,leave_requests_student_insert,leave_requests_student_select' THEN
+    RAISE EXCEPTION 'leave: the arms on LeaveRequests are %', arms;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 34: en elev ansöker om sin egen ledighet (LeaveRequests,
 -- 20261015130000).
 --
