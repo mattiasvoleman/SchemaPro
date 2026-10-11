@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { KeyRound, Loader2 } from "lucide-react";
@@ -27,7 +27,15 @@ import { useClearSecret, useSetSecret } from "./use-ss12000-source";
  * SS12000_CERT_PEM_INVALID); the refusal names the kind, never the value.
  *
  * A credential is bound to the host it is sent to. When the address changes
- * the gateway clears it, and the row here says it is missing again.
+ * the gateway clears it, and the row here says it is missing again. One
+ * stored for a sign-in type the source no longer uses (a client secret left
+ * after a switch to a static token) is listed too, with only "Ta bort": it
+ * can be removed, never read.
+ *
+ * Each row is a form, so Enter saves. The field is a password manager's
+ * business only to stay out of: it must never offer to generate or save a
+ * value here, which would replace the register's credential with an invented
+ * one in the admin's vault.
  */
 
 const PEM: ReadonlySet<SecretKind> = new Set(["CLIENT_KEY_PEM", "CLIENT_CERT_PEM"]);
@@ -35,6 +43,7 @@ const PEM: ReadonlySet<SecretKind> = new Set(["CLIENT_KEY_PEM", "CLIENT_CERT_PEM
 export function SecretsSection({ source }: { source: SourceView }) {
   const t = useTranslations("integrations.secrets");
   const kinds = secretKindsFor(source.authKind, source.tokenUrl !== null);
+  const unused = (Object.keys(source.secrets) as SecretKind[]).filter((kind) => !kinds.includes(kind) && source.secrets[kind]);
   return (
     <section className="space-y-3" aria-labelledby="ss-secrets-title">
       <h3 id="ss-secrets-title" className="flex items-center gap-2 text-sm font-semibold">
@@ -46,12 +55,15 @@ export function SecretsSection({ source }: { source: SourceView }) {
         {kinds.map((kind) => (
           <SecretRow key={kind} kind={kind} setAt={source.secrets[kind]?.setAt ?? null} optional={source.authKind === "MTLS_CLIENT_CERT" && kind === "BEARER_TOKEN"} />
         ))}
+        {unused.map((kind) => (
+          <SecretRow key={kind} kind={kind} setAt={source.secrets[kind]?.setAt ?? null} optional={false} unused />
+        ))}
       </div>
     </section>
   );
 }
 
-function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string | null; optional: boolean }) {
+function SecretRow({ kind, setAt, optional, unused = false }: { kind: SecretKind; setAt: string | null; optional: boolean; unused?: boolean }) {
   const t = useTranslations("integrations.secrets");
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
@@ -61,7 +73,9 @@ function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string 
   const clear = useClearSecret();
   const id = `ss-secret-${kind}`;
 
-  const submit = () => {
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (unused || value.trim() === "" || setSecret.isPending) return;
     const sent = value;
     setSecret.mutate(
       { kind, value: sent },
@@ -74,7 +88,7 @@ function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string 
   };
 
   return (
-    <div className="space-y-2 rounded-md border p-3">
+    <form className="space-y-2 rounded-md border p-3" onSubmit={submit}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Label htmlFor={id}>{t(`kinds.${kind}`)}</Label>
         {setAt ? (
@@ -83,8 +97,9 @@ function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string 
           <Badge variant={optional ? "outline" : "warning"}>{optional ? t("optional") : t("missing")}</Badge>
         )}
       </div>
+      {unused ? <p className="text-xs text-muted-foreground">{t("unused")}</p> : null}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-        {PEM.has(kind) ? (
+        {unused ? null : PEM.has(kind) ? (
           <Textarea
             id={id}
             className="min-h-24 font-mono text-xs"
@@ -99,7 +114,10 @@ function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string 
           <Input
             id={id}
             type="password"
-            autoComplete="new-password"
+            autoComplete="off"
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-bwignore="true"
             spellCheck={false}
             value={value}
             maxLength={16_384}
@@ -108,10 +126,12 @@ function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string 
           />
         )}
         <div className="flex gap-2">
-          <Button type="button" size="sm" onClick={submit} disabled={value.trim() === "" || setSecret.isPending}>
-            {setSecret.isPending ? <Loader2 className="animate-spin" /> : null}
-            {setAt ? t("replace") : t("save")}
-          </Button>
+          {unused ? null : (
+            <Button type="submit" size="sm" disabled={value.trim() === "" || setSecret.isPending}>
+              {setSecret.isPending ? <Loader2 className="animate-spin" /> : null}
+              {setAt ? t("replace") : t("save")}
+            </Button>
+          )}
           {setAt ? (
             <Button
               type="button"
@@ -130,6 +150,6 @@ function SecretRow({ kind, setAt, optional }: { kind: SecretKind; setAt: string 
           ) : null}
         </div>
       </div>
-    </div>
+    </form>
   );
 }

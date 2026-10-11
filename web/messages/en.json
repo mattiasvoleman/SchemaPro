@@ -1455,6 +1455,7 @@
     "keys": {
       "name": "Key name",
       "copy": "Copy",
+      "copyFailed": "Could not copy. Select the value and copy it yourself.",
       "done": "I have stored it",
       "secretSet": "Signing secret created {when}.",
       "secretMissing": "No signing secret: the system cannot subscribe to changes until one exists.",
@@ -1578,7 +1579,8 @@
       "replacePlaceholder": "Paste a new value to replace it",
       "replace": "Replace",
       "save": "Save",
-      "clear": "Remove"
+      "clear": "Remove",
+      "unused": "Not used by the chosen sign-in type. Remove it if it is not needed."
     },
     "schedule": {
       "title": "Nightly sync",
@@ -1596,7 +1598,7 @@
       "autoApplyNeedsSchedule": "Turn on the nightly sync first.",
       "autoApplyDoes": "Applied automatically: names, class moves, new teaching-group memberships, guardian links between people already linked who have no protected identity, duties, and deactivating pupils and guardians.",
       "autoApplyNever": "Never automatically: new people, links, email changes, reactivations, deactivating staff, anything you changed yourself since the last sync, and anything about a person with a protected identity.",
-      "autoApplyBrake": "More deactivations than 5 or 2 % of the linked people stops the night entirely."
+      "autoApplyBrake": "More than 5 deactivations, or more than 2 % of the linked people if that is higher, stop the night entirely."
     },
     "sync": {
       "title": "Sync",
@@ -1637,7 +1639,11 @@
       "counts": "{persons} people and {groups} groups read · {changes} changes · {notes} notes",
       "appliedCounts": "{applied} applied, {skipped} skipped",
       "autoBlocked": "The night applied nothing: too many deactivations. Review the diff.",
-      "errors": "{count, plural, one {# record was not read} other {# records were not read}}"
+      "autoBlockedStale": "The night applied nothing: the school changed between the fetch and the apply. Review the diff or sync again.",
+      "autoBlockedReview": "The night applied nothing: everything left needs an administrator. Review the diff.",
+      "partlyApplied": "Partly applied {when}",
+      "older": "Show older syncs",
+      "errorCodes": "Errors: {codes}"
     },
     "review": {
       "title": "Review the sync",
@@ -1654,13 +1660,15 @@
       "guardiansEndedTitle": "{count, plural, one {# guardian is} other {# guardians are}} no longer named for a child",
       "guardiansEndedBody": "A sync never removes a guardian. Check each one and remove the link under People if it should go, so that no former guardian keeps seeing the child's timetable.",
       "guardiansEndedLink": "{guardian} for {pupil}",
-      "guardiansEndedSeen": "I have seen the guardians above.",
+      "guardiansEndedSeen": "{count, plural, one {I have seen the child above.} other {I have seen all # children above.}}",
       "unknownPerson": "Unknown person",
+      "unknownGroup": "Unknown group",
+      "unknownOrganisation": "Unknown school unit",
       "filterEntity": "Show",
       "filterAll": "Everything ({count})",
       "entityCount": "{entity} ({count})",
       "filterAttention": "Only conflicts, notes and protected",
-      "selectVisible": "Choose all shown",
+      "selectVisible": "Choose all shown except flagged",
       "deselectVisible": "Leave out all shown",
       "emptyFilter": "Nothing to show with this filter.",
       "listLabel": "Changes",
@@ -1701,6 +1709,9 @@
       "applyNow": "Apply",
       "confirmTitle": "Apply {count, plural, one {# change} other {# changes}}?",
       "confirmBody": "Everything is done in one transaction: either all chosen changes or none.",
+      "markReviewed": "Mark as reviewed",
+      "confirmReviewedTitle": "Mark the sync as reviewed without changes?",
+      "confirmReviewedBody": "Nothing in the school changes. The conflicts remain and come back at the next full sync. The cursors move, so the next sync fetches only what changed after this one.",
       "confirmDeactivations": "{count, plural, one {# person is deactivated} other {# people are deactivated}}. Nobody is deleted, and the history stays.",
       "confirmDeselected": "{count, plural, =0 {No changes are left out.} one {# change left out comes back at the next full sync, within {days} days.} other {# changes left out come back at the next full sync, within {days} days.}}",
       "confirmNothingDeleted": "New people get no sign-in: you invite them under New people.",
@@ -1782,6 +1793,9 @@
       "EXPIRED": "The diff was not reviewed within 30 days and was discarded.",
       "REVIEW_PENDING": "The nightly sync was skipped because a manual diff is waiting for review.",
       "INVALID_RECORD": "A record in the register had the wrong shape and was not read.",
+      "PERSON_RECORD_INVALID": "The register sent this person, but the record had the wrong shape. They are not deactivated for it; fix the record in the register.",
+      "ROSTER_HAS_INVALID_RECORDS": "A record in the register could not be read, so the absence may come from it. The deactivation happens only if you choose it.",
+      "SS12000_LOOKUP_REFUSED": "The register refused to look people up; guardians and others only named were not read.",
       "PERSON_NOT_YET_ENROLLED": "The pupil starts later and is added when the enrolment begins.",
       "DELETED_BUT_RETURNED": "The register both deleted and sent the record in the same run; it is kept.",
       "PERSON_ROLE_MISMATCH": "The role in the register differs from the role in SchemaPro. A sync never changes a role.",

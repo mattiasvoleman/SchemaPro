@@ -7,6 +7,7 @@ import {
   readChange,
   selectionBody,
   summarise,
+  unknownSubjectKey,
   withAll,
 } from "./diff-view";
 import { inviteInChunks } from "./use-ss12000-sync";
@@ -137,6 +138,29 @@ describe("reading a change", () => {
 
   it("reads a minimised row by kind alone", () => {
     expect(readChange(change({ entity: "GROUP", op: "CREATE" }), new Map(), () => null)).toEqual({ subject: null, detail: null });
+  });
+
+  it("bulk-ticks only what it is given, and never a protected or flagged change; unticks those too (review 2026-10-11)", () => {
+    const plain = change({ op: "CREATE", selected: false });
+    const guarded = change({ op: "CREATE", selected: false, protectedIdentity: true });
+    const review = change({ op: "CREATE", selected: false, conflictCode: "DUTY_ROLE_REVIEW" });
+    const beyond = change({ op: "CREATE", selected: false });
+    const ticked = withAll(new Map(), [plain, guarded, review], "DIFF_READY", true);
+    expect([...ticked.entries()]).toEqual([[plain.id, true]]);
+    expect(summarise([plain, guarded, review, beyond], ticked, "DIFF_READY").chosen).toBe(1);
+    const cleared = withAll(new Map([[guarded.id, true]]), [plain, guarded, review], "DIFF_READY", false);
+    expect([...cleared.values()]).toEqual([false, false, false]);
+  });
+
+  it("names whose duty ends when it is absent at the source, and calls an unnamed group a group", () => {
+    const end = change({ entity: "DUTY_LINK", op: "END", localId: "link-1", after: { ended: true, reason: "ABSENT_FROM_SOURCE", userLocalId: "u-bo", personExternalId: null } });
+    expect(readChange(end, new Map(), (id) => (id === "u-bo" ? "Bo Ek" : null))).toEqual({
+      subject: "Bo Ek",
+      detail: { key: "reason.ABSENT_FROM_SOURCE", values: {} },
+    });
+    expect(unknownSubjectKey("GROUP")).toBe("unknownGroup");
+    expect(unknownSubjectKey("ORGANISATION")).toBe("unknownOrganisation");
+    expect(unknownSubjectKey("DUTY_LINK")).toBe("unknownPerson");
   });
 
   it("lists each pupil whose guardian the register no longer names, once", () => {

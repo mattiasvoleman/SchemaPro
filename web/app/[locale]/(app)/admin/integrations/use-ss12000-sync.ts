@@ -24,17 +24,24 @@ import {
 
 /** How often the history is re-read while a run is fetching. */
 export const RUN_POLL_MS = 3000;
+/** Runs a history page holds; the gateway's ListRunsQueryDto pages by `before`. */
+export const RUNS_PAGE = 20;
 
 export function useSyncRuns(enabled: boolean) {
   return useQuery({
     queryKey: INTEGRATION_KEYS.runs,
     enabled,
     retry: false,
-    queryFn: () => api.get<SyncRun[]>("/api/v1/ss12000-sync/runs?limit=20"),
+    queryFn: () => api.get<SyncRun[]>(`/api/v1/ss12000-sync/runs?limit=${RUNS_PAGE}`),
     // A manual run answers 202 and fetches in the background: poll until it lands.
     refetchInterval: (query) =>
       (query.state.data ?? []).some((run) => run.status === "RUNNING") ? RUN_POLL_MS : false,
   });
+}
+
+/** The page of runs started before `before` (the oldest run shown): "Visa äldre synkar". */
+export function fetchOlderRuns(before: string): Promise<SyncRun[]> {
+  return api.get<SyncRun[]>(`/api/v1/ss12000-sync/runs?limit=${RUNS_PAGE}&before=${encodeURIComponent(before)}`);
 }
 
 export function useStartRun() {

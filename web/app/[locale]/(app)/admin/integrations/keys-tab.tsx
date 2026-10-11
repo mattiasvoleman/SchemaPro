@@ -96,8 +96,13 @@ function OnceNotice({ title, value, hint, onDone }: { title: string; value: stri
           variant="outline"
           aria-label={t("keys.copy")}
           onClick={() => {
-            void navigator.clipboard.writeText(value);
-            toast.success(tCommon("copied"));
+            // A refused write (no permission, no secure context) must not say "copied".
+            Promise.resolve()
+              .then(() => navigator.clipboard.writeText(value))
+              .then(
+                () => toast.success(tCommon("copied")),
+                () => toast.error(t("keys.copyFailed")),
+              );
           }}
         >
           <Copy />

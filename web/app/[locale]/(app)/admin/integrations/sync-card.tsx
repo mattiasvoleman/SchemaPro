@@ -10,7 +10,7 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { codeText, errorText, formatWhen } from "./ss12000-messages";
 import type { ChangeEntity, ChangeOp, RunCounts, RunMode, RunStatus, SourceView, SyncRun } from "./ss12000-types";
-import { useStartRun, useSyncRuns } from "./use-ss12000-sync";
+import { RUNS_PAGE, fetchOlderRuns, useStartRun, useSyncRuns } from "./use-ss12000-sync";
 
 /*
  * Synka nu and Synkhistorik.
@@ -60,6 +60,13 @@ export function changeTotals(counts: RunCounts): { changes: number; notes: numbe
   };
 }
 
+/** A run's error codes in words, each once, with how many times it occurred. */
+export function errorSummary(errors: SyncRun["errors"], codeLabel: (code: string) => string): string {
+  const tally = new Map<string, number>();
+  for (const error of errors) tally.set(error.code, (tally.get(error.code) ?? 0) + 1);
+  return [...tally.entries()].map(([code, n]) => (n > 1 ? `${codeLabel(code)} (${n})` : codeLabel(code))).join(" · ");
+}
+
 /** A run whose changes are worth opening: it produced a diff. */
 const HAS_DIFF: ReadonlySet<RunStatus> = new Set(["DIFF_READY", "APPLIED", "APPLY_FAILED", "DISCARDED", "SUPERSEDED", "NO_CHANGES"]);
 
@@ -72,8 +79,26 @@ export function SyncCard({ source }: { source: SourceView }) {
   const runs = useSyncRuns(true);
   const start = useStartRun();
   const [reviewing, setReviewing] = useState<string | null>(null);
+  // Every run is kept (the run row is the log); older pages are read on demand.
+  const [older, setOlder] = useState<SyncRun[]>([]);
+  const [olderLeft, setOlderLeft] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
-  const list = runs.data ?? [];
+  const recent = runs.data ?? [];
+  const list = [...recent, ...older.filter((run) => !recent.some((shown) => shown.id === run.id))];
+  const canPage = olderLeft && (older.length > 0 || recent.length >= RUNS_PAGE);
+  const showOlder = () => {
+    const oldest = list[list.length - 1];
+    if (!oldest) return;
+    setLoadingOlder(true);
+    fetchOlderRuns(oldest.startedAt)
+      .then((page) => {
+        setOlder((current) => [...current, ...page]);
+        setOlderLeft(page.length >= RUNS_PAGE);
+      })
+      .catch((error) => toast.error(errorText(tErrors, error, tCommon("error"))))
+      .finally(() => setLoadingOlder(false));
+  };
   const running = list.some((run) => run.status === "RUNNING");
   const waiting = list.find((run) => run.status === "DIFF_READY") ?? null;
   const reviewRun = list.find((run) => run.id === reviewing) ?? null;
@@ -134,6 +159,12 @@ export function SyncCard({ source }: { source: SourceView }) {
               />
             ))}
           </ul>
+          {canPage ? (
+            <Button type="button" size="sm" variant="outline" onClick={showOlder} disabled={loadingOlder}>
+              {loadingOlder ? <Loader2 className="animate-spin" /> : null}
+              {t("older")}
+            </Button>
+          ) : null}
         </section>
       </CardContent>
 
@@ -183,8 +214,23 @@ function RunRow({
             {t("appliedCounts", { applied: (applied["admin"] ?? 0) + (applied["auto"] ?? 0), skipped: applied["skipped"] ?? 0 })}
           </p>
         ) : null}
-        {run.autoApplyBlockedReason ? <p className="text-xs text-destructive">{t("autoBlocked")}</p> : null}
-        {run.errors.length > 0 ? <p className="text-xs text-muted-foreground">{t("errors", { count: run.errors.length })}</p> : null}
+        {run.appliedAt && run.status !== "APPLIED" ? (
+          <p className="text-xs text-muted-foreground">{t("partlyApplied", { when: formatWhen(locale, run.appliedAt) })}</p>
+        ) : null}
+        {run.autoApplyBlockedReason ? (
+          <p className="text-xs text-destructive">
+            {run.autoApplyBlockedReason === "STALE"
+              ? t("autoBlockedStale")
+              : run.autoApplyBlockedReason === "REVIEW_REQUIRED"
+                ? t("autoBlockedReview")
+                : t("autoBlocked")}
+          </p>
+        ) : null}
+        {run.errors.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {t("errorCodes", { codes: errorSummary(run.errors, codeLabel) })}
+          </p>
+        ) : null}
       </div>
       {openable ? (
         <Button type="button" size="sm" variant={run.status === "DIFF_READY" ? "default" : "outline"} onClick={onOpen}>
