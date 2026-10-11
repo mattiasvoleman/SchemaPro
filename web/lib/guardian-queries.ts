@@ -20,11 +20,12 @@ import type { AbsenceReport, LeaveRequest, Person } from "@/lib/types";
 // moved here: /guardian 170.0 -> 165.8KB own JS, and 25 other routes 0.1-0.2KB
 // lighter.
 //
-// The teacher's lesson-attendance page reads useAbsenceReports and the admin
-// leave inbox reads the leave hooks. Both import lib/queries.ts for other
-// things anyway, so the split costs them only this module's extra chunk:
-// 0.5KB each (158.0 -> 158.5 and 158.9 -> 159.4), far inside their budgets
-// of 170 and 190. The keys are shared through
+// The admin leave inbox reads the leave hooks. It imports lib/queries.ts for
+// other things anyway, so the split costs it only this module's extra chunk:
+// 0.5KB (158.9 -> 159.4), far inside its budget of 190. The teacher's
+// lesson-attendance page read useAbsenceReports until 20261015120000; a
+// teacher reads no absence report since, and the page asks the gateway for
+// ids (useLessonReportedAbsences). The keys are shared through
 // lib/guardian-keys.ts, because useGuardianLinkActions over there invalidates
 // the children list without importing this file.
 // ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ export function useMyChildren(guardianUserId: string | null) {
   });
 }
 
-/** Absence reports visible to the caller (RLS: own children / own / staff). */
+/** Absence reports visible to the caller (RLS: own children / own / admin), with the note. */
 export function useAbsenceReports(options?: { date?: string; studentId?: string }) {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.absenceReports, options?.date ?? null, options?.studentId ?? null],

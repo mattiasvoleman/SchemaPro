@@ -8,11 +8,11 @@ import {
   useLesson,
   useLessonRoster,
   useLessonAttendance,
+  useLessonReportedAbsences,
   useReportAttendance,
   useSubjects,
   type AttendanceEntryInput,
 } from "@/lib/queries";
-import { useAbsenceReports } from "@/lib/guardian-queries";
 import { ATTENDANCE_STATUS_VARIANT, type StatusVariant } from "@/lib/status-variants";
 import type { AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -62,30 +62,17 @@ export default function LessonAttendancePage({
     isError: studentsError,
   } = useLessonRoster(lesson ? lessonId : null, lesson?.studentGroupId ?? null);
   const { data: existingRecords, isError: existingError } = useLessonAttendance(lessonId);
-  const { data: absenceReports } = useAbsenceReports({
-    date: lesson?.date ? lesson.date.slice(0, 10) : undefined,
-  });
+  const { data: reported } = useLessonReportedAbsences(lessonId);
 
-  /** Students with a guardian-reported absence covering this lesson. */
-  const reportedAbsent = useMemo(() => {
-    if (!lesson || !absenceReports) return new Set<string>();
-    const lessonStart = new Date(lesson.startsAt);
-    const lessonEnd = new Date(lesson.endsAt);
-    const toMin = (d: Date) => d.getHours() * 60 + d.getMinutes();
-    const set = new Set<string>();
-    for (const report of absenceReports) {
-      if (report.date.slice(0, 10) !== lesson.date.slice(0, 10)) continue;
-      if (report.startTime && report.endTime) {
-        const [sh, sm] = report.startTime.split(":").map(Number);
-        const [eh, em] = report.endTime.split(":").map(Number);
-        const overlaps =
-          sh * 60 + sm < toMin(lessonEnd) && toMin(lessonStart) < eh * 60 + em;
-        if (!overlaps) continue;
-      }
-      set.add(report.studentId);
-    }
-    return set;
-  }, [lesson, absenceReports]);
+  /**
+   * Students with an absence reported in advance covering this lesson. The
+   * gateway decides which, in the school's timezone; the page never reads an
+   * absence report, and with it no note.
+   */
+  const reportedAbsent = useMemo(
+    () => new Set<string>(reported?.studentIds ?? []),
+    [reported],
+  );
 
   const { data: subjects } = useSubjects();
   const report = useReportAttendance();

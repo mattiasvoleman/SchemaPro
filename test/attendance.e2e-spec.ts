@@ -118,7 +118,8 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
         { id: STUDENT_A, firstName: 'Ella', lastName: 'Ek', email: 'vh@example.invalid' },
       ]);
       harness.tx['attendanceRecord']!['upsert']!.mockResolvedValue({ createdAt: now, updatedAt: now });
-      harness.tx['absenceReport']!['findMany']!.mockResolvedValue([]);
+      // Nobody reported: app.reported_absences answers no row.
+      harness.tx['$queryRaw']!.mockResolvedValue([]);
       harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([{ guardianId: '88888888-8888-4888-8888-888888888888' }]);
 
       await request(harness.app.getHttpServer())
@@ -203,6 +204,106 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
         calendarLessonId: LESSON_ID,
         records: [{ studentId: STUDENT_A, status: 'PRESENT' }],
       })
+      .expect(404);
+  });
+});
+
+describe('GET /api/v1/attendance/lessons/:lessonId/reported-absences (e2e)', () => {
+  let harness: TestHarness;
+  const path = `/api/v1/attendance/lessons/${LESSON_ID}/reported-absences`;
+
+  beforeAll(async () => {
+    harness = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await harness.close();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    harness.tx['calendarLesson']!['findUnique']!.mockResolvedValue(LESSON);
+    // The pupil away all day is on the roster; the one away 06:00–08:00 is
+    // too, but that ends an hour before the 09:00 lesson.
+    harness.tx['$queryRaw']!.mockResolvedValue([
+      { studentId: STUDENT_A, startTime: null, endTime: null },
+      {
+        studentId: STUDENT_B,
+        startTime: new Date('1970-01-01T06:00:00.000Z'),
+        endTime: new Date('1970-01-01T08:00:00.000Z'),
+      },
+    ]);
+    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: STUDENT_A }]);
+  });
+
+  /** The day was asked of the function, never of the table a teacher may not read. */
+  const expectAskedOfTheFunction = () => {
+    const [query] = harness.tx['$queryRaw']!.mock.calls[0] as [{ sql: string; values: unknown[] }];
+    expect(query.sql).toContain('FROM app.reported_absences(?::date)');
+    expect(query.values).toEqual(['2026-09-02']);
+    expect(harness.tx['absenceReport']!['findMany']).not.toHaveBeenCalled();
+  };
+
+  it('rejects unauthenticated requests', async () => {
+    await request(harness.app.getHttpServer()).get(path).expect(401);
+  });
+
+  it.each(['STUDENT', 'GUARDIAN'])('rejects a %s (RBAC)', async (role) => {
+    await request(harness.app.getHttpServer())
+      .get(path)
+      .set('x-test-user', asUser({ role: role as never }))
+      .expect(403);
+  });
+
+  it('rejects a lesson id that is not a uuid', async () => {
+    await request(harness.app.getHttpServer())
+      .get('/api/v1/attendance/lessons/not-a-uuid/reported-absences')
+      .set('x-test-user', asUser({ role: 'TEACHER' as never, userId: TEACHER_USER_ID }))
+      .expect(400);
+  });
+
+  it('answers an admin with the ids of the lesson’s pupils reported away during it, and nothing else', async () => {
+    const response = await request(harness.app.getHttpServer())
+      .get(path)
+      .set('x-test-user', asUser({ role: 'SCHOOL_ADMIN' as never }))
+      .expect(200);
+
+    expect(response.body).toEqual({ studentIds: [STUDENT_A] });
+    expect(harness.tx['calendarLessonTeacher']!['findUnique']).not.toHaveBeenCalled();
+    expectAskedOfTheFunction();
+  });
+
+  it('answers a teacher assigned to the lesson', async () => {
+    harness.tx['calendarLessonTeacher']!['findUnique']!.mockResolvedValue({
+      id: '77777777-7777-4777-8777-777777777777',
+    });
+
+    const response = await request(harness.app.getHttpServer())
+      .get(path)
+      .set('x-test-user', asUser({ role: 'TEACHER' as never, userId: TEACHER_USER_ID }))
+      .expect(200);
+
+    expect(response.body).toEqual({ studentIds: [STUDENT_A] });
+    expectAskedOfTheFunction();
+  });
+
+  it('returns 403 to a teacher who is not assigned to the lesson, before any absence is read', async () => {
+    harness.tx['calendarLessonTeacher']!['findUnique']!.mockResolvedValue(null);
+
+    await request(harness.app.getHttpServer())
+      .get(path)
+      .set('x-test-user', asUser({ role: 'TEACHER' as never, userId: TEACHER_USER_ID }))
+      .expect(403);
+
+    expect(harness.tx['$queryRaw']).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for a lesson outside the caller school (RLS semantics)', async () => {
+    harness.tx['calendarLesson']!['findUnique']!.mockResolvedValue(null);
+
+    await request(harness.app.getHttpServer())
+      .get(path)
+      .set('x-test-user', asUser({ role: 'SCHOOL_ADMIN' as never }))
       .expect(404);
   });
 });

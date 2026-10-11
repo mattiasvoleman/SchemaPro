@@ -15,6 +15,7 @@ import {
   useImportCsv,
   useInvitations,
   useLessonActions,
+  useLessonReportedAbsences,
   useLessonRoster,
   useMasterLessons,
   useNationalTimplans,
@@ -815,6 +816,20 @@ describe("gateway queries", () => {
       "/api/v1/calendar-lessons/cl-1/substitute-suggestions",
     );
     expect(result.current.data).toEqual([{ teacherId: "t-2", isPrimary: true }]);
+  });
+
+  it("useLessonReportedAbsences asks the gateway for ids and never reads AbsenceReports", async () => {
+    // A teacher reads no absence report since 20261015120000, so the note a
+    // guardian wrote can never reach this page, whatever it selects.
+    mockApi.get.mockResolvedValue({ studentIds: ["st-1"] });
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useLessonReportedAbsences("cl-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/attendance/lessons/cl-1/reported-absences");
+    expect(queryClient.getQueryData(["lessonReportedAbsences", "cl-1"])).toEqual({ studentIds: ["st-1"] });
+    expect(queryLog.filter((entry) => entry.table === "AbsenceReports")).toEqual([]);
+    expect(supabaseMocks.from).not.toHaveBeenCalledWith("AbsenceReports");
   });
 
   it("useScheduleVersions and useScheduleVersionDetail gate on their ids", async () => {

@@ -1,4 +1,5 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -209,6 +210,20 @@ describe('AttendanceService', () => {
   /** The common case: everybody in the batch is a member of the home class. */
   const arrangeRoster = (studentIds: string[]) =>
     arrangeUsers({ homeClass: studentIds });
+
+  /**
+   * The day's absences were asked of app.reported_absences, once, and never of
+   * the table: a teacher reads no AbsenceReports row, and with it no note.
+   */
+  const expectDayAskedOfTheFunction = (day: string) => {
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [query] = tx.$queryRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.sql).toBe(
+      'SELECT "studentId", "startTime", "endTime" FROM app.reported_absences(?::date)',
+    );
+    expect(query.values).toEqual([day]);
+    expect(tx.absenceReport.findMany).not.toHaveBeenCalled();
+  };
 
   // -------------------------------------------------------------------------
   // Writing records
@@ -622,13 +637,7 @@ describe('AttendanceService', () => {
     it('alerts the guardians when no absence report exists', async () => {
       await reportAbsent();
 
-      expect(tx.absenceReport.findMany).toHaveBeenCalledWith({
-        where: {
-          studentId: { in: [STUDENT_A] },
-          date: new Date('2026-09-02T00:00:00.000Z'),
-        },
-        select: { studentId: true, startTime: true, endTime: true },
-      });
+      expectDayAskedOfTheFunction('2026-09-02');
       expect(notifications.notifyUsers).toHaveBeenCalledWith(
         tx,
         expect.objectContaining({
@@ -645,7 +654,7 @@ describe('AttendanceService', () => {
     });
 
     it('stays silent for a full-day report', async () => {
-      tx.absenceReport.findMany.mockResolvedValue([
+      tx.$queryRaw.mockResolvedValue([
         { studentId: STUDENT_A, startTime: null, endTime: null },
       ]);
 
@@ -655,7 +664,7 @@ describe('AttendanceService', () => {
     });
 
     it('reads a report that gives only one of its times as the whole day', async () => {
-      tx.absenceReport.findMany.mockResolvedValue([
+      tx.$queryRaw.mockResolvedValue([
         { studentId: STUDENT_A, startTime: wallClock('08:00'), endTime: null },
       ]);
 
@@ -669,7 +678,7 @@ describe('AttendanceService', () => {
       // UTC parts makes the report look like it starts at 08:00 against a
       // lesson at 07:00, and the guardian gets an alarm for a morning they
       // reported themselves.
-      tx.absenceReport.findMany.mockResolvedValue([
+      tx.$queryRaw.mockResolvedValue([
         {
           studentId: STUDENT_A,
           startTime: wallClock('08:00'),
@@ -686,7 +695,7 @@ describe('AttendanceService', () => {
       // 06:00–08:00 local ends an hour before the lesson. Comparing UTC parts
       // makes it look like it runs 06:00–08:00 against a 07:00 lesson, and a
       // genuinely unreported absence goes unnoticed.
-      tx.absenceReport.findMany.mockResolvedValue([
+      tx.$queryRaw.mockResolvedValue([
         {
           studentId: STUDENT_A,
           startTime: wallClock('06:00'),
@@ -714,7 +723,7 @@ describe('AttendanceService', () => {
       });
 
       it('stays silent for a report inside the lesson', async () => {
-        tx.absenceReport.findMany.mockResolvedValue([
+        tx.$queryRaw.mockResolvedValue([
           {
             studentId: STUDENT_A,
             startTime: wallClock('09:15'),
@@ -733,7 +742,7 @@ describe('AttendanceService', () => {
         ['begins as the lesson ends', '09:45', '12:00'],
         ['ends as the lesson begins', '08:00', '09:00'],
       ])('alerts for a report that %s', async (_label, start, end) => {
-        tx.absenceReport.findMany.mockResolvedValue([
+        tx.$queryRaw.mockResolvedValue([
           { studentId: STUDENT_A, startTime: wallClock(start), endTime: wallClock(end) },
         ]);
 
@@ -743,7 +752,7 @@ describe('AttendanceService', () => {
       });
 
       it('alerts for a report that begins after the lesson has ended', async () => {
-        tx.absenceReport.findMany.mockResolvedValue([
+        tx.$queryRaw.mockResolvedValue([
           {
             studentId: STUDENT_A,
             startTime: wallClock('10:30'),
@@ -766,7 +775,7 @@ describe('AttendanceService', () => {
         startsAt: new Date('2026-01-14T08:00:00.000Z'),
         endsAt: new Date('2026-01-14T08:45:00.000Z'),
       });
-      tx.absenceReport.findMany.mockResolvedValue([
+      tx.$queryRaw.mockResolvedValue([
         {
           studentId: STUDENT_A,
           startTime: wallClock('09:30'),
@@ -793,7 +802,90 @@ describe('AttendanceService', () => {
         teacher(),
       );
 
-      expect(tx.absenceReport.findMany).not.toHaveBeenCalled();
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reported absences for the list
+  // -------------------------------------------------------------------------
+
+  describe('reported absences for the list', () => {
+    const STRANGER = '88888888-8888-4888-8888-888888888888';
+
+    it('names the pupils on the roster whose report covers the lesson, and nobody else', async () => {
+      arrangeUsers({ homeClass: [STUDENT_A, STUDENT_B, STUDENT_C] });
+      tx.$queryRaw.mockResolvedValue([
+        // The whole day; 08:00–12:00 local around a 09:00–09:45 lesson;
+        // 06:00–08:00 local, which ends an hour before it.
+        { studentId: STUDENT_B, startTime: null, endTime: null },
+        { studentId: STUDENT_A, startTime: wallClock('08:00'), endTime: wallClock('12:00') },
+        { studentId: STUDENT_C, startTime: wallClock('06:00'), endTime: wallClock('08:00') },
+        // Away all day, but not in this lesson.
+        { studentId: STRANGER, startTime: null, endTime: null },
+      ]);
+
+      await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({
+        studentIds: [STUDENT_A, STUDENT_B],
+      });
+      expectDayAskedOfTheFunction('2026-09-02');
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: [STUDENT_B, STUDENT_A, STRANGER] },
+          studentGroupId: { in: [PRIMARY_GROUP] },
+        },
+        select: { id: true },
+      });
+    });
+
+    it('finds a pupil through a teaching group or the participant list too', async () => {
+      arrangeUsers({ homeClass: [] });
+      tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: STUDENT_A }]);
+      tx.calendarLessonStudent.findMany.mockResolvedValue([{ studentId: STUDENT_B }]);
+      tx.$queryRaw.mockResolvedValue([
+        { studentId: STUDENT_A, startTime: null, endTime: null },
+        { studentId: STUDENT_B, startTime: null, endTime: null },
+      ]);
+
+      await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({
+        studentIds: [STUDENT_A, STUDENT_B],
+      });
+    });
+
+    it('answers an empty list without asking for the roster when nobody is reported', async () => {
+      await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({
+        studentIds: [],
+      });
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a teacher who is not assigned to the lesson before reading any absence', async () => {
+      tx.calendarLessonTeacher.findUnique.mockResolvedValue(null);
+
+      await expect(service.reportedAbsences(LESSON_ID, teacher())).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin ask for any lesson of the school, through the same function', async () => {
+      arrangeUsers({ homeClass: [STUDENT_A] });
+      tx.$queryRaw.mockResolvedValue([{ studentId: STUDENT_A, startTime: null, endTime: null }]);
+
+      await expect(
+        service.reportedAbsences(LESSON_ID, testUser({ role: Role.SCHOOL_ADMIN })),
+      ).resolves.toEqual({ studentIds: [STUDENT_A] });
+      expect(tx.calendarLessonTeacher.findUnique).not.toHaveBeenCalled();
+      expectDayAskedOfTheFunction('2026-09-02');
+    });
+
+    it('throws NotFound when RLS hides the lesson', async () => {
+      tx.calendarLesson.findUnique.mockResolvedValue(null);
+
+      await expect(service.reportedAbsences(LESSON_ID, teacher())).rejects.toThrow(
+        new NotFoundException(`Calendar lesson not found: ${LESSON_ID}`),
+      );
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });

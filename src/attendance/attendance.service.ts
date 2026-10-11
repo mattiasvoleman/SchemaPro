@@ -17,11 +17,51 @@ export interface AttendanceReportResult {
   updated: number;
 }
 
+/** The pupils of a lesson whose absence was reported before it. */
+export interface ReportedAbsencesResult {
+  studentIds: string[];
+}
+
 /** The parts of a lesson that decide who may appear on its attendance list. */
 interface RosterScope {
   id: string;
   studentGroupId: string;
   extraGroups: Array<{ studentGroupId: string }>;
+}
+
+/** The lesson as the register and the absence check read it. */
+const LESSON_SELECT = {
+  id: true,
+  schoolId: true,
+  studentGroupId: true,
+  date: true,
+  startsAt: true,
+  endsAt: true,
+  subject: { select: { name: true } },
+  // `startsAt`/`endsAt` are instants, absence reports are bare wall-clock
+  // times. The school's zone is the only thing that relates the two — see
+  // coveredBy.
+  school: { select: { timezone: true } },
+  extraGroups: { select: { studentGroupId: true } },
+} as const satisfies Prisma.CalendarLessonSelect;
+
+/**
+ * An absence reported for a day, as app.reported_absences answers it: the
+ * pupil and the wall-clock times, both null for the whole day. Never the
+ * note or the type — see reportedAbsencesOn.
+ */
+interface ReportedAbsence {
+  studentId: string;
+  startTime: Date | null;
+  endTime: Date | null;
+}
+
+/** The parts of a lesson that decide whether a report covers it. */
+interface LessonClock {
+  date: Date;
+  startsAt: Date;
+  endsAt: Date;
+  school: { timezone: string };
 }
 
 /**
@@ -64,20 +104,7 @@ export class AttendanceService {
       // Verify the lesson exists (RLS will scope this to the caller's school).
       const lesson = await tx.calendarLesson.findUnique({
         where: { id: dto.calendarLessonId },
-        select: {
-          id: true,
-          schoolId: true,
-          studentGroupId: true,
-          date: true,
-          startsAt: true,
-          endsAt: true,
-          subject: { select: { name: true } },
-          // `startsAt`/`endsAt` are instants, absence reports are bare
-          // wall-clock times. The school's zone is the only thing that relates
-          // the two — see the coverage check further down.
-          school: { select: { timezone: true } },
-          extraGroups: { select: { studentGroupId: true } },
-        },
+        select: LESSON_SELECT,
       });
 
       if (!lesson) {
@@ -204,38 +231,8 @@ export class AttendanceService {
         )
         .map((entry) => entry.studentId);
       if (absentIds.length > 0) {
-        const reports = await tx.absenceReport.findMany({
-          where: { studentId: { in: absentIds }, date: lesson.date },
-          select: { studentId: true, startTime: true, endTime: true },
-        });
         const lessonDate = toDateString(lesson.date);
-        const covered = new Set(
-          reports
-            .filter((report) => {
-              if (!report.startTime || !report.endTime) return true; // full day
-              // A guardian reporting "away 08:00-12:00" means local clock time;
-              // the lesson is a real instant. Lift the report onto the lesson's
-              // date through the same conversion that materialised the lesson
-              // (see CalendarService.publish) so the two are the same unit —
-              // comparing the raw UTC parts is off by the zone offset, which in
-              // Europe/Stockholm is one or two hours every day of the year.
-              const start = zonedTimeToUtc(
-                lessonDate,
-                timeToString(report.startTime),
-                lesson.school.timezone,
-              );
-              const end = zonedTimeToUtc(
-                lessonDate,
-                timeToString(report.endTime),
-                lesson.school.timezone,
-              );
-              return (
-                start.getTime() < lesson.endsAt.getTime() &&
-                lesson.startsAt.getTime() < end.getTime()
-              );
-            })
-            .map((report) => report.studentId),
-        );
+        const covered = coveredBy(await reportedAbsencesOn(tx, lesson.date), lesson);
         const unreported = absentIds.filter((studentId) => !covered.has(studentId));
         if (unreported.length > 0) {
           const students = await tx.user.findMany({
@@ -269,6 +266,47 @@ export class AttendanceService {
       }
 
       return { created, updated };
+    });
+  }
+
+  /**
+   * The pupils of a lesson whose absence was reported before it, by a
+   * guardian, an adult pupil or a granted leave: what the attendance list
+   * opens with as Anmäld frånvaro.
+   *
+   * Narrower than what app.reported_absences answers. A TEACHER asks only for
+   * a lesson they are assigned to, the same rule as recording it, and hears
+   * only of pupils on its roster. The teacher learns that a pupil in front of
+   * them is away, not who else in the school is, and never why.
+   */
+  async reportedAbsences(
+    calendarLessonId: string,
+    user: AuthenticatedUser,
+  ): Promise<ReportedAbsencesResult> {
+    return this.prisma.withRls(user, async (tx) => {
+      const lesson = await tx.calendarLesson.findUnique({
+        where: { id: calendarLessonId },
+        select: LESSON_SELECT,
+      });
+
+      if (!lesson) {
+        throw new NotFoundException(
+          `Calendar lesson not found: ${calendarLessonId}`,
+        );
+      }
+
+      if (user.role === Role.TEACHER) {
+        await this.assertTeacherIsAssigned(tx, calendarLessonId, user);
+      }
+
+      const covered = [
+        ...coveredBy(await reportedAbsencesOn(tx, lesson.date), lesson),
+      ];
+      if (covered.length === 0) return { studentIds: [] };
+      const roster = await this.rosterAmong(tx, lesson, covered);
+      return {
+        studentIds: covered.filter((studentId) => roster.has(studentId)).sort(),
+      };
     });
   }
 
@@ -327,14 +365,39 @@ export class AttendanceService {
     lesson: RosterScope,
     studentIds: string[],
   ): Promise<void> {
+    const roster = await this.rosterAmong(tx, lesson, studentIds);
+    const strangers = studentIds.filter((studentId) => !roster.has(studentId));
+    if (strangers.length > 0) {
+      // The ids are what an admin needs: they are what the mobile client sent
+      // and what the group membership must be corrected against.
+      throw new ForbiddenException(
+        `These students are not on the roster for lesson ${lesson.id}: ` +
+          `${strangers.join(', ')}. Attendance can only be recorded for ` +
+          'students in the lesson group, in a group joined to the lesson, or ' +
+          'named as individual participants — correct the group membership ' +
+          'before reporting.',
+      );
+    }
+  }
+
+  /**
+   * Which of `studentIds` are on the lesson's roster, by the four sources
+   * above. The roster check refuses the rest; reportedAbsences leaves them
+   * out.
+   */
+  private async rosterAmong(
+    tx: Prisma.TransactionClient,
+    lesson: RosterScope,
+    studentIds: string[],
+  ): Promise<Set<string>> {
     const groupIds = [
       lesson.studentGroupId,
       ...lesson.extraGroups.map((group) => group.studentGroupId),
     ];
 
-    // Scoped to the submitted ids rather than fetching the whole roster: the
-    // batch is capped at 200 entries, a joint activity spanning several classes
-    // is not.
+    // Scoped to the ids asked about rather than fetching the whole roster: a
+    // batch is capped at 200 entries and a day's absences are few, a joint
+    // activity spanning several classes is not.
     const [homeClass, teachingGroups, participants] = await Promise.all([
       tx.user.findMany({
         where: { id: { in: studentIds }, studentGroupId: { in: groupIds } },
@@ -353,25 +416,31 @@ export class AttendanceService {
       }),
     ]);
 
-    const roster = new Set<string>([
+    return new Set<string>([
       ...homeClass.map((student) => student.id),
       ...teachingGroups.map((member) => member.studentId),
       ...participants.map((participant) => participant.studentId),
     ]);
-
-    const strangers = studentIds.filter((studentId) => !roster.has(studentId));
-    if (strangers.length > 0) {
-      // The ids are what an admin needs: they are what the mobile client sent
-      // and what the group membership must be corrected against.
-      throw new ForbiddenException(
-        `These students are not on the roster for lesson ${lesson.id}: ` +
-          `${strangers.join(', ')}. Attendance can only be recorded for ` +
-          'students in the lesson group, in a group joined to the lesson, or ' +
-          'named as individual participants — correct the group membership ' +
-          'before reporting.',
-      );
-    }
   }
+}
+
+/**
+ * The absences reported at the caller's school for the day of `date`.
+ *
+ * Asked of app.reported_absences (20261015120000), not of the table: a
+ * TEACHER reads no AbsenceReports row, because the row carries the note a
+ * guardian or an adult pupil wrote to the school, and the type of the
+ * absence. The function answers who and between which times, to a TEACHER
+ * or a SCHOOL_ADMIN of the school. The admin asks it too, so what the
+ * register sees of a report has one rule.
+ */
+function reportedAbsencesOn(
+  tx: Prisma.TransactionClient,
+  date: Date,
+): Promise<ReportedAbsence[]> {
+  return tx.$queryRaw<ReportedAbsence[]>(
+    Prisma.sql`SELECT "studentId", "startTime", "endTime" FROM app.reported_absences(${toDateString(date)}::date)`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +451,41 @@ export class AttendanceService {
 
 function toDateString(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+/** The pupils whose report covers the lesson; a report without both times is the whole day. */
+function coveredBy(
+  reports: readonly ReportedAbsence[],
+  lesson: LessonClock,
+): Set<string> {
+  const lessonDate = toDateString(lesson.date);
+  return new Set(
+    reports
+      .filter((report) => {
+        if (!report.startTime || !report.endTime) return true; // full day
+        // A guardian reporting "away 08:00-12:00" means local clock time;
+        // the lesson is a real instant. Lift the report onto the lesson's
+        // date through the same conversion that materialised the lesson
+        // (see CalendarService.publish) so the two are the same unit —
+        // comparing the raw UTC parts is off by the zone offset, which in
+        // Europe/Stockholm is one or two hours every day of the year.
+        const start = zonedTimeToUtc(
+          lessonDate,
+          timeToString(report.startTime),
+          lesson.school.timezone,
+        );
+        const end = zonedTimeToUtc(
+          lessonDate,
+          timeToString(report.endTime),
+          lesson.school.timezone,
+        );
+        return (
+          start.getTime() < lesson.endsAt.getTime() &&
+          lesson.startsAt.getTime() < end.getTime()
+        );
+      })
+      .map((report) => report.studentId),
+  );
 }
 
 function timeToString(time: Date): string {
