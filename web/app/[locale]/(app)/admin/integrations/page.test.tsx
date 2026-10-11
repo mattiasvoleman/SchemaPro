@@ -424,6 +424,23 @@ describe("/admin/integrations — the register", () => {
     expect(within(dialog).getByRole("button", { name: "Tillämpa 1" })).toBeDisabled();
   });
 
+  it("applies nothing from a diff too large to load whole", async () => {
+    const user = userEvent.setup();
+    server.source = { ...SOURCE, organisationIds: ["aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa"] };
+    server.runs = [run({})];
+    // Every page says there is another: the review stops at 40 pages (20 000 changes).
+    server.pages = [
+      { data: [CREATE_CIA], nextCursor: 1 },
+      { data: [], nextCursor: 2 },
+    ];
+    renderPage();
+    await user.click((await screen.findAllByRole("button", { name: "Granska" }))[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Diffen har fler än 20 000 ändringar");
+    expect(get.mock.calls.filter(([path]) => String(path).includes("/changes?")).length).toBe(40);
+    expect(within(dialog).getByRole("button", { name: /^Tillämpa/ })).toBeDisabled();
+  });
+
   it("shows an applied run read-only, with nothing to tick", async () => {
     const user = userEvent.setup();
     server.source = { ...SOURCE, organisationIds: ["aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa"] };
