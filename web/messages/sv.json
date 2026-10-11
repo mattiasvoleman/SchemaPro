@@ -1649,6 +1649,7 @@
       "alreadyApplied": "{count, plural, one {# ändring} other {# ändringar}} tillämpades redan av natten.",
       "minimised": "Namn och adresser är rensade: de sparas bara medan en synk väntar på granskning.",
       "stale": "Registret eller SchemaPro har ändrats sedan hämtningen. Stäng och synka igen.",
+      "truncated": "Diffen har fler än 20 000 ändringar, fler än som går att granska på en gång, så den kan inte tillämpas här. Kasta den och kontakta supporten.",
       "protectedChosen": "{count, plural, one {# vald ändring rör} other {# valda ändringar rör}} en person med skyddad identitet.",
       "guardiansEndedTitle": "{count, plural, one {# vårdnadshavare} other {# vårdnadshavare}} anges inte längre för ett barn",
       "guardiansEndedBody": "En synk tar aldrig bort en vårdnadshavare. Kontrollera var och en och ta bort kopplingen under Personer om den ska bort, så att ingen tidigare vårdnadshavare fortsätter se barnets schema.",

@@ -53,7 +53,9 @@ const MAX_CHANGE_PAGES = 40;
  * Every change of a run, page after page (500 a page) in one query, so the
  * review counts and selects over the whole diff and not over what happened
  * to be loaded: nothing can be applied by default that the admin did not
- * have in front of them. `onProgress` hears the running count.
+ * have in front of them. `onProgress` hears the running count. A run with
+ * more changes than one apply may choose between (ApplyRunDto takes at most
+ * 20 000 ids) comes back `truncated`, and the dialog applies nothing from it.
  *
  * One query that loops, not useInfiniteQuery: the infinite behaviour lands
  * in the react-query chunk every route shares (+0.1KB gzipped on each,
@@ -76,7 +78,7 @@ export function useRunChanges(runId: string | null, onProgress?: (loaded: number
         cursor = answer.nextCursor;
         if (cursor === null) break;
       }
-      return all;
+      return { changes: all, truncated: cursor !== null };
     },
   });
 }

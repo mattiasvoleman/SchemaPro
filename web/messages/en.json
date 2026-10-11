@@ -1649,6 +1649,7 @@
       "alreadyApplied": "{count, plural, one {# change was} other {# changes were}} already applied by the night.",
       "minimised": "Names and addresses are cleared: they are kept only while a sync waits for review.",
       "stale": "The register or SchemaPro changed since the fetch. Close and sync again.",
+      "truncated": "The diff has more than 20,000 changes, more than can be reviewed at once, so it cannot be applied here. Discard it and contact support.",
       "protectedChosen": "{count, plural, one {# chosen change concerns} other {# chosen changes concern}} a person with a protected identity.",
       "guardiansEndedTitle": "{count, plural, one {# guardian is} other {# guardians are}} no longer named for a child",
       "guardiansEndedBody": "A sync never removes a guardian. Check each one and remove the link under People if it should go, so that no former guardian keeps seeing the child's timetable.",

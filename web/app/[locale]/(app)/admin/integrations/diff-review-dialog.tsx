@@ -81,8 +81,9 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
   const [massConfirmed, setMassConfirmed] = useState(false);
   const [stale, setStale] = useState(false);
 
-  const all = useMemo(() => changes.data ?? [], [changes.data]);
+  const all = useMemo(() => changes.data?.changes ?? [], [changes.data]);
   const complete = changes.isSuccess;
+  const truncated = changes.data?.truncated === true;
   const editable = run.status === "DIFF_READY";
   const names = useMemo(() => personNames(all), [all]);
   const peopleById = useMemo(() => new Map((people ?? []).map((person) => [person.id, `${person.firstName} ${person.lastName}`])), [people]);
@@ -91,7 +92,8 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
   const visible = all.filter((change) => matchesFilter(change, filter));
   const guardianEnds = endedGuardianLinks(all);
   const minimised = !editable && all.length > 0 && all.every((change) => change.before === null && change.after === null);
-  const canApply = editable && complete && run.basisHash !== null && (guardianEnds.length === 0 || guardiansSeen) && !stale;
+  const canApply =
+    editable && complete && !truncated && run.basisHash !== null && (guardianEnds.length === 0 || guardiansSeen) && !stale;
 
   const detailText = (change: SyncChange) => {
     const reading = readChange(change, names, localName);
@@ -171,6 +173,11 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
               {summary.applied > 0 ? ` ${t("alreadyApplied", { count: summary.applied })}` : null}
             </p>
             {minimised ? <p className="text-xs text-muted-foreground">{t("minimised")}</p> : null}
+            {truncated && editable ? (
+              <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                {t("truncated")}
+              </p>
+            ) : null}
             {stale ? (
               <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
                 {t("stale")}
