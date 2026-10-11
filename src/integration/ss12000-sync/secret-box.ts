@@ -53,6 +53,16 @@ export function aadOf(binding: SecretBinding): Buffer {
   );
 }
 
+/**
+ * GCM's tag and iv lengths, fixed on both sides. Without authTagLength Node
+ * accepts a tag of 4 to 16 bytes and checks only the bytes it is given, so the
+ * first four bytes of a genuine tag would open the row and a forged one is a
+ * 2^32 search; with it, a tag of any other length is refused before
+ * decryption (Semgrep gcm-no-tag-length).
+ */
+const AUTH_TAG_BYTES = 16;
+const IV_BYTES = 12;
+
 export class SecretBox {
   private readonly keys: Map<string, Buffer>;
   private readonly current: { id: string; key: Buffer } | null;
@@ -84,8 +94,8 @@ export class SecretBox {
    */
   sealWith(plaintext: string, aad: Buffer): SealedSecret {
     if (!this.current) throw new SecretBoxError('SS12000_SECRETS_NOT_CONFIGURED');
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.current.key, iv);
+    const iv = randomBytes(IV_BYTES);
+    const cipher = createCipheriv('aes-256-gcm', this.current.key, iv, { authTagLength: AUTH_TAG_BYTES });
     cipher.setAAD(aad);
     const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     return { ciphertext, iv, authTag: cipher.getAuthTag(), keyId: this.current.id };
@@ -94,8 +104,11 @@ export class SecretBox {
   openWith(sealed: SealedSecret, aad: Buffer): string {
     const key = this.keys.get(sealed.keyId);
     if (!key) throw new SecretBoxError(this.current ? 'SS12000_SECRET_UNREADABLE' : 'SS12000_SECRETS_NOT_CONFIGURED');
+    if (sealed.authTag.length !== AUTH_TAG_BYTES || sealed.iv.length !== IV_BYTES) {
+      throw new SecretBoxError('SS12000_SECRET_UNREADABLE');
+    }
     try {
-      const decipher = createDecipheriv('aes-256-gcm', key, sealed.iv);
+      const decipher = createDecipheriv('aes-256-gcm', key, sealed.iv, { authTagLength: AUTH_TAG_BYTES });
       decipher.setAAD(aad);
       decipher.setAuthTag(sealed.authTag);
       return Buffer.concat([decipher.update(sealed.ciphertext), decipher.final()]).toString('utf8');

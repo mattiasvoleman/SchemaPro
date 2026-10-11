@@ -48,6 +48,27 @@ describe('SecretBox (AES-256-GCM, origin-bound)', () => {
     expect(() => box.open({ ...sealed, ciphertext: flipped }, binding)).toThrow('SS12000_SECRET_UNREADABLE');
   });
 
+  it.each([
+    ['cut to 4 bytes', 4],
+    ['cut to 12 bytes', 12],
+  ])('refuses a genuine tag %s, so a short tag never stands in for the whole one', (_label, bytes) => {
+    // Without an authTagLength Node accepts a GCM tag of 4 to 16 bytes and
+    // checks only the bytes it is given: the first bytes of the real tag
+    // then open the row, and a 4-byte tag is a forgery within reach.
+    const box = new SecretBox(KEY);
+    const sealed = box.seal('s3cret', binding);
+    const short = { ...sealed, authTag: sealed.authTag.subarray(0, bytes) };
+    expect(() => box.open(short, binding)).toThrow(new SecretBoxError('SS12000_SECRET_UNREADABLE'));
+  });
+
+  it('refuses an iv that is not 12 bytes', () => {
+    const box = new SecretBox(KEY);
+    const sealed = box.seal('s3cret', binding);
+    expect(() => box.open({ ...sealed, iv: Buffer.concat([sealed.iv, Buffer.alloc(4)]) }, binding)).toThrow(
+      new SecretBoxError('SS12000_SECRET_UNREADABLE'),
+    );
+  });
+
   it('decrypts with the previous key during a rotation and always seals with the current one', () => {
     const before = new SecretBox(OLD_KEY).seal('s3cret', binding);
     const rotated = new SecretBox(KEY, OLD_KEY);
