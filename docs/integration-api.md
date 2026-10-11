@@ -494,8 +494,13 @@ Pages per S1: filters and `limit` on the first request, `pageToken` and `limit`
 only after. An INCREMENTAL run adds `meta.modified.after` and reads
 `GET /deletedEntities?after=…&entities=Person&entities=Group&entities=Duty`.
 Anyone a pupil, a duty or a group names who was neither read nor linked is read
-through `POST /persons/lookup {ids}` (S1 `PersonsExpandedArray`). A provider that
-refuses an incremental filter makes the run FULL, and later runs too. A run
+through `POST /persons/lookup {ids}` (S1 `PersonsExpandedArray`). An INCREMENTAL
+run also looks up a *linked* person a changed group names as an active member:
+S1's `groupMemberships` belong to Group, so a class move modifies the two groups
+and not the Person, and without the pupil's record the move would be lost until
+the next FULL run. A provider that refuses an incremental filter makes the run
+FULL, and later runs too; a FULL run whose lookup is refused goes on and records
+`SS12000_LOOKUP_REFUSED` in its errors with the number of ids left unread. A run
 whose fetch does not complete, or a FULL fetch with no pupils (or staff) while
 linked ones exist (`SS12000_SOURCE_EMPTY`), produces no diff.
 
@@ -517,12 +522,26 @@ record is parsed.
 | Klass `groupMemberships` active on T | `Users.studentGroupId` | through the role-guarded write; P4's trigger records the move (dated the school's today) |
 | Undervisning `groupMemberships` | `StudentGroupMembers` | added, never removed |
 | `Duty.id` | `Ss12000DutyLinks` | no HR figure; an ended duty gets `endedAt` |
-| `securityMarking` ≠ Ingen | — | every change for the person deselected, never automatic, not stored |
+| `securityMarking` ≠ Ingen | — | every change for the person deselected, never automatic, not stored; any value other than `Ingen` (another Unicode form, case, an unknown value) counts as protected |
 
 Without a stored id, a LINK by email is proposed only for exactly one active
-local row with the same role and an address no other source person claims; a
-group LINK needs the same name, year and kind. Everything else is a named
-conflict for the admin.
+local row with the same role and an address no other source person claims (a
+linked person's new address counts as a claim, so an email update and a create
+of the same address are both `PERSON_EMAIL_TAKEN`); a group LINK needs the same
+name, year and kind. Everything else is a named conflict for the admin.
+
+A LINK or RELINK is a proposal until it is applied. Every change that depends on
+it — the name update beside it, a class move, a group membership, a guardian
+link, a duty link — carries only the source's id, and the apply resolves it only
+through a row linked before the apply or linked or created in it. When the admin
+deselects a LINK ("not the same person"), the row the address matched gets
+nothing; the dependants are skipped with `SS12000_DEPENDENCY_NOT_APPLIED`.
+
+A record the parser refuses (`INVALID_RECORD`) is not an absence. A linked
+person whose record was refused is `PERSON_RECORD_INVALID`, and while any person
+record of a FULL run was refused, a deactivation inferred from absence
+(`ABSENT_FROM_SOURCE`, a guardian's `NO_ACTIVE_CHILD`) is
+`ROSTER_HAS_INVALID_RECORDS`: deselected and never automatic.
 
 ### Diff, apply, schedule
 
@@ -546,7 +565,12 @@ conflict for the admin.
   link and a pupil's or guardian's deactivation, and stops at max(5, 2 %)
   deactivations. It never creates, links, changes an email, reactivates or
   deactivates staff. A manual diff younger than 24 h is not superseded: the
-  night records `SKIPPED` (`REVIEW_PENDING`).
+  night records `SKIPPED` (`REVIEW_PENDING`). A night that applies nothing says
+  why in `autoApplyBlockedReason`: `MASS_DEACTIVATION`, `STALE` (the school
+  changed between fetch and apply) or `REVIEW_REQUIRED` (all that is left needs
+  an admin). A night that applies part of a diff sets the run's `appliedAt`, so
+  its deactivations read as the sync's (and may be reactivated by a later sync)
+  also after a newer run supersedes it.
 
 A run's `before`/`after` hold names and emails only while it is `DIFF_READY`;
 they are nulled the moment it reaches any other status, and a `DIFF_READY` run
