@@ -169,9 +169,12 @@ A `groups.read`-only key therefore never learns a pupil's name through a
 group's memberships.
 
 Limits: 120 requests a minute **per key**, not per address, so one consumer
-address serving many schools does not share one bucket. Before a key is known,
-600 attempts a minute per address. Past either limit the answer is 429
-`TOO_MANY_REQUESTS` with `Retry-After`.
+address serving many schools does not share one bucket. Per address, only
+attempts that **fail** to authenticate count (no key, a malformed, unknown or
+revoked one): past 600 a minute that address is refused before any lookup
+until the minute passes. A request with a valid key never counts toward the
+address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
+`Retry-After`.
 
 ### Paging, filters, meta and errors
 
@@ -212,7 +215,11 @@ address serving many schools does not share one bucket. Before a key is known,
   "Svaret är förstort" (a calendar lookup over 5000 events). The message never
   echoes a value you sent. **Logs carry the method, the path and the status,
   never the query string**, so a personnummer or a name in a filter never
-  reaches a log line.
+  reaches a log line. That holds also for a request under `/ss12000/v2.0`
+  that no route answers (an S1 endpoint SchemaPro does not serve, a wrong
+  method): the house error filter drops its query from the log and from
+  `instance`. A page token missing a parameter the operation requires is
+  `INVALID_PAGE_TOKEN`.
 * **Incremental reads.** Read with `meta.modified.after` and
   `/deletedEntities?after=`. **Overlap your cursor by ten minutes.** S1 is
   silent on this, but a version is dated by its transaction's start, so a long
@@ -245,7 +252,9 @@ holds a value for it.
 active year's timplans: GRUNDSKOLA→`GR`, its årskurs 0 →`FKLASS`,
 ANPASSAD_GRUNDSKOLA_AMNEN→`GRS`, ANPASSAD_GRUNDSKOLA_AMNESOMRADEN→`TR`,
 SPECIALSKOLA→`SP`, SAMESKOLA→`SAM`; 2.1.0 still names grundsärskola and
-träningsskola).
+träningsskola). `schoolTypes` is written on a `Skolenhet` only, as S1 says
+("Anges endast för organisationselement typen Skolenhet"), never on the
+`Skola` several skolenheter make.
 
 **Persons** (`persons.read`; guardians need `responsibles.read`): active users.
 `givenName`, `familyName`, and `emails` with one entry: `Skola elev` for a
@@ -253,7 +262,9 @@ pupil, `Skola personal` for staff, `Privat` for a guardian. A pupil with an
 open class segment and a derivable school type has `enrolments`: `enroledAt`,
 `schoolType`, `schoolYear` (only 0–10) and `startDate`. `startDate` is the
 start of the pupil's unbroken chain of class segments, so a class move is not
-a new enrolment, and there is no `endDate` while the pupil is active.
+a new enrolment, and moving up a year is not one either: the summer between
+two consecutive läsår does not break the chain. There is no `endDate` while
+the pupil is active.
 `responsibles` holds `{person}` only; **`relationType` is omitted** because
 SchemaPro does not store it. **`eduPersonPrincipalNames` is omitted**: S1
 defines it as "spårbar, persistent och globalt unik", and an email address can
@@ -273,11 +284,19 @@ exclusive end is turned into S1's inclusive one, and an open segment has no
 `endDate`. A teaching group lists `{person}` per member; no dates are held.
 `expand=assignmentRoles` gives the MENTORSKAP uppdrag as `Mentor`.
 
-**Duties** (`duties.read`): the active year's posts, built by the same
-`toSs12000Duty` as v1's `/duties`. `dutyPercent` and `hoursPerYear` are sent
-only when the school turned `shareEmploymentWithIntegrations` on. The
-nedsättning, the target and the note are never selected. The ids are then
-translated as above. `expand=person`.
+**Duties** (`duties.read`): the active year's posts of active teachers, built
+by the same `toSs12000Duty` as v1's `/duties`. `dutyPercent` and
+`hoursPerYear` are sent only when the school turned
+`shareEmploymentWithIntegrations` on. The nedsättning, the target and the note
+are never selected. The ids are then translated as above. When the Duty is
+served under the **source's** duty id (a linked teacher), it carries the
+source's `dutyRole`, `startDate` and `endDate` as the link stored them, and no
+`dutyPercent` or `hoursPerYear`: S1 has one namespace for ids (L5061), and the
+source holds its own figures under that id. A deactivated teacher's Duty
+leaves `/duties` and is listed by `/deletedEntities`; the activities and
+events naming it get a new `meta.modified`. An HR-only edit (employment
+percent, contract kind) moves no Duty's `meta.modified` unless the school
+shares those figures. `expand=person`.
 
 **Activities** (`activities.read`): **the published** weekly timetable of the
 active year. That is the live masters in DIRECT and the publication's snapshot
@@ -286,7 +305,8 @@ valid now in DRAFT, read through the same `readGrundschema` as v1's
 activities. `displayName` (`<subject> — <group>`, as in v1),
 `calendarEventsRequired`, `startDate`/`endDate` (the master's dates or the
 year's), `activityType` (`Undervisning` when the subject counts toward the
-timplan, else `Elevaktivitet`, S1's own example being mentorstid), `groups`,
+timplan, else `Elevaktivitet`, S1's own example being mentorstid; changing
+that flag on a subject moves its activities' `meta.modified`), `groups`,
 `teachers` (`[{duty}]`), `syllabus` (when the Syllabus is served), and
 `organisation`. An ad-hoc lesson is an Activity of its own, with
 `calendarEventsRequired: false` and its date as both bounds.
@@ -299,9 +319,9 @@ published calendar) of the active and past years. `startTime.onOrAfter` and
 Fields: `activity`, `startTime`, `endTime`, `cancelled`, `rooms`,
 `studentExceptions` (a pupil named on the lesson outside its groups), and
 `teacherExceptions`. The exceptions compare the event's teachers with its
-activity's. When the lesson has a vikarie, the event's teachers are the
-SUBSTITUTE rows (the vikarie participates, the planned teachers do not);
-otherwise every row counts. **Only the fact: never an absence, a reason, the
+activity's: every teacher on the lesson counts. A cover removes only the
+replaced teacher's row, so the vikarie participates, the replaced teacher does
+not, and a co-teacher still on the lesson is not listed at all. **Only the fact: never an absence, a reason, the
 lesson's note or a cancel cause.** `expand=activity`. `expand=attendance` is
 403: no scope grants attendance (see "Left out").
 
