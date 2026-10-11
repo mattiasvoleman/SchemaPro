@@ -16,18 +16,24 @@
 import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Copy } from "lucide-react";
+import { Copy, Link2Off } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { PublicationSettings, PublicLink, PublicScopeKind } from "@/lib/publication-types";
 import { formatInstant, publicViewerUrl } from "@/lib/publication-view";
+import { LINK_STATE_VARIANT, type LinkState } from "@/lib/status-variants";
 import type { AcademicYear, Person, Room, StudentGroup } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { RowActions } from "@/components/ui/row-actions";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -35,19 +41,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCreatePublicLink, usePublicLinks, useRevokePublicLink } from "./use-public-links";
 
 const KINDS: PublicScopeKind[] = ["GROUP", "TEACHER", "ROOM"];
 /** A Select cannot hold an empty value; this stands for "an index". */
 const INDEX = "index";
+
+/** The inner-table cells: compact rows, the outer columns flush with the card's padding. */
+const TH = "h-auto py-1.5 pr-3 text-xs";
+const TD = "py-1.5 pr-3";
 
 interface LinksCardProps {
   year: AcademicYear;
@@ -85,6 +88,11 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
     const teacher = teachers.find((person) => person.id === link.targetId);
     return teacher ? `${teacher.firstName} ${teacher.lastName}` : "?";
   };
+  /** What a row's buttons and its revoke question call the link: its target, or which register. */
+  const linkName = (link: PublicLink): string =>
+    link.targetId === null ? t(`linkIndexOf.${link.kind}`) : targetName(link);
+  const stateOf = (link: PublicLink): LinkState =>
+    link.revokedAt ? "REVOKED" : link.notShownBecause ? "NOT_SHOWN" : "ACTIVE";
   const options =
     kind === "GROUP"
       ? yearGroups.map((group) => ({ id: group.id, name: group.name }))
@@ -142,17 +150,17 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("linksTitle", { year: year.name })}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm">
-        <p>{t("linksBody")}</p>
-        <div className="grid gap-3 sm:grid-cols-3 [&>*]:min-w-0">
-          <div className="space-y-1">
-            <Label htmlFor="link-kind">{t("linkKind")}</Label>
+    <SectionCard
+      id="publish-links"
+      title={t("linksTitle", { year: year.name })}
+      description={t("linksBody")}
+      descriptionClassName="max-w-prose"
+    >
+      <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+        <FormField id="link-kind" label={t("linkKind")}>
+          {(control) => (
             <Select value={kind} onValueChange={(next) => pickKind(next as PublicScopeKind)}>
-              <SelectTrigger id="link-kind" aria-label={t("linkKind")}>
+              <SelectTrigger {...control}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -163,11 +171,12 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="link-target">{t("linkTarget")}</Label>
+          )}
+        </FormField>
+        <FormField id="link-target" label={t("linkTarget")}>
+          {(control) => (
             <Select value={target} onValueChange={setTarget}>
-              <SelectTrigger id="link-target" aria-label={t("linkTarget")}>
+              <SelectTrigger {...control}>
                 <SelectValue placeholder={t("linkPickTeacher")} />
               </SelectTrigger>
               <SelectContent>
@@ -179,94 +188,139 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
                 ))}
               </SelectContent>
             </Select>
+          )}
+        </FormField>
+        <FormField id="link-label" label={t("linkLabel")} optional>
+          <Input
+            value={label}
+            maxLength={80}
+            disabled={kind === "TEACHER"}
+            onChange={(event) => setLabel(event.target.value)}
+          />
+        </FormField>
+      </div>
+      {!scopeOn ? <p className="max-w-prose text-sm text-muted-foreground">{t("linkScopeOff")}</p> : null}
+      <Button onClick={doCreate} disabled={create.isPending || (needsTarget && target === INDEX)}>
+        {t("linkCreate")}
+      </Button>
+      {made ? (
+        <Notice tone="success" title={t("linkMade")}>
+          <div className="flex items-center gap-2">
+            <Input readOnly value={made} aria-label={t("linkAddress")} onFocus={(event) => event.target.select()} />
+            <Button variant="outline" size="icon" onClick={copy} title={t("linkCopy")} aria-label={t("linkCopy")}>
+              <Copy />
+            </Button>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="link-label">{t("linkLabel")}</Label>
-            <Input
-              id="link-label"
-              value={label}
-              maxLength={80}
-              disabled={kind === "TEACHER"}
-              onChange={(event) => setLabel(event.target.value)}
-            />
-          </div>
-        </div>
-        {!scopeOn ? <p>{t("linkScopeOff")}</p> : null}
-        <Button onClick={doCreate} disabled={create.isPending || (needsTarget && target === INDEX)}>
-          {t("linkCreate")}
-        </Button>
-        {made ? (
-          <div className="space-y-1 rounded-md border p-3" role="status">
-            <p className="font-medium">{t("linkMade")}</p>
-            <div className="flex items-center gap-2">
-              <Input readOnly value={made} aria-label={t("linkAddress")} onFocus={(event) => event.target.select()} />
-              <Button variant="outline" size="icon" onClick={copy} title={t("linkCopy")} aria-label={t("linkCopy")}>
-                <Copy />
-              </Button>
-            </div>
-          </div>
-        ) : null}
-        {problem ? (
-          <p role="alert" className="font-medium">
-            {problem}
-          </p>
-        ) : null}
+        </Notice>
+      ) : null}
+      {problem ? <Notice tone="destructive">{problem}</Notice> : null}
 
-        {links.data && links.data.length > 0 ? (
-          <div className="overflow-x-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-foreground">{t("linkKind")}</TableHead>
-                  <TableHead className="text-foreground">{t("linkTarget")}</TableHead>
-                  <TableHead className="text-foreground">{t("linkLabel")}</TableHead>
-                  <TableHead className="text-foreground">{t("linkLastUsed")}</TableHead>
-                  <TableHead className="text-foreground">{t("validityStatus")}</TableHead>
-                  <TableHead />
+      {links.isError && links.data ? (
+        // A failed refetch keeps the list as last read, with this above it.
+        <LoadError variant="inline" title={t("linksLoadFailed")} hint={tCommon("refetchFailedHint")} />
+      ) : null}
+      {links.isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : links.isError && !links.data ? (
+        <LoadError variant="inline" title={t("linksLoadFailed")} hint={t("linksLoadFailedHint")} />
+      ) : links.data && links.data.length > 0 ? (
+        /*
+          Inside the card, so no frame of its own. On a phone a row is read by
+          which link it is, its status and its button; the kind moves under the
+          name (two "Register" rows are a class register and a room register),
+          and the label and the last visit step aside.
+        */
+        <div className="overflow-x-auto">
+          <Table>
+            <caption className="sr-only">{t("linksTitle", { year: year.name })}</caption>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead scope="col" className={cn(TH, "hidden pl-0 sm:table-cell")}>
+                  {t("linkKind")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, "pl-0 sm:pl-3")}>
+                  {t("linkTarget")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, "hidden sm:table-cell")}>
+                  {t("linkLabel")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, "hidden sm:table-cell")}>
+                  {t("linkLastUsed")}
+                </TableHead>
+                <TableHead scope="col" className={TH}>
+                  {t("validityStatus")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, "w-16 pr-0")}>
+                  <span className="sr-only">{tCommon("actions")}</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {links.data.map((link) => (
+                <TableRow key={link.id}>
+                  <TableCell className={cn(TD, "hidden pl-0 font-medium sm:table-cell")}>
+                    {t(`linkKinds.${link.kind}`)}
+                  </TableCell>
+                  <TableCell className={cn(TD, "pl-0 sm:pl-3")}>
+                    {targetName(link)}{" "}
+                    <span className="block text-xs text-muted-foreground sm:hidden">
+                      {t(`linkKinds.${link.kind}`)}
+                    </span>
+                  </TableCell>
+                  <TableCell className={cn(TD, "hidden sm:table-cell")}>
+                    {link.label ?? <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell className={cn(TD, "hidden whitespace-nowrap tabular-nums sm:table-cell")}>
+                    {link.lastUsedAt ? (
+                      formatInstant(link.lastUsedAt, locale)
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className={TD}>
+                    <Badge variant={LINK_STATE_VARIANT[stateOf(link)]}>
+                      {link.revokedAt
+                        ? t("linkStateRevoked")
+                        : link.notShownBecause
+                          ? t(`linkNotShown.${link.notShownBecause}`)
+                          : t("linkStateActive")}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className={cn(TD, "pr-0 text-right")}>
+                    {link.revokedAt ? null : (
+                      <RowActions
+                        name={linkName(link)}
+                        actions={[
+                          {
+                            label: t("linkRevoke"),
+                            icon: Link2Off,
+                            ariaLabel: t("linkRevokeNamed", { name: linkName(link) }),
+                            onSelect: () => setRevoking(link),
+                          },
+                        ]}
+                      />
+                    )}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {links.data.map((link) => (
-                  <TableRow key={link.id}>
-                    <TableCell>{t(`linkKinds.${link.kind}`)}</TableCell>
-                    <TableCell>{targetName(link)}</TableCell>
-                    <TableCell>{link.label ?? "–"}</TableCell>
-                    <TableCell className="tabular-nums">{link.lastUsedAt ? formatInstant(link.lastUsedAt, locale) : "–"}</TableCell>
-                    <TableCell>
-                      <Badge variant={link.revokedAt || link.notShownBecause ? "outline" : "success"}>
-                        {link.revokedAt
-                          ? t("linkStateRevoked")
-                          : link.notShownBecause
-                            ? t(`linkNotShown.${link.notShownBecause}`)
-                            : t("linkStateActive")}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {link.revokedAt ? null : (
-                        <Button variant="outline" size="sm" onClick={() => setRevoking(link)}>
-                          {t("linkRevoke")}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        ) : links.data ? (
-          <p>{t("linksNone")}</p>
-        ) : null}
-      </CardContent>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : links.data ? (
+        <p className="text-sm text-muted-foreground">{t("linksNone")}</p>
+      ) : null}
       <ConfirmDialog
         open={revoking !== null}
         onOpenChange={(open) => (open ? null : setRevoking(null))}
-        title={t("linkRevoke")}
+        title={revoking ? t("linkRevokeTitle", { name: linkName(revoking) }) : t("linkRevoke")}
         description={t("linkRevokeConfirm")}
         confirmLabel={t("linkRevoke")}
         destructive
         loading={revoke.isPending}
         onConfirm={doRevoke}
       />
-    </Card>
+    </SectionCard>
   );
 }

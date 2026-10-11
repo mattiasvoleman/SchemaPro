@@ -74,7 +74,16 @@
     "sunday": "Sön",
     "copied": "Kopierat till urklipp",
     "select": "Välj…",
-    "selected": "Vald"
+    "selected": "Vald",
+    "year": "Läsår",
+    "nextStep": "Nästa steg: {name}",
+    "actionNamed": "{action} {name}",
+    "moreActionsFor": "Fler åtgärder för {name}",
+    "stepDone": "klart",
+    "skipToContent": "Hoppa till innehållet",
+    "refetchFailedHint": "Det som visas är det som senast hämtades, och det kan ha ändrats sedan dess. Ladda om sidan innan du ändrar något.",
+    "confirmLoadFailed": "Bekräftelsen kunde inte öppnas. Inget är ändrat – försök igen.",
+    "formLoadFailed": "Formuläret kunde inte öppnas. Inget är ändrat – försök igen."
   },
   "days": {
     "1": "Måndag",
@@ -143,11 +152,11 @@
     "constraints": "Tillgänglighet",
     "frameTimes": "Ramtider",
     "lunchServings": "Lunchsittningar",
-    "breaks": "Lov & studiedagar",
+    "breaks": "Lov och studiedagar",
     "scheduling": "Schemaläggning",
     "generate": "Generera schema",
     "timetable": "Grundschema",
-    "gaps": "Luckor & håltimmar",
+    "gaps": "Luckor och håltimmar",
     "operations": "Drift",
     "dayPlanner": "Dagsplanering",
     "teacherAbsence": "Lärarfrånvaro",
@@ -167,7 +176,9 @@
     "publishing": "Publicering",
     "cancellations": "Avbokning",
     "coverBoard": "Vikarietavla",
-    "myCover": "Vikariepass & frånvaro"
+    "myCover": "Vikariepass och frånvaro",
+    "basics": "Grunddata",
+    "label": "Huvudmeny"
   },
   "dashboard": {
     "title": "Översikt",
@@ -183,14 +194,16 @@
     "quickActions": "Snabbåtgärder",
     "actionSetup": "Kör skolinställningar",
     "actionSetupHint": "Lägg till ämnen, salar, klasser och lärare",
-    "actionRequirements": "Lägg in timplansposter",
-    "actionRequirementsHint": "Vem som undervisar vad, hur ofta",
     "actionGenerate": "Generera schema",
     "actionGenerateHint": "Låt AI-motorn bygga schemat",
     "actionPublish": "Granska & publicera",
     "actionPublishHint": "Gör grundschemat till en levande kalender",
     "upcoming": "Dagens lektioner",
-    "noLessons": "Inga lektioner schemalagda idag."
+    "noLessons": "Inga lektioner schemalagda idag.",
+    "actionTimplan": "Lägg upp timplanen",
+    "actionTimplanHint": "Minuter per vecka i varje ämne och årskurs, mot de nationella timmarna",
+    "loadFailed": "Några siffror kunde inte hämtas",
+    "loadFailedHint": "De visas som —, inte som noll. Inget har ändrats; ladda om sidan för att försöka igen."
   },
   "setup": {
     "title": "Kom igång",
@@ -215,15 +228,21 @@
     "groupsTitle": "Skapa era klasser",
     "groupsHint": "Varje klass schemaläggs som en enhet. Elever kopplas till en klass.",
     "gradeLevel": "Årskurs",
-    "peopleTitle": "Bjud in lärare & elever",
+    "peopleTitle": "Bjud in lärare och elever",
     "peopleHint": "Personer loggar in med sin e-postadress. Elever måste tillhöra en klass.",
-    "done": "Klart — fortsätt till timplansposterna",
-    "goToRequirements": "Lägg in timplansposter",
     "yearsLink": "Läsåren och rullningen till nästa",
     "yearExistsHint": "Ett nytt läsår skapas inaktivt när skolan redan har ett. Vill du skapa nästa läsår från det här, rulla vidare det i stället — då följer klasser, timplansposter och lärare med.",
     "yearTimplansButton": "Timplan per årskurs",
     "yearTimplansFor": "Timplan per årskurs för {year}",
-    "yearTimplansDefaulted": "{year} följer {plan} i {count, plural, one {# årskurs} other {# årskurser}}. Ändra under Timplan per årskurs."
+    "yearTimplansDefaulted": "{year} följer {plan} i {count, plural, one {# årskurs} other {# årskurser}}. Ändra under Timplan per årskurs.",
+    "doneTimplan": "Klart — fortsätt till timplanen",
+    "goToTimplan": "Till timplanen",
+    "stepsLabel": "Steg i Kom igång",
+    "loadFailed": "Skolans grunddata kunde inte hämtas",
+    "loadFailedHint": "Stegen visas inte, eftersom de skulle se ogjorda ut av fel skäl. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "goToPage": "Till sidan {page}",
+    "groupsNeedActiveYear": "En klass hör till ett läsår. Skapa och aktivera läsåret i första steget, så går det att lägga till klasser här.",
+    "doneBody": "Läsår, ämnen, salar, klasser och personer finns på plats. Välj ett steg ovan om du vill lägga till fler."
   },
   "subjects": {
     "title": "Ämnen",
@@ -232,7 +251,7 @@
     "editSubject": "Redigera ämne",
     "namePlaceholder": "Matematik",
     "codePlaceholder": "MA",
-    "empty": "Inga ämnen ännu. Lägg till det första för att komma igång.",
+    "empty": "Ämnena används i timplanen, i tjänstefördelningen och i alla schemavyer. Lägg till det första, eller importera alla från en CSV-fil.",
     "requiredRoomType": "Kräver saltyp",
     "anyRoomType": "Valfri sal",
     "requiredRoomTypeHint": "Optimeraren placerar bara ämnet i salar av vald typ.",
@@ -250,7 +269,14 @@
     "notTeachingTime": "Ej undervisningstid",
     "loadFactor": "Faktor i tjänstefördelningen",
     "loadFactorHint": "0,5–3, 1 = minuterna som de är. Används bara när tjänstefördelningen räknar med Faktor (Tjänstefördelning › Inställningar): lärarens tjänstgöring = lektionstid × faktor.",
-    "loadFactorInvalid": "Ange ett tal mellan 0,5 och 3 med högst tre decimaler."
+    "loadFactorInvalid": "Ange ett tal mellan 0,5 och 3 med högst tre decimaler.",
+    "loadFailed": "Ämnena kunde inte hämtas",
+    "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan inte har några ämnen. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "emptyTitle": "Inga ämnen ännu",
+    "tableCaption": "Skolans ämnen med kod, nationell ämneskod och färg",
+    "dialogHint": "Namnet och färgen visas i alla schemavyer. Den nationella ämneskoden avgör vilken rad i timplanen ämnets timmar räknas mot.",
+    "roomTypeDialogHint": "Salstypen går sedan att välja både för ämnen och för salar.",
+    "roomTypesUnavailable": "Listan över salstyper kunde inte hämtas. Ämnets salstyp ändras inte om du sparar utan att välja en ny."
   },
   "rooms": {
     "title": "Salar",
@@ -259,7 +285,7 @@
     "editRoom": "Redigera sal",
     "namePlaceholder": "Sal A1",
     "codePlaceholder": "A1",
-    "empty": "Inga salar ännu. Lägg till den första för att komma igång.",
+    "empty": "Schemats lektioner läggs i salarna som finns här. Lägg till den första för att komma igång.",
     "requiresApproval": "Kräver godkännande",
     "requiresApprovalHint": "Självbokningar av denna sal måste godkännas av en administratör innan de bekräftas.",
     "approvalBadge": "Godkännande",
@@ -283,7 +309,14 @@
       "middle": "Mellanstadiet (4–6)",
       "upper": "Högstadiet (7–9)",
       "primary": "F–6"
-    }
+    },
+    "loadFailed": "Salarna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan inte har några salar. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "emptyTitle": "Inga salar ännu",
+    "tableCaption": "Skolans salar med kod, typ, kapacitet, årskurser och plats",
+    "dialogHint": "Kapaciteten och årskurserna avgör vilka lektioner schemat kan lägga i salen. Byggnad och våning används av salsoptimeringen.",
+    "typesFailed": "Salstyperna kunde inte hämtas",
+    "typesFailedHint": "Kolumnen Typ visas som — tills de har hämtats. Inget har ändrats; ladda om sidan för att försöka igen."
   },
   "groups": {
     "title": "Klasser",
@@ -293,7 +326,6 @@
     "namePlaceholder": "7A",
     "members": "Medlemmar",
     "year": "Läsår",
-    "empty": "Inga klasser ännu. Skapa läsåret först, lägg sedan till klasser.",
     "membersTitle": "Medlemmar i {name}",
     "membersHint": "Elever i en undervisningsgrupp behåller sin klass och läggs till här. Schemat ser till att gruppens lektioner aldrig krockar med klassens eller andra grupper eleven ingår i.",
     "membersSave": "Spara ({count})",
@@ -304,8 +336,23 @@
     "kindClassHelp": "En hemklass, t.ex. 7A. Alla elever i klassen följer klassens lektioner.",
     "kindTeachingGroupHelp": "En grupp som skär tvärs över klasserna, t.ex. Ma71 eller språkvalet En74. Lägg till eleverna med knappen Medlemmar.",
     "filterAll": "Alla",
-    "searchPlaceholder": "Sök på grupp, läsår eller elev…",
-    "andMore": " + {count} till"
+    "andMore": " + {count} till",
+    "loadFailed": "Klasserna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan saknar klasser. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "noYearTitle": "Skolan har inget läsår ännu",
+    "noYearHint": "En klass hör till ett läsår. Skapa läsåret först, så går det att lägga till klasserna här.",
+    "noYearAction": "Till läsåren",
+    "emptyTitle": "Skolan har inga klasser ännu",
+    "emptyHint": "Lägg till skolans klasser och undervisningsgrupper, eller importera dem från en CSV-fil.",
+    "searchLabel": "Sök på grupp, läsår eller elev",
+    "noMatch": "Ingen grupp matchar sökningen och sorten du valt",
+    "tableCaption": "Klasser och undervisningsgrupper i alla läsår, med läsår och antal elever",
+    "memberSearch": "Sök elev",
+    "dialogHint": "Gruppen schemaläggs som en enhet i det läsår den hör till.",
+    "countsFailed": "Elevantalen kunde inte hämtas",
+    "countsFailedHint": "Kolumnen Elever visas som —, inte som noll. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "membersLoadFailed": "Gruppens elever kunde inte hämtas",
+    "membersLoadFailedHint": "Listan går inte att spara nu, eftersom den skulle tömma gruppen. Inget har ändrats; stäng och öppna igen för att försöka på nytt."
   },
   "people": {
     "title": "Personer",
@@ -320,7 +367,6 @@
     "class": "Klass",
     "activeState": "Aktiv",
     "inactive": "Inaktiv",
-    "empty": "Inga personer ännu.",
     "filterAll": "Alla",
     "authHint": "Personen loggar in med denna e-post via Supabase Auth.",
     "manageGuardians": "Hantera vårdnadshavare",
@@ -340,7 +386,6 @@
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
     "inviteAll": "Bjud in {count} ej inbjudna",
-    "searchPlaceholder": "Sök på namn, e-post eller klass…",
     "homeClassLabel": "Klass",
     "teachingGroupsLabel": "Undervisningsgrupper",
     "noTeachingGroups": "Eleven ingår inte i någon undervisningsgrupp.",
@@ -348,7 +393,29 @@
     "teachesNothing": "Ingen timplanspost för det aktiva läsåret.",
     "asCoTeacher": "medlärare",
     "noGroupInfo": "Ingen grupptillhörighet att visa för den här rollen.",
-    "workTimeLabel": "Arbetstid"
+    "workTimeLabel": "Arbetstid",
+    "loadFailed": "Personerna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan saknar både personal och elever. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "emptyTitle": "Inga personer ännu",
+    "emptyHint": "Lägg till lärare, elever och vårdnadshavare en i taget, eller importera dem från en CSV-fil.",
+    "searchLabel": "Sök på namn, e-post eller klass",
+    "noMatch": "Ingen person matchar sökningen och rollen du valt",
+    "tableCaption": "Skolans personer med e-post, roll, klass, status och inbjudan. Varje namn kan fällas ut med klass, grupper och tjänst.",
+    "staffingYear": "Tjänst och uppdrag läsåret {year}",
+    "sendInvitationTo": "Skicka inbjudan till {name}",
+    "resendInvitationTo": "Skicka inbjudan igen till {name}",
+    "editHint": "E-postadressen går inte att ändra här, eftersom personen loggar in med den.",
+    "guardiansHint": "En kopplad vårdnadshavare ser elevens schema och kan sjukanmäla eleven och söka ledighet.",
+    "addGuardianLabel": "Koppla en vårdnadshavare",
+    "unlinkGuardian": "Koppla bort {name}",
+    "unlinkTitle": "Koppla bort {guardian}?",
+    "unlinkBody": "{guardian} ser inte längre schemat för {pupil} och kan inte sjukanmäla eleven. Kontot finns kvar, och kopplingen kan göras igen här.",
+    "unlinkConfirm": "Koppla bort",
+    "guardianUnlinked": "{name} är bortkopplad.",
+    "detailsFailed": "Några uppgifter om personerna kunde inte hämtas",
+    "detailsFailedHint": "Klass, grupper, tjänst eller arbetstid kan visas som — eller saknas, fast de finns. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "guardiansLoadFailed": "Elevens vårdnadshavare kunde inte hämtas",
+    "guardiansLoadFailedHint": "Ingen koppling har ändrats. Stäng och öppna igen för att försöka på nytt."
   },
   "requirements": {
     "title": "Timplansposter",
@@ -378,14 +445,13 @@
     "minutesAfterHint": "Tid eleverna behöver när lektionen slutat, till exempel dusch och ombyte. Bara eleverna är upptagna — läraren och salen är lediga direkt när lektionen tar slut.",
     "summary": "{lessons, plural, one {# lektion} other {# lektioner}} den tyngsta veckan · {hours} undervisning per läsår",
     "hoursCaveat": "Timtalet räknar läsårets kalenderveckor och drar av lov och studiedagar: en hel lovvecka försvinner, en enskild studiedag tar en femtedel av sin vecka. Det är en uppskattning på kravnivå — ett krav säger hur många lektioner i veckan, aldrig vilka veckodagar, så ingen vet om studiedagen låg på en av ämnets lektionsdagar. Rätt i genomsnitt över en termin, fel för den enskilda veckan.",
-    "hoursCaveatNoBreaks": "Inga lov eller studiedagar är inlagda för det här läsåret, så timtalet räknar alla kalenderveckor och läser därför ungefär 8–10 veckor för högt. Lägg in läsårets lov under Lov, så dras de av här.",
+    "hoursCaveatNoBreaks": "Inga lov eller studiedagar är inlagda för det här läsåret, så timtalet räknar alla kalenderveckor och läser därför ungefär 8–10 veckor för högt. Lägg in läsårets lov och studiedagar, så dras de av här.",
     "hoursHeader": "Timmar / läsår",
     "yearLabel": "Läsår",
     "peakHeader": "Max / vecka",
     "tableCaption": "Timplansposter per grupp och ämne. Sista kolumnen är gruppens undervisningstimmar per läsår, räknade på läsårets kalenderveckor med avdrag för lov och studiedagar — en uppskattning, eftersom ett krav inte säger vilka veckodagar ämnet läses.",
-    "empty": "Inga timplansposter ännu. AI-motorn behöver dem för att bygga ett schema.",
     "noYear": "Skapa och aktivera ett läsår först.",
-    "loadFailed": "Inga siffror visas, eftersom de skulle bli noll av fel skäl. Byt läsår i väljaren ovan för att försöka igen.",
+    "loadFailed": "Timplansposterna kunde inte hämtas",
     "loadFailedHint": "Inga siffror visas, eftersom de skulle bli noll av fel skäl. Byt läsår i väljaren ovan för att försöka igen.",
     "coTeacher": "Medlärare",
     "coTeacherHint": "Båda lärarna schemaläggs tillsammans. I det publicerade schemat har varje lektion två lärare: huvudläraren och medläraren.",
@@ -444,7 +510,19 @@
       "hintNotCounted": "Ämnet räknas inte som undervisningstid och har ingen rad i timplanen.",
       "hintTeachingGroup": "En undervisningsgrupp har inget eget mål; dess elever räknas mot sin klass mål på täckningssidan.",
       "hintNoGrade": "Klassen har ingen årskurs, så den kan inte jämföras med en timplan."
-    }
+    },
+    "noYearTitle": "Inget läsår ännu",
+    "noYearAction": "Till läsåren",
+    "deleteTitle": "Ta bort timplansposten {name}?",
+    "deleteBody": "Posten tas bort ur läsårets timplansposter, och lärarens tjänst räknas om utan den. Det går inte att ångra.",
+    "noSubjectsTitle": "Skolan har inga ämnen ännu",
+    "noSubjects": "En timplanspost anger ett ämnes tid i en klass. Lägg till ämnena först, så visas rutnätet här.",
+    "noSubjectsAction": "Till ämnena",
+    "noClassesTitle": "Läsåret har inga klasser ännu",
+    "noClasses": "En timplanspost anger ett ämnes tid i en klass. Lägg till läsårets klasser först, eller välj ett annat läsår ovan.",
+    "noClassesAction": "Till klasserna",
+    "hoursNoBreaksTitle": "Timmarna per läsår räknas utan lov",
+    "hoursNoBreaksAction": "Till Lov och studiedagar"
   },
   "timplan": {
     "title": "Timplan",
@@ -680,7 +758,8 @@
       "resultNext": "Sätt lärare och ändra poster på Timplansposter.",
       "openRequirements": "Öppna Timplansposter",
       "close": "Stäng"
-    }
+    },
+    "noSubjectsTitle": "Inga ämnen ännu"
   },
   "constraints": {
     "title": "Tillgänglighet",
@@ -737,7 +816,18 @@
     "ruleAllGrades": "Alla årskurser",
     "ruleGradesHint": "Regeln gäller en grupp vars alla årskurser ryms i spannet. En grupp som spänner 6–7 nås alltså inte av en regel för 7–9.",
     "ruleGradeBadge": "Åk {min}–{max}",
-    "ruleGradeBadgeOne": "Åk {min}"
+    "ruleGradeBadgeOne": "Åk {min}",
+    "listTitle": "Begränsningar",
+    "tableCaption": "Begränsningar: vad de gäller, när och varför",
+    "loadFailed": "Begränsningarna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att alla alltid är tillgängliga. Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "dialogDescription": "När en lärare, en sal, en klass eller några årskurser inte är tillgängliga, varje vecka eller ett visst datum.",
+    "roomRulesLoadFailed": "Salsreglerna kunde inte hämtas",
+    "roomRulesLoadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att inga regler finns. Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "deleteLockTitle": "Ta bort låsningen?",
+    "deleteLockBody": "{rule} tas bort och gäller inte nästa gång ett schema genereras. Redan genererade scheman ändras inte.",
+    "deletePreferenceTitle": "Ta bort önskemålet?",
+    "deletePreferenceBody": "{rule} tas bort och vägs inte in nästa gång ett schema genereras. Redan genererade scheman ändras inte."
   },
   "frameTimes": {
     "title": "Ramtider",
@@ -749,7 +839,7 @@
     "everyDay": "Alla dagar",
     "startTime": "Från",
     "endTime": "Till",
-    "empty": "Inga ramtider. Hela skoldagen är öppen för alla årskurser.",
+    "empty": "Hela skoldagen är öppen för alla årskurser.",
     "hint": "En ramtid säger när ett stadium FÅR ha lektioner. Allt utanför är stängt — motorn lägger inget där, grundschemat varnar om du drar dit något, och luckssökningen slutar erbjuda tiden.",
     "overlapHint": "Ramtider som träffar samma grupp gäller alla samtidigt, så det smalaste fönstret vinner. Skriver du «08:00–15:00 alla dagar» och «08:00–13:00 fredag» blir fredagen 08:00–13:00 utan att du behöver ta bort något.",
     "effectiveTitle": "Så här blir veckan",
@@ -759,7 +849,16 @@
     "duplicate": "Det finns redan en ramtid för de årskurserna den dagen.",
     "changeover": "Marginal mellan lektioner (minuter)",
     "changeoverHint": "Tid en klass eller lärare behöver för att förflytta sig. Motorn lämnar minst så mycket mellan två lektioner i följd. 0 betyder ingen marginal. Flera ramtider som matchar ger den största — en ramtid är en gräns, en marginal är ett golv.",
-    "offerWholeSchool": "Lägg in en ramtid för hela skolan"
+    "offerWholeSchool": "Lägg in en ramtid för hela skolan",
+    "emptyTitle": "Inga ramtider är inlagda",
+    "loadFailed": "Ramtiderna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista och ingen vecka visas, eftersom en tom lista skulle betyda att hela dagen är öppen. Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "tableCaption": "Inlagda ramtider: årskurser, dag och tid",
+    "gradeFromLabel": "Från årskurs",
+    "gradeToLabel": "Till och med årskurs",
+    "dialogDescription": "De tider årskurserna får ha lektioner, alla dagar eller en viss veckodag.",
+    "deleteTitle": "Ta bort ramtiden?",
+    "deleteBody": "{row} tas bort. Gäller ingen annan ramtid för årskurserna den dagen blir hela dagen öppen för lektioner."
   },
   "lunchServings": {
     "title": "Lunchsittningar",
@@ -774,7 +873,7 @@
     "seats": "Platser i denna sittning",
     "seatsPlaceholder": "Matsalens gräns",
     "seatsHint": "Lämnas fältet tomt gäller matsalens platsantal från lunchkortet.",
-    "empty": "Inga sittningar. Hela lunchfönstret är öppet för alla årskurser samtidigt.",
+    "empty": "Hela lunchfönstret är öppet för alla årskurser samtidigt.",
     "hint": "Du skriver när ett stadium äter. Solvern bestämmer vilken klass som går när inuti fönstret, och delar ett stadium som är större än matsalen i flera vågor.",
     "overlapHint": "Sittningar som når samma grupp läggs ihop — en 6-7-grupp får äta vid både 4-6:s och 7-9:s sittning. En rad för en viss veckodag ersätter alla-dagar-raden den dagen i stället för att vidga den.",
     "flowTitle": "Lunchflöde",
@@ -788,7 +887,22 @@
     "flowTotal": "Som mest {count} samtidigt",
     "flowPrint": "Skriv ut",
     "windowsTitle": "Så här blir veckan",
-    "windowsHint": "Uträknat ur raderna ovan, med samma regel som solvern använder."
+    "windowsHint": "Uträknat ur raderna ovan, med samma regel som solvern använder.",
+    "emptyTitle": "Inga sittningar är inlagda",
+    "loadFailed": "Sittningarna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista och ingen vecka visas, eftersom en tom lista skulle betyda att alla årskurser äter samtidigt. Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "lunchLoadFailed": "Lunchen kunde inte hämtas",
+    "lunchLoadFailedHint": "Utan lunchens längd går det inte att säga om en sittning är för kort, så ingen sittning markeras. Ladda om sidan för att försöka igen.",
+    "flowLoadFailed": "Lunchflödet kunde inte hämtas",
+    "flowLoadFailedHint": "Inget flöde visas, eftersom ett tomt skulle se ut som att inget schema är genererat. Ladda om sidan för att försöka igen.",
+    "tableCaption": "Inlagda sittningar: årskurser, dag, tid och platser",
+    "gradeFromLabel": "Från årskurs",
+    "gradeToLabel": "Till och med årskurs",
+    "dialogDescription": "När årskurserna äter, alla dagar eller en viss veckodag.",
+    "deleteTitle": "Ta bort sittningen?",
+    "deleteBody": "{row} tas bort. Har årskurserna ingen annan sittning den dagen blir hela lunchfönstret öppet för dem.",
+    "flowYearsLoadFailedHint": "Flödet hör till det aktiva läsåret, och läsåren kunde inte hämtas, så inget flöde visas. Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "flowNoYear": "Det finns inget aktivt läsår, så det finns inget lunchflöde att visa."
   },
   "breaks": {
     "title": "Lov och studiedagar",
@@ -817,7 +931,7 @@
     "removedLessons": "{name} sparades. {count, plural, =1 {1 publicerad lektion togs bort ur kalendern.} other {# publicerade lektioner togs bort ur kalendern.}}",
     "removedNone": "{name} sparades. Inga publicerade lektioner behövde tas bort.",
     "deleteBody": "Lovet försvinner ur listan och timplansposternas timtal räknar veckan som undervisad igen. Lektionerna som togs bort när lovet lades in kommer inte tillbaka.",
-    "empty": "Inga lov är inlagda för det här läsåret. Timplansposternas timtal räknar då varje kalendervecka som undervisad, vilket ligger ungefär 8–10 veckor för högt över ett svenskt läsår.",
+    "empty": "Timplansposternas timtal räknar då varje kalendervecka som undervisad, vilket ligger ungefär 8–10 veckor för högt över ett svenskt läsår.",
     "noYear": "Skapa och aktivera ett läsår först.",
     "loadFailed": "Listan över lov kunde inte hämtas.",
     "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan inte har några lov alls. Byt läsår i väljaren ovan för att försöka igen.",
@@ -862,10 +976,13 @@
         "span": "Första årskursen kan inte vara högre än den sista.",
         "group": "Välj en grupp.",
         "noteLong": "Anteckningen kan vara högst 500 tecken."
-      }
+      },
+      "refetchFailed": "Besluten kunde inte hämtas."
     },
     "cancellationsHint": "Ska lektionerna stå kvar som inställda, med dagens namn, och gå att ta tillbaka – prao, friluftsdag? Använd Avbokning i stället för ett lov.",
-    "cancellationsLink": "Till Avbokning"
+    "cancellationsLink": "Till Avbokning",
+    "emptyTitle": "Inga lov är inlagda för läsåret",
+    "toYears": "Till Läsår"
   },
   "generate": {
     "title": "Generera schema",
@@ -911,7 +1028,34 @@
     "rulesEdit": "Ändra",
     "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplansposterna saknar årskurs",
     "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
-    "noYearLink": "Lägg till medlemmar eller årskurs under Klasser"
+    "noYearLink": "Lägg till medlemmar eller årskurs under Klasser",
+    "loadFailed": "Förutsättningarna kunde inte hämtas",
+    "loadFailedHint": "Sidan kan inte säga om schemat går att generera, så knappen väntar. Inget har körts och inget schema har ändrats. Ladda om sidan.",
+    "groupsLoadFailed": "Gruppernas årskurser kunde inte kontrolleras",
+    "groupsLoadFailedHint": "Klasserna eller deras medlemmar kunde inte hämtas, så sidan kan inte varna för grupper utan årskurs. Körningen går att starta, men lektioner för en sådan grupp kan hamna rakt över en rast.",
+    "rulesLoadFailed": "Skolreglerna kunde inte hämtas",
+    "rulesLoadFailedHint": "Körningen läser skolans sparade regler själv, så de gäller ändå. Det är bara sammanfattningen här som saknas.",
+    "historyLoadFailed": "Körningshistoriken kunde inte hämtas",
+    "historyLoadFailedHint": "Tidigare körningar och schemat är orörda. Ladda om sidan för att se listan.",
+    "historyEmpty": "Inga körningar för läsåret ännu.",
+    "preState": {
+      "met": "Uppfyllt",
+      "warn": "Varning",
+      "unmet": "Saknas"
+    },
+    "historyStatus": {
+      "OPTIMAL": "Optimalt",
+      "FEASIBLE": "Fungerande",
+      "INFEASIBLE": "Inget giltigt schema",
+      "TIMEOUT": "Tiden tog slut",
+      "FAILED": "Misslyckades",
+      "PENDING": "Väntar",
+      "RUNNING": "Körs",
+      "SUCCEEDED": "Klar",
+      "UNSTAFFED": "Stoppad: lärare saknas"
+    },
+    "historyYearsLoadFailedHint": "Läsåren kunde inte hämtas, så sidan vet inte vilket läsårs körningar den ska visa. Tidigare körningar och schemat är orörda. Ladda om sidan.",
+    "historyNoYear": "Det finns inget aktivt läsår, så det finns inga körningar att visa."
   },
   "timetable": {
     "title": "Grundschema",
@@ -928,7 +1072,6 @@
     "filterRoom": "Salar",
     "allRooms": "Alla salar",
     "roomsSelected": "{count} salar valda",
-    "empty": "Inget grundschema ännu. Generera ett schema först.",
     "lessonCount": "{count, plural, one {# lektion} other {# lektioner}} / vecka",
     "editTitle": "Justera lektion",
     "editBody": "Flytta lektionen eller byt sal och lärare. Ändringen kontrolleras mot resten av schemat.",
@@ -1065,7 +1208,28 @@
       "announceMore": "{count, plural, one {# ämne till ändrades.} other {# ämnen till ändrades.}}",
       "openCoverage": "Se alla i Täckning"
     },
-    "draftExportNotice": "Utkast – ej publicerat"
+    "draftExportNotice": "Utkast – ej publicerat",
+    "moreActions": "Fler åtgärder",
+    "undoShortcut": "Ångra (Ctrl+Z)",
+    "redoShortcut": "Gör om (Ctrl+Shift+Z)",
+    "viewLabel": "Vy",
+    "loadFailed": "Grundschemat kunde inte hämtas",
+    "loadFailedHint": "Inget i schemat har ändrats. Ladda om sidan innan du flyttar eller lägger till lektioner.",
+    "emptyTitle": "Inget grundschema för läsåret ännu",
+    "emptyHint": "Generera ett schema från timplansposterna, eller lägg in lektioner för hand med Lägg till lektion.",
+    "emptyAction": "Generera schema",
+    "noYearTitle": "Inget aktivt läsår",
+    "noYearHint": "Grundschemat hör till ett läsår. Skapa och aktivera läsåret först, så går det att generera schemat eller lägga in lektioner här.",
+    "noYearAction": "Till läsåren",
+    "yearsLoadFailed": "Läsåren kunde inte hämtas",
+    "yearsLoadFailedHint": "Grundschemat hör till ett läsår, så det visas inte. Inget i schemat har ändrats. Ladda om sidan.",
+    "versionNameLabel": "Namn på versionen",
+    "versionCompareNamed": "Jämför ”{name}” med nuvarande",
+    "versionRestoreNamed": "Återställ ”{name}”",
+    "versionDelete": "Ta bort versionen",
+    "versionDeleteNamed": "Ta bort ”{name}”",
+    "versionsLoadFailed": "Versionerna kunde inte hämtas",
+    "versionsLoadFailedHint": "Ingen version har sparats, återställts eller tagits bort, och grundschemat är orört. Stäng Versioner och öppna igen."
   },
   "roomOptimization": {
     "title": "Optimera salar",
@@ -1103,7 +1267,6 @@
   "dayPlanner": {
     "title": "Dagsplanering",
     "subtitle": "Ställ in lektioner och tilldela vikarier för en specifik dag",
-    "empty": "Inga lektioner detta datum.",
     "cancelAction": "Ställ in lektion",
     "cancelTitle": "Ställ in lektionen?",
     "cancelBody": "Lektionen visas som inställd för lärare och elever.",
@@ -1128,7 +1291,17 @@
     "roomChangedToast": "Sal ändrad",
     "suggestions": "Föreslagna vikarier",
     "suggestionsPrimary": "Klassens lärare",
-    "suggestionsEmpty": "Ingen behörig lärare är ledig då. Välj någon nedan."
+    "suggestionsEmpty": "Ingen behörig lärare är ledig då. Välj någon nedan.",
+    "previousDay": "Föregående dag",
+    "nextDay": "Nästa dag",
+    "loadFailed": "Dagens lektioner kunde inte hämtas",
+    "loadFailedHint": "Inga lektioner är ändrade. Ladda om sidan eller välj dagen igen om en stund.",
+    "emptyTitle": "Inga lektioner den här dagen",
+    "emptyHint": "Kalendern har inga lektioner det datumet – det kan vara en helg, ett lov eller en dag innan schemat är publicerat. Välj en annan dag.",
+    "tableCaption": "Dagens lektioner med tid, ämne, klass, sal, lärare och läge",
+    "lookupsFailed": "Namnen på ämnen, klasser, salar eller lärare kunde inte hämtas",
+    "lookupsFailedHint": "Lektionerna visas ändå, med — där ett namn saknas. Inget är ändrat; ladda om sidan för att försöka igen.",
+    "dialogLoadFailed": "Formuläret kunde inte hämtas. Inget är ändrat – försök igen."
   },
   "teacherAbsence": {
     "title": "Lärarfrånvaro",
@@ -1137,7 +1310,6 @@
     "selectTeacherPlaceholder": "Välj en lärare",
     "from": "Från",
     "to": "Till",
-    "chooseTitle": "Välj en lärare",
     "chooseBody": "Välj en lärare och datumintervall för att se lektionerna som behöver täckas.",
     "empty": "Inga schemalagda lektioner för denna lärare i valt intervall.",
     "affectedCount": "{count, plural, one {# berörd lektion} other {# berörda lektioner}}",
@@ -1173,7 +1345,18 @@
     "countCancelled": "{count} inställda",
     "countHandled": "{count} hanterade på annat sätt",
     "countPassed": "{count} passerade utan beslut",
-    "countNone": "Inga lektioner"
+    "countNone": "Inga lektioner",
+    "previewTitle": "Förhandsgranska lektioner",
+    "previewBody": "Välj en lärare och en period för att se lektionerna och ta hand om dem en i taget – tilldela vikarie, byt sal eller ställ in. Med Registrera frånvaro hamnar de på vikarietavlan i stället.",
+    "loadFailed": "Lärarens lektioner kunde inte hämtas",
+    "loadFailedHint": "Inga lektioner är ändrade. Välj läraren eller perioden igen, eller ladda om sidan.",
+    "tableCaption": "Lärarens schemalagda lektioner i perioden, med datum, tid, ämne, klass och sal",
+    "cancelAllTitle": "{count, plural, one {Ställ in # lektion?} other {Ställ in # lektioner?}}",
+    "cancelAllBody": "Alla lektioner i listan ställs in med orsaken att läraren inte kan, och klasserna och vårdnadshavarna ser dem som inställda. En lektion kan återinsättas under Dagsplanering.",
+    "cancelAllConfirm": "{count, plural, one {Ställ in # lektion} other {Ställ in # lektioner}}",
+    "registerLoadFailed": "Frånvaroregistret kunde inte hämtas",
+    "registerLoadFailedHint": "Ingen frånvaro är ändrad, och vikarietavlan påverkas inte. Ladda om sidan för att försöka igen.",
+    "registerCaption": "Registrerad frånvaro med lärare, period, orsak, läge och lektionernas täckning"
   },
   "roomBooking": {
     "statusPENDING": "Väntar",
@@ -1191,7 +1374,6 @@
     "defaultTitle": "Lokalbokning",
     "invalidWindow": "Sluttiden måste vara efter starttiden.",
     "freeRooms": "Lediga lokaler för denna tid",
-    "noneFreeTitle": "Inga lediga lokaler",
     "noneFreeBody": "Alla lokaler är bokade eller används under denna tid. Prova en annan tid.",
     "seats": "{count} platser",
     "approvalRequired": "Kräver godkännande",
@@ -1201,21 +1383,37 @@
     "cancelledToast": "Bokning avbokad",
     "myBookings": "Mina bokningar",
     "noBookings": "Du har inga lokalbokningar ännu.",
-    "cancel": "Avboka"
+    "cancel": "Avboka",
+    "freeRoomsNeedWindow": "Lediga lokaler visas när sluttiden är efter starttiden.",
+    "loadFailed": "Lediga lokaler kunde inte hämtas",
+    "loadFailedHint": "Utan lokalerna, dagens lektioner och dagens bokningar går det inte att säga vad som är ledigt. Ingen bokning har gjorts eller ändrats. Ladda om sidan om en stund.",
+    "noRooms": "Skolan har inga lokaler registrerade ännu.",
+    "bookingsLoadFailed": "Dina bokningar kunde inte hämtas",
+    "bookingsLoadFailedHint": "Inga bokningar har ändrats. Ladda om sidan om en stund.",
+    "cancelTitle": "Avboka {room}, {when}?",
+    "cancelBody": "Lokalen blir ledig för andra igen. Behöver du den ändå får du boka den på nytt, om den fortfarande är ledig."
   },
   "adminRoomBookings": {
     "title": "Lokalbokningar",
     "subtitle": "Godkänn eller avslå bokningsförfrågningar för speciallokaler",
-    "empty": "Inga bokningar att visa.",
     "requestedBy": "Begärd av {name}",
-    "notePlaceholder": "Anteckning (valfritt)",
     "approve": "Godkänn",
     "reject": "Avslå",
     "approved": "Bokning godkänd",
-    "rejected": "Bokning avslagen"
+    "rejected": "Bokning avslagen",
+    "filterLabel": "Visa bokningar",
+    "listTitle": "{status, select, PENDING {Väntar på beslut} APPROVED {Godkända bokningar} other {Avslagna bokningar}}",
+    "emptyTitle": "{status, select, PENDING {Inga bokningar väntar på beslut} APPROVED {Inga godkända bokningar} other {Inga avslagna bokningar}}",
+    "emptyHint": "Lärarnas förfrågningar om speciallokaler hamnar här, och väntar tills du godkänner eller avslår dem.",
+    "loadFailed": "Bokningarna kunde inte hämtas",
+    "loadFailedHint": "Inga beslut är ändrade. Ladda om sidan för att försöka igen.",
+    "namesFailed": "Namnen på salar eller personer kunde inte hämtas",
+    "namesFailedHint": "Förfrågningarna visas med — där ett namn saknas. Inga beslut är ändrade.",
+    "noteLabel": "Anteckning till läraren",
+    "rejectTitle": "Avslå bokningen av {room}?",
+    "rejectBody": "Läraren får beskedet, med din anteckning om du har skrivit en. Ett beslut kan inte ändras efteråt."
   },
   "reports": {
-    "title": "Rapporter",
     "subtitle": "Närvarograd per klass och elev",
     "period": "Period",
     "class": "Klass",
@@ -1237,14 +1435,15 @@
       "label": "Rapport",
       "attendance": "Närvaro",
       "staffing": "Tjänstefördelning",
-      "cover": "Vikarietimmar"
+      "cover": "Vikarietimmar",
+      "title": "Rapporter",
+      "subtitle": "Närvaro, tjänstefördelning och vikarietimmar för en period"
     },
     "staffing": {
-      "title": "Rapporter",
-      "subtitle": "Tjänstefördelning: planerat, schemalagt och genomfört per lärare",
+      "subtitle": "Planerat, schemalagt och genomfört per lärare över en period",
       "year": "Läsår",
       "noYear": "Inget läsår att visa.",
-      "loadFailed": "Avstämningen kunde inte läsas.",
+      "loadFailed": "Avstämningen kunde inte hämtas",
       "rangeCrossed": "Från ligger efter Till. Siffrorna nedan gäller den senaste giltiga perioden.",
       "empty": "Ingen lärare har planerad, schemalagd eller genomförd tid i perioden.",
       "comparison": "Planerat och schemalagt jämförs {from} – {to}. Beräkningsmodell: {model}. Minuter, avrundat per rad.",
@@ -1319,8 +1518,21 @@
           "GRADE_WITHOUT_TIMPLAN": "Årskurs {grade} har ingen timplan för läsåret och redovisas som grundskola.",
           "ALL_LEFT_OUT": "{name}: undervisningen på en rad har ingen SCB-kolumn. Ange ämnen för hand."
         }
-      }
-    }
+      },
+      "loadFailedHint": "Avstämningen visar inga siffror förrän servern har svarat. Ingen planering, inget schema och ingen genomförd tid har ändrats – försök igen om en stund."
+    },
+    "chooseClassTitle": "Välj en klass",
+    "emptyTitle": "Ingen närvaro registrerad under perioden",
+    "loadFailed": "Närvaron kunde inte hämtas",
+    "loadFailedHint": "Rapporten visar inga siffror förrän närvaron, klasserna och eleverna har lästs, så att ingen elev ser ut att sakna närvaro. Ingen närvaro har ändrats – försök igen om en stund.",
+    "tableCaption": "Närvaro per elev under perioden: registrerade lektioner, närvaro, sen ankomst och frånvaro i minuter",
+    "kpiStudents": "Elever",
+    "kpiStudentsDetail": "av {total} i klassen har registrerad närvaro",
+    "kpiValid": "Giltig frånvaro",
+    "kpiInvalid": "Ogiltig frånvaro",
+    "kpiMinutes": "{minutes} min",
+    "csvFilename": "narvaro_{group}_{from}_{to}.csv",
+    "classPlaceholder": "Välj klass"
   },
   "schedule": {
     "title": "Mitt schema",
@@ -1329,11 +1541,16 @@
     "nextWeek": "Nästa vecka",
     "noLessons": "Inga lektioner denna vecka.",
     "cancelled": "Inställd",
-    "substituteMarker": "Vikarie"
+    "substituteMarker": "Vikarie",
+    "subtitleTeacher": "Dina lektioner vecka för vecka, också de du tar som vikarie",
+    "subtitleStudent": "Dina lektioner, lunch och raster vecka för vecka",
+    "loadFailed": "Veckans lektioner kunde inte hämtas",
+    "loadFailedHint": "Ingenting i schemat har ändrats. Försök igen om en stund.",
+    "thisWeek": "Denna vecka"
   },
   "teacherAttendance": {
     "title": "Närvaro",
-    "subtitle": "Dagens lektioner — välj en för att registrera närvaro",
+    "subtitle": "Dagens lektioner, {date} — välj en för att registrera närvaro",
     "lessonTitle": "Registrera närvaro",
     "recorded": "Närvaro sparad",
     "markAll": "Markera alla närvarande",
@@ -1341,15 +1558,31 @@
     "submitting": "Sparar…",
     "studentCount": "{count} elever",
     "recordedBadge": "{count}/{total} registrerade",
-    "noLessonsToday": "Du har inga lektioner idag.",
+    "noLessonsToday": "Du har inga lektioner idag",
     "notesPlaceholder": "Anteckning (valfritt)",
-    "reportedAbsent": "Anmäld frånvarande"
+    "reportedAbsent": "Anmäld frånvarande",
+    "loadFailed": "Dagens lektioner kunde inte hämtas",
+    "loadFailedHint": "Ingen närvaro har ändrats. Ladda om sidan om en stund.",
+    "lessonsLabel": "Dagens lektioner",
+    "backToLessons": "Till dagens lektioner",
+    "lessonLoadFailed": "Lektionen kunde inte hämtas",
+    "rosterLoadFailed": "Elevlistan kunde inte hämtas",
+    "lessonLoadFailedHint": "Ingen närvaro har sparats eller ändrats. Ladda om sidan om en stund.",
+    "existingLoadFailed": "Den närvaro som redan är registrerad kunde inte hämtas",
+    "existingLoadFailedHint": "Eleverna visas därför utan markering. Det du sparar gäller bara de elever du markerar nu.",
+    "rosterTitle": "Elever"
   },
   "studentAttendance": {
     "title": "Min närvaro",
     "subtitle": "Din närvarohistorik",
     "rate": "Närvarograd",
-    "empty": "Ingen närvaro registrerad ännu."
+    "empty": "Närvaron syns här när en lärare har registrerat den på en av dina lektioner.",
+    "loadFailed": "Din närvaro kunde inte hämtas",
+    "loadFailedHint": "Ingenting i din närvaro har ändrats. Ladda om sidan om en stund.",
+    "emptyTitle": "Ingen närvaro registrerad ännu",
+    "rateNone": "Ingen lektion är registrerad ännu",
+    "rateDetail": "{present} av {counted} registrerade lektioner",
+    "tableCaption": "Din närvaro per lektion: dag, tid, ämne och status"
   },
   "guardian": {
     "title": "Mina barn",
@@ -1402,18 +1635,36 @@
       "emptyToday": "Inget på schemat i dag.",
       "emptyDay": "Inget på schemat.",
       "emptyWeek": "Inget på schemat den här veckan."
-    }
+    },
+    "loadFailed": "Dina barn kunde inte hämtas",
+    "loadFailedHint": "Inga anmälningar eller ansökningar har ändrats. Ladda om sidan om en stund.",
+    "reportsLoadFailed": "Anmälningarna kunde inte hämtas",
+    "leavesLoadFailed": "Ansökningarna kunde inte hämtas",
+    "listsLoadFailedHint": "Det du redan har skickat finns kvar hos skolan. Ladda om sidan om en stund.",
+    "sending": "Skickar …",
+    "deleteReportNamed": "Ta bort anmälan för {name}, {date}",
+    "deleteReportTitle": "Ta bort anmälan för {name}, {date}?",
+    "deleteReportBody": "Skolan och barnets lärare ser inte längre anmälan. Är barnet ändå borta den dagen behöver du anmäla igen."
   },
   "adminLeave": {
     "title": "Ledighetsansökningar",
     "subtitle": "Besluta om vårdnadshavarnas ledighetsansökningar",
-    "empty": "Inga ledighetsansökningar i denna kategori.",
     "requestedBy": "Ansökt av {name}",
-    "notePlaceholder": "Beslutskommentar (valfritt)",
     "approve": "Bevilja",
     "reject": "Avslå",
-    "approved": "Beviljad — {count} frånvarodagar registrerade",
-    "rejected": "Ansökan avslagen"
+    "approved": "Beviljad — {count, plural, one {# frånvarodag registrerad} other {# frånvarodagar registrerade}}",
+    "rejected": "Ansökan avslagen",
+    "filterLabel": "Visa ansökningar",
+    "listTitle": "{status, select, PENDING {Väntar på beslut} APPROVED {Beviljade ansökningar} other {Avslagna ansökningar}}",
+    "emptyTitle": "{status, select, PENDING {Inga ansökningar väntar på beslut} APPROVED {Inga beviljade ansökningar} other {Inga avslagna ansökningar}}",
+    "emptyHint": "Vårdnadshavarnas ansökningar om ledighet hamnar här, och väntar tills du beviljar eller avslår dem.",
+    "loadFailed": "Ansökningarna kunde inte hämtas",
+    "loadFailedHint": "Inga beslut är ändrade. Ladda om sidan för att försöka igen.",
+    "namesFailed": "Namnen på elever eller vårdnadshavare kunde inte hämtas",
+    "namesFailedHint": "Ansökningarna visas med — där ett namn saknas. Inga beslut är ändrade.",
+    "noteLabel": "Kommentar till vårdnadshavaren",
+    "rejectTitle": "Avslå ledigheten för {name}?",
+    "rejectBody": "Vårdnadshavaren får beskedet, med din kommentar om du har skrivit en. Ett beslut kan inte ändras efteråt."
   },
   "notifications": {
     "title": "Notiser",
@@ -1435,7 +1686,7 @@
   },
   "integrations": {
     "title": "Integrationer",
-    "subtitle": "SS12000 åt båda hållen: hämta elever, personal och klasser från elevregistret, och låt andra system läsa schemat.",
+    "subtitle": "SS12000 åt båda hållen: hämta elever, personal och klasser från elevregistret, och låt andra system läsa schemat",
     "tabSource": "Elevregister",
     "tabKeys": "API-nycklar",
     "createTitle": "Skapa API-nyckel",
@@ -1643,7 +1894,8 @@
       "autoBlockedReview": "Natten tillämpade inget: allt som återstod kräver en administratör. Granska diffen.",
       "partlyApplied": "Delvis tillämpad {when}",
       "older": "Visa äldre synkar",
-      "errorCodes": "Fel: {codes}"
+      "errorCodes": "Fel: {codes}",
+      "historyLoadFailed": "Synkhistoriken kunde inte hämtas"
     },
     "review": {
       "title": "Granska synken",
@@ -1745,7 +1997,8 @@
           "NO_ACTIVE_CHILD": "Inget barn med aktiv inskrivning kvar",
           "ABSENT_FROM_SOURCE": "Finns inte längre i registret"
         }
-      }
+      },
+      "changesLoadFailed": "Ändringarna kunde inte hämtas"
     },
     "provisioning": {
       "title": "Nya personer",
@@ -1756,7 +2009,8 @@
       "invite": "Bjud in valda ({count})",
       "invited": "{sent} inbjudningar skickades.",
       "chunked": "Inbjudningarna skickas {chunk} åt gången.",
-      "report": "{sent} skickade, {already} hade redan konto, {failed} misslyckades."
+      "report": "{sent} skickade, {already} hade redan konto, {failed} misslyckades.",
+      "loadFailed": "Listan över nya personer kunde inte hämtas"
     },
     "codes": {
       "OK": "Anslutningen fungerar.",
@@ -1847,7 +2101,12 @@
       "INTEGRATION_KEY_SCOPES_INVALID": "Välj minst ett giltigt omfång.",
       "INTEGRATION_KEY_NOT_FOUND": "Nyckeln finns inte eller är återkallad.",
       "SUBSCRIPTION_NOT_FOUND": "Prenumerationen finns inte längre."
-    }
+    },
+    "tabsLabel": "Integrationens riktning",
+    "loadFailed": "Källsystemet kunde inte hämtas",
+    "loadFailedHint": "Ingenting har hämtats från registret eller ändrats i skolan. Ladda om sidan om en stund.",
+    "keysTitle": "Nycklar",
+    "keysLoadFailed": "Nycklarna kunde inte hämtas"
   },
   "csvImport": {
     "title": "Importera CSV",
@@ -1900,7 +2159,13 @@
     "summary": "Lunch {start}–{end}, {minutes} min",
     "summarySeats": "{seats} platser i matsalen",
     "summaryNoSeats": "ingen platsgräns",
-    "bandLabel": "Lunch"
+    "bandLabel": "Lunch",
+    "rulesTitle": "Skolregler",
+    "rulesIntro": "Hårda villkor för hela skolan, som varje genererat schema måste uppfylla.",
+    "loadFailed": "Skolreglerna kunde inte hämtas",
+    "loadFailedHint": "Formuläret visas inte, eftersom det annars skulle fyllas med standardvärden som kunde sparas över skolans riktiga regler. Ladda om sidan för att försöka igen.",
+    "saveFailed": "Skolreglerna sparades inte",
+    "saveFailedHint": "De regler som gällde innan står kvar."
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",
@@ -1976,7 +2241,12 @@
     "whoNoneOfKind": "Ingen",
     "durationHours": "{hours} h {minutes} min",
     "durationHoursOnly": "{hours} h",
-    "durationMinutes": "{minutes} min"
+    "durationMinutes": "{minutes} min",
+    "loadFailed": "Schemat kunde inte hämtas",
+    "loadFailedHint": "Svaren här räknas ur hela schemat, med skolans regler och klasslistor. När en del av det saknas visar sidan inga svar hellre än felaktiga. Inget har ändrats. Ladda om sidan.",
+    "noYearTitle": "Inget aktivt läsår",
+    "noYearHint": "Frågorna ställs till ett läsårs grundschema. Skapa och aktivera läsåret först, så finns det ett schema att fråga.",
+    "noYearAction": "Till läsåren"
   },
   "rasts": {
     "title": "Raster",
@@ -1995,7 +2265,7 @@
     "lessonBefore": "Kräv en lektion före rasten",
     "lessonBeforeHint": "Klassen måste ha minst en lektion mellan föregående rast eller lunch — eller dagens början — och den här rasten, om den är kvar i skolan efteråt. Utan kravet kan en dag börja med rast.",
     "lessonBeforeShort": "Lektion före",
-    "empty": "Inga raster är inlagda. Utan dem lägger motorn lektionerna dikt mot varandra.",
+    "empty": "Utan dem lägger motorn lektionerna dikt mot varandra.",
     "rowsTitle": "Inlagda raster",
     "weekTitle": "Så här blir veckan",
     "weekHint": "Raderna ovan lästa som en vecka. En dagsspecifik rast ersätter bara den varje-dag-rast vars tid den överlappar — de andra står kvar den dagen.",
@@ -2004,7 +2274,13 @@
     "deleteRast": "Ta bort {name}",
     "deleteTitle": "Ta bort rasten?",
     "deleteBody": "{name} tas bort. Motorn får då lägga lektioner i den tiden vid nästa körning.",
-    "bandLabel": "Rast"
+    "bandLabel": "Rast",
+    "emptyTitle": "Inga raster är inlagda",
+    "loadFailed": "Rasterna kunde inte hämtas",
+    "loadFailedHint": "Ingen lista och ingen vecka visas, eftersom en tom lista skulle betyda att skolan inte har några raster. Inget har ändrats. Ladda om sidan för att försöka igen.",
+    "gradeFromLabel": "Från årskurs",
+    "gradeToLabel": "Till och med årskurs",
+    "dialogDescription": "Minuter då årskurserna inte undervisas, alla dagar eller en viss veckodag."
   },
   "teacherWorkTime": {
     "title": "Arbetstid för {name}",
@@ -2353,7 +2629,8 @@
       "factorFor": "Faktor för {subject}",
       "invalid": "En faktor är ett tal mellan 0,5 och 3 med högst tre decimaler.",
       "save": "{count, plural, =0 {Spara faktorer} one {Spara # faktor} other {Spara # faktorer}}",
-      "saved": "{count, plural, one {# faktor sparad} other {# faktorer sparade}}"
+      "saved": "{count, plural, one {# faktor sparad} other {# faktorer sparade}}",
+      "loadFailedHint": "Inga faktorer har ändrats. Ladda om sidan för att försöka igen."
     },
     "drawerSubjectsFactor": "Räknad tid per ämne (faktor)",
     "printUppdrag": "Skriv ut uppdragsbeskrivning",
@@ -2416,7 +2693,8 @@
         "subjectId": "Ämne",
         "studentGroupId": "Grupp",
         "blockedConstraintId": "Blockerad tid"
-      }
+      },
+      "loadFailedHint": "Inget har ändrats i tjänsten eller uppdragen, bara historiken visas inte. Ladda om sidan för att försöka igen."
     },
     "proposal": {
       "open": "Föreslå bemanning",
@@ -2504,14 +2782,22 @@
       "undoRefused": "Kunde inte ångra: {reason}",
       "engineUnavailable": "Motorn kan inte föreslå bemanning just nu. Försök igen om en stund.",
       "yearMissing": "Läsåret finns inte längre. Välj ett annat läsår."
-    }
+    },
+    "noYearTitle": "Inget läsår ännu",
+    "noYearAction": "Till läsåren",
+    "emptyTitle": "Inga lärare med tjänst ännu",
+    "policyLoadFailed": "Inställningarna kunde inte hämtas",
+    "policyLoadFailedHint": "Spara är avstängt tills skolans inställningar har lästs, så att standardvärdena i fälten inte skriver över dem. Ladda om sidan för att försöka igen.",
+    "removeEmploymentTitle": "Ta bort tjänsten för {name} {year}?",
+    "removeEmploymentBody": "Tjänstegrad, nedsättning och avtal för läsåret tas bort, och läraren räknas utan mål tills en tjänst sparas igen. Timplansposter och uppdrag ligger kvar.",
+    "dutiesLoadFailedHint": "Inget har ändrats i uppdragen. Ladda om sidan för att försöka igen."
   },
   "myStaffing": {
     "title": "Min tjänst",
-    "subtitle": "Din tjänstefördelning för läsåret {year}.",
+    "subtitle": "Din tjänstefördelning för läsåret {year}",
     "readOnly": "Tjänstefördelningen läggs av skolledningen. Ser något fel ut, tala med din rektor.",
     "noYear": "Inget aktivt läsår",
-    "loadFailed": "Tjänsten kunde inte läsas just nu. Ladda om sidan om en stund.",
+    "loadFailed": "Tjänsten kunde inte hämtas",
     "notRegistered": "Ingen tjänst registrerad för {year}",
     "notRegisteredBody": "Skolledningen har inte lagt in någon anställning, undervisning eller något uppdrag för dig det här läsåret.",
     "noEmployment": "Ingen anställning registrerad. Utan den finns inget mål att jämföra med.",
@@ -2528,7 +2814,9 @@
     "shareHeader": "Andel av tjänsten",
     "noTeaching": "Ingen undervisning är fördelad till dig ännu.",
     "noDuties": "Inga uppdrag registrerade.",
-    "printLink": "Skriv ut uppdragsbeskrivning"
+    "printLink": "Skriv ut uppdragsbeskrivning",
+    "loadFailedHint": "Ingenting i din tjänst har ändrats. Ladda om sidan om en stund.",
+    "noYearBody": "Min tjänst visas när skolledningen har aktiverat ett läsår."
   },
   "planningYear": {
     "label": "Läsår att planera",
@@ -2823,7 +3111,15 @@
       "ROLLOVER_LINK_IS_FIXED": "Kopplingen till förra läsåret sätts när läsåret rullas vidare och kan inte ändras.",
       "ROLLOVER_LINK_MISMATCH": "En grupps föregångare måste ligga i läsåret före gruppens eget.",
       "ROLLOVER_GROUP_IS_LINKED": "Gruppen är kopplad till en grupp i förra eller nästa läsår och kan inte flyttas till ett annat läsår."
-    }
+    },
+    "loadFailed": "Läsåren kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats: inget läsår har aktiverats, rullats vidare eller tagits bort. Ladda om sidan för att försöka igen.",
+    "tableCaption": "Skolans läsår med period, status och den elevflytt som väntar på aktiveringen",
+    "groupsTableCaption": "Grupperna i {name} och vad var och en blir nästa läsår",
+    "rolloverLoadFailed": "Läsåret och dess grupper kunde inte hämtas",
+    "rolloverLoadFailedHint": "Inget har skapats och inget i läsåret har ändrats. Ladda om sidan för att försöka igen.",
+    "rolloverAbout": "Skapa nästa läsår ur ett befintligt, så följer klasser, timplansposter och lärare med",
+    "noSourceAction": "Välj läsår"
   },
   "engineMessages": {
     "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL": "Matsalen räcker inte till hela skolan på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}: {students, plural, one {# elev} other {# elever}} som äter {minutes} minuter var behöver {needed} elevminuter, och {seats} platser under {windowStart}–{windowEnd} ger {offered}. Lägg till platser, vidga lunchfönstret, eller korta lunchen.",
@@ -2904,7 +3200,7 @@
     "title": "Täckning",
     "subtitle": "Läsårets timplan, timplansposter, grundschema och kalender, jämförda per klass, grupp och elev",
     "yearLabel": "Läsår",
-    "backToTimplan": "Timplan",
+    "backToTimplan": "Till timplanen",
     "loadFailed": "Täckningen kunde inte hämtas",
     "loadFailedHint": "Ladda om sidan för att försöka igen.",
     "noYearTitle": "Inget läsår",
@@ -3187,7 +3483,10 @@
         "preschoolAfter2028": "Läsåret {year} gick eleven i en klass med årskurs 0. Förskoleklassen upphör 2028, så året räknas inte.",
         "subjectsUnmapped": "{stageTitle}: inget av elevens ämnen har en nationell ämneskod ({planned} planerat), så ingen nationell jämförelse görs."
       }
-    }
+    },
+    "noYearAction": "Till läsåren",
+    "peopleFailed": "Elevernas namn kunde inte hämtas",
+    "peopleFailedHint": "Täckningen räknas ändå, men eleverna står som ”okänd elev” tills sidan laddas om."
   },
   "teachingTime": {
     "title": "Undervisningstid",
@@ -3205,7 +3504,9 @@
     "unplanned": "Åk {grades} har ingen timplan i SchemaPro ännu, så de ingår inte i Planerat.",
     "backfilled": "Klassen fram till {date} är den klass eleven hade när SchemaPro började spara klasshistorik. Har eleven bytt klass före dess syns det inte.",
     "unpublished": "Den nationella fördelningen per ämne för stadiet är inte publicerad ännu, så timplanens timmar visas inte.",
-    "footer": "Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger.{versions, select, none {} other { Timplanens timmar är SchemaPros referensdata ({versions}).}}"
+    "footer": "Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger.{versions, select, none {} other { Timplanens timmar är SchemaPros referensdata ({versions}).}}",
+    "loadFailed": "Undervisningstiden kunde inte hämtas",
+    "loadFailedHint": "Skolans siffror har inte ändrats. Ladda om sidan om en stund."
   },
   "timplanCohorts": {
     "title": "Timplaner per årskull",
@@ -3276,9 +3577,12 @@
     "disclaimer": "Upplägget följer kommunala förlagor för uppdragsbeskrivningar (till exempel Göteborgs Stads för lärare med ferietjänst); skolans egen mall gäller. Timmar och dagar är skolans inställningar, inte lagtext.",
     "noTeacher": "Ingen tjänst för vald lärare",
     "noTeacherHint": "Öppna uppdragsbeskrivningen från en lärares låda under Tjänstefördelning.",
-    "loadFailed": "Tjänsten kunde inte läsas just nu. Ladda om sidan om en stund.",
+    "loadFailed": "Tjänsten kunde inte hämtas",
     "noOwnPost": "Ingen tjänst registrerad",
-    "noOwnPostHint": "Skolledningen har inte lagt in någon tjänst eller undervisning för dig det läsåret."
+    "noOwnPostHint": "Skolledningen har inte lagt in någon tjänst eller undervisning för dig det läsåret.",
+    "loadFailedHint": "Ladda om sidan om en stund. Ingenting i tjänsten har ändrats.",
+    "backAdmin": "Till tjänstefördelningen",
+    "backTeacher": "Till Min tjänst"
   },
   "publishing": {
     "title": "Publicering",
@@ -3505,7 +3809,24 @@
       "CANCELLATION_RANGE": "Datum och tider: en avbokning ligger inom läsåret, gäller högst 31 dagar, och ett tidsfönster har både början och slut.",
       "CANCELLATION_SCOPE": "Urvalet träffar inga lektioner, eller anger inte vilka årskurser eller grupper det gäller.",
       "CANCELLATION_CREDIT": "En tillgodoräknad dag gäller hela dagar efter i dag. Ta bort tidsfönstret, eller lägg tiden som en egen tillgodoräkning."
-    }
+    },
+    "subtitle": "Grundschemat i kalendern och i Schemavisaren",
+    "tabsLabel": "Publicering och Schemavisaren",
+    "loadFailed": "Publiceringsinställningarna kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats i hur skolan publicerar eller i vad Schemavisaren visar. Ladda om sidan.",
+    "yearsLoadFailed": "Läsåren kunde inte hämtas",
+    "yearsLoadFailedHint": "Giltighet och länkar hör till ett läsår, så de visas inte. Inget publicerat schema och ingen länk har ändrats. Ladda om sidan.",
+    "noYear": "Inget läsår ännu",
+    "noYearHint": "Giltighet och länkar hör till ett läsår. Lägg upp läsåret först, så går det att publicera grundschemat och skapa länkar för det.",
+    "noYearAction": "Till Läsår",
+    "hiddenLoadFailed": "Lärarna eller listan över dolda lärare kunde inte hämtas",
+    "hiddenLoadFailedHint": "Ingen lärare har bytt läge, och dolda lärare visas fortfarande inte. Ladda om sidan innan du ändrar något här.",
+    "validityLoadFailed": "Giltigheten kunde inte hämtas",
+    "validityLoadFailedHint": "Inget publicerat schema har ändrats. Ladda om sidan för att se vad som gäller när.",
+    "linksLoadFailed": "Länkarna kunde inte hämtas",
+    "linksLoadFailedHint": "Ingen länk har återkallats eller ändrats. Ladda om sidan för att se listan.",
+    "linkRevokeNamed": "Återkalla länken till {name}",
+    "linkRevokeTitle": "Återkalla länken till {name}?"
   },
   "cancellations": {
     "title": "Avbokning",
@@ -3573,7 +3894,7 @@
     "reapply": "Tillämpa igen",
     "reapplied": "{count, plural, one {# lektion till ställdes in} other {# lektioner till ställdes in}}.",
     "reverse": "Ta tillbaka",
-    "reverseTitle": "Ta tillbaka {name}",
+    "reverseTitle": "Ta tillbaka {name}?",
     "reverseBody": "Lektioner som avbokningen ställde in och som ligger framåt återställs, med sin tidigare anteckning. Dagar som har börjat rörs inte.",
     "reverseReinstate": "{count, plural, one {# lektion återställs} other {# lektioner återställs}}.",
     "reverseRoomTaken": "{count, plural, one {# lektion förblir inställd} other {# lektioner förblir inställda}}, eftersom salen har bokats eller fått en annan lektion under tiden:",
@@ -3585,7 +3906,18 @@
     "reverseHistory": "{count, plural, one {# lektion har} other {# lektioner har}} börjat eller ändrats sedan och lämnas som de är.",
     "reverseCredits": "{count, plural, one {# tillgodoräknad dag tas bort} other {# tillgodoräknade dagar tas bort}}.",
     "reverseConfirm": "Ta tillbaka",
-    "reversed": "{count, plural, one {# lektion återställdes} other {# lektioner återställdes}}."
+    "reversed": "{count, plural, one {# lektion återställdes} other {# lektioner återställdes}}.",
+    "subtitle": "Ställ in lektioner för många klasser på en gång, och ta tillbaka dem",
+    "loadFailed": "Läsåren kunde inte hämtas",
+    "loadFailedHint": "Inga avbokningar är ändrade. Ladda om sidan för att försöka igen.",
+    "noYearTitle": "Det finns inget läsår ännu",
+    "noYearBody": "En avbokning gäller dagar inom ett läsår. Lägg upp läsåret först.",
+    "goToYears": "Till läsåren",
+    "lookupsFailed": "Klasser, ämnen eller salar kunde inte hämtas",
+    "lookupsFailedHint": "Formuläret saknar dem tills sidan laddas om, och listan visar ? där ett namn saknas. Inga avbokningar är ändrade.",
+    "listLoadFailed": "Avbokningarna kunde inte hämtas",
+    "listLoadFailedHint": "Inga avbokningar är ändrade. Ladda om sidan för att se listan.",
+    "listCaption": "Avbokningar {year} med dagar, omfattning, antal inställda lektioner och läge"
   },
   "publicViewer": {
     "title": "Schema",
@@ -3706,12 +4038,6 @@
     "date": "Datum",
     "weekLabel": "Vecka {week}",
     "distributeDay": "Fördela dagen",
-    "summaryLabel": "Sammanfattning",
-    "summaryOpen": "{count} behöver vikarie",
-    "summaryCovered": "{count} med vikarie",
-    "summaryCancelled": "{count} inställda",
-    "summaryHandled": "{count} hanterade på annat sätt",
-    "summaryPassedOpen": "{count} passerade utan beslut",
     "publishing": "En publicering pågår. Tavlan väntar – försök igen om en stund.",
     "bulkSelected": "{count} valda",
     "bulkCancel": "Ställ in valda ({count})",
@@ -3761,7 +4087,18 @@
     "counterName": "Namn",
     "counterWeek": "Vecka",
     "counterTerm": "Termin",
-    "pool": "Pool"
+    "pool": "Pool",
+    "kpiOpen": "Behöver vikarie",
+    "kpiCovered": "Med vikarie",
+    "kpiCancelled": "Inställda",
+    "kpiHandled": "Hanterade på annat sätt",
+    "kpiPassed": "Passerade utan beslut",
+    "loadFailed": "Vikarietavlan kunde inte hämtas",
+    "loadFailedHint": "Inga beslut är ändrade, men lektionerna som behöver vikarie syns inte förrän tavlan kan läsas. Ladda om sidan om en stund.",
+    "tableCaption": "Lektioner som behöver vikarie, med frånvarande lärare, läge, vikarie och beslut",
+    "counterLoadFailed": "Vikarieräknaren kunde inte hämtas",
+    "counterLoadFailedHint": "Tavlan och besluten påverkas inte, och förslagen räknar passen som vanligt.",
+    "substituteLine": "Vikarie: {name}"
   },
   "coverCandidates": {
     "title": "Tillsätt vikarie",
@@ -3776,7 +4113,9 @@
     "excludedTitle": "Kan inte ({count})",
     "other": "Annan lärare",
     "otherHint": "Utanför förslagen: om den du väljer inte är behörig, förlorar lunch eller dygnsvila, har ett uppdrag eller en lokalbokning då, eller inte har sagt att hen kan, får du en varning. Den som har en egen lektion då eller själv är frånvarande kan aldrig tillsättas och finns inte i listan.",
-    "assign": "Tillsätt"
+    "assign": "Tillsätt",
+    "loadFailed": "Förslagen kunde inte hämtas",
+    "loadFailedHint": "Ingen vikarie är tillsatt. Du kan fortfarande välja en annan lärare nedan, eller stänga och försöka igen om en stund."
   },
   "coverReasons": {
     "QUAL_LEGITIMATION": "Legitimerad i {subject} för åk {grades}",
@@ -3828,7 +4167,9 @@
     "excludedNote": "Utesluten: {names}",
     "recompute": "Räkna om",
     "apply": "Tillämpa {count}",
-    "applied": "{count, plural, one {# vikarie tillsatt} other {# vikarier tillsatta}}"
+    "applied": "{count, plural, one {# vikarie tillsatt} other {# vikarier tillsatta}}",
+    "failed": "Förslaget kunde inte räknas fram",
+    "failedHint": "Ingen vikarie har tillsatts. Försök igen med Räkna om."
   },
   "coverErrors": {
     "COVER_STALE": "Lektionen har ändrats sedan tavlan lästes. Läs om tavlan och försök igen.",
@@ -3926,14 +4267,15 @@
     "start": "Från",
     "end": "Till",
     "addWindow": "Lägg till tid",
-    "windowAdded": "Tiden är tillagd"
+    "windowAdded": "Tiden är tillagd",
+    "windowsLoadFailed": "Tiderna kunde inte hämtas",
+    "windowsLoadFailedHint": "Inga tider har ändrats, och förslagen följer fortfarande de tider som står sparade. Försök igen om en stund."
   },
   "coverHours": {
     "intro": "Hållna vikariepass per person och period, i klockminuter – samma lektioner som tjänstefördelningen krediterar vikarien. Pass som är bokade men inte hållna visas här och exporteras aldrig.",
     "exportLessons": "Exportera pass (CSV)",
     "exportSummary": "Exportera summering (CSV)",
     "rangeError": "Välj en period på högst {days} dagar.",
-    "empty": "Inga vikariepass under perioden.",
     "columnSubstitute": "Vikarie",
     "columnKind": "Typ",
     "columnLessons": "Hållna pass",
@@ -3947,7 +4289,12 @@
     "total": "Totalt {minutes} min ({hours} timmar)",
     "privacy": "Filerna säger vem som vikarierade när – inte vem som var borta eller varför. Ingen orsak, ingen frånvaro och ingen ersatt lärare finns i dem.",
     "toCheckTitle": "Kontrollera innan lönen",
-    "toCheckBody": "{count, plural, one {# pass} other {# pass}} står i kalendern på en vikarie som själv var registrerad som borta då. De finns inte i filerna – rätta kalendern om någon annan höll lektionen."
+    "toCheckBody": "{count, plural, one {# pass} other {# pass}} står i kalendern på en vikarie som själv var registrerad som borta då. De finns inte i filerna – rätta kalendern om någon annan höll lektionen.",
+    "loadFailed": "Vikarietimmarna kunde inte hämtas",
+    "loadFailedHint": "Inga pass visas och ingen fil kan byggas förrän servern har svarat. Inga vikariepass har ändrats – försök igen om en stund.",
+    "emptyTitle": "Inga vikariepass under perioden",
+    "emptyHint": "Ett pass som tillsätts på Vikarietavlan räknas här när det har hållits. Välj en annan period för att se tidigare pass.",
+    "tableCaption": "Hållna och bokade vikariepass per vikarie under perioden, i klockminuter"
   },
   "teacherCover": {
     "title": "Vikariepass och frånvaro",
@@ -3966,11 +4313,14 @@
     "end": "Avsluta i förtid",
     "withdraw": "Återkalla",
     "privacy": "Orsaken ser bara du och skolledningen. Kollegor, elever och vårdnadshavare ser bara att lektionen har en vikarie eller är inställd.",
-    "availabilityTitle": "Min tillgänglighet"
+    "availabilityTitle": "Min tillgänglighet",
+    "coversLoadFailed": "Dina vikariepass kunde inte hämtas",
+    "absencesLoadFailed": "Din frånvaro kunde inte hämtas",
+    "loadFailedHint": "Ingenting har ändrats. Ladda om sidan om en stund."
   },
   "notificationSettings": {
     "title": "Notiser",
-    "subtitle": "Välj vad som skickas till dig utanför SchemaPro.",
+    "subtitle": "Välj vad som skickas till dig utanför SchemaPro",
     "cardTitle": "E-post och push",
     "cardBody": "Det du slår av skickas inte som e-post eller push. Notisen finns ändå kvar här i SchemaPro.",
     "loading": "Hämtar dina val …",
@@ -3991,6 +4341,8 @@
       "ROOM_BOOKING_DECIDED": "Beslut om lokalbokning",
       "TEACHER_ABSENCE_REPORTED": "Lärarfrånvaro",
       "LESSON_COVER_WITHDRAWN": "Avbokade vikariepass"
-    }
+    },
+    "loadFailed": "Dina val kunde inte hämtas",
+    "loadFailedHint": "Inget har ändrats i vad som skickas till dig. Ladda om sidan om en stund."
   }
 }

@@ -24,10 +24,13 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { useUpdatePublicationSettings } from "@/lib/publication-queries";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { PublicationSettings, PublicationSettingsInput, TeacherDisplay } from "@/lib/publication-types";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -65,41 +68,53 @@ export function ViewerCard({ settings }: { settings: PublicationSettings }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("viewerTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm">
-        <p>{t("viewerBody")}</p>
-        <ul className="space-y-3">
-          {FLAGS.map((flag) => (
-            <li key={flag} className="flex items-start gap-3">
-              <Switch
-                id={`viewer-${flag}`}
-                checked={value(flag)}
-                disabled={flag !== "publicViewerEnabled" && !value("publicViewerEnabled")}
-                onCheckedChange={(checked) => setChanges((previous) => ({ ...previous, [flag]: checked }))}
-                aria-describedby={`viewer-${flag}-hint`}
-              />
-              <span>
-                <Label htmlFor={`viewer-${flag}`}>{t(`viewer.${flag}`)}</Label>
-                <span id={`viewer-${flag}-hint`} className="block text-xs">
-                  {t(`viewer.${flag}Hint`)}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-        <div className="grid max-w-xl gap-4 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="viewer-display">{t("viewer.teacherDisplay")}</Label>
+    <SectionCard
+      id="publish-viewer"
+      title={t("viewerTitle")}
+      description={t("viewerBody")}
+      descriptionClassName="max-w-prose"
+      footer={
+        <Button onClick={save} disabled={Object.keys(changes).length === 0 || !sizeValid || update.isPending}>
+          {update.isPending ? (
+            <>
+              <Loader2 className="animate-spin" />
+              {tCommon("saving")}
+            </>
+          ) : (
+            tCommon("save")
+          )}
+        </Button>
+      }
+    >
+      <ul className="space-y-2">
+        {FLAGS.map((flag) => (
+          <li key={flag} className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor={`viewer-${flag}`}>{t(`viewer.${flag}`)}</Label>
+              <p id={`viewer-${flag}-hint`} className="text-xs text-muted-foreground">
+                {t(`viewer.${flag}Hint`)}
+              </p>
+            </div>
+            <Switch
+              id={`viewer-${flag}`}
+              checked={value(flag)}
+              disabled={flag !== "publicViewerEnabled" && !value("publicViewerEnabled")}
+              onCheckedChange={(checked) => setChanges((previous) => ({ ...previous, [flag]: checked }))}
+              aria-describedby={`viewer-${flag}-hint`}
+            />
+          </li>
+        ))}
+      </ul>
+      <div className="grid max-w-xl gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+        <FormField id="viewer-display" label={t("viewer.teacherDisplay")} hint={t("viewer.teacherDisplayHint")}>
+          {(control) => (
             <Select
               value={value("publicTeacherDisplay")}
               onValueChange={(next) =>
                 setChanges((previous) => ({ ...previous, publicTeacherDisplay: next as TeacherDisplay }))
               }
             >
-              <SelectTrigger id="viewer-display" aria-label={t("viewer.teacherDisplay")}>
+              <SelectTrigger {...control}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -110,35 +125,22 @@ export function ViewerCard({ settings }: { settings: PublicationSettings }) {
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs">{t("viewer.teacherDisplayHint")}</p>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="viewer-min-size">{t("viewer.minGroupSize")}</Label>
-            <Input
-              id="viewer-min-size"
-              type="number"
-              min={3}
-              max={30}
-              value={String(minSize)}
-              onChange={(event) =>
-                setChanges((previous) => ({ ...previous, publicMinGroupSize: Number(event.target.value) }))
-              }
-              aria-describedby="viewer-min-size-hint"
-            />
-            <p id="viewer-min-size-hint" className="text-xs">
-              {t("viewer.minGroupSizeHint")}
-            </p>
-          </div>
-        </div>
-        {problem ? (
-          <p role="alert" className="font-medium">
-            {problem}
-          </p>
-        ) : null}
-        <Button onClick={save} disabled={Object.keys(changes).length === 0 || !sizeValid || update.isPending}>
-          {tCommon("save")}
-        </Button>
-      </CardContent>
-    </Card>
+          )}
+        </FormField>
+        <FormField id="viewer-min-size" label={t("viewer.minGroupSize")} hint={t("viewer.minGroupSizeHint")}>
+          <Input
+            type="number"
+            min={3}
+            max={30}
+            className="tabular-nums"
+            value={String(minSize)}
+            onChange={(event) =>
+              setChanges((previous) => ({ ...previous, publicMinGroupSize: Number(event.target.value) }))
+            }
+          />
+        </FormField>
+      </div>
+      {problem ? <Notice tone="destructive">{problem}</Notice> : null}
+    </SectionCard>
   );
 }

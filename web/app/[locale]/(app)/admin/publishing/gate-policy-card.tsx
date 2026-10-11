@@ -26,8 +26,9 @@ import {
   type GatePolicyKey,
   type PublicationSettings,
 } from "@/lib/publication-types";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SectionCard } from "@/components/ui/section-card";
 import {
   Select,
   SelectContent,
@@ -54,38 +55,46 @@ export function GatePolicyCard({ settings }: { settings: PublicationSettings }) 
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("policyTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <p>{t("policyBody")}</p>
-        <ul className="divide-y rounded-md border">
-          {GATE_POLICY_KEYS.map((key) => {
-            const value = changes[key] ?? settings[key];
-            return (
-              <li key={key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                <span className="min-w-0 flex-1">{t(`policy.${GATE_OF_POLICY[key]}`)}</span>
-                <Select
-                  value={value}
-                  onValueChange={(next) => setChanges((previous) => ({ ...previous, [key]: next as GateMode }))}
-                >
-                  <SelectTrigger className="w-36" aria-label={t(`policy.${GATE_OF_POLICY[key]}`)}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="WARN">{t("severity.WARN")}</SelectItem>
-                    <SelectItem value="REFUSE">{t("severity.REFUSE")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </li>
-            );
-          })}
-        </ul>
+    <SectionCard
+      id="publish-policy"
+      title={t("policyTitle")}
+      description={t("policyBody")}
+      descriptionClassName="max-w-prose"
+      footer={
         <Button onClick={save} disabled={Object.keys(changes).length === 0 || update.isPending}>
-          {tCommon("save")}
+          {update.isPending ? (
+            <>
+              <Loader2 className="animate-spin" />
+              {tCommon("saving")}
+            </>
+          ) : (
+            tCommon("save")
+          )}
         </Button>
-      </CardContent>
-    </Card>
+      }
+    >
+      <ul className="divide-y rounded-md border text-sm">
+        {GATE_POLICY_KEYS.map((key) => {
+          const value = changes[key] ?? settings[key];
+          return (
+            <li key={key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <span className="min-w-0 flex-1">{t(`policy.${GATE_OF_POLICY[key]}`)}</span>
+              <Select
+                value={value}
+                onValueChange={(next) => setChanges((previous) => ({ ...previous, [key]: next as GateMode }))}
+              >
+                <SelectTrigger className="w-36" aria-label={t(`policy.${GATE_OF_POLICY[key]}`)}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="WARN">{t("severity.WARN")}</SelectItem>
+                  <SelectItem value="REFUSE">{t("severity.REFUSE")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </li>
+          );
+        })}
+      </ul>
+    </SectionCard>
   );
 }

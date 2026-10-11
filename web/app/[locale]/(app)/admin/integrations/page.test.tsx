@@ -212,6 +212,19 @@ describe("/admin/integrations — the register", () => {
     answer();
   });
 
+  it("says nothing about the token address and client id until the admin types in one of them", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByLabelText("Namn");
+    // A new source is not wrong yet: Save is simply not offered.
+    expect(screen.queryByText("Tokenadress och klient-id anges tillsammans.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Spara källsystem" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Tokenadress"), SOURCE.tokenUrl!);
+    expect(screen.getByText("Tokenadress och klient-id anges tillsammans.")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Klient-id"), "schemapro");
+    expect(screen.queryByText("Tokenadress och klient-id anges tillsammans.")).toBeNull();
+  });
+
   it("offers a school without a source the form, and saves the configuration with no credential in it", async () => {
     const user = userEvent.setup();
     put.mockResolvedValueOnce({ ...SOURCE });

@@ -23,6 +23,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -147,13 +148,13 @@ export function AbsenceDialog({
           <div className="space-y-4">
             {mode === "ADMIN" ? (
               <div className="space-y-1.5">
-                <Label>{t("teacher")}</Label>
+                <Label htmlFor="absence-teacher">{t("teacher")}</Label>
                 <Select
                   value={form.userId}
                   onValueChange={(userId) => patchForm({ userId })}
                   disabled={editing}
                 >
-                  <SelectTrigger aria-label={t("teacher")}>
+                  <SelectTrigger id="absence-teacher">
                     <SelectValue placeholder={t("teacherPlaceholder")} />
                   </SelectTrigger>
                   <SelectContent>
@@ -166,7 +167,7 @@ export function AbsenceDialog({
                 </Select>
               </div>
             ) : null}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
               <div className="space-y-1.5">
                 <Label htmlFor="absence-from">{t("from")}</Label>
                 <DateField
@@ -191,6 +192,7 @@ export function AbsenceDialog({
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
+                className="size-4"
                 checked={form.partDay}
                 onChange={(event) => patchForm({ partDay: event.target.checked })}
               />
@@ -198,12 +200,13 @@ export function AbsenceDialog({
             </label>
             {form.partDay ? (
               <div className="space-y-1.5">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
                   <div className="space-y-1.5">
                     <Label htmlFor="absence-start">{t("startTime")}</Label>
                     <Input
                       id="absence-start"
                       type="time"
+                      aria-describedby="absence-time-hint"
                       value={form.startTime}
                       onChange={(event) => patchForm({ startTime: event.target.value })}
                     />
@@ -213,21 +216,24 @@ export function AbsenceDialog({
                     <Input
                       id="absence-end"
                       type="time"
+                      aria-describedby="absence-time-hint"
                       value={form.endTime}
                       onChange={(event) => patchForm({ endTime: event.target.value })}
                     />
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">{t("timeHint")}</p>
+                <p id="absence-time-hint" className="text-xs text-muted-foreground">
+                  {t("timeHint")}
+                </p>
               </div>
             ) : null}
             <div className="space-y-1.5">
-              <Label>{t("reason")}</Label>
+              <Label htmlFor="absence-reason">{t("reason")}</Label>
               <Select
                 value={form.reasonId || NONE}
                 onValueChange={(value) => patchForm({ reasonId: value === NONE ? NO_REASON : value })}
               >
-                <SelectTrigger aria-label={t("reason")}>
+                <SelectTrigger id="absence-reason" aria-describedby="absence-reason-hint">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -239,16 +245,12 @@ export function AbsenceDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <p id="absence-reason-hint" className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 {t("reasonPrivacy")}
               </p>
             </div>
-            {shown && problem ? (
-              <p role="alert" className="text-sm text-destructive">
-                {t(`errors.${problem}`)}
-              </p>
-            ) : null}
+            {shown && problem ? <Notice tone="destructive">{t(`errors.${problem}`)}</Notice> : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>

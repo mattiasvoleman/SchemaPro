@@ -1,9 +1,9 @@
 "use client";
 
 import { lazy, Suspense, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarX2, Loader2, Send, Trash2, Users } from "lucide-react";
+import { Loader2, Send, Trash2, Users } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
 import {
   useAbsenceReportActions,
@@ -12,30 +12,25 @@ import {
   useLeaveRequests,
   useMyChildren,
 } from "@/lib/guardian-queries";
-import type { AbsenceReportType } from "@/lib/types";
+import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
+import type { AbsenceReport, AbsenceReportType } from "@/lib/types";
+import { toDateString } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
+import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/ui/empty-state";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { NativeSelect } from "@/components/ui/native-select";
 
 const TYPES: AbsenceReportType[] = ["SICK", "APPOINTMENT", "OTHER"];
 
@@ -66,19 +61,33 @@ const ChildSchedule = lazy(() =>
   ),
 );
 
+/*
+ * The confirmation before a report is taken back, fetched on its first open:
+ * /guardian is the heaviest route of its tier, and Radix Dialog is in none of
+ * its chunks. A chunk that does not arrive is said in a toast, and the next
+ * open fetches afresh.
+ */
+const lazyConfirmDialog = () =>
+  lazy(() => import("@/components/ui/confirm-dialog").then((module) => ({ default: module.ConfirmDialog })));
+let ConfirmDialog = lazyConfirmDialog();
+
+/** The guardian's own day: before 02:00 in Sweden UTC is still yesterday. */
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toDateString(new Date());
 }
 
 export default function GuardianPage() {
   const t = useTranslations("guardian");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
   const { profile } = useProfile();
-  const { data: children, isLoading } = useMyChildren(profile.id);
-  const { data: reports } = useAbsenceReports();
-  const { data: leaves } = useLeaveRequests();
+  const { data: children, isLoading, isError } = useMyChildren(profile.id);
+  const reportsQuery = useAbsenceReports();
+  const leavesQuery = useLeaveRequests();
   const absenceActions = useAbsenceReportActions();
   const leaveActions = useLeaveRequestActions();
+  const reports = reportsQuery.data ?? [];
+  const leaves = leavesQuery.data ?? [];
 
   const [childId, setChildId] = useState<string>("");
   const [date, setDate] = useState(todayISO());
@@ -92,6 +101,13 @@ export default function GuardianPage() {
   const [leaveStart, setLeaveStart] = useState(todayISO());
   const [leaveEnd, setLeaveEnd] = useState(todayISO());
   const [leaveReason, setLeaveReason] = useState("");
+
+  // The report a confirmation is about stays set while the dialog closes, so
+  // its title does not empty under the fade.
+  const [deleting, setDeleting] = useState<AbsenceReport | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmUsed, setConfirmUsed] = useState(false);
+  const [confirmLoad, setConfirmLoad] = useState(0);
 
   const childById = useMemo(
     () => new Map((children ?? []).map((child) => [child.id, child])),
@@ -108,6 +124,22 @@ export default function GuardianPage() {
     const child = childById.get(id);
     return child ? `${child.firstName} ${child.lastName}` : "—";
   };
+
+  // A report's day and a leave's span are dates, not instants: written in the
+  // reader's language, read on the UTC noon of that day so no timezone moves them.
+  const dates = useMemo(() => {
+    const tag = locale === "en" ? "en-GB" : "sv-SE";
+    return {
+      day: new Intl.DateTimeFormat(tag, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+      span: new Intl.DateTimeFormat(tag, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+    };
+  }, [locale]);
+  const noon = (value: string) => new Date(`${value.slice(0, 10)}T12:00:00Z`);
+  const dayText = (value: string) => dates.day.format(noon(value));
+  const spanText = (from: string, to: string) =>
+    from.slice(0, 10) === to.slice(0, 10)
+      ? dates.span.format(noon(from))
+      : dates.span.formatRange(noon(from), noon(to));
 
   const doReport = async () => {
     if (!selectedChildId) return;
@@ -146,23 +178,65 @@ export default function GuardianPage() {
     try {
       await absenceActions.remove.mutateAsync(id);
       toast.success(tCommon("deleted"));
+      setConfirmOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
 
-  if (!isLoading && (children ?? []).length === 0) {
+  const askDelete = (report: AbsenceReport) => {
+    setConfirmUsed(true);
+    setDeleting(report);
+    setConfirmOpen(true);
+  };
+
+  const header = <PageHeader title={t("title")} subtitle={t("subtitle")} />;
+
+  if (isLoading) {
     return (
-      <div>
-        <PageHeader title={t("title")} subtitle={t("subtitle")} />
-        <EmptyState icon={Users} title={t("noChildrenTitle")} description={t("noChildrenBody")} />
-      </div>
+      <Page>
+        {header}
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </Page>
     );
   }
 
+  // Never "Inga barn kopplade" for a read that failed: a guardian would call
+  // the school about a link that is there.
+  if (isError) {
+    return (
+      <Page>
+        {header}
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      </Page>
+    );
+  }
+
+  if ((children ?? []).length === 0) {
+    return (
+      <Page>
+        {header}
+        <EmptyState
+          icon={Users}
+          title={t("noChildrenTitle")}
+          description={t("noChildrenBody")}
+          headingLevel={2}
+        />
+      </Page>
+    );
+  }
+
+  const childOptions = (children ?? []).map((child) => (
+    <option key={child.id} value={child.id}>
+      {child.firstName} {child.lastName}
+    </option>
+  ));
+
   return (
-    <div>
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+    <Page>
+      {header}
 
       {/* The guardian's own children only: the gateway answers a guardian
           for their linked children and refuses anyone else's with the same
@@ -173,32 +247,21 @@ export default function GuardianPage() {
         </Suspense>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* ---- Report absence ---- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("reportTitle")}</CardTitle>
-            <CardDescription>{t("reportBody")}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("child")}</Label>
-              <Select value={selectedChildId} onValueChange={setChildId}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(children ?? []).map((child) => (
-                    <SelectItem key={child.id} value={child.id}>
-                      {child.firstName} {child.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="absence-date">{t("date")}</Label>
+      {/* In the manual's order — report, what was reported, ask for leave,
+          what was asked — so a phone reads each form with its own list
+          under it, and a wide screen sets each list beside its form.
+          items-start: a short list keeps its own height instead of
+          stretching to the form's beside it. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+        <SectionCard id="absence-report" title={t("reportTitle")} description={t("reportBody")}>
+          <div className="space-y-4">
+            <FormField id="absence-child" label={t("child")}>
+              <NativeSelect value={selectedChildId} onChange={(e) => setChildId(e.target.value)}>
+                {childOptions}
+              </NativeSelect>
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="absence-date" label={t("date")}>
                 <DateField
                   label={t("date")}
                   id="absence-date"
@@ -206,104 +269,128 @@ export default function GuardianPage() {
                   value={date}
                   onChange={(value) => setDate(value)}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label>{t("absenceType")}</Label>
-                <Select
+              </FormField>
+              <FormField id="absence-type" label={t("absenceType")}>
+                <NativeSelect
                   value={type}
-                  onValueChange={(value) => setType(value as AbsenceReportType)}
+                  onChange={(e) => setType(e.target.value as AbsenceReportType)}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TYPES.map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {t(`type${value}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  {TYPES.map((value) => (
+                    <option key={value} value={value}>
+                      {t(`type${value}`)}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </FormField>
             </div>
-            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+            <div className="flex items-center justify-between gap-4 rounded-md border p-3">
               <Label htmlFor="full-day">{t("fullDay")}</Label>
               <Switch id="full-day" checked={fullDay} onCheckedChange={setFullDay} />
             </div>
             {!fullDay ? (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="absence-start">{t("from")}</Label>
+              <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                <FormField id="absence-start" label={t("from")}>
                   <Input
-                    id="absence-start"
                     type="time"
+                    className="tabular-nums"
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="absence-end">{t("to")}</Label>
+                </FormField>
+                <FormField id="absence-end" label={t("to")}>
                   <Input
-                    id="absence-end"
                     type="time"
+                    className="tabular-nums"
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
                   />
-                </div>
+                </FormField>
               </div>
             ) : null}
-            <div className="space-y-2">
-              <Label htmlFor="absence-note">
-                {t("note")}{" "}
-                <span className="text-muted-foreground">({tCommon("optional")})</span>
-              </Label>
-              <Textarea
-                id="absence-note"
-                rows={2}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-            </div>
+            <FormField id="absence-note" label={t("note")} optional>
+              <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
+            </FormField>
             <Button
               className="w-full"
               onClick={doReport}
               disabled={absenceActions.report.isPending || !selectedChildId || !date}
             >
               {absenceActions.report.isPending ? (
-                <Loader2 className="animate-spin" />
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {t("sending")}
+                </>
               ) : (
-                <Send />
+                <>
+                  <Send aria-hidden="true" />
+                  {t("reportSubmit")}
+                </>
               )}
-              {t("reportSubmit")}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </SectionCard>
 
-        {/* ---- Request leave ---- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("leaveTitle")}</CardTitle>
-            <CardDescription>{t("leaveBody")}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("child")}</Label>
-              <Select value={selectedLeaveChildId} onValueChange={setLeaveChildId}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(children ?? []).map((child) => (
-                    <SelectItem key={child.id} value={child.id}>
-                      {child.firstName} {child.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <SectionCard id="absence-reports" title={t("reportsTitle")}>
+          {reportsQuery.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="leave-start">{t("from")}</Label>
+          ) : reportsQuery.isError ? (
+            <LoadError variant="inline" title={t("reportsLoadFailed")} hint={t("listsLoadFailedHint")} />
+          ) : reports.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("reportsEmpty")}</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {reports.map((report) => {
+                const name = childName(report.studentId);
+                const day = dayText(report.date);
+                return (
+                  <li
+                    key={report.id}
+                    className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <p className="font-medium">{name}</p>
+                      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                        <span className="tabular-nums">
+                          {day}
+                          {report.startTime
+                            ? ` · ${report.startTime.slice(0, 5)}–${report.endTime?.slice(0, 5) ?? ""}`
+                            : ` · ${t("fullDay")}`}
+                        </span>
+                        <Badge variant="secondary">{t(`type${report.type}`)}</Badge>
+                      </div>
+                    </div>
+                    {report.date.slice(0, 10) >= todayISO() ? (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => askDelete(report)}
+                        disabled={absenceActions.remove.isPending}
+                        aria-label={t("deleteReportNamed", { name, date: day })}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </SectionCard>
+
+        <SectionCard id="leave-request" title={t("leaveTitle")} description={t("leaveBody")}>
+          <div className="space-y-4">
+            <FormField id="leave-child" label={t("child")}>
+              <NativeSelect
+                value={selectedLeaveChildId}
+                onChange={(e) => setLeaveChildId(e.target.value)}
+              >
+                {childOptions}
+              </NativeSelect>
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="leave-start" label={t("from")}>
                 <DateField
                   label={t("from")}
                   id="leave-start"
@@ -311,9 +398,8 @@ export default function GuardianPage() {
                   value={leaveStart}
                   onChange={(value) => setLeaveStart(value)}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="leave-end">{t("to")}</Label>
+              </FormField>
+              <FormField id="leave-end" label={t("to")}>
                 <DateField
                   label={t("to")}
                   id="leave-end"
@@ -321,17 +407,11 @@ export default function GuardianPage() {
                   value={leaveEnd}
                   onChange={(value) => setLeaveEnd(value)}
                 />
-              </div>
+              </FormField>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="leave-reason">{t("reason")}</Label>
-              <Textarea
-                id="leave-reason"
-                rows={3}
-                value={leaveReason}
-                onChange={(e) => setLeaveReason(e.target.value)}
-              />
-            </div>
+            <FormField id="leave-reason" label={t("reason")}>
+              <Textarea rows={3} value={leaveReason} onChange={(e) => setLeaveReason(e.target.value)} />
+            </FormField>
             <Button
               className="w-full"
               onClick={doRequestLeave}
@@ -342,110 +422,98 @@ export default function GuardianPage() {
               }
             >
               {leaveActions.request.isPending ? (
-                <Loader2 className="animate-spin" />
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {t("sending")}
+                </>
               ) : (
-                <Send />
+                <>
+                  <Send aria-hidden="true" />
+                  {t("leaveSubmit")}
+                </>
               )}
-              {t("leaveSubmit")}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </SectionCard>
 
-        {/* ---- My reports ---- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("reportsTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {(reports ?? []).length === 0 ? (
-              <EmptyState icon={CalendarX2} title={tCommon("noResults")} description={t("reportsEmpty")} />
-            ) : (
-              <ul className="space-y-2">
-                {(reports ?? []).map((report) => (
-                  <li
-                    key={report.id}
-                    className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <span className="font-medium">{childName(report.studentId)}</span>{" "}
-                      <span className="tabular-nums text-muted-foreground">
-                        {report.date.slice(0, 10)}
-                        {report.startTime
-                          ? ` ${report.startTime.slice(0, 5)}–${report.endTime?.slice(0, 5) ?? ""}`
-                          : ` · ${t("fullDay")}`}
-                      </span>{" "}
-                      <Badge variant="secondary">{t(`type${report.type}`)}</Badge>
-                    </div>
-                    {report.date.slice(0, 10) >= todayISO() ? (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => void doDeleteReport(report.id)}
-                        aria-label={tCommon("delete")}
-                      >
-                        <Trash2 className="text-destructive" />
-                      </Button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ---- My leave requests ---- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("leavesTitle")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {(leaves ?? []).length === 0 ? (
-              <EmptyState icon={CalendarX2} title={tCommon("noResults")} description={t("leavesEmpty")} />
-            ) : (
-              <ul className="space-y-2">
-                {(leaves ?? []).map((leave) => (
-                  <li key={leave.id} className="rounded-md border px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">{childName(leave.studentId)}</span>
-                      <Badge
-                        variant={
-                          leave.status === "APPROVED"
-                            ? "success"
-                            : leave.status === "REJECTED"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {t(`status${leave.status}`)}
-                      </Badge>
-                    </div>
-                    <div className="tabular-nums text-muted-foreground">
-                      {leave.startDate.slice(0, 10)} – {leave.endDate.slice(0, 10)}
-                    </div>
-                    <div className="truncate text-muted-foreground">{leave.reason}</div>
-                    {leave.decisionNote ? (
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {t("decisionNote")}: {leave.decisionNote}
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        <SectionCard id="leave-requests" title={t("leavesTitle")}>
+          {leavesQuery.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : leavesQuery.isError ? (
+            <LoadError variant="inline" title={t("leavesLoadFailed")} hint={t("listsLoadFailedHint")} />
+          ) : leaves.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("leavesEmpty")}</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {leaves.map((leave) => (
+                <li key={leave.id} className="space-y-1 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{childName(leave.studentId)}</span>
+                    <Badge variant={LEAVE_STATUS_VARIANT[leave.status]}>
+                      {t(`status${leave.status}`)}
+                    </Badge>
+                  </div>
+                  <p className="tabular-nums text-muted-foreground">
+                    {spanText(leave.startDate, leave.endDate)}
+                  </p>
+                  <p className="truncate text-muted-foreground">{leave.reason}</p>
+                  {leave.decisionNote ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t("decisionNote")}: {leave.decisionNote}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
       </div>
 
       {/* One card per child, each read under the guardian's own RLS: the
           statement's rows exist for a guardian only for their own children,
           so a child of another family is not even asked for. */}
-      {profile.role === "GUARDIAN" && (children ?? []).length > 0 ? (
+      {profile.role === "GUARDIAN" ? (
         <Suspense fallback={null}>
           {(children ?? []).map((child) => (
             <TeachingTimeCard key={child.id} studentId={child.id} childName={child.firstName} />
           ))}
         </Suspense>
       ) : null}
-    </div>
+
+      {confirmUsed ? (
+        <DialogLoadBoundary
+          key={confirmLoad}
+          onError={() => {
+            // A chunk that failed to load says so in the reader's language;
+            // the error's own text is English and technical.
+            toast.error(tCommon("confirmLoadFailed"));
+            ConfirmDialog = lazyConfirmDialog();
+            setConfirmOpen(false);
+            setConfirmUsed(false);
+            setConfirmLoad((attempt) => attempt + 1);
+          }}
+        >
+          <Suspense fallback={null}>
+            <ConfirmDialog
+              open={confirmOpen}
+              onOpenChange={setConfirmOpen}
+              title={
+                deleting
+                  ? t("deleteReportTitle", { name: childName(deleting.studentId), date: dayText(deleting.date) })
+                  : ""
+              }
+              description={t("deleteReportBody")}
+              confirmLabel={tCommon("delete")}
+              loading={absenceActions.remove.isPending}
+              onConfirm={() => {
+                if (deleting) void doDeleteReport(deleting.id);
+              }}
+            />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
+    </Page>
   );
 }

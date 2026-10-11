@@ -41,6 +41,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { api } from "@/lib/api";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
 
 /** One subject of the stage, as the gateway's TeachingTimeLine. */
 export interface TeachingTimeLine {
@@ -99,20 +101,29 @@ export function useTeachingTimeCard(studentId: string | null) {
 export function TeachingTimeCard({ studentId, childName }: { studentId: string; childName?: string }) {
   const t = useTranslations("teachingTime");
   const locale = useLocale();
-  const { data } = useTeachingTimeCard(studentId);
+  const { data, isError } = useTeachingTimeCard(studentId);
   const statement = data?.statement ?? null;
+  const id = `teaching-time-${studentId}`;
+  const title = childName ? t("titleChild", { name: childName }) : t("title");
+  // A read that failed is said, in the card's own place: silence would read
+  // as "the school has not published", which is a different answer. While
+  // it loads the card stays away, as it does for a school that has not
+  // published — most pupils never see one, and a skeleton that then vanishes
+  // would move the page under the reader.
+  if (isError) {
+    return (
+      <SectionCard id={id} title={title}>
+        <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+      </SectionCard>
+    );
+  }
   if (!statement || statement.stages.length === 0) return null;
   const hours = (value: number) => `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)} h`;
   const day = (value: string) =>
     new Intl.DateTimeFormat(locale, { dateStyle: "long", timeZone: "UTC" }).format(new Date(`${value.slice(0, 10)}T12:00:00Z`));
   const grades = (list: number[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(list.map(String));
-  const titleId = `teaching-time-${studentId}`;
   return (
-    <section aria-labelledby={titleId} className="mt-6 rounded-lg border bg-card p-4 text-sm text-card-foreground shadow-sm">
-      <h2 id={titleId} className="font-semibold">
-        {childName ? t("titleChild", { name: childName }) : t("title")}
-      </h2>
-      <p className="text-muted-foreground">{t("updated", { date: day(statement.asOfDate) })}</p>
+    <SectionCard id={id} title={title} description={t("updated", { date: day(statement.asOfDate) })} className="text-sm">
       {statement.stages.map((stage) => {
         // "Hittills" only for a stage recorded from its start AND not backfilled.
         const since = (!stage.complete || stage.backfilled) && stage.recordedFrom !== null;
@@ -130,8 +141,8 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
             ? stage.historyFrom
             : null;
         return (
-          <div key={stage.stage} className="mt-3 space-y-1">
-            <h3 className="font-medium">
+          <div key={stage.stage} className="space-y-1">
+            <h3 className="text-sm font-semibold">
               {t("stage", { stage: stage.stage, from: stage.gradesFrom, to: stage.gradesTo })}
             </h3>
             <div className="overflow-x-auto">
@@ -156,7 +167,7 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
                       <td className="py-1.5 pr-3 text-right tabular-nums">{hours(line.plannedHours)}</td>
                       {national ? (
                         <td className="py-1.5 text-right tabular-nums">
-                          {line.nationalHours === null ? "–" : hours(line.nationalHours)}
+                          {line.nationalHours === null ? <span className="text-muted-foreground">—</span> : hours(line.nationalHours)}
                         </td>
                       ) : null}
                     </tr>
@@ -182,7 +193,7 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
           </div>
         );
       })}
-      <p className="mt-3 max-w-prose text-xs text-muted-foreground">
+      <p className="max-w-prose text-xs text-muted-foreground">
         {t("footer", {
           versions:
             [...new Set(statement.stages.map((stage) => stage.versionCode).filter((code): code is string => code !== null))]
@@ -190,6 +201,6 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
               .join(", ") || "none",
         })}
       </p>
-    </section>
+    </SectionCard>
   );
 }

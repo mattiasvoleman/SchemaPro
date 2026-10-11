@@ -39,36 +39,27 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ArrowRight, CalendarRange, GraduationCap, Trash2 } from "lucide-react";
+import { ArrowRight, GraduationCap, Trash2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useAcademicYears } from "@/lib/queries";
 import type { MessageLookup } from "@/lib/engine-message";
 import type { AcademicYear, ActivationPreview } from "@/lib/types";
-import { successorOf, yearStatus, type YearStatus } from "@/lib/year-rollover-form";
+import { successorOf, yearStatus } from "@/lib/year-rollover-form";
+import { YEAR_STATUS_VARIANT } from "@/lib/status-variants";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableCard } from "@/components/ui/table-card";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ActivationDialog } from "./activation-dialog";
 import { useDeleteYear, usePendingActivations } from "./use-year-activation";
 import { yearErrorText } from "./year-messages";
-
-const STATUS_VARIANT: Record<YearStatus, "success" | "secondary" | "outline"> = {
-  ACTIVE: "success",
-  UPCOMING: "secondary",
-  FINISHED: "outline",
-};
 
 /** Today in the reader's own calendar, as the dates on the page are written. */
 function localToday(): string {
@@ -110,30 +101,23 @@ export default function YearsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
-
-      <Card className="mb-6">
-        <CardContent className="flex gap-3 pt-6 text-sm text-muted-foreground">
-          <CalendarRange className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <p>{t("cycleHint")}</p>
-        </CardContent>
-      </Card>
+    <Page width="wide">
+      {/* The cycle is the page's explanation, so it is the header's intro
+          rather than a card of its own between the header and the table. */}
+      <PageHeader title={t("title")} subtitle={t("subtitle")} intro={t("cycleHint")} />
 
       {isLoading ? (
-        <div className="space-y-2" aria-busy="true">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
       ) : isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          {tCommon("error")}
-        </p>
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !years || years.length === 0 ? (
         <EmptyState
           icon={GraduationCap}
           title={t("emptyTitle")}
           description={t("emptyBody")}
+          headingLevel={2}
           action={
             <Button asChild>
               <Link href="/admin/setup">{t("emptyAction")}</Link>
@@ -141,7 +125,7 @@ export default function YearsPage() {
           }
         />
       ) : (
-        <Table>
+        <TableCard caption={t("tableCaption")}>
           <TableHeader>
             <TableRow>
               <TableHead>{t("colYear")}</TableHead>
@@ -183,7 +167,7 @@ export default function YearsPage() {
                     {year.startDate} – {year.endDate}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[status]}>{t(`status.${status}`)}</Badge>
+                    <Badge variant={YEAR_STATUS_VARIANT[status]}>{t(`status.${status}`)}</Badge>
                   </TableCell>
                   <TableCell className="text-sm">
                     {plan && moving > 0 && year.isActive ? (
@@ -209,8 +193,8 @@ export default function YearsPage() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap justify-end gap-2">
+                  <TableCell className="text-right">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       {status !== "FINISHED" && !successor ? (
                         moving > 0 ? (
                           <Button
@@ -225,7 +209,7 @@ export default function YearsPage() {
                           <Button size="sm" variant="outline" asChild>
                             <Link href={`/admin/years/rollover?from=${year.id}`}>
                               {t("rollover")}
-                              <ArrowRight />
+                              <ArrowRight aria-hidden="true" />
                             </Link>
                           </Button>
                         )
@@ -234,7 +218,7 @@ export default function YearsPage() {
                         <Button size="sm" variant="outline" asChild>
                           <Link href={`/admin/generate?year=${year.id}`}>
                             {t("planSchedule")}
-                            <ArrowRight />
+                            <ArrowRight aria-hidden="true" />
                           </Link>
                         </Button>
                       ) : null}
@@ -251,14 +235,17 @@ export default function YearsPage() {
                         </Button>
                       ) : null}
                       {status === "UPCOMING" ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={t("deleteNamed", { name: year.name })}
-                          onClick={() => setDeleting(year)}
-                        >
-                          <Trash2 />
-                        </Button>
+                        <RowActions
+                          name={year.name}
+                          actions={[
+                            {
+                              label: tCommon("delete"),
+                              icon: Trash2,
+                              ariaLabel: t("deleteNamed", { name: year.name }),
+                              onSelect: () => setDeleting(year),
+                            },
+                          ]}
+                        />
                       ) : null}
                     </div>
                   </TableCell>
@@ -266,7 +253,7 @@ export default function YearsPage() {
               );
             })}
           </TableBody>
-        </Table>
+        </TableCard>
       )}
 
       <ActivationDialog
@@ -288,6 +275,6 @@ export default function YearsPage() {
         loading={remove.isPending}
         onConfirm={() => void confirmDelete()}
       />
-    </div>
+    </Page>
   );
 }

@@ -14,6 +14,7 @@ import type { CandidateRemaining } from "@/lib/staffing-candidates";
 import type { StaffingWarning, TeacherCandidate } from "@/lib/types";
 import { badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { RefusalNotice } from "@/components/staffing/staffing-notices";
@@ -97,9 +98,9 @@ export function TeacherSuggestions({
     }
   };
 
-  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (isLoading) return <Skeleton className="h-24 w-full" aria-busy="true" />;
   if (isError || !data) {
-    return <p className="text-sm text-destructive">{t("suggestFailed")}</p>;
+    return <LoadError variant="inline" title={t("suggestFailed")} />;
   }
 
   const shown = showAll ? data.candidates : data.candidates.slice(0, SUGGESTIONS_SHOWN);

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import {
   useRoomPreferenceActions,
   useRoomPreferences,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import type { RoomRuleKind } from "@/lib/types";
+import type { RoomPreference } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 import {
   STRENGTH_DEFAULT,
@@ -21,7 +22,13 @@ import {
   strengthBand,
   strengthBounds,
 } from "@/lib/preference-strength";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions } from "@/components/ui/row-actions";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import {
   Select,
@@ -45,13 +52,20 @@ const BY_ROOMS = "rooms";
  *
  * ONE COMPONENT, MOUNTED TWICE, rather than two files. Everything except the
  * words and the strength slider is identical, and a copy would be the version
- * that stops matching the first time the room picker changes.
+ * that stops matching the first time the room picker changes. Mounted twice
+ * on one page, so every id it writes carries the kind: two open forms must
+ * not hand two labels the same control.
  */
 export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) {
   const isLock = kind === "LOCK";
+  const idOf = (field: string) => `${isLock ? "lock" : "wish"}-${field}`;
   const t = useTranslations("constraints");
   const tCommon = useTranslations("common");
-  const { data: preferences } = useRoomPreferences();
+  const {
+    data: preferences,
+    isLoading: preferencesLoading,
+    isError: preferencesFailed,
+  } = useRoomPreferences();
   const { data: subjects } = useSubjects();
   const { data: rooms } = useRooms();
   const { data: roomTypes } = useRoomTypes();
@@ -67,6 +81,7 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
     min: null,
     max: null,
   });
+  const [deleting, setDeleting] = useState<RoomPreference | null>(null);
 
   const subjectName = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
@@ -146,78 +161,103 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
           .map((entry) => roomName.get(entry.roomId) ?? "—")
           .join(", ");
 
+  /** The rule as a sentence: the list's line, and the name its delete button and confirm carry. */
+  const summary = (preference: RoomPreference) =>
+    t(isLock ? "lockSummary" : "preferenceSummary", {
+      subject: subjectName.get(preference.subjectId) ?? "—",
+      rooms: describe(preference),
+    });
+
+  /**
+   * Behind a confirm, and loud when it fails. The bin used to delete on the
+   * click and drop the promise, so a refused delete left the row standing with
+   * nothing said, and a slip of the pointer removed a lock nobody meant to.
+   */
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    try {
+      await actions.remove.mutateAsync(deleting.id);
+      toast.success(tCommon("deleted"));
+      setDeleting(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
+
   return (
-    <div className="mt-8 rounded-lg border bg-card p-4">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">
-          {t(isLock ? "locksTitle" : "preferencesTitle")}
-        </h2>
-        {!adding ? (
+    <SectionCard
+      id={isLock ? "salslasningar" : "salsonskemal"}
+      title={t(isLock ? "locksTitle" : "preferencesTitle")}
+      description={t(isLock ? "locksHint" : "preferencesHint")}
+      action={
+        !adding ? (
           <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
-            <Plus />
+            <Plus aria-hidden="true" />
             {t(isLock ? "addLock" : "addPreference")}
           </Button>
-        ) : null}
-      </div>
-      <p className="mb-4 text-sm text-muted-foreground">
-        {t(isLock ? "locksHint" : "preferencesHint")}
-      </p>
-
+        ) : null
+      }
+    >
       {adding ? (
-        <div className="mb-4 space-y-3 rounded-md border p-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="pref-subject">{t("preferenceSubject")}</Label>
-              <Select value={subjectId} onValueChange={setSubjectId}>
-                <SelectTrigger id="pref-subject" aria-label={t("preferenceSubject")}>
-                  <SelectValue placeholder={tCommon("select")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(subjects ?? []).map((subject) => (
-                    <SelectItem key={subject.id} value={subject.id}>
-                      {subject.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        <div className="space-y-3 rounded-md border p-3">
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <FormField id={idOf("subject")} label={t("preferenceSubject")}>
+              {(control) => (
+                <Select value={subjectId} onValueChange={setSubjectId}>
+                  <SelectTrigger {...control}>
+                    <SelectValue placeholder={tCommon("select")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(subjects ?? []).map((subject) => (
+                      <SelectItem key={subject.id} value={subject.id}>
+                        {subject.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
 
-            <div className="space-y-2">
-              <Label htmlFor="pref-target">{t("preferenceTarget")}</Label>
-              <Select
-                value={target}
-                onValueChange={(value) => setTarget(value as typeof BY_TYPE)}
-              >
-                <SelectTrigger id="pref-target" aria-label={t("preferenceTarget")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={BY_TYPE}>{t("preferenceByType")}</SelectItem>
-                  <SelectItem value={BY_ROOMS}>{t("preferenceByRooms")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <FormField id={idOf("target")} label={t("preferenceTarget")}>
+              {(control) => (
+                <Select
+                  value={target}
+                  onValueChange={(value) => setTarget(value as typeof BY_TYPE)}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={BY_TYPE}>{t("preferenceByType")}</SelectItem>
+                    <SelectItem value={BY_ROOMS}>{t("preferenceByRooms")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
           </div>
 
           {target === BY_TYPE ? (
-            <div className="space-y-2">
-              <Label htmlFor="pref-type">{t("preferenceRoomType")}</Label>
-              <Select value={roomTypeId} onValueChange={setRoomTypeId}>
-                <SelectTrigger id="pref-type" aria-label={t("preferenceRoomType")}>
-                  <SelectValue placeholder={tCommon("select")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(roomTypes ?? []).map((type) => (
-                    <SelectItem key={type.id} value={type.id}>
-                      {type.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <FormField id={idOf("type")} label={t("preferenceRoomType")}>
+              {(control) => (
+                <Select value={roomTypeId} onValueChange={setRoomTypeId}>
+                  <SelectTrigger {...control}>
+                    <SelectValue placeholder={tCommon("select")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(roomTypes ?? []).map((type) => (
+                      <SelectItem key={type.id} value={type.id}>
+                        {type.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
           ) : (
-            <div className="space-y-2">
-              <Label>{t("preferenceRooms")}</Label>
+            /* A group of checkboxes, so its name is a legend: a Label with no
+               control behind it named nothing. */
+            <fieldset className="space-y-1.5">
+              <legend className="text-sm font-medium leading-none">{t("preferenceRooms")}</legend>
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
                 {(rooms ?? []).map((room) => (
                   <label
@@ -239,7 +279,7 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
                   </label>
                 ))}
               </div>
-            </div>
+            </fieldset>
           )}
 
           <GradeSpanField
@@ -255,16 +295,16 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
               way past one. Showing the slider would offer a choice that does
               nothing. */}
           {isLock ? null : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label htmlFor="pref-weight">{t("preferenceWeight")}</Label>
+              <Label htmlFor={idOf("weight")}>{t("preferenceWeight")}</Label>
               <span className="text-xs text-muted-foreground">
                 {t(`strength.${strengthBand(weight)}`)}{" "}
                 <span className="tabular-nums">({weight})</span>
               </span>
             </div>
             <input
-              id="pref-weight"
+              id={idOf("weight")}
               type="range"
               min={bounds.min}
               max={bounds.max}
@@ -273,11 +313,14 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
               // the number that means nothing on its own — the word beside the
               // slider is visual only and never reaches it.
               aria-valuetext={`${t(`strength.${strengthBand(weight)}`)} (${weight})`}
+              aria-describedby={idOf("weight-hint")}
               value={weight}
               onChange={(event) => setWeight(clampStrength(Number(event.target.value)))}
               className="w-full accent-primary"
             />
-            <p className="text-xs text-muted-foreground">{t("preferenceWeightHint")}</p>
+            <p id={idOf("weight-hint")} className="text-xs text-muted-foreground">
+              {t("preferenceWeightHint")}
+            </p>
           </div>
           )}
 
@@ -286,53 +329,90 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
               {tCommon("cancel")}
             </Button>
             <Button onClick={submit} disabled={!canSubmit || actions.create.isPending}>
-              {tCommon("save")}
+              {actions.create.isPending ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
             </Button>
           </div>
         </div>
       ) : null}
 
-      {rules.length === 0 ? (
+      {/*
+        Loading, failed, empty and listed are four different answers. Before,
+        the list read `data ?? []`, so a request in flight and one that had
+        failed both said "no locks" — a claim a school acts on.
+      */}
+      {preferencesFailed && preferences !== undefined ? (
+        // A failed refetch keeps the rules as last read, with this above them.
+        <LoadError
+          variant="inline"
+          title={t("roomRulesLoadFailed")}
+          hint={tCommon("refetchFailedHint")}
+        />
+      ) : null}
+      {preferencesLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : preferencesFailed && preferences === undefined ? (
+        <LoadError
+          variant="inline"
+          title={t("roomRulesLoadFailed")}
+          hint={t("roomRulesLoadFailedHint")}
+        />
+      ) : rules.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {t(isLock ? "locksEmpty" : "preferencesEmpty")}
         </p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="divide-y rounded-md border">
           {rules.map((preference) => (
             <li
               key={preference.id}
-              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
             >
-              <span>
-                {t(isLock ? "lockSummary" : "preferenceSummary", {
-                  subject: subjectName.get(preference.subjectId) ?? "—",
-                  rooms: describe(preference),
-                })}
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                {summary(preference)}
                 {gradeBadge(preference) ? (
-                  <Badge variant="secondary" className="ml-2 font-normal">
-                    {gradeBadge(preference)}
-                  </Badge>
+                  <Badge variant="secondary">{gradeBadge(preference)}</Badge>
                 ) : null}
                 {/* A lock has no strength. Showing the column default beside it
                     would read as a number the admin chose. */}
                 {isLock ? null : (
-                  <Badge variant="outline" className="ml-2 font-normal">
+                  <Badge variant="outline">
                     {t("preferenceWeightBadge", { weight: preference.weight })}
                   </Badge>
                 )}
               </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={tCommon("delete")}
-                onClick={() => void actions.remove.mutateAsync(preference.id)}
-              >
-                <Trash2 className="text-destructive" />
-              </Button>
+              <RowActions
+                name={summary(preference)}
+                actions={[
+                  { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(preference) },
+                ]}
+              />
             </li>
           ))}
         </ul>
       )}
-    </div>
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => !open && setDeleting(null)}
+        title={t(isLock ? "deleteLockTitle" : "deletePreferenceTitle")}
+        description={
+          deleting
+            ? t(isLock ? "deleteLockBody" : "deletePreferenceBody", { rule: summary(deleting) })
+            : undefined
+        }
+        confirmLabel={tCommon("delete")}
+        loading={actions.remove.isPending}
+        onConfirm={confirmDelete}
+      />
+    </SectionCard>
   );
 }

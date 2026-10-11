@@ -24,8 +24,14 @@
     --destructive-foreground: 0 0% 100%;
     --success: 152 60% 36%;
     --success-foreground: 0 0% 100%;
+    /* Success and warning as ink and icons on light grounds: --success measures
+       about 3.3:1 on its own tint and --warning 2.1:1 on white, under AA for
+       text (4.5:1) and for meaningful icons (3:1). The strong shades keep the
+       hue at 5.7:1 and 4.2:1; dark mode already passes with the base shade. */
+    --success-strong: 152 65% 24%;
     --warning: 38 92% 50%;
     --warning-foreground: 32 81% 15%;
+    --warning-strong: 38 92% 33%;
     --border: 240 6% 90%;
     --input: 240 6% 90%;
     --ring: 243 75% 59%;
@@ -61,8 +67,10 @@
     --destructive-foreground: 0 0% 100%;
     --success: 152 55% 45%;
     --success-foreground: 152 80% 8%;
+    --success-strong: 152 55% 45%;
     --warning: 38 92% 55%;
     --warning-foreground: 32 81% 10%;
+    --warning-strong: 38 92% 55%;
     --border: 240 6% 16%;
     --input: 240 6% 18%;
     --ring: 243 85% 68%;
@@ -86,6 +94,35 @@
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
+  }
+}
+
+/*
+ * Reduced motion, app-wide (WCAG 2.3.3's intent, and the owner's "honour
+ * reduced motion"): with the OS setting on, every animation and transition
+ * finishes at once. Dialogs and popovers open and close without the zoom and
+ * fade, the mobile drawer appears instead of sliding, a skeleton stops
+ * pulsing, a hover colour changes without a fade.
+ *
+ * - 0.01ms, not `none` or 0: the animations still run, so animationend and
+ *   transitionend still fire. Radix Presence waits for animationend before it
+ *   unmounts a closing dialog; the events are what keep it closing.
+ * - !important: the motion is set by class utilities (animate-in, duration-200,
+ *   transition-colors), which outrank a universal selector.
+ * - .animate-spin is exempt. A spinner's turning is its message, "still
+ *   working"; frozen, the Loader2 on a pending Save reads as a static glyph.
+ *   It rotates in place and moves nothing across the screen.
+ * - scroll-behavior covers CSS and default-behaviour scrolls only; a script
+ *   that asks for behavior: "smooth" has to check the media query itself.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

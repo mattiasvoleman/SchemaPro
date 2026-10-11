@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Pencil, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   useAcademicYears,
   useConstraints,
@@ -17,24 +17,29 @@ import type {
   ConstraintResource,
   ConstraintType,
 } from "@/lib/types";
-import { formatTime } from "@/lib/utils";
+import { cn, formatTime } from "@/lib/utils";
 import { groupLabel } from "@/lib/year-scope";
+import { NextStep } from "@/components/layout/next-step";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { LunchSettingsCard } from "@/components/schedule/lunch-settings-card";
 import { RoomPreferencesCard } from "@/components/schedule/room-preferences-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions } from "@/components/ui/row-actions";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -63,6 +68,10 @@ const RESOURCES: ConstraintResource[] = [
 ];
 const TYPES: ConstraintType[] = ["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"];
 const DAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+/** The inner-table cells: compact rows, the first column flush with the card's padding. */
+const INNER_TH = "h-auto py-1.5 pr-3 text-xs";
+const INNER_TD = "py-1.5 pr-3";
 
 interface ConstraintForm {
   resourceType: ConstraintResource;
@@ -98,7 +107,8 @@ export default function ConstraintsPage() {
   const tCommon = useTranslations("common");
   const tTypes = useTranslations("constraintTypes");
   const tDays = useTranslations("days");
-  const { data: constraints, isLoading } = useConstraints();
+  const tNav = useTranslations("nav");
+  const { data: constraints, isLoading, isError } = useConstraints();
   const { data: people } = usePeople();
   const { data: rooms } = useRooms();
   const { data: groups } = useGroups();
@@ -191,6 +201,19 @@ export default function ConstraintsPage() {
     return "—";
   };
 
+  /** "Måndag" or the date — when a rule applies. */
+  const whenLabel = (constraint: AvailabilityConstraint): string =>
+    constraint.date ??
+    (constraint.dayOfWeek !== null ? tDays(String(constraint.dayOfWeek)) : "—");
+
+  /**
+   * The name a row's buttons carry: who, and when. One teacher often has
+   * several rules, so "Redigera Karin Ek" twice down a column would name
+   * nothing a screen reader could tell apart.
+   */
+  const rowName = (constraint: AvailabilityConstraint): string =>
+    `${resourceName(constraint)}, ${whenLabel(constraint)} ${formatTime(constraint.startTime)}–${formatTime(constraint.endTime)}`;
+
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
@@ -266,134 +289,172 @@ export default function ConstraintsPage() {
     form.startTime < form.endTime &&
     (form.mode === "recurring" || form.date !== "");
 
+  const saving = mutations.create.isPending || mutations.update.isPending;
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
           <Button onClick={openCreate}>
-            <Plus />
+            <Plus aria-hidden="true" />
             {t("addConstraint")}
           </Button>
         }
       />
 
-      {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
-      ) : !constraints || constraints.length === 0 ? (
-        <EmptyState
-          icon={SlidersHorizontal}
-          title={tCommon("noResults")}
-          description={t("empty")}
-        />
-      ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("resource")}</TableHead>
-                <TableHead>{tCommon("name")}</TableHead>
-                <TableHead>{t("day")}</TableHead>
-                <TableHead>{tCommon("time")}</TableHead>
-                <TableHead>{tCommon("type")}</TableHead>
-                <TableHead>{t("reason")}</TableHead>
-                <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {constraints.map((constraint) => (
-                <TableRow key={constraint.id}>
-                  <TableCell>
-                    <Badge variant="secondary">{resourceLabel(constraint.resourceType)}</Badge>
-                  </TableCell>
-                  <TableCell className="font-medium">{resourceName(constraint)}</TableCell>
-                  <TableCell>
-                    {constraint.date ??
-                      (constraint.dayOfWeek !== null
-                        ? tDays(String(constraint.dayOfWeek))
-                        : "—")}
-                  </TableCell>
-                  <TableCell className="tabular-nums">
-                    {formatTime(constraint.startTime)}–{formatTime(constraint.endTime)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={constraint.type === "UNAVAILABLE" ? "destructive" : "outline"}
-                    >
-                      {tTypes(constraint.type)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="max-w-40 truncate text-muted-foreground">
-                    {constraint.reason ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEdit(constraint)}
-                      aria-label={tCommon("edit")}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleting(constraint)}
-                      aria-label={tCommon("delete")}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
-                  </TableCell>
+      {/*
+        Four blocks with four different jobs, each a section with its own h2 —
+        the rules that say who is away, the school-wide rules (#skolregler, the
+        anchor Generera schema and Lunchsittningar link to), the locks and the
+        wishes. Locks above wishes: the absolute rule is read first, and a
+        school scanning the page should meet the thing that can refuse a week
+        before the thing that only nudges it.
+      */}
+      <SectionCard id="begransningar" title={t("listTitle")}>
+        {isError && constraints !== undefined ? (
+          // A failed refetch keeps the list as last read, with this above it.
+          <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
+        ) : null}
+        {isLoading ? (
+          <div aria-busy="true">
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : isError && constraints === undefined ? (
+          /*
+            Not the empty sentence: "no constraints" is a claim that everyone is
+            always available, and a failed request is not evidence of it.
+          */
+          <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+        ) : !constraints || constraints.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("empty")}</p>
+        ) : (
+          /*
+            A table inside its section: no frame of its own (the card is the
+            frame), cells flush with the card's padding. On a phone the kind
+            and the reason step aside — who, which day, what time and the row's
+            buttons are what a row is read by.
+          */
+          <div className="overflow-x-auto">
+            <Table>
+              <caption className="sr-only">{t("tableCaption")}</caption>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead scope="col" className={cn(INNER_TH, "pl-0")}>
+                    {t("resource")}
+                  </TableHead>
+                  <TableHead scope="col" className={INNER_TH}>
+                    {tCommon("name")}
+                  </TableHead>
+                  <TableHead scope="col" className={INNER_TH}>
+                    {t("day")}
+                  </TableHead>
+                  <TableHead scope="col" className={INNER_TH}>
+                    {tCommon("time")}
+                  </TableHead>
+                  <TableHead scope="col" className={cn(INNER_TH, "hidden sm:table-cell")}>
+                    {tCommon("type")}
+                  </TableHead>
+                  <TableHead scope="col" className={cn(INNER_TH, "hidden sm:table-cell")}>
+                    {t("reason")}
+                  </TableHead>
+                  <TableHead scope="col" className={cn(INNER_TH, "w-24 pr-0 text-right")}>
+                    {tCommon("actions")}
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+              </TableHeader>
+              <TableBody>
+                {constraints.map((constraint) => (
+                  <TableRow key={constraint.id}>
+                    <TableCell className={cn(INNER_TD, "pl-0")}>
+                      <Badge variant="secondary">{resourceLabel(constraint.resourceType)}</Badge>
+                    </TableCell>
+                    <TableCell className={cn(INNER_TD, "font-medium")}>{resourceName(constraint)}</TableCell>
+                    <TableCell className={cn(INNER_TD, "whitespace-nowrap tabular-nums")}>
+                      {whenLabel(constraint)}
+                    </TableCell>
+                    <TableCell className={cn(INNER_TD, "whitespace-nowrap tabular-nums")}>
+                      {formatTime(constraint.startTime)}–{formatTime(constraint.endTime)}
+                    </TableCell>
+                    <TableCell className={cn(INNER_TD, "hidden sm:table-cell")}>
+                      {/*
+                        A kind of rule, not a failure: secondary for the hard
+                        one, outline for the two wishes (lib/status-variants).
+                        Red on every row of a list of rules said "error" where
+                        nothing had gone wrong.
+                      */}
+                      <Badge
+                        variant={constraint.type === "UNAVAILABLE" ? "secondary" : "outline"}
+                      >
+                        {tTypes(constraint.type)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell
+                      className={cn(INNER_TD, "hidden max-w-40 truncate text-muted-foreground sm:table-cell")}
+                    >
+                      {constraint.reason ?? "—"}
+                    </TableCell>
+                    <TableCell className={cn(INNER_TD, "pr-0 text-right")}>
+                      <RowActions
+                        name={rowName(constraint)}
+                        actions={[
+                          { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(constraint) },
+                          { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(constraint) },
+                        ]}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </SectionCard>
 
       <LunchSettingsCard />
-      {/* Locks above wishes: the absolute rule is read first, and a school
-          scanning the page should meet the thing that can refuse a week before
-          the thing that only nudges it. */}
       <RoomPreferencesCard kind="LOCK" />
       <RoomPreferencesCard kind="WISH" />
 
+      {/* The manual's chain: timplan, timplansposter, tjänstefördelning,
+          tillgänglighet — and then the schedule is generated. */}
+      <div className="flex justify-end">
+        <NextStep href="/admin/generate" name={tNav("generate")} />
+      </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("editConstraint") : t("addConstraint")}</DialogTitle>
+            <DialogDescription>{t("dialogDescription")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{t("resource")}</Label>
-                <Select
-                  value={form.resourceType}
-                  onValueChange={(value) =>
-                    setForm({
-                      ...form,
-                      resourceType: value as ConstraintResource,
-                      resourceId: "",
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={t("resource")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {RESOURCES.map((resource) => (
-                      <SelectItem key={resource} value={resource}>
-                        {resourceLabel(resource)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="constraint-resource" label={t("resource")}>
+                {(control) => (
+                  <Select
+                    value={form.resourceType}
+                    onValueChange={(value) =>
+                      setForm({
+                        ...form,
+                        resourceType: value as ConstraintResource,
+                        resourceId: "",
+                      })
+                    }
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RESOURCES.map((resource) => (
+                        <SelectItem key={resource} value={resource}>
+                          {resourceLabel(resource)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
               {form.resourceType === "GRADE_LEVEL" ? (
                 /* No "every year": the service refuses a GRADE_LEVEL rule with
                    no bound at all, and one that means the whole school is a
@@ -410,24 +471,25 @@ export default function ConstraintsPage() {
                   hint={t("gradeHint")}
                 />
               ) : (
-                <div className="space-y-2">
-                  <Label>{tCommon("name")}</Label>
-                  <Select
-                    value={form.resourceId || undefined}
-                    onValueChange={(value) => setForm({ ...form, resourceId: value })}
-                  >
-                    <SelectTrigger aria-label={tCommon("name")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {resourceOptions(form.resourceType).map((option) => (
-                        <SelectItem key={option.id} value={option.id}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <FormField id="constraint-resource-id" label={tCommon("name")}>
+                  {(control) => (
+                    <Select
+                      value={form.resourceId || undefined}
+                      onValueChange={(value) => setForm({ ...form, resourceId: value })}
+                    >
+                      <SelectTrigger {...control}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {resourceOptions(form.resourceType).map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </FormField>
               )}
             </div>
 
@@ -448,99 +510,94 @@ export default function ConstraintsPage() {
             </Tabs>
 
             {form.mode === "recurring" ? (
-              <div className="space-y-2">
-                <Label>{t("day")}</Label>
-                <Select
-                  value={form.dayOfWeek}
-                  onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DAYS.map((day) => (
-                      <SelectItem key={day} value={String(day)}>
-                        {tDays(String(day))}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <FormField id="constraint-day" label={t("day")}>
+                {(control) => (
+                  <Select
+                    value={form.dayOfWeek}
+                    onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DAYS.map((day) => (
+                        <SelectItem key={day} value={String(day)}>
+                          {tDays(String(day))}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
             ) : (
-              <div className="space-y-2">
-                <Label htmlFor="constraint-date">{tCommon("date")}</Label>
+              <FormField id="constraint-date" label={tCommon("date")}>
                 <DateField
                   label={tCommon("date")}
-                  id="constraint-date"
                   value={form.date}
                   onChange={(value) => setForm({ ...form, date: value })}
                 />
-              </div>
+              </FormField>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="constraint-start">{t("startTime")}</Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="constraint-start" label={t("startTime")}>
                 <Input
-                  id="constraint-start"
                   type="time"
                   value={form.startTime}
                   onChange={(e) => setForm({ ...form, startTime: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="constraint-end">{t("endTime")}</Label>
+              </FormField>
+              <FormField id="constraint-end" label={t("endTime")}>
                 <Input
-                  id="constraint-end"
                   type="time"
                   value={form.endTime}
                   onChange={(e) => setForm({ ...form, endTime: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{tCommon("type")}</Label>
-                <Select
-                  value={form.type}
-                  onValueChange={(value) => setForm({ ...form, type: value as ConstraintType })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {tTypes(type)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="constraint-reason">
-                  {t("reason")}{" "}
-                  <span className="text-muted-foreground">({tCommon("optional")})</span>
-                </Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="constraint-type" label={tCommon("type")}>
+                {(control) => (
+                  <Select
+                    value={form.type}
+                    onValueChange={(value) => setForm({ ...form, type: value as ConstraintType })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TYPES.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {tTypes(type)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
+              <FormField id="constraint-reason" label={t("reason")} optional>
                 <Input
-                  id="constraint-reason"
                   value={form.reason}
                   placeholder={t("reasonPlaceholder")}
                   onChange={(e) => setForm({ ...form, reason: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button
-              onClick={submit}
-              disabled={!formValid || mutations.create.isPending || mutations.update.isPending}
-            >
-              {tCommon("save")}
+            <Button onClick={submit} disabled={!formValid || saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -549,12 +606,12 @@ export default function ConstraintsPage() {
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title={tCommon("deleteConfirmTitle", { name: deleting ? resourceName(deleting) : "" })}
+        title={tCommon("deleteConfirmTitle", { name: deleting ? rowName(deleting) : "" })}
         description={tCommon("deleteConfirmBody")}
         confirmLabel={tCommon("delete")}
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
 }

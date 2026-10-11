@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ReportsTabs, reportTabOf } from "./reports-tabs";
+import { reportTabOf } from "@/lib/report-tabs";
+import { ReportsTabs } from "./reports-tabs";
 
 Element.prototype.hasPointerCapture ??= () => false;
 
@@ -46,6 +47,19 @@ describe("the reports tabs", () => {
     await user.click(screen.getByRole("tab", { name: "cover" }));
     expect(await screen.findByText("cover-hours-report")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=cover");
+  });
+
+  it("names the page once, above the tabs, and puts each report in a tabpanel named by its tab", async () => {
+    const user = userEvent.setup();
+    render(<ReportsTabs initialTab="attendance" />);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "title" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "label" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "attendance" })).toHaveTextContent("attendance-report");
+    await user.click(screen.getByRole("tab", { name: "cover" }));
+    expect(await screen.findByRole("tabpanel", { name: "cover" })).toHaveTextContent("cover-hours-report");
+    // The header stays where it was while the tab changes.
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("reads ?tab= as one of the three tabs, anything else as Närvaro", () => {

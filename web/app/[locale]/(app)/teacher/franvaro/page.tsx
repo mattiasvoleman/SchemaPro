@@ -32,10 +32,14 @@ import { useAbsenceReasons, useAbsences, useCoverSettings, usePoolMembership } f
 import type { Absence } from "@/lib/cover-types";
 import { absencePeriodText, shiftDate } from "@/lib/cover-absence-form";
 import { reasonName } from "@/lib/cover-view";
-import { formatTime, toDateString } from "@/lib/utils";
+import { COVER_STATUS_VARIANT } from "@/lib/status-variants";
+import { toDateString } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** A pool member's hours: only a pool member downloads the editor. */
@@ -64,18 +68,6 @@ export function mayWithdraw(absence: Absence, now: number): boolean {
   return decided === 0 && now - new Date(absence.createdAt).getTime() < WITHDRAW_WINDOW_MS;
 }
 
-function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <section className="space-y-3 rounded-lg border bg-card p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{title}</h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 export default function TeacherCoverPage() {
   const t = useTranslations("teacherCover");
   const tReasons = useTranslations("absenceReasons");
@@ -85,12 +77,20 @@ export default function TeacherCoverPage() {
   const until = shiftDate(today, WEEKS_AHEAD * 7);
   const now = Date.now();
 
-  const { data: lessons, isLoading: lessonsLoading } = useTeacherLessons(profile.id, today, until);
+  const {
+    data: lessons,
+    isLoading: lessonsLoading,
+    isError: lessonsError,
+  } = useTeacherLessons(profile.id, today, until);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
   const { data: settings } = useCoverSettings();
-  const { data: absences, isLoading: absencesLoading } = useAbsences({ userId: profile.id });
+  const {
+    data: absences,
+    isLoading: absencesLoading,
+    isError: absencesError,
+  } = useAbsences({ userId: profile.id });
   const { data: reasons } = useAbsenceReasons();
   const { data: isPoolMember } = usePoolMembership(profile.id);
 
@@ -110,6 +110,9 @@ export default function TeacherCoverPage() {
   );
   const dayText = (date: string) =>
     new Date(`${date}T12:00:00`).toLocaleDateString(locale, { weekday: "short", day: "numeric", month: "short" });
+  // 24-hour clock times as the reader's locale writes them.
+  const time = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { hour: "2-digit", minute: "2-digit" });
+  const timeText = (iso: string) => time.format(new Date(iso));
 
   const open = (action: () => void) => {
     setDialogs(true);
@@ -117,12 +120,27 @@ export default function TeacherCoverPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+    <Page>
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          selfReport ? (
+            <Button onClick={() => open(() => setReporting(true))}>
+              <CalendarPlus aria-hidden="true" />
+              {t("report")}
+            </Button>
+          ) : null
+        }
+      />
 
-      <Section title={t("coversTitle")}>
+      <SectionCard id="teacher-covers" title={t("coversTitle")}>
         {lessonsLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <div aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : lessonsError ? (
+          <LoadError variant="inline" title={t("coversLoadFailed")} hint={t("loadFailedHint")} />
         ) : covers.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("coversEmpty", { weeks: WEEKS_AHEAD })}</p>
         ) : (
@@ -131,7 +149,7 @@ export default function TeacherCoverPage() {
               <li key={lesson.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
                 <span className="w-28 capitalize">{dayText(lesson.date)}</span>
                 <span className="w-24 tabular-nums">
-                  {formatTime(lesson.startsAt)}–{formatTime(lesson.endsAt)}
+                  {timeText(lesson.startsAt)}–{timeText(lesson.endsAt)}
                 </span>
                 <span className="font-medium">{subjectName.get(lesson.subjectId) ?? "—"}</span>
                 <span>{groupName.get(lesson.studentGroupId) ?? "—"}</span>
@@ -142,24 +160,21 @@ export default function TeacherCoverPage() {
             ))}
           </ul>
         )}
-      </Section>
+      </SectionCard>
 
-      <Section
+      <SectionCard
+        id="teacher-absences"
         title={t("absencesTitle")}
-        action={
-          selfReport ? (
-            <Button size="sm" onClick={() => open(() => setReporting(true))}>
-              <CalendarPlus />
-              {t("report")}
-            </Button>
-          ) : null
-        }
+        description={settings ? (selfReport ? t("selfReportOn") : t("selfReportOff")) : undefined}
       >
-        <p className="text-sm text-muted-foreground">{selfReport ? t("selfReportOn") : t("selfReportOff")}</p>
         {absencesLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <div aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : absencesError ? (
+          <LoadError variant="inline" title={t("absencesLoadFailed")} hint={t("loadFailedHint")} />
         ) : (absences ?? []).length === 0 ? (
-          <p className="text-sm italic text-muted-foreground">{t("absencesEmpty")}</p>
+          <p className="text-sm text-muted-foreground">{t("absencesEmpty")}</p>
         ) : (
           <ul className="divide-y rounded-md border">
             {(absences ?? []).map((absence) => (
@@ -170,13 +185,13 @@ export default function TeacherCoverPage() {
                 </span>
                 <span className="flex flex-wrap gap-1">
                   {absence.counts.covered > 0 ? (
-                    <Badge variant="success">{t("covered", { count: absence.counts.covered })}</Badge>
+                    <Badge variant={COVER_STATUS_VARIANT.COVERED}>{t("covered", { count: absence.counts.covered })}</Badge>
                   ) : null}
                   {absence.counts.open > 0 ? (
-                    <Badge variant="warning">{t("open", { count: absence.counts.open })}</Badge>
+                    <Badge variant={COVER_STATUS_VARIANT.OPEN}>{t("open", { count: absence.counts.open })}</Badge>
                   ) : null}
                   {absence.counts.cancelled + absence.counts.handled > 0 ? (
-                    <Badge variant="secondary">
+                    <Badge variant={COVER_STATUS_VARIANT.CANCELLED}>
                       {t("otherwise", { count: absence.counts.cancelled + absence.counts.handled })}
                     </Badge>
                   ) : null}
@@ -188,13 +203,10 @@ export default function TeacherCoverPage() {
                         {t("end")}
                       </Button>
                     ) : null}
+                    {/* A neutral trigger: the withdraw dialog is the
+                        confirmation, and carries the red. */}
                     {mayWithdraw(absence, now) ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-destructive"
-                        onClick={() => open(() => setWithdrawing(absence))}
-                      >
+                      <Button size="sm" variant="outline" onClick={() => open(() => setWithdrawing(absence))}>
                         {t("withdraw")}
                       </Button>
                     ) : null}
@@ -205,14 +217,14 @@ export default function TeacherCoverPage() {
           </ul>
         )}
         <p className="text-xs text-muted-foreground">{t("privacy")}</p>
-      </Section>
+      </SectionCard>
 
       {isPoolMember ? (
-        <Section title={t("availabilityTitle")}>
+        <SectionCard id="teacher-availability" title={t("availabilityTitle")}>
           <Suspense fallback={<Skeleton className="h-16 w-full" />}>
             <AvailabilityEditor own />
           </Suspense>
-        </Section>
+        </SectionCard>
       ) : null}
 
       {dialogs ? (
@@ -227,6 +239,6 @@ export default function TeacherCoverPage() {
           <AbsenceWithdrawDialog absence={withdrawing} mode="TEACHER" onOpenChange={(next) => !next && setWithdrawing(null)} />
         </Suspense>
       ) : null}
-    </div>
+    </Page>
   );
 }

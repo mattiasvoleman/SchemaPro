@@ -12,6 +12,7 @@ import {
   LockOpen,
   FileText,
   Footprints,
+  MoreHorizontal,
   Plus,
   Printer,
   Redo2,
@@ -23,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  useAcademicYears,
   useConstraints,
   useCreateMasterLesson,
   useDeleteMasterLesson,
@@ -178,6 +180,8 @@ import {
   useHistoryKeyboard,
   useScheduleHistory,
 } from "@/lib/use-schedule-history";
+import { NextStep } from "@/components/layout/next-step";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import {
   TimetableGrid,
@@ -185,8 +189,22 @@ import {
   type TimetableLesson,
   type TimetableGridHandle,
 } from "@/components/schedule/timetable-grid";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+/*
+ * Already on this route: FilterPicker draws its lists with the same menu, so
+ * the header's overflow costs its own few lines and no second copy of Radix.
+ */
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -247,6 +265,7 @@ export default function TimetablePage() {
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tDays = useTranslations("days");
+  const tNav = useTranslations("nav");
   /*
    * The grundschema on screen: this year's, or next year's before its
    * activation (lib/planning-year.ts). Every year-keyed read and write below
@@ -255,9 +274,20 @@ export default function TimetablePage() {
    */
   const planning = usePlanningYear();
   const shownYear = planning.year;
+  /*
+   * The years themselves, for the state ladder only (usePlanningYear reads
+   * the same cached query). Without them a school whose years were still on
+   * their way, or had failed, or had no active year was told "no
+   * grundschema yet — generate one": a page that could not know saying so.
+   * Pending includes the one render usePlanningYear holds the year back
+   * for, so the empty state does not flash before the grid.
+   */
+  const yearsQuery = useAcademicYears();
+  const yearPending = yearsQuery.isLoading || (planning.active !== null && shownYear === null);
   const {
     data: lessons,
     isLoading,
+    isError: lessonsFailed,
     dataUpdatedAt: lessonsReadAt,
   } = useMasterLessons(shownYear?.id ?? null);
   const { data: subjects } = useSubjects();
@@ -1905,31 +1935,43 @@ export default function TimetablePage() {
 
   const conflictCount = conflictMap.size;
 
+  /*
+   * What a pick in the header's overflow menu does, run once the menu has
+   * closed rather than as it is picked. Skriv ut above all: window.print()
+   * blocks on the page as it is drawn, and a menu still on screen would be
+   * on the paper. Optimera salar opens its dialog the same way, so the
+   * dialog's focus trap starts after the menu's has let go and hands focus
+   * back to the menu button when it closes.
+   */
+  const afterMenu = useRef<(() => void) | null>(null);
+  const fromMenu = (action: () => void) => () => {
+    afterMenu.current = action;
+  };
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={doUndo}
-              disabled={!history.canUndo}
-              title={`${t("undo")} (Ctrl+Z)`}
-            >
-              <Undo2 />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={doRedo}
-              disabled={!history.canRedo}
-              title={`${t("redo")} (Ctrl+Shift+Z)`}
-            >
-              <Redo2 />
-            </Button>
+          <>
+            {/* First in the actions, as every page's scope is. It shared the
+                header with nine buttons once and ran past a 1440 px screen;
+                the header holds four controls now, with the exports, the
+                print and the room optimisation behind "Fler åtgärder". */}
+            <PlanningYearPicker
+              {...planning}
+              onChoose={(yearId) => {
+                // What was picked, ticked and undoable belongs to the other
+                // year's grid: its group ids are not this year's, and an undo
+                // would move a lesson nobody can see.
+                setGroupFilters([]);
+                setSelectedIds(new Set());
+                setPlacingLunch(false);
+                history.clear();
+                planning.choose(yearId);
+              }}
+            />
             <Button
               variant="outline"
               onClick={() => openCreate(1, 8 * 60)}
@@ -1949,58 +1991,68 @@ export default function TimetablePage() {
               <History />
               {t("versions")}
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setRoomsUsed(true);
-                setRoomsOpen(true);
-              }}
-              disabled={!shownYear || !lessons || lessons.length === 0}
-            >
-              <Footprints />
-              {t("optimizeRooms")}
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={doExportIcs}
-              disabled={!shownYear || filtered.length === 0}
-              title={t("exportIcs")}
-            >
-              <Download />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={doExportPdf}
-              disabled={!shownYear || filtered.length === 0}
-              title={t("exportPdf")}
-            >
-              <FileText />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => window.print()}
-              title={t("print")}
-            >
-              <Printer />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label={t("moreActions")}>
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                onCloseAutoFocus={() => {
+                  const action = afterMenu.current;
+                  afterMenu.current = null;
+                  action?.();
+                }}
+              >
+                <DropdownMenuItem
+                  disabled={!shownYear || !lessons || lessons.length === 0}
+                  onSelect={fromMenu(() => {
+                    setRoomsUsed(true);
+                    setRoomsOpen(true);
+                  })}
+                >
+                  <Footprints />
+                  {t("optimizeRooms")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!shownYear || filtered.length === 0}
+                  onSelect={fromMenu(() => void doExportIcs())}
+                >
+                  <Download />
+                  {t("exportIcs")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!shownYear || filtered.length === 0}
+                  onSelect={fromMenu(() => void doExportPdf())}
+                >
+                  <FileText />
+                  {t("exportPdf")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={fromMenu(() => window.print())}>
+                  <Printer />
+                  {t("print")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button onClick={() => setPublishOpen(true)} disabled={!shownYear}>
               <Upload />
               {t("publish")}
             </Button>
-          </div>
+          </>
         }
       />
       {/* Utkastläge only: what the grid holds against what is published. The
-          badge draws nothing in direct mode. It arrives with the lesson
-          dialogs' chunk, and a chunk that fails takes the badge away rather
-          than the page — no toast, no retry loop; the dialogs say it. */}
+          badge draws nothing in direct mode — and its row with it (empty:
+          hidden), which is why it is a row of its own and not PageHeader's
+          meta, whose wrapper would keep its margin with nothing in it. It
+          arrives with the lesson dialogs' chunk, and a chunk that fails takes
+          the badge away rather than the page — no toast, no retry loop; the
+          dialogs say it. */}
       {shownYear && !badgeFailed ? (
         <DialogLoadBoundary onError={() => setBadgeFailed(true)}>
           <Suspense fallback={null}>
-            <div className="mb-2 empty:hidden">
+            <div className="empty:hidden">
               <PublicationBadge
                 yearId={shownYear.id}
                 revision={lessonsReadAt}
@@ -2010,24 +2062,6 @@ export default function TimetablePage() {
           </Suspense>
         </DialogLoadBoundary>
       ) : null}
-      {/* In a row of its own, above the banner it explains, and not in the
-          header's actions: that row is nine buttons already, and with the
-          choice beside them it ran past a 1440 px screen and put Publicera
-          out of sight for the whole planning window. */}
-      <PlanningYearPicker
-        {...planning}
-        className="mb-4"
-        onChoose={(yearId) => {
-          // What was picked, ticked and undoable belongs to the other
-          // year's grid: its group ids are not this year's, and an undo
-          // would move a lesson nobody can see.
-          setGroupFilters([]);
-          setSelectedIds(new Set());
-          setPlacingLunch(false);
-          history.clear();
-          planning.choose(yearId);
-        }}
-      />
       <ProjectedRostersBanner
         year={shownYear}
         active={planning.active}
@@ -2035,7 +2069,34 @@ export default function TimetablePage() {
         failed={planning.rostersFailed}
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {/* The board's own toolbar: filters, the view, the history and the
+          modes. Undo and redo live here, beside what they undo, with their
+          shortcuts said in words (aria-keyshortcuts) and on hover. */}
+      <FilterBar className="items-center">
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={doUndo}
+            disabled={!history.canUndo}
+            aria-label={t("undo")}
+            aria-keyshortcuts="Control+Z Meta+Z"
+            title={t("undoShortcut")}
+          >
+            <Undo2 />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={doRedo}
+            disabled={!history.canRedo}
+            aria-label={t("redo")}
+            aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z"
+            title={t("redoShortcut")}
+          >
+            <Redo2 />
+          </Button>
+        </div>
         {/* Labelled inside, because it sits beside the teacher combobox and a
             screen reader read both as "Alla …" with nothing to tell them
             apart. */}
@@ -2072,8 +2133,11 @@ export default function TimetablePage() {
           allLabel={t("allRooms")}
           countLabel={(count) => t("roomsSelected", { count })}
         />
+        {/* Named like the pickers beside it, inside rather than above: a
+            visible label over one control of six would push the grid down
+            for every school, every day. */}
         <Select value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-40" aria-label={t("viewLabel")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -2105,15 +2169,15 @@ export default function TimetablePage() {
           {t("lessonTime.button")}
         </Button>
         {filtered.length > 0 ? (
-          <span className="text-sm text-muted-foreground">
+          <span className="text-sm tabular-nums text-muted-foreground">
             {t("lessonCount", { count: filtered.length })}
           </span>
         ) : null}
         {conflictCount > 0 ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-1 text-sm font-medium text-red-700">
-            <TriangleAlert className="h-4 w-4" />
+          <Badge variant="destructive" className="gap-1.5">
+            <TriangleAlert className="size-3.5" />
             {t("conflictCount", { count: conflictCount })}
-          </span>
+          </Badge>
         ) : null}
         <span className="text-xs text-muted-foreground">{t("dragHint")}</span>
         {peers.length > 1 ? (
@@ -2130,7 +2194,7 @@ export default function TimetablePage() {
             ))}
           </span>
         ) : null}
-      </div>
+      </FilterBar>
 
       {lessonTimeOpen && shownYear ? (
         <DialogLoadBoundary
@@ -2170,11 +2234,17 @@ export default function TimetablePage() {
       lunchSettings?.lunchEnabled &&
       lunchSittings !== undefined &&
       !lunchSittings.some((sitting) => sitting.studentGroupId === onlyGroup) ? (
-        <div
-          role="status"
-          className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        <Notice
+          tone="warning"
+          action={
+            canPlaceLunch ? (
+              <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)}>
+                <UtensilsCrossed />
+                {t("noSittingsPlace")}
+              </Button>
+            ) : undefined
+          }
         >
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
           {lunchSittings.length === 0 ? (
             <div className="space-y-1">
               <p>{t("noSittingsYear")}</p>
@@ -2188,42 +2258,23 @@ export default function TimetablePage() {
               >
                 {t("noSittingsYearLink")}
               </Link>
-              {canPlaceLunch ? (
-                <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)}>
-                  <UtensilsCrossed />
-                  {t("noSittingsPlace")}
-                </Button>
-              ) : null}
             </div>
           ) : (
-            <div className="space-y-1">
-              <p>
-                {t("noSittingsGroup", {
-                  group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
-                })}
-              </p>
-              {canPlaceLunch ? (
-                <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)}>
-                  <UtensilsCrossed />
-                  {t("noSittingsPlace")}
-                </Button>
-              ) : null}
-            </div>
+            <p>
+              {t("noSittingsGroup", {
+                group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
+              })}
+            </p>
           )}
-        </div>
+        </Notice>
       ) : null}
 
       {lunchMode ? (
-        <p
-          role="status"
-          className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
-        >
-          {t("placeLunchHint", { minutes: lunchSettings?.lunchMinutes ?? 0 })}
-        </p>
+        <Notice>{t("placeLunchHint", { minutes: lunchSettings?.lunchMinutes ?? 0 })}</Notice>
       ) : null}
 
       {selectedIds.size > 0 ? (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2">
           <span className="text-sm font-medium">
             {t("bulkSelected", { count: selectedIds.size })}
           </span>
@@ -2246,20 +2297,67 @@ export default function TimetablePage() {
         </div>
       ) : null}
 
-      {isLoading ? (
-        <Skeleton className="h-96 w-full" />
+      {/*
+        A failed refetch keeps the board. Realtime peers invalidate the
+        lessons on every edit, so a background read that fails must not
+        unmount a board someone is editing: the board stays as last read and
+        this says so above it. The page-level error is only for a board that
+        was never read.
+      */}
+      {lessonsFailed && lessons !== undefined ? (
+        <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
+      ) : null}
+
+      {isLoading || yearPending ? (
+        <div aria-busy="true">
+          <Skeleton className="h-96 w-full" />
+        </div>
+      ) : !shownYear && yearsQuery.isError ? (
+        <LoadError title={t("yearsLoadFailed")} hint={t("yearsLoadFailedHint")} headingLevel={2} />
+      ) : !shownYear ? (
+        <EmptyState
+          icon={CalendarDays}
+          headingLevel={2}
+          title={t("noYearTitle")}
+          description={t("noYearHint")}
+          action={
+            <Button asChild variant="outline">
+              <Link href="/admin/years">{t("noYearAction")}</Link>
+            </Button>
+          }
+        />
+      ) : lessonsFailed && lessons === undefined ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !lessons || lessons.length === 0 ? (
-        <EmptyState icon={CalendarDays} title={tCommon("noResults")} description={t("empty")} />
+        <EmptyState
+          icon={CalendarDays}
+          headingLevel={2}
+          title={t("emptyTitle")}
+          description={t("emptyHint")}
+          action={
+            <Button asChild>
+              <Link
+                href={
+                  shownYear && !shownYear.isActive
+                    ? `/admin/generate?year=${shownYear.id}`
+                    : "/admin/generate"
+                }
+              >
+                {t("emptyAction")}
+              </Link>
+            </Button>
+          }
+        />
       ) : resourceBoards ? (
         <div className="space-y-6">
           {resourceBoards.map((board) => (
-            <div key={board.key}>
-              <h3 className="mb-2 text-sm font-semibold">
+            <section key={board.key} aria-labelledby={`board-${board.key}`} className="space-y-2">
+              <h2 id={`board-${board.key}`} className="text-base font-semibold">
                 {board.label}
-                <span className="ml-2 font-normal text-muted-foreground">
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
                   {t("lessonCount", { count: board.lessons.length })}
                 </span>
-              </h3>
+              </h2>
               <TimetableGrid
                 lessons={board.lessons}
                 editable
@@ -2277,7 +2375,7 @@ export default function TimetablePage() {
                 onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
                 onBandRemove={(id) => void removeLunch(id)}
               />
-            </div>
+            </section>
           ))}
         </div>
       ) : (
@@ -2312,14 +2410,16 @@ export default function TimetablePage() {
         data-testid="lesson-tray"
         aria-labelledby="lesson-tray-title"
         className={cn(
-          "mt-4 rounded-lg border border-dashed p-3",
+          "space-y-2 rounded-lg border border-dashed p-3",
           parked.length === 0 ? "text-muted-foreground" : "bg-card",
         )}
       >
-        <h2 id="lesson-tray-title" className="mb-1 text-sm font-semibold">
-          {t("trayTitle")}
-        </h2>
-        <p className="mb-2 text-xs text-muted-foreground">{t("trayHint")}</p>
+        <div className="space-y-1">
+          <h2 id="lesson-tray-title" className="text-base font-semibold text-foreground">
+            {t("trayTitle")}
+          </h2>
+          <p className="text-xs text-muted-foreground">{t("trayHint")}</p>
+        </div>
         {parked.length === 0 ? (
           <p className="text-sm">{t("trayEmpty")}</p>
         ) : (
@@ -2357,6 +2457,11 @@ export default function TimetablePage() {
           </ul>
         )}
       </section>
+
+      {/* The manual's next step after the grundschema. */}
+      <div className="flex justify-end">
+        <NextStep href="/admin/gaps" name={tNav("gaps")} />
+      </div>
 
       {/* ---------------- Edit dialog ---------------- */}
       {/*
@@ -2518,6 +2623,6 @@ export default function TimetablePage() {
           </Suspense>
         )}
       </DialogLoadBoundary>
-    </div>
+    </Page>
   );
 }

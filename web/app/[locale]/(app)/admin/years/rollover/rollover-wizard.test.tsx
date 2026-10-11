@@ -638,7 +638,11 @@ describe("RolloverWizard", () => {
   it("asks for a source year when it is given none", () => {
     renderWizard(null);
     const empty = screen.getByText("Inget läsår att rulla").closest("div")!.parentElement!;
-    expect(within(empty).getByRole("link", { name: "Till läsåren" })).toHaveAttribute("href", "/admin/years");
+    // The empty state's button names the task; the header's back link,
+    // there in every branch, is the one that says "Till läsåren".
+    expect(within(empty).getByRole("link", { name: "Välj läsår" })).toHaveAttribute("href", "/admin/years");
+    expect(screen.getByRole("link", { name: "Till läsåren" })).toHaveAttribute("href", "/admin/years");
+    expect(screen.getByText("Skapa nästa läsår ur ett befintligt, så följer klasser, timplansposter och lärare med")).toBeInTheDocument();
     expect(post).not.toHaveBeenCalled();
   });
 });

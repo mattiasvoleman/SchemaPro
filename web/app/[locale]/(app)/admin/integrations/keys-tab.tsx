@@ -3,14 +3,18 @@
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Copy, KeyRound, Loader2, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Copy, Loader2, Pause, Play, Plus, Trash2 } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
+import { KEY_STATE_VARIANT } from "@/lib/status-variants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CHECKBOX } from "./form-styles";
 import { errorText, formatWhen } from "./ss12000-messages";
 import { DEFAULT_SCOPES, SCOPES, type ProviderKey, type ProviderSubscription, type Scope } from "./ss12000-types";
@@ -87,32 +91,33 @@ function OnceNotice({ title, value, hint, onDone }: { title: string; value: stri
   const tCommon = useTranslations("common");
   const t = useTranslations("integrations");
   return (
-    <div className="rounded-md border border-warning/50 bg-warning/10 p-3" role="status">
-      <p className="mb-2 text-sm font-medium">{title}</p>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 overflow-x-auto rounded bg-background px-2 py-1 text-xs">{value}</code>
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label={t("keys.copy")}
-          onClick={() => {
-            // A refused write (no permission, no secure context) must not say "copied".
-            Promise.resolve()
-              .then(() => navigator.clipboard.writeText(value))
-              .then(
-                () => toast.success(tCommon("copied")),
-                () => toast.error(t("keys.copyFailed")),
-              );
-          }}
-        >
-          <Copy />
+    <Notice tone="warning" title={title}>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 overflow-x-auto rounded-md bg-background px-2 py-1 text-xs">{value}</code>
+          <Button
+            size="icon"
+            variant="outline"
+            aria-label={t("keys.copy")}
+            onClick={() => {
+              // A refused write (no permission, no secure context) must not say "copied".
+              Promise.resolve()
+                .then(() => navigator.clipboard.writeText(value))
+                .then(
+                  () => toast.success(tCommon("copied")),
+                  () => toast.error(t("keys.copyFailed")),
+                );
+            }}
+          >
+            <Copy aria-hidden="true" />
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+        <Button size="sm" variant="outline" onClick={onDone}>
+          {t("keys.done")}
         </Button>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
-      <Button className="mt-2" size="sm" variant="outline" onClick={onDone}>
-        {t("keys.done")}
-      </Button>
-    </div>
+    </Notice>
   );
 }
 
@@ -128,46 +133,52 @@ export function KeysTab() {
   const list = keys.data ?? [];
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("createTitle")}</CardTitle>
-          <CardDescription>{t("createBody")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input placeholder={t("namePlaceholder")} value={name} maxLength={120} aria-label={t("keys.name")} onChange={(e) => setName(e.target.value)} />
-          <ScopePicker value={scopes} onChange={setScopes} idPrefix="new-key" />
-          <Button
-            onClick={() =>
-              create.mutate(
-                { name: name.trim() || "Integration", scopes },
-                {
-                  onSuccess: (result) => {
-                    setFreshKey(result.key);
-                    setName("");
-                    setScopes([...DEFAULT_SCOPES]);
-                  },
-                  onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+    <div className="space-y-4">
+      <SectionCard id="key-create" title={t("createTitle")} description={t("createBody")}>
+        <FormField id="key-name" label={t("keys.name")}>
+          <Input placeholder={t("namePlaceholder")} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+        </FormField>
+        <ScopePicker value={scopes} onChange={setScopes} idPrefix="new-key" />
+        <Button
+          onClick={() =>
+            create.mutate(
+              { name: name.trim() || "Integration", scopes },
+              {
+                onSuccess: (result) => {
+                  setFreshKey(result.key);
+                  setName("");
+                  setScopes([...DEFAULT_SCOPES]);
                 },
-              )
-            }
-            disabled={create.isPending || scopes.length === 0}
-          >
-            {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-            {t("create")}
-          </Button>
-          {freshKey ? <OnceNotice title={t("freshKeyTitle")} value={freshKey} hint={t("freshKeyHint")} onDone={() => setFreshKey(null)} /> : null}
-          <p className="text-xs text-muted-foreground">{t("docsHint")}</p>
-        </CardContent>
-      </Card>
+                onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+              },
+            )
+          }
+          disabled={create.isPending || scopes.length === 0}
+        >
+          {create.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+          {t("create")}
+        </Button>
+        {freshKey ? <OnceNotice title={t("freshKeyTitle")} value={freshKey} hint={t("freshKeyHint")} onDone={() => setFreshKey(null)} /> : null}
+        <p className="text-xs text-muted-foreground">{t("docsHint")}</p>
+      </SectionCard>
 
-      {keys.isError ? <p role="alert" className="text-sm">{errorText(tErrors, keys.error, tCommon("error"))}</p> : null}
-      {keys.data && list.length === 0 ? <EmptyState icon={KeyRound} title={tCommon("noResults")} description={t("empty")} /> : null}
-      <ul className="space-y-3">
-        {list.map((key) => (
-          <KeyRow key={key.id} entry={key} />
-        ))}
-      </ul>
+      <SectionCard id="key-list" title={t("keysTitle")}>
+        {keys.isLoading ? (
+          <div aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : keys.isError ? (
+          <LoadError variant="inline" title={t("keysLoadFailed")} hint={errorText(tErrors, keys.error, tCommon("error"))} />
+        ) : list.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("empty")}</p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {list.map((key) => (
+              <KeyRow key={key.id} entry={key} />
+            ))}
+          </ul>
+        )}
+      </SectionCard>
     </div>
   );
 }
@@ -189,12 +200,12 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
   const onError = (error: unknown) => toast.error(errorText(tErrors, error, tCommon("error")));
 
   return (
-    <li className="space-y-3 rounded-md border p-3">
+    <li className="space-y-3 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-medium">{entry.name}</span>
-            {live ? <Badge variant="success">{t("active")}</Badge> : <Badge variant="destructive">{t("revoked")}</Badge>}
+            <Badge variant={KEY_STATE_VARIANT[live ? "ACTIVE" : "REVOKED"]}>{live ? t("active") : t("revoked")}</Badge>
           </div>
           <div className="text-xs text-muted-foreground">
             {t("created")}: {formatWhen(locale, entry.createdAt)} ·{" "}
@@ -203,7 +214,7 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
         </div>
         {live ? (
           <Button size="sm" variant="outline" onClick={() => setRevoking(true)} disabled={revoke.isPending}>
-            <Trash2 />
+            <Trash2 aria-hidden="true" />
             {t("revoke")}
           </Button>
         ) : null}
@@ -271,7 +282,7 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
               disabled={secret.isPending}
               onClick={() => secret.mutate(entry.id, { onSuccess: (result) => setFreshSecret(result.secret), onError })}
             >
-              {secret.isPending ? <Loader2 className="animate-spin" /> : null}
+              {secret.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {entry.webhookSecret ? t("keys.rotateSecret") : t("keys.createSecret")}
             </Button>
           </div>
@@ -318,7 +329,7 @@ function Subscriptions({ keyId, subscriptions }: { keyId: string; subscriptions:
           const current = subscriptionState(subscription, now);
           const paused = current === "PAUSED" || current === "FAILING";
           return (
-            <li key={subscription.id} className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background px-2 py-1 text-xs">
+            <li key={subscription.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background px-2 py-1 text-xs">
               <div className="min-w-0 space-y-0.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{subscription.name}</span>
@@ -347,7 +358,7 @@ function Subscriptions({ keyId, subscriptions }: { keyId: string; subscriptions:
                   )
                 }
               >
-                {paused ? <Play /> : <Pause />}
+                {paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
                 {paused ? tSubs("resume") : tSubs("pause")}
               </Button>
             </li>

@@ -11,6 +11,7 @@ import {
   type WeekView,
 } from "@/lib/staffing-view";
 import type { LoadStatus, TeacherLoad, TeacherLoadReport } from "@/lib/teacher-load";
+import { LOAD_STATUS_VARIANT } from "@/lib/status-variants";
 import { subjectColor } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { LoadBar } from "@/components/staffing/load-bar";
@@ -31,16 +32,10 @@ export interface StaffingMatrixProps {
   onOpenTeacher: (userId: string) => void;
 }
 
-const STATUS_VARIANT: Record<LoadStatus, "destructive" | "warning" | "success" | "outline"> = {
-  OVER: "destructive",
-  UNDER: "warning",
-  OK: "success",
-  NO_TARGET: "outline",
-};
-
+/** The colours the manual names (OVER red, UNDER amber, OK green, NO_TARGET outline), from the app's one map. */
 export function StatusBadge({ status }: { status: LoadStatus }) {
   const t = useTranslations("staffing");
-  return <Badge variant={STATUS_VARIANT[status]}>{t(`status${status}`)}</Badge>;
+  return <Badge variant={LOAD_STATUS_VARIANT[status]}>{t(`status${status}`)}</Badge>;
 }
 
 /**
@@ -101,7 +96,7 @@ export function StaffingMatrix({
           <tr className="border-b">
             <th
               scope="col"
-              className="sticky left-0 top-0 z-30 bg-card px-3 py-2.5 text-left font-medium text-muted-foreground"
+              className="sticky left-0 top-0 z-30 bg-card px-3 py-2.5 text-left text-xs font-medium text-muted-foreground"
             >
               {t("teacherHeader")}
             </th>
@@ -113,10 +108,10 @@ export function StaffingMatrix({
               >
                 <div className="flex flex-col items-center gap-1">
                   <span
-                    className="h-2 w-2 rounded-full"
+                    className="size-2 rounded-full"
                     style={{ backgroundColor: colorOf(subject.id) }}
                   />
-                  <span className="max-w-24 truncate text-xs font-medium" title={subject.name}>
+                  <span className="max-w-24 truncate text-xs font-medium text-muted-foreground" title={subject.name}>
                     {subject.code ?? subject.name}
                   </span>
                 </div>
@@ -128,13 +123,13 @@ export function StaffingMatrix({
               (right-64), undervisning 6rem (right-84), mål 5rem (right-108),
               tjänst 5rem (right-128).
             */}
-            <th scope="col" className="sticky right-[32rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-[32rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
               {t("employmentHeader")}
             </th>
-            <th scope="col" className="sticky right-[27rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-[27rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
               {t("targetHeader")}
             </th>
-            <th scope="col" className="sticky right-[21rem] top-0 z-30 min-w-24 max-w-24 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-[21rem] top-0 z-30 min-w-24 max-w-24 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
               {/* Under the Faktor model the column is räknad tid (minutes ×
                   the subject's factor), not lesson minutes: said in the header. */}
               {report.loadModel === "FACTOR"
@@ -145,13 +140,13 @@ export function StaffingMatrix({
                   ? t("teachingPeakHeader")
                   : t("teachingHeader")}
             </th>
-            <th scope="col" className="sticky right-64 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-64 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
               {t("dutyHeader")}
             </th>
-            <th scope="col" className="sticky right-44 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-44 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
               {t("balanceHeader")}
             </th>
-            <th scope="col" className="sticky right-0 top-0 z-30 min-w-44 max-w-44 border-l bg-card px-3 py-2.5 text-left font-medium text-foreground">
+            <th scope="col" className="sticky right-0 top-0 z-30 min-w-44 max-w-44 border-l bg-card px-3 py-2.5 text-left text-xs font-medium text-muted-foreground">
               {t("barHeader")}
             </th>
           </tr>

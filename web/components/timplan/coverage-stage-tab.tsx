@@ -38,7 +38,7 @@
 import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Layers, TriangleAlert } from "lucide-react";
+import { Layers } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { useNationalTimplans } from "@/lib/queries";
 import { useTimplanStages, useTimplanStatementActions } from "@/lib/timplan-stage-queries";
@@ -61,6 +61,9 @@ import type { ClassStageCell, ClassStageSummary, PupilStage, StageCell } from "@
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CohortNotice, versionText } from "@/components/timplan/cohort-notice";
 import type { CoverageTabProps } from "@/components/timplan/coverage-scheduled-tab";
@@ -99,9 +102,12 @@ export function CoverageStageTab({ year, linkedGroup, groupName, pupilName, grad
   const tables = useMemo(() => (coverage ? stageTables(coverage.classes, groupName) : []), [coverage, groupName]);
   const selected = coverage?.classes.some((row) => row.studentGroupId === groupId) ? groupId : null;
 
-  if (overview.isLoading || (!coverage && !overview.isError)) return <Skeleton className="h-96 w-full" />;
+  if (overview.isLoading || (!coverage && !overview.isError)) {
+    return <Skeleton className="h-96 w-full" aria-busy="true" />;
+  }
   if (overview.isError || !coverage) {
-    return <EmptyState icon={TriangleAlert} title={tCoverage("loadFailed")} description={tCoverage("loadFailedHint")} />;
+    // Directly under the tablist, which sits under the h1: an h2.
+    return <LoadError title={tCoverage("loadFailed")} hint={tCoverage("loadFailedHint")} headingLevel={2} />;
   }
 
   const header = (
@@ -115,7 +121,7 @@ export function CoverageStageTab({ year, linkedGroup, groupName, pupilName, grad
     return (
       <div className="space-y-4">
         {header}
-        <EmptyState icon={Layers} title={t("notActiveTitle")} description={t("notActiveBody")} />
+        <EmptyState icon={Layers} title={t("notActiveTitle")} description={t("notActiveBody")} headingLevel={2} />
         <Publication yearId={year.id} publication={coverage.publication} isActiveYear={false} />
       </div>
     );
@@ -126,13 +132,11 @@ export function CoverageStageTab({ year, linkedGroup, groupName, pupilName, grad
   return (
     <div className="space-y-4">
       {header}
-      <p role="status" className="max-w-prose rounded-md bg-muted px-3 py-2 text-sm">
-        {t("expectation")}
-      </p>
+      <Notice className="max-w-prose">{t("expectation")}</Notice>
       <Publication yearId={year.id} publication={coverage.publication} isActiveYear />
 
       {coverage.classes.length === 0 ? (
-        <EmptyState icon={Layers} title={t("noPupilsTitle")} description={t("noPupilsBody")} />
+        <EmptyState icon={Layers} title={t("noPupilsTitle")} description={t("noPupilsBody")} headingLevel={2} />
       ) : (
         <>
           <section className="space-y-1 text-sm" aria-label={t("countsLabel")}>
@@ -157,7 +161,7 @@ export function CoverageStageTab({ year, linkedGroup, groupName, pupilName, grad
               <h2 id={`stage-${table.stage}`} className="text-base font-semibold">
                 {t("stageTitle", { stage: table.stage })}
               </h2>
-              <div className="overflow-x-auto rounded-lg border bg-card">
+              <div className="relative overflow-x-auto rounded-lg border bg-card">
                 <table className="w-full border-collapse text-sm">
                   <caption className="sr-only">{t("caption", { stage: table.stage, year: year.name })}</caption>
                   <thead>
@@ -240,10 +244,7 @@ function Publication({
   };
   const pending = publish.isPending || withdraw.isPending;
   return (
-    <section className="space-y-2 rounded-lg border bg-card p-4 text-sm" aria-labelledby="stage-publication">
-      <h2 id="stage-publication" className="font-semibold">
-        {t("publicationTitle")}
-      </h2>
+    <SectionCard id="stage-publication" title={t("publicationTitle")} className="text-sm">
       <p className="max-w-prose">
         {publication === null
           ? t("publicationNone")
@@ -286,7 +287,7 @@ function Publication({
           </Button>
         ) : null}
       </div>
-    </section>
+    </SectionCard>
   );
 }
 
@@ -420,13 +421,13 @@ function StageDrillDown({ yearId, groupId, name, subjectName, pupilName, gradeNa
       aria-labelledby="tackning-stage-title"
       className="scroll-mt-4 space-y-4 rounded-lg border bg-card p-4"
     >
-      <h2 id="tackning-stage-title" className="text-lg font-semibold">
+      <h2 id="tackning-stage-title" className="text-base font-semibold">
         {name}
       </h2>
       {drill.isError ? (
-        <p className="text-sm text-foreground">{tCoverage("loadFailed")}</p>
+        <LoadError variant="inline" title={tCoverage("loadFailed")} hint={tCoverage("loadFailedHint")} />
       ) : !data ? (
-        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full" aria-busy="true" />
       ) : (
         <>
           {rows.map((row) => (
@@ -478,7 +479,7 @@ function ClassStageTable({ row, subjectName }: { row: ClassStageSummary; subject
           {row.backfilledPupils > 0 ? ` · ${t("backfilledPupils", { count: row.backfilledPupils })}` : ""}
         </span>
       </h3>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">{t("drillCaption", { stage: row.stage })}</caption>
           <thead>
@@ -496,7 +497,7 @@ function ClassStageTable({ row, subjectName }: { row: ClassStageSummary; subject
               <tr key={cell.code} className="border-b last:border-b-0">
                 <th scope="row" className="py-1.5 pr-3 text-left font-medium">{subjectName(cell.code)}</th>
                 <td className="py-1.5 pr-3 text-right tabular-nums">
-                  {cell.nationalHours === null ? "–" : hours(cell.nationalHours)}
+                  {cell.nationalHours === null ? "—" : hours(cell.nationalHours)}
                 </td>
                 <td className="py-1.5 pr-3 text-right tabular-nums">{stats(cell.planned)}</td>
                 <td className="py-1.5 pr-3 text-right tabular-nums">{stats(cell.projected)}</td>

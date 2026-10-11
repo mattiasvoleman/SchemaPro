@@ -435,8 +435,17 @@ describe("TimplanPage: Timplaner per årskull", () => {
       { id: "g-ma", academicYearId: "y-1", name: "Ma-grupp", kind: "TEACHING_GROUP", gradeLevel: 7 },
       { id: "g-9a", academicYearId: "y-0", name: "9A", kind: "CLASS", gradeLevel: 9 },
     ];
+    const user = userEvent.setup();
     render(<TimplanPage />);
-    const notice = (await screen.findByText("title", { selector: "summary" })).closest("details")!;
+    // A disclosure button (no longer a native <details>): closed, it names
+    // and controls the panel; opened, the panel is a region named by it.
+    const toggle = await screen.findByRole("button", { name: "title" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "title" })).not.toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const notice = screen.getByRole("region", { name: "title" });
+    expect(toggle).toHaveAttribute("aria-controls", notice.id);
     const rows = within(notice).getAllByRole("listitem").map((item) => item.textContent);
     // 7A began åk 1 in 2020: lågstadiet finished June 2023, before SFS 2023:945
     // (no lydelse in the reference data); mellanstadiet reads bilaga 1; its
@@ -458,8 +467,8 @@ describe("TimplanPage: Timplaner per årskull", () => {
   it("keeps the notice on screen while a dialog's chunk loads: the two do not share a Suspense boundary", async () => {
     const user = userEvent.setup();
     render(<TimplanPage />);
-    // The summary is what shows of the closed <details>.
-    const notice = await screen.findByText("title", { selector: "summary" });
+    // The disclosure button is what shows of the closed notice.
+    const notice = await screen.findByRole("button", { name: "title" });
     expect(notice).toBeVisible();
     // Timplan per årskurs is lazy: its first open suspends until the chunk is in.
     await user.click(screen.getByRole("button", { name: /yearTimplansButton/ }));

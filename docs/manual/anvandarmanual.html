@@ -41,9 +41,9 @@
     <ol>
       <li><span>4.1 Timplan</span><span class="dots"></span><span class="pg" data-pg="s41"></span></li>
       <li><span>4.2 Timplansposter</span><span class="dots"></span><span class="pg" data-pg="s42"></span></li>
-      <li><span>4.3 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
-      <li><span>4.4 Raster</span><span class="dots"></span><span class="pg" data-pg="s44"></span></li>
-      <li><span>4.5 Tjänstefördelning</span><span class="dots"></span><span class="pg" data-pg="s45"></span></li>
+      <li><span>4.3 Tjänstefördelning</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
+      <li><span>4.4 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s44"></span></li>
+      <li><span>4.5 Raster</span><span class="dots"></span><span class="pg" data-pg="s45"></span></li>
     </ol>
     <li><span>5 · Fas 3 — Schemaläggning</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <ol>
@@ -141,7 +141,7 @@
     <div class="phase">
       <div class="n">Fas 2</div>
       <div class="t">Planering</div>
-      <div class="d">Timplan, timplansposter och tillgänglighet. Här avgörs schemats kvalitet.</div>
+      <div class="d">Timplan, timplansposter, tjänstefördelning och tillgänglighet. Här avgörs schemats kvalitet.</div>
     </div>
     <div class="phase">
       <div class="n">Fas 3</div>
@@ -159,6 +159,23 @@
     Fas 1 och 2 tar mest tid första gången men görs sällan om. Fas 3 kan köras
     så många gånger du vill — det kostar ingenting att generera ett schema och
     kasta det. Fas 4 är det löpande arbetet resten av läsåret.
+  </p>
+  <p>
+    Menyn till vänster är grupperad efter samma fyra faser. Fas 1 ligger under
+    <span class="path">Grunddata</span>: <span class="path">Kom igång</span>
+    och de fem sidor guiden går igenom — läsår, ämnen, salar, klasser och
+    personer. Fas 2 ligger under <span class="path">Planering</span>, fas 3
+    under <span class="path">Schemaläggning</span> och fas 4 under
+    <span class="path">Drift</span>. I de tre första grupperna står sidorna i
+    den ordning arbetet görs, så menyn läst uppifrån och ned är arbetsgången,
+    och kapitel 3–6 följer den grupp för grupp.
+  </p>
+  <p>
+    <span class="path">Integrationer</span> står sist och utan grupp, eftersom
+    kopplingen till andra system inte hör till någon fas (kapitel 7). Överst
+    står <span class="path">Översikt</span>, vars fyra genvägar går samma väg:
+    Kom igång, timplanen, genereringen och grundschemat att granska och
+    publicera.
   </p>
 
   <h3 id="s22"><span class="num">2.2</span>Roller och behörigheter</h3>
@@ -207,8 +224,13 @@
   <p class="lede">Grunddata som allt annat vilar på. Görs en gång per läsår.</p>
 
   <p>
-    Gå till <span class="path">Kom igång</span>. Guiden leder genom fem steg i
-    tur och ordning. Varje steg bygger på det föregående, så hoppa inte framåt.
+    Gå till <span class="path">Grunddata › Kom igång</span>. Guiden leder
+    genom fem steg i tur och ordning — läsår, ämnen, salar, klasser och
+    personer, samma sidor som står under den i menyn och samma ordning som
+    avsnitten nedan. Varje steg bygger på det föregående, så hoppa inte framåt.
+    När alla fem är klara står <span class="ui">Klart — fortsätt till
+    timplanen</span> sist i guiden, med en knapp till timplanen: där börjar
+    fas 2 (4.1).
   </p>
 
   <h3><span class="num">3.1</span>Läsår</h3>
@@ -237,7 +259,7 @@
   <p>
     Det här görs en gång, när skolan börjar använda systemet. Varje senare
     läsår skapas genom att det aktiva <em>rullas vidare</em> under
-    <span class="path">Planering › Läsår</span> (8.1) — då följer klasser,
+    <span class="path">Grunddata › Läsår</span> (8.1) — då följer klasser,
     timplansposter och lärare med. Ett läsår som skapas här när skolan redan
     har ett blir därför inaktivt om du inte själv slår på
     <span class="ui">Aktivt</span>.
@@ -279,7 +301,7 @@
       ett tydligt meddelande, i stället för att ämnet läggs in utan sitt krav.
       Ett ämne utan salstypskrav får nämligen placeras i vilken sal som helst,
       och det upptäcks först när slöjden hamnat i ett vanligt klassrum. Lägg
-      till salstyperna under <span class="path">Planering › Salar</span> först
+      till salstyperna under <span class="path">Grunddata › Salar</span> först
       — se 3.3.
     </p>
   </div>
@@ -296,7 +318,7 @@
     med de vanligaste — klassrum, laborationssal, gymnastiksal,
     hemkunskapssal, trä- och metallslöjd, textilslöjd, musiksal, bildsal, aula
     och övrigt — men listan redigeras fritt under
-    <span class="path">Planering › Salar</span>. Saknas en typ som skolan
+    <span class="path">Grunddata › Salar</span>. Saknas en typ som skolan
     använder, lägg till den där innan salarna registreras; samma lista väljs
     sedan i ämnets fält <span class="ui">Kräver salstyp</span>.
   </p>
@@ -366,14 +388,14 @@
     Utöver sin klass kan en elev ingå i <strong>undervisningsgrupper</strong> —
     grupper som skär tvärs över klasserna, till exempel <em>Ma71</em>,
     <em>Sv73</em> eller ett språkval <em>En74</em>. Du skapar dem under
-    <span class="path">Planering › Klasser</span> och väljer
+    <span class="path">Grunddata › Klasser</span> och väljer
     <span class="ui">Undervisningsgrupp</span> i fältet
     <span class="ui">Sorts grupp</span>. Klicka därefter
     <span class="ui">Medlemmar</span> på gruppens rad och bocka för eleverna;
     varje elev behåller sin klass och kan ingå i valfritt antal grupper.
     Knappen visas bara på undervisningsgrupper — en klass fylls i stället genom
     att eleven får klassen tilldelad under
-    <span class="path">Planering › Personer</span>.
+    <span class="path">Grunddata › Personer</span>.
   </p>
   <p>
     Listan kan filtreras med flikarna <span class="ui">Alla</span>,
@@ -457,9 +479,9 @@
   <h3><span class="num">3.6</span>Importera från fil (CSV)</h3>
   <p>
     Har skolan sina uppgifter i register eller kalkylblad behöver ingenting
-    skrivas in för hand. Under <span class="path">Planering › Klasser</span>,
-    <span class="path">Planering › Personer</span> och
-    <span class="path">Planering › Salar</span> finns
+    skrivas in för hand. Under <span class="path">Grunddata › Klasser</span>,
+    <span class="path">Grunddata › Personer</span> och
+    <span class="path">Grunddata › Salar</span> finns
     <span class="ui">Importera CSV</span>: ladda ner mallen, fyll i den i
     Excel eller motsvarande, och ladda upp den igen. Mallarna är anpassade för
     svensk Excel (semikolonseparerade) och innehåller en exempelrad som visar
@@ -474,7 +496,7 @@
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
-      <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; anteckning</td><td>Importeras under <span class="path">Planering › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.5.</td></tr>
+      <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
     </tbody>
   </table>
   <p>
@@ -692,7 +714,7 @@
   <p>
     En plan gäller inget läsår förrän läsåret säger det. Tryck
     <span class="ui">Timplan per årskurs</span> överst på sidan (eller vid
-    läsåret i <span class="path">Kom igång</span>) och välj läsår. Varje
+    läsåret i <span class="path">Grunddata › Kom igång</span>) och välj läsår. Varje
     årskurs, förskoleklass till åk 9, har en rad med läsårets klasser i
     årskursen och en lista med skolans planer; <em>Ingen timplan</em> betyder
     att årskursen inte jämförs med något. Olika årskurser kan följa olika
@@ -800,7 +822,7 @@
     <span class="label">Lärarnas minuter finns redan</span>
     <p>
       Hur många minuter varje lärare har per ämne visar
-      tjänstefördelningen (4.5) och lärarens egen vy
+      tjänstefördelningen (4.3) och lärarens egen vy
       <span class="path">Min tjänst</span>. Täckningen handlar om elevernas tid.
     </p>
   </div>
@@ -854,7 +876,7 @@
     <p>
       <strong>Frånvaro dras inte av.</strong> Undervisningstiden är det skolan
       erbjuder; att en elev var borta en lektion ändrar inte att lektionen
-      hölls. Frånvaron följs upp i närvaron (6.5).
+      hölls. Frånvaron följs upp i närvaron (6.6).
     </p>
     <table>
       <thead><tr><th style="width:44%">Rad i kalendern</th><th>Räknas som</th></tr></thead>
@@ -1028,7 +1050,7 @@
   <p>
     Skolan avgör själv om en friluftsdag, en temadag eller en lägerskola räknas
     som undervisningstid. Beslutet skrivs under
-    <span class="path">Planering › Lov &amp; studiedagar</span>, i avsnittet
+    <span class="path">Planering › Lov och studiedagar</span>, i avsnittet
     <span class="ui">Tillgodoräknad tid</span>: datum, minuter (1–600 för
     dagen), ämne och vilka det gäller — hela skolan, några årskurser eller en
     grupp. En friluftsdag som räknas som 300 minuter idrott och hälsa för åk 7–9
@@ -1051,7 +1073,7 @@
   </p>
   <p>
     Ska dagens lektioner stå kvar som inställda i stället för att tas bort
-    som av ett lov, används <span class="path">Drift › Avbokning</span> (6.9),
+    som av ett lov, används <span class="path">Drift › Avbokning</span> (6.5),
     som kan skriva beslutet om tillgodoräknad tid i samma steg.
   </p>
   <div class="warn">
@@ -1128,7 +1150,7 @@
     <span class="ui">Räknas för lärare (%)</span> och
     <span class="ui">Räknas för medlärare (%)</span>. De säger hur stor del av
     lektionstiden som räknas mot respektive lärares tjänst i
-    tjänstefördelningen (4.5), från 0 till 200 och 100 för nästan varje post.
+    tjänstefördelningen (4.3), från 0 till 200 och 100 för nästan varje post.
     Två lärare i samma slöjdsal kan till exempel räknas som 100 och 50.
     Lektionen, elevernas tid och schemat ändras inte — bara vad läraren
     belastas med. Har en post något annat än 100 öppnas
@@ -1160,7 +1182,7 @@
     årskurser, och går läraren över sitt mål? Beroende på inställningen sparas
     posten tyst, sparas med en varning som ligger kvar ovanför matrisen tills
     du stänger den, eller vägras — då står skälet i dialogen och ingenting är
-    sparat. Se 4.5. Vid import gäller samma sak rad för rad: en varnad rad
+    sparat. Se 4.3. Vid import gäller samma sak rad för rad: en varnad rad
     sparas och listas under <span class="ui">Sparade, med varning</span>, en
     vägrad rad listas bland felen och resten av filen läses in.
   </p>
@@ -1177,7 +1199,7 @@
     även långt ned i en lista med hundra grupper. Bakom varje undervisningsgrupps namn står hur många
     elever den har. <strong>Står det 0 elever är siffran röd</strong> — en
     timplanspost på en tom grupp genererar lektioner som ingen elev går på.
-    Lägg till medlemmarna under <span class="path">Planering › Klasser ›
+    Lägg till medlemmarna under <span class="path">Grunddata › Klasser ›
     Medlemmar</span> först.
   </p>
   <p>
@@ -1213,232 +1235,7 @@
     </p>
   </div>
 
-  <h3 id="s43"><span class="num">4.3</span>Tillgänglighet</h3>
-  <p>
-    Gå till <span class="path">Planering › Tillgänglighet</span>. Här anges när
-    en lärare, en sal eller en klass <strong>inte</strong> är tillgänglig — till
-    exempel en deltidsanställd lärare som är ledig på fredagar, eller en aula
-    som är bokad för annat på onsdagseftermiddagar.
-  </p>
-  <p>
-    En begränsning kan vara <span class="ui">Återkommande veckodag</span> eller
-    gälla ett <span class="ui">Specifikt datum</span>. Återkommande begränsningar
-    påverkar grundschemat; enstaka datum hanteras bäst i driften (kapitel 6).
-  </p>
-
-  <div class="warn">
-    <span class="label">Lägg inte in fler hårda begränsningar än nödvändigt</span>
-    <p>
-      Varje begränsning tar bort möjliga lösningar. Läggs önskemål in som hårda
-      begränsningar kan resultatet bli att inget schema alls går att bygga —
-      och systemet kan då bara meddela att det är omöjligt, inte vilket önskemål
-      som borde ge vika. Lägg in det som verkligen måste gälla här, och
-      använd de mjuka reglerna nedan för det som helst ska gälla.
-    </p>
-  </div>
-
-  <h4>Mjuka regler för salar</h4>
-  <p>
-    Längst ned på samma sida finns <span class="ui">Mjuka regler för
-    salar</span>. Här anger du vad som <em>helst</em> ska gälla:
-    <em>NO helst i laborationssal</em>, eller <em>slöjd helst i A12 eller
-    A14</em>. En regel pekar antingen på en salstyp eller på en uppsättning
-    namngivna salar.
-  </p>
-  <p>
-    Skillnaden mot begränsningarna ovan är hur de går sönder. En hård
-    begränsning som inte kan uppfyllas gör veckan omöjlig att schemalägga och
-    måste rättas. En mjuk regel som inte kan uppfyllas ger i stället ett schema
-    där någon enstaka lektion hamnat i fel sal — motorn bryter hellre ett
-    önskemål än ger upp.
-  </p>
-  <p>
-    <span class="ui">Styrkan</span> ställer du med ett reglage och avgör hur
-    mycket motorn får offra av annat för att uppfylla önskemålet. Bredvid
-    reglaget står vad läget betyder — <em>svagt</em>, <em>lagom</em>,
-    <em>starkt</em> eller <em>mycket starkt</em> — så att siffran inte behöver
-    tolkas på egen hand.
-  </p>
-  <p>
-    Skalan är densamma som optimeringsprofilens vikter i avsnitt 5.1, och det
-    är mot dem styrkan ska läsas. Utgångsläget 5 väger lika tungt som skolans
-    övriga önskemål. Runt 10 börjar salsönskemålet ta över från mål som att
-    sprida ämnena över veckan (vikt 3) och att undvika lärarluckor (vikt 2).
-    Över 25 dominerar det allt annat — användbart för något som verkligen
-    alltid ska gälla, men då bör du kontrollera att schemat i övrigt blev
-    rimligt.
-  </p>
-  <div class="note">
-    <span class="label">Hård eller mjuk?</span>
-    <p>
-      Kräver ämnet utrustningen i en viss sorts sal — slöjd, hemkunskap, kemi —
-      sätt <span class="ui">Kräver salstyp</span> på ämnet (3.2). Det är ett
-      hårt krav och ska vara det. Handlar det om vana, närhet eller bekvämlighet
-      hör det hemma bland de mjuka reglerna.
-    </p>
-  </div>
-
-  <div class="check">
-    <span class="label">Kontrollera</span>
-    <p>
-      Gå till <span class="path">Schemaläggning › Generera schema</span> och
-      titta på rutan <span class="ui">Förutsättningar</span>. Alla fyra raderna
-      — aktivt läsår, timplansposter, lärare tilldelade och salar tillgängliga —
-      ska vara uppfyllda innan du fortsätter.
-    </p>
-  </div>
-  <h3 id="s44"><span class="num">4.4</span>Raster</h3>
-  <p>
-    Gå till <span class="path">Planering › Raster</span>. Här anger du de
-    minuter av dagen ett stadium <strong>inte</strong> undervisas — förmiddagsrast,
-    mellanmål, den kvart efter lunchen som är på gården. Motorn lägger inga
-    lektioner tvärs över dem, och de syns i elevens, vårdnadshavarens och
-    lärarens schema.
-  </p>
-  <p>
-    En rast har ett <span class="ui">Namn</span>, ett spann av
-    <span class="ui">Årskurser</span>, en <span class="ui">Dag</span> och ett
-    klockslag. Namnet står på elevens schema, så
-    <em>Förmiddagsrast</em> och <em>Långrast</em> säger mer än <em>Rast</em>.
-  </p>
-  <p>
-    <strong>Flera raster per dag är det normala.</strong> Varje rad som matchar
-    stadiet gäller, och de adderas — till skillnad från ramtiderna, som snävar
-    in varandra. En rad för en enskild veckodag ersätter bara den
-    <span class="ui">Alla dagar</span>-rast vars klockslag den överlappar; de
-    övriga står kvar den dagen. Tabellen
-    <span class="ui">Så här blir veckan</span> längst ned visar vad raderna
-    tillsammans betyder, stadium för stadium och dag för dag. Läs den innan du
-    kör en generering.
-  </p>
-
-  <div class="note">
-    <span class="label">Lägg in rasterna före första genereringen</span>
-    <p>
-      Utan raster lägger motorn lektionerna dikt mot varandra — det finns
-      ingenting i modellen som säger att en klass behöver luft mellan två
-      lektioner. Raster är också det enda som stänger elevernas hål på ett sätt
-      skolan själv bestämmer.
-    </p>
-  </div>
-
-  <h4>Kräv en lektion före rasten</h4>
-  <p>
-    En rast är i sig bara ett hål i dagen. Ingenting hindrar att en klass
-    <em>börjar</em> måndagen med förmiddagsrasten, eller att hela dess
-    eftermiddag står tom fram till eftermiddagsrasten. Vill du att det ska vara
-    minst en lektion före en rast, slå på
-    <span class="ui">Kräv en lektion före rasten</span> på den rasten. Rasterna
-    i listan som har kravet är märkta
-    <span class="ui">Lektion före</span>.
-  </p>
-  <p>
-    Sträckan räknas från föregående rast eller lunch, inte från dagens början.
-    Det är hela poängen med kravet på eftermiddagen: läst som &quot;någon
-    lektion före rasten&quot; räcker en lektion på förmiddagen, och
-    eftermiddagen kan ändå stå tom — mätt på tjugofyra klasser blev
-    <em>samtliga</em> eftermiddagar tomma på det sättet.
-  </p>
-  <p>
-    Kravet gäller bara en klass som fortfarande är kvar i skolan. Har klassen
-    gått hem före rasten begärs ingenting, och en dag klassen inte har någon
-    lektion alls berörs inte. Ligger lunchfönstret tvärs över rasten, så att det
-    inte är avgjort om måltiden kommer före eller efter, ställs inget krav
-    heller — då är &quot;en lektion mellan dem&quot; ännu ingen mening om veckan.
-  </p>
-  <p>
-    En <em>låst</em> lektion räknas. Har du handplacerat en lektion på
-    sträckan är kravet redan uppfyllt, och har du handplacerat en lektion
-    <em>efter</em> rasten är klassen bevisligen kvar — då gäller kravet den
-    dagen oavsett vad motorn själv lägger ut.
-  </p>
-  <p>
-    Har en veckodag en egen rastrad som ersätter den vanliga är det den dagens
-    rast som gäller, med den dagens krav. Skriver du &quot;fredag
-    08:00–11:00&quot; för att fredagen börjar senare, finns förmiddagsrasten
-    inte på fredagen, och då begär den ingenting på fredagen heller.
-  </p>
-
-  <div class="warn">
-    <span class="label">Kravet kostar tid, och kan vägra veckan</span>
-    <p>
-      Det här är den enda rastinställningen som gör modellen större i stället
-      för mindre: rasternas minuter <em>snävar in</em> sökrummet, men kravet på
-      en lektion före rasten <em>lägger till</em> villkor. Mätt på två klasser
-      med 24 lektioner var gick genereringen från 1,2 till 3,5 sekunder. På
-      tjugofyra klasser gick den från 29 till 53 sekunder — fortfarande inom
-      minutbudgeten, men större delen av den, så på en stor skola är det värt
-      att slå på kravet på en rast i taget. Går veckan inte ihop namnger nekandet klasserna och
-      säger att det är kravet som inte får plats, och en tidsgräns provar
-      kravet för sig: &quot;med kravet på en lektion före rasten borttaget
-      hittades ett schema på N sekunder&quot; är något en skola kan göra något
-      åt.
-    </p>
-  </div>
-
-  <div class="warn">
-    <span class="label">Kravet kan vara omöjligt att uppfylla</span>
-    <p>
-      Två av skolans egna meningar kan motsäga varandra, och då säger motorn
-      det direkt i stället för att fundera i en minut. Har du ett lunchfönster
-      11:00–12:30 med en 60-minuters måltid slutar lunchen tidigast 12:00, och
-      en rast 12:30 som kräver en lektion före sig ber om att en 40-minuters
-      lektion ska rymmas på trettio minuter. Detsamma gäller en rast strax
-      efter att ramtiden öppnat, strax efter föregående rast, eller med en
-      <em>reservation</em> över hela sträckan — en otillgänglig tid för
-      klassen, för dess årskurs eller för lärarna i alla dess ämnen.
-    </p>
-    <p>
-      Men det räcker inte att sträckan är tom för att veckan ska nekas, och det
-      är med flit. Kravet kan också uppfyllas av att klassen har
-      <em>gått hem</em> före rasten, så en klass vars förmiddag rymmer hela
-      veckan får sitt schema — den blir bara ledig efter rasten. Först när
-      dagarna som blir kvar inte rymmer klassens lektioner nekas veckan, och då
-      säger nekandet både vad som tog minuterna och hur många minuter som
-      fattas. Åtgärden är att flytta rasten, korta måltiden, vidga
-      lunchfönstret, frigöra tiden en reservation håller — eller stänga av
-      kravet för just den rasten.
-    </p>
-  </div>
-
-  <div class="warn">
-    <span class="label">En rast kan göra veckan omöjlig</span>
-    <p>
-      Rasterna hugger hål i dagen, och en lektion behöver en obruten sträcka.
-      Lämnar rasterna ingen sträcka som rymmer skolans längsta lektion vägras
-      genereringen med besked om vilket stadium, vilken kurs och hur lång den
-      längsta sträckan blev. Korta rasten, vidga ramtiden, eller dela lektionen.
-    </p>
-  </div>
-
-  <h4>Marginal mellan lektioner</h4>
-  <p>
-    Raster löser de hål skolan själv namngett. De når inte två lektioner som
-    ligger i följd inne i samma block. För det finns
-    <span class="ui">Marginal mellan lektioner</span> på
-    <span class="path">Planering › Ramtider</span>: antalet minuter en klass
-    eller lärare behöver för att förflytta sig, som motorn alltid lämnar mellan
-    två lektioner i rad.
-  </p>
-  <p>
-    Talet står på ramtiden eftersom en ramtid är skolans mening om formen på ett
-    stadiums dag. Matchar flera ramtider gäller den <em>största</em> marginalen
-    — en ramtid är en gräns och flera snävar in, en marginal är ett golv och den
-    vidaste vinner. Standardvärdet är 0, alltså ingen marginal, för varje skola
-    tills någon skriver ett tal.
-  </p>
-
-  <div class="note">
-    <span class="label">Börja med 0</span>
-    <p>
-      Varje lektion blir <em>undervisningstid plus marginal</em> lång för
-      motorn, så en vecka som redan var full kan gå från lösbar till olösbar.
-      Kör en generering med rasterna först, titta på schemat, och sätt sedan 5
-      minuter för det stadium som behöver det.
-    </p>
-  </div>
-
-  <h3 id="s45"><span class="num">4.5</span>Tjänstefördelning</h3>
+  <h3 id="s43"><span class="num">4.3</span>Tjänstefördelning</h3>
   <p>
     <span class="path">Planering › Tjänstefördelning</span> är timplansposterna
     lästa från andra hållet: där 4.2 säger vad varje grupp behöver, säger den
@@ -1734,7 +1531,7 @@
     <p>
       Ändrar du ett ämnes faktor ändras alla läsårs siffror under Faktor, även
       förra årets, och ändringen syns inte i lärarnas historik. Ta ut
-      samverkansfilen (6.8) före en ändring om ni behöver de gamla siffrorna.
+      samverkansfilen (6.9) före en ändring om ni behöver de gamla siffrorna.
       En faktor per grupp finns inte; radens procent på timplansposten
       (<span class="ui">Räknas för lärare (%)</span>) väger redan en grupp och ett ämne.
     </p>
@@ -1803,6 +1600,237 @@
     själv och kan inte ändra något. Anställningen och behörigheterna är personaluppgifter: en
     lärare ser aldrig en kollegas.
   </p>
+
+  <h3 id="s44"><span class="num">4.4</span>Tillgänglighet</h3>
+  <p>
+    Gå till <span class="path">Planering › Tillgänglighet</span>. Här anges när
+    en lärare, en sal eller en klass <strong>inte</strong> är tillgänglig — till
+    exempel en deltidsanställd lärare som är ledig på fredagar, eller en aula
+    som är bokad för annat på onsdagseftermiddagar.
+  </p>
+  <p>
+    En begränsning kan vara <span class="ui">Återkommande veckodag</span> eller
+    gälla ett <span class="ui">Specifikt datum</span>. Återkommande begränsningar
+    påverkar grundschemat; enstaka datum hanteras bäst i driften (kapitel 6).
+  </p>
+  <p>
+    På samma sida ställer du in <strong>skolreglerna</strong>: lunchen,
+    matsalens platser och högsta antal lektioner per dag. De gäller hela
+    skolan och beskrivs i 5.1, där de läses tillsammans med
+    optimeringsprofilen.
+  </p>
+
+  <div class="warn">
+    <span class="label">Lägg inte in fler hårda begränsningar än nödvändigt</span>
+    <p>
+      Varje begränsning tar bort möjliga lösningar. Läggs önskemål in som hårda
+      begränsningar kan resultatet bli att inget schema alls går att bygga —
+      och systemet kan då bara meddela att det är omöjligt, inte vilket önskemål
+      som borde ge vika. Lägg in det som verkligen måste gälla här, och
+      använd de mjuka reglerna nedan för det som helst ska gälla.
+    </p>
+  </div>
+
+  <h4>Mjuka regler för salar</h4>
+  <p>
+    Längst ned på samma sida finns <span class="ui">Mjuka regler för
+    salar</span>. Här anger du vad som <em>helst</em> ska gälla:
+    <em>NO helst i laborationssal</em>, eller <em>slöjd helst i A12 eller
+    A14</em>. En regel pekar antingen på en salstyp eller på en uppsättning
+    namngivna salar.
+  </p>
+  <p>
+    Skillnaden mot begränsningarna ovan är hur de går sönder. En hård
+    begränsning som inte kan uppfyllas gör veckan omöjlig att schemalägga och
+    måste rättas. En mjuk regel som inte kan uppfyllas ger i stället ett schema
+    där någon enstaka lektion hamnat i fel sal — motorn bryter hellre ett
+    önskemål än ger upp.
+  </p>
+  <p>
+    <span class="ui">Styrkan</span> ställer du med ett reglage och avgör hur
+    mycket motorn får offra av annat för att uppfylla önskemålet. Bredvid
+    reglaget står vad läget betyder — <em>svagt</em>, <em>lagom</em>,
+    <em>starkt</em> eller <em>mycket starkt</em> — så att siffran inte behöver
+    tolkas på egen hand.
+  </p>
+  <p>
+    Skalan är densamma som optimeringsprofilens vikter i avsnitt 5.1, och det
+    är mot dem styrkan ska läsas. Utgångsläget 5 väger lika tungt som skolans
+    övriga önskemål. Runt 10 börjar salsönskemålet ta över från mål som att
+    sprida ämnena över veckan (vikt 3) och att undvika lärarluckor (vikt 2).
+    Över 25 dominerar det allt annat — användbart för något som verkligen
+    alltid ska gälla, men då bör du kontrollera att schemat i övrigt blev
+    rimligt.
+  </p>
+  <div class="note">
+    <span class="label">Hård eller mjuk?</span>
+    <p>
+      Kräver ämnet utrustningen i en viss sorts sal — slöjd, hemkunskap, kemi —
+      sätt <span class="ui">Kräver salstyp</span> på ämnet (3.2). Det är ett
+      hårt krav och ska vara det. Handlar det om vana, närhet eller bekvämlighet
+      hör det hemma bland de mjuka reglerna.
+    </p>
+  </div>
+
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Gå till <span class="path">Schemaläggning › Generera schema</span> och
+      titta på rutan <span class="ui">Förutsättningar</span>. Alla fyra raderna
+      — aktivt läsår, timplansposter, lärare tilldelade och salar tillgängliga —
+      ska vara uppfyllda innan du fortsätter.
+    </p>
+  </div>
+  <h3 id="s45"><span class="num">4.5</span>Raster</h3>
+  <p>
+    Gå till <span class="path">Planering › Raster</span>. Här anger du de
+    minuter av dagen ett stadium <strong>inte</strong> undervisas — förmiddagsrast,
+    mellanmål, den kvart efter lunchen som är på gården. Motorn lägger inga
+    lektioner tvärs över dem, och de syns i elevens, vårdnadshavarens och
+    lärarens schema.
+  </p>
+  <p>
+    En rast har ett <span class="ui">Namn</span>, ett spann av
+    <span class="ui">Årskurser</span>, en <span class="ui">Dag</span> och ett
+    klockslag. Namnet står på elevens schema, så
+    <em>Förmiddagsrast</em> och <em>Långrast</em> säger mer än <em>Rast</em>.
+  </p>
+  <p>
+    <strong>Flera raster per dag är det normala.</strong> Varje rad som matchar
+    stadiet gäller, och de adderas — till skillnad från ramtiderna, som snävar
+    in varandra. En rad för en enskild veckodag ersätter bara den
+    <span class="ui">Alla dagar</span>-rast vars klockslag den överlappar; de
+    övriga står kvar den dagen. Tabellen
+    <span class="ui">Så här blir veckan</span> längst ned visar vad raderna
+    tillsammans betyder, stadium för stadium och dag för dag. Läs den innan du
+    kör en generering.
+  </p>
+
+  <div class="note">
+    <span class="label">Lägg in rasterna före första genereringen</span>
+    <p>
+      Utan raster lägger motorn lektionerna dikt mot varandra — det finns
+      ingenting i modellen som säger att en klass behöver luft mellan två
+      lektioner. Raster är också det enda som stänger elevernas hål på ett sätt
+      skolan själv bestämmer.
+    </p>
+  </div>
+
+  <h4>Kräv en lektion före rasten</h4>
+  <p>
+    En rast är i sig bara ett hål i dagen. Ingenting hindrar att en klass
+    <em>börjar</em> måndagen med förmiddagsrasten, eller att hela dess
+    eftermiddag står tom fram till eftermiddagsrasten. Vill du att det ska vara
+    minst en lektion före en rast, slå på
+    <span class="ui">Kräv en lektion före rasten</span> på den rasten. Rasterna
+    i listan som har kravet är märkta
+    <span class="ui">Lektion före</span>.
+  </p>
+  <p>
+    Sträckan räknas från föregående rast eller lunch, inte från dagens början.
+    Det är hela poängen med kravet på eftermiddagen: läst som &quot;någon
+    lektion före rasten&quot; räcker en lektion på förmiddagen, och
+    eftermiddagen kan ändå stå tom — mätt på tjugofyra klasser blev
+    <em>samtliga</em> eftermiddagar tomma på det sättet.
+  </p>
+  <p>
+    Kravet gäller bara en klass som fortfarande är kvar i skolan. Har klassen
+    gått hem före rasten begärs ingenting, och en dag klassen inte har någon
+    lektion alls berörs inte. Ligger lunchfönstret tvärs över rasten, så att det
+    inte är avgjort om måltiden kommer före eller efter, ställs inget krav
+    heller — då är &quot;en lektion mellan dem&quot; ännu ingen mening om veckan.
+  </p>
+  <p>
+    En <em>låst</em> lektion räknas. Har du handplacerat en lektion på
+    sträckan är kravet redan uppfyllt, och har du handplacerat en lektion
+    <em>efter</em> rasten är klassen bevisligen kvar — då gäller kravet den
+    dagen oavsett vad motorn själv lägger ut.
+  </p>
+  <p>
+    Har en veckodag en egen rastrad som ersätter den vanliga är det den dagens
+    rast som gäller, med den dagens krav. Skriver du &quot;fredag
+    08:00–11:00&quot; för att fredagen börjar senare, finns förmiddagsrasten
+    inte på fredagen, och då begär den ingenting på fredagen heller.
+  </p>
+
+  <div class="warn">
+    <span class="label">Kravet kostar tid, och kan vägra veckan</span>
+    <p>
+      Det här är den enda rastinställningen som gör modellen större i stället
+      för mindre: rasternas minuter <em>snävar in</em> sökrummet, men kravet på
+      en lektion före rasten <em>lägger till</em> villkor. Mätt på två klasser
+      med 24 lektioner var gick genereringen från 1,2 till 3,5 sekunder. På
+      tjugofyra klasser gick den från 29 till 53 sekunder — fortfarande inom
+      minutbudgeten, men större delen av den, så på en stor skola är det värt
+      att slå på kravet på en rast i taget. Går veckan inte ihop namnger nekandet klasserna och
+      säger att det är kravet som inte får plats, och en tidsgräns provar
+      kravet för sig: &quot;med kravet på en lektion före rasten borttaget
+      hittades ett schema på N sekunder&quot; är något en skola kan göra något
+      åt.
+    </p>
+  </div>
+
+  <div class="warn">
+    <span class="label">Kravet kan vara omöjligt att uppfylla</span>
+    <p>
+      Två av skolans egna meningar kan motsäga varandra, och då säger motorn
+      det direkt i stället för att fundera i en minut. Har du ett lunchfönster
+      11:00–12:30 med en 60-minuters måltid slutar lunchen tidigast 12:00, och
+      en rast 12:30 som kräver en lektion före sig ber om att en 40-minuters
+      lektion ska rymmas på trettio minuter. Detsamma gäller en rast strax
+      efter att ramtiden öppnat, strax efter föregående rast, eller med en
+      <em>reservation</em> över hela sträckan — en otillgänglig tid för
+      klassen, för dess årskurs eller för lärarna i alla dess ämnen.
+    </p>
+    <p>
+      Men det räcker inte att sträckan är tom för att veckan ska nekas, och det
+      är med flit. Kravet kan också uppfyllas av att klassen har
+      <em>gått hem</em> före rasten, så en klass vars förmiddag rymmer hela
+      veckan får sitt schema — den blir bara ledig efter rasten. Först när
+      dagarna som blir kvar inte rymmer klassens lektioner nekas veckan, och då
+      säger nekandet både vad som tog minuterna och hur många minuter som
+      fattas. Åtgärden är att flytta rasten, korta måltiden, vidga
+      lunchfönstret, frigöra tiden en reservation håller — eller stänga av
+      kravet för just den rasten.
+    </p>
+  </div>
+
+  <div class="warn">
+    <span class="label">En rast kan göra veckan omöjlig</span>
+    <p>
+      Rasterna hugger hål i dagen, och en lektion behöver en obruten sträcka.
+      Lämnar rasterna ingen sträcka som rymmer skolans längsta lektion vägras
+      genereringen med besked om vilket stadium, vilken kurs och hur lång den
+      längsta sträckan blev. Korta rasten, vidga ramtiden, eller dela lektionen.
+    </p>
+  </div>
+
+  <h4>Marginal mellan lektioner</h4>
+  <p>
+    Raster löser de hål skolan själv namngett. De når inte två lektioner som
+    ligger i följd inne i samma block. För det finns
+    <span class="ui">Marginal mellan lektioner</span> på
+    <span class="path">Planering › Ramtider</span>: antalet minuter en klass
+    eller lärare behöver för att förflytta sig, som motorn alltid lämnar mellan
+    två lektioner i rad.
+  </p>
+  <p>
+    Talet står på ramtiden eftersom en ramtid är skolans mening om formen på ett
+    stadiums dag. Matchar flera ramtider gäller den <em>största</em> marginalen
+    — en ramtid är en gräns och flera snävar in, en marginal är ett golv och den
+    vidaste vinner. Standardvärdet är 0, alltså ingen marginal, för varje skola
+    tills någon skriver ett tal.
+  </p>
+
+  <div class="note">
+    <span class="label">Börja med 0</span>
+    <p>
+      Varje lektion blir <em>undervisningstid plus marginal</em> lång för
+      motorn, så en vecka som redan var full kan gå från lösbar till olösbar.
+      Kör en generering med rasterna först, titta på schemat, och sätt sedan 5
+      minuter för det stadium som behöver det.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 5 ============================ -->
@@ -1812,13 +1840,19 @@
 
   <h3 id="s51"><span class="num">5.1</span>Skolregler och optimeringsprofil</h3>
   <p>
-    På sidan <span class="path">Schemaläggning › Generera schema</span> finns två
-    inställningar som styr resultatet. Skillnaden mellan dem är avgörande.
+    Två sorters inställningar styr resultatet, och skillnaden mellan dem är
+    avgörande. Skolreglerna ställs in under
+    <span class="path">Planering › Tillgänglighet</span> och gäller hela
+    skolan. Optimeringsprofilen ställs in på sidan
+    <span class="path">Schemaläggning › Generera schema</span>. Där står också
+    skolreglerna under <span class="ui">Skolregler</span>, men bara att läsa:
+    länken <span class="ui">Ändra</span> tar dig till Tillgänglighet.
   </p>
   <p>
     <strong>Skolregler</strong> är hårda villkor. De <em>måste</em> uppfyllas.
-    Här anges garanterad lunchrast för varje klass — inom vilket tidsfönster och
-    hur många minuter — samt högsta antal lektioner per dag och klass.
+    De anger garanterad lunchrast för varje klass — inom vilket tidsfönster och
+    hur många minuter — antalet platser i matsalen, och högsta antal lektioner
+    per dag och klass.
   </p>
   <p>
     Antalet platser i matsalen räknas mot de klasser som är i skolan den
@@ -1872,11 +1906,11 @@
     <span class="ui">Alla timplansposter har lärare</span>, med hur många som
     saknar en. Raden länkar till <span class="ui">Obemannade rader</span> på
     tjänstefördelningssidan. Har skolan valt <span class="ui">Generering utan
-    lärare: Vägra</span> (4.5) är knappen avstängd tills alla poster har en
+    lärare: Vägra</span> (4.3) är knappen avstängd tills alla poster har en
     lärare, och skälet står under den. Med <span class="ui">Tillåt</span> är
     raden bara en varning: poster utan lärare schemaläggs utan lärare.
     Saknas lärare länkar raden också till <span class="ui">Föreslå
-    bemanning</span> (4.5), som bemannar alla poster det kan på en gång.
+    bemanning</span> (4.3), som bemannar alla poster det kan på en gång.
     Båda länkarna öppnar tjänstefördelningen för det läsår som planeras här,
     även när det är nästa läsår och ännu inte aktiverat.
   </p>
@@ -2086,14 +2120,15 @@
     grundschema som redan är satt.
   </p>
   <p>
-    Tryck <span class="ui">Optimera salar</span> i grundschemats verktygsrad.
+    Välj <span class="ui">Fler åtgärder</span> (⋯) ›
+    <span class="ui">Optimera salar</span> i grundschemats sidhuvud.
     Välj under <span class="ui">Vem ska slippa gå?</span> om det är
     <em>Lärarna</em>, <em>Klasserna</em> eller <em>Båda</em> som ska gå så lite
     som möjligt, och tryck <span class="ui">Beräkna förslag</span>. Det tar
     oftast runt tio sekunder. Optimeringen räknar varje gång någon byter sal
     mellan två lektioner i följd samma dag, och väger ett byte av hus tyngst,
     sedan ett byte av våning, sedan ett byte av sal. Har ämnet en mjuk regel
-    för salar (se 4.3) räknas det också när lektionen hamnar utanför den.
+    för salar (se 4.4) räknas det också när lektionen hamnar utanför den.
   </p>
   <h4>Det optimeringen aldrig ändrar</h4>
   <ul>
@@ -2111,7 +2146,7 @@
     <li>
       En lektion flyttas bara till en sal som genereringen själv hade fått
       lägga den i: rätt salstyp, tillräcklig kapacitet, rätt årskurser, de
-      begränsningar som gäller salen och ämnet (se 4.3) och ledig på den tiden. En sal som är markerad som otillgänglig
+      begränsningar som gäller salen och ämnet (se 4.4) och ledig på den tiden. En sal som är markerad som otillgänglig
       under <span class="path">Planering › Tillgänglighet</span> på den tiden
       väljs inte.
     </li>
@@ -2135,7 +2170,7 @@
     många lektioner som byter sal och vilka lärare och klasser som får störst
     skillnad. Behöver inget ändras står det <em>Salarna ligger redan så bra det
     går</em>. Saknar salarna våning påminner förslaget om det, med en länk till
-    <span class="path">Planering › Salar</span> — utan våningar räknas inga
+    <span class="path">Grunddata › Salar</span> — utan våningar räknas inga
     våningsbyten, bara byten av sal och, där byggnaden är ifylld, av hus.
   </p>
   <p>
@@ -2253,8 +2288,12 @@
     publicering.
   </p>
   <p>
-    Exporterar du schemat till PDF eller kalenderfil medan ett utkast skiljer
-    sig från det publicerade, märks filen <em>Utkast – ej publicerat</em>.
+    Exporterar du schemat till PDF eller kalenderfil
+    (<span class="ui">Fler åtgärder</span> (⋯) ›
+    <span class="ui">Exportera som PDF</span> eller
+    <span class="ui">Exportera som iCal (.ics)</span> i grundschemats sidhuvud)
+    medan ett utkast skiljer sig från det publicerade, märks filen
+    <em>Utkast – ej publicerat</em>.
   </p>
 
   <div class="check">
@@ -2425,7 +2464,7 @@
   <p>
     Under <span class="ui">Inställningar</span> kan skolan låta lärare anmäla
     sin egen frånvaro (förval: av). Läraren anmäler då under
-    <span class="path">Vikariepass &amp; frånvaro</span> från och med i dag —
+    <span class="path">Vikariepass och frånvaro</span> från och med i dag —
     ”sjuk i dag” klockan sju går alltså bra — kan avsluta den i förtid och
     återkalla en anmälan innan den börjar, eller inom en timme om inget har
     bestämts. Orsaken kan läraren inte ändra efteråt; det gör en administratör.
@@ -2545,7 +2584,7 @@
     <li><strong>Tider.</strong> En poolvikarie utan tjänst föreslås bara inom
       de tider som har angetts — varje vecka (till exempel tisdagar
       08–15) eller ett datum. Tiderna anger du under <span class="ui">Tider</span>,
-      eller vikarien själv under <span class="path">Vikariepass &amp;
+      eller vikarien själv under <span class="path">Vikariepass och
       frånvaro</span>. Utan tider föreslås hen aldrig.</li>
     <li><strong>Rangordning.</strong> Skolan väljer om poolen ska användas
       först (poolen får ett försprång i poängen), som all annan personal
@@ -2560,7 +2599,68 @@
       Inaktivera den som slutar.</li>
   </ul>
 
-  <h3><span class="num">6.5</span>Närvaro</h3>
+  <h3 id="s65"><span class="num">6.5</span>Avbokning</h3>
+  <p>
+    <span class="path">Drift › Avbokning</span> ställer in många lektioner på
+    en gång: en dag, en vecka, en årskurs eller några klasser, för prao, en
+    friluftsdag eller en studiedag. Ge avbokningen ett namn, välj dagar (högst
+    31) och vilka den gäller: hela skolan, årskurser eller namngivna klasser och
+    grupper. Med ett tidsfönster ställs bara de lektioner in som ligger helt
+    eller delvis inom det.
+  </p>
+  <p>
+    Lektionerna står kvar som <em>inställda</em> med anteckningen
+    <em>Inställd: Prao åk 9</em>, så att elever, vårdnadshavare och lärare ser
+    varför timmen är tom. Ett lov tar i stället bort lektionerna. Välj
+    avbokning när dagen ska synas och kunna tas tillbaka, och lov när skolan
+    inte undervisar alls.
+  </p>
+  <p>
+    Inget ställs in före en <span class="ui">förhandsgranskning</span>. Den
+    visar hur många lektioner som ställs in och vilka, och vad som lämnas
+    orört: lektioner som har börjat, redan är inställda eller har närvaro rörs
+    aldrig. Vid årskurser räknas en lektion in när någon av dess klasser har en
+    årskurs i spannet. En undervisningsgrupp utan egen årskurs räknas inte in,
+    och förhandsgranskningen namnger sådana grupper så att du kan välja dem
+    med namn. Ändrar du formuläret efter förhandsgranskningen behöver den göras
+    om.
+  </p>
+  <h4>Undervisningstid och Täckning</h4>
+  <p>
+    En lektion som ställs in för en aktivitet räknas som förlorad tid i
+    Täckning (<em>Inställd – avbokning</em>), om inte skolan räknar dagen som
+    undervisningstid. Slå då på <span class="ui">Dagen räknas som
+    undervisningstid</span> och ange minuter och ämne. En tillgodoräkning
+    skrivs för varje hel dag efter i dag. En dag med tidsfönster kan inte
+    tillgodoräknas, eftersom förmiddagens lektioner då skulle räknas två
+    gånger. Tillgodoräkningen förbättrar avvikelsen mot timplanen men inte
+    <em>schemat mot planerat</em>: den visar fortfarande att lektionerna inte
+    hölls, så att schemat inte ser bättre ut än det är.
+  </p>
+  <h4>Ta tillbaka och tillämpa igen</h4>
+  <p>
+    <span class="ui">Ta tillbaka</span> visar först vad som händer: hur många
+    lektioner som återställs (med sin tidigare anteckning), vilka som förblir
+    inställda för att salen har bokats eller fått en annan lektion under
+    tiden, vad som har börjat och lämnas, och vilka tillgodoräkningar som tas
+    bort. En lektion som förblir inställd namnges med datum och sal, så att du
+    kan lösa salen för hand. Har schemat flyttat en lektion sedan
+    avbokningen, till exempel genom en publicering, ligger lektionen redan på
+    sin nya plats den veckan. Den inställda raden på den gamla platsen tas då
+    bort i stället för att återställas, så att klassen inte får lektionen två
+    gånger. En avbokning tas tillbaka en gång.
+  </p>
+  <p>
+    Publiceras schemat igen efter en avbokning, eller fylls det på, skrivs nya
+    lektioner i avbokningens dagar som inställda direkt. Har lektioner ändå
+    tillkommit visar listan <em>N lektioner har tillkommit sedan
+    avbokningen</em> med <span class="ui">Tillämpa igen</span>. Avbokningar
+    skickar ingen notis. Anteckningen på varje lektion är det elever läser.
+    Vårdnadshavarnas schema visar bara att lektionen är inställd, utan
+    anteckningen.
+  </p>
+
+  <h3><span class="num">6.6</span>Närvaro</h3>
   <p>
     Läraren registrerar närvaro under <span class="path">Närvaro</span>, som
     visar dagens lektioner. I lektionsvyn markeras varje elev, med möjlighet att
@@ -2569,7 +2669,7 @@
     markerade.
   </p>
 
-  <h3><span class="num">6.6</span>Frånvaroanmälan och ledighet</h3>
+  <h3><span class="num">6.7</span>Frånvaroanmälan och ledighet</h3>
   <p>
     Vårdnadshavare anmäler frånvaro och ansöker om ledighet under
     <span class="path">Mina barn</span>. Frånvaroanmälan gäller omgående.
@@ -2613,7 +2713,7 @@
       klassen. Undervisningsgrupperna räknas som de är i dag.</li>
   </ul>
 
-  <h3><span class="num">6.7</span>Lokalbokningar</h3>
+  <h3><span class="num">6.8</span>Lokalbokningar</h3>
   <p>
     Lärare bokar lokaler under <span class="path">Boka lokal</span>. Beroende på
     salens inställningar godkänns bokningen direkt eller hamnar för granskning
@@ -2621,7 +2721,7 @@
     till schemat, så en sal som redan har lektion går inte att boka.
   </p>
 
-  <h3 id="s68"><span class="num">6.8</span>Rapporter</h3>
+  <h3 id="s69"><span class="num">6.9</span>Rapporter</h3>
   <p>
     <span class="path">Drift › Rapporter</span> har tre flikar. Fliken
     <span class="ui">Närvaro</span> visar närvarograd per klass och elev för en
@@ -2792,67 +2892,6 @@
     </p>
   </div>
 
-  <h3 id="s69"><span class="num">6.9</span>Avbokning</h3>
-  <p>
-    <span class="path">Drift › Avbokning</span> ställer in många lektioner på
-    en gång: en dag, en vecka, en årskurs eller några klasser, för prao, en
-    friluftsdag eller en studiedag. Ge avbokningen ett namn, välj dagar (högst
-    31) och vilka den gäller: hela skolan, årskurser eller namngivna klasser och
-    grupper. Med ett tidsfönster ställs bara de lektioner in som ligger helt
-    eller delvis inom det.
-  </p>
-  <p>
-    Lektionerna står kvar som <em>inställda</em> med anteckningen
-    <em>Inställd: Prao åk 9</em>, så att elever, vårdnadshavare och lärare ser
-    varför timmen är tom. Ett lov tar i stället bort lektionerna. Välj
-    avbokning när dagen ska synas och kunna tas tillbaka, och lov när skolan
-    inte undervisar alls.
-  </p>
-  <p>
-    Inget ställs in före en <span class="ui">förhandsgranskning</span>. Den
-    visar hur många lektioner som ställs in och vilka, och vad som lämnas
-    orört: lektioner som har börjat, redan är inställda eller har närvaro rörs
-    aldrig. Vid årskurser räknas en lektion in när någon av dess klasser har en
-    årskurs i spannet. En undervisningsgrupp utan egen årskurs räknas inte in,
-    och förhandsgranskningen namnger sådana grupper så att du kan välja dem
-    med namn. Ändrar du formuläret efter förhandsgranskningen behöver den göras
-    om.
-  </p>
-  <h4>Undervisningstid och Täckning</h4>
-  <p>
-    En lektion som ställs in för en aktivitet räknas som förlorad tid i
-    Täckning (<em>Inställd – avbokning</em>), om inte skolan räknar dagen som
-    undervisningstid. Slå då på <span class="ui">Dagen räknas som
-    undervisningstid</span> och ange minuter och ämne. En tillgodoräkning
-    skrivs för varje hel dag efter i dag. En dag med tidsfönster kan inte
-    tillgodoräknas, eftersom förmiddagens lektioner då skulle räknas två
-    gånger. Tillgodoräkningen förbättrar avvikelsen mot timplanen men inte
-    <em>schemat mot planerat</em>: den visar fortfarande att lektionerna inte
-    hölls, så att schemat inte ser bättre ut än det är.
-  </p>
-  <h4>Ta tillbaka och tillämpa igen</h4>
-  <p>
-    <span class="ui">Ta tillbaka</span> visar först vad som händer: hur många
-    lektioner som återställs (med sin tidigare anteckning), vilka som förblir
-    inställda för att salen har bokats eller fått en annan lektion under
-    tiden, vad som har börjat och lämnas, och vilka tillgodoräkningar som tas
-    bort. En lektion som förblir inställd namnges med datum och sal, så att du
-    kan lösa salen för hand. Har schemat flyttat en lektion sedan
-    avbokningen, till exempel genom en publicering, ligger lektionen redan på
-    sin nya plats den veckan. Den inställda raden på den gamla platsen tas då
-    bort i stället för att återställas, så att klassen inte får lektionen två
-    gånger. En avbokning tas tillbaka en gång.
-  </p>
-  <p>
-    Publiceras schemat igen efter en avbokning, eller fylls det på, skrivs nya
-    lektioner i avbokningens dagar som inställda direkt. Har lektioner ändå
-    tillkommit visar listan <em>N lektioner har tillkommit sedan
-    avbokningen</em> med <span class="ui">Tillämpa igen</span>. Avbokningar
-    skickar ingen notis. Anteckningen på varje lektion är det elever läser.
-    Vårdnadshavarnas schema visar bara att lektionen är inställd, utan
-    anteckningen.
-  </p>
-
   <h3 id="s610"><span class="num">6.10</span>Notiser, e-post och push</h3>
   <p>
     Notiserna i SchemaPro skrivs alltid och är skolans egen förteckning. Vad
@@ -2900,7 +2939,7 @@
   <p>
     Två luckor gäller både notiser, e-post och push: en inställd lektion
     eller en vikarie i en undervisningsgrupp (inte en klass) når ingen
-    vårdnadshavare, och en avbokning (6.9) skickar ingen notis alls.
+    vårdnadshavare, och en avbokning (6.5) skickar ingen notis alls.
   </p>
 </section>
 
@@ -2987,7 +3026,7 @@
       kan avslöja frånvaro. Av samma skäl namnger klassens och salens veckor
       ingen lärare på en inställd lektion, och aldrig en vikarie: en lektion
       som en vikarie håller visas utan lärare. Samma val gäller schemat som
-      inloggade vårdnadshavare ser för sina barn (6.6).</li>
+      inloggade vårdnadshavare ser för sina barn (6.7).</li>
     <li><strong>Vilka veckor</strong>: en länk visar veckor inom sitt läsår,
       från förra veckan och framåt. Äldre veckor visas inte, så att ingen kan
       bläddra bakåt genom ett helt läsårs inställda lektioner.</li>
@@ -3111,7 +3150,7 @@
       En synk tar aldrig bort en vårdnadshavare från ett barn. Anger registret
       inte längre en vårdnadshavare för ett barn listas det överst i
       granskningen, med en länk till barnets vårdnadshavare under
-      <span class="path">Planering › Personer</span>. Kontrollera var och en och ta bort
+      <span class="path">Grunddata › Personer</span>. Kontrollera var och en och ta bort
       kopplingen där om den ska bort, så att ingen tidigare vårdnadshavare
       fortsätter se barnets schema. Du kan inte tillämpa förrän du har kryssat
       i att du har sett listan. Alla barn i listan visas, hur många de än är. Har en vårdnadshavare inget barn kvar alls
@@ -3157,7 +3196,7 @@
     <span class="ui">Nya personer</span> listas alla som synken har lagt in
     eller kopplat och som inte är inbjudna ännu. Kryssa i dem som ska få en
     inbjudan och tryck <span class="ui">Bjud in valda</span>. Inbjudan är
-    densamma som under <span class="path">Planering › Personer</span>.
+    densamma som under <span class="path">Grunddata › Personer</span>.
   </p>
 
   <h4>Nattlig synk</h4>
@@ -3249,7 +3288,7 @@
       <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.3).</td></tr>
       <tr><td class="k">Sensommar</td><td>Granska efter sommarens klassbyten</td><td>Klassbyten och nya elever efter genereringen kan ge krockar; de ritas i grundschemat. Justera, eller generera om med hög <span class="ui">Schemastabilitet</span>.</td></tr>
       <tr><td class="k">Före terminsstart</td><td>Spara version och publicera</td><td>Publicera hela terminen eller läsåret.</td></tr>
-      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Ta ut SCB-underlaget under <span class="path">Rapporter › Tjänstefördelning</span>, komplettera och kontrollera det (6.8).</td></tr>
+      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Ta ut SCB-underlaget under <span class="path">Rapporter › Tjänstefördelning</span>, komplettera och kontrollera det (6.9).</td></tr>
       <tr><td class="k">Löpande</td><td>Drift</td><td>Närvaro, vikarier, ledigheter, bokningar.</td></tr>
       <tr><td class="k">Vid större ändringar</td><td>Spara version, justera, generera om</td><td>Höj <span class="ui">Schemastabilitet</span> så att befintliga placeringar behålls.</td></tr>
       <tr><td class="k">Terminsslut</td><td>Exportera rapporter</td><td>Närvarostatistik per klass för arkivering, och tjänstefördelningens samverkansfil med planerat mot genomfört.</td></tr>
@@ -3258,7 +3297,7 @@
 
   <h3 id="s81"><span class="num">8.1</span>Rulla vidare till nästa läsår</h3>
   <p>
-    Under <span class="path">Planering › Läsår</span> står skolans läsår med
+    Under <span class="path">Grunddata › Läsår</span> står skolans läsår med
     status <em>Aktivt</em>, <em>Kommande</em> eller <em>Avslutat</em>, och
     vilket läsår som rullats till vilket. <span class="ui">Rulla vidare</span>
     på det aktiva läsåret öppnar en guide i fyra steg. Ingenting skrivs förrän
@@ -3334,7 +3373,7 @@
   </ul>
   <p>
     Rullar du utan tjänster kan de tas med senare från tjänstefördelningssidan
-    (4.5).
+    (4.3).
   </p>
   <p>
     Följer <strong>inte</strong> med: grundschemat (nästa läsårs schema
@@ -3348,7 +3387,7 @@
     <span class="label">Ångra en rullning</span>
     <p>
       Så länge det nya läsåret inte är aktiverat ångras rullningen genom att
-      det tas bort under <span class="path">Planering › Läsår</span>. Bara
+      det tas bort under <span class="path">Grunddata › Läsår</span>. Bara
       ett kommande läsår kan tas bort där: ett avslutat läsår har sin kalender
       och sin närvaro kvar, och de skulle följa med. Ett läsår som elever —
       också inaktiva — har sina klasser i går inte att ta bort. Ett läsår kan
@@ -3360,9 +3399,10 @@
   <p>
     Nästa läsårs schema behöver inte vänta på aktiveringen. Så snart läsåret
     är rullat står <span class="ui">Generera schema</span> på dess rad under
-    <span class="path">Planering › Läsår</span>, och på sidorna
-    <span class="path">Schemaläggning › Generera schema</span> och
-    <span class="path">Schemaläggning › Grundschema</span> väljer du överst
+    <span class="path">Grunddata › Läsår</span>, och på sidorna
+    <span class="path">Schemaläggning › Generera schema</span>,
+    <span class="path">Schemaläggning › Grundschema</span> och
+    <span class="path">Schemaläggning › Luckor och håltimmar</span> väljer du överst
     mellan det aktiva läsåret och nästa, <em>2027/28 (nästa, inte
     aktiverat)</em>. Allt på sidan följer valet: timplansposterna,
     lektionerna, luncherna, versionerna, salsförslagen och publiceringen.
@@ -3378,8 +3418,8 @@
     vidare, räknas inte i någon klass. Inaktiva elever räknas där de står,
     som vid aktiveringen. Samma listor används överallt där systemet räknar
     elever: i genereringen, i salsförslagen, i lunchsittningarnas antal, i
-    krockkontrollen när du lägger eller drar en lektion och i årskursen för
-    en undervisningsgrupp. Ingenting skrivs: eleverna flyttar först vid
+    krockkontrollen när du lägger eller drar en lektion, i luckorna och
+    håltimmarna och i årskursen för en undervisningsgrupp. Ingenting skrivs: eleverna flyttar först vid
     aktiveringen.
   </p>
   <p>
@@ -3388,7 +3428,7 @@
     aktiveringen. Har elever bytt klass sedan rullningen säger den också hur
     många medlemskap i undervisningsgrupperna som inte längre stämmer.
     Grupperna bestämdes vid rullningen och räknas som de står, så se över
-    dem under <span class="path">Planering › Klasser</span>.
+    dem under <span class="path">Grunddata › Klasser</span>.
   </p>
   <div class="warn">
     <span class="label">Klassbyten i år ändrar nästa års listor</span>
@@ -3436,7 +3476,7 @@
     till exempel en klass som inte rullades vidare. Aktiveringen gör det nya
     läsåret aktivt och flyttar eleverna i ett enda steg. Elever som går ut
     behåller aktiva konton utan klass; placera eleverna utan klass under
-    <span class="path">Planering › Personer</span>.
+    <span class="path">Grunddata › Personer</span>.
   </p>
   <p>
     Flytten skrivs i klasshistoriken (4.1, Stadium) i samma steg. Aktiveras
@@ -3523,12 +3563,12 @@
       <tr>
         <td class="k">Knappen är avstängd och det står att timplansposter saknar lärare</td>
         <td>Skolan har valt <span class="ui">Generering utan lärare: Vägra</span>.</td>
-        <td>Bemanna posterna under <span class="ui">Obemannade rader</span> på tjänstefördelningssidan, eller ändra inställningen till Tillåt (4.5).</td>
+        <td>Bemanna posterna under <span class="ui">Obemannade rader</span> på tjänstefördelningssidan, eller ändra inställningen till Tillåt (4.3).</td>
       </tr>
       <tr>
         <td class="k">En timplanspost vägras med ”saknar behörighet” eller ”över målet”</td>
         <td>Behörighetskontrollen eller överbeläggningen står på Vägra.</td>
-        <td>Välj en annan lärare (<span class="ui">Föreslå lärare</span> rangordnar dem), registrera lärarens behörighet, eller ändra kontrollen till Varna (4.5).</td>
+        <td>Välj en annan lärare (<span class="ui">Föreslå lärare</span> rangordnar dem), registrera lärarens behörighet, eller ändra kontrollen till Varna (4.3).</td>
       </tr>
 
       <tr>
@@ -3604,7 +3644,7 @@
       <tr>
         <td class="k">En person från registret kan inte logga in</td>
         <td>En synk ger ingen inloggning.</td>
-        <td>Bjud in personen under <span class="ui">Nya personer</span> eller under <span class="path">Planering › Personer</span>.</td>
+        <td>Bjud in personen under <span class="ui">Nya personer</span> eller under <span class="path">Grunddata › Personer</span>.</td>
       </tr>
     </tbody>
   </table>
@@ -3624,12 +3664,13 @@
       <tr><td class="k">4</td><td>Klasser skapade</td><td>Alla klasser med rätt årskurs.</td></tr>
       <tr><td class="k">5</td><td>Personer upplagda</td><td>Lärare och elever finns; elever tillhör en klass. Inbjudningarna kan skickas senare.</td></tr>
       <tr><td class="k">6</td><td>Timplan beslutad och timplansposter ifyllda</td><td>Den lokala timplanen är beslutad, och timplansposternas veckosumma stämmer mot den.</td></tr>
-      <tr><td class="k">7</td><td>Tillgänglighet inlagd</td><td>Endast verkliga hinder, inte önskemål.</td></tr>
-      <tr><td class="k">8</td><td>Skolregler satta</td><td>Lunchfönster och max lektioner per dag angivna.</td></tr>
-      <tr><td class="k">9</td><td>Schema genererat</td><td>Resultatet är Optimal eller Fungerande.</td></tr>
-      <tr><td class="k">10</td><td>Schemat granskat</td><td>Klass för klass och lärare för lärare.</td></tr>
-      <tr><td class="k">11</td><td>Version sparad</td><td>En namngiven version finns.</td></tr>
-      <tr><td class="k">12</td><td>Publicerat</td><td>Lärare ser sitt schema under Mitt schema, och loggen under Publicering visar vilket schema som gäller från vilken dag.</td></tr>
+      <tr><td class="k">7</td><td>Tjänstefördelning klar</td><td><span class="ui">Obemannade rader</span> står på 0, och varje lärare över mål eller obehörig tilldelning är ett beslut, inte ett förbiseende (4.3).</td></tr>
+      <tr><td class="k">8</td><td>Tillgänglighet inlagd</td><td>Endast verkliga hinder, inte önskemål.</td></tr>
+      <tr><td class="k">9</td><td>Skolregler satta</td><td>Lunchfönster och max lektioner per dag angivna under Tillgänglighet (5.1).</td></tr>
+      <tr><td class="k">10</td><td>Schema genererat</td><td>Resultatet är Optimal eller Fungerande.</td></tr>
+      <tr><td class="k">11</td><td>Schemat granskat</td><td>Klass för klass och lärare för lärare.</td></tr>
+      <tr><td class="k">12</td><td>Version sparad</td><td>En namngiven version finns.</td></tr>
+      <tr><td class="k">13</td><td>Publicerat</td><td>Lärare ser sitt schema under Mitt schema, och loggen under Publicering visar vilket schema som gäller från vilken dag.</td></tr>
     </tbody>
   </table>
 

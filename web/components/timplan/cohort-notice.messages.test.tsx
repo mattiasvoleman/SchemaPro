@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it } from "vitest";
 import { cohortNotice } from "@/lib/timplan-cohorts";
@@ -37,5 +38,20 @@ describe("CohortNotice, in Swedish", () => {
     expect(reformed).toHaveTextContent("lydelsen från hösten 2028 finns inte i referensdatan");
     // The old cohort's own rows still read bilaga 3.
     expect(screen.getByText(/HT 2020/).closest("li")!).toHaveTextContent("SFS 2023:945 B3");
+  });
+
+  it("opens from a named disclosure button, closed at first, and closes again", async () => {
+    const user = userEvent.setup();
+    show("GRUNDSKOLA");
+    const toggle = screen.getByRole("button", { name: "Timplaner per årskull" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "Timplaner per årskull" })).not.toBeInTheDocument();
+    await user.click(toggle);
+    const panel = screen.getByRole("region", { name: "Timplaner per årskull" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-controls", panel.id);
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(panel).not.toBeVisible();
   });
 });

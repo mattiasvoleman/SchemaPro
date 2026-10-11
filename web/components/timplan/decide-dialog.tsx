@@ -68,7 +68,7 @@ export function DecideDialog({ open, onOpenChange, planName, pending, onConfirm 
           <DialogTitle>{t("decideTitle")}</DialogTitle>
           <DialogDescription>{t("decideBody", { name: planName })}</DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <Label htmlFor="timplan-decision-note">{t("decisionNoteLabel")}</Label>
           <Textarea
             id="timplan-decision-note"
@@ -76,7 +76,11 @@ export function DecideDialog({ open, onOpenChange, planName, pending, onConfirm 
             maxLength={600}
             placeholder={t("decisionNotePlaceholder")}
             aria-invalid={(touched && problem !== null) || undefined}
-            aria-describedby="timplan-decision-note-hint"
+            aria-describedby={
+              touched && problem
+                ? "timplan-decision-note-hint timplan-decision-note-error"
+                : "timplan-decision-note-hint"
+            }
             onChange={(event) => setNote(event.target.value)}
             onBlur={() => setTouched(true)}
           />
@@ -84,7 +88,7 @@ export function DecideDialog({ open, onOpenChange, planName, pending, onConfirm 
             {t("decisionNoteHint")}
           </p>
           {touched && problem ? (
-            <p role="alert" className="text-sm text-destructive">
+            <p id="timplan-decision-note-error" role="alert" className="text-xs text-destructive">
               {problem}
             </p>
           ) : null}

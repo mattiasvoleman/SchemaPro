@@ -1,17 +1,19 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Check, ClipboardCheck, Loader2, X } from "lucide-react";
+import { ClipboardCheck } from "lucide-react";
 import { usePeople } from "@/lib/queries";
 import { useLeaveRequestActions, useLeaveRequests } from "@/lib/guardian-queries";
+import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
+import { DecisionList, type Decision, type DecisionRequest } from "@/components/admin/decision-list";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Card, CardContent } from "@/components/ui/card";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Filter = "PENDING" | "APPROVED" | "REJECTED";
@@ -20,27 +22,32 @@ export default function LeaveRequestsPage() {
   const t = useTranslations("adminLeave");
   const tGuardian = useTranslations("guardian");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
   const [filter, setFilter] = useState<Filter>("PENDING");
-  const { data: leaves, isLoading } = useLeaveRequests(filter);
-  const { data: people } = usePeople();
+  const { data: leaves, isLoading, isError } = useLeaveRequests(filter);
+  const peopleQuery = usePeople();
   const actions = useLeaveRequestActions();
-  const [notes, setNotes] = useState<Record<string, string>>({});
 
   const personName = useMemo(() => {
-    const byId = new Map((people ?? []).map((person) => [person.id, person]));
+    const byId = new Map((peopleQuery.data ?? []).map((person) => [person.id, person]));
     return (id: string) => {
       const person = byId.get(id);
       return person ? `${person.firstName} ${person.lastName}` : "—";
     };
-  }, [people]);
+  }, [peopleQuery.data]);
 
-  const decide = async (id: string, status: "APPROVED" | "REJECTED") => {
+  // A leave's dates are calendar days, read at UTC midnight so no time zone
+  // moves them to the day before; when it was asked is the reader's own day.
+  const days = useMemo(
+    () => new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+    [locale],
+  );
+  const asked = useMemo(() => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }), [locale]);
+  const dayOf = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00.000Z`);
+
+  const decide = async (id: string, status: Decision, note: string | undefined) => {
     try {
-      const result = await actions.decide.mutateAsync({
-        id,
-        status,
-        note: notes[id]?.trim() || undefined,
-      });
+      const result = await actions.decide.mutateAsync({ id, status, note });
       toast.success(
         status === "APPROVED"
           ? t("approved", { count: (result as { absenceDays?: number }).absenceDays ?? 0 })
@@ -51,84 +58,79 @@ export default function LeaveRequestsPage() {
     }
   };
 
+  const requests: DecisionRequest[] = (leaves ?? []).map((leave) => {
+    const student = personName(leave.studentId);
+    const start = dayOf(leave.startDate);
+    const end = dayOf(leave.endDate);
+    const period = start.getTime() === end.getTime() ? days.format(start) : days.formatRange(start, end);
+    return {
+      id: leave.id,
+      title: (
+        <>
+          {student}
+          <span className="ml-2 font-normal tabular-nums text-muted-foreground">{period}</span>
+        </>
+      ),
+      name: `${student}, ${period}`,
+      details: [
+        ...(leave.reason ? [leave.reason] : []),
+        <span key="who" className="text-xs">
+          {t("requestedBy", { name: personName(leave.requestedById) })} · {asked.format(new Date(leave.createdAt))}
+        </span>,
+      ],
+      open: leave.status === "PENDING",
+      status: { label: tGuardian(`status${leave.status}`), variant: LEAVE_STATUS_VARIANT[leave.status] },
+    };
+  });
+
   return (
-    <div>
+    <Page>
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
-      <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)} className="mb-4">
-        <TabsList>
-          <TabsTrigger value="PENDING">{tGuardian("statusPENDING")}</TabsTrigger>
-          <TabsTrigger value="APPROVED">{tGuardian("statusAPPROVED")}</TabsTrigger>
-          <TabsTrigger value="REJECTED">{tGuardian("statusREJECTED")}</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <FilterBar>
+        <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
+          <TabsList aria-label={t("filterLabel")}>
+            <TabsTrigger value="PENDING">{tGuardian("statusPENDING")}</TabsTrigger>
+            <TabsTrigger value="APPROVED">{tGuardian("statusAPPROVED")}</TabsTrigger>
+            <TabsTrigger value="REJECTED">{tGuardian("statusREJECTED")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </FilterBar>
 
-      {isLoading ? null : (leaves ?? []).length === 0 ? (
-        <EmptyState icon={ClipboardCheck} title={tCommon("noResults")} description={t("empty")} />
-      ) : (
-        <div className="space-y-3">
-          {(leaves ?? []).map((leave) => (
-            <Card key={leave.id}>
-              <CardContent className="pt-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">
-                      {personName(leave.studentId)}
-                      <span className="ml-2 tabular-nums text-sm text-muted-foreground">
-                        {leave.startDate.slice(0, 10)} – {leave.endDate.slice(0, 10)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">{leave.reason}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t("requestedBy", { name: personName(leave.requestedById) })} ·{" "}
-                      {new Date(leave.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  {leave.status === "PENDING" ? (
-                    <div className="flex flex-col items-end gap-2">
-                      <Input
-                        placeholder={t("notePlaceholder")}
-                        className="h-8 w-64"
-                        value={notes[leave.id] ?? ""}
-                        onChange={(e) =>
-                          setNotes({ ...notes, [leave.id]: e.target.value })
-                        }
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => void decide(leave.id, "APPROVED")}
-                          disabled={actions.decide.isPending}
-                        >
-                          {actions.decide.isPending ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <Check />
-                          )}
-                          {t("approve")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => void decide(leave.id, "REJECTED")}
-                          disabled={actions.decide.isPending}
-                        >
-                          <X />
-                          {t("reject")}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Badge variant={leave.status === "APPROVED" ? "success" : "destructive"}>
-                      {tGuardian(`status${leave.status}`)}
-                    </Badge>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+      {peopleQuery.isError ? (
+        <LoadError variant="inline" title={t("namesFailed")} hint={t("namesFailedHint")} />
+      ) : null}
+
+      {isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : requests.length === 0 ? (
+        <EmptyState
+          icon={ClipboardCheck}
+          title={t("emptyTitle", { status: filter })}
+          description={t("emptyHint")}
+          headingLevel={2}
+        />
+      ) : (
+        <DecisionList
+          id="leave-requests"
+          title={t("listTitle", { status: filter })}
+          requests={requests}
+          labels={{ approve: t("approve"), reject: t("reject"), note: t("noteLabel") }}
+          rejectCopy={(request) => {
+            const leave = leaves?.find((candidate) => candidate.id === request.id);
+            return {
+              title: t("rejectTitle", { name: leave ? personName(leave.studentId) : "—" }),
+              body: t("rejectBody"),
+            };
+          }}
+          deciding={actions.decide.isPending ? (actions.decide.variables?.id ?? null) : null}
+          onDecide={decide}
+        />
       )}
-    </div>
+    </Page>
   );
 }

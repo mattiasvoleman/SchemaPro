@@ -10,8 +10,8 @@ import {
   Mail,
   Pencil,
   Plus,
-  Search,
   Trash2,
+  Unlink,
   Upload,
   UserCheck,
 } from "lucide-react";
@@ -93,6 +93,7 @@ import type {
   TeacherWorkRule,
   UserRole,
 } from "@/lib/types";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,7 +109,14 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { FormField } from "@/components/ui/form-field";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { RowActions, type RowAction } from "@/components/ui/row-actions";
+import { SearchField } from "@/components/ui/search-field";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -125,17 +133,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const ROLES: UserRole[] = ["STUDENT", "TEACHER", "SCHOOL_ADMIN", "GUARDIAN"];
 const NO_GROUP = "__none__";
+/** The register's columns; the detail row spans them all. */
+const COLUMNS = 7;
+/**
+ * Every action a row can have — edit, guardians or working time, the
+ * invitation, delete — as an icon, none behind "Fler åtgärder". Four, the
+ * most any row has; the Åtgärder column is w-40 to hold them.
+ */
+const PEOPLE_INLINE_ACTIONS = 4;
 
 /**
  * Who a working-time rule can belong to.
@@ -279,33 +288,44 @@ function PersonDetail({
           undervisande rektor.
         */}
         {MAY_HAVE_WORK_TIME.includes(person.role) && staffing ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Suspense fallback={<Skeleton className="h-32 w-full" />}>
-              <EmploymentCard
-                teacher={person}
-                academicYearId={staffing.academicYearId}
-                academicYearName={staffing.academicYearName}
-                employment={staffing.employment}
-                policy={staffing.policy}
-              />
-            </Suspense>
-            <Suspense fallback={<Skeleton className="h-32 w-full" />}>
-              <QualificationsCard
-                teacher={person}
-                qualifications={staffing.qualifications}
-                subjects={staffing.subjects}
-              />
-            </Suspense>
-            <Suspense fallback={<Skeleton className="h-32 w-full" />}>
-              <DutiesCard
-                teacher={person}
-                academicYearId={staffing.academicYearId}
-                academicYearName={staffing.academicYearName}
-                subjects={staffing.subjects}
-                groups={staffing.groups}
-              />
-            </Suspense>
-          </div>
+          <section aria-labelledby={`person-staffing-${person.id}`} className="space-y-3">
+            {/*
+              The year the cards write into, said once above them: the post
+              and the uppdrag are per läsår, and the page has no year picker
+              of its own — the register is the school's people, not a year's.
+              Also the h2 the cards' own h3 headings sit under.
+            */}
+            <h2 id={`person-staffing-${person.id}`} className="text-base font-semibold">
+              {t("staffingYear", { year: staffing.academicYearName })}
+            </h2>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+                <EmploymentCard
+                  teacher={person}
+                  academicYearId={staffing.academicYearId}
+                  academicYearName={staffing.academicYearName}
+                  employment={staffing.employment}
+                  policy={staffing.policy}
+                />
+              </Suspense>
+              <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+                <QualificationsCard
+                  teacher={person}
+                  qualifications={staffing.qualifications}
+                  subjects={staffing.subjects}
+                />
+              </Suspense>
+              <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+                <DutiesCard
+                  teacher={person}
+                  academicYearId={staffing.academicYearId}
+                  academicYearName={staffing.academicYearName}
+                  subjects={staffing.subjects}
+                  groups={staffing.groups}
+                />
+              </Suspense>
+            </div>
+          </section>
         ) : null}
       </div>
     );
@@ -346,22 +366,30 @@ export default function PeoplePage() {
   const tCommon = useTranslations("common");
   const tRoles = useTranslations("roles");
   const tCsvImport = useTranslations("csvImport");
-  const { data: people, isLoading } = usePeople();
-  const { data: groups } = useGroups();
-  const { data: memberships } = useGroupMemberships();
-  const { data: subjects } = useSubjects();
-  const { data: years } = useAcademicYears();
+  const { data: people, isLoading, isError } = usePeople();
+  const groupsQuery = useGroups();
+  const groups = groupsQuery.data;
+  const membershipsQuery = useGroupMemberships();
+  const memberships = membershipsQuery.data;
+  const subjectsQuery = useSubjects();
+  const subjects = subjectsQuery.data;
+  const yearsQuery = useAcademicYears();
+  const years = yearsQuery.data;
   const activeYear = years?.find((year) => year.isActive) ?? years?.[0] ?? null;
   const activeYearId = activeYear?.id ?? null;
-  const { data: requirements } = useRequirements(activeYearId);
+  const requirementsQuery = useRequirements(activeYearId);
+  const requirements = requirementsQuery.data;
   /**
    * The staff's posts for the active year, their behörigheter and the policy
    * that turns a post into a target — read once for the whole list, like the
    * working-time rules, and looked up per row.
    */
-  const { data: employments } = useTeacherEmployments(activeYearId);
-  const { data: qualifications } = useTeacherQualifications();
-  const { data: policy } = useStaffingPolicy();
+  const employmentsQuery = useTeacherEmployments(activeYearId);
+  const employments = employmentsQuery.data;
+  const qualificationsQuery = useTeacherQualifications();
+  const qualifications = qualificationsQuery.data;
+  const policyQuery = useStaffingPolicy();
+  const policy = policyQuery.data;
   const employmentActions = useTeacherEmploymentActions();
   const employmentOf = (userId: string) =>
     employments?.find((row) => row.userId === userId) ?? null;
@@ -383,7 +411,27 @@ export default function PeoplePage() {
    * At most one row per person and no row for most of them, so this is a lookup
    * by userId rather than an index — see useTeacherWorkRules.
    */
-  const { data: workRules } = useTeacherWorkRules();
+  const workRulesQuery = useTeacherWorkRules();
+  const workRules = workRulesQuery.data;
+  /*
+   * The register itself is usePeople; everything a row says beyond the name
+   * — the class, the groups, what a teacher teaches, the post, the working
+   * time — comes from reads of its own. When one of those fails the row
+   * would read "—" or "nothing" as if that were the answer, so the page says
+   * once, above the table, that some of it could not be read.
+   */
+  const detailsFailed = [
+    groupsQuery,
+    membershipsQuery,
+    subjectsQuery,
+    yearsQuery,
+    requirementsQuery,
+    employmentsQuery,
+    qualificationsQuery,
+    // The policy turns a post into the target the Anställning card shows.
+    policyQuery,
+    workRulesQuery,
+  ].some((query) => query.isError);
   const workRuleOf = (teacherId: string) =>
     workRules?.find((rule) => rule.userId === teacherId);
   const [workTimeFor, setWorkTimeFor] = useState<Person | null>(null);
@@ -400,9 +448,12 @@ export default function PeoplePage() {
     if (pupil) setGuardiansFor(pupil);
     setLinkedPupilId(null);
   }, [linkedPupilId, people]);
-  const { data: studentGuardians } = useStudentGuardians(guardiansFor?.id ?? null);
+  const guardiansQuery = useStudentGuardians(guardiansFor?.id ?? null);
+  const studentGuardians = guardiansQuery.data;
   const guardianLinks = useGuardianLinkActions();
   const [newGuardianId, setNewGuardianId] = useState("");
+  /** The guardian link a click asked to remove, held until the admin confirms it. */
+  const [unlinking, setUnlinking] = useState<{ id: string; name: string } | null>(null);
   const mutations = useCrudMutations<{
     firstName: string;
     lastName: string;
@@ -615,8 +666,83 @@ export default function PeoplePage() {
     }
   };
 
+  /*
+   * A guardian taken off a pupil stops seeing the pupil's week and can no
+   * longer report the pupil sick, so the click asks first, as every other
+   * removal on this page does — and a refusal says so instead of vanishing.
+   */
+  const confirmUnlink = async () => {
+    if (!unlinking) return;
+    try {
+      await guardianLinks.unlink.mutateAsync(unlinking.id);
+      toast.success(t("guardianUnlinked", { name: unlinking.name }));
+      setUnlinking(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
+
+  /**
+   * A row's actions in order of use: edit first, then what only that role
+   * has (guardians, working time), then the invitation, then delete last.
+   * All of them stay icons on the row (PEOPLE_INLINE_ACTIONS): a row has at
+   * most four, as before the 2026-10-11 overhaul, and the manual sends the
+   * reader to the envelope on the row to invite one person.
+   */
+  const actionsOf = (person: Person): RowAction[] => {
+    const name = `${person.firstName} ${person.lastName}`;
+    const actions: RowAction[] = [
+      {
+        label: tCommon("edit"),
+        icon: Pencil,
+        ariaLabel: tCommon("editNamed", { name }),
+        onSelect: () => openEdit(person),
+      },
+    ];
+    if (person.role === "STUDENT") {
+      actions.push({
+        label: t("manageGuardians"),
+        icon: Link2,
+        ariaLabel: t("guardiansTitle", { name }),
+        onSelect: () => {
+          setNewGuardianId("");
+          setGuardiansFor(person);
+        },
+      });
+    }
+    // Only on a member of staff's row, the way the guardian link is only on
+    // a student's: see MAY_HAVE_WORK_TIME for why the undervisande rektor
+    // counts and a pupil does not.
+    if (MAY_HAVE_WORK_TIME.includes(person.role)) {
+      actions.push({
+        label: t("workTimeLabel"),
+        icon: Clock,
+        ariaLabel: tWorkTime("editFor", { name }),
+        onSelect: () => setWorkTimeFor(person),
+      });
+    }
+    if (person.isActive) {
+      actions.push({
+        label: person.invitedAt ? t("resendInvitation") : t("sendInvitation"),
+        icon: Mail,
+        ariaLabel: person.invitedAt
+          ? t("resendInvitationTo", { name })
+          : t("sendInvitationTo", { name }),
+        onSelect: () => void inviteOne(person),
+        disabled: invitations.inviteOne.isPending,
+      });
+    }
+    actions.push({
+      label: tCommon("delete"),
+      icon: Trash2,
+      ariaLabel: tCommon("deleteNamed", { name }),
+      onSelect: () => setDeleting(person),
+    });
+    return actions;
+  };
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
@@ -628,7 +754,7 @@ export default function PeoplePage() {
                 onClick={() => void inviteAllUninvited()}
                 disabled={invitations.inviteMany.isPending}
               >
-                <Mail />
+                <Mail aria-hidden="true" />
                 {t("inviteAll", { count: uninvited.length })}
               </Button>
             ) : null}
@@ -660,54 +786,63 @@ export default function PeoplePage() {
               ]}
             />
             <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload />
+              <Upload aria-hidden="true" />
               {tCsvImport("button")}
             </Button>
             <Button onClick={openCreate}>
-              <Plus />
+              <Plus aria-hidden="true" />
               {t("addPerson")}
             </Button>
           </>
         }
       />
 
-      <Tabs
-        value={filter}
-        onValueChange={(value) => setFilter(value as "ALL" | UserRole)}
-        className="mb-4"
-      >
-        <TabsList>
-          <TabsTrigger value="ALL">{t("filterAll")}</TabsTrigger>
-          {ROLES.map((role) => (
-            <TabsTrigger key={role} value={role}>
-              {tRoles(role)}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      <div className="relative mb-4 max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
+      <FilterBar>
+        <Tabs value={filter} onValueChange={(value) => setFilter(value as "ALL" | UserRole)}>
+          {/* Five roles do not fit a 390 px phone in one row (418 px): the
+              pill wraps rather than widen the page into a sideways scroll. */}
+          <TabsList aria-label={t("role")} className="h-auto flex-wrap justify-start">
+            <TabsTrigger value="ALL">{t("filterAll")}</TabsTrigger>
+            {ROLES.map((role) => (
+              <TabsTrigger key={role} value={role}>
+                {tRoles(role)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <SearchField
+          id="people-search"
+          label={t("searchLabel")}
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={t("searchPlaceholder")}
-          aria-label={t("searchPlaceholder")}
-          className="pl-9"
+          onValueChange={setSearch}
         />
-      </div>
+      </FilterBar>
 
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState icon={UserCheck} title={tCommon("noResults")} description={t("empty")} />
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : !people || people.length === 0 ? (
+        <EmptyState
+          icon={UserCheck}
+          title={t("emptyTitle")}
+          description={t("emptyHint")}
+          headingLevel={2}
+          action={
+            <Button onClick={openCreate}>
+              <Plus aria-hidden="true" />
+              {t("addPerson")}
+            </Button>
+          }
+        />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
+        <>
+          {detailsFailed ? (
+            <LoadError variant="inline" title={t("detailsFailed")} hint={t("detailsFailedHint")} />
+          ) : null}
+          <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
                 <TableHead>{tCommon("name")}</TableHead>
@@ -716,10 +851,20 @@ export default function PeoplePage() {
                 <TableHead>{t("class")}</TableHead>
                 <TableHead>{tCommon("status")}</TableHead>
                 <TableHead>{t("invitationState")}</TableHead>
-                <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
+                <TableHead className="w-40 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
+              {filtered.length === 0 ? (
+                // A search or a role tab that matches nobody is a miss, not a
+                // school without people: said in the table, under the filters
+                // that caused it.
+                <TableRow>
+                  <TableCell colSpan={COLUMNS} className="py-8 text-center text-muted-foreground">
+                    {t("noMatch")}
+                  </TableCell>
+                </TableRow>
+              ) : null}
               {filtered.map((person) => (
                 <Fragment key={person.id}>
                 <TableRow>
@@ -731,13 +876,14 @@ export default function PeoplePage() {
                       }
                       aria-expanded={expandedId === person.id}
                       aria-controls={`person-detail-${person.id}`}
-                      className="flex items-center gap-1.5 text-left hover:underline"
+                      className="flex items-center gap-1.5 rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <ChevronRight
+                        aria-hidden="true"
                         className={
                           expandedId === person.id
-                            ? "h-3.5 w-3.5 rotate-90 transition-transform"
-                            : "h-3.5 w-3.5 transition-transform"
+                            ? "size-3.5 rotate-90 transition-transform"
+                            : "size-3.5 transition-transform"
                         }
                       />
                       {person.firstName} {person.lastName}
@@ -747,7 +893,13 @@ export default function PeoplePage() {
                   <TableCell>
                     <Badge variant="secondary">{tRoles(person.role)}</Badge>
                   </TableCell>
-                  <TableCell>{groupName(person.studentGroupId)}</TableCell>
+                  <TableCell>
+                    {person.studentGroupId ? (
+                      groupName(person.studentGroupId)
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {person.isActive ? (
                       <Badge variant="success">{t("activeState")}</Badge>
@@ -763,77 +915,16 @@ export default function PeoplePage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    {person.isActive ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => void inviteOne(person)}
-                        disabled={invitations.inviteOne.isPending}
-                        aria-label={
-                          person.invitedAt ? t("resendInvitation") : t("sendInvitation")
-                        }
-                        title={
-                          person.invitedAt ? t("resendInvitation") : t("sendInvitation")
-                        }
-                      >
-                        <Mail />
-                      </Button>
-                    ) : null}
-                    {person.role === "STUDENT" ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          setNewGuardianId("");
-                          setGuardiansFor(person);
-                        }}
-                        aria-label={t("manageGuardians")}
-                        title={t("manageGuardians")}
-                      >
-                        <Link2 />
-                      </Button>
-                    ) : null}
-                    {/*
-                      Only on a member of staff's row, the way the guardian link
-                      is only on a student's: see MAY_HAVE_WORK_TIME for why the
-                      undervisande rektor counts and a pupil does not.
-                    */}
-                    {MAY_HAVE_WORK_TIME.includes(person.role) ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setWorkTimeFor(person)}
-                        aria-label={tWorkTime("editFor", {
-                          name: `${person.firstName} ${person.lastName}`,
-                        })}
-                        title={tWorkTime("editFor", {
-                          name: `${person.firstName} ${person.lastName}`,
-                        })}
-                      >
-                        <Clock />
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEdit(person)}
-                      aria-label={tCommon("edit")}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleting(person)}
-                      aria-label={tCommon("delete")}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
+                    <RowActions
+                      name={`${person.firstName} ${person.lastName}`}
+                      actions={actionsOf(person)}
+                      inlineMax={PEOPLE_INLINE_ACTIONS}
+                    />
                   </TableCell>
                 </TableRow>
                 {expandedId === person.id ? (
-                  <TableRow id={`person-detail-${person.id}`} className="bg-muted/30">
-                    <TableCell colSpan={7} className="py-3">
+                  <TableRow id={`person-detail-${person.id}`} className="bg-muted/40 hover:bg-muted/40">
+                    <TableCell colSpan={COLUMNS} className="py-3">
                       <PersonDetail
                         person={person}
                         homeClass={groupName(person.studentGroupId)}
@@ -858,132 +949,119 @@ export default function PeoplePage() {
                 </Fragment>
               ))}
             </TableBody>
-          </Table>
-        </div>
+          </TableCard>
+        </>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("editPerson") : t("addPerson")}</DialogTitle>
-            {!editing ? <DialogDescription>{t("authHint")}</DialogDescription> : null}
+            <DialogDescription>{editing ? t("editHint") : t("authHint")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="person-first">{t("firstName")}</Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="person-first" label={t("firstName")}>
                 <Input
-                  id="person-first"
                   value={form.firstName}
                   onChange={(e) => setForm({ ...form, firstName: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="person-last">{t("lastName")}</Label>
+              </FormField>
+              <FormField id="person-last" label={t("lastName")}>
                 <Input
-                  id="person-last"
                   value={form.lastName}
                   onChange={(e) => setForm({ ...form, lastName: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="person-email">{t("email")}</Label>
+            <FormField id="person-email" label={t("email")}>
               <Input
-                id="person-email"
                 type="email"
                 value={form.email}
                 disabled={editing !== null}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
               />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="person-phone">
-                  {t("phone")}{" "}
-                  <span className="text-muted-foreground">({tCommon("optional")})</span>
-                </Label>
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="person-phone" label={t("phone")} optional>
                 <Input
-                  id="person-phone"
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label>{t("role")}</Label>
-                <Select
-                  value={form.role}
-                  onValueChange={(value) => setForm({ ...form, role: value as UserRole })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ROLES.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {tRoles(role)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              </FormField>
+              <FormField id="person-role" label={t("role")}>
+                {(control) => (
+                  <Select
+                    value={form.role}
+                    onValueChange={(value) => setForm({ ...form, role: value as UserRole })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map((role) => (
+                        <SelectItem key={role} value={role}>
+                          {tRoles(role)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
             </div>
             {form.role === "STUDENT" ? (
-              <div className="space-y-2">
-                <Label>{t("class")}</Label>
-                <Select
-                  value={form.studentGroupId}
-                  onValueChange={(value) => setForm({ ...form, studentGroupId: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_GROUP}>{tCommon("none")}</SelectItem>
-                    {homeClasses.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <FormField id="person-class" label={t("class")}>
+                {(control) => (
+                  <Select
+                    value={form.studentGroupId}
+                    onValueChange={(value) => setForm({ ...form, studentGroupId: value })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_GROUP}>{tCommon("none")}</SelectItem>
+                      {homeClasses.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
             ) : null}
 
             {showsPost ? (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="person-employment">
-                    {tStaffing("employmentPercent")}{" "}
-                    <span className="text-muted-foreground">({tCommon("optional")})</span>
-                  </Label>
+              <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                <FormField
+                  id="person-employment"
+                  label={tStaffing("employmentPercent")}
+                  optional
+                  hint={tStaffing("employmentHint", { year: activeYear?.name ?? "" })}
+                >
                   <Input
-                    id="person-employment"
                     inputMode="decimal"
                     value={form.employmentPercent}
                     onChange={(e) => setForm({ ...form, employmentPercent: e.target.value })}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    {tStaffing("employmentHint", { year: activeYear?.name ?? "" })}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="person-signature">
-                    {tStaffing("signature")}{" "}
-                    <span className="text-muted-foreground">({tCommon("optional")})</span>
-                  </Label>
+                </FormField>
+                <FormField
+                  id="person-signature"
+                  label={tStaffing("signature")}
+                  optional
+                  hint={tStaffing("signatureHint")}
+                >
                   <Input
-                    id="person-signature"
                     maxLength={8}
                     value={form.signature}
                     onChange={(e) => setForm({ ...form, signature: e.target.value })}
                   />
-                  <p className="text-xs text-muted-foreground">{tStaffing("signatureHint")}</p>
-                </div>
+                </FormField>
                 {postProblem ? (
-                  <p role="alert" className="col-span-2 text-sm text-destructive">
+                  <Notice tone="destructive" className="sm:col-span-2">
                     {postProblemText(postProblem)}
-                  </p>
+                  </Notice>
                 ) : null}
               </div>
             ) : null}
@@ -992,7 +1070,7 @@ export default function PeoplePage() {
               <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                 <div className="space-y-1">
                   <Label htmlFor="send-invitation">{t("sendInvitation")}</Label>
-                  <p className="text-sm text-muted-foreground">
+                  <p id="send-invitation-hint" className="text-xs text-muted-foreground">
                     {t("sendInvitationHelp")}
                   </p>
                 </div>
@@ -1000,6 +1078,7 @@ export default function PeoplePage() {
                   id="send-invitation"
                   checked={sendInvitation}
                   onCheckedChange={setSendInvitation}
+                  aria-describedby="send-invitation-hint"
                 />
               </div>
             ) : null}
@@ -1030,7 +1109,7 @@ export default function PeoplePage() {
         open={guardiansFor !== null}
         onOpenChange={(open) => !open && setGuardiansFor(null)}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {t("guardiansTitle", {
@@ -1039,57 +1118,75 @@ export default function PeoplePage() {
                   : "",
               })}
             </DialogTitle>
+            <DialogDescription>{t("guardiansHint")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            {(studentGuardians ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("guardiansEmpty")}</p>
-            ) : (
-              (studentGuardians ?? []).map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
-                >
-                  <div className="min-w-0">
-                    <div className="font-medium">
-                      {entry.guardian.firstName} {entry.guardian.lastName}
+          {/* "Inga vårdnadshavare" only once the links have been read: while
+              they load, or when the read failed, the pupil may well have some. */}
+          {guardiansQuery.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : guardiansQuery.isError ? (
+            <LoadError
+              variant="inline"
+              title={t("guardiansLoadFailed")}
+              hint={t("guardiansLoadFailedHint")}
+            />
+          ) : (studentGuardians ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("guardiansEmpty")}</p>
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {(studentGuardians ?? []).map((entry) => {
+                const name = `${entry.guardian.firstName} ${entry.guardian.lastName}`;
+                return (
+                  <li key={entry.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <div className="font-medium">{name}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {entry.guardian.email}
+                      </div>
                     </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {entry.guardian.email}
-                    </div>
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => void guardianLinks.unlink.mutateAsync(entry.id)}
-                    aria-label={tCommon("delete")}
-                  >
-                    <Trash2 className="text-destructive" />
-                  </Button>
-                </div>
-              ))
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Select value={newGuardianId || undefined} onValueChange={setNewGuardianId}>
-              <SelectTrigger>
-                <SelectValue placeholder={t("selectGuardian")} />
-              </SelectTrigger>
-              <SelectContent>
-                {(people ?? [])
-                  .filter(
-                    (person) =>
-                      person.role === "GUARDIAN" &&
-                      !(studentGuardians ?? []).some(
-                        (entry) => entry.guardianId === person.id,
-                      ),
-                  )
-                  .map((person) => (
-                    <SelectItem key={person.id} value={person.id}>
-                      {person.firstName} {person.lastName}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+                    <RowActions
+                      name={name}
+                      actions={[
+                        {
+                          label: t("unlinkConfirm"),
+                          icon: Unlink,
+                          ariaLabel: t("unlinkGuardian", { name }),
+                          onSelect: () => setUnlinking({ id: entry.id, name }),
+                        },
+                      ]}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="flex items-end gap-2">
+            <FormField id="person-add-guardian" label={t("addGuardianLabel")} className="min-w-0 flex-1">
+              {(control) => (
+                <Select value={newGuardianId || undefined} onValueChange={setNewGuardianId}>
+                  <SelectTrigger {...control}>
+                    <SelectValue placeholder={t("selectGuardian")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(people ?? [])
+                      .filter(
+                        (person) =>
+                          person.role === "GUARDIAN" &&
+                          !(studentGuardians ?? []).some(
+                            (entry) => entry.guardianId === person.id,
+                          ),
+                      )
+                      .map((person) => (
+                        <SelectItem key={person.id} value={person.id}>
+                          {person.firstName} {person.lastName}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
             <Button
               onClick={() => {
                 if (!guardiansFor || !newGuardianId) return;
@@ -1145,6 +1242,19 @@ export default function PeoplePage() {
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+
+      <ConfirmDialog
+        open={unlinking !== null}
+        onOpenChange={(open) => !open && setUnlinking(null)}
+        title={t("unlinkTitle", { guardian: unlinking?.name ?? "" })}
+        description={t("unlinkBody", {
+          guardian: unlinking?.name ?? "",
+          pupil: guardiansFor ? `${guardiansFor.firstName} ${guardiansFor.lastName}` : "",
+        })}
+        confirmLabel={t("unlinkConfirm")}
+        loading={guardianLinks.unlink.isPending}
+        onConfirm={() => void confirmUnlink()}
+      />
+    </Page>
   );
 }

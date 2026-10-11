@@ -20,8 +20,12 @@ import {
 } from "@/lib/staffing-forms";
 import type { StaffingCheckMode, StaffingLoadModel, UnstaffedGenerationMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -63,7 +67,7 @@ const SubjectFactorsTable = lazy(() =>
 export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
-  const { data: policy, isSuccess } = useStaffingPolicy();
+  const { data: policy, isSuccess, isError } = useStaffingPolicy();
   const save = useSaveStaffingPolicy();
 
   const [draft, setDraft] = useState<PolicyDraft>(DEFAULT_POLICY_DRAFT);
@@ -99,15 +103,22 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
   const showsRefuse = draft.qualificationMode === "REFUSE" || draft.overAllocationMode === "REFUSE";
 
   return (
-    <section id={id} className="rounded-lg border bg-card p-4" aria-labelledby={`${id}-title`}>
-      <div className="mb-1 flex items-center gap-2">
-        <SlidersHorizontal className="size-5 text-muted-foreground" />
-        <h2 id={`${id}-title`} className="text-lg font-semibold">
-          {t("policyTitle")}
-        </h2>
-      </div>
-      <p className="mb-4 text-sm text-muted-foreground">{t("policyHint")}</p>
-
+    <SectionCard
+      id={id}
+      icon={SlidersHorizontal}
+      title={t("policyTitle")}
+      description={t("policyHint")}
+      footer={
+        // Not before the school's row has been read: until then the form
+        // holds the table's defaults, and a Spara would write them over it.
+        <Button onClick={() => void submit()} disabled={!loaded || problem !== null || save.isPending}>
+          {save.isPending ? tCommon("saving") : tCommon("save")}
+        </Button>
+      }
+    >
+      {isError && !loaded ? (
+        <LoadError variant="inline" title={t("policyLoadFailed")} hint={t("policyLoadFailedHint")} />
+      ) : null}
       <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor={`${id}-riktmarke`}>{t("riktmarke")}</Label>
@@ -120,6 +131,7 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
               step={5}
               className="max-w-40"
               placeholder={t("riktmarkeEmpty")}
+              aria-describedby={`${id}-riktmarke-source`}
               value={draft.fullTimeTeachingMinutesPerWeek}
               onChange={(event) => patch({ fullTimeTeachingMinutesPerWeek: event.target.value })}
             />
@@ -135,7 +147,9 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
           </div>
           {/* The source, in full: a number offered without its provenance is a
               number the school cannot defend at the samverkan table. */}
-          <p className="text-xs text-foreground">{t("riktmarkeSource")}</p>
+          <p id={`${id}-riktmarke-source`} className="text-xs text-foreground">
+            {t("riktmarkeSource")}
+          </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -184,46 +198,46 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="space-y-1.5">
-            <Label>{t("qualificationMode")}</Label>
-            <Select
-              value={draft.qualificationMode}
-              onValueChange={(value) => patch({ qualificationMode: value as StaffingCheckMode })}
-            >
-              <SelectTrigger aria-label={t("qualificationMode")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CHECK_MODES.map((mode) => (
-                  <SelectItem key={mode} value={mode}>
-                    {t(`mode${mode}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("overAllocationMode")}</Label>
-            <Select
-              value={draft.overAllocationMode}
-              onValueChange={(value) => patch({ overAllocationMode: value as StaffingCheckMode })}
-            >
-              <SelectTrigger aria-label={t("overAllocationMode")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CHECK_MODES.map((mode) => (
-                  <SelectItem key={mode} value={mode}>
-                    {t(`mode${mode}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-tolerance`}>{t("tolerance")}</Label>
+          <FormField id={`${id}-qualification-mode`} label={t("qualificationMode")}>
+            {(control) => (
+              <Select
+                value={draft.qualificationMode}
+                onValueChange={(value) => patch({ qualificationMode: value as StaffingCheckMode })}
+              >
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CHECK_MODES.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {t(`mode${mode}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
+          <FormField id={`${id}-over-allocation-mode`} label={t("overAllocationMode")}>
+            {(control) => (
+              <Select
+                value={draft.overAllocationMode}
+                onValueChange={(value) => patch({ overAllocationMode: value as StaffingCheckMode })}
+              >
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CHECK_MODES.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {t(`mode${mode}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
+          <FormField id={`${id}-tolerance`} label={t("tolerance")} hint={t("toleranceHint")}>
             <Input
-              id={`${id}-tolerance`}
               type="number"
               min={0}
               max={50}
@@ -232,27 +246,26 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
                 patch({ overAllocationTolerancePercent: event.target.value })
               }
             />
-            <p className="text-xs text-muted-foreground">{t("toleranceHint")}</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("loadModel")}</Label>
-            <Select
-              value={draft.loadModel}
-              onValueChange={(value) => patch({ loadModel: value as StaffingLoadModel })}
-            >
-              <SelectTrigger aria-label={t("loadModel")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LOAD_MODELS.map((model) => (
-                  <SelectItem key={model} value={model}>
-                    {t(`model${model}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">{t("modelHint")}</p>
-          </div>
+          </FormField>
+          <FormField id={`${id}-load-model`} label={t("loadModel")} hint={t("modelHint")}>
+            {(control) => (
+              <Select
+                value={draft.loadModel}
+                onValueChange={(value) => patch({ loadModel: value as StaffingLoadModel })}
+              >
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LOAD_MODELS.map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {t(`model${model}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
         </div>
 
         {draft.loadModel === "FACTOR" ? (
@@ -276,37 +289,33 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
           />
         </div>
 
-        <div className="space-y-1.5">
-          <Label>{t("unstaffedGeneration")}</Label>
-          <Select
-            value={draft.unstaffedGeneration}
-            onValueChange={(value) => patch({ unstaffedGeneration: value as UnstaffedGenerationMode })}
-          >
-            <SelectTrigger className="max-w-56" aria-label={t("unstaffedGeneration")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {GENERATION_MODES.map((mode) => (
-                <SelectItem key={mode} value={mode}>
-                  {t(`generation${mode}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">{t("unstaffedGenerationHint")}</p>
-        </div>
+        <FormField
+          id={`${id}-unstaffed-generation`}
+          label={t("unstaffedGeneration")}
+          hint={t("unstaffedGenerationHint")}
+        >
+          {(control) => (
+            <Select
+              value={draft.unstaffedGeneration}
+              onValueChange={(value) => patch({ unstaffedGeneration: value as UnstaffedGenerationMode })}
+            >
+              <SelectTrigger className="max-w-56" {...control}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {GENERATION_MODES.map((mode) => (
+                  <SelectItem key={mode} value={mode}>
+                    {t(`generation${mode}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </FormField>
 
         {showsRefuse ? <p className="text-sm text-foreground">{t("refuseHint")}</p> : null}
-        {problem ? (
-          <p role="alert" className="text-sm text-destructive">
-            {problemText(problem)}
-          </p>
-        ) : null}
-
-        <Button onClick={() => void submit()} disabled={problem !== null || save.isPending}>
-          {save.isPending ? tCommon("saving") : tCommon("save")}
-        </Button>
+        {problem ? <Notice tone="destructive">{problemText(problem)}</Notice> : null}
       </div>
-    </section>
+    </SectionCard>
   );
 }

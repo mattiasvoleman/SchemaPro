@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -337,25 +338,17 @@ export function StaffingProposalDialog({
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>{t("title", { year: academicYearName })}</DialogTitle>
           <DialogDescription>{t("body")}</DialogDescription>
         </DialogHeader>
 
-        {problem ? (
-          <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-            {problem}
-          </p>
-        ) : null}
+        {problem ? <Notice tone="destructive">{problem}</Notice> : null}
 
         {proposal === null ? (
           <>
-            {stale ? (
-              <p role="status" className="rounded-md bg-muted p-3 text-sm text-foreground">
-                {t("stale")}
-              </p>
-            ) : null}
+            {stale ? <Notice>{t("stale")}</Notice> : null}
             <fieldset className="space-y-3" disabled={propose.isPending}>
               <legend className="sr-only">{t("optionsLabel")}</legend>
               <label className="flex items-start gap-2 text-sm">
@@ -442,20 +435,23 @@ export function StaffingProposalDialog({
             ) : null}
 
             {noTargets ? (
-              <div role="status" className="space-y-2 rounded-md bg-muted p-3 text-sm text-foreground">
-                <p>{t("noTargets")}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    changeOpen(false);
-                    onOpenSettings();
-                  }}
-                >
-                  {t("noTargetsAction")}
-                </Button>
-              </div>
+              <Notice
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      changeOpen(false);
+                      onOpenSettings();
+                    }}
+                  >
+                    {t("noTargetsAction")}
+                  </Button>
+                }
+              >
+                {t("noTargets")}
+              </Notice>
             ) : (
               <p className="text-sm text-muted-foreground">
                 {t("targets", { withTarget: teachersWithTarget, total: teachersTotal })}

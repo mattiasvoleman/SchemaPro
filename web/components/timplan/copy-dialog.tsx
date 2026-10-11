@@ -69,7 +69,7 @@ export function CopyDialog({
             {t(mode === "reopen" ? "reopenBody" : "copyBody", { name: planName })}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <Label htmlFor="timplan-copy-name">{t("copyNameLabel")}</Label>
           <Input
             id="timplan-copy-name"
@@ -79,7 +79,10 @@ export function CopyDialog({
             aria-describedby="timplan-copy-name-hint"
             onChange={(event) => setName(event.target.value)}
           />
-          <p id="timplan-copy-name-hint" className="text-xs text-muted-foreground">
+          <p
+            id="timplan-copy-name-hint"
+            className={tooLong ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+          >
             {tooLong ? t("nameTooLong") : t("copyNameHint", { name: fallback })}
           </p>
         </div>

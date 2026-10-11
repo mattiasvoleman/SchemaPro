@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
+import { PUBLICATION_KEYS } from "@/lib/publication-keys";
 import type { PublicationSettings, PublicationTimeline } from "@/lib/publication-types";
 import PublishingPage from "./page";
 
@@ -124,13 +125,25 @@ function answer() {
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
-        <PublishingPage />
-      </NextIntlClientProvider>
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+          <PublishingPage />
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    ),
+  };
+}
+
+/** From now on the gateway refuses GETs to `path` (or paths starting with it). */
+function failFrom(path: string) {
+  const answering = get.getMockImplementation()!;
+  get.mockImplementation(async (asked: string) => {
+    if (asked.startsWith(path)) throw new ApiError(500, "boom");
+    return answering(asked);
+  });
 }
 
 describe("/admin/publishing", () => {
@@ -243,6 +256,30 @@ describe("/admin/publishing", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/publications/discard", { academicYearId: "y26" }));
   });
 
+  it("says the settings could not be read when the first read fails", async () => {
+    failFrom("/api/v1/publication-settings");
+    renderPage();
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Publiceringsinställningarna kunde inte hämtas" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Publicering" })).toBeNull();
+  });
+
+  it("keeps the settings it has read when a refetch fails, and says so above them", async () => {
+    const { queryClient } = renderPage();
+    expect(await screen.findByText("Direkt")).toBeInTheDocument();
+
+    failFrom("/api/v1/publication-settings");
+    await act(() => queryClient.refetchQueries({ queryKey: PUBLICATION_KEYS.settings }));
+
+    const notice = await screen.findByRole("alert");
+    expect(notice).toHaveTextContent("Publiceringsinställningarna kunde inte hämtas");
+    expect(notice).toHaveTextContent(sv.common.refetchFailedHint);
+    expect(screen.getByText("Direkt")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Publicering" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Publiceringsinställningarna kunde inte hämtas" })).toBeNull();
+  });
+
   it("saves only the checks that were changed", async () => {
     put.mockResolvedValueOnce({ ...SETTINGS, gateClashes: "REFUSE", stored: true });
     const user = userEvent.setup();
@@ -311,7 +348,9 @@ describe("/admin/publishing › Schemavisaren", () => {
     });
     const user = userEvent.setup();
     await openViewerTab(user);
-    expect(await screen.findByRole("cell", { name: "7A" })).toBeInTheDocument();
+    // The link's cell names its target, then its kind: the kind's own column
+    // gives way on a phone and the line under the name carries it there.
+    expect(await screen.findByRole("cell", { name: "7A Klass eller grupp" })).toBeInTheDocument();
     // A link that answers says so; one the viewer refuses says why, never "Aktiv".
     expect(screen.getAllByText("Aktiv")).toHaveLength(1);
     expect(screen.getByText("Visas inte: den här sortens länk är avstängd")).toBeInTheDocument();
@@ -322,12 +361,30 @@ describe("/admin/publishing › Schemavisaren", () => {
     expect(await screen.findByRole("textbox", { name: "Länkens adress" })).toHaveValue(`${window.location.origin}/v/${"T".repeat(43)}`);
   });
 
+  it("keeps the year's links when a refetch fails, and says so above them", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderPage();
+    await user.click(await screen.findByRole("tab", { name: "Schemavisaren" }));
+    expect(await screen.findByRole("cell", { name: "7A Klass eller grupp" })).toBeInTheDocument();
+
+    failFrom("/api/v1/public-links");
+    await act(() => queryClient.refetchQueries({ queryKey: PUBLICATION_KEYS.links }));
+
+    const notice = await screen.findByRole("alert");
+    expect(notice).toHaveTextContent("Länkarna kunde inte hämtas");
+    expect(notice).toHaveTextContent(sv.common.refetchFailedHint);
+    expect(screen.getByRole("cell", { name: "7A Klass eller grupp" })).toBeInTheDocument();
+  });
+
   it("revokes a link after saying it stops within a minute", async () => {
     post.mockResolvedValueOnce({});
     const user = userEvent.setup();
     await openViewerTab(user);
-    await user.click((await screen.findAllByRole("button", { name: "Återkalla" }))[0]!);
+    // The row's button names the link it revokes (a row action), and so does
+    // the question it opens; the confirm itself is still the bare verb.
+    await user.click(await screen.findByRole("button", { name: "Återkalla länken till 7A" }));
     const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Återkalla länken till 7A?");
     expect(dialog).toHaveTextContent("inom en minut");
     await user.click(within(dialog).getByRole("button", { name: "Återkalla" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/public-links/k-1/revoke"));

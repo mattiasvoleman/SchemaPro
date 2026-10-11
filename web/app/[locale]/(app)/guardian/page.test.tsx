@@ -1,4 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GuardianPage from "./page";
 
@@ -13,6 +15,7 @@ import GuardianPage from "./page";
 const state = vi.hoisted(() => ({
   role: "GUARDIAN",
   children: [] as { id: string; firstName: string; lastName: string; isActive: boolean }[],
+  reports: [] as Record<string, unknown>[],
 }));
 
 vi.mock("@/components/profile-context", () => ({
@@ -32,7 +35,7 @@ vi.mock("@/components/profile-context", () => ({
 }));
 vi.mock("@/lib/guardian-queries", () => ({
   useMyChildren: () => ({ data: state.children, isLoading: false }),
-  useAbsenceReports: () => ({ data: [] }),
+  useAbsenceReports: () => ({ data: state.reports }),
   useLeaveRequests: () => ({ data: [] }),
   useAbsenceReportActions: () => ({ report: { isPending: false }, remove: { isPending: false } }),
   useLeaveRequestActions: () => ({ request: { isPending: false } }),
@@ -48,12 +51,18 @@ vi.mock("@/components/guardian/child-schedule", () => ({
   ),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The delete confirmation is a lazy chunk; here it never arrives.
+vi.mock("@/components/ui/confirm-dialog", () => {
+  throw new Error("Failed to fetch dynamically imported module: /_next/static/chunks/confirm-dialog.js");
+});
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
 }));
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  state.reports = [];
   state.role = "GUARDIAN";
   state.children = [
     { id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true },
@@ -118,5 +127,18 @@ describe("the guardian's Schema card", () => {
     state.children = [];
     render(<GuardianPage />);
     expect(screen.queryByText(/^child-schedule/)).not.toBeInTheDocument();
+  });
+});
+
+describe("the guardian's delete confirmation", () => {
+  it("says in the reader's language that it could not be opened when its chunk does not arrive", async () => {
+    state.reports = [
+      { id: "r-1", studentId: "c-1", reportedById: "g-1", date: "2099-03-02", startTime: null, endTime: null, type: "SICK", note: null, createdAt: "2099-03-01T08:00:00Z" },
+    ];
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.click(screen.getByRole("button", { name: "guardian.deleteReportNamed" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("common.confirmLoadFailed"));
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining("dynamically imported module"));
   });
 });

@@ -108,6 +108,64 @@ describe("WeekSchedule", () => {
     expect(onWeekChange.mock.calls[1]?.[0]).toEqual(new Date(2026, 7, 10));
   });
 
+  it("says a week that could not be fetched as that, not as a free week", () => {
+    render(
+      <WeekSchedule
+        weekStart={WEEK_START}
+        onWeekChange={vi.fn()}
+        lessons={[]}
+        isLoading={false}
+        isError
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("loadFailed");
+    expect(screen.queryByText("noLessons")).not.toBeInTheDocument();
+    // The arrows stay: another week may well load.
+    expect(screen.getByRole("button", { name: "nextWeek" })).toBeEnabled();
+  });
+
+  it("announces the week the arrows landed on", () => {
+    render(
+      <WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[]} isLoading={false} />,
+    );
+
+    expect(screen.getByText("week 32")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("goes back to this week, and is spent while this week is shown", async () => {
+    // Only Date is faked, so userEvent's own timers still run.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 14, 10)); // Wednesday of ISO week 42
+    try {
+      const user = userEvent.setup();
+      const onWeekChange = vi.fn();
+      const { rerender } = render(
+        <WeekSchedule
+          weekStart={WEEK_START}
+          onWeekChange={onWeekChange}
+          lessons={[]}
+          isLoading={false}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "thisWeek" }));
+      expect(onWeekChange).toHaveBeenCalledWith(new Date(2026, 9, 12));
+
+      rerender(
+        <WeekSchedule
+          weekStart={new Date(2026, 9, 12)}
+          onWeekChange={onWeekChange}
+          lessons={[]}
+          isLoading={false}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "thisWeek" })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("labels a year-boundary week with its ISO week number", () => {
     // Monday 2025-12-29 belongs to ISO week 1 of 2026.
     render(

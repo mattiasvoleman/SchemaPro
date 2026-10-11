@@ -25,7 +25,6 @@ import {
   ArrowRight,
   BookOpen,
   CalendarRange,
-  Check,
   GraduationCap,
   MapPin,
   Plus,
@@ -41,23 +40,21 @@ import {
   useRooms,
   useSubjects,
 } from "@/lib/queries";
-import { cn } from "@/lib/utils";
 import { TIMPLAN_COVERAGE_KEYS, YEAR_TIMPLAN_KEYS } from "@/lib/year-timplan-keys";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
+import { FormField } from "@/components/ui/form-field";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Stepper } from "@/components/ui/stepper";
 import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 
 const YearTimplansDialog = lazy(() =>
   import("@/components/timplan/year-timplans-dialog").then((module) => ({
@@ -71,11 +68,23 @@ export default function SetupPage() {
   const t = useTranslations("setup");
   const tCommon = useTranslations("common");
 
-  const { data: years } = useAcademicYears();
-  const { data: subjects } = useSubjects();
-  const { data: rooms } = useRooms();
-  const { data: groups } = useGroups();
-  const { data: people } = usePeople();
+  const yearsQuery = useAcademicYears();
+  const subjectsQuery = useSubjects();
+  const roomsQuery = useRooms();
+  const groupsQuery = useGroups();
+  const peopleQuery = usePeople();
+  const years = yearsQuery.data;
+  const subjects = subjectsQuery.data;
+  const rooms = roomsQuery.data;
+  const groups = groupsQuery.data;
+  const people = peopleQuery.data;
+  // The steps are drawn only once all five lists have answered: a list still
+  // on its way reads as empty, which would mark its step undone and open Kom
+  // igång on it, then jump when the answer came. A list that failed is not
+  // empty either, so the page says it failed instead of offering the step.
+  const queries = [yearsQuery, subjectsQuery, roomsQuery, groupsQuery, peopleQuery];
+  const loading = queries.some((query) => query.isLoading);
+  const failed = queries.some((query) => query.isError);
 
   const yearMutations = useCrudMutations<{
     name: string;
@@ -150,6 +159,10 @@ export default function SetupPage() {
   const [activeStep, setActiveStep] = useState<StepId | null>(null);
   const currentStep = activeStep ?? firstIncomplete;
   const allDone = steps.every((step) => step.done);
+  // Every step done and none picked: the done state is what is current. No
+  // pill is marked current and no step card stands open, so the stepper and
+  // the success Notice say the same thing; a pill opens its step again.
+  const showingDone = allDone && activeStep === null;
 
   // --- quick-add form state ---------------------------------------------------
   // isActive null = the default, which depends on whether the school already
@@ -256,194 +269,208 @@ export default function SetupPage() {
   };
 
   const meta = stepMeta[currentStep];
+  const stepLabel = steps.find((step) => step.id === currentStep)?.label ?? "";
+  /** A class needs a year to belong to; said under the field rather than left as a dead button. */
+  const groupsNeedYear = currentStep === "groups" && !activeYear;
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <Page width="wide">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
-      {/* Stepper */}
-      <ol className="mb-6 flex flex-wrap items-center gap-2">
-        {steps.map((step, index) => (
-          <li key={step.id} className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveStep(step.id)}
-              className={cn(
-                "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
-                currentStep === step.id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : step.done
-                    ? "border-success/40 bg-success/10 text-success"
-                    : "text-muted-foreground hover:bg-muted",
-              )}
-            >
-              {step.done && currentStep !== step.id ? (
-                <Check className="h-3.5 w-3.5" />
-              ) : (
-                <step.icon className="h-3.5 w-3.5" />
-              )}
-              {step.label}
-              <Badge
-                variant={currentStep === step.id ? "secondary" : "outline"}
-                className="px-1.5 py-0 text-[10px]"
-              >
-                {step.count}
-              </Badge>
-            </button>
-            {index < steps.length - 1 ? (
-              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-            ) : null}
-          </li>
-        ))}
-      </ol>
+      {loading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : failed ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : (
+        <>
+          <Stepper
+            steps={steps.map((step) => ({
+              id: step.id,
+              label: step.label,
+              done: step.done,
+              icon: step.icon,
+              meta: step.count,
+            }))}
+            // "" names no step: nothing is aria-current while the done state is.
+            current={showingDone ? "" : currentStep}
+            label={t("stepsLabel")}
+            onSelect={(id) => setActiveStep(id as StepId)}
+          />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{meta.title}</CardTitle>
-          <CardDescription>{meta.hint}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {currentStep === "year" ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label htmlFor="year-name">{t("yearName")}</Label>
-                  <Input
-                    id="year-name"
-                    placeholder={t("yearNamePlaceholder")}
-                    value={yearForm.name}
-                    onChange={(e) => setYearForm({ ...yearForm, name: e.target.value })}
-                  />
+          {showingDone ? null : (
+            <SectionCard
+              id="setup-step"
+              title={meta.title}
+              description={meta.hint}
+              footer={
+                // The people step's body already is this link.
+                currentStep !== "people" ? (
+                  <Button asChild variant="ghost" size="sm">
+                    <Link href={meta.href}>
+                      {t("goToPage", { page: stepLabel })}
+                      <ArrowRight aria-hidden="true" />
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
+            >
+              {currentStep === "year" ? (
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+                    <FormField id="year-name" label={t("yearName")}>
+                      <Input
+                        placeholder={t("yearNamePlaceholder")}
+                        value={yearForm.name}
+                        onChange={(e) => setYearForm({ ...yearForm, name: e.target.value })}
+                      />
+                    </FormField>
+                    <FormField id="year-start" label={t("startDate")}>
+                      <DateField
+                        label={t("startDate")}
+                        value={yearForm.startDate}
+                        onChange={(value) => setYearForm({ ...yearForm, startDate: value })}
+                      />
+                    </FormField>
+                    <FormField id="year-end" label={t("endDate")}>
+                      <DateField
+                        label={t("endDate")}
+                        value={yearForm.endDate}
+                        onChange={(value) => setYearForm({ ...yearForm, endDate: value })}
+                      />
+                    </FormField>
+                  </div>
+                  {hasYears ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t("yearExistsHint")}{" "}
+                      <Link href="/admin/years" className="font-medium text-primary underline-offset-4 hover:underline">
+                        {t("yearsLink")}
+                      </Link>
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Switch
+                        checked={yearIsActive}
+                        onCheckedChange={(checked) =>
+                          setYearForm({ ...yearForm, isActive: checked })
+                        }
+                      />
+                      {t("active")}
+                    </label>
+                    <Button
+                      onClick={addYear}
+                      disabled={
+                        yearForm.name.trim() === "" ||
+                        yearForm.startDate === "" ||
+                        yearForm.endDate === "" ||
+                        yearForm.startDate >= yearForm.endDate ||
+                        yearMutations.create.isPending
+                      }
+                    >
+                      <Plus aria-hidden="true" />
+                      {tCommon("create")}
+                    </Button>
+                  </div>
+                  {(years ?? []).length > 0 ? (
+                    <ul className="divide-y rounded-md border">
+                      {(years ?? []).map((year) => (
+                        <li key={year.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                          <span className="font-medium">
+                            {year.name}
+                            {year.isActive ? (
+                              // secondary, not the status map's success: the
+                              // success badge's green on its tint is 3.25:1 in
+                              // light mode, under AA, until ui/badge is fixed.
+                              <Badge variant="secondary" className="ml-2">
+                                {t("active")}
+                              </Badge>
+                            ) : null}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setTimplanYearId(year.id)}
+                            aria-label={t("yearTimplansFor", { year: year.name })}
+                          >
+                            <CalendarRange aria-hidden="true" />
+                            {t("yearTimplansButton")}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="year-start">{t("startDate")}</Label>
-                  <DateField
-                    label={t("startDate")}
-                    id="year-start"
-                    value={yearForm.startDate}
-                    onChange={(value) => setYearForm({ ...yearForm, startDate: value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="year-end">{t("endDate")}</Label>
-                  <DateField
-                    label={t("endDate")}
-                    id="year-end"
-                    value={yearForm.endDate}
-                    onChange={(value) => setYearForm({ ...yearForm, endDate: value })}
-                  />
-                </div>
-              </div>
-              {hasYears ? (
-                <p className="text-sm text-muted-foreground">
-                  {t("yearExistsHint")}{" "}
-                  <Link href="/admin/years" className="font-medium text-primary underline-offset-4 hover:underline">
-                    {t("yearsLink")}
+              ) : currentStep === "people" ? (
+                <Button asChild>
+                  <Link href="/admin/people">
+                    {t("stepPeople")}
+                    <ArrowRight aria-hidden="true" />
                   </Link>
-                </p>
-              ) : null}
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-sm">
-                  <Switch
-                    checked={yearIsActive}
-                    onCheckedChange={(checked) =>
-                      setYearForm({ ...yearForm, isActive: checked })
-                    }
-                  />
-                  {t("active")}
-                </label>
-                <Button
-                  onClick={addYear}
-                  disabled={
-                    yearForm.name.trim() === "" ||
-                    yearForm.startDate === "" ||
-                    yearForm.endDate === "" ||
-                    yearForm.startDate >= yearForm.endDate ||
-                    yearMutations.create.isPending
-                  }
-                >
-                  <Plus />
-                  {tCommon("create")}
                 </Button>
-              </div>
-              {(years ?? []).length > 0 ? (
-                <ul className="divide-y rounded-md border">
-                  {(years ?? []).map((year) => (
-                    <li key={year.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-                      <span className="font-medium">
-                        {year.name}
-                        {year.isActive ? (
-                          <Badge variant="secondary" className="ml-2">
-                            {t("active")}
-                          </Badge>
-                        ) : null}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setTimplanYearId(year.id)}
-                        aria-label={t("yearTimplansFor", { year: year.name })}
-                      >
-                        <CalendarRange />
-                        {t("yearTimplansButton")}
-                      </Button>
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void quickAdd(currentStep);
+                  }}
+                >
+                  <FormField
+                    id="setup-quick-name"
+                    label={tCommon("name")}
+                    hint={groupsNeedYear ? t("groupsNeedActiveYear") : undefined}
+                  >
+                    {(control) => (
+                      <div className="flex gap-2">
+                        <Input
+                          {...control}
+                          value={quickName}
+                          onChange={(e) => setQuickName(e.target.value)}
+                        />
+                        <Button
+                          type="submit"
+                          disabled={quickName.trim() === "" || groupsNeedYear}
+                        >
+                          <Plus aria-hidden="true" />
+                          {tCommon("add")}
+                        </Button>
+                      </div>
+                    )}
+                  </FormField>
+                </form>
+              )}
+
+              {meta.items.length > 0 ? (
+                <ul className="flex flex-wrap gap-1.5">
+                  {meta.items.map((item) => (
+                    <li key={item}>
+                      <Badge variant="secondary">{item}</Badge>
                     </li>
                   ))}
                 </ul>
               ) : null}
-            </div>
-          ) : currentStep === "people" ? (
-            <Button asChild>
-              <Link href="/admin/people">
-                {t("stepPeople")}
-                <ArrowRight />
-              </Link>
-            </Button>
-          ) : (
-            <form
-              className="flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void quickAdd(currentStep);
-              }}
-            >
-              <Input
-                value={quickName}
-                onChange={(e) => setQuickName(e.target.value)}
-                placeholder={tCommon("name")}
-              />
-              <Button
-                type="submit"
-                disabled={
-                  quickName.trim() === "" || (currentStep === "groups" && !activeYear)
-                }
-              >
-                <Plus />
-                {tCommon("add")}
-              </Button>
-            </form>
+            </SectionCard>
           )}
 
-          {meta.items.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {meta.items.map((item) => (
-                <Badge key={item} variant="secondary">
-                  {item}
-                </Badge>
-              ))}
-            </div>
+          {allDone ? (
+            <Notice
+              tone="success"
+              title={t("doneTimplan")}
+              action={
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/admin/timplan">
+                    {t("goToTimplan")}
+                    <ArrowRight aria-hidden="true" />
+                  </Link>
+                </Button>
+              }
+            >
+              {t("doneBody")}
+            </Notice>
           ) : null}
-
-          <div className="border-t pt-4">
-            <Button asChild variant="ghost" size="sm">
-              <Link href={meta.href}>
-                {tCommon("edit")}
-                <ArrowRight />
-              </Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        </>
+      )}
 
       <Suspense fallback={null}>
         {timplanYearId !== null ? (
@@ -455,23 +482,6 @@ export default function SetupPage() {
           />
         ) : null}
       </Suspense>
-
-      {allDone ? (
-        <Card className="mt-6 border-success/40 bg-success/5">
-          <CardContent className="flex items-center justify-between gap-4 pt-6">
-            <div className="flex items-center gap-3">
-              <Check className="h-5 w-5 text-success" />
-              <span className="text-sm font-medium">{t("done")}</span>
-            </div>
-            <Button asChild>
-              <Link href="/admin/requirements">
-                {t("goToRequirements")}
-                <ArrowRight />
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-      ) : null}
-    </div>
+    </Page>
   );
 }

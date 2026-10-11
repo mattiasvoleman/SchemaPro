@@ -1,44 +1,29 @@
 "use client";
 
 import { useMemo } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { ClipboardCheck } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
 import { useStudentAttendance, useSubjects } from "@/lib/queries";
-import type { AttendanceStatus } from "@/lib/types";
-import { formatTime } from "@/lib/utils";
+import { ATTENDANCE_STATUS_VARIANT } from "@/lib/status-variants";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { KpiStrip, KpiTile } from "@/components/ui/kpi";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-
-const BADGE_VARIANTS: Record<
-  AttendanceStatus,
-  "success" | "warning" | "destructive" | "secondary" | "outline"
-> = {
-  PRESENT: "success",
-  LATE: "warning",
-  ABSENT: "destructive",
-  EXCUSED: "secondary",
-  UNKNOWN: "outline",
-};
+import { TableCard } from "@/components/ui/table-card";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export default function StudentAttendancePage() {
   const t = useTranslations("studentAttendance");
   const tStatus = useTranslations("attendanceStatus");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
   const { profile } = useProfile();
 
-  const { data: records, isLoading } = useStudentAttendance(profile.id);
+  const { data: records, isLoading, isError } = useStudentAttendance(profile.id);
   const { data: subjects } = useSubjects();
 
   const subjectById = useMemo(
@@ -46,77 +31,120 @@ export default function StudentAttendancePage() {
     [subjects],
   );
 
-  const rate = useMemo(() => {
-    if (!records || records.length === 0) return null;
-    const counted = records.filter((record) => record.status !== "UNKNOWN");
-    if (counted.length === 0) return null;
+  // The lesson's own day (a date, not an instant) and its clock times as the
+  // reader's locale writes them; 24-hour in both languages, as the school runs.
+  const formats = useMemo(() => {
+    const tag = locale === "en" ? "en-GB" : "sv-SE";
+    return {
+      day: new Intl.DateTimeFormat(tag, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }),
+      time: new Intl.DateTimeFormat(tag, { hour: "2-digit", minute: "2-digit" }),
+      percent: new Intl.NumberFormat(tag, { style: "percent", maximumFractionDigits: 0 }),
+    };
+  }, [locale]);
+  const dayText = (date: string) => formats.day.format(new Date(`${date.slice(0, 10)}T12:00:00Z`));
+  const timeText = (iso: string) => formats.time.format(new Date(iso));
+
+  // Lessons not yet taken (UNKNOWN) are left out: a rate over them would read
+  // as absence that nobody recorded.
+  const summary = useMemo(() => {
+    const counted = (records ?? []).filter((record) => record.status !== "UNKNOWN");
     const present = counted.filter(
       (record) => record.status === "PRESENT" || record.status === "LATE",
     ).length;
-    return Math.round((present / counted.length) * 100);
+    return {
+      counted: counted.length,
+      present,
+      rate: counted.length === 0 ? null : present / counted.length,
+    };
   }, [records]);
 
-  return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader
-        title={t("title")}
-        subtitle={t("subtitle")}
-        actions={
-          rate !== null ? (
-            <Card>
-              <CardContent className="px-4 py-2 text-center">
-                <div className="text-xs text-muted-foreground">{t("rate")}</div>
-                <div className="text-lg font-semibold tabular-nums">{rate}%</div>
-              </CardContent>
-            </Card>
-          ) : null
-        }
-      />
+  const header = <PageHeader title={t("title")} subtitle={t("subtitle")} />;
 
-      {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+  if (isLoading) {
+    return (
+      <Page width="narrow">
+        {header}
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
-      ) : !records || records.length === 0 ? (
-        <EmptyState icon={ClipboardCheck} title={tCommon("noResults")} description={t("empty")} />
-      ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{tCommon("date")}</TableHead>
-                <TableHead>{tCommon("time")}</TableHead>
-                <TableHead>{tCommon("subject")}</TableHead>
-                <TableHead>{tCommon("status")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {records.map((record) => (
-                <TableRow key={record.id}>
-                  <TableCell className="tabular-nums">{record.lesson?.date ?? "—"}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {record.lesson
-                      ? `${formatTime(record.lesson.startsAt)}–${formatTime(record.lesson.endsAt)}`
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {record.lesson
-                      ? (subjectById.get(record.lesson.subjectId)?.name ?? "—")
-                      : "—"}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={BADGE_VARIANTS[record.status]}>
-                      {tStatus(record.status)}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-    </div>
+      </Page>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Page width="narrow">
+        {header}
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      </Page>
+    );
+  }
+
+  if (!records || records.length === 0) {
+    return (
+      <Page width="narrow">
+        {header}
+        <EmptyState
+          icon={ClipboardCheck}
+          title={t("emptyTitle")}
+          description={t("empty")}
+          headingLevel={2}
+        />
+      </Page>
+    );
+  }
+
+  return (
+    <Page width="narrow">
+      {header}
+      <KpiStrip columns={3}>
+        <KpiTile
+          label={t("rate")}
+          value={summary.rate === null ? null : formats.percent.format(summary.rate)}
+          fallback={t("rateNone")}
+          detail={
+            summary.rate === null
+              ? undefined
+              : t("rateDetail", { present: summary.present, counted: summary.counted })
+          }
+        />
+      </KpiStrip>
+      <TableCard caption={t("tableCaption")}>
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col">{tCommon("date")}</TableHead>
+            <TableHead scope="col">{tCommon("time")}</TableHead>
+            <TableHead scope="col">{tCommon("subject")}</TableHead>
+            <TableHead scope="col">{tCommon("status")}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {records.map((record) => (
+            <TableRow key={record.id}>
+              <TableCell className="whitespace-nowrap font-medium tabular-nums">
+                {record.lesson ? dayText(record.lesson.date) : <span className="text-muted-foreground">—</span>}
+              </TableCell>
+              <TableCell className="whitespace-nowrap tabular-nums">
+                {record.lesson ? (
+                  `${timeText(record.lesson.startsAt)}–${timeText(record.lesson.endsAt)}`
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell>
+                {(record.lesson ? subjectById.get(record.lesson.subjectId)?.name : undefined) ?? (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell>
+                <Badge variant={ATTENDANCE_STATUS_VARIANT[record.status]}>
+                  {tStatus(record.status)}
+                </Badge>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </TableCard>
+    </Page>
   );
 }

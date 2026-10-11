@@ -16,6 +16,7 @@ import {
   calendarRastToBand,
 } from "@/lib/lesson-mapper";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile } from "@/components/profile-context";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
@@ -44,7 +45,7 @@ export default function StudentSchedulePage() {
   const toDate = toDateString(addDays(weekStart, 6));
 
   // RLS scopes this to the student's own group automatically.
-  const { data: lessons, isLoading } = useCalendarLessons(fromDate, toDate);
+  const { data: lessons, isLoading, isError } = useCalendarLessons(fromDate, toDate);
   const { data: lunches } = useCalendarLunches(fromDate, toDate);
   const { data: rasts } = useCalendarRasts(fromDate, toDate);
   const { data: subjects } = useSubjects();
@@ -98,13 +99,16 @@ export default function StudentSchedulePage() {
   );
 
   return (
-    <div>
-      <PageHeader title={t("title")} />
+    <Page>
+      <PageHeader title={t("title")} subtitle={t("subtitleStudent")} />
+      {/* A failed read is said as one, under the week's own arrows, never
+          drawn as an empty week. */}
       <WeekSchedule
         weekStart={weekStart}
         onWeekChange={setWeekStart}
         lessons={gridLessons}
         isLoading={isLoading}
+        isError={isError}
         bands={lunchBands}
       />
       {/* A pupil's own card only: any role may open this page, and the
@@ -115,6 +119,6 @@ export default function StudentSchedulePage() {
           <TeachingTimeCard studentId={profile.id} />
         </Suspense>
       ) : null}
-    </div>
+    </Page>
   );
 }

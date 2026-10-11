@@ -41,6 +41,14 @@ vi.mock("@/lib/staffing-history-queries", () => ({
 vi.mock("@/components/profile-context", () => ({
   useProfile: () => ({ profile: { id: "u-admin" }, school: { name: "Norra skolan", timezone: "Europe/Stockholm" } }),
 }));
+// The back link is next-intl's Link, which needs the app's provider; a plain anchor here.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
@@ -60,6 +68,13 @@ describe("the admin's uppdragsbeskrivning", () => {
     expect(screen.getByText("uppdrag.noTeacher")).toBeInTheDocument();
     expect(screen.queryByText("BOA")).not.toBeInTheDocument();
     expect(screen.queryByText(/Bo Alm/)).not.toBeInTheDocument();
+  });
+
+  it("links back to the tjänstefördelning on the year the paper was opened for, in every state", () => {
+    // No row for the asked teacher: the page's own header, with the link above its h1.
+    render(<AdminUppdragsbeskrivning teacherId="t-anna" yearId="y1" />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("uppdrag.title");
+    expect(screen.getByRole("link", { name: "uppdrag.backAdmin" })).toHaveAttribute("href", "/admin/staffing?year=y1");
   });
 
   it("says so without a teacher in the link, and reads nobody's uppdrag", () => {

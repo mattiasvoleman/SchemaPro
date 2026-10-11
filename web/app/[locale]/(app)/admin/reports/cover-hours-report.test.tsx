@@ -114,12 +114,22 @@ describe("Vikarietimmar", () => {
     });
     renderReport();
     const note = await screen.findByRole("region", { name: "Kontrollera innan lönen" });
-    expect(within(note).getByText(/Bo Ek/)).toHaveTextContent("Bo Ek · 2026-09-15 08:00–09:00 · Matematik · 7A");
+    // The day in the reader's language (Intl), the times on the school's clock.
+    expect(within(note).getByText(/Bo Ek/)).toHaveTextContent("Bo Ek · tis 15 sep. 08:00–09:00 · Matematik · 7A");
     expect(note).not.toHaveTextContent(/sjuk|orsak/i);
     // Not in the payroll file.
     await user.click(screen.getByRole("button", { name: "Exportera pass (CSV)" }));
     await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
     expect((download.mock.calls[0] as [string, string])[1]).not.toContain("Bo Ek");
+  });
+
+  it("says a failed read in words, and draws no table and no empty period", async () => {
+    get.mockRejectedValue(new Error("boom"));
+    renderReport();
+    expect(await screen.findByRole("heading", { level: 2, name: "Vikarietimmarna kunde inte hämtas" })).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inga vikariepass under perioden")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Exportera pass (CSV)" })).toBeDisabled();
   });
 
   it("refuses a period longer than the gateway's 93 days before asking it", async () => {

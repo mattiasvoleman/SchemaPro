@@ -168,6 +168,13 @@ function renderBoard() {
 }
 
 const rowOf = (subject: string) => screen.getByRole("cell", { name: subject }).closest("tr")!;
+/*
+ * The board renders twice, split by CSS alone: a list below sm and the table
+ * from sm. jsdom loads no stylesheet, so both are in the tree here; a test
+ * that ticks every box takes the table's, or each pair would be ticked twice.
+ */
+const table = () => screen.getByRole("table", { name: /^Lektioner som behöver vikarie/ });
+const phoneList = () => screen.getByRole("list", { name: /^Lektioner som behöver vikarie/ });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -187,8 +194,48 @@ describe("Vikarietavla", () => {
     expect(within(rowOf("Matematik")).getByText("Behöver vikarie")).toBeInTheDocument();
     expect(within(rowOf("Svenska")).getByText("Vikarie tillsatt")).toBeInTheDocument();
     expect(within(rowOf("Svenska")).getByText("Dan Ström")).toBeInTheDocument();
-    expect(screen.getByText("2 behöver vikarie")).toBeInTheDocument();
+    // The day's summary is a KPI strip (a <dl>) above the board, not a row of chips.
+    const open = screen.getAllByText("Behöver vikarie").find((element) => element.tagName === "DT")!;
+    expect(open.nextElementSibling).toHaveTextContent("2");
     expect(screen.queryByText(/Sjuk|Vård av barn/)).not.toBeInTheDocument();
+  });
+
+  it("lists each pair on a phone with its lesson, room, absent teacher and state, acting on the same selection and dialogs", async () => {
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    const items = within(phoneList()).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    const maths = items.find((item) => item.textContent?.includes("Matematik"))!;
+    expect(maths.querySelector("p")).toHaveTextContent(/–\d{2}:\d{2} · 7A · Matematik$/);
+    expect(within(maths).getByText("Sal 12 · Anna Lind")).toBeInTheDocument();
+    expect(within(maths).getByText("Behöver vikarie")).toBeInTheDocument();
+    // No room: the line says who is away, without a dash in front.
+    const english = items.find((item) => item.textContent?.includes("Engelska"))!;
+    expect(within(english).getByText("Anna Lind")).toBeInTheDocument();
+    const swedish = items.find((item) => item.textContent?.includes("Svenska"))!;
+    expect(within(swedish).getByText("Vikarie: Dan Ström")).toBeInTheDocument();
+    expect(within(swedish).getByRole("button", { name: /^Ångra Anna Lind/ })).toBeInTheDocument();
+
+    // The box is labelled as the table's is, and ticks the same pair.
+    await user.click(within(maths).getByRole("checkbox", { name: /^Välj Anna Lind: .* · Matematik · 7A$/ }));
+    expect(screen.getByText("1 valda")).toBeInTheDocument();
+    expect(within(rowOf("Matematik")).getByRole("checkbox")).toBeChecked();
+
+    await user.click(within(maths).getByRole("button", { name: /^Tillsätt vikarie Anna Lind/ }));
+    expect(await within(await screen.findByRole("dialog")).findByText("Legitimerad i Matematik för åk 7–9")).toBeInTheDocument();
+  });
+
+  it("says the board could not be read, and never draws a failed read as a day with nothing to cover", async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/v1/cover/board")) throw new ApiError(500, "boom");
+      if (path.startsWith("/api/v1/cover/counter")) return { date: DATE, rows: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
+    renderBoard();
+    expect(await screen.findByRole("heading", { name: "Vikarietavlan kunde inte hämtas" })).toBeInTheDocument();
+    expect(screen.queryByText("Inga lektioner behöver vikarie")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Fördela dagen/ })).toBeDisabled();
   });
 
   it("assigns a ranked candidate with the status the admin saw, the reasons in plain Swedish", async () => {
@@ -236,7 +283,10 @@ describe("Vikarietavla", () => {
     const user = userEvent.setup();
     renderBoard();
     await screen.findByRole("cell", { name: "Matematik" });
-    await user.click(within(rowOf("Matematik")).getByRole("button", { name: /Ställ in/ }));
+    // Ställ in sits under the row's "Fler val"; "Tillsätt vikarie" is the one decision in sight.
+    expect(within(rowOf("Matematik")).queryByRole("button", { name: /Ställ in/ })).not.toBeInTheDocument();
+    await user.click(within(rowOf("Matematik")).getByRole("button", { name: /Fler val/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Ställ in" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Ingen anledning skickas till elever eller vårdnadshavare.");
     await user.click(within(dialog).getByRole("button", { name: "Ställ in" }));
@@ -283,7 +333,7 @@ describe("Vikarietavla", () => {
     const user = userEvent.setup();
     renderBoard();
     await screen.findByRole("cell", { name: "Matematik" });
-    for (const box of screen.getAllByRole("checkbox")) await user.click(box);
+    for (const box of within(table()).getAllByRole("checkbox")) await user.click(box);
     // Three selected; two are open, one is covered.
     expect(screen.getByText("3 valda")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Självstudier för valda (2)" }));
@@ -304,7 +354,7 @@ describe("Vikarietavla", () => {
     const user = userEvent.setup();
     renderBoard();
     await screen.findByRole("cell", { name: "Matematik" });
-    for (const box of screen.getAllByRole("checkbox")) await user.click(box);
+    for (const box of within(table()).getAllByRole("checkbox")) await user.click(box);
     await user.click(screen.getByRole("button", { name: "Ställ in valda (2)" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Ställ in 2 lektioner?");
@@ -313,7 +363,7 @@ describe("Vikarietavla", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cover/bulk", expect.objectContaining({ action: "CANCELLED" })));
 
     post.mockClear();
-    for (const box of screen.getAllByRole("checkbox")) if (!(box as HTMLInputElement).checked) await user.click(box);
+    for (const box of within(table()).getAllByRole("checkbox")) if (!(box as HTMLInputElement).checked) await user.click(box);
     await user.click(screen.getByRole("button", { name: "Ångra valda (1)" }));
     const undoDialog = await screen.findByRole("dialog");
     expect(undoDialog).toHaveTextContent("Ångra 1 beslut?");
@@ -372,6 +422,29 @@ describe("Vikarietavla", () => {
     );
     await user.click(await within(dialog).findByRole("button", { name: "Tillämpa 2" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 vikarie tillsatt"));
+  });
+
+  it("says in the dialog that a proposal failed, rather than leaving it empty, and computes again on Räkna om", async () => {
+    let proposals = 0;
+    post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/proposal")) {
+        proposals += 1;
+        if (proposals === 1) throw new ApiError(500, "boom");
+        return PROPOSAL;
+      }
+      throw new Error(`unexpected POST ${path}`);
+    });
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    await user.click(screen.getByRole("button", { name: /Fördela dagen/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Förslaget kunde inte räknas fram")).toBeInTheDocument();
+    expect(within(dialog).getByText("Ingen vikarie har tillsatts. Försök igen med Räkna om.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Tillämpa/ })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Räkna om" }));
+    expect(await within(dialog).findByText("Anna Lind → Bo Ek")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Förslaget kunde inte räknas fram")).not.toBeInTheDocument();
   });
 });
 

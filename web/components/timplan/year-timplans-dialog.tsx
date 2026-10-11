@@ -35,7 +35,9 @@ import {
 } from "@/lib/year-timplan-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import { FormField } from "@/components/ui/form-field";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -150,53 +152,51 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>{t("body")}</DialogDescription>
         </DialogHeader>
 
         {years.length > 1 ? (
-          <div className="space-y-1.5">
-            <Label>{t("yearLabel")}</Label>
-            <Select
-              value={yearId ?? undefined}
-              onValueChange={(value) => {
-                setYearId(value);
-                setError(null);
-              }}
-              disabled={dirty || save.isPending}
-            >
-              <SelectTrigger aria-label={t("yearLabel")} className="w-60">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {dirty ? <p className="text-xs text-muted-foreground">{t("yearLocked")}</p> : null}
-          </div>
+          <FormField id="year-timplans-year" label={t("yearLabel")} hint={dirty ? t("yearLocked") : undefined}>
+            {(control) => (
+              <Select
+                value={yearId ?? undefined}
+                onValueChange={(value) => {
+                  setYearId(value);
+                  setError(null);
+                }}
+                disabled={dirty || save.isPending}
+              >
+                <SelectTrigger className="w-60" {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {years.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
         ) : null}
 
         {!year ? (
           <p className="text-sm text-foreground">{t("noYear")}</p>
         ) : loading ? (
-          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-64 w-full" aria-busy="true" />
         ) : failed ? (
-          <p role="alert" className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
-            {t("loadFailed")}
-          </p>
+          <LoadError variant="inline" title={t("loadFailed")} />
         ) : planList.length === 0 && savedOnly.length === 0 ? (
-          <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+          <Notice role={null}>
             {t("noPlans")}{" "}
             <Link href="/admin/timplan" className="font-medium underline underline-offset-2">
               {t("noPlansLink")}
             </Link>
-          </p>
+          </Notice>
         ) : (
           <table className="w-full text-sm">
             <caption className="sr-only">{t("caption", { year: year.name })}</caption>
@@ -265,11 +265,7 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
           </table>
         )}
 
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
+        {error ? <Notice tone="destructive">{error}</Notice> : null}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => close(false)} disabled={save.isPending}>

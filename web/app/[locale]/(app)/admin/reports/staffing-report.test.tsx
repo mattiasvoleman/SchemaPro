@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { uppdragLoad } from "@/lib/__fixtures__/staffing-fas3";
 import type { StaffingReconciliationResponse } from "@/lib/staffing-reconciliation";
 import { hoursText } from "@/lib/staffing-reconciliation";
+import { ApiError } from "@/lib/api";
 import enMessages from "@/messages/en.json";
 import svMessages from "@/messages/sv.json";
 import { StaffingReport } from "./staffing-report";
@@ -22,7 +23,10 @@ vi.mock("@/lib/csv-export", async (original) => ({
   ...(await original<typeof import("@/lib/csv-export")>()),
   downloadCsv: download,
 }));
-vi.mock("@/lib/api", () => ({ api: { get: apiGet } }));
+vi.mock("@/lib/api", async (original) => ({
+  ...(await original<typeof import("@/lib/api")>()),
+  api: { get: apiGet },
+}));
 vi.mock("./use-staffing-reconciliation", () => ({
   useStaffingReconciliation: (...args: unknown[]) => {
     state.recArgs.push(args);
@@ -195,11 +199,60 @@ describe("Rapporter › Tjänstefördelning", () => {
     expect(screen.getByText("minutes(2500)").closest("[aria-busy]")).toHaveClass("opacity-60");
   });
 
-  it("says the gateway's refusal rather than drawing an empty report", () => {
-    state.rec = { data: undefined, isLoading: false, isError: true, error: new Error("Läsåret är inte aktiverat.") };
+  it("says the reconciliation could not be read rather than drawing an empty report", () => {
+    state.rec = { data: undefined, isLoading: false, isError: true, error: new Error("academic year not active") };
     render(<StaffingReport />);
-    expect(screen.getByText("loadFailed")).toBeInTheDocument();
-    expect(screen.getByText("Läsåret är inte aktiverat.")).toBeInTheDocument();
+    // The page's error recipe (LoadError): what failed, and that nothing
+    // changed. The gateway's message is English prose written for a log, so
+    // it is no longer put in front of the reader.
+    expect(screen.getByRole("heading", { level: 2, name: "loadFailed" })).toBeInTheDocument();
+    expect(screen.getByText("loadFailedHint")).toBeInTheDocument();
+    expect(screen.queryByText("academic year not active")).not.toBeInTheDocument();
+    expect(screen.queryByText(/minutes\(/)).not.toBeInTheDocument();
+  });
+
+  it("names the reason when the gateway refuses a year whose predecessor is not activated", () => {
+    state.rec = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(409, "Klasslistorna för 2027/28 …", "ROLLOVER_NOT_ACTIVATED", {
+        year: "2027/28",
+        predecessor: "2026/27",
+      }),
+    };
+    render(<StaffingReport />);
+    expect(screen.getByRole("heading", { level: 2, name: "loadFailed" })).toBeInTheDocument();
+    // The code's own sentence, with what to activate; not "try again later".
+    expect(screen.getByText("ROLLOVER_NOT_ACTIVATED(2027/28|2026/27)")).toBeInTheDocument();
+    expect(screen.queryByText("loadFailedHint")).not.toBeInTheDocument();
+  });
+
+  it("shows the gateway's sentence, without its field tag, for a period it will not read", () => {
+    state.rec = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(400, "from/to: perioden ligger helt utanför läsåret (2026-08-17 – 2027-06-11)."),
+    };
+    render(<StaffingReport />);
+    expect(screen.getByText("Perioden ligger helt utanför läsåret (2026-08-17 – 2027-06-11).")).toBeInTheDocument();
+    expect(screen.queryByText("loadFailedHint")).not.toBeInTheDocument();
+  });
+
+  it("offers only the year's days in the period's calendars", async () => {
+    const user = userEvent.setup();
+    render(<StaffingReport />);
+    await user.click(screen.getByRole("button", { name: "openCalendarFor(from)" }));
+    expect(screen.getByRole("button", { name: "16 augusti 2026" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "17 augusti 2026" })).toBeEnabled();
+  });
+
+  it("keeps the generic hint for a server failure", () => {
+    state.rec = { data: undefined, isLoading: false, isError: true, error: new ApiError(503, "Service Unavailable") };
+    render(<StaffingReport />);
+    expect(screen.getByText("loadFailedHint")).toBeInTheDocument();
+    expect(screen.queryByText("Service Unavailable")).not.toBeInTheDocument();
   });
 
   it("downloads the samverkan file with the vikarie in it, and behörigheter only when ticked", async () => {

@@ -23,7 +23,7 @@ export function RolloverStaffingReview({
   if (isEmptyCarry(staffing)) return null;
   return (
     <section aria-labelledby="review-staffing" className="space-y-1">
-      <h3 id="review-staffing" className="font-medium">
+      <h3 id="review-staffing" className="text-sm font-semibold">
         {t("reviewStaffing")}
       </h3>
       <StaffingCarrySummary preview={staffing} teacherName={teacherName} />

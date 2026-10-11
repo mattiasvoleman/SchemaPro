@@ -8,7 +8,14 @@ import { api } from "@/lib/api";
 import { CoverSettingsDialog } from "./cover-settings-dialog";
 
 Element.prototype.hasPointerCapture ??= () => false;
+Element.prototype.setPointerCapture ??= () => {};
+Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};
+globalThis.ResizeObserver ??= class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 
 /**
  * The school's settings for absence and cover: self-report (off unless the
@@ -70,9 +77,13 @@ describe("Frånvaro och vikarier", () => {
     renderDialog();
     const save = await screen.findByRole("button", { name: "Spara reglerna" });
     expect(save).toBeDisabled();
-    await waitFor(() => expect(screen.getByLabelText("Vikariepoolen i förslagen")).toHaveValue("NEUTRAL"));
-    await user.click(screen.getByRole("checkbox", { name: /Lärare får anmäla sin egen frånvaro/ }));
-    await user.selectOptions(screen.getByLabelText("Vikariepoolen i förslagen"), "LAST_RESORT");
+    // The pool's place is a radix Select now (the page already carries one),
+    // and self-report a Switch row: the same two answers, read by role.
+    const preference = screen.getByRole("combobox", { name: "Vikariepoolen i förslagen" });
+    await waitFor(() => expect(preference).toHaveTextContent("Som all annan personal"));
+    await user.click(screen.getByRole("switch", { name: /Lärare får anmäla sin egen frånvaro/ }));
+    await user.click(preference);
+    await user.click(await screen.findByRole("option", { name: "Använd poolen sist" }));
     await user.click(save);
     await waitFor(() =>
       expect(put).toHaveBeenCalledWith("/api/v1/cover/settings", {
@@ -109,7 +120,8 @@ describe("Frånvaro och vikarier", () => {
     const user = userEvent.setup();
     renderDialog();
     expect(await screen.findByText("cia@example.se · 070-1")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Lägg till i poolen"), "t-dan");
+    await user.click(screen.getByRole("combobox", { name: "Lägg till i poolen" }));
+    await user.click(await screen.findByRole("option", { name: "Dan Ström" }));
     await user.click(screen.getByRole("button", { name: "Lägg till" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cover/pool", { userId: "t-dan" }));
   });

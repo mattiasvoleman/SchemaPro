@@ -138,7 +138,8 @@ import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { splitGroupsByKind } from "@/lib/group-sections";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Grid3x3, Plus, TriangleAlert, Upload } from "lucide-react";
+import { Grid3x3, Plus, Upload } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import {
   useAcademicYears,
   useCrudMutations,
@@ -187,12 +188,18 @@ import type { TargetSources } from "@/lib/requirements-target";
 import type { TargetState } from "@/components/timplan/requirements-target";
 import { subjectColor } from "@/lib/utils";
 import { sortByName } from "@/lib/sorting";
+import { NextStep } from "@/components/layout/next-step";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
+import { YearSelect } from "@/components/schedule/year-select";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -306,6 +313,7 @@ interface CellForm {
 export default function RequirementsPage() {
   const t = useTranslations("requirements");
   const tCommon = useTranslations("common");
+  const tNav = useTranslations("nav");
   // The period controls and their badge live in the `timetable` namespace,
   // because the master timetable said "udda veckor" first and a requirement
   // that means the same thing must not be given a second wording here.
@@ -540,6 +548,8 @@ export default function RequirementsPage() {
     };
   }, [targetMode, targetModule, tCommon]);
   const [cell, setCell] = useState<CellTarget | null>(null);
+  /** Ta bort asks first: a ConfirmDialog over the cell dialog, named after the cell. */
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [form, setForm] = useState<CellForm>({
     lessonsPerWeek: "2",
     minutesPerLesson: "60",
@@ -756,6 +766,7 @@ export default function RequirementsPage() {
   const openCell = (groupId: string, subjectId: string) => {
     const existing = requirementIndex.get(`${groupId}:${subjectId}`) ?? null;
     setCell({ groupId, subjectId, existing });
+    setConfirmRemove(false);
     setRefusal(null);
     // A split post opens as its parts, longest first: the first in the
     // dialog's own two fields, the rest as extra rows under them.
@@ -893,8 +904,11 @@ export default function RequirementsPage() {
     try {
       await mutations.remove.mutateAsync(cell.existing.id);
       toast.success(tCommon("deleted"));
+      setConfirmRemove(false);
       setCell(null);
     } catch (error) {
+      // The confirmation closes and the cell dialog stays, as it was.
+      setConfirmRemove(false);
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
@@ -992,35 +1006,23 @@ export default function RequirementsPage() {
   };
 
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
           <>
-            {years && years.length > 0 ? (
-              <Select
-                value={activeYearId ?? undefined}
-                onValueChange={(value) => setSelectedYearId(value)}
-              >
-                {/*
-                  The picker decides what every figure on the page means, and
-                  it sits among two buttons now rather than alone — a trigger
-                  announcing only "2026/2027" leaves a screen-reader user to
-                  guess which of the three controls they are on.
-                */}
-                <SelectTrigger className="w-44" aria-label={t("yearLabel")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map((year) => (
-                    <SelectItem key={year.id} value={year.id}>
-                      {year.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
+            {/*
+              The picker decides what every figure on the page means, and
+              it sits among two buttons now rather than alone — a trigger
+              announcing only "2026/2027" leaves a screen-reader user to
+              guess which of the three controls they are on.
+            */}
+            <YearSelect
+              value={activeYearId}
+              label={t("yearLabel")}
+              onValueChange={(value) => setSelectedYearId(value)}
+            />
             {/*
               A toggle, so `aria-pressed` says which mode the matrix is in; the
               label stays "Mål" in both states, as a toggle's name must.
@@ -1054,23 +1056,17 @@ export default function RequirementsPage() {
       />
 
       {savedWarnings ? (
-        <div className="mb-4">
-          <WarningsNotice
-            context={savedWarnings.label}
-            warnings={savedWarnings.warnings}
-            onDismiss={() => setSavedWarnings(null)}
-          />
-        </div>
+        <WarningsNotice
+          context={savedWarnings.label}
+          warnings={savedWarnings.warnings}
+          onDismiss={() => setSavedWarnings(null)}
+        />
       ) : null}
 
       {loading ? (
-        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-96 w-full" aria-busy="true" />
       ) : failed ? (
-        <EmptyState
-          icon={TriangleAlert}
-          title={t("loadFailed")}
-          description={t("loadFailedHint")}
-        />
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !activeYearId ? (
         /*
           "Skapa och aktivera ett läsår först" is a statement about how the
@@ -1081,9 +1077,47 @@ export default function RequirementsPage() {
           one. What is left is the one state the sentence is true in — `years`
           arrived and held nothing.
         */
-        <EmptyState icon={Grid3x3} title={tCommon("noResults")} description={t("noYear")} />
-      ) : yearGroups.length === 0 || !subjects || subjects.length === 0 ? (
-        <EmptyState icon={Grid3x3} title={tCommon("noResults")} description={t("empty")} />
+        <EmptyState
+          icon={Grid3x3}
+          title={t("noYearTitle")}
+          description={t("noYear")}
+          headingLevel={2}
+          action={
+            <Button asChild variant="outline">
+              <Link href="/admin/years">{t("noYearAction")}</Link>
+            </Button>
+          }
+        />
+      ) : !subjects || subjects.length === 0 ? (
+        /*
+          The grid is classes × subjects, so with either missing there is no
+          grid to fill, and the way on is the page that adds what is missing:
+          Ämnen first, as Kom igång orders it, then the year's Klasser. Not
+          Timplan — a plan with no classes or subjects to land on fills nothing.
+        */
+        <EmptyState
+          icon={Grid3x3}
+          title={t("noSubjectsTitle")}
+          description={t("noSubjects")}
+          headingLevel={2}
+          action={
+            <Button asChild variant="outline">
+              <Link href="/admin/subjects">{t("noSubjectsAction")}</Link>
+            </Button>
+          }
+        />
+      ) : yearGroups.length === 0 ? (
+        <EmptyState
+          icon={Grid3x3}
+          title={t("noClassesTitle")}
+          description={t("noClasses")}
+          headingLevel={2}
+          action={
+            <Button asChild variant="outline">
+              <Link href="/admin/groups">{t("noClassesAction")}</Link>
+            </Button>
+          }
+        />
       ) : (
         <>
           {/*
@@ -1093,35 +1127,62 @@ export default function RequirementsPage() {
             `aria-atomic` because the sentence only means anything whole: "3"
             announced alone is not an answer to anything.
           */}
-          <p
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-            aria-describedby="requirements-hours-caveat"
-            className="text-sm font-medium text-foreground"
-          >
-            {t("summary", {
-              lessons: peakWeekly,
-              hours: formatHours(annualTotal),
-            })}
-          </p>
-          {/*
-            Which footnote is true depends on whether the school has entered any
-            lov, and that is not a detail. `hoursCaveat` states that holidays are
-            deducted; for a school with an empty admin/breaks — which is every
-            school until someone fills it in, and the default state of the
-            feature — nothing is deducted and the figure is the old one, reading
-            8-10 weeks high under a sentence promising it does not. That is the
-            precise silent overstatement this whole change was made to remove,
-            so the empty case says so and points at the page that fixes it.
+          <div className="space-y-1">
+            <p
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-describedby="requirements-hours-caveat"
+              className="text-sm font-medium text-foreground"
+            >
+              {t("summary", {
+                lessons: peakWeekly,
+                hours: formatHours(annualTotal),
+              })}
+            </p>
+            {/*
+              Which footnote is true depends on whether the school has entered any
+              lov, and that is not a detail. `hoursCaveat` states that holidays are
+              deducted; for a school with an empty admin/breaks — which is every
+              school until someone fills it in, and the default state of the
+              feature — nothing is deducted and the figure is the old one, reading
+              8-10 weeks high under a sentence promising it does not. That is the
+              precise silent overstatement this whole change was made to remove,
+              so the empty case says so and points at the page that fixes it.
 
-            Empty is not the same as absent here: `loading` and `failed` above
-            already hold the whole table back, so reaching this line means the
-            list arrived and genuinely held nothing.
-          */}
-          <p id="requirements-hours-caveat" className="mb-3 mt-1 text-xs text-foreground">
-            {(breaks ?? []).length > 0 ? t("hoursCaveat") : t("hoursCaveatNoBreaks")}
-          </p>
+              Empty is not the same as absent here: `loading` and `failed` above
+              already hold the whole table back, so reaching this line means the
+              list arrived and genuinely held nothing.
+            */}
+            {(breaks ?? []).length > 0 ? (
+              <p id="requirements-hours-caveat" className="text-xs text-foreground">
+                {t("hoursCaveat")}
+              </p>
+            ) : null}
+          </div>
+          {(breaks ?? []).length === 0 ? (
+            /*
+              The empty case is a warning, not a footnote: the figure above is
+              8–10 weeks high until somebody acts, and the act is on another
+              page, so the notice carries the way there. The sentence keeps the
+              id the summary's aria-describedby names, so a screen reader still
+              hears the figure and its qualification together. role null: the
+              summary above is the live region; this is the state the figure is
+              read in, not news.
+            */
+            <Notice
+              tone="warning"
+              role={null}
+              title={t("hoursNoBreaksTitle")}
+              action={
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/admin/breaks">{t("hoursNoBreaksAction")}</Link>
+                </Button>
+              }
+            >
+              <p id="requirements-hours-caveat">{t("hoursCaveatNoBreaks")}</p>
+            </Notice>
+          ) : null}
           {targetMode && targetModule && activeYearId ? (
             <targetModule.TargetHost
               academicYearId={activeYearId}
@@ -1129,7 +1190,7 @@ export default function RequirementsPage() {
               onState={setTargetState}
             />
           ) : targetMode ? (
-            <p role="status" className="mb-3 text-sm text-foreground">
+            <p role="status" className="text-sm text-foreground">
               {t("target.loading")}
             </p>
           ) : null}
@@ -1415,7 +1476,7 @@ export default function RequirementsPage() {
                                 ) : null}
                               </>
                             ) : (
-                              <Plus className="h-4 w-4" />
+                              <Plus className="size-4" />
                             )}
                           </button>
                         </td>
@@ -1470,6 +1531,11 @@ export default function RequirementsPage() {
         </>
       )}
 
+      {/* The manual's chain forward: the posts get their teachers. */}
+      <div className="flex justify-end">
+        <NextStep href="/admin/staffing" name={tNav("staffing")} />
+      </div>
+
       {/*
         Only the timplan, though the dialog can offer a list: every other kind
         has a page of its own, and an import of elever launched from here would
@@ -1496,8 +1562,8 @@ export default function RequirementsPage() {
           </DialogHeader>
           <div className="space-y-4">
             {/* Three columns while extra lengths exist, so their rows line up under this pair. */}
-            <div className={form.extraLengths.length > 0 ? EXTRA_ROW_GRID : "grid grid-cols-2 gap-4"}>
-              <div className="space-y-2">
+            <div className={form.extraLengths.length > 0 ? EXTRA_ROW_GRID : "grid gap-4 sm:grid-cols-2 [&>*]:min-w-0"}>
+              <div className="space-y-1.5">
                 <Label htmlFor="req-lessons">
                   {form.extraLengths.length > 0 ? t("lengthLessons", { n: 1 }) : t("lessonsPerWeek")}
                 </Label>
@@ -1510,7 +1576,7 @@ export default function RequirementsPage() {
                   onChange={(e) => setForm({ ...form, lessonsPerWeek: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="req-minutes">
                   {form.extraLengths.length > 0 ? t("lengthMinutes", { n: 1 }) : t("minutesPerLesson")}
                 </Label>
@@ -1558,8 +1624,8 @@ export default function RequirementsPage() {
               matters most is in the second one: only the children are
               occupied, which is the whole reason this is not a longer lesson.
             */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <div className="space-y-1.5">
                 <Label htmlFor="req-minutes-before">{t("minutesBefore")}</Label>
                 <Input
                   id="req-minutes-before"
@@ -1572,7 +1638,7 @@ export default function RequirementsPage() {
                 />
                 <p className="text-xs text-muted-foreground">{t("minutesBeforeHint")}</p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="req-minutes-after">{t("minutesAfter")}</Label>
                 <Input
                   id="req-minutes-after"
@@ -1586,7 +1652,7 @@ export default function RequirementsPage() {
                 <p className="text-xs text-muted-foreground">{t("minutesAfterHint")}</p>
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="req-teacher">{tCommon("teacher")}</Label>
               <Select
                 value={form.teacherId}
@@ -1606,7 +1672,7 @@ export default function RequirementsPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{tStaffing("candidateHint")}</p>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="req-co-teacher">{t("coTeacher")}</Label>
               <Select
                 value={form.coTeacherId}
@@ -1670,8 +1736,8 @@ export default function RequirementsPage() {
             >
               <summary className="cursor-pointer text-sm font-medium">{t("advanced")}</summary>
               <div className="mt-3 space-y-3">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
+                <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                  <div className="space-y-1.5">
                     <Label htmlFor="req-teacher-load">{t("teacherLoadPercent")}</Label>
                     <Input
                       id="req-teacher-load"
@@ -1685,7 +1751,7 @@ export default function RequirementsPage() {
                       onChange={(e) => setForm({ ...form, teacherLoadPercent: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="req-co-teacher-load">{t("coTeacherLoadPercent")}</Label>
                     <Input
                       id="req-co-teacher-load"
@@ -1714,7 +1780,7 @@ export default function RequirementsPage() {
             {cell?.existing ? (
               <Button
                 variant="destructive"
-                onClick={removeCell}
+                onClick={() => setConfirmRemove(true)}
                 disabled={mutations.remove.isPending}
               >
                 {tCommon("delete")}
@@ -1759,6 +1825,19 @@ export default function RequirementsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+
+      {/* Over the cell dialog, not instead of it: Avbryt returns to the post as it was. */}
+      <ConfirmDialog
+        open={confirmRemove && !!cell?.existing}
+        onOpenChange={setConfirmRemove}
+        title={t("deleteTitle", {
+          name: cell ? `${groupOf(cell.groupId)?.name ?? ""} · ${subjectOf(cell.subjectId)?.name ?? ""}` : "",
+        })}
+        description={t("deleteBody")}
+        confirmLabel={tCommon("delete")}
+        loading={mutations.remove.isPending}
+        onConfirm={() => void removeCell()}
+      />
+    </Page>
   );
 }

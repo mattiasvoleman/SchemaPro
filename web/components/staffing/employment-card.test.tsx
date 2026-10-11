@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StaffingPolicy, TeacherEmployment } from "@/lib/types";
@@ -153,11 +153,26 @@ describe("EmploymentCard", () => {
     expect(save.mock.calls[0]?.[0]).toMatchObject({ note: "Mentor 7B", signature: "ANN", reductionPercent: 20 });
   });
 
-  it("removes the post by teacher and year", async () => {
+  it("removes the post by teacher and year, only once the named confirmation says so", async () => {
+    // Ta bort tjänsten used to delete at once; the post's figures are gone
+    // with it, so it asks first, as every other delete in the app does.
     const user = userEvent.setup();
     renderCard({ employment });
     await user.click(screen.getByRole("button", { name: "editEmployment" }));
     await user.click(screen.getByRole("button", { name: "removeEmployment" }));
+    expect(remove).not.toHaveBeenCalled();
+
+    const confirm = screen.getByRole("dialog", { name: /^removeEmploymentTitle\(Anna Ek\|/ });
+    expect(within(confirm).getByText("removeEmploymentBody")).toBeInTheDocument();
+    await user.click(within(confirm).getByRole("button", { name: "cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "removeEmployment" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: /^removeEmploymentTitle/ })).getByRole("button", {
+        name: "removeEmployment",
+      }),
+    );
     expect(remove).toHaveBeenCalledWith({ userId: "t-anna", academicYearId: "y1" });
   });
 });

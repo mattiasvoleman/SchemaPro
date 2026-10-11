@@ -1,10 +1,9 @@
 "use client";
 
 import { use, useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCheck, Loader2 } from "lucide-react";
-import { Link } from "@/i18n/navigation";
+import { Check, CheckCheck, Loader2 } from "lucide-react";
 import {
   useLesson,
   useLessonRoster,
@@ -14,22 +13,33 @@ import {
   type AttendanceEntryInput,
 } from "@/lib/queries";
 import { useAbsenceReports } from "@/lib/guardian-queries";
+import { ATTENDANCE_STATUS_VARIANT, type StatusVariant } from "@/lib/status-variants";
 import type { AttendanceStatus } from "@/lib/types";
-import { cn, formatTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Card, CardContent } from "@/components/ui/card";
 
 const STATUSES: AttendanceStatus[] = ["PRESENT", "LATE", "ABSENT", "EXCUSED"];
 
-const STATUS_STYLES: Record<AttendanceStatus, string> = {
-  PRESENT: "data-[active=true]:bg-success data-[active=true]:text-success-foreground",
-  LATE: "data-[active=true]:bg-warning data-[active=true]:text-warning-foreground",
-  ABSENT: "data-[active=true]:bg-destructive data-[active=true]:text-destructive-foreground",
-  EXCUSED: "data-[active=true]:bg-primary data-[active=true]:text-primary-foreground",
-  UNKNOWN: "",
+/*
+ * The chosen status is drawn in its status colour as an edge and a tint, with
+ * the text kept in the foreground colour and a check mark beside it: white
+ * on --success measures 3.9:1 and on the dark theme's --destructive 4.1:1,
+ * under AA for a label this size, and the check mark says "chosen" to anyone
+ * who cannot tell the colours apart.
+ */
+const CHOSEN_TONE: Record<StatusVariant, string> = {
+  success: "border-success bg-success/15",
+  warning: "border-warning bg-warning/15",
+  destructive: "border-destructive bg-destructive/10",
+  secondary: "border-foreground/40 bg-secondary",
+  outline: "border-foreground/40",
 };
 
 export default function LessonAttendancePage({
@@ -41,14 +51,17 @@ export default function LessonAttendancePage({
   const t = useTranslations("teacherAttendance");
   const tStatus = useTranslations("attendanceStatus");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
 
-  const { data: lesson } = useLesson(lessonId);
+  const lessonQuery = useLesson(lessonId);
+  const lesson = lessonQuery.data;
   // Full roster: primary class + extra classes + individual participants.
-  const { data: students, isLoading: studentsLoading } = useLessonRoster(
-    lesson ? lessonId : null,
-    lesson?.studentGroupId ?? null,
-  );
-  const { data: existingRecords } = useLessonAttendance(lessonId);
+  const {
+    data: students,
+    isLoading: studentsLoading,
+    isError: studentsError,
+  } = useLessonRoster(lesson ? lessonId : null, lesson?.studentGroupId ?? null);
+  const { data: existingRecords, isError: existingError } = useLessonAttendance(lessonId);
   const { data: absenceReports } = useAbsenceReports({
     date: lesson?.date ? lesson.date.slice(0, 10) : undefined,
   });
@@ -136,110 +149,163 @@ export default function LessonAttendancePage({
     }
   };
 
+  // The lesson's day (a date) and clock times as the reader's locale writes them.
+  const tag = locale === "en" ? "en-GB" : "sv-SE";
+  const subtitle = lesson
+    ? (() => {
+        const time = new Intl.DateTimeFormat(tag, { hour: "2-digit", minute: "2-digit" });
+        const day = new Intl.DateTimeFormat(tag, {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          timeZone: "UTC",
+        }).format(new Date(`${lesson.date.slice(0, 10)}T12:00:00Z`));
+        return `${day} · ${time.format(new Date(lesson.startsAt))}–${time.format(new Date(lesson.endsAt))}`;
+      })()
+    : undefined;
+
+  const header = (
+    <PageHeader
+      back={{ href: "/teacher/attendance", label: t("backToLessons") }}
+      title={subject?.name ?? t("lessonTitle")}
+      subtitle={subtitle}
+      meta={
+        students && students.length > 0 ? (
+          <Badge variant="secondary">
+            {t("recordedBadge", { count: recordedCount, total: students.length })}
+          </Badge>
+        ) : null
+      }
+    />
+  );
+
+  // The state ladder: the lesson first, then its roster. A lesson that cannot
+  // be read never leaves the skeleton standing: the roster waits for it.
+  const failed = lessonQuery.isError
+    ? t("lessonLoadFailed")
+    : studentsError
+      ? t("rosterLoadFailed")
+      : null;
+  if (failed) {
+    return (
+      <Page width="narrow">
+        {header}
+        <LoadError title={failed} hint={t("lessonLoadFailedHint")} headingLevel={2} />
+      </Page>
+    );
+  }
+
+  if (lessonQuery.isLoading || studentsLoading || !students) {
+    return (
+      <Page width="narrow">
+        {header}
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </Page>
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4">
-        <Button asChild variant="ghost" size="sm">
-          <Link href="/teacher/attendance">
-            <ArrowLeft />
-            {tCommon("back")}
-          </Link>
+    <Page width="narrow">
+      {header}
+
+      {existingError ? (
+        <Notice tone="warning" title={t("existingLoadFailed")}>
+          {t("existingLoadFailedHint")}
+        </Notice>
+      ) : null}
+
+      <SectionCard
+        id="attendance-roster"
+        title={t("rosterTitle")}
+        description={t("studentCount", { count: students.length })}
+        action={
+          <Button variant="outline" size="sm" onClick={markAllPresent}>
+            <CheckCheck aria-hidden="true" />
+            {t("markAll")}
+          </Button>
+        }
+      >
+        <ul className="divide-y">
+          {students.map((student) => {
+            const current = statuses[student.id] ?? "UNKNOWN";
+            const nameId = `attendance-${student.id}-name`;
+            return (
+              <li
+                key={student.id}
+                className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <span className="flex flex-wrap items-center gap-2">
+                  <span id={nameId} className="font-medium">
+                    {student.firstName} {student.lastName}
+                  </span>
+                  {reportedAbsent.has(student.id) ? (
+                    <Badge variant="warning">{t("reportedAbsent")}</Badge>
+                  ) : null}
+                </span>
+                {/* One radio group per pupil, named by the pupil: native
+                    radios give the arrow keys, the "1 of 4" and the checked
+                    state for free, and each label is a 44px target. */}
+                <div
+                  role="radiogroup"
+                  aria-labelledby={nameId}
+                  className="grid grid-cols-2 gap-1.5 sm:flex sm:shrink-0"
+                >
+                  {STATUSES.map((status) => {
+                    const chosen = current === status;
+                    return (
+                      <label
+                        key={status}
+                        className={cn(
+                          "relative flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-background",
+                          chosen ? CHOSEN_TONE[ATTENDANCE_STATUS_VARIANT[status]] : "hover:bg-muted",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={`attendance-${student.id}`}
+                          value={status}
+                          checked={chosen}
+                          onChange={() =>
+                            setStatuses((previous) => ({ ...previous, [student.id]: status }))
+                          }
+                          className="sr-only"
+                        />
+                        {chosen ? <Check className="size-4 shrink-0" aria-hidden="true" /> : null}
+                        {tStatus(status)}
+                      </label>
+                    );
+                  })}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </SectionCard>
+
+      {/* Held at the bottom of the screen on a long roster, so the teacher
+          does not scroll back past thirty pupils to save. */}
+      <div className="sticky bottom-0 z-10 bg-background py-3">
+        <Button
+          className="w-full"
+          size="lg"
+          onClick={submit}
+          disabled={recordedCount === 0 || report.isPending}
+        >
+          {report.isPending ? (
+            <>
+              <Loader2 className="animate-spin" aria-hidden="true" />
+              {t("submitting")}
+            </>
+          ) : (
+            <>
+              <Check aria-hidden="true" />
+              {t("submit")}
+            </>
+          )}
         </Button>
       </div>
-
-      <PageHeader
-        title={subject?.name ?? t("lessonTitle")}
-        subtitle={
-          lesson
-            ? `${lesson.date} · ${formatTime(lesson.startsAt)}–${formatTime(lesson.endsAt)}`
-            : undefined
-        }
-        actions={
-          students && students.length > 0 ? (
-            <Badge variant="secondary">
-              {t("recordedBadge", { count: recordedCount, total: students.length })}
-            </Badge>
-          ) : null
-        }
-      />
-
-      {studentsLoading || !students ? (
-        <div className="space-y-2">
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-        </div>
-      ) : (
-        <>
-          <div className="mb-4 flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">
-              {t("studentCount", { count: students.length })}
-            </span>
-            <Button variant="outline" size="sm" onClick={markAllPresent}>
-              <CheckCheck />
-              {t("markAll")}
-            </Button>
-          </div>
-
-          <Card>
-            <CardContent className="divide-y p-0">
-              {students.map((student) => {
-                const current = statuses[student.id] ?? "UNKNOWN";
-                return (
-                  <div
-                    key={student.id}
-                    className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <span className="font-medium">
-                      {student.firstName} {student.lastName}
-                      {reportedAbsent.has(student.id) ? (
-                        <Badge variant="warning" className="ml-2">
-                          {t("reportedAbsent")}
-                        </Badge>
-                      ) : null}
-                    </span>
-                    <div className="flex gap-1">
-                      {STATUSES.map((status) => (
-                        <button
-                          key={status}
-                          type="button"
-                          data-active={current === status}
-                          onClick={() =>
-                            setStatuses({ ...statuses, [student.id]: status })
-                          }
-                          className={cn(
-                            "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted",
-                            STATUS_STYLES[status],
-                            current === status && "border-transparent",
-                          )}
-                        >
-                          {tStatus(status)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
-
-          <Button
-            className="mt-6 w-full"
-            size="lg"
-            onClick={submit}
-            disabled={recordedCount === 0 || report.isPending}
-          >
-            {report.isPending ? (
-              <>
-                <Loader2 className="animate-spin" />
-                {t("submitting")}
-              </>
-            ) : (
-              t("submit")
-            )}
-          </Button>
-        </>
-      )}
-    </div>
+    </Page>
   );
 }

@@ -4,12 +4,13 @@ import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
-import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
+import { useCrudMutations, useRooms, useRoomTypes } from "@/lib/queries";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { roomTypesToCsv } from "@/lib/csv-export";
 import { SCHOOL_STAGES, gradeRangeLabel, stageOf } from "@/lib/school-stages";
 import type { Room, RoomType } from "@/lib/types";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,10 +19,15 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -33,14 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface RoomForm {
   name: string;
@@ -142,12 +141,12 @@ export default function RoomsPage() {
   const t = useTranslations("rooms");
   const tCsvImport = useTranslations("csvImport");
   const tCommon = useTranslations("common");
-  const { data: roomTypes } = useRoomTypes();
+  const { data: roomTypes, isError: roomTypesFailed } = useRoomTypes();
   const roomTypeById = useMemo(
     () => new Map((roomTypes ?? []).map((rt: RoomType) => [rt.id, rt] as const)),
     [roomTypes],
   );
-  const { data: rooms, isLoading } = useRooms();
+  const { data: rooms, isLoading, isError } = useRooms();
   const mutations = useCrudMutations<{
     name: string;
     code?: string | null;
@@ -233,7 +232,7 @@ export default function RoomsPage() {
   };
 
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
@@ -261,16 +260,17 @@ export default function RoomsPage() {
       />
 
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !rooms || rooms.length === 0 ? (
         <EmptyState
           icon={MapPin}
-          title={tCommon("noResults")}
+          title={t("emptyTitle")}
           description={t("empty")}
+          headingLevel={2}
           action={
             <Button onClick={openCreate}>
               <Plus />
@@ -279,218 +279,208 @@ export default function RoomsPage() {
           }
         />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
+        <>
+          {roomTypesFailed ? (
+            // The Typ column is read from the room types, a list of its own: a
+            // dash there would claim the rooms have no type.
+            <LoadError variant="inline" title={t("typesFailed")} hint={t("typesFailedHint")} />
+          ) : null}
+          <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
                 <TableHead>{tCommon("name")}</TableHead>
                 <TableHead>{tCommon("code")}</TableHead>
                 <TableHead>{tCommon("type")}</TableHead>
-                <TableHead>{tCommon("capacity")}</TableHead>
+                <TableHead className="text-right">{tCommon("capacity")}</TableHead>
                 <TableHead>{t("stageColumn")}</TableHead>
                 <TableHead>{t("placeColumn")}</TableHead>
                 <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rooms.map((room) => (
-                <TableRow key={room.id}>
-                  <TableCell className="font-medium">
-                    <span className="inline-flex items-center gap-1.5">
-                      {room.name}
-                      {room.requiresApproval ? (
-                        <Badge variant="secondary">{t("approvalBadge")}</Badge>
-                      ) : null}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    {room.code ? <Badge variant="secondary">{room.code}</Badge> : "—"}
-                  </TableCell>
-                  <TableCell>
-                    {roomTypeById.get(room.roomTypeId ?? "")?.name ?? "—"}
-                  </TableCell>
-                  <TableCell className="tabular-nums">{room.capacity ?? "—"}</TableCell>
-                  <TableCell>
-                    {gradeRangeLabel(room.minGradeLevel, room.maxGradeLevel, (key) =>
-                      t(`stages.${key}`),
-                    ) ?? "—"}
-                  </TableCell>
-                  <TableCell>
-                    {placeLabel(room, (value) => t("floorShort", { floor: value }))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEdit(room)}
-                      aria-label={tCommon("edit")}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleting(room)}
-                      aria-label={tCommon("delete")}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {rooms.map((room) => {
+                const type = roomTypeById.get(room.roomTypeId ?? "")?.name ?? null;
+                const stage = gradeRangeLabel(room.minGradeLevel, room.maxGradeLevel, (key) =>
+                  t(`stages.${key}`),
+                );
+                const place = placeLabel(room, (value) => t("floorShort", { floor: value }));
+                return (
+                  <TableRow key={room.id}>
+                    <TableCell className="font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {room.name}
+                        {room.requiresApproval ? (
+                          <Badge variant="secondary">{t("approvalBadge")}</Badge>
+                        ) : null}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {room.code ? <Badge variant="secondary">{room.code}</Badge> : <Empty />}
+                    </TableCell>
+                    <TableCell>{type ?? <Empty />}</TableCell>
+                    <TableCell className="text-right tabular-nums">{room.capacity ?? <Empty />}</TableCell>
+                    <TableCell>{stage ?? <Empty />}</TableCell>
+                    <TableCell>{place === "—" ? <Empty /> : place}</TableCell>
+                    <TableCell className="text-right">
+                      <RowActions
+                        name={room.name}
+                        actions={[
+                          {
+                            label: tCommon("edit"),
+                            icon: Pencil,
+                            ariaLabel: tCommon("editNamed", { name: room.name }),
+                            onSelect: () => openEdit(room),
+                          },
+                          {
+                            label: tCommon("delete"),
+                            icon: Trash2,
+                            ariaLabel: tCommon("deleteNamed", { name: room.name }),
+                            onSelect: () => setDeleting(room),
+                          },
+                        ]}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
-          </Table>
-        </div>
+          </TableCard>
+        </>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("editRoom") : t("addRoom")}</DialogTitle>
+            <DialogDescription>{t("dialogHint")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="room-name">{tCommon("name")}</Label>
+            <FormField id="room-name" label={tCommon("name")}>
               <Input
-                id="room-name"
                 value={form.name}
                 placeholder={t("namePlaceholder")}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="room-code">
-                  {tCommon("code")}{" "}
-                  <span className="text-muted-foreground">({tCommon("optional")})</span>
-                </Label>
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="room-code" label={tCommon("code")} optional>
                 <Input
-                  id="room-code"
                   value={form.code}
                   placeholder={t("codePlaceholder")}
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="room-capacity">{tCommon("capacity")}</Label>
+              </FormField>
+              <FormField id="room-capacity" label={tCommon("capacity")}>
                 <Input
-                  id="room-capacity"
                   type="number"
                   min={1}
                   value={form.capacity}
                   onChange={(e) => setForm({ ...form, capacity: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
-            <div className="space-y-2">
-              <Label>{tCommon("type")}</Label>
-              <Select
-                value={form.roomTypeId}
-                onValueChange={(value) => setForm({ ...form, roomTypeId: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(roomTypes ?? []).map((roomType: RoomType) => (
-                    <SelectItem key={roomType.id} value={roomType.id}>
-                      {roomType.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="room-stage">{t("stageLabel")}</Label>
-              <Select
-                value={form.stage}
-                onValueChange={(value) => setForm({ ...form, stage: value })}
-              >
-                <SelectTrigger id="room-stage" aria-label={t("stageLabel")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_LIMIT}>{t("stageNone")}</SelectItem>
-                  {SCHOOL_STAGES.map((stage) => (
-                    <SelectItem key={stage.key} value={stage.key}>
-                      {t(`stages.${stage.key}`)}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value={CUSTOM_RANGE}>{t("stageCustom")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{t("stageHint")}</p>
-            </div>
+            <FormField id="room-type" label={tCommon("type")}>
+              {(control) => (
+                <Select
+                  value={form.roomTypeId}
+                  onValueChange={(value) => setForm({ ...form, roomTypeId: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(roomTypes ?? []).map((roomType: RoomType) => (
+                      <SelectItem key={roomType.id} value={roomType.id}>
+                        {roomType.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
+            <FormField id="room-stage" label={t("stageLabel")} hint={t("stageHint")}>
+              {(control) => (
+                <Select
+                  value={form.stage}
+                  onValueChange={(value) => setForm({ ...form, stage: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_LIMIT}>{t("stageNone")}</SelectItem>
+                    {SCHOOL_STAGES.map((stage) => (
+                      <SelectItem key={stage.key} value={stage.key}>
+                        {t(`stages.${stage.key}`)}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_RANGE}>{t("stageCustom")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
 
             {form.stage === CUSTOM_RANGE ? (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="room-min-grade">{t("stageFrom")}</Label>
+              <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                <FormField id="room-min-grade" label={t("stageFrom")}>
                   <Input
-                    id="room-min-grade"
                     type="number"
                     min={0}
                     max={12}
                     value={form.minGradeLevel}
                     onChange={(e) => setForm({ ...form, minGradeLevel: e.target.value })}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="room-max-grade">{t("stageTo")}</Label>
+                </FormField>
+                <FormField id="room-max-grade" label={t("stageTo")}>
                   <Input
-                    id="room-max-grade"
                     type="number"
                     min={0}
                     max={12}
                     value={form.maxGradeLevel}
                     onChange={(e) => setForm({ ...form, maxGradeLevel: e.target.value })}
                   />
-                </div>
+                </FormField>
               </div>
             ) : null}
 
-            <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="room-building">
-                    {t("building")}{" "}
-                    <span className="text-muted-foreground">({tCommon("optional")})</span>
-                  </Label>
+            {/* One hint for the pair, read by both fields; the floor's own rule
+                sits under the floor, where the wrong value was typed. */}
+            <div className="space-y-1.5">
+              <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                <FormField id="room-building" label={t("building")} optional>
                   <Input
-                    id="room-building"
                     value={form.building}
                     maxLength={60}
                     placeholder={t("buildingPlaceholder")}
+                    aria-describedby="room-place-hint"
                     onChange={(e) => setForm({ ...form, building: e.target.value })}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="room-floor">
-                    {t("floor")}{" "}
-                    <span className="text-muted-foreground">({tCommon("optional")})</span>
-                  </Label>
+                </FormField>
+                <FormField
+                  id="room-floor"
+                  label={t("floor")}
+                  optional
+                  error={floor === undefined ? t("floorInvalid") : undefined}
+                >
                   <Input
-                    id="room-floor"
                     type="number"
                     step={1}
                     min={MIN_FLOOR}
                     max={MAX_FLOOR}
                     value={form.floor}
                     placeholder={t("floorPlaceholder")}
-                    aria-invalid={floor === undefined}
+                    aria-describedby="room-place-hint"
                     onChange={(e) => setForm({ ...form, floor: e.target.value })}
                   />
-                </div>
+                </FormField>
               </div>
-              {floor === undefined ? (
-                <p className="text-xs text-destructive">{t("floorInvalid")}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t("placeHint")}</p>
-              )}
+              <p id="room-place-hint" className="text-xs text-muted-foreground">
+                {t("placeHint")}
+              </p>
             </div>
 
-            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
-              <div className="space-y-0.5">
+            <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+              <div className="space-y-1">
                 <Label htmlFor="room-approval">{t("requiresApproval")}</Label>
                 <p className="text-xs text-muted-foreground">{t("requiresApprovalHint")}</p>
               </div>
@@ -537,6 +527,11 @@ export default function RoomsPage() {
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
+}
+
+/** An empty cell: the em dash, muted, so it reads as "nothing here" and not as data. */
+function Empty() {
+  return <span className="text-muted-foreground">—</span>;
 }

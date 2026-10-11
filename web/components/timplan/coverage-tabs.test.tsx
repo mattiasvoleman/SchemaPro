@@ -147,6 +147,20 @@ describe("CoverageScheduledTab", () => {
     expect(within(section).getAllByText(/^okänd$|Bea Berg|Eli Ek/).length).toBe(5);
   });
 
+  it("keeps the tables' sr-only sentences inside their scroll boxes, so a phone scrolls the matrix and not the page", async () => {
+    // An sr-only sentence is position: absolute. With no positioned ancestor
+    // inside the overflow-x-auto box it is laid out against the page, and the
+    // columns past a 390 px screen widened /admin/timplan/tackning to 624 px.
+    state.scheduled[""] = scheduledCase(TWO_GROUPS).response;
+    state.scheduled["00000000-0000-4000-8000-000000000157"] = scheduledCase(DRILLED).response;
+    const user = userEvent.setup();
+    render(<CoverageScheduledTab {...props(subjects)} />);
+    await user.click(screen.getByRole("button", { name: /^7A/ }));
+    const tables = screen.getAllByRole("table");
+    expect(tables.length).toBeGreaterThan(1);
+    for (const table of tables) expect(table.closest(".overflow-x-auto")).toHaveClass("relative");
+  });
+
   it("shows a teacher no pupil column and asks for no pupil drill-down", async () => {
     state.scheduled[""] = scheduledCase(TEACHER).response;
     const user = userEvent.setup();
@@ -244,6 +258,14 @@ describe("CoverageDeliveredTab", () => {
     expect(within(section).getByText(/timplanCoverage\.delivered\.sharedWith\(Ma7-fördjupning\)/)).toBeInTheDocument();
     await user.click(within(section).getByRole("button", { name: "timplanCoverage.showAllPupils" }));
     expect(within(section).getByText("Ali Al")).toBeInTheDocument();
+  });
+
+  it("keeps the matrix's sr-only sentences inside its scroll box", () => {
+    state.delivered[""] = DELIVERED_OVERVIEW;
+    render(<CoverageDeliveredTab {...props(subjects)} />);
+    for (const table of screen.getAllByRole("table")) {
+      expect(table.closest(".overflow-x-auto")).toHaveClass("relative");
+    }
   });
 
   it("gives a teacher the group's breakdowns and no pupil", async () => {

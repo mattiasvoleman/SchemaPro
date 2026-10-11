@@ -3,22 +3,25 @@
 import { useMemo, useState } from "react";
 import { compareSwedish } from "@/lib/sorting";
 import { groupLabel } from "@/lib/year-scope";
-import { useTranslations } from "next-intl";
-import { BarChart3, Download } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import { BarChart3, Download, Users } from "lucide-react";
 import {
   useAcademicYears,
   useGroupAttendance,
   useGroups,
   usePeople,
 } from "@/lib/queries";
-import { PageHeader } from "@/components/layout/page-header";
+import { attendanceRateVariant } from "@/lib/status-variants";
+import { toDateString } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FilterBar, FilterField } from "@/components/ui/filter-bar";
+import { KpiStrip, KpiTile } from "@/components/ui/kpi";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Select,
   SelectContent,
@@ -27,7 +30,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -61,14 +63,11 @@ function lessonMinutes(lesson: { startsAt: string; endsAt: string } | null): num
   return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : 0;
 }
 
-function toDateInput(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
+/** Thirty days back on the school's wall clock (toISOString() named UTC's day). */
 function defaultFrom(): string {
   const d = new Date();
   d.setDate(d.getDate() - 30);
-  return toDateInput(d);
+  return toDateString(d);
 }
 
 /** RFC 4180-style escaping: quote fields containing separators or quotes. */
@@ -79,26 +78,37 @@ function csvField(value: string | number): string {
 
 /**
  * Närvaro: the attendance report, as /admin/reports was before staffing
- * Fas 3 gave the page a second tab. Moved here unchanged; reports-tabs.tsx
- * holds the tab shell.
+ * Fas 3 gave the page a second tab; reports-tabs.tsx holds the tab shell and
+ * the page's one header.
+ *
+ * NO FIGURE FROM A FAILED READ. The rates are computed here from the class's
+ * pupils and their records, so a roster that did not load would leave every
+ * pupil out and draw "no attendance" — the report says it could not read
+ * instead, and shows no class average.
  */
 export function AttendanceReport() {
   const t = useTranslations("reports");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
 
   const [groupId, setGroupId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState(defaultFrom);
-  const [toDate, setToDate] = useState(() => toDateInput(new Date()));
+  const [toDate, setToDate] = useState(() => toDateString(new Date()));
 
-  const { data: groups } = useGroups();
+  const groupsQuery = useGroups();
+  const groups = groupsQuery.data;
   // Every year's classes, named with their year unless it is the active
   // one's: last year's attendance is reported after the activation, so a
   // filter would hide it, and between a rollover and its activation every
   // class name exists twice.
   const { data: years } = useAcademicYears();
   const activeYearId = years?.find((year) => year.isActive)?.id ?? null;
-  const { data: people } = usePeople();
-  const { data: records, isLoading } = useGroupAttendance(groupId, fromDate, toDate);
+  const peopleQuery = usePeople();
+  const people = peopleQuery.data;
+  const recordsQuery = useGroupAttendance(groupId, fromDate, toDate);
+  const records = recordsQuery.data;
+  const failed = groupsQuery.isError || peopleQuery.isError || recordsQuery.isError;
+  const loading = recordsQuery.isLoading || peopleQuery.isLoading;
 
   const stats: StudentStats[] = useMemo(() => {
     if (!records || !people) return [];
@@ -162,9 +172,14 @@ export function AttendanceReport() {
   }, [stats]);
 
   const hasData = stats.some((entry) => entry.total > 0);
+  const rated = stats.filter((entry) => entry.total > 0).length;
+  const validMinutes = stats.reduce((sum, entry) => sum + entry.validAbsenceMinutes, 0);
+  const invalidMinutes = stats.reduce((sum, entry) => sum + entry.invalidAbsenceMinutes, 0);
+  const number = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const percent = useMemo(() => new Intl.NumberFormat(locale, { style: "percent" }), [locale]);
 
   const exportCsv = () => {
-    const groupName = groups?.find((group) => group.id === groupId)?.name ?? "class";
+    const groupName = groups?.find((group) => group.id === groupId)?.name ?? t("class");
     const header = [
       t("student"),
       t("lessons"),
@@ -203,40 +218,22 @@ export function AttendanceReport() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `attendance_${groupName}_${fromDate}_${toDate}.csv`;
+    link.download = t("csvFilename", { group: groupName, from: fromDate, to: toDate });
     link.click();
     URL.revokeObjectURL(url);
   };
 
-  const ratePercent = (rate: number | null) =>
-    rate !== null ? `${Math.round(rate * 100)}%` : "—";
-
-  const rateBadgeVariant = (rate: number | null) => {
-    if (rate === null) return "outline" as const;
-    if (rate >= 0.9) return "secondary" as const;
-    if (rate >= 0.75) return "default" as const;
-    return "destructive" as const;
-  };
+  const ratePercent = (rate: number | null) => (rate !== null ? percent.format(rate) : "—");
 
   return (
-    <div>
-      <PageHeader
-        title={t("title")}
-        subtitle={t("subtitle")}
-        actions={
-          <Button onClick={exportCsv} disabled={!groupId || !hasData}>
-            <Download />
-            {t("exportCsv")}
-          </Button>
-        }
-      />
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
 
-      <div className="mb-6 flex flex-wrap items-end gap-3">
-        <div className="space-y-2">
-          <Label>{t("class")}</Label>
+      <FilterBar>
+        <FilterField id="report-class" label={t("class")}>
           <Select value={groupId ?? ""} onValueChange={setGroupId}>
-            <SelectTrigger className="w-44">
-              <SelectValue />
+            <SelectTrigger id="report-class" className="w-44">
+              <SelectValue placeholder={t("classPlaceholder")} />
             </SelectTrigger>
             <SelectContent>
               {(groups ?? []).map((group) => (
@@ -246,9 +243,8 @@ export function AttendanceReport() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="report-from">{tCommon("from")}</Label>
+        </FilterField>
+        <FilterField id="report-from" label={tCommon("from")}>
           <DateField
             label={tCommon("from")}
             id="report-from"
@@ -256,9 +252,8 @@ export function AttendanceReport() {
             value={fromDate}
             onChange={(value) => value && setFromDate(value)}
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="report-to">{tCommon("to")}</Label>
+        </FilterField>
+        <FilterField id="report-to" label={tCommon("to")}>
           <DateField
             label={tCommon("to")}
             id="report-to"
@@ -266,37 +261,54 @@ export function AttendanceReport() {
             value={toDate}
             onChange={(value) => value && setToDate(value)}
           />
-        </div>
-        {classAverage !== null ? (
-          <div className="ml-auto rounded-lg border bg-card px-4 py-2 text-sm">
-            <span className="text-muted-foreground">{t("classAverage")}: </span>
-            <span className="font-semibold tabular-nums">
-              {Math.round(classAverage * 100)}%
-            </span>
-          </div>
-        ) : null}
-      </div>
+        </FilterField>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          onClick={exportCsv}
+          disabled={!groupId || !hasData || failed}
+        >
+          <Download />
+          {t("exportCsv")}
+        </Button>
+      </FilterBar>
 
-      {!groupId ? (
-        <EmptyState icon={BarChart3} title={t("title")} description={t("chooseClass")} />
-      ) : isLoading ? (
-        <Skeleton className="h-72 w-full" />
+      {failed ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : !groupId ? (
+        <EmptyState icon={Users} title={t("chooseClassTitle")} description={t("chooseClass")} headingLevel={2} />
+      ) : loading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
       ) : !hasData ? (
-        <EmptyState icon={BarChart3} title={tCommon("noResults")} description={t("empty")} />
+        <EmptyState icon={BarChart3} title={t("emptyTitle")} description={t("empty")} headingLevel={2} />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
+        <>
+          <KpiStrip>
+            <KpiTile label={t("classAverage")} value={classAverage !== null ? percent.format(classAverage) : null} />
+            <KpiTile
+              label={t("kpiStudents")}
+              value={number.format(rated)}
+              detail={t("kpiStudentsDetail", { total: stats.length })}
+            />
+            <KpiTile label={t("kpiInvalid")} value={t("kpiMinutes", { minutes: number.format(invalidMinutes) })} />
+            <KpiTile label={t("kpiValid")} value={t("kpiMinutes", { minutes: number.format(validMinutes) })} />
+          </KpiStrip>
+
+          <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
-                <TableHead>{t("student")}</TableHead>
-                <TableHead className="text-right">{t("lessons")}</TableHead>
-                <TableHead className="text-right">{t("present")}</TableHead>
-                <TableHead className="text-right">{t("absent")}</TableHead>
-                <TableHead className="text-right">{t("late")}</TableHead>
-                <TableHead className="text-right">{t("excused")}</TableHead>
-                <TableHead className="text-right">{t("rate")}</TableHead>
-                <TableHead className="text-right">{t("validMinutes")}</TableHead>
-                <TableHead className="text-right">{t("invalidMinutes")}</TableHead>
+                <TableHead scope="col">{t("student")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("lessons")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("present")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("absent")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("late")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("excused")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("rate")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("validMinutes")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("invalidMinutes")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -309,7 +321,7 @@ export function AttendanceReport() {
                   <TableCell className="text-right tabular-nums">{entry.late}</TableCell>
                   <TableCell className="text-right tabular-nums">{entry.excused}</TableCell>
                   <TableCell className="text-right">
-                    <Badge variant={rateBadgeVariant(entry.rate)}>
+                    <Badge variant={attendanceRateVariant(entry.rate)} className="tabular-nums">
                       {ratePercent(entry.rate)}
                     </Badge>
                   </TableCell>
@@ -322,8 +334,8 @@ export function AttendanceReport() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
-        </div>
+          </TableCard>
+        </>
       )}
     </div>
   );

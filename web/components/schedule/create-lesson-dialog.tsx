@@ -20,6 +20,7 @@ import { Loader2, Lock, Sparkles } from "lucide-react";
 import type { OpenSlotMatch } from "@/lib/placement-search";
 import type { LessonRecurrence, Person, Room, StudentGroup, Subject } from "@/lib/types";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -193,7 +194,7 @@ export function CreateLessonDialog({
             <div className="col-span-2 space-y-3 rounded-md border p-3">
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <Sparkles className="h-4 w-4" />
+                  <Sparkles className="size-4" />
                   {t("slotFinderTitle")}
                 </div>
                 <p className="text-xs text-muted-foreground">{t("slotFinderHint")}</p>
@@ -345,17 +346,14 @@ export function CreateLessonDialog({
                             {teacher
                               ? `${teacher.firstName[0]}. ${teacher.lastName}`
                               : "—"}
-                            <span
-                              className={
-                                match.isFallback
-                                  ? "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
-                                  : "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800"
-                              }
-                            >
+                            {/* The class's own teacher is the ordinary case
+                                (neutral); a stand-in from the subject is the
+                                one to look twice at (warning). */}
+                            <Badge variant={match.isFallback ? "warning" : "secondary"}>
                               {match.isFallback
                                 ? t("slotFinderFallback")
                                 : t("slotFinderAssigned")}
-                            </span>
+                            </Badge>
                           </span>
                         </button>
                       );
@@ -464,7 +462,7 @@ export function CreateLessonDialog({
             />
             <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
               <div className="flex items-center gap-2">
-                <Lock className="h-4 w-4 text-muted-foreground" />
+                <Lock className="size-4 text-muted-foreground" />
                 <div>
                   <label htmlFor="create-lock" className="block text-sm font-medium">
                     {t("lockLabel")}

@@ -56,7 +56,8 @@
 
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Grid3x3, Settings2, Sparkles, TriangleAlert, Users } from "lucide-react";
+import { Grid3x3, Settings2, Sparkles, Users } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import {
   useAcademicYears,
   useGroups,
@@ -72,22 +73,22 @@ import {
   useTeacherQualifications,
 } from "@/lib/staffing-queries";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
+import { NextStep } from "@/components/layout/next-step";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { YearSelect } from "@/components/schedule/year-select";
 import { BottlenecksPanel } from "@/components/staffing/bottlenecks-panel";
 import { StaffingMatrix } from "@/components/staffing/staffing-matrix";
 import { UnstaffedPanel } from "@/components/staffing/unstaffed-panel";
 import { StaffingPolicyCard } from "@/components/staffing/staffing-policy-card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { KpiStrip, KpiTile } from "@/components/ui/kpi";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 /**
  * The drawer is click-opened, so it is React's lazy() — not next/dynamic,
@@ -133,7 +134,7 @@ const PROPOSE_HASH = "propose";
 
 export default function StaffingPage() {
   const t = useTranslations("staffing");
-  const tCommon = useTranslations("common");
+  const tNav = useTranslations("nav");
   const { data: years, isLoading: yearsLoading, isError: yearsFailed } = useAcademicYears();
   const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
   // ?year= from /admin/generate's links, which plan a rolled year not yet
@@ -254,7 +255,12 @@ export default function StaffingPage() {
     // After the card has mounted, bring it into view: the notice sits above
     // the matrix and the card below it.
     window.setTimeout(() => {
-      document.getElementById("staffing-policy")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Smooth only for people who have not asked for less motion: CSS's
+      // reduced-motion rule cannot reach a scroll started from script.
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      document
+        .getElementById("staffing-policy")
+        ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
     }, 0);
   };
 
@@ -262,26 +268,13 @@ export default function StaffingPage() {
   const openLoad = report?.teachers.find((row) => row.userId === openTeacherId);
 
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
           <>
-            {years && years.length > 0 ? (
-              <Select value={activeYearId ?? undefined} onValueChange={setSelectedYearId}>
-                <SelectTrigger className="w-44" aria-label={t("yearLabel")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map((year) => (
-                    <SelectItem key={year.id} value={year.id}>
-                      {year.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
+            <YearSelect value={activeYearId} label={t("yearLabel")} onValueChange={setSelectedYearId} />
             <Button variant="outline" onClick={openPropose} disabled={!report || !activeYearId}>
               <Sparkles />
               {t("proposal.open")}
@@ -300,87 +293,75 @@ export default function StaffingPage() {
       />
 
       {loading ? (
-        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-96 w-full" aria-busy="true" />
       ) : failed ? (
-        <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !activeYearId || !activeYear || !report ? (
-        <EmptyState icon={Grid3x3} title={tCommon("noResults")} description={t("noYear")} />
+        <EmptyState
+          icon={Grid3x3}
+          title={t("noYearTitle")}
+          description={t("noYear")}
+          headingLevel={2}
+          action={
+            <Button asChild variant="outline">
+              <Link href="/admin/years">{t("noYearAction")}</Link>
+            </Button>
+          }
+        />
       ) : (
-        <div className="space-y-4">
+        <>
           {noTarget ? (
             // foreground on muted: 17.00 / 13.19, AAA — the notice is a state
             // the whole page is in, not an error, so it is not painted red.
-            <div
-              role="status"
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted px-4 py-3 text-sm text-foreground"
+            <Notice
+              title={t("noTargetTitle")}
+              action={
+                <Button variant="outline" size="sm" onClick={openSettings}>
+                  {t("noTargetAction")}
+                </Button>
+              }
             >
-              <div>
-                <p className="font-medium">{t("noTargetTitle")}</p>
-                <p>{t("noTargetBody")}</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={openSettings}>
-                {t("noTargetAction")}
-              </Button>
-            </div>
+              {t("noTargetBody")}
+            </Notice>
           ) : null}
 
           {offerCarry && predecessor ? (
-            <div
-              role="status"
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted px-4 py-3 text-sm text-foreground"
+            <Notice
+              title={t("carry.noticeTitle", { year: predecessor.name })}
+              action={
+                <Button variant="outline" size="sm" onClick={() => setCarryOpen(true)}>
+                  {t("carry.noticeAction")}
+                </Button>
+              }
             >
-              <div>
-                <p className="font-medium">{t("carry.noticeTitle", { year: predecessor.name })}</p>
-                <p>{t("carry.noticeBody", { year: activeYear.name, source: predecessor.name })}</p>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => setCarryOpen(true)}>
-                {t("carry.noticeAction")}
-              </Button>
-            </div>
+              {t("carry.noticeBody", { year: activeYear.name, source: predecessor.name })}
+            </Notice>
           ) : null}
 
           {figures ? (
-            <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-lg border bg-card p-4">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t("kpiUnstaffed")}
-                </dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums">{figures.unstaffed}</dd>
-              </div>
-              <div className="rounded-lg border bg-card p-4">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t("kpiUnqualified")}
-                </dt>
-                {figures.unqualified === null ? (
-                  <dd className="mt-1 text-sm text-foreground" title={t("kpiUnqualifiedNotRecordedHint")}>
-                    {t("kpiUnqualifiedNotRecorded")}
-                  </dd>
-                ) : (
-                  <dd className="mt-1 text-2xl font-semibold tabular-nums">{figures.unqualified}</dd>
-                )}
-              </div>
-              <div className="rounded-lg border bg-card p-4">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t("kpiOverTarget")}
-                </dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums">{figures.overTarget}</dd>
-              </div>
-              <div className="rounded-lg border bg-card p-4">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t("kpiBottlenecks")}
-                </dt>
-                {figures.bottlenecks === null ? (
-                  <dd className="mt-1 text-sm text-foreground" title={t("kpiBottlenecksNotComputedHint")}>
-                    {t("kpiUnqualifiedNotRecorded")}
-                  </dd>
-                ) : (
-                  <dd className="mt-1 text-2xl font-semibold tabular-nums">{figures.bottlenecks}</dd>
-                )}
-              </div>
-            </dl>
+            <KpiStrip>
+              <KpiTile label={t("kpiUnstaffed")} value={figures.unstaffed} />
+              {/* "Not recorded", never 0: a school that has entered no behörighet has not
+                  zero unqualified assignments, it has no answer yet. */}
+              <KpiTile
+                label={t("kpiUnqualified")}
+                value={figures.unqualified}
+                fallback={t("kpiUnqualifiedNotRecorded")}
+                title={figures.unqualified === null ? t("kpiUnqualifiedNotRecordedHint") : undefined}
+              />
+              <KpiTile label={t("kpiOverTarget")} value={figures.overTarget} />
+              <KpiTile
+                label={t("kpiBottlenecks")}
+                value={figures.bottlenecks}
+                fallback={t("kpiUnqualifiedNotRecorded")}
+                title={figures.bottlenecks === null ? t("kpiBottlenecksNotComputedHint") : undefined}
+              />
+            </KpiStrip>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
+          {/* The view toggles are filters on what the matrix shows: a FilterBar,
+              each TabsList named by its aria-label. */}
+          <FilterBar>
             {predecessor ? (
               <Tabs value={view} onValueChange={(value) => setView(value as PageView)}>
                 <TabsList aria-label={t("compare.toggle")}>
@@ -405,9 +386,9 @@ export default function StaffingPage() {
                 </Tabs>
               </>
             ) : null}
-          </div>
+          </FilterBar>
           {view === "matrix" ? (
-            <p className="text-xs text-foreground">
+            <p className="text-xs text-muted-foreground">
               {week === "peak" ? t("weekHintPeak") : t("weekHintStandard")}
               {unit === "percent"
                 ? ` ${t(report.loadModel === "FACTOR" ? "unitHintPercentFactor" : "unitHintPercent")}`
@@ -416,7 +397,7 @@ export default function StaffingPage() {
           ) : null}
 
           {view === "compare" && predecessor ? (
-            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <Suspense fallback={<Skeleton className="h-48 w-full" aria-busy="true" />}>
               <YearComparison
                 thisYear={{ name: activeYear.name, teachers: report.teachers }}
                 predecessor={predecessor}
@@ -424,7 +405,7 @@ export default function StaffingPage() {
               />
             </Suspense>
           ) : report.teachers.length === 0 ? (
-            <EmptyState icon={Users} title={tCommon("noResults")} description={t("empty")} />
+            <EmptyState icon={Users} title={t("emptyTitle")} description={t("empty")} headingLevel={2} />
           ) : (
             <StaffingMatrix
               report={report}
@@ -443,8 +424,13 @@ export default function StaffingPage() {
           <BottlenecksPanel report={report} />
 
           {settingsOpen ? <StaffingPolicyCard /> : null}
-        </div>
+        </>
       )}
+
+      {/* The manual's chain forward: who teaches is set, now when they can. */}
+      <div className="flex justify-end">
+        <NextStep href="/admin/constraints" name={tNav("constraints")} />
+      </div>
 
       {carryOpen && activeYear ? (
         <Suspense fallback={null}>
@@ -506,6 +492,6 @@ export default function StaffingPage() {
           />
         </Suspense>
       ) : null}
-    </div>
+    </Page>
   );
 }

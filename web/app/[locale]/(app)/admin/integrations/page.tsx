@@ -26,7 +26,9 @@
 import { Suspense, lazy, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { MessageLookup } from "@/lib/engine-message";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProvisioningCard } from "./provisioning-card";
@@ -41,13 +43,16 @@ const KeysTab = lazy(() => import("./keys-tab").then((module) => ({ default: mod
 export default function IntegrationsPage() {
   const t = useTranslations("integrations");
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
-  const tCommon = useTranslations("common");
   const source = useSs12000Source();
   const [tab, setTab] = useState("source");
   const [keysOpened, setKeysOpened] = useState(false);
 
+  // The gateway's reason in the reader's words when it gave one, and always
+  // what did not happen: a failed read changes nothing in the school.
+  const reason = source.isError ? errorText(tErrors, source.error, "") : "";
+
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <Page width="wide">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
       <Tabs
         value={tab}
@@ -55,17 +60,24 @@ export default function IntegrationsPage() {
           setTab(value);
           if (value === "keys") setKeysOpened(true);
         }}
+        className="space-y-4"
       >
-        <TabsList>
+        <TabsList aria-label={t("tabsLabel")}>
           <TabsTrigger value="source">{t("tabSource")}</TabsTrigger>
           <TabsTrigger value="keys">{t("tabKeys")}</TabsTrigger>
         </TabsList>
         <TabsContent value="source" className="space-y-4">
-          {source.isLoading ? <Skeleton className="h-64 w-full" /> : null}
+          {source.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-64 w-full" />
+            </div>
+          ) : null}
           {source.isError ? (
-            <p role="alert" className="text-sm">
-              {errorText(tErrors, source.error, tCommon("error"))}
-            </p>
+            <LoadError
+              title={t("loadFailed")}
+              hint={reason ? `${reason} ${t("loadFailedHint")}` : t("loadFailedHint")}
+              headingLevel={2}
+            />
           ) : null}
           {source.isSuccess ? (
             <>
@@ -81,11 +93,17 @@ export default function IntegrationsPage() {
           ) : null}
         </TabsContent>
         <TabsContent value="keys" forceMount={keysOpened ? true : undefined} hidden={tab !== "keys"}>
-          <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <Suspense
+            fallback={
+              <div aria-busy="true">
+                <Skeleton className="h-64 w-full" />
+              </div>
+            }
+          >
             <KeysTab />
           </Suspense>
         </TabsContent>
       </Tabs>
-    </div>
+    </Page>
   );
 }

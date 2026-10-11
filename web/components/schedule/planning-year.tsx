@@ -7,10 +7,10 @@
  */
 
 import { useTranslations } from "next-intl";
-import { Users } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import type { AcademicYear, YearRosters } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 
 /**
  * This year, or next year before its activation: two buttons, one pressed.
@@ -32,7 +32,7 @@ export function PlanningYearPicker({
   active: AcademicYear | null;
   successor: AcademicYear | null;
   onChoose: (yearId: string) => void;
-  /** Spacing from the page: it sits in a header's actions on one page and in a row of its own on another. */
+  /** Extra classes on the group; the page's own rhythm spaces it (both pages put it in the header's actions). */
   className?: string;
 }) {
   const t = useTranslations("planningYear");
@@ -80,25 +80,13 @@ export function ProjectedRostersBanner({
   const t = useTranslations("planningYear");
   if (!year || !active) return null;
   if (failed) {
-    return (
-      <p
-        role="alert"
-        className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
-      >
-        {t("rostersFailed", { year: year.name })}
-      </p>
-    );
+    return <Notice tone="destructive">{t("rostersFailed", { year: year.name })}</Notice>;
   }
   if (rosters?.basis !== "PROJECTED") return null;
   const { missing, stale } = rosters.membershipsOutOfDate;
   return (
-    <div
-      role="status"
-      className="mb-4 flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm"
-    >
-      <Users className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+    <Notice title={t("bannerTitle", { year: year.name })}>
       <div className="space-y-1">
-        <p className="font-medium">{t("bannerTitle", { year: year.name })}</p>
         <p>
           {t("bannerBody", {
             year: year.name,
@@ -107,11 +95,11 @@ export function ProjectedRostersBanner({
           })}
         </p>
         {missing + stale > 0 ? <p>{t("bannerMemberships", { missing, stale })}</p> : null}
-        <p className="text-muted-foreground">{t("bannerChanges", { active: active.name })}</p>
+        <p>{t("bannerChanges", { active: active.name })}</p>
         <Link href="/admin/years" className="underline underline-offset-4">
           {t("bannerLink", { active: active.name })}
         </Link>
       </div>
-    </div>
+    </Notice>
   );
 }

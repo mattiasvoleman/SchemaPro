@@ -56,6 +56,7 @@ export function RolloverGroupsStep({
   form,
   update,
   sourceGroups,
+  sourceName,
   resolved,
   defaults,
   collisions,
@@ -64,6 +65,8 @@ export function RolloverGroupsStep({
   form: RolloverFormState;
   update: (patch: Partial<RolloverFormState>) => void;
   sourceGroups: StudentGroup[];
+  /** The läsår rolled from, for the table's name. */
+  sourceName: string;
   resolved: ResolvedGroup[];
   defaults: ResolvedGroup[];
   collisions: NameCollision[];
@@ -106,7 +109,10 @@ export function RolloverGroupsStep({
       {sourceGroups.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("noGroups")}</p>
       ) : (
+        // Inside the step's card, so no frame of its own (a card in a card);
+        // the caption names it for a screen reader all the same.
         <Table>
+          <caption className="sr-only">{t("groupsTableCaption", { name: sourceName })}</caption>
           <TableHeader>
             <TableRow>
               <TableHead>{t("colGroup")}</TableHead>
@@ -236,7 +242,7 @@ function GroupFlags({
   return (
     <div className="mt-1 flex flex-wrap gap-1">
       {flags.map((flag) => (
-        <Badge key={flag.key} variant={flag.variant} className="text-[10px]">
+        <Badge key={flag.key} variant={flag.variant}>
           {flag.text}
         </Badge>
       ))}
