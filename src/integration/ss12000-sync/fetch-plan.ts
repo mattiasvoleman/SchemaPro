@@ -2,6 +2,7 @@ import type { Ss12000Client, Query } from './client';
 import { Ss12000SourceError } from './errors';
 import {
   DELETED_ENTITY_TYPES,
+  activeOn,
   RELATIONSHIP_TYPES,
   parseDeletedEntities,
   parseDuty,
@@ -48,6 +49,17 @@ import {
  * guardian is newly attached, or a group names somebody outside the
  * fetched set.
  *
+ * In an INCREMENTAL run that includes a LINKED person a fetched group names
+ * as an active member. groupMemberships belong to Group in S1, so moving a
+ * pupil from 7B to 7A modifies the two groups and not the Person: without
+ * the pupil's record the diff cannot tell an active pupil from a former one,
+ * would drop the move, and the cursor would pass it until the next FULL run.
+ *
+ * A FULL run whose lookup is refused goes on without those people and says
+ * so: SS12000_LOOKUP_REFUSED in the run's errors, with how many ids stayed
+ * unresolved (lookupRefused / unresolved), so a run log full of
+ * RESPONSIBLE_NOT_PROVISIONED does not read as a source with no guardians.
+ *
  * If the provider refuses an incremental filter (HTTP 400 on
  * meta.modified.after or /deletedEntities) or the lookup, the run starts
  * over FULL and says so (incrementalUnsupported), so later runs are FULL.
@@ -83,6 +95,8 @@ export interface FetchedRoster {
   duties: S1Duty[];
   deleted: S1DeletedEntities | null;
   invalid: InvalidRecord[];
+  /** A FULL run's /persons/lookup was refused; `unresolved` ids were never read. */
+  lookup: { refused: boolean; unresolved: number };
 }
 
 const LOOKUP_BATCH = 500;
@@ -127,6 +141,7 @@ async function fetchOnce(client: Ss12000Client, input: FetchPlanInput, mode: 'FU
     duties: [],
     deleted: null,
     invalid: [],
+    lookup: { refused: false, unresolved: 0 },
   };
   const addPersons = (raw: unknown[], into?: Set<string>) => {
     for (const item of raw) {
@@ -225,8 +240,17 @@ async function fetchOnce(client: Ss12000Client, input: FetchPlanInput, mode: 'FU
     for (const responsible of person.responsibles) referenced.add(responsible.personId);
   }
   for (const duty of roster.duties) if (duty.personId) referenced.add(duty.personId);
-  for (const group of roster.groups) for (const membership of group.memberships) referenced.add(membership.personId);
-  const missing = [...referenced].filter((id) => !roster.persons.has(id) && !input.linkedPersonIds.has(id)).sort();
+  // Linked people too, when a changed group names them as active members.
+  const members = new Set<string>();
+  for (const group of roster.groups) {
+    for (const membership of group.memberships) {
+      referenced.add(membership.personId);
+      if (incremental && activeOn(input.today, membership.startDate, membership.endDate)) members.add(membership.personId);
+    }
+  }
+  const missing = [...referenced]
+    .filter((id) => !roster.persons.has(id) && (!input.linkedPersonIds.has(id) || members.has(id)))
+    .sort();
   for (let at = 0; at < missing.length; at += LOOKUP_BATCH) {
     const batch = missing.slice(at, at + LOOKUP_BATCH);
     let found: unknown[];
@@ -235,8 +259,9 @@ async function fetchOnce(client: Ss12000Client, input: FetchPlanInput, mode: 'FU
     } catch (error) {
       const refused = error instanceof Ss12000SourceError && [400, 403, 404, 405, 501].includes(error.status ?? 0);
       if (incremental && refused) throw new RefusedIncremental();
-      if (refused) break;
-      throw error;
+      if (!refused) throw error;
+      roster.lookup = { refused: true, unresolved: missing.length - at };
+      break;
     }
     addPersons(found);
   }

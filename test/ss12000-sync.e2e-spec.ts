@@ -316,6 +316,16 @@ describe('SS12000 sync (e2e)', () => {
       expect(w.changes.find((c) => c['id'] === teacher.id)).toMatchObject({ selected: false, applied: false });
     });
 
+    it('says in the run log when a FULL run could not look people up, and how many', async () => {
+      await configured();
+      provider.faults.refuseLookup = true;
+      provider.world.groups = [s1Group(CLASS, '7A', 'Klass', ORG, [PUPIL, PROTECTED, 'bbbbbbbb-7777-4000-8000-000000000001'])];
+      const run = await runOnce();
+      expect(run.status).toBe('DIFF_READY');
+      expect(run.errors).toEqual(expect.arrayContaining([{ code: 'SS12000_LOOKUP_REFUSED', entity: 'PERSON', externalId: null }]));
+      expect(run.counts.fetch.lookupUnresolved).toBe(1);
+    });
+
     it('records a failed fetch as FETCH_FAILED with its code, writes no diff and moves no cursor', async () => {
       await configured();
       provider.faults.serverError = true;
@@ -402,7 +412,8 @@ describe('SS12000 sync (e2e)', () => {
       );
       await harness.app.get(Ss12000SchedulerService).tick();
       const run = w.runs.find((r) => r['trigger'] === 'SCHEDULED')!;
-      expect(run).toMatchObject({ status: 'DIFF_READY', autoApplied: true });
+      // A partial night says when it wrote (k15): its deactivations read as the sync's.
+      expect(run).toMatchObject({ status: 'DIFF_READY', autoApplied: true, appliedAt: expect.any(Date) });
       const applied = w.changes.filter((c) => c['applied']);
       expect(applied.map((c) => `${c['entity']}:${c['op']}`)).toEqual(['PERSON:UPDATE']);
       expect(w.changes.find((c) => c['op'] === 'DEACTIVATE')).toMatchObject({ applied: false, autoApplicable: false, localId: '10000002-0000-4000-8000-000000000000' });
@@ -421,6 +432,16 @@ describe('SS12000 sync (e2e)', () => {
       expect(w.runs).toEqual([expect.objectContaining({ trigger: 'SCHEDULED', status: 'APPLIED', autoApplied: true })]);
       expect(w.changes).toEqual([expect.objectContaining({ op: 'CONFLICT', conflictCode: 'PERSON_NO_EMAIL', applied: false })]);
       expect(w.source).toMatchObject({ modifiedCursor: expect.any(Date), lastAppliedAt: expect.any(Date) });
+    });
+
+    it('says on the run why a night left everything for the admin (REVIEW_REQUIRED)', async () => {
+      await scheduled(true);
+      // Nobody linked: every change is a create, which only an admin makes.
+      await harness.app.get(Ss12000SchedulerService).tick();
+      expect(w.runs).toEqual([
+        expect.objectContaining({ trigger: 'SCHEDULED', status: 'DIFF_READY', autoApplied: false, autoApplyBlockedReason: 'REVIEW_REQUIRED' }),
+      ]);
+      expect(w.changes.some((c) => c['applied'])).toBe(false);
     });
 
     it('waits with a diff when auto-apply is off', async () => {
@@ -542,6 +563,7 @@ describe('SS12000 sync (e2e)', () => {
       run['basisHash'] = '0'.repeat(64);
       await sync().autoApply(runId!, SCHOOL);
       expect(w.changes.filter((c) => c['runId'] === runId).some((c) => c['applied'])).toBe(false);
+      expect(run['autoApplyBlockedReason']).toBe('STALE');
     });
   });
 
