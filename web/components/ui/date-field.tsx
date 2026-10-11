@@ -373,9 +373,9 @@ export function DateField({
             label ? t("openCalendarFor", { field: label }) : t("openCalendar")
           }
           onClick={() => setOpen((wasOpen) => !wasOpen)}
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input-strong text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <CalendarDays className="h-4 w-4" />
+          <CalendarDays className="size-4" />
         </button>
       </div>
 
@@ -410,7 +410,7 @@ export function DateField({
               onClick={() => stepMonth(-1)}
               className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="size-4" />
             </button>
             <span aria-live="polite" className="text-sm font-medium text-foreground">
               {monthLabel}
@@ -421,7 +421,7 @@ export function DateField({
               onClick={() => stepMonth(1)}
               className="inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="size-4" />
             </button>
           </div>
 

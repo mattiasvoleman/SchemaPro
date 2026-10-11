@@ -396,6 +396,21 @@ describe("DateField", () => {
     });
   });
 
+  describe("the edge it is found by", () => {
+    it("draws the box and the calendar button in the 3:1 field token", () => {
+      // SC 1.4.11. The two sit side by side as one control, so they share the
+      // edge; the hairline border-input measures 1.27:1 on white.
+      renderField();
+      for (const part of [
+        screen.getByRole("textbox"),
+        screen.getByRole("button", { name: /openCalendar/ }),
+      ]) {
+        expect(part).toHaveClass("border-input-strong");
+        expect(part).not.toHaveClass("border-input");
+      }
+    });
+  });
+
   describe("the props the call sites pass", () => {
     it("takes the whole field out of reach when disabled", async () => {
       // Both halves, or the field is disabled in appearance only: the box

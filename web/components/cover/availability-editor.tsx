@@ -14,10 +14,8 @@ import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadError } from "@/components/ui/load-error";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const NATIVE_SELECT =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 /** "Måndag 08:00–16:00" or "2026-10-14 08:00–12:00". */
 export function windowText(window: PoolWindow, dayName: (day: number) => string): string {
@@ -111,15 +109,14 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 [&>*]:min-w-0">
         <div className="space-y-1.5">
           <Label htmlFor="window-kind">{t("windowKind")}</Label>
-          <select
+          <NativeSelect
             id="window-kind"
-            className={NATIVE_SELECT}
             value={kind}
             onChange={(event) => setKind(event.target.value === "date" ? "date" : "weekday")}
           >
             <option value="weekday">{t("kindWeekday")}</option>
             <option value="date">{t("kindDate")}</option>
-          </select>
+          </NativeSelect>
         </div>
         {kind === "date" ? (
           <div className="space-y-1.5">
@@ -129,9 +126,8 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
         ) : (
           <div className="space-y-1.5">
             <Label htmlFor="window-weekday">{t("weekday")}</Label>
-            <select
+            <NativeSelect
               id="window-weekday"
-              className={NATIVE_SELECT}
               value={weekday}
               onChange={(event) => setWeekday(Number(event.target.value))}
             >
@@ -140,7 +136,7 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
                   {dayName(day)}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
         <div className="space-y-1.5">

@@ -45,6 +45,15 @@ describe("Button", () => {
     expect(screen.getByRole("button", { name: "Go" })).toHaveClass("bg-primary", "h-9");
   });
 
+  // `hover:bg-primary/90` faded the fill into the page and took the dark-mode
+  // label to 4.34:1. The hover token is solid, 5.09 / 6.27 (globals-css.test.ts).
+  it("hovers the primary variant to a solid shade, not a fade", () => {
+    render(<Button>Go</Button>);
+    const button = screen.getByRole("button", { name: "Go" });
+    expect(button).toHaveClass("hover:bg-primary-hover");
+    expect(button.className).not.toMatch(/hover:bg-primary\//);
+  });
+
   it("lets a custom className win conflicting utilities via tailwind-merge", () => {
     render(<Button className="px-8">Wide</Button>);
     const button = screen.getByRole("button", { name: "Wide" });

@@ -31,4 +31,11 @@ describe("Textarea", () => {
     expect(textarea).toHaveClass("min-h-[120px]", "rounded-md");
     expect(textarea).not.toHaveClass("min-h-[60px]");
   });
+
+  it("draws its edge in the 3:1 field token, not the hairline", () => {
+    render(<Textarea aria-label="Notes" />);
+    const textarea = screen.getByRole("textbox", { name: "Notes" });
+    expect(textarea).toHaveClass("border-input-strong");
+    expect(textarea).not.toHaveClass("border-input");
+  });
 });
