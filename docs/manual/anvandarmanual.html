@@ -3114,7 +3114,7 @@
       <span class="path">Planering › Personer</span>. Kontrollera var och en och ta bort
       kopplingen där om den ska bort, så att ingen tidigare vårdnadshavare
       fortsätter se barnets schema. Du kan inte tillämpa förrän du har kryssat
-      i att du har sett listan. Har en vårdnadshavare inget barn kvar alls
+      i att du har sett listan. Alla barn i listan visas, hur många de än är. Har en vårdnadshavare inget barn kvar alls
       avaktiveras hen i stället.
     </p>
   </div>
@@ -3127,6 +3127,23 @@
     är fler — måste du bekräfta det särskilt. Det skyddar mot ett register som av misstag svarar utan
     elever. Det du kryssar ur kommer tillbaka vid nästa fulla synk.
     <span class="ui">Kasta diffen</span> ändrar ingenting.
+  </p>
+  <p>
+    Är inget valt, till exempel när synken bara hittade konflikter, heter
+    knappen <span class="ui">Markera som granskad</span>. Då ändras ingenting i
+    skolan, men nästa synk hämtar bara det som ändrats efter den här, och
+    konflikterna visas igen vid nästa fulla synk. <span class="ui">Välj alla
+    visade utom flaggade</span> kryssar i de ändringar som syns i listan, men
+    aldrig en ändring för en person med skyddad identitet eller en ändring med
+    en flagga, som en tjänst för granskning. Dem kryssar du i en och en.
+  </p>
+  <p>
+    Kopplar granskningen en person på e-postadressen och du kryssar ur
+    kopplingen, för att det inte är samma människa, görs ingenting med den
+    personen: inget namnbyte, ingen klass, ingen grupp och ingen
+    vårdnadshavare. Kunde registrets post för en person inte läsas avaktiveras
+    personen inte för det, och så länge någon post saknas avaktiveras ingen
+    automatiskt för att den inte finns i registret.
   </p>
   <p>
     En klass som en synk flyttar en elev till dateras i klasshistoriken med
@@ -3160,7 +3177,13 @@
     e-post, återaktivering, avaktivering av personal, det du själv har ändrat
     sedan förra synken och allt som rör en person med skyddad identitet.
     Skulle natten avaktivera fler än fem personer, eller fler än två procent
-    av de kopplade om det är fler, gör den ingenting alls.
+    av de kopplade om det är fler, gör den ingenting alls. Tillämpar natten
+    ingenting står orsaken i <span class="ui">Synkhistorik</span>: för många
+    avaktiveringar, att skolan ändrades under natten, eller att allt som
+    återstod kräver dig. En natt som tillämpade en del står som
+    <em>Delvis tillämpad</em>. Historiken visar varje synk;
+    <span class="ui">Visa äldre synkar</span> hämtar de tidigare, och varje
+    fel står med sin förklaring.
   </p>
   <div class="check">
     <span class="label">Det registret aldrig lämnar till SchemaPro</span>
