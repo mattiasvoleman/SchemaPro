@@ -169,7 +169,9 @@ export class Ss12000V2Service {
         displayName: model.school.name,
         organisationType: model.ids.organisationType,
         ...(model.ids.schoolUnitCode ? { schoolUnitCode: model.ids.schoolUnitCode } : {}),
-        ...(schoolTypes.length > 0 ? { schoolTypes } : {}),
+        // S1 Organisation.schoolTypes: "Anges endast för organisationselement
+        // typen Skolenhet" — never on the Skola several skolenheter make.
+        ...(schoolTypes.length > 0 && model.ids.organisationType === 'Skolenhet' ? { schoolTypes } : {}),
       },
     ];
   }
@@ -828,9 +830,10 @@ export class Ss12000V2Service {
    * Only lessons of the active and past years' groups (A5.7).
    *
    * teacherExceptions compares the event's teachers with its activity's:
-   * the event's are the SUBSTITUTE rows when the lesson has one (a vikarie
-   * stood in front of the class; a LEAD or ASSISTANT beside it is displaced,
-   * as the staffing reconciliation reads it), else every row. A teacher of
+   * the event's are every CalendarLessonTeachers row. A cover removes only
+   * the leaving teacher's row and adds the vikarie's (assignInTransaction),
+   * so a co-teacher still on the lesson beside a SUBSTITUTE teaches it and
+   * is not reported absent. A teacher of
    * the event but not the activity participates; one of the activity but not
    * the event does not. Only the fact — never a reason, a note or a cause.
    * A teacher without a Duty to reference is left out (A5.6).
@@ -864,8 +867,10 @@ export class Ss12000V2Service {
       const yearId = model.lessonYear(lesson)!;
       const activityId = lesson.masterLessonId ?? parts.pendingKey.get(lesson.id) ?? adhocActivityId(lesson.id);
       const rows = parts.teachers.get(lesson.id) ?? [];
-      const substitutes = rows.filter((row) => row.role === 'SUBSTITUTE').map((row) => row.teacherId);
-      const present = new Set(substitutes.length > 0 ? substitutes : rows.map((row) => row.teacherId));
+      // Every row is a teacher on the lesson: a cover replaces only the
+      // leaving teacher's row (CalendarLessonsService.assignInTransaction),
+      // so a co-teacher beside a substitute still teaches it.
+      const present = new Set(rows.map((row) => row.teacherId));
       const planned = new Set(activityById.get(activityId)?.teacherIds ?? []);
       const teacherExceptions = [
         ...[...present].filter((id) => !planned.has(id)).map((id) => ({ id, participates: true })),
