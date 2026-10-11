@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -13,7 +16,11 @@ import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { AttendanceService, AttendanceReportResult } from './attendance.service';
+import {
+  AttendanceService,
+  AttendanceReportResult,
+  ReportedAbsencesResult,
+} from './attendance.service';
 import { ReportAttendanceDto } from './dto/report-attendance.dto';
 
 /**
@@ -52,5 +59,20 @@ export class AttendanceController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<AttendanceReportResult> {
     return this.attendanceService.reportAttendance(dto, user);
+  }
+
+  /**
+   * `GET /api/v1/attendance/lessons/:lessonId/reported-absences`
+   *
+   * The pupils of the lesson whose absence was reported before it, for the
+   * list to open with them as Anmäld frånvaro. Ids only: a teacher reads no
+   * absence report, and with it no note and no type (20261015120000).
+   */
+  @Get('lessons/:lessonId/reported-absences')
+  async reportedAbsences(
+    @Param('lessonId', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ReportedAbsencesResult> {
+    return this.attendanceService.reportedAbsences(lessonId, user);
   }
 }

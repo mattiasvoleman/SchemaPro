@@ -11034,9 +11034,10 @@ ROLLBACK;
 -- funeral, a hospital visit or a hearing. The admin who decides reads it, and
 -- so do the pupil's guardians and the pupil. No TEACHER reads any row of the
 -- table, not even the pupil's mentor, by any role or join: a teacher learns of
--- granted leave from the full-day AbsenceReports the decision writes
--- ("Approved leave", never the reason), which attendance shows as Anmäld
--- frånvaro. Web and mobile read the table straight through PostgREST, so the
+-- granted leave from the full-day AbsenceReports the decision writes, and only
+-- as app.reported_absences answers them (20261015120000): the pupil and the
+-- times, never the reason, which attendance shows as Anmäld frånvaro. Web
+-- and mobile read the table straight through PostgREST, so the
 -- teacher and the guardian are asserted under `authenticated` as well as under
 -- the API's role.
 -- ---------------------------------------------------------------------------
@@ -11136,7 +11137,8 @@ END $$;
 
 -- 32e: the child's mentor reads no request and no reason, by a count, a join
 -- or a subselect, under the API's role or PostgREST's, and writes none. What
--- they do read is the approved leave's absence, which names no reason.
+-- they do learn is the approved leave's absence, through app.reported_absences
+-- (20261015120000), which names the pupil and no reason.
 SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls32_teacher_sub'))::text, true);
 DO $$
 DECLARE
@@ -11165,8 +11167,10 @@ BEGIN
     RAISE EXCEPTION 'leave: a teacher filed a leave request';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
-  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" = other AND date = DATE '2095-05-04' AND note = 'Approved leave';
-  IF n <> 1 THEN RAISE EXCEPTION 'leave: a teacher reads % absence(s) of the approved leave, not its one', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports";
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: a teacher reads % absence report(s) directly', n; END IF;
+  SELECT count(*) INTO n FROM app.reported_absences(DATE '2095-05-04') WHERE "studentId" = other AND "startTime" IS NULL AND "endTime" IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'leave: a teacher learns % full-day absence(s) of the approved leave, not its one', n; END IF;
 END $$;
 SET LOCAL ROLE authenticated;
 DO $$
@@ -11191,6 +11195,218 @@ BEGIN
     FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveRequests';
   IF arms IS DISTINCT FROM 'leave_requests_admin_all,leave_requests_guardian_insert,leave_requests_guardian_select,leave_requests_student_insert,leave_requests_student_select' THEN
     RAISE EXCEPTION 'leave: the arms on LeaveRequests are %', arms;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 33: frånvaroanmälningar (AbsenceReports, 20260713170100 and
+-- 20261015120000).
+--
+-- A report's note is what a family wrote to the school when the pupil stayed
+-- home: a fever, but also a hospital visit, a funeral or something at home.
+-- Its type says SICK, APPOINTMENT or OTHER. The admin reads both, and so do the
+-- pupil's guardians and the pupil. No TEACHER reads any row of the table, by
+-- any role, count, join or subselect. What attendance needs, who was reported
+-- absent on a day and between which times, a TEACHER asks of
+-- app.reported_absences, which answers those three columns and is the API's
+-- alone. Web and mobile read the table straight through PostgREST, so the
+-- teacher and the guardian are asserted under `authenticated` as well as under
+-- the API's role.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- 33a: the second school's report, written by its own admin on the same day.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE pupil uuid;
+BEGIN
+  SELECT id INTO pupil FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000002';
+  IF pupil IS NULL THEN RAISE EXCEPTION 'absence: the second school has no pupil to plant on'; END IF;
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (app.current_school_id(), pupil, app.current_user_id(), DATE '2095-06-01', 'SICK', 'rls33 b-skolans anteckning');
+END $$;
+
+-- 33b: the primary school's admin reports another pupil away for a morning,
+-- and reads every note of the school and none of another.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  child uuid; other uuid; teacher uuid; n bigint; r text;
+BEGIN
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs JOIN "Users" g ON g.id = gs."guardianId"
+   WHERE g."authId" = '00000000-0000-4000-8000-000000000004' ORDER BY gs."studentId" LIMIT 1;
+  SELECT id INTO other FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND id <> child ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  IF child IS NULL OR other IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'absence: the primary school lacks the guardian''s child, another pupil or a teacher';
+  END IF;
+  IF (SELECT "authId" FROM "Users" WHERE id = child) IS NULL THEN RAISE EXCEPTION 'absence: the guardian''s child cannot sign in'; END IF;
+
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, "startTime", "endTime", type, note)
+  VALUES (school, other, app.current_user_id(), DATE '2095-06-01', TIME '08:00', TIME '10:00', 'APPOINTMENT', 'rls33 läkarbesök');
+
+  SELECT note INTO r FROM "AbsenceReports" WHERE "studentId" = other AND date = DATE '2095-06-01';
+  IF r IS DISTINCT FROM 'rls33 läkarbesök' THEN RAISE EXCEPTION 'absence: the admin reads the note %', coalesce(r, 'NULL'); END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: the admin reads % report(s) of another school', n; END IF;
+
+  PERFORM set_config('app.test_rls33_child', child::text, true);
+  PERFORM set_config('app.test_rls33_other', other::text, true);
+  PERFORM set_config('app.test_rls33_child_sub', (SELECT "authId"::text FROM "Users" WHERE id = child), true);
+  PERFORM set_config('app.test_rls33_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
+END $$;
+
+-- 33c: the guardian reports their child sick through PostgREST's role, as the
+-- app does, and reads the report with its note under either role, and nobody
+-- else's. They cannot call the teacher's function, and under the API's role it
+-- answers them nothing.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE child uuid := current_setting('app.test_rls33_child')::uuid; n bigint; r text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'absence: expected the GUARDIAN'; END IF;
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (app.current_school_id(), child, app.current_user_id(), DATE '2095-06-01', 'SICK', 'rls33 feber');
+  SELECT note INTO r FROM "AbsenceReports" WHERE "studentId" = child AND date = DATE '2095-06-01';
+  IF r IS DISTINCT FROM 'rls33 feber' THEN RAISE EXCEPTION 'absence: through PostgREST''s role the guardian reads the note %', coalesce(r, 'NULL'); END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" <> child;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: through PostgREST''s role the guardian reads % report(s) of another pupil', n; END IF;
+  BEGIN
+    PERFORM app.reported_absences(DATE '2095-06-01');
+    RAISE EXCEPTION 'absence: authenticated may call app.reported_absences';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+DO $$
+DECLARE child uuid := current_setting('app.test_rls33_child')::uuid; n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" = child AND note = 'rls33 feber' AND type = 'SICK';
+  IF n <> 1 THEN RAISE EXCEPTION 'absence: the guardian reads % of their child''s one report', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" <> child;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: the guardian reads % report(s) of another pupil', n; END IF;
+  SELECT count(*) INTO n FROM app.reported_absences(DATE '2095-06-01');
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: app.reported_absences answers a GUARDIAN % row(s)', n; END IF;
+END $$;
+
+-- 33d: the pupil reads their own report with its note and nobody else's; the
+-- function answers a STUDENT nothing.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls33_child_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'absence: expected the STUDENT'; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" = app.current_user_id() AND note = 'rls33 feber';
+  IF n <> 1 THEN RAISE EXCEPTION 'absence: the pupil reads % of their own one report', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" <> app.current_user_id();
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: the pupil reads % report(s) of somebody else', n; END IF;
+  SELECT count(*) INTO n FROM app.reported_absences(DATE '2095-06-01');
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: app.reported_absences answers a STUDENT % row(s)', n; END IF;
+END $$;
+
+-- 33e: a teacher of the school reads no report, no note and no type, by a
+-- count, a join or a subselect, under the API's role or PostgREST's, and
+-- writes none. Through the function they read who is away that day and when:
+-- the child all day, the other pupil 08:00-10:00, and nobody of another school.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls33_teacher_sub'))::text, true);
+DO $$
+DECLARE
+  child uuid := current_setting('app.test_rls33_child')::uuid;
+  other uuid := current_setting('app.test_rls33_other')::uuid;
+  n bigint; seen text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'absence: expected a TEACHER'; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports";
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: a teacher reads % absence report(s)', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE note IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: a teacher reads % note(s)', n; END IF;
+  SELECT count(*) INTO n FROM "Users" u JOIN "AbsenceReports" a ON a."studentId" = u.id;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: a teacher reaches % report(s) through a pupil', n; END IF;
+  SELECT count(*) INTO n FROM "Users" u
+   WHERE EXISTS (SELECT 1 FROM "AbsenceReports" a WHERE a."studentId" = u.id AND a.type = 'SICK');
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: a teacher learns who is off sick through a subselect'; END IF;
+
+  SELECT string_agg(r."studentId"::text || ' ' || coalesce(r."startTime"::text, '-') || '-' || coalesce(r."endTime"::text, '-'), ',' ORDER BY r."studentId"::text) INTO seen
+    FROM app.reported_absences(DATE '2095-06-01') r;
+  IF seen IS DISTINCT FROM (SELECT string_agg(s, ',' ORDER BY s) FROM (VALUES (child::text || ' ---'), (other::text || ' 08:00:00-10:00:00')) v(s)) THEN
+    RAISE EXCEPTION 'absence: through the function a teacher reads %', coalesce(seen, 'nothing');
+  END IF;
+  SELECT count(*) INTO n FROM app.reported_absences(DATE '2095-06-02');
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: the function answers % row(s) of another day', n; END IF;
+
+  UPDATE "AbsenceReports" SET note = 'rls33 lärarens' WHERE "studentId" IN (child, other);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: a teacher rewrote % report(s)', n; END IF;
+  DELETE FROM "AbsenceReports" WHERE "studentId" IN (child, other);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: a teacher deleted % report(s)', n; END IF;
+  BEGIN
+    INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type)
+    VALUES (app.current_school_id(), child, app.current_user_id(), DATE '2095-06-03', 'OTHER');
+    RAISE EXCEPTION 'absence: a teacher filed an absence report';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'absence: expected a TEACHER'; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports";
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: through PostgREST''s role a teacher reads % absence report(s)', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE note IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: through PostgREST''s role a teacher reads % note(s)', n; END IF;
+  SELECT count(*) INTO n FROM "Users" u WHERE EXISTS (SELECT 1 FROM "AbsenceReports" a WHERE a."studentId" = u.id);
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: through PostgREST''s role a teacher learns who is away through a subselect'; END IF;
+  BEGIN
+    PERFORM app.reported_absences(DATE '2095-06-01');
+    RAISE EXCEPTION 'absence: through PostgREST''s role a teacher may call app.reported_absences';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+-- 33f: the second school's teacher reads its own pupil's absence through the
+-- function and none of the primary school's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000001')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'absence: expected the second school''s TEACHER'; END IF;
+  SELECT count(*) INTO n FROM app.reported_absences(DATE '2095-06-01') r
+    JOIN "Users" u ON u.id = r."studentId" AND u."authId" = '00000000-0000-4000-8000-000000000002';
+  IF n <> 1 THEN RAISE EXCEPTION 'absence: the second school''s teacher reads % of its pupil''s one absence', n; END IF;
+  SELECT count(*) INTO n FROM app.reported_absences(DATE '2095-06-01');
+  IF n <> 1 THEN RAISE EXCEPTION 'absence: the second school''s teacher reads % absence(s), not its one', n; END IF;
+END $$;
+
+-- 33g: the catalogue. Exactly these arms, and a function that answers three
+-- columns, runs as its owner and is the API's alone.
+DO $$
+DECLARE arms text; fn text := 'app.reported_absences(date)'; r text;
+BEGIN
+  SELECT string_agg(policyname, ',' ORDER BY policyname) INTO arms
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'AbsenceReports';
+  IF arms IS DISTINCT FROM 'absence_reports_admin_all,absence_reports_guardian_insert,absence_reports_guardian_select,'
+                           'absence_reports_reporter_delete,absence_reports_student_insert,absence_reports_student_select' THEN
+    RAISE EXCEPTION 'absence: the arms on AbsenceReports are %', arms;
+  END IF;
+  IF pg_get_function_result(fn::regprocedure) IS DISTINCT FROM
+     'TABLE("studentId" uuid, "startTime" time without time zone, "endTime" time without time zone)' THEN
+    RAISE EXCEPTION 'absence: app.reported_absences answers %', pg_get_function_result(fn::regprocedure);
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'absence: % is not SECURITY DEFINER', fn; END IF;
+  IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'absence: the API may not call %', fn; END IF;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'absence: % may call %', r, fn;
+    END IF;
+  END LOOP;
+  IF (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) LIKE '%{=X/%' OR (SELECT proacl::text FROM pg_proc WHERE oid = fn::regprocedure) LIKE '%,=X/%' THEN
+    RAISE EXCEPTION 'absence: PUBLIC may call %', fn;
   END IF;
 END $$;
 ROLLBACK;

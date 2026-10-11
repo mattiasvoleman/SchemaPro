@@ -825,6 +825,23 @@ export function useLessonAttendance(calendarLessonId: string) {
   });
 }
 
+/**
+ * The lesson's pupils whose absence was reported before it, as ids. From the
+ * gateway, not from PostgREST: a teacher reads no AbsenceReports row, and
+ * with it no note and no type (20261015120000). The gateway answers only for
+ * a lesson the teacher is assigned to and decides coverage in the school's
+ * timezone, the same rule as the guardian alert.
+ */
+export function useLessonReportedAbsences(calendarLessonId: string) {
+  return useQuery({
+    queryKey: ["lessonReportedAbsences", calendarLessonId],
+    queryFn: () =>
+      api.get<{ studentIds: string[] }>(
+        `/api/v1/attendance/lessons/${calendarLessonId}/reported-absences`,
+      ),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Mutations — through the NestJS gateway.
 // ---------------------------------------------------------------------------
