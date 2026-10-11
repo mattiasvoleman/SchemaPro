@@ -58,6 +58,7 @@ describe('applyChanges', () => {
   });
 
   it('skips a change whose dependency was not applied (its create deselected), and applies the rest', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(2), ss12000Id: ext(2) }]);
     const move = change({ entity: 'CLASS_MEMBERSHIP', op: 'MOVE', externalId: ext(1), after: { groupExternalId: ext(70) } });
     const add = change({ entity: 'RESPONSIBLE', op: 'ADD', externalId: ext(1), localId: loc(1), after: { guardianExternalId: ext(10) } });
     const name = change({ entity: 'PERSON', op: 'UPDATE', localId: loc(2), externalId: ext(2), after: { firstName: 'A', lastName: 'B' } });
@@ -70,13 +71,35 @@ describe('applyChanges', () => {
   });
 
   it('links to rows already linked before the apply, read from the database', async () => {
-    tx.user.findMany.mockResolvedValue([{ id: loc(10), ss12000Id: ext(10) }]);
+    tx.user.findMany.mockResolvedValue([{ id: loc(10), ss12000Id: ext(10) }, { id: loc(1), ss12000Id: ext(1) }]);
     const add = change({ entity: 'RESPONSIBLE', op: 'ADD', externalId: ext(1), localId: loc(1), after: { guardianExternalId: ext(10), guardianLocalId: null } });
     await run([add]);
     expect(tx.guardianStudent.createMany).toHaveBeenCalledWith({
       data: [{ schoolId: SCHOOL, guardianId: loc(10), studentId: loc(1), origin: 'SS12000' }],
       skipDuplicates: true,
     });
+  });
+
+  it('writes nothing to the row a deselected LINK matched, whatever local ids the dependants carry', async () => {
+    // k3: the admin deselected "P5 -> Lisa", "G3 -> another guardian" and
+    // "7C -> local 7C"; the dependants stay selected. Even with local ids in
+    // them (as a diff before this rule wrote), none may reach those rows.
+    const name = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(5), localId: loc(1), after: { firstName: 'Per', lastName: 'Fem' } });
+    const guardianName = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(30), localId: loc(2), after: { firstName: 'Gull', lastName: 'Fem' } });
+    const move = change({ entity: 'CLASS_MEMBERSHIP', op: 'MOVE', externalId: ext(5), localId: loc(1), after: { groupExternalId: ext(70), groupLocalId: loc(70) } });
+    const member = change({ entity: 'GROUP_MEMBERSHIP', op: 'ADD', externalId: ext(5), localId: loc(1), after: { groupExternalId: ext(71), groupLocalId: loc(71) } });
+    const guardian = change({ entity: 'RESPONSIBLE', op: 'ADD', externalId: ext(5), localId: loc(1), after: { guardianExternalId: ext(30), guardianLocalId: loc(2) } });
+    const dutyLink = change({
+      entity: 'DUTY_LINK', op: 'ADD', externalId: ext(50),
+      after: { personExternalId: ext(31), userLocalId: loc(3), startDate: '2026-08-01', academicYearId: YEAR },
+    });
+    const outcome = await run([name, guardianName, move, member, guardian, dutyLink]);
+    expect(outcome.applied).toEqual([]);
+    expect(outcome.skipped.map((s) => s.code)).toEqual(Array(6).fill('SS12000_DEPENDENCY_NOT_APPLIED'));
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
+    expect(tx.guardianStudent.createMany).not.toHaveBeenCalled();
+    expect(tx.ss12000DutyLink.createMany).not.toHaveBeenCalled();
   });
 
   it('refuses a LINK whose row was linked or deactivated meanwhile (SS12000_TARGET_CHANGED)', async () => {
@@ -91,6 +114,7 @@ describe('applyChanges', () => {
   });
 
   it('deactivates last, never a SCHOOL_ADMIN, and stamps updatedAt with the apply\'s stamp', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(2), ss12000Id: ext(2) }]);
     const off = change({ entity: 'PERSON', op: 'DEACTIVATE', externalId: ext(1), localId: loc(1) });
     const name = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(2), localId: loc(2), after: { firstName: 'A', lastName: 'B' } });
     await run([off, name]);
@@ -129,6 +153,7 @@ describe('applyChanges, op by op', () => {
 
   it('links a group (unless it was linked meanwhile) and renames one', async () => {
     tx.studentGroup.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 }).mockResolvedValue({ count: 1 });
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }]);
     const link = change({ entity: 'GROUP', op: 'LINK', externalId: ext(70), localId: loc(70) });
     const lost = change({ entity: 'GROUP', op: 'LINK', externalId: ext(71), localId: loc(71) });
     const rename = change({ entity: 'GROUP', op: 'UPDATE', externalId: ext(72), localId: loc(72), after: { name: '8B' } });
@@ -173,6 +198,7 @@ describe('applyChanges, op by op', () => {
   });
 
   it('adds a teaching-group member into a group made in the same apply, and skips one with no group', async () => {
+    tx.user.findMany.mockResolvedValue([{ id: loc(1), ss12000Id: ext(1) }, { id: loc(2), ss12000Id: ext(2) }]);
     const createGroup = change({ entity: 'GROUP', op: 'CREATE', externalId: ext(90), after: { name: 'Spanska', kind: 'TEACHING_GROUP', academicYearId: YEAR } });
     const add = change({ entity: 'GROUP_MEMBERSHIP', op: 'ADD', externalId: ext(1), localId: loc(1), after: { groupExternalId: ext(90) } });
     const orphan = change({ entity: 'GROUP_MEMBERSHIP', op: 'ADD', externalId: ext(2), localId: loc(2), after: { groupExternalId: ext(91) } });

@@ -12,10 +12,15 @@ import type { ChangeEntity, ChangeOp } from './diff';
  *   links -> duty links -> deactivations
  *
  * so a pupil created in this apply can be moved into a class created in it,
- * and a guardian linked in it can be linked to a child. References to a row
- * made in the same apply travel as the SOURCE's id and are resolved here;
- * a change whose reference does not resolve (its create was deselected) is
- * skipped with SS12000_DEPENDENCY_NOT_APPLIED and stays unapplied.
+ * and a guardian linked in it can be linked to a child. A change that
+ * depends on a person or group (a name, a class move, a group member, a
+ * guardian link, a duty link) is resolved ONLY by the SOURCE's id: through
+ * a row linked before this apply, or one this apply links, relinks or
+ * creates. A local id the diff carries is never trusted for it, so when the
+ * admin deselects a LINK ("not the same person"), the row the address
+ * matched gets nothing — no name, no class, no guardian. A change whose
+ * reference does not resolve is skipped with SS12000_DEPENDENCY_NOT_APPLIED
+ * and stays unapplied.
  *
  * Every write follows the column rules today's writers follow:
  *
@@ -84,8 +89,15 @@ export async function applyChanges(
   for (const group of await tx.studentGroup.findMany({ where: { schoolId, ss12000Id: { not: null } }, select: { id: true, ss12000Id: true } })) {
     if (group.ss12000Id) groupByExt.set(group.ss12000Id, group.id);
   }
-  const userOf = (change: StoredChange): string | null =>
-    change.localId ?? (change.externalId ? userByExt.get(change.externalId) ?? null : null);
+  const userOf = (change: StoredChange): string | null => (change.externalId ? userByExt.get(change.externalId) ?? null : null);
+  const groupOf = (change: StoredChange): string | null => {
+    const groupExt = str(change.after?.['groupExternalId']);
+    return groupExt ? groupByExt.get(groupExt) ?? null : null;
+  };
+  const personOf = (key: string) => (change: StoredChange): string | null => {
+    const id = str(change.after?.[key]);
+    return id ? userByExt.get(id) ?? null : null;
+  };
 
   // --- groups ---------------------------------------------------------------
   const groupCreates = of('GROUP', 'CREATE').filter((change) => change.externalId && change.after);
@@ -177,18 +189,25 @@ export async function applyChanges(
     done(change);
   }
 
-  const names = of('PERSON', 'UPDATE').filter((change) => typeof change.after?.['firstName'] === 'string');
+  const names: Array<{ change: StoredChange; userId: string }> = [];
+  for (const change of of('PERSON', 'UPDATE').filter((c) => typeof c.after?.['firstName'] === 'string')) {
+    const userId = userOf(change);
+    if (!userId) {
+      skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
+      continue;
+    }
+    names.push({ change, userId });
+  }
   for (const rows of chunks(names)) {
-    const values = rows
-      .filter((change) => change.localId)
-      .map((change) => Prisma.sql`(${change.localId}::uuid, ${str(change.after!['firstName'])}, ${str(change.after!['lastName'])})`);
-    if (values.length === 0) continue;
+    const values = rows.map(
+      ({ change, userId }) => Prisma.sql`(${userId}::uuid, ${str(change.after!['firstName'])}, ${str(change.after!['lastName'])})`,
+    );
     await tx.$executeRaw(Prisma.sql`
       UPDATE "Users" u
          SET "firstName" = v.first_name, "lastName" = v.last_name, "updatedAt" = ${stamp}
         FROM (VALUES ${Prisma.join(values)}) AS v(id, first_name, last_name)
        WHERE u."id" = v.id AND u."schoolId" = ${schoolId}::uuid AND u."role" <> 'SCHOOL_ADMIN'`);
-    rows.filter((change) => change.localId).forEach(done);
+    rows.forEach(({ change }) => done(change));
   }
   for (const change of of('PERSON', 'UPDATE').filter((c) => typeof c.after?.['email'] === 'string')) {
     if (!change.localId) continue;
@@ -211,8 +230,7 @@ export async function applyChanges(
   const moves: Array<{ change: StoredChange; userId: string; groupId: string }> = [];
   for (const change of of('CLASS_MEMBERSHIP', 'MOVE')) {
     const userId = userOf(change);
-    const groupExt = str(change.after?.['groupExternalId']);
-    const groupId = str(change.after?.['groupLocalId']) ?? (groupExt ? groupByExt.get(groupExt) ?? null : null);
+    const groupId = groupOf(change);
     if (!userId || !groupId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
@@ -233,8 +251,7 @@ export async function applyChanges(
   const memberRows: Array<{ schoolId: string; studentGroupId: string; studentId: string }> = [];
   for (const change of of('GROUP_MEMBERSHIP', 'ADD')) {
     const userId = userOf(change);
-    const groupExt = str(change.after?.['groupExternalId']);
-    const groupId = str(change.after?.['groupLocalId']) ?? (groupExt ? groupByExt.get(groupExt) ?? null : null);
+    const groupId = groupOf(change);
     if (!userId || !groupId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
@@ -248,8 +265,7 @@ export async function applyChanges(
   const linkRows: Array<{ schoolId: string; guardianId: string; studentId: string; origin: 'SS12000' }> = [];
   for (const change of of('RESPONSIBLE', 'ADD')) {
     const studentId = userOf(change);
-    const guardianExt = str(change.after?.['guardianExternalId']);
-    const guardianId = str(change.after?.['guardianLocalId']) ?? (guardianExt ? userByExt.get(guardianExt) ?? null : null);
+    const guardianId = personOf('guardianExternalId')(change);
     if (!studentId || !guardianId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
       continue;
@@ -262,8 +278,7 @@ export async function applyChanges(
   // --- duty links -----------------------------------------------------------------
   const dutyRows: Prisma.Ss12000DutyLinkCreateManyInput[] = [];
   for (const change of of('DUTY_LINK', 'ADD')) {
-    const personExt = str(change.after?.['personExternalId']);
-    const userId = str(change.after?.['userLocalId']) ?? (personExt ? userByExt.get(personExt) ?? null : null);
+    const userId = personOf('personExternalId')(change);
     const academicYearId = str(change.after?.['academicYearId']);
     const startDate = str(change.after?.['startDate']);
     if (!userId || !academicYearId || !startDate || !change.externalId) {
@@ -285,8 +300,7 @@ export async function applyChanges(
   }
   for (const rows of chunks(dutyRows)) await tx.ss12000DutyLink.createMany({ data: rows, skipDuplicates: true });
   for (const change of of('DUTY_LINK', 'UPDATE')) {
-    const personExt = str(change.after?.['personExternalId']);
-    const userId = str(change.after?.['userLocalId']) ?? (personExt ? userByExt.get(personExt) ?? null : null);
+    const userId = personOf('personExternalId')(change);
     const startDate = str(change.after?.['startDate']);
     if (!change.localId || !userId || !startDate) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
