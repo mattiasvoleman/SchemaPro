@@ -37,6 +37,23 @@
           "hsl(240 10% 95%)"
         ]
       },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "Indigo Ledger Hover",
+        "canonical": "hsl(243 75% 63%)",
+        "dark": "hsl(243 85% 74%)",
+        "tonalRamp": [
+          "hsl(243 75% 15%)",
+          "hsl(243 75% 25%)",
+          "hsl(243 75% 35%)",
+          "hsl(243 75% 45%)",
+          "hsl(243 75% 55%)",
+          "hsl(243 75% 65%)",
+          "hsl(243 75% 80%)",
+          "hsl(243 75% 95%)"
+        ],
+        "note": "The default Button's hover fill, solid rather than primary/90. primary-foreground on it measures 5.09:1 light and 6.27:1 dark; the old fade fell to 4.34:1 in dark."
+      },
       "accent": {
         "role": "primary",
         "displayName": "Indigo Wash",
@@ -283,7 +300,24 @@
           "hsl(240 6% 80%)",
           "hsl(240 6% 95%)"
         ],
-        "note": "--input 240 6% 90% / 240 6% 18%."
+        "note": "--input 240 6% 90% / 240 6% 18%: the outline Button's edge and the Switch track, 1.27:1 / 1.40:1 on background. Fields draw input-strong."
+      },
+      "input-strong": {
+        "role": "neutral",
+        "displayName": "Field Edge",
+        "canonical": "hsl(240 6% 56%)",
+        "dark": "hsl(240 6% 45%)",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 25%)",
+          "hsl(240 6% 35%)",
+          "hsl(240 6% 45%)",
+          "hsl(240 6% 55%)",
+          "hsl(240 6% 65%)",
+          "hsl(240 6% 80%)",
+          "hsl(240 6% 95%)"
+        ],
+        "note": "The edge of Input, Textarea, SelectTrigger, NativeSelect and DateField (SC 1.4.11). Light 3.49:1 on background and card, 3.18:1 on muted; dark 3.80:1 on background, 3.59:1 on card, 3.07:1 on muted."
       },
       "sidebar": {
         "role": "neutral",
@@ -522,7 +556,7 @@
       "refersTo": "button-primary",
       "description": "The page's one primary action; default Button.",
       "html": "<button class=\"ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M5 12h14M12 5v14\"/></svg>Lägg till klass</button>",
-      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:8px;height:36px;padding:8px 16px;border:0;border-radius:calc(var(--radius) - 2px);background:hsl(var(--primary));color:hsl(var(--primary-foreground));font:500 14px/20px var(--font-sans);box-shadow:0 1px 3px rgb(0 0 0/.1),0 1px 2px -1px rgb(0 0 0/.1);transition:background-color .15s}.ds-btn-primary:hover{background:hsl(var(--primary)/.9)}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}"
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:8px;height:36px;padding:8px 16px;border:0;border-radius:calc(var(--radius) - 2px);background:hsl(var(--primary));color:hsl(var(--primary-foreground));font:500 14px/20px var(--font-sans);box-shadow:0 1px 3px rgb(0 0 0/.1),0 1px 2px -1px rgb(0 0 0/.1);transition:background-color .15s}.ds-btn-primary:hover{background:hsl(var(--primary-hover))}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}"
     },
     {
       "name": "Outline Button",
@@ -538,7 +572,7 @@
       "refersTo": "input",
       "description": "FormField: label, control, hint.",
       "html": "<div class=\"ds-field\"><label class=\"ds-label\" for=\"ds-i\">Namn <span class=\"ds-opt\">(valfritt)</span></label><input id=\"ds-i\" class=\"ds-input\" aria-describedby=\"ds-h\"><p id=\"ds-h\" class=\"ds-hint\">Visas i schemat.</p></div>",
-      "css": ".ds-field{display:grid;gap:6px;max-width:320px}.ds-label{font:500 14px/1 var(--font-sans);color:hsl(var(--foreground))}.ds-opt{font-weight:400;color:hsl(var(--muted-foreground))}.ds-input{height:36px;padding:4px 12px;border:1px solid hsl(var(--input));border-radius:calc(var(--radius) - 2px);background:transparent;color:hsl(var(--foreground));font:400 14px/20px var(--font-sans);box-shadow:0 1px 2px rgb(0 0 0/.05)}.ds-input:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--ring))}.ds-hint{margin:0;font:400 12px/16px var(--font-sans);color:hsl(var(--muted-foreground))}"
+      "css": ".ds-field{display:grid;gap:6px;max-width:320px}.ds-label{font:500 14px/1 var(--font-sans);color:hsl(var(--foreground))}.ds-opt{font-weight:400;color:hsl(var(--muted-foreground))}.ds-input{height:36px;padding:4px 12px;border:1px solid hsl(var(--input-strong));border-radius:calc(var(--radius) - 2px);background:transparent;color:hsl(var(--foreground));font:400 14px/20px var(--font-sans);box-shadow:0 1px 2px rgb(0 0 0/.05)}.ds-input:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--ring))}.ds-hint{margin:0;font:400 12px/16px var(--font-sans);color:hsl(var(--muted-foreground))}"
     },
     {
       "name": "Status Badge",
@@ -592,6 +626,11 @@
       "Light and dark themes from the same HSL tokens; reduced motion honoured app-wide."
     ],
     "rules": [
+      {
+        "name": "The Field Edge Rule",
+        "body": "A text field, select or textarea draws `border-input-strong` through the shared primitive or its exported class (`NATIVE_SELECT_CLASS`), never through a copy of it; `border-input` is only for boxes that a label already identifies.",
+        "section": "colors"
+      },
       {
         "name": "The Ink Stays Foreground Rule",
         "body": "Tinted surfaces (Notice, done Stepper step) keep their text in `foreground`; the tone is carried by the tint, the hairline edge and the icon. Red on its 5% tint measures 4.45:1 and green on its tint 3.45:1, both under AA, so neither is ever the ink. Icons and Badge text use the `-strong` shades.",

@@ -57,6 +57,13 @@ describe("Select", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("draws the trigger's edge in the 3:1 field token, not the hairline", () => {
+    render(<FruitSelect />);
+    const trigger = screen.getByRole("combobox", { name: "Fruit" });
+    expect(trigger).toHaveClass("border-input-strong");
+    expect(trigger).not.toHaveClass("border-input");
+  });
+
   it("opens a listbox with all options on trigger click", async () => {
     const user = userEvent.setup();
     render(<FruitSelect />);

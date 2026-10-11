@@ -34,9 +34,11 @@ import type { AvailabilityConstraint, LessonRecurrence, MasterLesson } from "@/l
  *
  *   What IS asserted below is the half jsdom can see: the class tokens that
  *   decide those ratios. `text-foreground` on the column headers instead of
- *   TableHead's muted default, a visible border on every boxed control instead
- *   of the near-invisible `border-input`, `ring-offset-background` on every
- *   focus ring. Those three are exactly where the claim was silently lost.
+ *   TableHead's muted default, one visible border on every boxed control
+ *   instead of the shared edges (`border-input-strong` on fields, the
+ *   near-invisible `border-input` on the outline button), and
+ *   `ring-offset-background` on every focus ring. Those three are exactly
+ *   where the claim was silently lost.
  *
  *   Reading order in a real screen reader. Not verified in a browser: the route
  *   sits behind a Supabase session and no seeded instance was available. What
@@ -1240,10 +1242,10 @@ describe("Gaps page — structure and operation", () => {
   it("gives every boxed control an edge, and every focus ring a page-coloured offset", () => {
     const { container } = render(<GapsPage />);
 
-    // A select trigger, a time field and an outline button are identified by
-    // their boundary and nothing else. The shared border-input measures
-    // 1.27:1 light / 1.40:1 dark against the page — under SC 1.4.11's 3:1 —
-    // so this page draws its own at 4.83 / 6.54.
+    // A select trigger, a time field and an outline button are boxes. The
+    // shared field edge, border-input-strong, measures 3.49 / 3.80 against the
+    // page, and the outline button's hairline border-input 1.27 / 1.40 — under
+    // SC 1.4.11's 3:1 — so this page draws its own on all three at 4.83 / 6.54.
     for (const name of ["gaps.whoStart", "gaps.whoEnd"]) {
       expect(screen.getByLabelText(name).className, name).toContain(
         "border-muted-foreground",

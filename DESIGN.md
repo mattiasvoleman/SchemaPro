@@ -7,6 +7,7 @@ colors:
   card: "hsl(0 0% 100%)"
   primary: "hsl(243 75% 59%)"
   primary-foreground: "hsl(0 0% 100%)"
+  primary-hover: "hsl(243 75% 63%)"
   muted: "hsl(240 5% 96%)"
   muted-foreground: "hsl(240 4% 46%)"
   accent: "hsl(243 75% 96%)"
@@ -19,6 +20,7 @@ colors:
   warning-foreground: "hsl(32 81% 15%)"
   warning-strong: "hsl(38 92% 33%)"
   border: "hsl(240 6% 90%)"
+  input-strong: "hsl(240 6% 56%)"
   sidebar: "hsl(240 6% 98%)"
   sidebar-foreground: "hsl(240 6% 26%)"
   sidebar-accent: "hsl(243 75% 94%)"
@@ -104,7 +106,7 @@ components:
     height: "36px"
     typography: "{typography.label}"
   button-primary-hover:
-    backgroundColor: "hsl(243 75% 59% / 0.9)"
+    backgroundColor: "{colors.primary-hover}"
   button-outline:
     backgroundColor: "{colors.background}"
     textColor: "{colors.foreground}"
@@ -228,7 +230,8 @@ Two surfaces keep their own look, by owner decision: the sign-in pages under `(a
 A cool neutral ground (hue 240) with one blue-violet accent (hue 243) and three status hues; tokens are HSL channel triplets in `web/app/globals.css`, consumed as `hsl(var(--token))` through `web/tailwind.config.ts`. Dark-theme values live under `.dark` and are listed in the sidecar.
 
 ### Primary
-- **Indigo Ledger** (`primary`): the default Button, the focus ring (`ring` equals primary), `text-primary` links, the current Stepper step, the brand mark's tile. In dark mode it is lifted to 70% lightness so `text-primary` on card measures 4.83:1 (68% failed at 4.37:1).
+- **Indigo Ledger** (`primary`): the default Button, the focus ring (`ring` equals primary), `text-primary` links, the current Stepper step, the brand mark's tile. In dark mode it is lifted to 70% lightness so `text-primary` on card measures 4.83:1 (68% failed at 4.37:1). The Button's label on it measures 6.18:1 light and 5.12:1 dark.
+- **Indigo Ledger Hover** (`primary-hover`): the default Button under the pointer, a solid shade. Light is what `primary/90` painted on white (label 5.09:1); dark lifts the fill to 74% (label 6.27:1), where the old `primary/90` fade let the page through and fell to 4.34:1.
 - **Indigo Wash** (`accent`, `accent-foreground`): the hover fill of outline and ghost buttons; the sidebar uses its own pair (`sidebar-accent`, `sidebar-accent-foreground`) for the active and hovered nav item.
 
 ### Secondary
@@ -241,10 +244,13 @@ A cool neutral ground (hue 240) with one blue-violet accent (hue 243) and three 
 - **Ink** (`foreground`): all running text, Notice text in every tone, table cells.
 - **Fog** (`muted`, also `secondary`): neutral Notice fill, Tabs track, skeletons, empty-state icon disc, group rows at 40%, table row hover at 50%.
 - **Slate Text** (`muted-foreground`): subtitles, descriptions, hints, table heads, KPI labels, decorative icons. 4.83:1, AA, not AAA.
-- **Hairline** (`border`, `input`): every card, table, tile and control edge.
+- **Hairline** (`border`, `input`): every card, table and tile edge, the outline Button's edge and the Switch track. `input` measures 1.27:1 on white and 1.40:1 on the dark page, `border` 1.27:1 and 1.23:1 on card, so both are decoration and never the only sign that a control is there.
+- **Field Edge** (`input-strong`): the edge of every text field, select and textarea: Input, Textarea, SelectTrigger, NativeSelect and DateField (box and calendar button). SC 1.4.11 asks 3:1 of it on every surface a field sits on: light 3.49:1 on background and card, 3.35:1 on sidebar, 3.18:1 on muted; dark 3.80, 3.59, 3.68 and 3.07:1. `web/app/globals-css.test.ts` computes these from the tokens. Not yet on it: the Switch's unchecked track (`bg-input`) and the timplan grid's cell inputs (`border-input`).
 - **Sidebar Mist** (`sidebar`, `sidebar-foreground`, `sidebar-border`): the fixed navigation column.
 
 ### Named Rules
+**The Field Edge Rule.** A text field, select or textarea draws `border-input-strong` through the shared primitive or its exported class (`NATIVE_SELECT_CLASS`), never through a copy of it; `border-input` is only for boxes that a label already identifies.
+
 **The Ink Stays Foreground Rule.** Tinted surfaces (Notice, done Stepper step) keep their text in `foreground`; the tone is carried by the tint, the hairline edge and the icon. Red on its 5% tint measures 4.45:1 and green on its tint 3.45:1, both under AA, so neither is ever the ink. Icons and Badge text use the `-strong` shades.
 
 **The One Meaning Per Colour Rule.** Status colour comes only from `web/lib/status-variants.ts`: success = done, ok, approved, covered, active, applied; warning = needs action (open, draft, under, pending, ongoing); destructive = failed, over, passed, rejected, blocked; secondary = neutral information, handled, upcoming, kinds; outline = inactive or finished (historic, revoked, withdrawn, ended). A draft needs a decision, so it is warning; revoked is finished, so it is outline. Raw palette classes (`amber-*`, `red-*`, …) do not appear in signed-in pages.
@@ -339,7 +345,7 @@ Radius is derived from `--radius` (10px): `rounded-lg` (10px) for cards, table f
 
 ### Forms
 - **FormField:** `space-y-1.5`; a Label `htmlFor` the control; an optional muted "(valfritt)" inside the label; a `text-xs` muted hint and a `text-xs` destructive error, both linked by `aria-describedby`; the error also sets `aria-invalid`. For a Radix Select, the id and aria props go on the SelectTrigger (render-function child).
-- **Controls:** Input and Select are 36px tall, `rounded-md border-input`, `px-3`, text-sm, focus `ring-2 ring-ring`. Radix Select is the default select.
+- **Controls:** Input, Textarea, Select and NativeSelect are 36px tall (Textarea at least 60px), `rounded-md border-input-strong`, `px-3`, text-sm, focus `ring-2 ring-ring`. Radix Select is the default select.
 - **FilterBar:** `flex flex-wrap items-end gap-3` of FilterFields (a visible label above the control). Typical widths: DateField `w-40`, Select `w-44`, SearchField `max-w-sm` with the Search icon inside the left edge. Toolbar-only actions go last with `ml-auto` as outline small buttons; counts sit inline as muted text-sm.
 - **Switch rows:** `flex items-start justify-between gap-4 rounded-md border p-3`.
 - **Pending:** a spinning Loader2 replaces the button's icon and the label says what is happening ("Sparar …"). Results go to a toast; form errors to a destructive Notice inside the form.
@@ -359,7 +365,7 @@ Radius is derived from `--radius` (10px): `rounded-lg` (10px) for cards, table f
 - **Mobile drawer:** a hand-written modal (not Radix, for the shell's byte budget) with `aria-modal`, focus moved to its close button, Tab wrapped inside, Escape to close, and focus returned to the hamburger.
 
 ### Bundle-budget exceptions
-- **NativeSelect** (`NATIVE_SELECT_CLASS`, styled like Input) instead of Radix Select on `/guardian` (phone-first, core tier) and in integrations; the cover dialogs and the availability editor carry their own copy of the same class. Radix Select costs about 15 KB gzipped on a route with no other popover (+8.7 KB measured for YearSelect on /admin/generate), so weigh it before adding a YearSelect to a page with no other Select.
+- **NativeSelect** (`NATIVE_SELECT_CLASS`, styled like Input, the same edge and 2px focus ring) instead of Radix Select on `/guardian` (phone-first, core tier), in integrations, in the cover candidates dialog and in the availability editor. Radix Select costs about 15 KB gzipped on a route with no other popover (+8.7 KB measured for YearSelect on /admin/generate), so weigh it before adding a YearSelect to a page with no other Select.
 - `RowActions`' overflow uses DropdownMenu because it is already in the shell's chunk (the locale switcher).
 - `/guardian` lazy-loads TeachingTimeCard and ChildSchedule with a null fallback, so the absence report never depends on those chunks.
 

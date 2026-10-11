@@ -14,6 +14,12 @@
     --popover-foreground: 240 10% 8%;
     --primary: 243 75% 59%;
     --primary-foreground: 0 0% 100%;
+    /* The default Button's hover fill. It was `bg-primary/90`, a fade toward
+       whatever lies under the button, so its contrast depended on the surface
+       and in dark mode fell under AA (see .dark). A solid shade does not. In
+       light it is what primary/90 painted on white (97,90,231 against
+       98,90,232): primary-foreground on it measures 5.09:1, 6.18:1 at rest. */
+    --primary-hover: 243 75% 63%;
     --secondary: 240 5% 96%;
     --secondary-foreground: 240 6% 10%;
     --muted: 240 5% 96%;
@@ -34,6 +40,13 @@
     --warning-strong: 38 92% 33%;
     --border: 240 6% 90%;
     --input: 240 6% 90%;
+    /* The edge of a text field, select or textarea. WCAG 2.1 SC 1.4.11 asks
+       3:1 of the boundary that tells a reader a control is there, and the
+       hairline --input measures 1.27:1 on white: an empty field had no
+       visible edge. --input stays the hairline of the outline Button, whose
+       label identifies it, and of the Switch track. 56% measures 3.49:1 on
+       background, card and popover, 3.35:1 on sidebar and 3.18:1 on muted. */
+    --input-strong: 240 6% 56%;
     --ring: 243 75% 59%;
     --radius: 0.625rem;
     --sidebar: 240 6% 98%;
@@ -57,6 +70,12 @@
        this value down. */
     --primary: 243 85% 70%;
     --primary-foreground: 240 10% 5%;
+    /* `bg-primary/90` let the near-black page through the fill and took the
+       label to 4.34:1 on --background (4.40:1 on --card), under the 4.5:1
+       AA floor. Hover now lifts the fill away from the label instead: 74%
+       measures 6.27:1, against 5.12:1 at rest. The step from rest to hover
+       is 1.23:1, light's is 1.21:1. */
+    --primary-hover: 243 85% 74%;
     --secondary: 240 6% 14%;
     --secondary-foreground: 240 5% 92%;
     --muted: 240 6% 14%;
@@ -73,6 +92,10 @@
     --warning-strong: 38 92% 55%;
     --border: 240 6% 16%;
     --input: 240 6% 18%;
+    /* --input measures 1.40:1 on background and 1.32:1 on card. 45% measures
+       3.80:1 on background, 3.59:1 on card and popover, 3.68:1 on sidebar
+       and 3.07:1 on muted. */
+    --input-strong: 240 6% 45%;
     --ring: 243 85% 68%;
     --sidebar: 240 8% 7%;
     --sidebar-foreground: 240 5% 70%;

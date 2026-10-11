@@ -33,14 +33,12 @@
 //   focus ring on background       6.18 /  4.63   over SC 1.4.11's 3:1
 //   muted-fg as a control border   4.83 /  6.54   over SC 1.4.11's 3:1
 //   primary-fg on primary          6.18 /  5.12   AA, NOT AAA — at rest
-//   the same pair on :hover        5.31 /  4.34   BELOW AA in dark
+//   primary-fg on primary-hover    5.09 /  6.27   AA, NOT AAA — on :hover
 //
 // So: AAA for every piece of text this page writes, and AA for the two submit
-// buttons AT REST. Their hover state falls to 4.34:1 in dark, under AA's 4.5
-// floor — a real failure, and not one this page can honestly fix alone: it is
-// `bg-primary/90` from the shared Button, so every button in the product paints
-// it. Recorded here rather than rounded away, and worth raising as its own
-// change against components/ui/button.tsx.
+// buttons, at rest and on hover. The hover used to be the shared Button's
+// `bg-primary/90`, a fade into the page that fell to 4.34:1 in dark; the
+// Button now hovers to the solid --primary-hover instead.
 //
 // These buttons are `bg-primary` — the product's brand button. Reaching 7:1
 // there needs --primary at 56% lightness or lower in light and 77% or higher
@@ -59,9 +57,9 @@
 // SectionCard draws before each h2 (4.83 / 6.17 on card; decorative, hidden
 // from assistive tech), and the border this page draws on its own boxed
 // controls (see CONTROL below). That
-// border is ours because the shared `border-input` measures 1.27 / 1.40
-// against the page, under SC 1.4.11's 3:1, which is a control with no visible
-// edge. Product-wide, and older than this page.
+// border was drawn when the shared `border-input` (1.27 / 1.40 against the
+// page, under SC 1.4.11's 3:1) was every control's edge. Fields now draw
+// `border-input-strong` (3.49 / 3.80); the outline Button keeps the hairline.
 //
 // Not claimed: 1.4.8 (measure and line spacing are set, but the app offers no
 // user-chosen colours) and 3.1.5 (reading level never measured). Nothing here
@@ -143,14 +141,15 @@ const WEEK_OPTIONS: LessonRecurrence[] = ["ALL_WEEKS", "ODD_WEEKS", "EVEN_WEEKS"
  * Every control this page owns that is a box rather than a fill: 44px tall,
  * with an edge you can see.
  *
- * The shared `border-input` measures 1.27:1 against the page in light and
- * 1.40:1 in dark — under the 3:1 SC 1.4.11 asks of the boundary that tells a
- * reader a control is there. A select trigger, a time field and an outline
- * button are identified by that boundary and nothing else, so this page draws
- * its own in muted-foreground (4.83 / 6.54). The filled submit buttons are
+ * SC 1.4.11 asks 3:1 of the boundary that tells a reader a control is there.
+ * The product's fields now draw `border-input-strong`, 3.49:1 against the
+ * page in light and 3.80:1 in dark; the outline Button keeps the hairline
+ * `border-input` at 1.27 / 1.40. This page draws one edge of its own on all
+ * three kinds of box (a select trigger, a time field, the outline button), in
+ * muted-foreground (4.83 / 6.54): it predates the shared fix, and it is still
+ * the only visible edge the outline button has. The filled submit buttons are
  * exempt: their own fill is 6.18 / 5.12 against the page, so the shape reads
- * without help. Not fixed in input.tsx / select.tsx / button.tsx, because
- * those three are the form controls of the entire product.
+ * without help.
  */
 const CONTROL = "h-11 border-muted-foreground";
 
