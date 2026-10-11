@@ -79,11 +79,16 @@ const state = vi.hoisted(() => ({
   employments: [] as unknown[],
   qualifications: [] as unknown[],
   duties: [] as unknown[],
+  studentGuardians: [] as unknown[],
+  /** The guardian links' read: loading or failed, for the dialog's state ladder. */
+  guardiansLoading: false,
+  guardiansFailed: false,
 }));
 
-const { saveEmployment, createPerson } = vi.hoisted(() => ({
+const { saveEmployment, createPerson, unlinkGuardian } = vi.hoisted(() => ({
   saveEmployment: vi.fn(),
   createPerson: vi.fn(),
+  unlinkGuardian: vi.fn(),
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -103,10 +108,15 @@ vi.mock("@/lib/queries", () => ({
   }),
   useRequirements: () => ({ data: requirements }),
   useSubjects: () => ({ data: [{ id: "sub-ma", name: "Matematik", code: "MA", color: "#123456", requiredRoomTypeId: null }] }),
-  useStudentGuardians: () => ({ data: [] }),
+  useStudentGuardians: () =>
+    state.guardiansLoading || state.guardiansFailed
+      ? { data: undefined, isLoading: state.guardiansLoading, isError: state.guardiansFailed }
+      : { data: state.studentGuardians, isLoading: false, isError: false },
+  // The hook's own two mutations, link and unlink (lib/queries.ts); the mock
+  // named them create and remove before the unlink read its pending state.
   useGuardianLinkActions: () => ({
-    create: { mutateAsync: vi.fn(), isPending: false },
-    remove: { mutateAsync: vi.fn(), isPending: false },
+    link: { mutateAsync: vi.fn(), isPending: false },
+    unlink: { mutateAsync: unlinkGuardian, isPending: false },
   }),
   useInvitations: () => ({
     inviteOne: { mutateAsync: vi.fn(), isPending: false },
@@ -164,7 +174,17 @@ const rowNames = () =>
     .slice(1)
     .map((row) => within(row).getAllByRole("cell")[0]?.textContent ?? "");
 
-const searchBox = () => screen.getByRole("textbox", { name: "searchPlaceholder" });
+/**
+ * The search is a labelled type=search field (a searchbox) since the 2026-10-11
+ * overhaul, named by its visible label rather than a placeholder.
+ */
+const searchBox = () => screen.getByRole("searchbox", { name: "searchLabel" });
+
+/**
+ * A row's edit button, named after its person: the row actions say whom they
+ * act on (2026-10-11), where every one used to read just "Redigera".
+ */
+const editButton = (name: string) => screen.getByRole("button", { name: `editNamed(${name})` });
 
 describe("People page", () => {
   beforeEach(() => {
@@ -173,7 +193,11 @@ describe("People page", () => {
     state.employments = [];
     state.qualifications = [];
     state.duties = [];
+    state.studentGuardians = [];
+    state.guardiansLoading = false;
+    state.guardiansFailed = false;
     saveEmployment.mockResolvedValue(undefined);
+    unlinkGuardian.mockResolvedValue(undefined);
     createPerson.mockResolvedValue({ id: "t-new" });
   });
 
@@ -181,6 +205,34 @@ describe("People page", () => {
     render(<PeoplePage />);
 
     expect(rowNames()).toHaveLength(4);
+  });
+
+  it("keeps every row action an icon on the row, the envelope included, with delete last", () => {
+    // The manual sends the reader to the envelope on the row to invite one
+    // person; before the 2026-10-11 overhaul every action was an icon, and a
+    // teacher's four (edit, working time, invitation, delete) still are.
+    render(<PeoplePage />);
+
+    const row = screen.getAllByRole("row").find((candidate) => candidate.textContent?.includes("karin@skolan.se"))!;
+    const buttons = within(row).getAllByRole("button").filter((button) => button.getAttribute("aria-expanded") === null);
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "editNamed(Karin Ek)",
+      "editFor(Karin Ek)",
+      "resendInvitationTo(Karin Ek)",
+      "deleteNamed(Karin Ek)",
+    ]);
+    expect(within(row).queryByRole("button", { name: /moreActionsFor/ })).not.toBeInTheDocument();
+    // A pupil's row: edit, guardians, the invitation, delete — all in sight too.
+    const pupil = screen.getAllByRole("row").find((candidate) => candidate.textContent?.includes("alma@skolan.se"))!;
+    expect(within(pupil).getByRole("button", { name: "sendInvitationTo(Alma Berg)" })).toBeInTheDocument();
+    expect(within(pupil).queryByRole("button", { name: /moreActionsFor/ })).not.toBeInTheDocument();
+  });
+
+  it("lets the role tabs wrap on a phone rather than widen the page", () => {
+    // Five roles in one pill are 418 px, past a 390 px screen's content box.
+    render(<PeoplePage />);
+
+    expect(screen.getByRole("tablist", { name: "role" })).toHaveClass("flex-wrap", "h-auto");
   });
 
   it("opens a pupil's guardians from ?guardians=, as the SS12000 review links them, and nobody else's", async () => {
@@ -197,6 +249,60 @@ describe("People page", () => {
     } finally {
       window.history.replaceState(null, "", "/");
     }
+  });
+
+  it("asks before unlinking a guardian, and unlinks only that link once confirmed", async () => {
+    state.studentGuardians = [
+      {
+        id: "link-1",
+        guardianId: "g-1",
+        studentId: "st-1",
+        guardian: { id: "g-1", firstName: "Eva", lastName: "Berg", email: "eva@hem.se" },
+      },
+    ];
+    window.history.replaceState(null, "", "/sv/admin/people?guardians=st-1");
+    try {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+      await screen.findByRole("dialog");
+      await user.click(screen.getByRole("button", { name: "unlinkGuardian(Eva Berg)" }));
+
+      // Nothing is sent on the first click: the confirmation says what the
+      // guardian loses.
+      expect(unlinkGuardian).not.toHaveBeenCalled();
+      expect(await screen.findByText("unlinkTitle(Eva Berg)")).toBeInTheDocument();
+      expect(screen.getByText("unlinkBody(Eva Berg|Alma Berg)")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "unlinkConfirm" }));
+      expect(unlinkGuardian).toHaveBeenCalledWith("link-1");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("says a pupil has no guardians only once the links have been read", async () => {
+    state.guardiansFailed = true;
+    window.history.replaceState(null, "", "/sv/admin/people?guardians=st-1");
+    try {
+      render(<PeoplePage />);
+      const dialog = await screen.findByRole("dialog");
+
+      // A failed read is not "Inga vårdnadshavare": it says so, and no
+      // empty list is drawn.
+      expect(within(dialog).getByRole("alert")).toHaveTextContent("guardiansLoadFailed");
+      expect(within(dialog).queryByText("guardiansEmpty")).toBeNull();
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("says a search that matches nobody is a miss, not an empty school", async () => {
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+
+    await user.type(searchBox(), "finns inte");
+
+    expect(screen.getByText("noMatch")).toBeInTheDocument();
+    expect(screen.queryByText("emptyTitle")).toBeNull();
   });
 
   it("searches by name", async () => {
@@ -530,7 +636,7 @@ describe("People page", () => {
       const user = userEvent.setup();
       render(<PeoplePage />);
 
-      await user.click(screen.getAllByRole("button", { name: "edit" })[0]!); // Alma, in 7A
+      await user.click(editButton("Alma Berg")); // in 7A
       const dialog = screen.getByRole("dialog");
       const classPicker = within(dialog).getAllByRole("combobox")[1]!;
       expect(classPicker).toHaveTextContent("7A");
@@ -551,7 +657,7 @@ describe("People page", () => {
       const user = userEvent.setup();
       render(<PeoplePage />);
 
-      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!); // Karin
+      await user.click(editButton("Karin Ek"));
       expect(screen.getByLabelText(/^employmentPercent/)).toHaveValue("");
       expect(screen.getByLabelText(/^signature/)).toBeInTheDocument();
     });
@@ -561,7 +667,7 @@ describe("People page", () => {
       const user = userEvent.setup();
       render(<PeoplePage />);
 
-      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!);
+      await user.click(editButton("Karin Ek"));
       const percent = screen.getByLabelText(/^employmentPercent/) as HTMLInputElement;
       expect(percent.value).toBe("80");
       await user.clear(percent);
@@ -586,7 +692,7 @@ describe("People page", () => {
       const user = userEvent.setup();
       render(<PeoplePage />);
 
-      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!);
+      await user.click(editButton("Karin Ek"));
       await user.click(screen.getByRole("button", { name: "save" }));
 
       expect(saveEmployment).not.toHaveBeenCalled();
@@ -596,7 +702,7 @@ describe("People page", () => {
       const user = userEvent.setup();
       render(<PeoplePage />);
 
-      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!);
+      await user.click(editButton("Karin Ek"));
       await user.type(screen.getByLabelText(/^employmentPercent/), "101");
 
       expect(screen.getByRole("alert")).toHaveTextContent("problem_percentOutOfRange(3)");

@@ -3,8 +3,8 @@
 import { Fragment, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Download, Scale, TriangleAlert } from "lucide-react";
-import { api } from "@/lib/api";
+import { ChevronDown, ChevronRight, Download, Scale } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
 import { useProfile } from "@/components/profile-context";
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useStaffingLoad } from "@/lib/staffing-queries";
@@ -22,21 +22,18 @@ import type { ScbNotice } from "@/lib/staffing-exports";
 import type { YearTimplanRow } from "@/lib/year-timplan-queries";
 import type { LocalTimplanListItem } from "@/lib/timplan-queries";
 import type { SchoolForm, TeacherDuty, TeacherQualification } from "@/lib/types";
-import { PageHeader } from "@/components/layout/page-header";
+import { YearSelect } from "@/components/schedule/year-select";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Label } from "@/components/ui/label";
+import { FilterBar, FilterField } from "@/components/ui/filter-bar";
+import { KpiStrip, KpiTile } from "@/components/ui/kpi";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -68,8 +65,19 @@ import { useStaffingReconciliation } from "./use-staffing-reconciliation";
  * never called SCB's file: the text beside its button says what to complete,
  * what to check and where SCB's columns came from.
  */
+/**
+ * The refusals the admin can act on: a period the gateway will not read
+ * (400, entirely outside the year) and a year whose class lists cannot be
+ * worked out yet (R6's 409). 401/403/404 carry Nest's English defaults and,
+ * like a network failure or a 5xx, keep the generic "nothing changed" hint.
+ */
+const REFUSALS: ReadonlySet<number> = new Set([400, 409, 422]);
+/** The DTO's field tag ("from: ", "from/to: ") in front of the gateway's Swedish sentence. */
+const FIELD_TAG = /^[A-Za-z]+(?:\/[A-Za-z]+)*:\s+/;
+
 export function StaffingReport() {
   const t = useTranslations("reports.staffing");
+  const tYearErrors = useTranslations("years.errors");
   const locale = useLocale();
   const tCause = useTranslations("timplanCoverage.delivered.cause");
   const tCommon = useTranslations("common");
@@ -234,6 +242,22 @@ export function StaffingReport() {
     return t(`scb.notice.${notice.code}`, params as Record<string, string | number>);
   };
 
+  /*
+   * Why the reconciliation could not be read. A refusal says its reason,
+   * from the code's own sentence when there is one, else the gateway's
+   * Swedish sentence; anything else says what did not change.
+   */
+  const failureHint = (error: unknown): string => {
+    if (error instanceof ApiError && REFUSALS.has(error.status)) {
+      if (error.code === "ROLLOVER_NOT_ACTIVATED" && error.params) {
+        return tYearErrors("ROLLOVER_NOT_ACTIVATED", error.params);
+      }
+      const reason = error.message.replace(FIELD_TAG, "").trim();
+      if (reason) return reason.charAt(0).toLocaleUpperCase(locale) + reason.slice(1);
+    }
+    return t("loadFailedHint");
+  };
+
   const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
   const kpis = data?.totals
     ? [
@@ -246,237 +270,232 @@ export function StaffingReport() {
     : [];
 
   return (
-    <div>
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
 
-      <div className="mb-6 flex flex-wrap items-end gap-3">
-        <div className="space-y-2">
-          <Label>{t("year")}</Label>
-          <Select value={yearId ?? ""} onValueChange={chooseYear}>
-            <SelectTrigger className="w-44" aria-label={t("year")}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(years ?? []).map((candidate) => (
-                <SelectItem key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="staffing-from">{tCommon("from")}</Label>
+      <FilterBar>
+        <FilterField id="staffing-year" label={t("year")}>
+          <YearSelect id="staffing-year" value={yearId} onValueChange={chooseYear} years={years} />
+        </FilterField>
+        <FilterField id="staffing-from" label={tCommon("from")}>
           <DateField
             label={tCommon("from")}
             id="staffing-from"
             className="w-40"
+            min={year?.startDate}
+            max={year?.endDate}
             value={range.from ?? data?.from ?? ""}
             onChange={(value) => value && editRange({ from: value })}
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="staffing-to">{tCommon("to")}</Label>
+        </FilterField>
+        <FilterField id="staffing-to" label={tCommon("to")}>
           <DateField
             label={tCommon("to")}
             id="staffing-to"
             className="w-40"
+            min={year?.startDate}
+            max={year?.endDate}
             value={range.to ?? data?.to ?? ""}
             onChange={(value) => value && editRange({ to: value })}
           />
-        </div>
+        </FilterField>
         {crossed ? (
           <p role="alert" className="pb-2 text-sm text-destructive">
             {t("rangeCrossed")}
           </p>
         ) : null}
-      </div>
+      </FilterBar>
 
       {!yearId ? (
-        <EmptyState icon={Scale} title={t("noYear")} />
+        <EmptyState icon={Scale} title={t("noYear")} headingLevel={2} />
       ) : rec.isLoading ? (
-        <Skeleton className="h-72 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
       ) : rec.isError || !data ? (
-        <EmptyState
-          icon={TriangleAlert}
-          title={t("loadFailed")}
-          description={rec.error instanceof Error ? rec.error.message : undefined}
-        />
+        // A refusal the admin must act on names its reason; a network
+        // failure or a 5xx says that nothing changed.
+        <LoadError title={t("loadFailed")} hint={failureHint(rec.error)} headingLevel={2} />
       ) : (
         <div
-          className={cn("space-y-6 transition-opacity", rec.isPlaceholderData && "opacity-60")}
+          className={cn("space-y-4 transition-opacity", rec.isPlaceholderData && "opacity-60")}
           aria-busy={rec.isPlaceholderData || undefined}
         >
           {data.notices.length > 0 ? (
-            <ul role="status" className="space-y-1 rounded-md bg-muted px-4 py-3 text-sm text-foreground">
-              {data.notices.map((notice) => (
-                <li key={notice.code}>{noticeText(notice)}</li>
-              ))}
-            </ul>
+            <Notice>
+              <ul className="space-y-1">
+                {data.notices.map((notice) => (
+                  <li key={notice.code}>{noticeText(notice)}</li>
+                ))}
+              </ul>
+            </Notice>
           ) : null}
 
           {data.comparison ? (
-            <p className="text-sm text-foreground">
+            <p className="text-sm">
               {t("comparison", { from: data.comparison.from, to: data.comparison.to, model: t(`model.${data.loadModel}`) })}
             </p>
           ) : null}
 
-          <dl className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {kpis.map((kpi) => (
-              <div key={kpi.key} className="rounded-lg border bg-card p-4">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t(kpi.key)}
-                </dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums">{t("minutes", { minutes: kpi.minutes })}</dd>
-                <dd className="text-sm text-muted-foreground tabular-nums">
-                  {t("hours", { hours: hoursText(kpi.minutes, locale) })}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          {kpis.length > 0 ? (
+            <KpiStrip columns={5}>
+              {kpis.map((kpi) => (
+                <KpiTile
+                  key={kpi.key}
+                  label={t(kpi.key)}
+                  value={t("minutes", { minutes: kpi.minutes })}
+                  detail={t("hours", { hours: hoursText(kpi.minutes, locale) })}
+                />
+              ))}
+            </KpiStrip>
+          ) : null}
 
           {teachers.length === 0 ? (
-            <EmptyState icon={Scale} title={t("empty")} />
+            <p className="text-sm text-muted-foreground">{t("empty")}</p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <Table>
-                <caption className="sr-only">{t("tableCaption")}</caption>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("teacher")}</TableHead>
-                    <TableHead className="text-right">{t("employment")}</TableHead>
-                    <TableHead className="text-right">{t("planned")}</TableHead>
-                    <TableHead className="text-right">{t("scheduled")}</TableHead>
-                    <TableHead className="text-right">{t("delivered")}</TableHead>
-                    <TableHead className="text-right">{t("deltaDelivered")}</TableHead>
-                    <TableHead className="text-right">{t("substitute")}</TableHead>
-                    <TableHead className="text-right">{t("coveredByOthers")}</TableHead>
-                    <TableHead className="text-right">{t("lost")}</TableHead>
-                    <TableHead className="text-right">{t("ahead")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {teachers.map((row) => {
-                    const expanded = open.has(row.userId);
-                    const employment = loadOf.get(row.userId)?.employment ?? null;
-                    const name = nameOf(row.userId);
-                    return (
-                      <Fragment key={row.userId}>
-                        <TableRow>
-                          <TableCell className="font-medium">
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 text-left"
-                              aria-expanded={expanded}
-                              aria-label={t(expanded ? "hideLines" : "showLines", { name })}
-                              onClick={() => toggle(row.userId)}
+            <TableCard caption={t("tableCaption")}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col">{t("teacher")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("employment")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("planned")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("scheduled")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("delivered")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("deltaDelivered")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("substitute")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("coveredByOthers")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("lost")}</TableHead>
+                  <TableHead scope="col" className="text-right">{t("ahead")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {teachers.map((row) => {
+                  const expanded = open.has(row.userId);
+                  const employment = loadOf.get(row.userId)?.employment ?? null;
+                  const name = nameOf(row.userId);
+                  const lineId = (index: number) => `staffing-lines-${row.userId}-${index}`;
+                  return (
+                    <Fragment key={row.userId}>
+                      <TableRow>
+                        <TableCell className="font-medium">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-left"
+                            aria-expanded={expanded}
+                            aria-controls={
+                              expanded && row.lines.length > 0
+                                ? row.lines.map((_, index) => lineId(index)).join(" ")
+                                : undefined
+                            }
+                            aria-label={t(expanded ? "hideLines" : "showLines", { name })}
+                            onClick={() => toggle(row.userId)}
+                          >
+                            {expanded ? (
+                              <ChevronDown className="size-4" aria-hidden="true" />
+                            ) : (
+                              <ChevronRight className="size-4" aria-hidden="true" />
+                            )}
+                            {name}
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {employment ? `${formatPercent(employment.employmentPercent)} %` : "—"}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{row.planned}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.scheduled}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.delivered}</TableCell>
+                        <TableCell className="text-right tabular-nums">{signed(row.delivered - row.planned)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.substituteMinutes}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.coveredByOthersMinutes}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.lostMinutes}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.aheadMinutes}</TableCell>
+                      </TableRow>
+                      {expanded
+                        ? row.lines.map((line, index) => (
+                            <TableRow
+                              key={`${row.userId}-${line.studentGroupId}-${line.subjectId}`}
+                              id={lineId(index)}
+                              className="bg-muted/40 text-sm"
                             >
-                              {expanded ? (
-                                <ChevronDown className="size-4" aria-hidden="true" />
-                              ) : (
-                                <ChevronRight className="size-4" aria-hidden="true" />
-                              )}
-                              {name}
-                            </button>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {employment ? `${formatPercent(employment.employmentPercent)} %` : "—"}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{row.planned}</TableCell>
-                          <TableCell className="text-right tabular-nums">{row.scheduled}</TableCell>
-                          <TableCell className="text-right tabular-nums">{row.delivered}</TableCell>
-                          <TableCell className="text-right tabular-nums">{signed(row.delivered - row.planned)}</TableCell>
-                          <TableCell className="text-right tabular-nums">{row.substituteMinutes}</TableCell>
-                          <TableCell className="text-right tabular-nums">{row.coveredByOthersMinutes}</TableCell>
-                          <TableCell className="text-right tabular-nums">{row.lostMinutes}</TableCell>
-                          <TableCell className="text-right tabular-nums">{row.aheadMinutes}</TableCell>
-                        </TableRow>
-                        {expanded
-                          ? row.lines.map((line) => (
-                              <TableRow
-                                key={`${row.userId}-${line.studentGroupId}-${line.subjectId}`}
-                                className="bg-muted/40 text-sm"
-                              >
-                                <TableCell className="pl-8">
-                                  {subjectName(line.subjectId)} · {groupName(line.studentGroupId)}
-                                  {line.extraGroupIds.length > 0
-                                    ? ` ${t("withGroups", { groups: line.extraGroupIds.map(groupName).join(", ") })}`
-                                    : ""}
-                                </TableCell>
-                                <TableCell />
-                                <TableCell className="text-right tabular-nums">{line.planned}</TableCell>
-                                <TableCell className="text-right tabular-nums">{line.scheduled}</TableCell>
-                                <TableCell className="text-right tabular-nums">{line.delivered}</TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {signed(line.delivered - line.planned)}
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">{line.substituteMinutes}</TableCell>
-                                <TableCell />
-                                <TableCell className="text-right tabular-nums">{line.lostMinutes}</TableCell>
-                                <TableCell />
-                              </TableRow>
-                            ))
-                          : null}
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                              <TableCell className="pl-8">
+                                {subjectName(line.subjectId)} · {groupName(line.studentGroupId)}
+                                {line.extraGroupIds.length > 0
+                                  ? ` ${t("withGroups", { groups: line.extraGroupIds.map(groupName).join(", ") })}`
+                                  : ""}
+                              </TableCell>
+                              <TableCell />
+                              <TableCell className="text-right tabular-nums">{line.planned}</TableCell>
+                              <TableCell className="text-right tabular-nums">{line.scheduled}</TableCell>
+                              <TableCell className="text-right tabular-nums">{line.delivered}</TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {signed(line.delivered - line.planned)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">{line.substituteMinutes}</TableCell>
+                              <TableCell />
+                              <TableCell className="text-right tabular-nums">{line.lostMinutes}</TableCell>
+                              <TableCell />
+                            </TableRow>
+                          ))
+                        : null}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </TableCard>
           )}
 
           {data.groupLosses.length > 0 ? (
-            <section aria-labelledby="group-losses-title" className="space-y-2">
-              <h2 id="group-losses-title" className="text-lg font-semibold">
+            <section aria-labelledby="group-losses-title" className="space-y-3">
+              <h2 id="group-losses-title" className="text-base font-semibold">
                 {t("groupLosses")}
               </h2>
-              <div className="overflow-x-auto rounded-lg border bg-card">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("groupSubject")}</TableHead>
-                      <TableHead className="text-right">{tCause("teacherless")}</TableHead>
-                      {LOST_CAUSES.map((cause) => (
-                        <TableHead key={cause} className="text-right">
-                          {tCause(cause)}
-                        </TableHead>
-                      ))}
-                      {/* Only when a bulk avbokning cost something: the
-                          gateway sends the key above 0 alone. */}
-                      {eventLosses ? (
-                        <TableHead className="text-right">{tCause("cancelledEvent")}</TableHead>
-                      ) : null}
-                      <TableHead className="text-right">{t("lessons")}</TableHead>
-                      <TableHead className="text-right">{t("lost")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data.groupLosses.map((loss) => (
-                      <TableRow key={`${loss.studentGroupId}-${loss.subjectId}`}>
-                        <TableCell>
-                          {groupName(loss.studentGroupId)} · {subjectName(loss.subjectId)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">{loss.teacherless}</TableCell>
-                        {LOST_CAUSES.map((cause) => (
-                          <TableCell key={cause} className="text-right tabular-nums">
-                            {loss[cause]}
-                          </TableCell>
-                        ))}
-                        {eventLosses ? (
-                          <TableCell className="text-right tabular-nums">{loss.cancelledEvent ?? 0}</TableCell>
-                        ) : null}
-                        <TableCell className="text-right tabular-nums">{loss.lessons}</TableCell>
-                        <TableCell className="text-right tabular-nums">{groupLossMinutes(loss)}</TableCell>
-                      </TableRow>
+              <TableCard caption={t("groupLosses")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">{t("groupSubject")}</TableHead>
+                    <TableHead scope="col" className="text-right">{tCause("teacherless")}</TableHead>
+                    {LOST_CAUSES.map((cause) => (
+                      <TableHead key={cause} scope="col" className="text-right">
+                        {tCause(cause)}
+                      </TableHead>
                     ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <p className="text-xs text-foreground">{t("footGroupLosses")}</p>
+                    {/* Only when a bulk avbokning cost something: the
+                        gateway sends the key above 0 alone. */}
+                    {eventLosses ? (
+                      <TableHead scope="col" className="text-right">{tCause("cancelledEvent")}</TableHead>
+                    ) : null}
+                    <TableHead scope="col" className="text-right">{t("lessons")}</TableHead>
+                    <TableHead scope="col" className="text-right">{t("lost")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.groupLosses.map((loss) => (
+                    <TableRow key={`${loss.studentGroupId}-${loss.subjectId}`}>
+                      <TableCell>
+                        {groupName(loss.studentGroupId)} · {subjectName(loss.subjectId)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{loss.teacherless}</TableCell>
+                      {LOST_CAUSES.map((cause) => (
+                        <TableCell key={cause} className="text-right tabular-nums">
+                          {loss[cause]}
+                        </TableCell>
+                      ))}
+                      {eventLosses ? (
+                        <TableCell className="text-right tabular-nums">{loss.cancelledEvent ?? 0}</TableCell>
+                      ) : null}
+                      <TableCell className="text-right tabular-nums">{loss.lessons}</TableCell>
+                      <TableCell className="text-right tabular-nums">{groupLossMinutes(loss)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </TableCard>
+              <p className="text-xs text-muted-foreground">{t("footGroupLosses")}</p>
             </section>
           ) : null}
 
-          <ul className="list-disc space-y-1 pl-5 text-xs text-foreground">
+          {/* What each figure means, said under the tables; hints are muted
+              like every other hint on the page. */}
+          <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
             <li>{t("footDefinition")}</li>
             <li>{t("footCredit")}</li>
             <li>{t("footCoTeacher")}</li>
@@ -490,10 +509,7 @@ export function StaffingReport() {
       )}
 
       {yearId ? (
-        <section aria-labelledby="staffing-exports-title" className="mt-8 space-y-3 rounded-lg border bg-card p-4">
-          <h2 id="staffing-exports-title" className="text-lg font-semibold">
-            {t("exportsTitle")}
-          </h2>
+        <SectionCard id="staffing-exports" title={t("exportsTitle")} icon={Download}>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3">
               <Button
@@ -521,20 +537,19 @@ export function StaffingReport() {
               <Download />
               {t("exportScb")}
             </Button>
-            <p className="text-xs text-foreground">{t("scbNotice")}</p>
+            <p className="text-xs text-muted-foreground">{t("scbNotice")}</p>
             <p className="text-xs text-muted-foreground">{t("scbYearNote")}</p>
           </div>
           {scbNotices ? (
-            <div role="status" className="space-y-1 rounded-md bg-muted px-4 py-3 text-sm text-foreground">
-              <p className="font-medium">{t("scbNoticesTitle", { count: scbNotices.length })}</p>
+            <Notice title={t("scbNoticesTitle", { count: scbNotices.length })}>
               <ul className="list-disc space-y-0.5 pl-5">
                 {scbNotices.map((notice) => (
                   <li key={`${notice.code}-${JSON.stringify(notice.params)}`}>{scbNoticeText(notice)}</li>
                 ))}
               </ul>
-            </div>
+            </Notice>
           ) : null}
-        </section>
+        </SectionCard>
       ) : null}
     </div>
   );

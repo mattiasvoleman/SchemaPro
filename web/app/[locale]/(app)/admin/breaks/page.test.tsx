@@ -196,14 +196,17 @@ const { createMock, updateMock, removeMock } = vi.hoisted(() => ({
 
 /** The year's credits (tillgodoräknad tid) and their three writes. */
 const credits = vi.hoisted(() => ({
-  rows: [] as unknown[],
+  // undefined is a list never read (with failed, the first read failed).
+  rows: [] as unknown[] | undefined,
+  /** The last read of the decisions failed (a first read, or a refetch over rows in hand). */
+  failed: false,
   create: vi.fn(),
   update: vi.fn(),
   remove: vi.fn(),
 }));
 vi.mock("@/lib/timplan-credit-queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/timplan-credit-queries")>()),
-  useTimplanCredits: () => ({ data: credits.rows, isLoading: false, isError: false }),
+  useTimplanCredits: () => ({ data: credits.rows, isLoading: false, isError: credits.failed }),
   useTimplanCreditActions: () => ({
     create: { mutateAsync: credits.create, isPending: false },
     update: { mutateAsync: credits.update, isPending: false },
@@ -278,6 +281,7 @@ const fillDates = (from: string, to: string) => {
 beforeEach(() => {
   state = freshState();
   credits.rows = [];
+  credits.failed = false;
   credits.create.mockReset().mockResolvedValue(FRILUFTSDAG);
   credits.update.mockReset().mockResolvedValue(FRILUFTSDAG);
   credits.remove.mockReset().mockResolvedValue(undefined);
@@ -431,7 +435,25 @@ describe("Vad som sägs när lektioner försvinner", () => {
     render(<BreaksPage />);
     await openCreate();
 
-    expect(within(screen.getByRole("dialog")).getByText("deletesWarning")).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    const warning = within(dialog).getByText("deletesWarning");
+    // The dialog's own description, so it is heard as the dialog opens.
+    expect(dialog.getAttribute("aria-describedby")).toBe(warning.id);
+  });
+
+  it("paints the notice in no colour this page cannot hold to its contrast", async () => {
+    // The sentence carries the alarm. text-destructive measures under the
+    // 4.5 this page holds its icons to on every tint the shared notice offers.
+    createMock.mockResolvedValue(savedAs({ ...HOSTLOV, name: "Sportlov" }, 42));
+    render(<BreaksPage />);
+    const user = await openCreate();
+
+    fireEvent.change(screen.getByLabelText("name"), { target: { value: "Sportlov" } });
+    fillDates("2027-02-22", "2027-02-26");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(notice().innerHTML).not.toContain("destructive");
+    expect(notice().className).not.toContain("sr-only");
   });
 
   it("says on the delete confirm that the lessons do not come back", async () => {
@@ -698,7 +720,7 @@ describe("Lovlistan medan den inte vet", () => {
     render(<BreaksPage />);
 
     expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.queryByText("noResults")).toBeNull();
+    expect(screen.queryByText("emptyTitle")).toBeNull();
     expect(document.querySelector(".animate-pulse")).not.toBeNull();
   });
 
@@ -711,7 +733,20 @@ describe("Lovlistan medan den inte vet", () => {
 
     expect(screen.getByText("loadFailed")).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.queryByText("noResults")).toBeNull();
+    expect(screen.queryByText("emptyTitle")).toBeNull();
+  });
+
+  it("keeps the lov it has read when a refetch fails, and says so above them", () => {
+    // Every save invalidates the list; a background read that fails must not
+    // take the rows away from an admin working on them.
+    state.breaks = { ...state.breaks, isError: true };
+    render(<BreaksPage />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("loadFailed");
+    expect(alert).toHaveTextContent("refetchFailedHint");
+    expect(rowFor("Höstlov")).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "loadFailed" })).toBeNull();
   });
 
   it("does not tell a school to create a läsår while the list is still loading", () => {
@@ -732,8 +767,9 @@ describe("Lovlistan medan den inte vet", () => {
 
     expect(screen.getByText("noYear")).toBeTruthy();
     expect(document.querySelector(".animate-pulse")).toBeNull();
-    // And there is nothing to add a lov to.
+    // And there is nothing to add a lov to — only the way to where a year is made.
     expect(screen.getByRole("button", { name: "addBreak" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "toYears" }).getAttribute("href")).toBe("/admin/years");
   });
 
   it("says what an empty list MEANS for the timplan", () => {
@@ -744,8 +780,12 @@ describe("Lovlistan medan den inte vet", () => {
     state.breaks = loaded([]);
     render(<BreaksPage />);
 
-    expect(screen.getByText("noResults")).toBeTruthy();
-    expect(screen.getByText("empty")).toBeTruthy();
+    // A title that says what is missing, not the generic "Inget här ännu".
+    expect(screen.getByText("emptyTitle")).toBeTruthy();
+    const meaning = screen.getByText("empty");
+    // And the half that matters at this page's 7:1, not EmptyState's muted default.
+    expect(meaning.className).toContain("text-foreground");
+    expect(meaning.className).not.toContain("text-muted-foreground");
   });
 });
 
@@ -759,6 +799,26 @@ describe("Tillgodoräknad tid", () => {
       ["2026-10-02", "Temadag", "120", "credits.subjectNoneShort", "7A", ""],
       ["2026-10-27", "Friluftsdag", "300", "Idrott och hälsa", "gradeRange(7|9)", "Rektor 2026-09-01"],
     ]);
+  });
+
+  it("says the decisions could not be read rather than that there are none", () => {
+    credits.rows = undefined;
+    credits.failed = true;
+    render(<BreaksPage />);
+    const section = screen.getByRole("region", { name: "credits.title" });
+    expect(within(section).getByRole("alert")).toHaveTextContent("credits.loadFailed");
+    expect(within(section).queryByText("credits.empty")).toBeNull();
+  });
+
+  it("keeps the decisions it has read when a refetch fails, and says so above them", () => {
+    credits.rows = [FRILUFTSDAG];
+    credits.failed = true;
+    render(<BreaksPage />);
+    const section = screen.getByRole("region", { name: "credits.title" });
+    const alert = within(section).getByRole("alert");
+    expect(alert).toHaveTextContent("credits.refetchFailed");
+    expect(alert).toHaveTextContent("refetchFailedHint");
+    expect(within(section).getByText("Friluftsdag")).toBeTruthy();
   });
 
   it("says under a lov what its day counts as, and nothing under the others", () => {
@@ -807,7 +867,10 @@ describe("Tillgodoräknad tid", () => {
       const user = userEvent.setup();
       render(<BreaksPage />);
       await user.click(screen.getByRole("button", { name: "credits.add" }));
-      expect(toast.error).toHaveBeenCalledWith("Loading chunk failed");
+      // The chunk's own English error never reaches the admin: the toast says
+      // in the product's words that nothing changed and to try again.
+      expect(toast.error).toHaveBeenCalledWith("formLoadFailed");
+      expect(toast.error).not.toHaveBeenCalledWith("Loading chunk failed");
       expect(screen.getByRole("region", { name: "credits.title" })).toBeInTheDocument();
       dialogLoad.fails = false;
       await user.click(screen.getByRole("button", { name: "credits.add" }));

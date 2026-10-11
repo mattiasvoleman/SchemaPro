@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Download, Loader2 } from "lucide-react";
+import { CalendarClock, Download, Loader2 } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { useProfile } from "@/components/profile-context";
 import { useGroups, usePeople, useRooms, useSubjects } from "@/lib/queries";
@@ -15,10 +15,13 @@ import { toDateString } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
+import { EmptyState } from "@/components/ui/empty-state";
+import { FilterBar, FilterField } from "@/components/ui/filter-bar";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -42,6 +45,12 @@ const MAX_DAYS = 93;
 /** 08:00 on the school's clock, as the payroll file writes it. */
 const clockIn = (iso: string, timeZone: string) =>
   new Intl.DateTimeFormat("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
+
+/** A cover's calendar day (yyyy-mm-dd) in the reader's language, read at UTC midnight so no zone moves it. */
+const dayIn = (date: string, locale: string) =>
+  new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(
+    new Date(`${date}T00:00:00.000Z`),
+  );
 
 /**
  * Vikarietimmar (`/admin/reports?tab=cover`): per substitute and period, the
@@ -67,7 +76,7 @@ export function CoverHoursReport() {
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const valid = Boolean(from && to && to >= from && span(from, to) <= MAX_DAYS);
-  const { data: hours, isLoading, error } = useCoverHours(from, to, valid);
+  const { data: hours, isLoading, isError } = useCoverHours(from, to, valid);
   const { data: people } = usePeople();
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
@@ -116,58 +125,60 @@ export function CoverHoursReport() {
     }
   };
 
+  const hoursOf = (minutes: number) => (minutes / 60).toLocaleString(locale, { maximumFractionDigits: 2 });
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">{t("intro")}</p>
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="hours-from">{tCommon("from")}</Label>
+      <p className="max-w-prose text-sm text-muted-foreground">{t("intro")}</p>
+      <FilterBar>
+        <FilterField id="hours-from" label={tCommon("from")}>
           <DateField id="hours-from" label={tCommon("from")} className="w-40" value={from} onChange={setFrom} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="hours-to">{tCommon("to")}</Label>
+        </FilterField>
+        <FilterField id="hours-to" label={tCommon("to")}>
           <DateField id="hours-to" label={tCommon("to")} className="w-40" value={to} min={from} onChange={setTo} />
+        </FilterField>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!hours || exporting || hours.rows.length === 0}
+            onClick={() => hours && void download(hours, "lektioner")}
+          >
+            {exporting ? <Loader2 className="animate-spin" /> : <Download />}
+            {t("exportLessons")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!hours || exporting || hours.summary.length === 0}
+            onClick={() => hours && void download(hours, "summering")}
+          >
+            <Download />
+            {t("exportSummary")}
+          </Button>
         </div>
-        <Button
-          variant="outline"
-          disabled={!hours || exporting || hours.rows.length === 0}
-          onClick={() => hours && void download(hours, "lektioner")}
-        >
-          {exporting ? <Loader2 className="animate-spin" /> : <Download />}
-          {t("exportLessons")}
-        </Button>
-        <Button
-          variant="outline"
-          disabled={!hours || exporting || hours.summary.length === 0}
-          onClick={() => hours && void download(hours, "summering")}
-        >
-          <Download />
-          {t("exportSummary")}
-        </Button>
-      </div>
+      </FilterBar>
       {!valid ? (
-        <p role="alert" className="text-sm text-destructive">
-          {t("rangeError", { days: MAX_DAYS })}
-        </p>
+        <Notice tone="destructive">{t("rangeError", { days: MAX_DAYS })}</Notice>
       ) : isLoading ? (
-        <Skeleton className="h-48 w-full" />
-      ) : error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {coverErrorText(tErrors, error, tCommon("error"))}
-        </p>
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : summary.length === 0 && planned.size === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("empty")}</p>
+        <EmptyState icon={CalendarClock} title={t("emptyTitle")} description={t("emptyHint")} headingLevel={2} />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
+        <div className="space-y-2">
+          <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
-                <TableHead>{t("columnSubstitute")}</TableHead>
-                <TableHead>{t("columnKind")}</TableHead>
-                <TableHead className="text-right">{t("columnLessons")}</TableHead>
-                <TableHead className="text-right">{t("columnMinutes")}</TableHead>
-                <TableHead className="text-right">{t("columnHours")}</TableHead>
-                <TableHead className="text-right">{t("columnPlanned")}</TableHead>
+                <TableHead scope="col">{t("columnSubstitute")}</TableHead>
+                <TableHead scope="col">{t("columnKind")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("columnLessons")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("columnMinutes")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("columnHours")}</TableHead>
+                <TableHead scope="col" className="text-right">{t("columnPlanned")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -179,9 +190,7 @@ export function CoverHoursReport() {
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{line.lessons}</TableCell>
                   <TableCell className="text-right tabular-nums">{line.minutes}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {(line.minutes / 60).toLocaleString(locale, { maximumFractionDigits: 2 })}
-                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{hoursOf(line.minutes)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
                     {planned.get(line.userId)?.lessons ?? 0}
                   </TableCell>
@@ -200,28 +209,31 @@ export function CoverHoursReport() {
                   </TableRow>
                 ))}
             </TableBody>
-          </Table>
-          <p className="border-t px-4 py-2 text-sm text-muted-foreground">
-            {t("total", { minutes: total, hours: (total / 60).toLocaleString(locale, { maximumFractionDigits: 2 }) })}
-          </p>
+          </TableCard>
+          <p className="text-sm text-muted-foreground">{t("total", { minutes: total, hours: hoursOf(total) })}</p>
         </div>
       )}
       {toCheck.length > 0 ? (
-        <section aria-label={t("toCheckTitle")} className="rounded-md border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
-          <h3 className="font-medium">{t("toCheckTitle")}</h3>
-          <p className="text-muted-foreground">{t("toCheckBody", { count: toCheck.length })}</p>
-          <ul className="mt-2 space-y-0.5">
-            {toCheck.map((row) => (
-              <li key={`${row.lessonId}:${row.userId}`}>
-                {[
-                  nameOf(row.userId),
-                  `${row.date} ${clockIn(row.startsAt, timezone)}–${clockIn(row.endsAt, timezone)}`,
-                  subjectOf.get(row.subjectId) ?? "",
-                  groupOf.get(row.studentGroupId) ?? "",
-                ].join(" · ")}
-              </li>
-            ))}
-          </ul>
+        // A region of its own, named, for the payroll check; not live — it
+        // arrives with the figures, and a list read out on load helps no one.
+        <section aria-label={t("toCheckTitle")}>
+          <Notice tone="warning" role={null} title={t("toCheckTitle")}>
+            <div className="space-y-2">
+              <p>{t("toCheckBody", { count: toCheck.length })}</p>
+              <ul className="space-y-0.5">
+                {toCheck.map((row) => (
+                  <li key={`${row.lessonId}:${row.userId}`} className="tabular-nums">
+                    {[
+                      nameOf(row.userId),
+                      `${dayIn(row.date, locale)} ${clockIn(row.startsAt, timezone)}–${clockIn(row.endsAt, timezone)}`,
+                      subjectOf.get(row.subjectId) ?? "",
+                      groupOf.get(row.studentGroupId) ?? "",
+                    ].join(" · ")}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </Notice>
         </section>
       ) : null}
       <p className="text-xs text-muted-foreground">{t("privacy")}</p>

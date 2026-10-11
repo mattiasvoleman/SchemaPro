@@ -16,9 +16,12 @@
 // Each tab panel owns its own empty states; the planned panel keeps the
 // markup it had.
 //
-// A hand-built tablist (role=tablist/tab, aria-selected, roving arrow keys)
-// rather than Radix Tabs: three buttons, and no second primitive on a route
-// that needs none.
+// Radix pill Tabs, as every other page with views has them (the design
+// overhaul, 2026-10-11): the hand-built tablist this page had wrote the
+// roving tabindex, the arrow keys and the tabpanel wiring Radix already
+// gives. One addition Radix does not: a click on the tab already chosen
+// still counts as choosing it (see chooseLayer), because that is how a tab
+// whose chunk failed to load is fetched afresh.
 //
 // LAYER 1 — PLANERAT MOT TIMPLAN.
 //
@@ -52,9 +55,9 @@
 // useSearchParams, which would make the whole route bail out of static
 // rendering for three ids.
 
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ArrowLeft, TriangleAlert, Target } from "lucide-react";
+import { Target } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useLocalTimplans } from "@/lib/timplan-queries";
@@ -68,19 +71,18 @@ import {
 } from "@/lib/timplan-tackning";
 import type { PupilLine } from "@/lib/timplan-planned";
 import { cn } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
+import { YearSelect } from "@/components/schedule/year-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 /** Hours to the tenth with a decimal comma, as the matrix prints them. */
 const hoursText = (hours: number): string => {
@@ -153,7 +155,7 @@ export default function TimplanCoveragePage() {
   const { data: years, isLoading: yearsLoading, isError: yearsFailed } = useAcademicYears();
   const { data: groups, isLoading: groupsLoading, isError: groupsFailed } = useGroups();
   const { data: subjects, isLoading: subjectsLoading, isError: subjectsFailed } = useSubjects();
-  const { data: people } = usePeople();
+  const { data: people, isError: peopleFailed } = usePeople();
   const { data: plans } = useLocalTimplans();
 
   const [link, setLink] = useState<Deeplink | null>(null);
@@ -189,25 +191,6 @@ export default function TimplanCoveragePage() {
     setChosenLayer(entry);
     setTabLoad((state) => (state.failed ? { failed: false, attempt: state.attempt + 1 } : state));
   };
-  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
-  const onTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const index = LAYERS.indexOf(shownTab);
-    const next =
-      event.key === "ArrowRight"
-        ? (index + 1) % LAYERS.length
-        : event.key === "ArrowLeft"
-          ? (index + LAYERS.length - 1) % LAYERS.length
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? LAYERS.length - 1
-              : null;
-    if (next === null) return;
-    event.preventDefault();
-    chooseLayer(LAYERS[next]!);
-    tabs.current[next]?.focus();
-  };
-
   // Layer 1 is asked for only while its tab is the one shown.
   const coverage = useTimplanCoverage(layer === "planned" ? yearId : null);
 
@@ -247,93 +230,46 @@ export default function TimplanCoveragePage() {
   const failed = yearsFailed || groupsFailed || subjectsFailed || coverage.isError;
   const linkedGroup = chosenYear === null ? (link?.group ?? null) : null;
 
-  return (
-    <div>
-      <PageHeader
-        title={t("title")}
-        subtitle={t("subtitle")}
-        actions={
-          <>
-            {years && years.length > 0 ? (
-              <Select
-                value={yearId ?? undefined}
-                onValueChange={(value) => {
-                  setChosenYear(value);
-                  setChosenClass(null);
-                }}
-              >
-                <SelectTrigger className="w-48" aria-label={t("yearLabel")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map((entry) => (
-                    <SelectItem key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
-            <Button asChild variant="outline">
-              <Link href="/admin/timplan">
-                <ArrowLeft />
-                {t("backToTimplan")}
-              </Link>
-            </Button>
-          </>
-        }
-      />
+  const noYear = (
+    <EmptyState
+      icon={Target}
+      title={t("noYearTitle")}
+      description={t("noYearBody")}
+      headingLevel={2}
+      action={
+        <Button asChild variant="outline">
+          <Link href="/admin/years">{t("noYearAction")}</Link>
+        </Button>
+      }
+    />
+  );
+  const loadFailed = <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />;
+  const busy = <Skeleton className="h-96 w-full" aria-busy="true" />;
 
-      <div role="tablist" aria-label={t("layersLabel")} className="mb-4 flex flex-wrap gap-1 border-b">
-        {LAYERS.map((entry, index) => (
-          <button
-            key={entry}
-            ref={(node) => {
-              tabs.current[index] = node;
-            }}
-            type="button"
-            role="tab"
-            id={`tackning-tab-${entry}`}
-            aria-selected={shownTab === entry}
-            aria-controls="tackning-panel"
-            tabIndex={shownTab === entry ? 0 : -1}
-            onClick={() => chooseLayer(entry)}
-            onKeyDown={onTabKey}
-            className={cn(
-              "-mb-px border-b-2 px-3 py-2 text-sm font-medium",
-              shownTab === entry
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {t(LAYER_LABEL[entry])}
-          </button>
-        ))}
-      </div>
-
-      <div role="tabpanel" id="tackning-panel" aria-labelledby={`tackning-tab-${shownTab}`}>
-      {layer === null ? (
-        <Skeleton className="h-96 w-full" />
-      ) : layer !== "planned" ? (
-        yearsLoading || groupsLoading || subjectsLoading ? (
-          <Skeleton className="h-96 w-full" />
-        ) : yearsFailed || groupsFailed || subjectsFailed ? (
-          <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
-        ) : !year ? (
-          <EmptyState icon={Target} title={t("noYearTitle")} description={t("noYearBody")} />
-        ) : tabLoad.failed ? (
-          <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
-        ) : (
-          <DialogLoadBoundary
-            key={tabLoad.attempt}
-            onError={() => {
-              CoverageScheduledTab = lazyScheduledTab();
-              CoverageDeliveredTab = lazyDeliveredTab();
-              CoverageStageTab = lazyStageTab();
-              setTabLoad((state) => ({ ...state, failed: true }));
-            }}
-          >
-          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+  // What the chosen tab's panel shows; each panel owns its own empty states.
+  const panel =
+    layer === null ? (
+      busy
+    ) : layer !== "planned" ? (
+      yearsLoading || groupsLoading || subjectsLoading ? (
+        busy
+      ) : yearsFailed || groupsFailed || subjectsFailed ? (
+        loadFailed
+      ) : !year ? (
+        noYear
+      ) : tabLoad.failed ? (
+        loadFailed
+      ) : (
+        <DialogLoadBoundary
+          key={tabLoad.attempt}
+          onError={() => {
+            CoverageScheduledTab = lazyScheduledTab();
+            CoverageDeliveredTab = lazyDeliveredTab();
+            CoverageStageTab = lazyStageTab();
+            setTabLoad((state) => ({ ...state, failed: true }));
+          }}
+        >
+          <Suspense fallback={busy}>
             {layer === "scheduled" ? (
               <CoverageScheduledTab
                 key={year.id}
@@ -367,109 +303,170 @@ export default function TimplanCoveragePage() {
               />
             )}
           </Suspense>
-          </DialogLoadBoundary>
-        )
-      ) : loading ? (
-        <Skeleton className="h-96 w-full" />
-      ) : failed ? (
-        <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
-      ) : !year ? (
-        <EmptyState icon={Target} title={t("noYearTitle")} description={t("noYearBody")} />
-      ) : !matrix ? (
-        <Skeleton className="h-96 w-full" />
-      ) : matrix.classes.length === 0 ? (
-        <EmptyState icon={Target} title={t("noClassesTitle")} description={t("noClassesBody", { year: year.name })} />
-      ) : (
-        <div className="space-y-4">
-          <section className="space-y-2 text-sm text-foreground" aria-label={t("summaryLabel")}>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("layerPlanned")}</p>
-            <p role="status" className="font-medium">
-              {/* "ingen är under mål" is true of a year with no targets at
-                  all, and read as all is well; the notices below say why. */}
-              {matrix.classes.every((row) => row.summary.linesWithTarget === 0)
-                ? t("pupilsNoTarget", { pupils: matrix.coverage.pupilCount })
-                : matrix.coverage.pupilsBelowTarget === null
-                ? t("pupilsTotal", { pupils: matrix.coverage.pupilCount })
-                : t("pupilsBelow", {
-                    pupils: matrix.coverage.pupilCount,
-                    below: matrix.coverage.pupilsBelowTarget,
-                  })}
-            </p>
-            {matrix.coverage.pupilsOutsideClasses > 0 ? (
-              <p>{t("pupilsOutside", { count: matrix.coverage.pupilsOutsideClasses })}</p>
-            ) : null}
-            {matrix.unattachedGrades.length > 0 ? (
-              <p className="rounded-md bg-muted px-3 py-2">
-                {t("unattached", { grades: matrix.unattachedGrades.map(gradeName).join(", ") })}
-              </p>
-            ) : null}
-            {matrix.draftPlans.map((plan) => (
-              <p key={plan.id} className="rounded-md border-l-4 border-l-warning bg-muted px-3 py-2">
-                {t("draft", { name: plan.name, grades: plan.gradeLevels.map(gradeName).join(", ") })}
-              </p>
-            ))}
-            {matrix.emptyPlanGrades.map((entry) => (
-              <p key={entry.gradeLevel} className="rounded-md bg-muted px-3 py-2">
-                {t("emptyPlan", { name: entry.planName, grade: gradeName(entry.gradeLevel) })}
-              </p>
-            ))}
-            <p className="text-xs text-muted-foreground">{t("legend")}</p>
-          </section>
+        </DialogLoadBoundary>
+      )
+    ) : loading ? (
+      busy
+    ) : failed ? (
+      loadFailed
+    ) : !year ? (
+      noYear
+    ) : !matrix ? (
+      busy
+    ) : matrix.classes.length === 0 ? (
+      <EmptyState
+        icon={Target}
+        title={t("noClassesTitle")}
+        description={t("noClassesBody", { year: year.name })}
+        headingLevel={2}
+      />
+    ) : (
+      <div className="space-y-4">
+        {/* No eyebrow naming the layer: the active tab above already says
+            "Planerat mot timplan". */}
+        <section className="space-y-2 text-sm text-foreground" aria-label={t("summaryLabel")}>
+          <p role="status" className="font-medium">
+            {/* "ingen är under mål" is true of a year with no targets at
+                all, and read as all is well; the notices below say why. */}
+            {matrix.classes.every((row) => row.summary.linesWithTarget === 0)
+              ? t("pupilsNoTarget", { pupils: matrix.coverage.pupilCount })
+              : matrix.coverage.pupilsBelowTarget === null
+              ? t("pupilsTotal", { pupils: matrix.coverage.pupilCount })
+              : t("pupilsBelow", {
+                  pupils: matrix.coverage.pupilCount,
+                  below: matrix.coverage.pupilsBelowTarget,
+                })}
+          </p>
+          {matrix.coverage.pupilsOutsideClasses > 0 ? (
+            <p>{t("pupilsOutside", { count: matrix.coverage.pupilsOutsideClasses })}</p>
+          ) : null}
+          {/* Facts of the year drawn with it, not news: no live role. */}
+          {matrix.unattachedGrades.length > 0 ? (
+            <Notice role={null}>
+              {t("unattached", { grades: matrix.unattachedGrades.map(gradeName).join(", ") })}
+            </Notice>
+          ) : null}
+          {matrix.draftPlans.map((plan) => (
+            <Notice key={plan.id} tone="warning" role={null}>
+              {t("draft", { name: plan.name, grades: plan.gradeLevels.map(gradeName).join(", ") })}
+            </Notice>
+          ))}
+          {matrix.emptyPlanGrades.map((entry) => (
+            <Notice key={entry.gradeLevel} role={null}>
+              {t("emptyPlan", { name: entry.planName, grade: gradeName(entry.gradeLevel) })}
+            </Notice>
+          ))}
+          <p className="text-xs text-muted-foreground">{t("legend")}</p>
+        </section>
 
-          <div className="overflow-x-auto rounded-lg border bg-card">
-            <table className="w-full border-collapse text-sm">
-              <caption className="sr-only">{t("caption", { year: year.name })}</caption>
-              <thead>
-                <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th scope="col" className="sticky left-0 z-10 bg-card px-3 py-2 font-medium">
-                    {t("classColumn")}
+        {/*
+          `relative` is what keeps the page from scrolling sideways on a phone.
+          The cells' sr-only sentences are position: absolute, and without a
+          positioned ancestor inside this box they are laid out against the
+          page instead — so the columns past the right edge (Spanska, Tyska,
+          Täckning …) pushed the page out to 624 px at 390. Contained here,
+          they scroll with the matrix like the rest of it.
+        */}
+        <div className="relative overflow-x-auto rounded-lg border bg-card">
+          <table className="w-full border-collapse text-sm">
+            <caption className="sr-only">{t("caption", { year: year.name })}</caption>
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th scope="col" className="sticky left-0 z-10 bg-card px-3 py-2 font-medium">
+                  {t("classColumn")}
+                </th>
+                {matrix.subjects.map((subject) => (
+                  <th key={subject.id} scope="col" className="px-2 py-2 text-center font-medium">
+                    {subject.name}
                   </th>
-                  {matrix.subjects.map((subject) => (
-                    <th key={subject.id} scope="col" className="px-2 py-2 text-center font-medium">
-                      {subject.name}
-                    </th>
-                  ))}
-                  <th scope="col" className="px-3 py-2 text-center font-medium">
-                    {t("coverageColumn")}
-                  </th>
-                  <th scope="col" className="px-3 py-2 text-right font-medium">
-                    {t("totalColumn")}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {matrix.classes.map((row) => (
-                  <ClassRow
-                    key={row.id}
-                    row={row}
-                    subjects={matrix.subjects}
-                    cell={matrix.cell}
-                    open={row.id === classId}
-                    gradeName={gradeName}
-                    onToggle={() => setChosenClass(row.id === classId ? "" : row.id)}
-                  />
                 ))}
-              </tbody>
-            </table>
-          </div>
-
-          {selected ? (
-            <ClassDrillDown
-              row={selected}
-              planName={selected.summary.localTimplanId ? (planName.get(selected.summary.localTimplanId) ?? "") : null}
-              pupilLevel={matrix.coverage.pupilLevel}
-              gradeName={gradeName}
-              groupName={(id) => groupName.get(id) ?? id}
-              subjectNames={(ids) => ids.map((id) => subjectName.get(id) ?? id).join(" / ")}
-              pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground">{t("chooseClass")}</p>
-          )}
+                <th scope="col" className="px-3 py-2 text-center font-medium">
+                  {t("coverageColumn")}
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  {t("totalColumn")}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.classes.map((row) => (
+                <ClassRow
+                  key={row.id}
+                  row={row}
+                  subjects={matrix.subjects}
+                  cell={matrix.cell}
+                  open={row.id === classId}
+                  gradeName={gradeName}
+                  onToggle={() => setChosenClass(row.id === classId ? "" : row.id)}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
+
+        {selected ? (
+          <ClassDrillDown
+            row={selected}
+            planName={selected.summary.localTimplanId ? (planName.get(selected.summary.localTimplanId) ?? "") : null}
+            pupilLevel={matrix.coverage.pupilLevel}
+            gradeName={gradeName}
+            groupName={(id) => groupName.get(id) ?? id}
+            subjectNames={(ids) => ids.map((id) => subjectName.get(id) ?? id).join(" / ")}
+            pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("chooseClass")}</p>
+        )}
       </div>
-    </div>
+    );
+
+  return (
+    <Page>
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        back={{ href: "/admin/timplan", label: t("backToTimplan") }}
+        actions={
+          <YearSelect
+            value={yearId}
+            label={t("yearLabel")}
+            onValueChange={(value) => {
+              setChosenYear(value);
+              setChosenClass(null);
+            }}
+          />
+        }
+      />
+
+      {/* The names only: every layer still counts without them, so the page
+          stays and says why its pupils have none. */}
+      {peopleFailed ? (
+        <LoadError variant="inline" title={t("peopleFailed")} hint={t("peopleFailedHint")} />
+      ) : null}
+
+      {/* THE TABLIST SITS ABOVE EVERY LOADING AND EMPTY STATE (R27): each
+          panel's children render only while its tab is chosen. */}
+      <Tabs value={shownTab} onValueChange={(value) => chooseLayer(value as Layer)} className="space-y-4">
+        <TabsList aria-label={t("layersLabel")} className="h-auto flex-wrap justify-start">
+          {LAYERS.map((entry) => (
+            <TabsTrigger
+              key={entry}
+              value={entry}
+              // Radix calls onValueChange only for ANOTHER tab; a click on
+              // the chosen one must still retry a chunk that failed.
+              onClick={() => chooseLayer(entry)}
+            >
+              {t(LAYER_LABEL[entry])}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {LAYERS.map((entry) => (
+          <TabsContent key={entry} value={entry} className="mt-0">
+            {panel}
+          </TabsContent>
+        ))}
+      </Tabs>
+    </Page>
   );
 }
 
@@ -525,20 +522,15 @@ function ClassRow({ row, subjects, cell, open, gradeName, onToggle }: ClassRowPr
         ) : summary.linesWithTarget === 0 ? (
           <span className="text-xs text-muted-foreground">{t("emptyPlanShort")}</span>
         ) : (
-          <span
-            className={cn(
-              "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums",
-              short ? "bg-warning/15 text-warning-foreground dark:text-warning" : "border text-foreground",
-            )}
-          >
-            {/* aria-label on a role-less span is not read: the sentence is text. */}
+          <Badge variant={short ? "warning" : "outline"} className="tabular-nums">
+            {/* aria-label on a role-less element is not read: the sentence is text. */}
             <span aria-hidden="true">
               {summary.linesCovered}/{summary.linesWithTarget}
             </span>
             <span className="sr-only">
               {t("coverageLabel", { covered: summary.linesCovered, total: summary.linesWithTarget })}
             </span>
-          </span>
+          </Badge>
         )}
       </td>
       <td className="px-3 py-1.5 text-right tabular-nums">
@@ -582,7 +574,7 @@ function CoverageCell({ view, subjectName }: { view: CoverageCellView; subjectNa
       )}
     >
       <span className="text-sm font-semibold tabular-nums" aria-hidden>
-        {cell.plannedMinutesPerWeek} / {cell.targetMinutesPerWeek ?? "–"}
+        {cell.plannedMinutesPerWeek} / {cell.targetMinutesPerWeek ?? "—"}
       </span>
       {note ? (
         <span className="text-[10px] font-semibold leading-tight tabular-nums" aria-hidden>
@@ -608,26 +600,25 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
   const t = useTranslations("timplanCoverage");
   const { summary } = row;
   return (
-    <section
+    <SectionCard
       id="tackning-class"
-      aria-labelledby="tackning-class-title"
-      className="scroll-mt-4 space-y-4 rounded-lg border bg-card p-4"
+      title={row.name}
+      className="scroll-mt-4"
+      description={
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{gradeName(summary.gradeLevel)}</Badge>
+          {planName !== null ? <Badge variant="secondary">{planName}</Badge> : null}
+          {summary.planStatus === "DRAFT" ? <Badge variant="warning">{t("draftBadge")}</Badge> : null}
+          <span>{t("classPupils", { count: summary.pupilCount })}</span>
+        </div>
+      }
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 id="tackning-class-title" className="text-lg font-semibold">
-          {row.name}
-        </h2>
-        <Badge variant="outline">{gradeName(summary.gradeLevel)}</Badge>
-        {planName !== null ? <Badge variant="secondary">{planName}</Badge> : null}
-        {summary.planStatus === "DRAFT" ? <Badge variant="warning">{t("draftBadge")}</Badge> : null}
-        <span className="text-sm text-muted-foreground">{t("classPupils", { count: summary.pupilCount })}</span>
-      </div>
-
       {summary.localTimplanId === null ? (
         <p className="text-sm text-foreground">{t("classNoPlan")}</p>
       ) : null}
 
-      <div className="overflow-x-auto">
+      {/* relative: holds the sr-only cells in this scroll box (see the matrix). */}
+      <div className="relative overflow-x-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">{t("linesCaption", { group: row.name })}</caption>
           <thead>
@@ -653,7 +644,7 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
                     <span className="ml-1 text-xs font-normal text-muted-foreground">{t("together")}</span>
                   ) : null}
                 </th>
-                <td className="py-1.5 pr-3 text-right tabular-nums">{line.targetMinutesPerWeek ?? "–"}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">{line.targetMinutesPerWeek ?? "—"}</td>
                 <td className="py-1.5 pr-3 text-right tabular-nums">
                   {line.plannedMinutesPerWeek}
                   {line.deltaMinutesPerWeek !== null && line.deltaMinutesPerWeek !== 0 ? (
@@ -668,14 +659,14 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
                   ) : null}
                 </td>
                 <td className="py-1.5 pr-3">
-                  {line.teachingGroupIds.length > 0 ? line.teachingGroupIds.map(groupName).join(", ") : "–"}
+                  {line.teachingGroupIds.length > 0 ? line.teachingGroupIds.map(groupName).join(", ") : "—"}
                 </td>
                 {pupilLevel ? (
                   <>
                     <td className="py-1.5 pr-3 text-right tabular-nums">
                       {line.pupils
                         ? t("stats", { min: line.pupils.min, median: line.pupils.median, max: line.pupils.max })
-                        : "–"}
+                        : "—"}
                     </td>
                     <td
                       className={cn(
@@ -683,7 +674,7 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
                         line.pupils && line.pupils.below > 0 && "font-medium text-warning-foreground dark:text-warning",
                       )}
                     >
-                      {line.pupils ? t("below", { below: line.pupils.below, pupils: summary.pupilCount }) : "–"}
+                      {line.pupils ? t("below", { below: line.pupils.below, pupils: summary.pupilCount }) : "—"}
                     </td>
                   </>
                 ) : null}
@@ -698,7 +689,7 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
           <h3 className="text-sm font-semibold">{t("pupilsTitle", { count: row.pupils.length })}</h3>
           <p className="text-xs text-muted-foreground">{t("pupilsHint")}</p>
           {row.pupils.length === 0 ? (
-            <p className="text-sm text-foreground">{t("pupilsNone")}</p>
+            <p className="text-sm text-muted-foreground">{t("pupilsNone")}</p>
           ) : (
             <ul className="space-y-2">
               {row.pupils.map((pupil) => (
@@ -720,7 +711,7 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
           )}
         </div>
       ) : null}
-    </section>
+    </SectionCard>
   );
 }
 

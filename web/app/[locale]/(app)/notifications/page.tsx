@@ -3,9 +3,12 @@
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useProfile } from "@/components/profile-context";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
   useNotificationPreferences,
@@ -61,52 +64,47 @@ export default function NotificationSettingsPage() {
   const types = data?.types ?? [];
 
   return (
-    <div className="max-w-2xl">
+    <Page width="narrow">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("cardTitle")}</CardTitle>
-          <CardDescription>{t("cardBody")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">{t("loading")}</p>
-          ) : isError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {tCommon("error")}
-            </p>
-          ) : types.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("empty")}</p>
-          ) : (
-            <ul className="divide-y">
-              {types.map((entry) => {
-                const id = `notification-${entry.type}`;
-                const text = hint(entry);
-                return (
-                  <li key={entry.type} className="flex items-start justify-between gap-4 py-3">
-                    <span>
-                      <Label htmlFor={id}>{label(entry)}</Label>
-                      {text ? (
-                        <span id={`${id}-hint`} className="mt-0.5 block text-xs text-muted-foreground">
-                          {text}
-                        </span>
-                      ) : null}
-                    </span>
-                    <Switch
-                      id={id}
-                      checked={entry.enabled}
-                      disabled={entry.required}
-                      aria-disabled={save.isPending || undefined}
-                      aria-describedby={text ? `${id}-hint` : undefined}
-                      onCheckedChange={(checked) => void change(types, entry, checked)}
-                    />
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      <SectionCard id="notification-channels" title={t("cardTitle")} description={t("cardBody")}>
+        {isLoading ? (
+          <div aria-busy="true">
+            <Skeleton className="h-24 w-full" />
+            <span className="sr-only">{t("loading")}</span>
+          </div>
+        ) : isError ? (
+          <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+        ) : types.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("empty")}</p>
+        ) : (
+          <ul className="divide-y">
+            {types.map((entry) => {
+              const id = `notification-${entry.type}`;
+              const text = hint(entry);
+              return (
+                <li key={entry.type} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                  <div className="space-y-1">
+                    <Label htmlFor={id}>{label(entry)}</Label>
+                    {text ? (
+                      <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+                        {text}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Switch
+                    id={id}
+                    checked={entry.enabled}
+                    disabled={entry.required}
+                    aria-disabled={save.isPending || undefined}
+                    aria-describedby={text ? `${id}-hint` : undefined}
+                    onCheckedChange={(checked) => void change(types, entry, checked)}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </SectionCard>
+    </Page>
   );
 }

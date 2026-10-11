@@ -27,6 +27,7 @@ const TWO_YEARS = [
 
 const state = vi.hoisted(() => ({
   years: [] as unknown[],
+  lists: { subjects: [] as unknown[], rooms: [] as unknown[], groups: [] as unknown[], people: [] as unknown[] },
   create: vi.fn(),
   keys: [] as string[][][],
   groupKeys: [] as string[][],
@@ -35,10 +36,10 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: state.years }),
-  useSubjects: () => ({ data: [] }),
-  useRooms: () => ({ data: [] }),
-  useGroups: () => ({ data: [] }),
-  usePeople: () => ({ data: [] }),
+  useSubjects: () => ({ data: state.lists.subjects }),
+  useRooms: () => ({ data: state.lists.rooms }),
+  useGroups: () => ({ data: state.lists.groups }),
+  usePeople: () => ({ data: state.lists.people }),
   useCrudMutations: (path: string, keys: string[][]) => {
     if (path === "/api/v1/academic-years") state.keys.push(keys);
     if (path === "/api/v1/student-groups") state.groupKeys = keys;
@@ -91,6 +92,7 @@ beforeEach(() => {
     ],
   }));
   state.keys = [];
+  state.lists = { subjects: [], rooms: [], groups: [], people: [] };
 });
 
 describe("SetupPage, the year step and the active flag", () => {
@@ -166,5 +168,37 @@ describe("SetupPage: the läsår step and Timplan per årskurs", () => {
     await user.click(screen.getByRole("button", { name: "create" }));
     expect(state.create).toHaveBeenCalled();
     expect(state.toast.info).not.toHaveBeenCalled();
+  });
+});
+
+describe("SetupPage when every step is done", () => {
+  beforeEach(() => {
+    state.lists = {
+      subjects: [{ id: "s", name: "Matematik" }],
+      rooms: [{ id: "r", name: "A1" }],
+      groups: [{ id: "g", name: "7A" }],
+      people: [
+        { id: "p1", firstName: "Anna", lastName: "Lind" },
+        { id: "p2", firstName: "Bo", lastName: "Ek" },
+      ],
+    };
+  });
+
+  it("marks no step current while it says Klart, and opens no step card", () => {
+    render(<SetupPage />);
+    expect(screen.getByRole("status")).toHaveTextContent("doneTimplan");
+    expect(screen.getByRole("link", { name: /goToTimplan/ })).toHaveAttribute("href", "/admin/timplan");
+    const steps = screen.getByRole("list", { name: "stepsLabel" });
+    expect(steps.querySelector("[aria-current]")).toBeNull();
+    expect(screen.queryByRole("region", { name: "peopleTitle" })).toBeNull();
+  });
+
+  it("makes a step current again when the admin opens it, and still says Klart", async () => {
+    const user = userEvent.setup();
+    render(<SetupPage />);
+    await user.click(screen.getByRole("button", { name: /stepRooms/ }));
+    expect(screen.getByRole("button", { name: /stepRooms/ })).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("region", { name: "roomsTitle" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("doneTimplan");
   });
 });

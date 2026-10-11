@@ -56,7 +56,7 @@ export function RolloverBreaksStep({
                 <input
                   id={checkboxId}
                   type="checkbox"
-                  className="h-4 w-4 accent-primary"
+                  className="size-4 accent-primary"
                   checked={selected}
                   onChange={(event) => toggle(lov.sourceBreakId, event.target.checked)}
                 />

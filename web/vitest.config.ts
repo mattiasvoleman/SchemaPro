@@ -46,6 +46,12 @@ export default defineConfig({
     // same reason playwright.config.ts pins a timezone.
     env: { TZ: "UTC" },
     setupFiles: ["./vitest.setup.ts"],
+    // next-intl's navigation build imports "next/navigation" without an
+    // extension, which Node's own ESM loader cannot resolve in an
+    // externalised dependency. Run through Vite instead, a module that only
+    // imports @/i18n/navigation (PageHeader's back link, since the design
+    // overhaul) loads in any test without a vi.mock of its own.
+    server: { deps: { inline: ["next-intl"] } },
     include: ["**/*.test.{ts,tsx}"],
     exclude: ["node_modules/**", "e2e/**", ".next/**"],
     coverage: {

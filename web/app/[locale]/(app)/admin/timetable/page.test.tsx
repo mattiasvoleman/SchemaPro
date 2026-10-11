@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./page";
@@ -18,7 +18,10 @@ import { ApiError } from "@/lib/api";
  */
 
 const state = vi.hoisted(() => ({
-  lessons: [] as unknown[],
+  // undefined models a board never read: the first request failed.
+  lessons: [] as unknown[] | undefined,
+  /** The last read of the lessons failed (a first read, or a refetch over a cached board). */
+  lessonsFailed: false,
   // undefined models the query in flight, which is a different fact from an
   // empty roster and must reach the page as one.
   memberships: [] as unknown[] | undefined,
@@ -34,6 +37,8 @@ const state = vi.hoisted(() => ({
   nextLessons: [] as unknown[],
   /** The year each year-keyed read was last asked for. */
   askedFor: {} as Record<string, string | null>,
+  /** The years themselves still on their way (the page's state ladder). */
+  yearsLoading: false,
 }));
 
 /**
@@ -98,9 +103,16 @@ const lunch = {
 };
 
 vi.mock("@/lib/queries", () => ({
+  // Read by the page's state ladder only; the year itself comes from the
+  // usePlanningYear mock above.
+  useAcademicYears: () => ({ isLoading: state.yearsLoading, isError: false }),
   useMasterLessons: (yearId: string | null) => {
     state.askedFor.lessons = yearId;
-    return { data: yearId === "y-2" ? state.nextLessons : state.lessons, isLoading: false };
+    return {
+      data: yearId === "y-2" ? state.nextLessons : state.lessons,
+      isLoading: false,
+      isError: state.lessonsFailed,
+    };
   },
   useGroups: () => ({ data: GROUPS }),
   usePeople: () => ({ data: PEOPLE }),
@@ -466,6 +478,7 @@ beforeEach(() => {
     return this.closest('[data-testid="lesson-tray"]') ? TRAY_RECT : GRID_RECT;
   });
   state.lessons = LESSONS;
+  state.lessonsFailed = false;
   state.memberships = MEMBERSHIPS;
   state.lunchSettings = null;
   state.sittings = [];
@@ -473,6 +486,7 @@ beforeEach(() => {
   state.snapshot = null;
   state.nextLessons = [];
   state.askedFor = {};
+  state.yearsLoading = false;
   planning.successor = null;
   planning.rosters = null;
 });
@@ -511,6 +525,17 @@ async function tick(picker: string, ...names: string[]) {
 const filterTo = (...names: string[]) => tick("timetable.filterGroup", ...names);
 const filterToTeacher = (...names: string[]) => tick("timetable.filterTeacher", ...names);
 const filterToRoom = (...names: string[]) => tick("timetable.filterRoom", ...names);
+
+/**
+ * Pick one of the header's overflow actions: Optimera salar, the two exports
+ * and Skriv ut sit behind "Fler åtgärder" since the header was cut to four
+ * controls (the design overhaul's header rule), and each runs once the menu
+ * has closed.
+ */
+async function fromMoreMenu(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(screen.getByRole("button", { name: "timetable.moreActions" }));
+  await user.click(await screen.findByRole("menuitem", { name }));
+}
 
 /** The subjects on screen, which is the whole question this page answers. */
 function subjectsOnScreen(): string[] {
@@ -746,7 +771,7 @@ describe("exporting one class's week", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
     if (className) await filterTo(className);
-    await user.click(screen.getByRole("button", { name: "timetable.exportIcs" }));
+    await fromMoreMenu(user, "timetable.exportIcs");
     // Awaited: the builder is fetched when the button is pressed, so the call
     // lands a tick after the click rather than during it.
     await waitFor(() => expect(buildIcs).toHaveBeenCalled());
@@ -801,7 +826,7 @@ describe("exporting one class's week", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
     await filterTo("4.1");
-    await user.click(screen.getByRole("button", { name: "timetable.exportPdf" }));
+    await fromMoreMenu(user, "timetable.exportPdf");
     await waitFor(() => expect(exportTimetablePdf).toHaveBeenCalled());
     const [{ lessons }] = vi.mocked(exportTimetablePdf).mock.calls[0];
     expect(lessons.map((l) => l.group)).toEqual([
@@ -1238,7 +1263,7 @@ describe("the grid in utkastläge", () => {
     vi.mocked(exportTimetablePdf).mockClear();
     const user = userEvent.setup();
     render(<TimetablePage />);
-    await user.click(screen.getByRole("button", { name: "timetable.exportPdf" }));
+    await fromMoreMenu(user, "timetable.exportPdf");
     await waitFor(() => expect(exportTimetablePdf).toHaveBeenCalled());
     expect(vi.mocked(exportTimetablePdf).mock.calls[0]![0].subtitle).toBe("2026/27 · timetable.draftExportNotice");
   });
@@ -1435,7 +1460,11 @@ describe("comparing a version with the timetable", () => {
     render(<TimetablePage />);
     await user.click(screen.getByRole("button", { name: "timetable.versions" }));
     // The dialog's code arrives on that first press (versions-dialog.tsx).
-    await user.click(await screen.findByRole("button", { name: "timetable.versionCompare" }));
+    // Named by the version it compares since the design overhaul, so a list
+    // of versions is not a column of identical buttons.
+    await user.click(
+      await screen.findByRole("button", { name: "timetable.versionCompareNamed(Före bytet)" }),
+    );
     return screen.getByText("timetable.diffTitle(Före bytet)").parentElement!;
   }
 
@@ -1911,26 +1940,33 @@ describe("the room optimisation", () => {
     roomOptimization.apply.mutateAsync.mockReset();
   });
 
-  it("sits beside the versions and opens its dialog", async () => {
+  it("sits in the header's overflow menu, beside the versions, and opens its dialog", async () => {
+    // The header holds four controls since the design overhaul; Optimera
+    // salar went behind "Fler åtgärder" with the exports and the print, and
+    // that menu sits beside Versioner.
     const user = userEvent.setup();
     render(<TimetablePage />);
 
-    const button = screen.getByRole("button", { name: "timetable.optimizeRooms" });
-    expect(button.parentElement).toBe(
+    expect(screen.getByRole("button", { name: "timetable.moreActions" }).parentElement).toBe(
       screen.getByRole("button", { name: "timetable.versions" }).parentElement,
     );
-    await user.click(button);
+    await fromMoreMenu(user, "timetable.optimizeRooms");
 
     // Awaited, not read straight away: the dialog's code is fetched when this
     // button is pressed rather than with the page, so it arrives a tick later.
     expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
   });
 
-  it("is not offered for a grundschema with no lessons", () => {
+  it("is not offered for a grundschema with no lessons", async () => {
     state.lessons = [];
+    const user = userEvent.setup();
     render(<TimetablePage />);
 
-    expect(screen.getByRole("button", { name: "timetable.optimizeRooms" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "timetable.moreActions" }));
+    expect(await screen.findByRole("menuitem", { name: "timetable.optimizeRooms" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("forgets the page's own undo history once the rooms are rewritten", async () => {
@@ -1948,10 +1984,12 @@ describe("the room optimisation", () => {
     render(<TimetablePage />);
 
     dragToTuesday("Slöjd");
-    const undo = screen.getByTitle("timetable.undo (Ctrl+Z)");
+    // Named by its own label now, with the shortcut in the tooltip from the
+    // catalogue rather than a hard-coded "(Ctrl+Z)".
+    const undo = screen.getByRole("button", { name: "timetable.undo" });
     await waitFor(() => expect(undo).toBeEnabled());
 
-    await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
+    await fromMoreMenu(user, "timetable.optimizeRooms");
     await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
     await user.click(await screen.findByRole("button", { name: "roomOptimization.apply" }));
 
@@ -1978,7 +2016,7 @@ describe("the room optimisation", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
 
-    await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
+    await fromMoreMenu(user, "timetable.optimizeRooms");
     await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
@@ -2036,7 +2074,9 @@ describe("next year's grid, before its activation", () => {
 
   const card = (subject: string) =>
     screen.queryAllByRole("button").find((el) => el.textContent?.includes(subject));
-  const clashes = (subject: string) => card(subject)?.className.includes("ring-red-500") ?? false;
+  // The clash ring is the destructive token since the design overhaul (it was
+  // a raw ring-red-500/80); the token is what marks a clash now.
+  const clashes = (subject: string) => card(subject)?.className.includes("ring-destructive") ?? false;
 
   it("shows next year's lessons, and every year-keyed read follows the choice", async () => {
     await showNextYear();
@@ -2046,15 +2086,21 @@ describe("next year's grid, before its activation", () => {
     expect(card("Idrott")).toBeUndefined();
   });
 
-  it("puts the year choice in a row of its own, not among the header's actions", async () => {
-    // jsdom does no layout, so the width is measured elsewhere (the commit);
-    // what this pins is where the choice sits. Beside nine buttons it ran
-    // past a 1440 px screen and pushed Publicera out of sight.
+  it("puts the year choice first among the header's actions, now that they are four", async () => {
+    // jsdom does no layout, so the width is measured elsewhere. Beside nine
+    // buttons the choice once ran past a 1440 px screen and pushed Publicera
+    // out of sight, so it had a row of its own. The design overhaul cut the
+    // header to Lägg till, Versioner, the overflow menu and Publicera, and the
+    // scope selector goes first in the actions as on every page. What this
+    // pins is that, and that the exports and the print did not come back.
     render(<TimetablePage />);
     const choice = screen.getByRole("group", { name: "planningYear.label" });
     const actions = screen.getByRole("button", { name: /timetable\.publish/ }).parentElement!;
-    expect(actions.contains(choice)).toBe(false);
+    expect(actions.firstElementChild).toBe(choice);
     expect(choice.closest("h1")).toBeNull();
+    for (const name of ["timetable.optimizeRooms", "timetable.exportIcs", "timetable.exportPdf", "timetable.print"]) {
+      expect(within(actions).queryByRole("button", { name })).toBeNull();
+    }
   });
 
   it("offers next year's groups in the filter, and not this year's", async () => {
@@ -2129,6 +2175,56 @@ describe("next year's grid, before its activation", () => {
     render(<TimetablePage />);
 
     expect(screen.queryByRole("group", { name: "planningYear.label" })).toBeNull();
+  });
+});
+
+describe("the state ladder", () => {
+  it("waits for the years rather than saying there is no grundschema", () => {
+    // With no year the lessons are never asked for, so they read as loaded
+    // and empty; the empty state's "generate one" would be a guess.
+    state.yearsLoading = true;
+    state.lessons = [];
+    const { container } = render(<TimetablePage />);
+
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.queryByText("timetable.emptyTitle")).toBeNull();
+  });
+
+  it("offers the generate page when the year has no grundschema", () => {
+    state.lessons = [];
+    render(<TimetablePage />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "timetable.emptyTitle" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "timetable.emptyAction" }).getAttribute("href")).toBe(
+      "/admin/generate",
+    );
+  });
+
+  it("says the board could not be read when the first read fails", () => {
+    state.lessons = undefined;
+    state.lessonsFailed = true;
+    render(<TimetablePage />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "timetable.loadFailed" })).toBeTruthy();
+    expect(screen.getByText("timetable.loadFailedHint")).toBeTruthy();
+    expect(screen.queryByText("timetable.emptyTitle")).toBeNull();
+  });
+
+  it("keeps a board it has read when a refetch fails, and says so above it", () => {
+    // A realtime peer invalidates the lessons on every edit; a background
+    // read that fails must not unmount the board someone is dragging on.
+    const { rerender } = render(<TimetablePage />);
+    expect(subjectsOnScreen().length).toBeGreaterThan(0);
+    const before = subjectsOnScreen();
+
+    state.lessonsFailed = true;
+    rerender(<TimetablePage />);
+
+    expect(subjectsOnScreen()).toEqual(before);
+    const notice = screen.getByRole("alert");
+    expect(within(notice).getByText("timetable.loadFailed")).toBeTruthy();
+    expect(within(notice).getByText("common.refetchFailedHint")).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "timetable.loadFailed" })).toBeNull();
   });
 });
 

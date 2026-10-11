@@ -7,6 +7,7 @@ import type { CreatePlanBody } from "@/lib/timplan-queries";
 import { parseWeeksTenths, SUGGESTED_WEEKS } from "@/lib/timplan-view";
 import type { NationalTimplanVersion } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -115,42 +116,37 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
           <DialogDescription>{t("createBody")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          <FormField id="timplan-create-name" label={t("nameLabel")} error={touched ? nameProblem : null}>
+            <Input value={name} onChange={(event) => setName(event.target.value)} />
+          </FormField>
+          <FormField id="timplan-create-school-form" label={t("schoolFormLabel")}>
+            {(control) => (
+              <Select
+                value={schoolForm}
+                onValueChange={(value) => {
+                  setSchoolForm(value as SchoolForm);
+                  setVersionId(null);
+                }}
+              >
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHOOL_FORMS.map((form) => (
+                    <SelectItem key={form} value={form}>
+                      {t(`schoolForms.${form}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
           <div className="space-y-1.5">
-            <Label htmlFor="timplan-create-name">{t("nameLabel")}</Label>
-            <Input
-              id="timplan-create-name"
-              value={name}
-              aria-invalid={(touched && nameProblem !== null) || undefined}
-              onChange={(event) => setName(event.target.value)}
-            />
-            {touched && nameProblem ? <p className="text-sm text-destructive">{nameProblem}</p> : null}
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("schoolFormLabel")}</Label>
-            <Select
-              value={schoolForm}
-              onValueChange={(value) => {
-                setSchoolForm(value as SchoolForm);
-                setVersionId(null);
-              }}
-            >
-              <SelectTrigger aria-label={t("schoolFormLabel")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SCHOOL_FORMS.map((form) => (
-                  <SelectItem key={form} value={form}>
-                    {t(`schoolForms.${form}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("versionLabel")}</Label>
+            {/* By hand: with no version for the form there is no control to label, only the sentence. */}
+            <Label htmlFor={chosen ? "timplan-create-version" : undefined}>{t("versionLabel")}</Label>
             {chosen ? (
               <Select value={chosen.id} onValueChange={setVersionId}>
-                <SelectTrigger aria-label={t("versionLabel")}>
+                <SelectTrigger id="timplan-create-version">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -170,21 +166,20 @@ export function CreateDialog({ open, onOpenChange, versions, pending, onConfirm 
               <p className="text-sm text-destructive">{t("noVersionForForm")}</p>
             )}
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="timplan-create-weeks">{t("weeksLabel")}</Label>
+          {/* The line under the field is the hint, or the error in its place. */}
+          <FormField
+            id="timplan-create-weeks"
+            label={t("weeksLabel")}
+            hint={weeksTenths === null ? undefined : t("weeksHint")}
+            error={weeksTenths === null ? t("weeksInvalid") : undefined}
+          >
             <Input
-              id="timplan-create-weeks"
               inputMode="decimal"
               className="w-28"
               value={weeks}
-              aria-invalid={weeksTenths === null || undefined}
-              aria-describedby="timplan-create-weeks-hint"
               onChange={(event) => setWeeks(event.target.value)}
             />
-            <p id="timplan-create-weeks-hint" className="text-xs text-muted-foreground">
-              {weeksTenths === null ? t("weeksInvalid") : t("weeksHint")}
-            </p>
-          </div>
+          </FormField>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>

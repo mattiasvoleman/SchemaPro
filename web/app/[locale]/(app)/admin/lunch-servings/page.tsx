@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Link } from "@/i18n/navigation";
-import { Pencil, Plus, Trash2, TriangleAlert, UtensilsCrossed } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2, UtensilsCrossed } from "lucide-react";
 import {
   useActiveYear,
   useCrudMutations,
@@ -16,19 +16,32 @@ import {
 import type { LunchServing } from "@/lib/types";
 import { servingsFor } from "@/lib/lunch-servings";
 import { lunchFlow, peakSeated } from "@/lib/lunch-flow";
+import { clock } from "@/lib/clock";
 import { formatTime, timeToMinutes } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import {
+  StageWeekMatrix,
+  WEEKDAYS,
+  stagesOf,
+  useSpanLabel,
+} from "@/components/schedule/stage-week-matrix";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -41,7 +54,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -49,7 +61,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const WEEKDAYS = [1, 2, 3, 4, 5] as const;
 /** The select's stand-in for `dayOfWeek: null`, which a Select cannot hold. */
 const EVERY_DAY = "all";
 
@@ -75,11 +86,14 @@ export default function LunchServingsPage() {
   const t = useTranslations("lunchServings");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
-  const tGrades = useTranslations("grades");
-  const { data: servings, isLoading } = useLunchServings();
-  const { data: lunchSettings } = useLunchSettings();
-  const { activeYear } = useActiveYear();
-  const { data: sittings } = useLunchSittings(activeYear?.id ?? null);
+  const { data: servings, isLoading, isError } = useLunchServings();
+  const { data: lunchSettings, isError: lunchFailed } = useLunchSettings();
+  const { activeYear, isLoading: yearLoading, isError: yearsFailed } = useActiveYear();
+  const {
+    data: sittings,
+    isLoading: sittingsLoading,
+    isError: sittingsFailed,
+  } = useLunchSittings(activeYear?.id ?? null);
   const { data: groups } = useGroups();
 
   const mutations = useCrudMutations<{
@@ -96,28 +110,20 @@ export default function LunchServingsPage() {
   const [deleting, setDeleting] = useState<LunchServing | null>(null);
   const [form, setForm] = useState<ServingForm>(EMPTY_FORM);
 
-  const spanLabel = (min: number, max: number): string =>
-    min === max
-      ? tGrades("grade", { grade: min })
-      : `${tGrades("grade", { grade: min })}–${tGrades("grade", { grade: max })}`;
+  const spanLabel = useSpanLabel();
+
+  /** The stages the school has written about, in year order (see stagesOf). */
+  const spans = useMemo(() => stagesOf(servings), [servings]);
 
   /**
-   * The stages the school has written about, in year order.
-   *
-   * Derived from the rows rather than from a fixed F-3/4-6/7-9, because the
-   * school decides what a stage is — one row per single year is an equally
-   * valid thing to say, and the flow below has to show it back.
+   * "Åk 4–6, Alla dagar 11:00–11:40": the row as its buttons and its confirm
+   * name it. A comma rather than " · ", which some screen readers read out as
+   * "middle dot".
    */
-  const spans = useMemo(() => {
-    const seen = new Map<string, { min: number; max: number }>();
-    for (const serving of servings ?? []) {
-      seen.set(`${serving.minGradeLevel}-${serving.maxGradeLevel}`, {
-        min: serving.minGradeLevel,
-        max: serving.maxGradeLevel,
-      });
-    }
-    return [...seen.values()].sort((a, b) => a.min - b.min || a.max - b.max);
-  }, [servings]);
+  const rowName = (serving: LunchServing): string =>
+    `${spanLabel(serving.minGradeLevel, serving.maxGradeLevel)}, ${
+      serving.dayOfWeek === null ? t("everyDay") : tDays(String(serving.dayOfWeek))
+    } ${formatTime(serving.startTime)}–${formatTime(serving.endTime)}`;
 
   /** Group names for the kitchen's list; an id there would be useless. */
   const groupNameOf = useMemo(
@@ -129,6 +135,12 @@ export default function LunchServingsPage() {
   const lunchMinutes = lunchSettings?.lunchEnabled
     ? (lunchSettings.lunchMinutes ?? null)
     : null;
+  /**
+   * The lunch settings have ANSWERED — null (never set) or a row. The query
+   * maps an empty reply to null, so undefined means only "in flight" or
+   * "failed", and neither is grounds for telling the admin lunch is undefined.
+   */
+  const lunchKnown = lunchSettings !== undefined;
 
   const openCreate = () => {
     setEditing(null);
@@ -187,113 +199,117 @@ export default function LunchServingsPage() {
 
   const formValid = form.startTime < form.endTime;
 
+  const saving = mutations.create.isPending || mutations.update.isPending;
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
+        intro={t("hint")}
         actions={
           <Button onClick={openCreate}>
-            <Plus />
+            <Plus aria-hidden="true" />
             {t("add")}
           </Button>
         }
       />
 
-      <p className="mb-4 max-w-prose text-sm text-muted-foreground">{t("hint")}</p>
-
       {/*
-        A sitting is a window for a meal whose length lives on the lunch card.
-        With no lunch defined the rows here constrain nothing at all, and a page
-        that let an admin write six of them without saying so would be a page
-        that wasted an afternoon.
+        A sitting is a window for a meal whose length lives in the school
+        rules. With no lunch defined the rows here constrain nothing at all,
+        and a page that let an admin write six of them without saying so would
+        be a page that wasted an afternoon.
+
+        Said only once the rules have ANSWERED. It used to show while they were
+        still loading and when they had failed, telling a school with a perfectly
+        good lunch that it had none.
       */}
-      {lunchMinutes === null ? (
-        <div
-          role="status"
-          className="mb-6 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+      {lunchKnown && lunchMinutes === null ? (
+        <Notice
+          tone="warning"
+          action={
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/admin/constraints#skolregler">{t("lunchLink")}</Link>
+            </Button>
+          }
         >
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
-          <div className="space-y-1">
-            <p>{t("noLunch")}</p>
-            <Link
-              href="/admin/constraints"
-              className="font-medium underline underline-offset-4"
-            >
-              {t("lunchLink")}
-            </Link>
-          </div>
-        </div>
+          {t("noLunch")}
+        </Notice>
+      ) : !lunchKnown && lunchFailed ? (
+        <LoadError variant="inline" title={t("lunchLoadFailed")} hint={t("lunchLoadFailedHint")} />
+      ) : null}
+
+      {isError && servings !== undefined ? (
+        // A failed refetch keeps the sittings as last read, with this above them.
+        <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
       ) : null}
 
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError && servings === undefined ? (
+        /*
+          Not the empty state: "no sittings" means every stage may eat at once,
+          and a failed request is not evidence of that.
+        */
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !servings || servings.length === 0 ? (
         <EmptyState
           icon={UtensilsCrossed}
-          title={tCommon("noResults")}
+          title={t("emptyTitle")}
           description={t("empty")}
+          headingLevel={2}
         />
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-foreground">{t("gradeSpan")}</TableHead>
-                  <TableHead className="text-foreground">{t("day")}</TableHead>
-                  <TableHead className="text-foreground">{tCommon("time")}</TableHead>
-                  <TableHead className="text-foreground">{t("seats")}</TableHead>
-                  <TableHead className="w-24 text-right text-foreground">
-                    {tCommon("actions")}
-                  </TableHead>
+          <TableCard caption={t("tableCaption")}>
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col" className="text-foreground">{t("gradeSpan")}</TableHead>
+                <TableHead scope="col" className="text-foreground">{t("day")}</TableHead>
+                <TableHead scope="col" className="text-foreground">{tCommon("time")}</TableHead>
+                <TableHead scope="col" className="text-right text-foreground">{t("seats")}</TableHead>
+                <TableHead scope="col" className="w-24 text-right text-foreground">
+                  {tCommon("actions")}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {servings.map((serving) => (
+                <TableRow key={serving.id}>
+                  <TableCell className="font-medium">
+                    {spanLabel(serving.minGradeLevel, serving.maxGradeLevel)}
+                  </TableCell>
+                  <TableCell>
+                    {serving.dayOfWeek === null ? (
+                      <Badge variant="secondary">{t("everyDay")}</Badge>
+                    ) : (
+                      tDays(String(serving.dayOfWeek))
+                    )}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    {formatTime(serving.startTime)}–{formatTime(serving.endTime)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {serving.seats ?? (
+                      <span className="text-muted-foreground">{t("seatsPlaceholder")}</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <RowActions
+                      name={rowName(serving)}
+                      actions={[
+                        { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(serving) },
+                        { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(serving) },
+                      ]}
+                    />
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {servings.map((serving) => (
-                  <TableRow key={serving.id}>
-                    <TableCell className="font-medium">
-                      {spanLabel(serving.minGradeLevel, serving.maxGradeLevel)}
-                    </TableCell>
-                    <TableCell>
-                      {serving.dayOfWeek === null ? (
-                        <Badge variant="secondary">{t("everyDay")}</Badge>
-                      ) : (
-                        tDays(String(serving.dayOfWeek))
-                      )}
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      {formatTime(serving.startTime)}–{formatTime(serving.endTime)}
-                    </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {serving.seats ?? t("seatsPlaceholder")}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEdit(serving)}
-                        aria-label={tCommon("edit")}
-                      >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeleting(serving)}
-                        aria-label={tCommon("delete")}
-                      >
-                        <Trash2 className="text-destructive" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+              ))}
+            </TableBody>
+          </TableCard>
 
           {/*
             The rows above are what the school typed; this is the flow they make.
@@ -302,102 +318,99 @@ export default function LunchServingsPage() {
             with servingsFor, the same function the app's own checks use, rather
             than a second implementation that could disagree with the solver.
           */}
-          <section aria-labelledby="deklarerade-fonster" className="mt-8">
-            <h2 id="deklarerade-fonster" className="text-lg font-semibold">
-              {t("windowsTitle")}
-            </h2>
-            <p className="mb-3 text-sm text-muted-foreground">{t("windowsHint")}</p>
-            <p className="mb-3 max-w-prose text-sm text-muted-foreground">
-              {t("overlapHint")}
-            </p>
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-foreground">{t("gradeSpan")}</TableHead>
-                    {WEEKDAYS.map((day) => (
-                      <TableHead key={day} className="text-foreground">
-                        {tDays(String(day))}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {spans.map((span) => (
-                    <TableRow key={`${span.min}-${span.max}`}>
-                      <TableCell className="font-medium">
-                        {spanLabel(span.min, span.max)}
-                      </TableCell>
-                      {WEEKDAYS.map((day) => {
-                        const open = servingsFor(servings, span, day);
-                        if (open.length === 0) {
-                          return (
-                            <TableCell key={day} className="text-muted-foreground">
-                              {t("flowOpen")}
-                            </TableCell>
-                          );
-                        }
-                        return (
-                          <TableCell key={day} className="tabular-nums">
-                            <div className="flex flex-col gap-1">
-                              {open.map((serving) => {
-                                const minutes =
-                                  timeToMinutes(serving.endTime) -
-                                  timeToMinutes(serving.startTime);
-                                const tooShort =
-                                  lunchMinutes !== null && minutes < lunchMinutes;
-                                return (
-                                  <span key={serving.id}>
-                                    {formatTime(serving.startTime)}–
-                                    {formatTime(serving.endTime)}
-                                    {tooShort ? (
-                                      <Badge variant="destructive" className="ml-2">
-                                        {t("tooShort", { minutes: lunchMinutes })}
-                                      </Badge>
-                                    ) : null}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+          <StageWeekMatrix
+            id="sittningar-vecka"
+            title={t("windowsTitle")}
+            description={
+              <>
+                <p>{t("windowsHint")}</p>
+                <p>{t("overlapHint")}</p>
+              </>
+            }
+            stageLabel={t("gradeSpan")}
+            spans={spans}
+            renderCell={(span, day) => {
+              const open = servingsFor(servings, span, day);
+              if (open.length === 0) {
+                return <span className="text-muted-foreground">{t("flowOpen")}</span>;
+              }
+              return (
+                <div className="flex flex-col gap-1">
+                  {open.map((serving) => {
+                    const minutes =
+                      timeToMinutes(serving.endTime) - timeToMinutes(serving.startTime);
+                    const tooShort = lunchMinutes !== null && minutes < lunchMinutes;
+                    return (
+                      <span key={serving.id} className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {formatTime(serving.startTime)}–{formatTime(serving.endTime)}
+                        </span>
+                        {tooShort ? (
+                          <Badge variant="destructive">
+                            {t("tooShort", { minutes: lunchMinutes })}
+                          </Badge>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            }}
+          />
         </>
       )}
 
       {/*
         What the solver actually did, as opposed to what the school asked for.
-        The table above is the rule; this is the day. It is the cheapest useful
-        artefact in the whole feature — one page the kitchen can print — and it
-        exists only after a generation run, which is why it is absent rather
-        than empty until then.
+        The table above is the rule; this is the day — one page the kitchen
+        can print. It exists only after a generation run, so until then the
+        section says so in a sentence: a printable list with nothing on it
+        would invite somebody to take it to the kitchen.
       */}
-      {sittings && sittings.length > 0 ? (
-        <section aria-labelledby="kitchen-flow" className="mt-10">
-          <h2 id="kitchen-flow" className="text-lg font-semibold">
+      <section aria-labelledby="kitchen-flow" className="space-y-3">
+        <div className="space-y-1">
+          <h2 id="kitchen-flow" className="text-base font-semibold">
             {t("flowTitle")}
           </h2>
-          <p className="mb-3 text-sm text-muted-foreground">{t("flowSubtitle")}</p>
+          <p className="text-sm text-muted-foreground">{t("flowSubtitle")}</p>
+        </div>
+        {sittingsFailed && sittings !== undefined ? (
+          <LoadError variant="inline" title={t("flowLoadFailed")} hint={tCommon("refetchFailedHint")} />
+        ) : null}
+        {/*
+          The flow is the active year's. Without one the request is never made,
+          so a school whose years failed, or that has none active, would read
+          "no sittings yet — generate a schedule": a page that could not know.
+        */}
+        {yearLoading || sittingsLoading ? (
+          <div aria-busy="true">
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : !activeYear && yearsFailed ? (
+          <LoadError variant="inline" title={t("flowLoadFailed")} hint={t("flowYearsLoadFailedHint")} />
+        ) : !activeYear ? (
+          <p className="text-sm text-muted-foreground">{t("flowNoYear")}</p>
+        ) : sittingsFailed && sittings === undefined ? (
+          <LoadError variant="inline" title={t("flowLoadFailed")} hint={t("flowLoadFailedHint")} />
+        ) : !sittings || sittings.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("flowEmpty")}</p>
+        ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {WEEKDAYS.map((day) => {
               const waves = lunchFlow(sittings, day);
               if (waves.length === 0) return null;
               return (
-                <div key={day} className="rounded-lg border bg-card p-4">
-                  <h3 className="font-medium">{tDays(String(day))}</h3>
-                  <p className="mb-2 text-sm text-muted-foreground">
-                    {t("flowTotal", { count: peakSeated(sittings, day) })}
-                  </p>
+                <div key={day} className="space-y-2 rounded-lg border bg-card p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold">{tDays(String(day))}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {t("flowTotal", { count: peakSeated(sittings, day) })}
+                    </p>
+                  </div>
                   <ol className="space-y-1 text-sm">
                     {waves.map((wave) => (
                       <li key={wave.startMinutes} className="flex justify-between gap-3">
-                        <span className="tabular-nums">
+                        <span className="whitespace-nowrap tabular-nums">
                           {clock(wave.startMinutes)}–{clock(wave.endMinutes)}
                         </span>
                         <span className="text-right">
@@ -415,13 +428,14 @@ export default function LunchServingsPage() {
               );
             })}
           </div>
-        </section>
-      ) : null}
+        )}
+      </section>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("edit") : t("add")}</DialogTitle>
+            <DialogDescription>{t("dialogDescription")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             {/* No "every year": a sitting is a stage's turn at the tables, and
@@ -429,7 +443,8 @@ export default function LunchServingsPage() {
                 below exists to warn about. The API refuses it outright. */}
             <GradeSpanField
               label={t("gradeSpan")}
-              toLabel={`${t("gradeSpan")} – ${tCommon("to")}`}
+              fromLabel={t("gradeFromLabel")}
+              toLabel={t("gradeToLabel")}
               min={form.minGradeLevel}
               max={form.maxGradeLevel}
               onChange={({ min, max }) =>
@@ -437,66 +452,67 @@ export default function LunchServingsPage() {
               }
             />
 
-            <div className="space-y-2">
-              <Label>{t("day")}</Label>
-              <Select
-                value={form.dayOfWeek}
-                onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
-              >
-                <SelectTrigger aria-label={t("day")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={EVERY_DAY}>{t("everyDay")}</SelectItem>
-                  {WEEKDAYS.map((day) => (
-                    <SelectItem key={day} value={String(day)}>
-                      {tDays(String(day))}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <FormField id="sittning-dag" label={t("day")}>
+              {(control) => (
+                <Select
+                  value={form.dayOfWeek}
+                  onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={EVERY_DAY}>{t("everyDay")}</SelectItem>
+                    {WEEKDAYS.map((day) => (
+                      <SelectItem key={day} value={String(day)}>
+                        {tDays(String(day))}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="sittning-start">{t("startTime")}</Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="sittning-start" label={t("startTime")}>
                 <Input
-                  id="sittning-start"
                   type="time"
                   value={form.startTime}
                   onChange={(event) => setForm({ ...form, startTime: event.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="sittning-slut">{t("endTime")}</Label>
+              </FormField>
+              <FormField id="sittning-slut" label={t("endTime")}>
                 <Input
-                  id="sittning-slut"
                   type="time"
                   value={form.endTime}
                   onChange={(event) => setForm({ ...form, endTime: event.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="sittning-platser">{t("seats")}</Label>
+            <FormField id="sittning-platser" label={t("seats")} hint={t("seatsHint")}>
               <Input
-                id="sittning-platser"
                 type="number"
                 min={1}
                 placeholder={t("seatsPlaceholder")}
                 value={form.seats}
                 onChange={(event) => setForm({ ...form, seats: event.target.value })}
               />
-              <p className="text-sm text-muted-foreground">{t("seatsHint")}</p>
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={submit} disabled={!formValid}>
-              {tCommon("save")}
+            <Button onClick={submit} disabled={!formValid || saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -505,24 +521,12 @@ export default function LunchServingsPage() {
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title={tCommon("delete")}
-        description={
-          deleting
-            ? `${spanLabel(deleting.minGradeLevel, deleting.maxGradeLevel)} · ${
-                deleting.dayOfWeek === null
-                  ? t("everyDay")
-                  : tDays(String(deleting.dayOfWeek))
-              } ${formatTime(deleting.startTime)}–${formatTime(deleting.endTime)}`
-            : ""
-        }
+        title={t("deleteTitle")}
+        description={deleting ? t("deleteBody", { row: rowName(deleting) }) : undefined}
+        confirmLabel={tCommon("delete")}
+        loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
-}
-
-/** Minutes since midnight as HH:MM, for the kitchen's list. */
-function clock(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }

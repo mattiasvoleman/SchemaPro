@@ -21,10 +21,12 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { useSwitchPublishMode } from "@/lib/publication-queries";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { PublishMode } from "@/lib/publication-types";
+import { PLAN_STATUS_VARIANT } from "@/lib/status-variants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 
 export function ModeCard({ mode }: { mode: PublishMode }) {
   const t = useTranslations("publishing");
@@ -48,26 +50,25 @@ export function ModeCard({ mode }: { mode: PublishMode }) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+    <SectionCard
+      id="publish-mode"
+      title={
+        <span className="flex flex-wrap items-center gap-2">
           {t("modeTitle")}
-          <Badge variant={mode === "DRAFT" ? "warning" : "secondary"}>
+          {/* An utkast waits for a decision (warning, as a draft timplan
+              does); direct is a neutral fact about the school. */}
+          <Badge variant={mode === "DRAFT" ? PLAN_STATUS_VARIANT.DRAFT : "secondary"}>
             {t(mode === "DRAFT" ? "modeDraft" : "modeDirect")}
           </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <p>{t(mode === "DRAFT" ? "modeDraftBody" : "modeDirectBody")}</p>
-        <Button variant="outline" onClick={() => setConfirming(true)} disabled={switchMode.isPending}>
-          {t(target === "DRAFT" ? "modeToDraft" : "modeToDirect")}
-        </Button>
-        {problem ? (
-          <p role="alert" className="font-medium">
-            {problem}
-          </p>
-        ) : null}
-      </CardContent>
+        </span>
+      }
+    >
+      <p className="max-w-prose text-sm">{t(mode === "DRAFT" ? "modeDraftBody" : "modeDirectBody")}</p>
+      <Button variant="outline" onClick={() => setConfirming(true)} disabled={switchMode.isPending}>
+        {t(target === "DRAFT" ? "modeToDraft" : "modeToDirect")}
+      </Button>
+      {/* What the gateway refused and how to get there, where the switch was pressed. */}
+      {problem ? <Notice tone="destructive">{problem}</Notice> : null}
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -77,6 +78,6 @@ export function ModeCard({ mode }: { mode: PublishMode }) {
         loading={switchMode.isPending}
         onConfirm={doSwitch}
       />
-    </Card>
+    </SectionCard>
   );
 }

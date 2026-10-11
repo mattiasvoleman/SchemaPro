@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -101,12 +102,12 @@ export function AbsenceEndDialog({
   return (
     <>
       <Dialog open={absence !== null} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("title")}</DialogTitle>
             <DialogDescription>{t("body")}</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
             <div className="space-y-1.5">
               <Label htmlFor="absence-end-date">{t("date")}</Label>
               <DateField id="absence-end-date" label={t("date")} value={date} onChange={setDate} />
@@ -116,11 +117,7 @@ export function AbsenceEndDialog({
               <Input id="absence-end-time" type="time" value={time} onChange={(event) => setTime(event.target.value)} />
             </div>
           </div>
-          {shown && problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(`errors.${problem}`)}
-            </p>
-          ) : null}
+          {shown && problem ? <Notice tone="destructive">{t(`errors.${problem}`)}</Notice> : null}
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={end.isPending}>
               {tCommon("cancel")}

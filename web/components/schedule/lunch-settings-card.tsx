@@ -3,11 +3,16 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { UtensilsCrossed } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useLunchSettings, useSaveLunchSettings } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 
 /** The solver's grid: 08:00-18:00 in quarter hours, and it rejects anything else. */
@@ -94,21 +99,42 @@ function legacyForm(): Partial<LunchForm> | null {
   }
 }
 
+/** The fields a saved form is compared on, so Save can wait for a change. */
+const FORM_KEYS = Object.keys(EMPTY_FORM) as (keyof LunchForm)[];
+
 /**
- * Lunch, and how many the dining hall seats.
+ * Skolregler: lunch, how many the dining hall seats, and the most lessons a
+ * day. Hard rules for the whole school, rendered as the section
+ * #skolregler on Tillgänglighet — the anchor Generera schema and
+ * Lunchsittningar link to.
  *
  * The seat count is what lets the solver stagger sittings instead of assuming
  * the whole school can eat at once. Without it a generated week looks fine and
  * puts four hundred children in a hall with room for a hundred and eighty.
+ *
+ * NOTHING CAN BE SAVED BEFORE THE SCHOOL'S OWN RULES HAVE ARRIVED. The card
+ * used to draw the form on its defaults while the request was in flight, with
+ * Save enabled: a press in that second PUT lunch switched off, no seat limit
+ * and no daily cap over whatever the school had set, and the refetch then
+ * showed the defaults as if they had always been the rules. So the form is not drawn
+ * until it is filled, a failed fetch says so instead of falling back to the
+ * defaults, and Save waits for both the fill and a change.
  */
 export function LunchSettingsCard() {
   const t = useTranslations("lunch");
   const tCommon = useTranslations("common");
-  const { data: settings, isSuccess } = useLunchSettings();
+  const { data: settings, isSuccess, isError } = useLunchSettings();
   const save = useSaveLunchSettings();
 
   const [form, setForm] = useState<LunchForm>(EMPTY_FORM);
   const [loaded, setLoaded] = useState(false);
+  /**
+   * The form as the server holds it, to tell a change from none. Null when the
+   * school has no row yet: then even the untouched defaults (or the legacy
+   * rules read from localStorage) are something to save, and Save stays open.
+   */
+  const [baseline, setBaseline] = useState<LunchForm | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     // Only until the first fill: re-running on every render of the query would
@@ -116,7 +142,7 @@ export function LunchSettingsCard() {
     if (!isSuccess || loaded) return;
     setLoaded(true);
     if (settings) {
-      setForm({
+      const filled: LunchForm = {
         lunchEnabled: settings.lunchEnabled,
         lunchStartTime: toInputTime(settings.lunchStartTime),
         lunchEndTime: toInputTime(settings.lunchEndTime),
@@ -126,7 +152,9 @@ export function LunchSettingsCard() {
           settings.maxLessonsPerDayPerGroup === null
             ? ""
             : String(settings.maxLessonsPerDayPerGroup),
-      });
+      };
+      setForm(filled);
+      setBaseline(filled);
       return;
     }
     setForm({ ...EMPTY_FORM, ...legacyForm() });
@@ -140,116 +168,138 @@ export function LunchSettingsCard() {
     return trimmed === "" ? null : Number(trimmed);
   };
 
+  const changed =
+    baseline === null || FORM_KEYS.some((key) => form[key] !== baseline[key]);
+
   const submit = async () => {
+    const sent = form;
+    setSaveError(null);
     try {
       await save.mutateAsync({
-        lunchEnabled: form.lunchEnabled,
-        lunchStartTime: form.lunchStartTime,
-        lunchEndTime: form.lunchEndTime,
+        lunchEnabled: sent.lunchEnabled,
+        lunchStartTime: sent.lunchStartTime,
+        lunchEndTime: sent.lunchEndTime,
         // Sent as real numbers: the API runs with implicit conversion off, so
         // "30" is not 30 anywhere along the way.
-        lunchMinutes: Number(form.lunchMinutes),
-        diningSeats: optionalNumber(form.diningSeats),
-        maxLessonsPerDayPerGroup: optionalNumber(form.maxLessonsPerDayPerGroup),
+        lunchMinutes: Number(sent.lunchMinutes),
+        diningSeats: optionalNumber(sent.diningSeats),
+        maxLessonsPerDayPerGroup: optionalNumber(sent.maxLessonsPerDayPerGroup),
       });
+      setBaseline(sent);
       // `updated`, not `saved`: this called a key that has never existed in
       // either locale, so every successful save threw MISSING_MESSAGE instead
       // of confirming anything. `common.updated` already reads "Sparad", and it
       // is what every other page in the app says here.
       toast.success(tCommon("updated"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      // Beside the form rather than in a toast: the fields still hold what
+      // did not save, and the sentence has to stay next to them until the
+      // admin has read it — with what still applies, which a toast has no
+      // room to say.
+      setSaveError(error instanceof Error ? error.message : tCommon("error"));
     }
   };
 
   return (
-    <div className="mt-8 rounded-lg border bg-card p-4">
-      <div className="mb-1 flex items-center gap-2">
-        <UtensilsCrossed className="size-5 text-muted-foreground" />
-        <h2 className="text-lg font-semibold">{t("title")}</h2>
-      </div>
-      <p className="mb-4 text-sm text-muted-foreground">{t("hint")}</p>
+    <SectionCard
+      id="skolregler"
+      title={t("rulesTitle")}
+      description={`${t("rulesIntro")} ${t("hint")}`}
+      footer={
+        // Drawn, disabled, while the rules load, so the card does not grow a
+        // button under the admin's pointer; gone when they cannot be read.
+        loaded || !isError ? (
+          <Button onClick={() => void submit()} disabled={!loaded || save.isPending || !changed}>
+            {save.isPending ? (
+              <>
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                {tCommon("saving")}
+              </>
+            ) : (
+              tCommon("save")
+            )}
+          </Button>
+        ) : null
+      }
+    >
+      {loaded ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+            <Label htmlFor="lunch-enabled">{t("enabled")}</Label>
+            <Switch
+              id="lunch-enabled"
+              checked={form.lunchEnabled}
+              onCheckedChange={(checked) => patch({ lunchEnabled: checked })}
+            />
+          </div>
 
-      <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <Switch
-            id="lunch-enabled"
-            checked={form.lunchEnabled}
-            onCheckedChange={(checked) => patch({ lunchEnabled: checked })}
-          />
-          <Label htmlFor="lunch-enabled">{t("enabled")}</Label>
+          <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+            <FormField id="lunch-start" label={t("windowStart")}>
+              <Input
+                type="time"
+                step={QUARTER_HOUR_STEP}
+                value={form.lunchStartTime}
+                onChange={(event) => patch({ lunchStartTime: event.target.value })}
+              />
+            </FormField>
+            <FormField id="lunch-end" label={t("windowEnd")}>
+              <Input
+                type="time"
+                step={QUARTER_HOUR_STEP}
+                value={form.lunchEndTime}
+                onChange={(event) => patch({ lunchEndTime: event.target.value })}
+              />
+            </FormField>
+            <FormField id="lunch-minutes" label={t("minutes")}>
+              <Input
+                type="number"
+                min={15}
+                max={120}
+                step={15}
+                value={form.lunchMinutes}
+                onChange={(event) => patch({ lunchMinutes: event.target.value })}
+              />
+            </FormField>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <FormField id="dining-seats" label={t("seats")} hint={t("seatsHint")}>
+              <Input
+                type="number"
+                min={1}
+                max={5000}
+                placeholder={t("seatsPlaceholder")}
+                value={form.diningSeats}
+                onChange={(event) => patch({ diningSeats: event.target.value })}
+              />
+            </FormField>
+            <FormField id="max-per-day" label={t("maxPerDay")} hint={t("maxPerDayHint")}>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                placeholder={t("maxPerDayPlaceholder")}
+                value={form.maxLessonsPerDayPerGroup}
+                onChange={(event) =>
+                  patch({ maxLessonsPerDayPerGroup: event.target.value })
+                }
+              />
+            </FormField>
+          </div>
+
+          {saveError !== null ? (
+            <Notice tone="destructive" title={t("saveFailed")}>
+              {saveError} {t("saveFailedHint")}
+            </Notice>
+          ) : null}
         </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="space-y-2">
-            <Label htmlFor="lunch-start">{t("windowStart")}</Label>
-            <Input
-              id="lunch-start"
-              type="time"
-              step={QUARTER_HOUR_STEP}
-              value={form.lunchStartTime}
-              onChange={(event) => patch({ lunchStartTime: event.target.value })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="lunch-end">{t("windowEnd")}</Label>
-            <Input
-              id="lunch-end"
-              type="time"
-              step={QUARTER_HOUR_STEP}
-              value={form.lunchEndTime}
-              onChange={(event) => patch({ lunchEndTime: event.target.value })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="lunch-minutes">{t("minutes")}</Label>
-            <Input
-              id="lunch-minutes"
-              type="number"
-              min={15}
-              max={120}
-              step={15}
-              value={form.lunchMinutes}
-              onChange={(event) => patch({ lunchMinutes: event.target.value })}
-            />
-          </div>
+      ) : isError ? (
+        <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+      ) : (
+        <div aria-busy="true">
+          <Skeleton className="h-24 w-full" />
         </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="dining-seats">{t("seats")}</Label>
-            <Input
-              id="dining-seats"
-              type="number"
-              min={1}
-              max={5000}
-              placeholder={t("seatsPlaceholder")}
-              value={form.diningSeats}
-              onChange={(event) => patch({ diningSeats: event.target.value })}
-            />
-            <p className="text-xs text-muted-foreground">{t("seatsHint")}</p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="max-per-day">{t("maxPerDay")}</Label>
-            <Input
-              id="max-per-day"
-              type="number"
-              min={1}
-              max={20}
-              placeholder={t("maxPerDayPlaceholder")}
-              value={form.maxLessonsPerDayPerGroup}
-              onChange={(event) =>
-                patch({ maxLessonsPerDayPerGroup: event.target.value })
-              }
-            />
-            <p className="text-xs text-muted-foreground">{t("maxPerDayHint")}</p>
-          </div>
-        </div>
-
-        <Button onClick={() => void submit()} disabled={save.isPending}>
-          {save.isPending ? tCommon("saving") : tCommon("save")}
-        </Button>
-      </div>
-    </div>
+      )}
+    </SectionCard>
   );
 }

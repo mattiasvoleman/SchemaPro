@@ -69,6 +69,7 @@ import {
 } from "@/lib/timplan-planned";
 import { useLocalTimplanDetails, useYearTimplans } from "@/lib/year-timplan-queries";
 import { cn } from "@/lib/utils";
+import { Notice } from "@/components/ui/notice";
 
 export type TargetState =
   | { status: "loading" }
@@ -138,16 +139,14 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
 
   if (state.status === "loading") {
     return (
-      <p role="status" className="mb-3 text-sm text-foreground">
+      <p role="status" className="text-sm text-foreground">
         {t("target.loading")}
       </p>
     );
   }
   if (state.status === "failed") {
     return (
-      <p role="alert" className="mb-3 rounded-md bg-muted px-3 py-2 text-sm text-foreground">
-        {t("target.failed")}
-      </p>
+      <Notice tone="destructive">{t("target.failed")}</Notice>
     );
   }
   const { view } = state;
@@ -157,24 +156,24 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
     </Link>
   );
   return (
-    <div className="mb-3 space-y-1 text-sm text-foreground">
+    <div className="space-y-1 text-sm text-foreground">
       <p>{t("target.legend")}</p>
       {/* The way to a plan is a link, not a sentence naming a page: Timplan
           per årskurs is a dialog on /admin/timplan (webbgenomgången). */}
       {view.unattachedGrades.length > 0 ? (
-        <p className="rounded-md bg-muted px-3 py-2">
+        <Notice role={null}>
           {t("target.unattached", { grades: view.unattachedGrades.map(grade).join(", ") })} {choosePlan}
-        </p>
+        </Notice>
       ) : null}
       {view.draftPlans.map((plan) => (
-        <p key={plan.id} className="rounded-md bg-muted px-3 py-2">
+        <Notice key={plan.id} tone="warning" role={null}>
           {t("target.draft", { name: plan.name, grades: plan.gradeLevels.map(grade).join(", ") })}
-        </p>
+        </Notice>
       ))}
       {view.emptyPlanGrades.map((entry) => (
-        <p key={entry.gradeLevel} className="rounded-md bg-muted px-3 py-2">
+        <Notice key={entry.gradeLevel} role={null}>
           {t("target.emptyPlan", { name: entry.planName, grade: grade(entry.gradeLevel) })} {choosePlan}
-        </p>
+        </Notice>
       ))}
       <p role="status" aria-live="polite" aria-atomic="true" className="font-medium">
         {view.total.target === null
@@ -269,7 +268,7 @@ export function TargetCellBody({ cell, badge }: { cell: TargetCellView; badge?: 
   return (
     <>
       <span className="text-sm font-semibold tabular-nums">
-        {cell.planned} / {cell.target ?? "–"}
+        {cell.planned} / {cell.target ?? "—"}
       </span>
       {note ? (
         <span className="text-[10px] font-semibold leading-tight tabular-nums">{note}</span>
@@ -356,14 +355,14 @@ export function GroupTotalCell({
           targetHours: summary.localTimplanId === null ? null : summary.targetHours,
         }
       : null;
-  if (!figures) return <span aria-hidden="true">–</span>;
+  if (!figures) return <span aria-hidden="true">—</span>;
   return (
     <span className="flex flex-col items-end">
       <span>
-        {figures.planned} / {figures.target ?? "–"}
+        {figures.planned} / {figures.target ?? "—"}
       </span>
       <span className="text-xs font-normal">
-        {h(figures.plannedHours)} / {figures.targetHours === null ? "–" : h(figures.targetHours)}
+        {h(figures.plannedHours)} / {figures.targetHours === null ? "—" : h(figures.targetHours)}
       </span>
     </span>
   );
@@ -378,7 +377,7 @@ export function SubjectTotalCell({ total }: { total: TargetTotal | undefined }) 
     // its first column, as the cells and the grand total count it.
     return (
       <span className="tabular-nums">
-        <span aria-hidden="true">–</span>
+        <span aria-hidden="true">—</span>
         <span className="sr-only">{t("target.totalCountedWith")}</span>
       </span>
     );
@@ -386,10 +385,10 @@ export function SubjectTotalCell({ total }: { total: TargetTotal | undefined }) 
   return (
     <span className="flex flex-col items-center tabular-nums">
       <span className="font-semibold">
-        {total.planned} / {total.target ?? "–"}
+        {total.planned} / {total.target ?? "—"}
       </span>
       <span className="text-[10px] leading-tight">
-        {h(total.plannedHours)} / {total.targetHours === null ? "–" : h(total.targetHours)}
+        {h(total.plannedHours)} / {total.targetHours === null ? "—" : h(total.targetHours)}
       </span>
     </span>
   );

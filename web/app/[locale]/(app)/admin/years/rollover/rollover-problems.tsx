@@ -1,9 +1,9 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Info, TriangleAlert } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import type { RolloverProblem } from "@/lib/types";
+import { Notice } from "@/components/ui/notice";
 import { problemText } from "../year-messages";
 
 export type RolloverStep = "year" | "groups" | "breaks" | "review";
@@ -37,31 +37,21 @@ export function problemsOfStep(problems: readonly RolloverProblem[], step: Rollo
   return problems.filter((problem) => STEP_OF[problem.code] === step);
 }
 
-/** Blocking findings first and red; the rest are things to look at, not to fix. */
+/**
+ * Blocking findings first, as destructive notices announced at once; the rest
+ * are warnings to look at, not to fix, and are not announced as alerts.
+ */
 export function ProblemList({ problems }: { problems: readonly RolloverProblem[] }) {
   const t = useTranslations("years");
   const tProblems = useTranslations("years.problems") as unknown as MessageLookup;
   return (
     <ul className="space-y-2" aria-label={t("problemsLabel")}>
       {problems.map((problem, index) => (
-        <li
-          key={`${problem.code}-${index}`}
-          role={problem.blocking ? "alert" : undefined}
-          className={
-            problem.blocking
-              ? "flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-              : "flex gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
-          }
-        >
-          {problem.blocking ? (
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          ) : (
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
-          )}
-          <span>
+        <li key={`${problem.code}-${index}`}>
+          <Notice tone={problem.blocking ? "destructive" : "warning"} role={problem.blocking ? "alert" : null}>
             <span className="sr-only">{problem.blocking ? t("blocking") : t("notice")}: </span>
             {problemText(tProblems, problem)}
-          </span>
+          </Notice>
         </li>
       ))}
     </ul>

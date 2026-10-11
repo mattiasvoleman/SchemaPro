@@ -221,7 +221,7 @@ export function ScheduleDeltaPanel({
       id={id}
       role="region"
       aria-label={t("region")}
-      className="mb-4 space-y-2 rounded-lg border bg-card p-3 text-sm text-foreground"
+      className="space-y-2 rounded-lg border bg-card p-3 text-sm text-foreground"
     >
       <p className="max-w-prose text-xs leading-relaxed">{t("intro")}</p>
       {!view ? (

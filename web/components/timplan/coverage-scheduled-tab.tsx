@@ -21,7 +21,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { CalendarDays, TriangleAlert } from "lucide-react";
+import { CalendarDays } from "lucide-react";
 import { useMasterLessons } from "@/lib/queries";
 import { useScheduledCoverage, type ScheduledCoverageResponse } from "@/lib/timplan-scheduled-queries";
 import type { ScheduledGroupSummary, ScheduledLine, ScheduledPupil } from "@/lib/timplan-scheduled";
@@ -30,6 +30,7 @@ import type { MasterLesson } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** The Mål mode's tones, as the planned tab and the timetable panel paint them. */
@@ -84,15 +85,25 @@ export function CoverageScheduledTab({ year, linkedGroup, groupName, subjects, p
     document.getElementById("tackning-scheduled-group")?.scrollIntoView?.({ block: "start" });
   }, [selected, chosen]);
 
-  if (overview.isLoading || (!coverage && !overview.isError)) return <Skeleton className="h-96 w-full" />;
+  // Each state stands directly under the tablist, which sits under the h1: an h2.
+  if (overview.isLoading || (!coverage && !overview.isError)) {
+    return <Skeleton className="h-96 w-full" aria-busy="true" />;
+  }
   if (overview.isError || !coverage) {
-    return <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />;
+    return <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />;
   }
   if (coverage.lessonCount === 0 && coverage.verdicts.some((v) => v.code === "TIMPLAN_SCHEDULE_NONE")) {
-    return <EmptyState icon={CalendarDays} title={t("scheduled.noLessons")} description={t("scheduled.noLessonsBody")} />;
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title={t("scheduled.noLessons")}
+        description={t("scheduled.noLessonsBody")}
+        headingLevel={2}
+      />
+    );
   }
   if (coverage.groups.length === 0) {
-    return <EmptyState icon={CalendarDays} title={t("scheduled.noLines")} />;
+    return <EmptyState icon={CalendarDays} title={t("scheduled.noLines")} headingLevel={2} />;
   }
 
   const classes = coverage.groups.filter((g) => g.kind === "CLASS");
@@ -121,7 +132,7 @@ export function CoverageScheduledTab({ year, linkedGroup, groupName, subjects, p
         <p className="text-xs text-muted-foreground">{t("scheduled.legend")}</p>
       </section>
 
-      <div className="overflow-x-auto rounded-lg border bg-card">
+      <div className="relative overflow-x-auto rounded-lg border bg-card">
         <table className="w-full border-collapse text-sm">
           <caption className="sr-only">{t("scheduled.caption", { year: year.name })}</caption>
           <thead>
@@ -328,7 +339,7 @@ function ScheduledDrillDown({
       className="scroll-mt-4 space-y-4 rounded-lg border bg-card p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h2 id="tackning-scheduled-title" className="text-lg font-semibold">
+        <h2 id="tackning-scheduled-title" className="text-base font-semibold">
           {name}
         </h2>
         <span className="text-sm text-muted-foreground">
@@ -337,7 +348,7 @@ function ScheduledDrillDown({
         </span>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">{t("linesCaption", { group: name })}</caption>
           <thead>
@@ -380,10 +391,10 @@ function ScheduledDrillDown({
                     </span>
                   ) : null}
                 </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">{line.parkedMinutesPerWeek || "–"}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">{line.parkedMinutesPerWeek || "—"}</td>
                 <td className="py-1.5 pr-3 text-xs">
                   {line.masterLessonIds.length === 0 ? (
-                    "–"
+                    "—"
                   ) : (
                     <ul>
                       {line.masterLessonIds.map((id) => {
@@ -402,7 +413,7 @@ function ScheduledDrillDown({
                             median: signedDelta(line.pupils.median),
                             max: signedDelta(line.pupils.max),
                           })
-                        : "–"}
+                        : "—"}
                     </td>
                     <td
                       className={cn(
@@ -410,7 +421,7 @@ function ScheduledDrillDown({
                         line.pupils && line.pupils.below > 0 && "font-medium text-warning-foreground dark:text-warning",
                       )}
                     >
-                      {line.pupils ? t("below", { below: line.pupils.below, pupils: summary.pupilCount }) : "–"}
+                      {line.pupils ? t("below", { below: line.pupils.below, pupils: summary.pupilCount }) : "—"}
                     </td>
                   </>
                 ) : null}

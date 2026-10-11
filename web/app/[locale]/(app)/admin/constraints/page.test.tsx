@@ -1,3 +1,4 @@
+import type React from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,12 @@ import ConstraintsPage from "./page";
  */
 
 const create = vi.hoisted(() => vi.fn());
-const constraints = vi.hoisted(() => ({ data: [] as unknown[], isLoading: false }));
+const constraints = vi.hoisted(() => ({
+  // undefined is a list never read (with isError, the first read failed).
+  data: [] as unknown[] | undefined,
+  isLoading: false,
+  isError: false,
+}));
 
 vi.mock("@/lib/queries", () => ({
   useConstraints: () => constraints,
@@ -60,6 +66,12 @@ vi.mock("@/components/schedule/room-preferences-card", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// The "Nästa steg: Generera schema" link at the foot of the page; next-intl's
+// navigation needs a provider this test does not mount.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
+}));
+
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
@@ -88,6 +100,7 @@ describe("Constraints page — year-range locks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     constraints.data = [];
+    constraints.isError = false;
   });
 
   it("swaps the resource picker for two year selects", async () => {
@@ -204,5 +217,50 @@ describe("Constraints page — year-range locks", () => {
     render(<ConstraintsPage />);
 
     expect(within(screen.getByRole("table")).getByText("gradeRange(4|6)")).toBeTruthy();
+  });
+});
+
+describe("Constraints page — a read that fails", () => {
+  const rule = {
+    id: "c-1",
+    resourceType: "USER",
+    userId: "u-1",
+    roomId: null,
+    studentGroupId: null,
+    minGradeLevel: null,
+    maxGradeLevel: null,
+    dayOfWeek: 1,
+    date: null,
+    startTime: "08:00:00",
+    endTime: "09:00:00",
+    type: "UNAVAILABLE",
+    reason: "Möte",
+  };
+
+  beforeEach(() => {
+    constraints.data = [rule];
+    constraints.isError = false;
+  });
+
+  it("says the list could not be read when the first read fails, not that there are none", () => {
+    constraints.data = undefined;
+    constraints.isError = true;
+    render(<ConstraintsPage />);
+
+    const notice = screen.getByRole("alert");
+    expect(within(notice).getByText("loadFailed")).toBeTruthy();
+    expect(within(notice).getByText("loadFailedHint")).toBeTruthy();
+    expect(screen.queryByText("empty")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("keeps the list it has read when a refetch fails, and says so above it", () => {
+    constraints.isError = true;
+    render(<ConstraintsPage />);
+
+    const notice = screen.getByRole("alert");
+    expect(within(notice).getByText("loadFailed")).toBeTruthy();
+    expect(within(notice).getByText("refetchFailedHint")).toBeTruthy();
+    expect(within(screen.getByRole("table")).getByText("Möte")).toBeTruthy();
   });
 });

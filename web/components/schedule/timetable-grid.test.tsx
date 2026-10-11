@@ -659,7 +659,9 @@ describe("TimetableGrid pointer editing", () => {
     const ghost = queryGhost(container);
     expect(ghost).not.toBeNull();
     expect(ghost).toHaveTextContent("09:10–10:10");
-    expect(ghost).toHaveClass("border-emerald-500");
+    // The success token, not a raw emerald: the design overhaul's colours are
+    // tokens only, so the two themes are tuned in one place.
+    expect(ghost).toHaveClass("border-success");
     expect(screen.getByRole("button", { name: /Math/ })).toHaveClass("opacity-40");
 
     pointerUp({ clientX: 300, clientY: 121 });
@@ -706,7 +708,8 @@ describe("TimetableGrid pointer editing", () => {
     pointerDown(screen.getByRole("button", { name: /Math/ }), { clientX: 100, clientY: 110 });
     pointerMove({ clientX: 300, clientY: 121 });
 
-    expect(queryGhost(container)).toHaveClass("border-red-500");
+    // The destructive token rather than a raw red (tokens only, as above).
+    expect(queryGhost(container)).toHaveClass("border-destructive");
 
     pointerUp({ clientX: 300, clientY: 121 });
 

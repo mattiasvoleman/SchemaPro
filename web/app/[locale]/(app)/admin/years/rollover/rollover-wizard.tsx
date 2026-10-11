@@ -29,7 +29,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, CalendarRange, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarRange } from "lucide-react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
 import { useAcademicYears, useGroups } from "@/lib/queries";
@@ -42,11 +42,15 @@ import {
 } from "@/lib/year-rollover-form";
 import { nameCollisions, resolveGroups, type GroupChoice } from "@/lib/year-rollover";
 import { cn } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Stepper } from "@/components/ui/stepper";
 import { yearErrorText } from "../year-messages";
 import { RolloverYearStep } from "./rollover-year-step";
 import { RolloverGroupsStep } from "./rollover-groups-step";
@@ -69,6 +73,12 @@ const PREVIEW_DEBOUNCE_MS = 400;
  */
 const REVIEW_ARMING_MS = 600;
 
+/**
+ * The step card's heading: SectionCard titles its section `${id}-title`, and
+ * focus moves there on every step change.
+ */
+const STEP_CARD_ID = "rollover-step";
+
 function initialForm(source: { name: string; startDate: string; endDate: string }): RolloverFormState {
   return {
     ...defaultTarget(source),
@@ -88,20 +98,27 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
   const tCommon = useTranslations("common");
   const tErrors = useTranslations("years.errors") as unknown as MessageLookup;
   const router = useRouter();
-  const { data: years, isLoading: yearsLoading } = useAcademicYears();
-  const { data: groups } = useGroups();
+  const { data: years, isLoading: yearsLoading, isError: yearsFailed } = useAcademicYears();
+  const { data: groups, isLoading: groupsLoading, isError: groupsFailed } = useGroups();
   const source = years?.find((year) => year.id === sourceYearId) ?? null;
 
   const [edited, setEdited] = useState<RolloverFormState | null>(null);
   const [step, setStep] = useState<RolloverStep>("year");
   const [reviewArmed, setReviewArmed] = useState(false);
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const firstStep = useRef(true);
   useEffect(() => {
     // Focus follows the step (and a screen reader hears its name); not on
     // the first render, which would pull focus from wherever the page put it.
+    // The heading is SectionCard's own, so it is made focusable here rather
+    // than through a ref the card does not take.
     if (firstStep.current) firstStep.current = false;
-    else headingRef.current?.focus();
+    else {
+      const heading = document.getElementById(`${STEP_CARD_ID}-title`);
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus();
+      }
+    }
     if (step !== "review") {
       setReviewArmed(false);
       return;
@@ -182,29 +199,53 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
     }
   };
 
-  if (sourceYearId === null || (!yearsLoading && !source)) {
+  const back = { href: "/admin/years", label: t("backToYears") };
+  // Until the source year is known (loading, failed, none given) the header
+  // says what the page does; the wizard itself names the year it rolls.
+  const header = <PageHeader title={t("rolloverTitle")} subtitle={t("rolloverAbout")} back={back} />;
+
+  // A year list or a group list that failed is not an empty one: without it
+  // the wizard would say there is no year to roll, or that the year has no
+  // groups. Nothing is created from here until both have been read.
+  if (yearsFailed || groupsFailed) {
     return (
-      <div className="mx-auto max-w-3xl">
-        <PageHeader title={t("rolloverTitle")} />
+      <Page width="wide">
+        {header}
+        <LoadError title={t("rolloverLoadFailed")} hint={t("rolloverLoadFailedHint")} headingLevel={2} />
+      </Page>
+    );
+  }
+  if (sourceYearId === null || (!yearsLoading && !source)) {
+    // The same header as every other branch, back link included, so the
+    // page does not change shape; the empty state's button names the task
+    // ("Välj läsår") rather than repeating the back link's "Till läsåren".
+    return (
+      <Page width="wide">
+        {header}
         <EmptyState
           icon={CalendarRange}
           title={t("noSourceTitle")}
           description={t("noSourceBody")}
+          headingLevel={2}
           action={
             <Button asChild>
-              <Link href="/admin/years">{t("backToYears")}</Link>
+              <Link href="/admin/years">{t("noSourceAction")}</Link>
             </Button>
           }
         />
-      </div>
+      </Page>
     );
   }
-  if (!source || !form) {
+  // The groups too: until they have arrived the groups step would say the
+  // year has none.
+  if (!source || !form || groupsLoading) {
     return (
-      <div className="mx-auto max-w-3xl space-y-2" aria-busy="true">
-        <Skeleton className="h-8 w-1/2" />
-        <Skeleton className="h-40 w-full" />
-      </div>
+      <Page width="wide">
+        {header}
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </Page>
     );
   }
 
@@ -221,7 +262,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
   const incomplete = rolloverOptions(form) === null;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <Page width="wide">
       <PageHeader
         title={t("rolloverTitle")}
         subtitle={t("rolloverSubtitle", {
@@ -229,54 +270,56 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
           start: source.startDate,
           end: source.endDate,
         })}
-        actions={
-          <Button variant="ghost" asChild>
-            <Link href="/admin/years">
-              <ArrowLeft />
-              {t("backToYears")}
-            </Link>
-          </Button>
-        }
+        back={back}
       />
 
-      <ol className="mb-6 flex flex-wrap items-center gap-2" aria-label={t("stepsLabel")}>
-        {STEPS.map((id, index) => (
-          <li key={id} className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setStep(id)}
-              aria-current={step === id ? "step" : undefined}
-              className={cn(
-                "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
-                step === id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : index < stepIndex
-                    ? "border-success/40 bg-success/10 text-success"
-                    : "text-muted-foreground hover:bg-muted",
-              )}
-            >
-              {index < stepIndex ? <Check className="h-3.5 w-3.5" aria-hidden /> : <span>{index + 1}</span>}
-              {t(`step.${id}`)}
-            </button>
-            {index < STEPS.length - 1 ? (
-              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/50" aria-hidden />
-            ) : null}
-          </li>
-        ))}
-      </ol>
+      <Stepper
+        steps={STEPS.map((id, index) => ({ id, label: t(`step.${id}`), done: index < stepIndex }))}
+        current={step}
+        label={t("stepsLabel")}
+        onSelect={(id) => setStep(id as RolloverStep)}
+      />
 
-      {refusal ? (
-        <p role="alert" className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {refusal}
-        </p>
-      ) : null}
+      {refusal ? <Notice tone="destructive">{refusal}</Notice> : null}
 
       {refusedWhole ? null : (
-        <Card>
-          <CardContent className="space-y-6 pt-6">
-            <h2 ref={headingRef} tabIndex={-1} className="sr-only">
-              {t(`step.${step}`)}
-            </h2>
+        <SectionCard
+          id={STEP_CARD_ID}
+          title={t(`step.${step}`)}
+          footer={
+            <div className="flex flex-1 flex-wrap items-center justify-between gap-2">
+              <span
+                className={cn("text-xs", incomplete ? "text-destructive" : "text-muted-foreground")}
+                aria-live="polite"
+              >
+                {incomplete
+                  ? t("previewNeedsInput")
+                  : preview.isFetching || !current
+                    ? t("previewUpdating")
+                    : t("previewCurrent")}
+              </span>
+              <div className="flex gap-2">
+                {stepIndex > 0 ? (
+                  <Button variant="outline" onClick={() => setStep(STEPS[stepIndex - 1]!)}>
+                    <ArrowLeft aria-hidden="true" />
+                    {tCommon("back")}
+                  </Button>
+                ) : null}
+                {step !== "review" ? (
+                  <Button key="next" onClick={() => setStep(STEPS[stepIndex + 1]!)}>
+                    {tCommon("next")}
+                    <ArrowRight aria-hidden="true" />
+                  </Button>
+                ) : (
+                  <Button key="create" onClick={() => void create()} disabled={!canCreate}>
+                    {execute.isPending ? tCommon("saving") : t("createYear", { name: form.name.trim() })}
+                  </Button>
+                )}
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-6">
             {step === "year" ? (
               <RolloverYearStep form={form} update={update} plan={plan} graduatingGrade={graduatingGrade} />
             ) : step === "groups" ? (
@@ -284,6 +327,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
                 form={form}
                 update={update}
                 sourceGroups={sourceGroups}
+                sourceName={source.name}
                 resolved={resolved}
                 defaults={defaults}
                 collisions={collisions}
@@ -298,40 +342,9 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
             )}
 
             {stepProblems.length > 0 ? <ProblemList problems={stepProblems} /> : null}
-
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
-              <span
-                className={cn("text-xs", incomplete ? "text-destructive" : "text-muted-foreground")}
-                aria-live="polite"
-              >
-                {incomplete
-                  ? t("previewNeedsInput")
-                  : preview.isFetching || !current
-                    ? t("previewUpdating")
-                    : t("previewCurrent")}
-              </span>
-              <div className="flex gap-2">
-                {stepIndex > 0 ? (
-                  <Button variant="outline" onClick={() => setStep(STEPS[stepIndex - 1]!)}>
-                    <ArrowLeft />
-                    {tCommon("back")}
-                  </Button>
-                ) : null}
-                {step !== "review" ? (
-                  <Button key="next" onClick={() => setStep(STEPS[stepIndex + 1]!)}>
-                    {tCommon("next")}
-                    <ArrowRight />
-                  </Button>
-                ) : (
-                  <Button key="create" onClick={() => void create()} disabled={!canCreate}>
-                    {execute.isPending ? tCommon("saving") : t("createYear", { name: form.name.trim() })}
-                  </Button>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        </SectionCard>
       )}
-    </div>
+    </Page>
   );
 }

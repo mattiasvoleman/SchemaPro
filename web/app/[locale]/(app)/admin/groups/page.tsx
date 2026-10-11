@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Pencil, Plus, Search, Trash2, Upload, UserPlus, Users } from "lucide-react";
+import { CalendarRange, Pencil, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { classesToCsv, membershipsToCsv } from "@/lib/csv-export";
@@ -18,10 +19,10 @@ import {
 } from "@/lib/queries";
 import type { StudentGroup } from "@/lib/types";
 import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   buildGroupMemberNames,
   countGroupMembers,
@@ -31,10 +32,17 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { FormField } from "@/components/ui/form-field";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions, type RowAction } from "@/components/ui/row-actions";
+import { SearchField } from "@/components/ui/search-field";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -46,14 +54,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface GroupForm {
   name: string;
@@ -62,14 +63,28 @@ interface GroupForm {
   academicYearId: string;
 }
 
+/**
+ * Klasser: every läsår's groups in one list, with a Läsår column.
+ *
+ * Not scoped to one year. Between a rollover and its activation every class
+ * exists twice, this year's 7A beside next year's 8A, and the Läsår column
+ * and the search tell them apart: "ma71 2026" narrows a name that recurs
+ * across läsår (manual 3.4). Generate's "groups without an årskurs" notice
+ * names groups of the year being planned, which need not be the active one,
+ * and sends the reader here to find them; a list of one year would hide them.
+ */
 export default function GroupsPage() {
   const t = useTranslations("groups");
   const tCommon = useTranslations("common");
   const tSetup = useTranslations("setup");
+  const tYears = useTranslations("years");
   const tCsvImport = useTranslations("csvImport");
-  const { data: groups, isLoading } = useGroups();
-  const { data: years } = useAcademicYears();
-  const { data: people } = usePeople();
+  const groupsQuery = useGroups();
+  const groups = groupsQuery.data;
+  const yearsQuery = useAcademicYears();
+  const years = useMemo(() => yearsQuery.data ?? [], [yearsQuery.data]);
+  const peopleQuery = usePeople();
+  const people = peopleQuery.data;
   const mutations = useCrudMutations<{
     name: string;
     gradeLevel?: number | null;
@@ -88,8 +103,18 @@ export default function GroupsPage() {
   const [search, setSearch] = useState("");
   const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
   const [memberSearch, setMemberSearch] = useState("");
-  const { data: currentMembers } = useGroupMembers(membersFor?.id ?? null);
-  const { data: memberships } = useGroupMemberships();
+  const membersQuery = useGroupMembers(membersFor?.id ?? null);
+  const currentMembers = membersQuery.data;
+  /*
+   * Saving REPLACES the group's members with the ticked boxes. Until the
+   * stored members (and the pupils to tick) have arrived every box is
+   * unticked, so a save then would empty the group: the list and the save
+   * wait for both, and a failed read says so instead of an empty list.
+   */
+  const membersLoading = membersFor !== null && (membersQuery.isLoading || peopleQuery.isLoading);
+  const membersFailed = membersFor !== null && (membersQuery.isError || peopleQuery.isError);
+  const membershipsQuery = useGroupMemberships();
+  const memberships = membershipsQuery.data;
   const setMembers = useSetGroupMembers();
 
   const students = useMemo(
@@ -141,10 +166,6 @@ export default function GroupsPage() {
     academicYearId: "",
   });
 
-  // Sizes come from two different places depending on the kind of group —
-  // see lib/group-sections.ts, where the rule and its tests live.
-  const yearName = (id: string) => years?.find((year) => year.id === id)?.name ?? "—";
-
   // Group id → the people in it, so the search below can find a group by the
   // name of a student in it. See lib/group-sections.ts.
   const memberNames = useMemo(
@@ -152,10 +173,15 @@ export default function GroupsPage() {
     [people, memberships],
   );
 
+  // Sizes come from two different places depending on the kind of group —
+  // see lib/group-sections.ts, where the rule and its tests live.
   const memberCounts = useMemo(
     () => countGroupMembers(people ?? [], memberships ?? []),
     [people, memberships],
   );
+
+  /** Läsår id → its name, for the Läsår column and the search. */
+  const yearNames = useMemo(() => new Map(years.map((year) => [year.id, year.name])), [years]);
 
   const visibleGroups = useMemo(() => {
     const byKind = (groups ?? []).filter(
@@ -166,12 +192,13 @@ export default function GroupsPage() {
     // admin answers "which teaching group is Alma in?".
     return filterByQuery(byKind, search, (group) => [
       group.name,
-      yearName(group.academicYearId),
+      yearNames.get(group.academicYearId) ?? "",
       ...(memberNames.get(group.id) ?? []).map((member) => member.name),
     ]);
-  }, [groups, kindFilter, search, years, memberNames]);
+  }, [groups, kindFilter, search, yearNames, memberNames]);
 
-  const defaultYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? "";
+  /** A new group goes into the active läsår unless the dialog is told otherwise. */
+  const defaultYearId = years.find((year) => year.isActive)?.id ?? years[0]?.id ?? "";
 
   /**
    * The students in this group that the current search matched — shown under
@@ -235,8 +262,45 @@ export default function GroupsPage() {
     }
   };
 
+  const loading = groupsQuery.isLoading || yearsQuery.isLoading;
+  const failed = groupsQuery.isError || yearsQuery.isError;
+  const hasYears = years.length > 0;
+  /*
+   * The Elever column is counted from the people and the memberships, two
+   * reads of their own. Until both have answered a count is not known, and
+   * when either failed it is not 0: the cell says "—" and a notice says why,
+   * rather than a column of zeros that reads as empty classes.
+   */
+  const countsFailed = peopleQuery.isError || membershipsQuery.isError;
+  const countsKnown = people !== undefined && memberships !== undefined && !countsFailed;
+
+  const actionsOf = (group: StudentGroup): RowAction[] => [
+    ...(group.kind === "TEACHING_GROUP"
+      ? [
+          {
+            label: t("members"),
+            icon: UserPlus,
+            ariaLabel: t("membersTitle", { name: group.name }),
+            onSelect: () => openMembers(group),
+          },
+        ]
+      : []),
+    {
+      label: tCommon("edit"),
+      icon: Pencil,
+      ariaLabel: tCommon("editNamed", { name: group.name }),
+      onSelect: () => openEdit(group),
+    },
+    {
+      label: tCommon("delete"),
+      icon: Trash2,
+      ariaLabel: tCommon("deleteNamed", { name: group.name }),
+      onSelect: () => setDeleting(group),
+    },
+  ];
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
@@ -258,135 +322,137 @@ export default function GroupsPage() {
               ]}
             />
             <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload />
+              <Upload aria-hidden="true" />
               {tCsvImport("button")}
             </Button>
-            <Button onClick={openCreate} disabled={!years || years.length === 0}>
-              <Plus />
+            <Button onClick={openCreate} disabled={!hasYears}>
+              <Plus aria-hidden="true" />
               {t("addGroup")}
             </Button>
           </>
         }
       />
 
-      {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+      {loading || failed || hasYears ? (
+        <FilterBar>
+          <Tabs
+            value={kindFilter}
+            onValueChange={(value) => setKindFilter(value as typeof kindFilter)}
+          >
+            <TabsList aria-label={t("kindLabel")}>
+              <TabsTrigger value="ALL">{t("filterAll")}</TabsTrigger>
+              <TabsTrigger value="CLASS">{t("kindClass")}</TabsTrigger>
+              <TabsTrigger value="TEACHING_GROUP">{t("kindTeachingGroup")}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <SearchField
+            id="groups-search"
+            label={t("searchLabel")}
+            value={search}
+            onValueChange={setSearch}
+          />
+        </FilterBar>
+      ) : null}
+
+      {loading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : failed ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : !hasYears ? (
+        <EmptyState
+          icon={CalendarRange}
+          title={t("noYearTitle")}
+          description={t("noYearHint")}
+          headingLevel={2}
+          action={
+            <Button asChild>
+              <Link href="/admin/years">{t("noYearAction")}</Link>
+            </Button>
+          }
+        />
       ) : !groups || groups.length === 0 ? (
-        <EmptyState icon={Users} title={tCommon("noResults")} description={t("empty")} />
+        <EmptyState
+          icon={Users}
+          title={t("emptyTitle")}
+          description={t("emptyHint")}
+          headingLevel={2}
+          action={
+            <Button onClick={openCreate}>
+              <Plus aria-hidden="true" />
+              {t("addGroup")}
+            </Button>
+          }
+        />
       ) : (
         <>
-        <Tabs
-          value={kindFilter}
-          onValueChange={(value) => setKindFilter(value as typeof kindFilter)}
-          className="mb-4"
-        >
-          <TabsList>
-            <TabsTrigger value="ALL">{t("filterAll")}</TabsTrigger>
-            <TabsTrigger value="CLASS">{t("kindClass")}</TabsTrigger>
-            <TabsTrigger value="TEACHING_GROUP">{t("kindTeachingGroup")}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <div className="relative mb-4 max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t("searchPlaceholder")}
-            aria-label={t("searchPlaceholder")}
-            className="pl-9"
-          />
-        </div>
-        <div className="rounded-lg border bg-card">
-          <Table>
+          {countsFailed ? (
+            <LoadError variant="inline" title={t("countsFailed")} hint={t("countsFailedHint")} />
+          ) : null}
+          <TableCard caption={t("tableCaption")}>
             <TableHeader>
               <TableRow>
                 <TableHead>{tCommon("name")}</TableHead>
                 <TableHead>{t("year")}</TableHead>
-                <TableHead>{tCommon("students")}</TableHead>
-                <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
+                <TableHead className="text-right">{tCommon("students")}</TableHead>
+                <TableHead className="w-32 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {visibleGroups.length === 0 ? (
                 <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className="py-8 text-center text-muted-foreground"
-                  >
-                    {tCommon("noResults")}
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                    {t("noMatch")}
                   </TableCell>
                 </TableRow>
               ) : null}
-              {visibleGroups.map((group) => (
-                <TableRow key={group.id}>
-                  <TableCell className="font-medium">
-                    {group.name}
-                    {matchingMembers(group.id).length > 0 ? (
-                      <div className="mt-0.5 text-xs font-normal text-muted-foreground">
-                        {matchingMembers(group.id)
-                          .slice(0, 3)
-                          .map((member) => member.name)
-                          .join(", ")}
-                        {matchingMembers(group.id).length > 3
-                          ? t("andMore", {
-                              count: matchingMembers(group.id).length - 3,
-                            })
-                          : ""}
+              {visibleGroups.map((group) => {
+                const matched = matchingMembers(group.id);
+                return (
+                  <TableRow key={group.id}>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{group.name}</span>
+                        <Badge variant={group.kind === "CLASS" ? "secondary" : "outline"}>
+                          {group.kind === "CLASS" ? t("kindClass") : t("kindTeachingGroup")}
+                        </Badge>
+                        {group.gradeLevel !== null ? (
+                          <Badge variant="secondary">
+                            {tYears("gradeShort", { grade: group.gradeLevel })}
+                          </Badge>
+                        ) : null}
                       </div>
-                    ) : null}
-                    <Badge
-                      variant={group.kind === "CLASS" ? "secondary" : "outline"}
-                      className="mr-2"
-                    >
-                      {group.kind === "CLASS" ? t("kindClass") : t("kindTeachingGroup")}
-                    </Badge>
-                    {group.gradeLevel !== null ? (
-                      <Badge variant="secondary" className="ml-2">
-                        {group.gradeLevel}
-                      </Badge>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>{yearName(group.academicYearId)}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {memberCounts.get(group.id) ?? 0}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {group.kind === "TEACHING_GROUP" ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openMembers(group)}
-                        aria-label={t("members")}
-                        title={t("members")}
-                      >
-                        <UserPlus />
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEdit(group)}
-                      aria-label={tCommon("edit")}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleting(group)}
-                      aria-label={tCommon("delete")}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+                      {matched.length > 0 ? (
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {matched
+                            .slice(0, 3)
+                            .map((member) => member.name)
+                            .join(", ")}
+                          {matched.length > 3 ? t("andMore", { count: matched.length - 3 }) : ""}
+                        </div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {yearNames.get(group.academicYearId) ?? (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {countsKnown ? (
+                        memberCounts.get(group.id) ?? 0
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <RowActions name={group.name} actions={actionsOf(group)} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
-          </Table>
-        </div>
+          </TableCard>
         </>
       )}
 
@@ -394,71 +460,68 @@ export default function GroupsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("editGroup") : t("addGroup")}</DialogTitle>
+            <DialogDescription>{t("dialogHint")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="group-kind">{t("kindLabel")}</Label>
-              <Select
-                value={form.kind}
-                onValueChange={(value) =>
-                  setForm({ ...form, kind: value as GroupForm["kind"] })
-                }
-              >
-                <SelectTrigger id="group-kind">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CLASS">{t("kindClass")}</SelectItem>
-                  <SelectItem value="TEACHING_GROUP">{t("kindTeachingGroup")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-sm text-muted-foreground">
-                {form.kind === "CLASS" ? t("kindClassHelp") : t("kindTeachingGroupHelp")}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="group-name">{tCommon("name")}</Label>
+            <FormField
+              id="group-kind"
+              label={t("kindLabel")}
+              hint={form.kind === "CLASS" ? t("kindClassHelp") : t("kindTeachingGroupHelp")}
+            >
+              {(control) => (
+                <Select
+                  value={form.kind}
+                  onValueChange={(value) =>
+                    setForm({ ...form, kind: value as GroupForm["kind"] })
+                  }
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CLASS">{t("kindClass")}</SelectItem>
+                    <SelectItem value="TEACHING_GROUP">{t("kindTeachingGroup")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="group-name" label={tCommon("name")}>
                 <Input
-                  id="group-name"
                   value={form.name}
                   placeholder={t("namePlaceholder")}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="group-grade">
-                  {tSetup("gradeLevel")}{" "}
-                  <span className="text-muted-foreground">({tCommon("optional")})</span>
-                </Label>
+              </FormField>
+              <FormField id="group-grade" label={tSetup("gradeLevel")} optional>
                 <Input
-                  id="group-grade"
                   type="number"
                   min={0}
                   max={12}
                   value={form.gradeLevel}
                   onChange={(e) => setForm({ ...form, gradeLevel: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
-            <div className="space-y-2">
-              <Label>{t("year")}</Label>
-              <Select
-                value={form.academicYearId}
-                onValueChange={(value) => setForm({ ...form, academicYearId: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(years ?? []).map((year) => (
-                    <SelectItem key={year.id} value={year.id}>
-                      {year.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <FormField id="group-year" label={t("year")}>
+              {(control) => (
+                <Select
+                  value={form.academicYearId}
+                  onValueChange={(value) => setForm({ ...form, academicYearId: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {years.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -480,49 +543,68 @@ export default function GroupsPage() {
       </Dialog>
 
       <Dialog open={membersFor !== null} onOpenChange={(open) => !open && setMembersFor(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {t("membersTitle", { name: membersFor?.name ?? "" })}
             </DialogTitle>
+            <DialogDescription>{t("membersHint")}</DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">{t("membersHint")}</p>
-          <Input
-            placeholder={tCommon("search")}
-            value={memberSearch}
-            onChange={(event) => setMemberSearch(event.target.value)}
-          />
-          <div className="max-h-72 overflow-y-auto rounded-md border">
-            {students
-              .filter((student) =>
-                `${student.firstName} ${student.lastName}`
-                  .toLowerCase()
-                  .includes(memberSearch.toLowerCase()),
-              )
-              .map((student) => (
-                <label
-                  key={student.id}
-                  className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-muted/50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={memberIds.has(student.id)}
-                    onChange={() => toggleMember(student.id)}
-                  />
-                  <span className="flex-1">
-                    {student.firstName} {student.lastName}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {groups?.find((g) => g.id === student.studentGroupId)?.name ?? ""}
-                  </span>
-                </label>
-              ))}
+          <div className="space-y-4">
+            <SearchField
+              id="group-member-search"
+              label={t("memberSearch")}
+              value={memberSearch}
+              onValueChange={setMemberSearch}
+              className="max-w-none"
+            />
+            {membersLoading ? (
+              <div aria-busy="true">
+                <Skeleton className="h-24 w-full" />
+              </div>
+            ) : membersFailed ? (
+              <LoadError
+                variant="inline"
+                title={t("membersLoadFailed")}
+                hint={t("membersLoadFailedHint")}
+              />
+            ) : (
+              <ul className="max-h-72 divide-y overflow-y-auto rounded-md border">
+                {students
+                  .filter((student) =>
+                    `${student.firstName} ${student.lastName}`
+                      .toLowerCase()
+                      .includes(memberSearch.toLowerCase()),
+                  )
+                  .map((student) => (
+                    <li key={student.id}>
+                      <label className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-muted/50">
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-primary"
+                          checked={memberIds.has(student.id)}
+                          onChange={() => toggleMember(student.id)}
+                        />
+                        <span className="flex-1">
+                          {student.firstName} {student.lastName}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {groups?.find((g) => g.id === student.studentGroupId)?.name ?? ""}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+              </ul>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMembersFor(null)}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={saveMembers} disabled={setMembers.isPending}>
+            <Button
+              onClick={saveMembers}
+              disabled={setMembers.isPending || membersLoading || membersFailed}
+            >
               {t("membersSave", { count: memberIds.size })}
             </Button>
           </DialogFooter>
@@ -544,6 +626,6 @@ export default function GroupsPage() {
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
 }

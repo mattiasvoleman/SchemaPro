@@ -906,8 +906,29 @@ describe("Timplan while its data is still arriving", () => {
     state.groups = pending();
     render(<RequirementsPage />);
 
-    expect(screen.queryByText("empty")).toBeNull();
+    expect(screen.queryByText("noClassesTitle")).toBeNull();
     expect(document.querySelector(".animate-pulse")).not.toBeNull();
+  });
+
+  it("says the year has no classes and sends the reader to Klasser, not to the timplan", () => {
+    // The grid is classes × subjects: a year without classes has nothing to
+    // fill, and the way on is the page that adds them.
+    state.groups = loaded([]);
+    render(<RequirementsPage />);
+
+    expect(screen.getByRole("heading", { name: "noClassesTitle" })).toBeInTheDocument();
+    expect(screen.getByText("noClasses")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "noClassesAction" })).toHaveAttribute("href", "/admin/groups");
+    expect(screen.queryByRole("link", { name: /timplan/i })).toBeNull();
+  });
+
+  it("says the school has no subjects and sends the reader to Ämnen", () => {
+    state.subjects = loaded([]);
+    render(<RequirementsPage />);
+
+    expect(screen.getByRole("heading", { name: "noSubjectsTitle" })).toBeInTheDocument();
+    expect(screen.getByText("noSubjects")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "noSubjectsAction" })).toHaveAttribute("href", "/admin/subjects");
   });
 
   it("waits for the memberships before calling a teaching group empty", () => {
@@ -1126,6 +1147,28 @@ describe("Timplan while its data is still arriving", () => {
     expect(
       (screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled,
     ).toBe(false);
+  });
+
+  it("asks before deleting a post, names it, and deletes only on the confirmation", async () => {
+    // The cell dialog's Ta bort used to delete at once; a post is a term of
+    // a class's teaching, and the button sits beside Spara.
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+    await user.click(screen.getByRole("button", { name: "delete" }));
+    expect(removeMock).not.toHaveBeenCalled();
+
+    const confirm = screen.getByRole("dialog", { name: "deleteTitle(7A · Samhällsorientering)" });
+    expect(within(confirm).getByText("deleteBody")).toBeInTheDocument();
+    // Avbryt goes back to the post, still open, and nothing is deleted.
+    await user.click(within(confirm).getByRole("button", { name: "cancel" }));
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+
+    await user.click(screen.getByRole("button", { name: "delete" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: /^deleteTitle/ })).getByRole("button", { name: "delete" }),
+    );
+    expect(removeMock).toHaveBeenCalledWith("r-so");
   });
 
   it("keeps the hours footnote with the figure it qualifies", () => {
@@ -2076,7 +2119,8 @@ describe("Timplansposter in Mål mode", () => {
     await enterTargetMode();
 
     expect(screen.getByText("target.unattached(target.grade(7))")).toBeInTheDocument();
-    expect(within(cellOf("Samhällsorientering")).getByText("180 / –")).toBeInTheDocument();
+    // No target is the app's one empty glyph, the em dash (design overhaul 2026-10-11).
+    expect(within(cellOf("Samhällsorientering")).getByText("180 / —")).toBeInTheDocument();
     expect(screen.getByText("target.pillNoPlan")).toBeInTheDocument();
   });
 

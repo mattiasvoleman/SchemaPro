@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { formatPercent } from "@/lib/staffing-view";
 import type { LoadModel, TeacherLoad } from "@/lib/teacher-load";
+import { SectionCard } from "@/components/ui/section-card";
 
 export interface AnnualCardProps {
   annual: TeacherLoad["annual"];
@@ -46,7 +47,6 @@ export function AnnualCard({
   headingLevel = "h3",
 }: AnnualCardProps) {
   const t = useTranslations("staffing.annual");
-  const Heading = headingLevel;
   const hours = (value: number) => t("hours", { hours: formatPercent(value) });
   const rows: { label: string; value: string }[] = [
     {
@@ -76,16 +76,20 @@ export function AnnualCard({
   rows.push({ label: t("teachingWeeks"), value: formatPercent(annual.teachingWeeksPerYear) });
 
   return (
-    <section className="rounded-lg border bg-card p-4 break-inside-avoid" aria-labelledby="annual-card-title">
-      <Heading id="annual-card-title" className="mb-2 font-semibold">
-        {t("title")}
-      </Heading>
+    // The app's section card, so its heading is the same size as the cards
+    // around it (h2 text-base on a page, h3 text-sm in the drawer).
+    <SectionCard
+      id="annual-card"
+      headingLevel={headingLevel === "h2" ? 2 : 3}
+      title={t("title")}
+      className="break-inside-avoid"
+    >
       {annual.contractKind === "SEMESTER" && annual.semesterHoursPerWeek !== null ? (
-        <p className="mb-2 text-sm">
+        <p className="text-sm">
           {t("semesterWeekly", { hours: formatPercent(annual.semesterHoursPerWeek) })}
         </p>
       ) : null}
-      {annual.contractKind === null ? <p className="mb-2 text-sm">{t("noPost")}</p> : null}
+      {annual.contractKind === null ? <p className="text-sm">{t("noPost")}</p> : null}
       <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-sm">
         {rows.map((row) => (
           <div key={row.label} className="contents">
@@ -94,9 +98,9 @@ export function AnnualCard({
           </div>
         ))}
       </dl>
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {showSettingsPath ? t("captionAdmin") : t("caption")}
       </p>
-    </section>
+    </SectionCard>
   );
 }

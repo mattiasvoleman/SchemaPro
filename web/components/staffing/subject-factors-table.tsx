@@ -10,6 +10,9 @@ import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { formatLoadFactor, parseLoadFactor } from "@/lib/load-factor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * "Faktor per ämne" — every subject's Subjects.loadFactor in one table, under
@@ -78,18 +81,20 @@ export function SubjectFactorsTable() {
     <div className="space-y-2 rounded-md border p-3">
       <h3 className="text-sm font-semibold">{t("tableTitle")}</h3>
       <p className="text-xs text-muted-foreground">{t("hint")}</p>
-      {isLoading ? null : isError ? (
-        <p className="text-sm text-destructive">{t("loadFailed")}</p>
+      {isLoading ? (
+        <Skeleton className="h-16 w-full" aria-busy="true" />
+      ) : isError ? (
+        <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
       ) : (
         <>
           <table className="w-full text-sm">
             <caption className="sr-only">{t("tableTitle")}</caption>
             <thead>
-              <tr className="text-left">
-                <th scope="col" className="py-1 pr-3 font-medium">
+              <tr className="text-left text-xs text-muted-foreground">
+                <th scope="col" className="py-1.5 pr-3 font-medium">
                   {t("subject")}
                 </th>
-                <th scope="col" className="py-1 font-medium">
+                <th scope="col" className="py-1.5 font-medium">
                   {t("factor")}
                 </th>
               </tr>
@@ -116,11 +121,7 @@ export function SubjectFactorsTable() {
               ))}
             </tbody>
           </table>
-          {invalid ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t("invalid")}
-            </p>
-          ) : null}
+          {invalid ? <Notice tone="destructive">{t("invalid")}</Notice> : null}
           <Button
             variant="outline"
             size="sm"

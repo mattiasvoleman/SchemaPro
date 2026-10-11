@@ -13,6 +13,7 @@ import {
 import { calendarLessonToGrid, calendarRastToBand } from "@/lib/lesson-mapper";
 import { teacherRastBands } from "@/lib/rasts";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
 
@@ -24,7 +25,7 @@ export default function TeacherSchedulePage() {
   const fromDate = toDateString(weekStart);
   const toDate = toDateString(addDays(weekStart, 6));
 
-  const { data: lessons, isLoading } = useTeacherLessons(profile.id, fromDate, toDate);
+  const { data: lessons, isLoading, isError } = useTeacherLessons(profile.id, fromDate, toDate);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
@@ -79,15 +80,20 @@ export default function TeacherSchedulePage() {
   }, [rasts, lessons, groups]);
 
   return (
-    <div>
-      <PageHeader title={t("title")} />
+    <Page>
+      <PageHeader title={t("title")} subtitle={t("subtitleTeacher")} />
+      {/* A failed read is said as one, under the week's own arrows, never
+          drawn as "Inga lektioner denna vecka": a teacher would take an
+          empty week at its word. The arrows stay, so a week that failed
+          can be left for one that loads. */}
       <WeekSchedule
         weekStart={weekStart}
         onWeekChange={setWeekStart}
         lessons={gridLessons}
         isLoading={isLoading}
+        isError={isError}
         bands={rastBands}
       />
-    </div>
+    </Page>
   );
 }

@@ -50,10 +50,20 @@ const updateMock = vi.fn();
 const removeMock = vi.fn();
 
 const state = vi.hoisted(() => ({
-  servings: { data: [] as unknown[], isLoading: false },
-  lunch: { data: null as unknown },
+  servings: { data: [], isLoading: false } as {
+    data: unknown[] | undefined;
+    isLoading: boolean;
+    isError?: boolean;
+  },
+  lunch: { data: null } as { data: unknown; isError?: boolean },
   /** What the SOLVER decided, as opposed to what the school declared. */
-  sittings: { data: [] as unknown[] },
+  sittings: { data: [] } as { data: unknown[] | undefined; isError?: boolean },
+  /** useActiveYear: the flow is the active year's. */
+  year: { activeYear: { id: "y-1" } } as {
+    activeYear: { id: string } | null;
+    isLoading?: boolean;
+    isError?: boolean;
+  },
 }));
 
 const GROUPS = [
@@ -65,7 +75,7 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries")>()),
   useLunchServings: () => state.servings,
   useLunchSettings: () => state.lunch,
-  useActiveYear: () => ({ activeYear: { id: "y-1" } }),
+  useActiveYear: () => state.year,
   useLunchSittings: () => state.sittings,
   useGroups: () => ({ data: GROUPS }),
   useCrudMutations: () => ({
@@ -119,6 +129,7 @@ beforeEach(() => {
   state.servings = { data: [], isLoading: false };
   state.lunch = { data: LUNCH };
   state.sittings = { data: [] };
+  state.year = { activeYear: { id: "y-1" }, isLoading: false, isError: false };
 });
 
 /** The flow, as "stage | mon | tue | wed | thu | fri". */
@@ -241,13 +252,58 @@ describe("the kitchen's flow", () => {
     headcount,
   });
 
-  it("is absent until a generation run has produced sittings", () => {
-    // Absent rather than empty: a printable list with nothing on it invites
-    // somebody to take it to the kitchen.
+  it("says in a sentence that it waits for a generation run, and draws no list", () => {
+    // Not an empty list: a printable list with nothing on it invites somebody
+    // to take it to the kitchen. But not silence either — the section used to
+    // be absent, so nothing said where the kitchen's list would appear or why
+    // it was not there yet (lunchServings.flowEmpty was written and never shown).
     state.servings = { data: [serving("a", 4, 6, null, "11:00", "11:40")], isLoading: false };
     render(<LunchServingsPage />);
 
-    expect(screen.queryByRole("region", { name: "flowTitle" })).toBeNull();
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(within(region).getByText("flowEmpty")).toBeTruthy();
+    expect(within(region).queryByRole("list")).toBeNull();
+  });
+
+  it("says the years could not be read rather than that no schedule is generated", () => {
+    state.year = { activeYear: null, isLoading: false, isError: true };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    const notice = within(region).getByRole("alert");
+    expect(notice).toHaveTextContent("flowLoadFailed");
+    expect(notice).toHaveTextContent("flowYearsLoadFailedHint");
+    expect(within(region).queryByText("flowEmpty")).toBeNull();
+  });
+
+  it("says there is no active year rather than that no schedule is generated", () => {
+    state.year = { activeYear: null, isLoading: false, isError: false };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(within(region).getByText("flowNoYear")).toBeTruthy();
+    expect(within(region).queryByText("flowEmpty")).toBeNull();
+  });
+
+  it("waits for the years rather than saying anything about the flow", () => {
+    state.year = { activeYear: null, isLoading: true, isError: false };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(region.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(within(region).queryByText("flowEmpty")).toBeNull();
+    expect(within(region).queryByText("flowNoYear")).toBeNull();
+  });
+
+  it("keeps the flow it has read when a refetch fails, and says so above it", () => {
+    state.sittings = { data: [sitting("s1", "g-4a", 1, "11:00", "11:30", 28)], isError: true };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    const notice = within(region).getByRole("alert");
+    expect(notice).toHaveTextContent("flowLoadFailed");
+    expect(notice).toHaveTextContent("refetchFailedHint");
+    expect(within(region).getByText(/4A/)).toBeTruthy();
   });
 
   it("names the classes, not their ids", () => {
@@ -330,6 +386,85 @@ describe("when lunch is not defined", () => {
     render(<LunchServingsPage />);
     expect(screen.queryByRole("status")).toBeNull();
   });
+
+  it("says nothing about lunch while the school rules are still on their way", () => {
+    // The banner used to show before the rules had answered, telling a school
+    // with a perfectly good lunch that it had none.
+    state.lunch = { data: undefined };
+    render(<LunchServingsPage />);
+
+    expect(screen.queryByText("noLunch")).toBeNull();
+  });
+
+  it("says the lunch could not be read rather than that it is undefined", () => {
+    state.lunch = { data: undefined, isError: true };
+    render(<LunchServingsPage />);
+
+    expect(screen.queryByText("noLunch")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("lunchLoadFailed");
+  });
+
+  it("links to the school rules section itself, not the top of Tillgänglighet", () => {
+    state.lunch = { data: null };
+    render(<LunchServingsPage />);
+
+    expect(screen.getByRole("link", { name: "lunchLink" }).getAttribute("href")).toBe(
+      "/admin/constraints#skolregler",
+    );
+  });
+});
+
+describe("while the sittings are not known", () => {
+  it("says the fetch failed instead of claiming every stage eats at once", () => {
+    state.servings = { data: undefined, isLoading: false, isError: true };
+    render(<LunchServingsPage />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("loadFailed");
+    expect(screen.queryByText("emptyTitle")).toBeNull();
+  });
+
+  it("keeps the sittings it has read when a refetch fails, and says so above them", () => {
+    // Every save invalidates the list; a background read that fails must not
+    // take away the rows the admin is working on.
+    state.servings = {
+      data: [serving("a", 4, 6, 5, "11:40", "12:20")],
+      isLoading: false,
+      isError: true,
+    };
+    render(<LunchServingsPage />);
+
+    const notice = screen.getByRole("alert");
+    expect(notice).toHaveTextContent("loadFailed");
+    expect(notice).toHaveTextContent("refetchFailedHint");
+    expect(
+      screen.getByRole("button", { name: "actionNamed(delete|grade(4)–grade(6), 5 11:40–12:20)" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "loadFailed" })).toBeNull();
+  });
+
+  it("shows a skeleton, not the empty state, while they load", () => {
+    state.servings = { data: undefined, isLoading: true };
+    render(<LunchServingsPage />);
+
+    expect(screen.queryByText("emptyTitle")).toBeNull();
+    expect(document.querySelector(".animate-pulse")).not.toBeNull();
+  });
+});
+
+describe("removing a sitting", () => {
+  it("names the row on its buttons and asks, with the verb, before it removes it", async () => {
+    state.servings = { data: [serving("a", 4, 6, 5, "11:40", "12:20")], isLoading: false };
+    const user = userEvent.setup();
+    render(<LunchServingsPage />);
+
+    await user.click(screen.getByRole("button", { name: "actionNamed(delete|grade(4)–grade(6), 5 11:40–12:20)" }));
+    const confirm = await screen.findByRole("dialog");
+    expect(within(confirm).getByText("deleteBody(grade(4)–grade(6), 5 11:40–12:20)")).toBeTruthy();
+    expect(removeMock).not.toHaveBeenCalled();
+
+    await user.click(within(confirm).getByRole("button", { name: "delete" }));
+    expect(removeMock).toHaveBeenCalledWith("a");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -371,7 +506,7 @@ describe("saving a sitting", () => {
     render(<LunchServingsPage />);
 
     await open(user);
-    await user.click(screen.getByRole("combobox", { name: "gradeSpan" }));
+    await user.click(screen.getByRole("combobox", { name: "gradeFromLabel" }));
     await user.click(await screen.findByRole("option", { name: "grade(9)" }));
     await save(user);
 
@@ -387,7 +522,7 @@ describe("saving a sitting", () => {
     render(<LunchServingsPage />);
 
     await open(user);
-    await user.click(screen.getByRole("combobox", { name: "gradeSpan – to" }));
+    await user.click(screen.getByRole("combobox", { name: "gradeToLabel" }));
     await user.click(await screen.findByRole("option", { name: "grade(1)" }));
     await save(user);
 
@@ -440,7 +575,7 @@ describe("saving a sitting", () => {
     const user = userEvent.setup();
     render(<LunchServingsPage />);
 
-    await user.click(screen.getAllByRole("button", { name: "edit" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: /^actionNamed\(edit\|/ })[0]!);
 
     expect(screen.getByLabelText("startTime")).toHaveValue("11:40");
     expect(screen.getByLabelText("endTime")).toHaveValue("12:20");
@@ -452,7 +587,7 @@ describe("saving a sitting", () => {
     const user = userEvent.setup();
     render(<LunchServingsPage />);
 
-    await user.click(screen.getAllByRole("button", { name: "edit" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: /^actionNamed\(edit\|/ })[0]!);
 
     expect(screen.getByLabelText("seats")).toHaveValue(null);
   });
@@ -462,7 +597,7 @@ describe("saving a sitting", () => {
     const user = userEvent.setup();
     render(<LunchServingsPage />);
 
-    await user.click(screen.getAllByRole("button", { name: "edit" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: /^actionNamed\(edit\|/ })[0]!);
     await save(user);
 
     expect(updateMock).toHaveBeenCalledWith(

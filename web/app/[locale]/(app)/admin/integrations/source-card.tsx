@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CheckCircle2, Loader2, PlugZap, ShieldAlert } from "lucide-react";
+import { Loader2, PlugZap } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
 import { CHECKBOX, NATIVE_SELECT } from "./form-styles";
 import { SecretsSection } from "./secrets-section";
@@ -118,7 +120,14 @@ export function SourceCard({ source }: { source: SourceView | null }) {
   const save = useSaveSource();
   const test = useTestConnection();
 
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => ({ ...current, [key]: value }));
+  // The token address and client id are judged once the admin has typed in
+  // one of them: an untouched new source is not an error yet, and Save stays
+  // disabled until both are filled either way.
+  const [clientTouched, setClientTouched] = useState(false);
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
+    if (key === "tokenUrl" || key === "clientId") setClientTouched(true);
+    setForm((current) => ({ ...current, [key]: value }));
+  };
   const baseProblem = urlProblem(form.baseUrl, "base");
   const usesClient = form.authKind === "OAUTH2_CLIENT_CREDENTIALS" || form.authKind === "MTLS_CLIENT_CERT";
   const tokenProblem = usesClient ? urlProblem(form.tokenUrl, "token") : null;
@@ -165,12 +174,8 @@ export function SourceCard({ source }: { source: SourceView | null }) {
     (chosenOrgs.length !== source.organisationIds.length || chosenOrgs.some((id) => !source.organisationIds.includes(id)));
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("title")}</CardTitle>
-        <CardDescription>{t("body")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
+    <SectionCard id="ss-source" title={t("title")} description={t("body")}>
+      <div className="space-y-6">
         <form
           className="space-y-4"
           onSubmit={(event) => {
@@ -178,95 +183,89 @@ export function SourceCard({ source }: { source: SourceView | null }) {
             if (canSave) submit(inputOf(form), t("saved"));
           }}
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="ss-name">{t("name")}</Label>
-              <Input id="ss-name" value={form.name} maxLength={120} placeholder={t("namePlaceholder")} onChange={(e) => set("name", e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ss-auth">{t("authKind")}</Label>
-              <select id="ss-auth" className={NATIVE_SELECT} value={form.authKind} onChange={(e) => set("authKind", e.target.value as AuthKind)}>
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <FormField id="ss-name" label={t("name")}>
+              <Input value={form.name} maxLength={120} placeholder={t("namePlaceholder")} onChange={(e) => set("name", e.target.value)} />
+            </FormField>
+            <FormField id="ss-auth" label={t("authKind")}>
+              <select className={NATIVE_SELECT} value={form.authKind} onChange={(e) => set("authKind", e.target.value as AuthKind)}>
                 {AUTH_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
                     {t(`authKinds.${kind}`)}
                   </option>
                 ))}
               </select>
-            </div>
+            </FormField>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="ss-base">{t("baseUrl")}</Label>
+          <FormField
+            id="ss-base"
+            label={t("baseUrl")}
+            hint={baseProblem ? undefined : t("baseUrlHint")}
+            error={baseProblem ? t(`urlProblems.${baseProblem}`) : undefined}
+          >
             <Input
-              id="ss-base"
               inputMode="url"
               autoComplete="off"
               spellCheck={false}
               value={form.baseUrl}
               maxLength={2048}
               placeholder="https://api.ist.com/ss12000v2-api/source/…/v2.0"
-              aria-invalid={baseProblem !== null}
-              aria-describedby="ss-base-hint"
               onChange={(e) => set("baseUrl", e.target.value)}
             />
-            <p id="ss-base-hint" className={`text-xs ${baseProblem ? "text-destructive" : "text-muted-foreground"}`}>
-              {baseProblem ? t(`urlProblems.${baseProblem}`) : t("baseUrlHint")}
-            </p>
-          </div>
+          </FormField>
           {usesClient ? (
             <div className="space-y-4 rounded-md border p-3">
               <p className="text-xs text-muted-foreground">
                 {form.authKind === "MTLS_CLIENT_CERT" ? t("clientOptionalHint") : t("clientHint")}
               </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="ss-token-url">{t("tokenUrl")}</Label>
+              <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                <FormField
+                  id="ss-token-url"
+                  label={t("tokenUrl")}
+                  error={tokenProblem ? t(`urlProblems.${tokenProblem}`) : undefined}
+                >
                   <Input
-                    id="ss-token-url"
                     inputMode="url"
                     autoComplete="off"
                     spellCheck={false}
                     value={form.tokenUrl}
                     maxLength={2048}
                     placeholder="https://skolid.se/connect/token"
-                    aria-invalid={tokenProblem !== null}
                     onChange={(e) => set("tokenUrl", e.target.value)}
                   />
-                  {tokenProblem ? <p className="text-xs text-destructive">{t(`urlProblems.${tokenProblem}`)}</p> : null}
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ss-client-id">{t("clientId")}</Label>
-                  <Input id="ss-client-id" autoComplete="off" spellCheck={false} value={form.clientId} maxLength={256} onChange={(e) => set("clientId", e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ss-scope">{t("tokenScope")}</Label>
-                  <Input id="ss-scope" autoComplete="off" spellCheck={false} value={form.tokenScope} maxLength={512} onChange={(e) => set("tokenScope", e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="ss-style">{t("tokenAuthStyle")}</Label>
-                  <select id="ss-style" className={NATIVE_SELECT} value={form.tokenAuthStyle} onChange={(e) => set("tokenAuthStyle", e.target.value as TokenAuthStyle)}>
+                </FormField>
+                <FormField id="ss-client-id" label={t("clientId")}>
+                  <Input autoComplete="off" spellCheck={false} value={form.clientId} maxLength={256} onChange={(e) => set("clientId", e.target.value)} />
+                </FormField>
+                <FormField id="ss-scope" label={t("tokenScope")}>
+                  <Input autoComplete="off" spellCheck={false} value={form.tokenScope} maxLength={512} onChange={(e) => set("tokenScope", e.target.value)} />
+                </FormField>
+                <FormField id="ss-style" label={t("tokenAuthStyle")}>
+                  <select className={NATIVE_SELECT} value={form.tokenAuthStyle} onChange={(e) => set("tokenAuthStyle", e.target.value as TokenAuthStyle)}>
                     {TOKEN_STYLES.map((style) => (
                       <option key={style} value={style}>
                         {t(`tokenAuthStyles.${style}`)}
                       </option>
                     ))}
                   </select>
-                </div>
+                </FormField>
               </div>
-              {clientIncomplete ? <p className="text-xs text-destructive">{t("clientIncomplete")}</p> : null}
+              {clientIncomplete && (clientTouched || form.tokenUrl !== "" || form.clientId !== "") ? (
+                <p className="text-xs text-destructive">{t("clientIncomplete")}</p>
+              ) : null}
             </div>
           ) : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="ss-page">{t("pageSize")}</Label>
-              <Input id="ss-page" type="number" min={100} max={2000} step={100} value={form.pageSize} onChange={(e) => set("pageSize", e.target.value)} />
-            </div>
-            <div className="flex items-center gap-2 self-end pb-2">
-              <Switch id="ss-enabled" checked={form.enabled} onCheckedChange={(checked) => set("enabled", checked)} />
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <FormField id="ss-page" label={t("pageSize")}>
+              <Input type="number" min={100} max={2000} step={100} value={form.pageSize} onChange={(e) => set("pageSize", e.target.value)} />
+            </FormField>
+            <div className="flex items-center justify-between gap-4 self-end rounded-md border p-3">
               <Label htmlFor="ss-enabled">{t("enabled")}</Label>
+              <Switch id="ss-enabled" checked={form.enabled} onCheckedChange={(checked) => set("enabled", checked)} />
             </div>
           </div>
           <Button type="submit" disabled={!canSave}>
-            {save.isPending ? <Loader2 className="animate-spin" /> : null}
+            {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
             {source ? t("save") : t("create")}
           </Button>
         </form>
@@ -275,20 +274,21 @@ export function SourceCard({ source }: { source: SourceView | null }) {
           <>
             <SecretsSection source={source} />
 
-            <section className="space-y-3" aria-labelledby="ss-test-title">
+            <section className="space-y-3 border-t pt-4" aria-labelledby="ss-test-title">
               <h3 id="ss-test-title" className="text-sm font-semibold">
                 {t("connectionTitle")}
               </h3>
               <p className="text-sm text-muted-foreground">{t("connectionBody")}</p>
+              {/* No live role: it stands from the first paint and changes
+                  only with the credentials listed just above it. */}
               {missingSecrets.length > 0 ? (
-                <p className="flex items-center gap-2 text-sm text-warning-foreground dark:text-warning">
-                  <ShieldAlert className="h-4 w-4" aria-hidden />
+                <Notice tone="warning" role={null}>
                   {t("secretsMissing")}
-                </p>
+                </Notice>
               ) : null}
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="button" variant="outline" onClick={runTest} disabled={test.isPending}>
-                  {test.isPending ? <Loader2 className="animate-spin" /> : <PlugZap />}
+                  {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
                   {t("test")}
                 </Button>
                 {source.lastTestedAt ? (
@@ -297,30 +297,30 @@ export function SourceCard({ source }: { source: SourceView | null }) {
                   </span>
                 ) : null}
               </div>
+              {/* The answer to the admin's own press: a status either way, so
+                  a failed test is read out as the result it is, not as an
+                  error of the page. */}
               {tested ? (
-                <div role="status" className={`rounded-md border p-3 text-sm ${tested.ok ? "border-success/40" : "border-destructive/40"}`}>
-                  {tested.ok ? (
-                    <p className="flex items-center gap-2 font-medium">
-                      <CheckCircle2 className="h-4 w-4 text-success" aria-hidden />
-                      {t("testOk", { count: tested.organisations.length })}
-                    </p>
-                  ) : (
-                    <p className="font-medium">
-                      {tested.tokenOk ? t("testFailedAfterToken") : t("testFailed")} {codeText(tCodes, tested.code)}
-                    </p>
-                  )}
-                </div>
+                <Notice
+                  tone={tested.ok ? "success" : "destructive"}
+                  role="status"
+                  title={
+                    tested.ok
+                      ? t("testOk", { count: tested.organisations.length })
+                      : `${tested.tokenOk ? t("testFailedAfterToken") : t("testFailed")} ${codeText(tCodes, tested.code)}`
+                  }
+                />
               ) : null}
 
               <div className="space-y-2">
-                <h4 className="text-sm font-medium">{t("organisationsTitle")}</h4>
+                <h4 className="text-sm font-semibold">{t("organisationsTitle")}</h4>
                 {tested?.ok && tested.organisations.length > 0 ? (
                   <fieldset className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
                     <legend className="sr-only">{t("organisationsTitle")}</legend>
                     {tested.organisations.map((organisation) => {
                       const checked = chosenOrgs.includes(organisation.id);
                       return (
-                        <label key={organisation.id} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted">
+                        <label key={organisation.id} className="flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-muted">
                           <input
                             type="checkbox"
                             className={CHECKBOX}
@@ -364,7 +364,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
             </section>
           </>
         ) : null}
-      </CardContent>
+      </div>
 
       <ConfirmDialog
         open={relink !== null}
@@ -375,6 +375,6 @@ export function SourceCard({ source }: { source: SourceView | null }) {
         loading={save.isPending}
         onConfirm={() => relink && submit({ ...relink.input, confirmRelink: true }, t("saved"))}
       />
-    </Card>
+    </SectionCard>
   );
 }

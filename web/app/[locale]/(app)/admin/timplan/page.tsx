@@ -66,7 +66,7 @@
 import { lazy, Suspense, useMemo, useState, type ComponentType } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarRange, Download, FileUp, ListPlus, Plus, Target, TriangleAlert } from "lucide-react";
+import { CalendarRange, Download, FileUp, ListPlus, Plus, Target } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useAcademicYears, useGroups, useNationalTimplans, usePeople, useSubjects } from "@/lib/queries";
 import {
@@ -92,6 +92,9 @@ import {
 } from "@/lib/timplan-view";
 import { downloadCsv } from "@/lib/csv-export";
 import { TIMPLAN_CSV_TEMPLATE, timplanToCsv } from "@/lib/timplan-csv";
+import { PLAN_STATUS_VARIANT } from "@/lib/status-variants";
+import { NextStep } from "@/components/layout/next-step";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TimplanGrid } from "@/components/timplan/timplan-grid";
@@ -100,8 +103,12 @@ import type { SchoolCohortNoticeProps } from "@/components/timplan/school-cohort
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -171,6 +178,7 @@ const errorText = (error: unknown, fallback: string) =>
 export default function TimplanPage() {
   const t = useTranslations("timplan");
   const tCommon = useTranslations("common");
+  const tNav = useTranslations("nav");
   const locale = useLocale();
 
   const { data: plans, isLoading: plansLoading, isError: plansFailed } = useLocalTimplans();
@@ -347,13 +355,31 @@ export default function TimplanPage() {
     actions.remove.isPending ||
     actions.create.isPending;
 
+  // The page's state ladder decides whether a plan is on screen at all: its
+  // status goes in the header's meta row only then.
+  const planShown = !loading && !failed && !!shown && !!current;
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
+        meta={
+          planShown && shown ? (
+            <>
+              <Badge variant={PLAN_STATUS_VARIANT[shown.status]}>
+                {decided ? t("statusDecided") : t("statusDraft")}
+              </Badge>
+              <Badge variant="outline">{t(`schoolForms.${shown.schoolForm}`)}</Badge>
+            </>
+          ) : undefined
+        }
         actions={
-          <>
+          // One row from xl (1280) up: the four controls are about 750px,
+          // and the header's two halves otherwise share the width by their
+          // natural sizes, which wrapped the row even at 1440. The subtitle
+          // wraps beside it instead. Below xl the row wraps as every header's.
+          <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
             {plans && plans.length > 0 ? (
               <Select
                 value={activeId ?? undefined}
@@ -388,25 +414,26 @@ export default function TimplanPage() {
               <CalendarRange />
               {t("yearTimplansButton")}
             </Button>
-            <Button asChild variant="ghost">
+            <Button asChild variant="outline">
               <Link href="/admin/timplan/tackning">
                 <Target />
                 {t("coverageLink")}
               </Link>
             </Button>
-          </>
+          </div>
         }
       />
 
       {loading ? (
-        <Skeleton className="h-96 w-full" />
+        <Skeleton className="h-96 w-full" aria-busy="true" />
       ) : failed ? (
-        <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !plans || plans.length === 0 ? (
         <EmptyState
           icon={Target}
           title={t("noPlansTitle")}
           description={t("noPlansBody")}
+          headingLevel={2}
           action={
             <Button onClick={() => setDialog("create")}>
               <Plus />
@@ -415,98 +442,100 @@ export default function TimplanPage() {
           }
         />
       ) : !shown || !current ? (
-        <Skeleton className="h-96 w-full" />
+        <Skeleton className="h-96 w-full" aria-busy="true" />
       ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold">{shown.name}</h2>
-            <Badge variant={decided ? "success" : "secondary"}>
-              {decided ? t("statusDecided") : t("statusDraft")}
-            </Badge>
-            <Badge variant="outline">{t(`schoolForms.${shown.schoolForm}`)}</Badge>
-          </div>
-
+        <>
           {decided ? (
-            <div role="status" className="rounded-md bg-muted px-4 py-3 text-sm text-foreground">
-              <p className="font-medium">
-                {t("decidedTitle", { date: decidedDate })}
-                {decidedBy ? ` ${t("decidedBy", { name: `${decidedBy.firstName} ${decidedBy.lastName}` })}` : ""}
-              </p>
-              {shown.decisionNote ? <p>{t("decidedNote", { note: shown.decisionNote })}</p> : null}
-              <p className="mt-1">{t("decidedReadOnly")}</p>
-            </div>
+            <Notice
+              title={
+                <>
+                  {t("decidedTitle", { date: decidedDate })}
+                  {decidedBy ? ` ${t("decidedBy", { name: `${decidedBy.firstName} ${decidedBy.lastName}` })}` : ""}
+                </>
+              }
+            >
+              <div className="space-y-1">
+                {shown.decisionNote ? <p>{t("decidedNote", { note: shown.decisionNote })}</p> : null}
+                <p>{t("decidedReadOnly")}</p>
+              </div>
+            </Notice>
           ) : null}
 
-          <section className="grid gap-4 rounded-lg border bg-card p-4 md:grid-cols-3" aria-label={t("planLabel")}>
-            <div className="space-y-1.5">
-              <Label htmlFor="timplan-name">{t("nameLabel")}</Label>
-              <Input
-                id="timplan-name"
-                value={current.name}
-                readOnly={decided}
-                aria-invalid={nameProblem !== null || undefined}
-                onChange={(event) => change({ name: event.target.value })}
-              />
-              {nameProblem ? <p className="text-sm text-destructive">{nameProblem}</p> : null}
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t("versionLabel")}</Label>
-              <Select
-                value={current.versionId}
-                onValueChange={(value) => change({ versionId: value })}
-                disabled={decided}
-              >
-                <SelectTrigger aria-label={t("versionLabel")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {versions
-                    .filter((entry) => entry.schoolForm === shown.schoolForm)
-                    .map((entry) => (
-                      <SelectItem key={entry.id} value={entry.id}>
-                        {t("versionOption", {
-                          sfs: entry.sfs,
-                          total: entry.totalHours,
-                          term: entry.appliesFromCohortTerm,
-                        })}
-                        {entry.entries.length === 0 ? ` · ${t("versionUnpublished")}` : ""}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="timplan-weeks">{t("weeksLabel")}</Label>
-              <div className="flex items-center gap-2">
+          {/* The plan's own name is the section's heading: the h2 the page
+              had above its badges, now that the badges are the header's meta. */}
+          <SectionCard id="timplan-plan" title={shown.name}>
+            <div className="grid gap-4 md:grid-cols-3 [&>*]:min-w-0">
+              <FormField id="timplan-name" label={t("nameLabel")} error={nameProblem}>
                 <Input
-                  id="timplan-weeks"
-                  inputMode="decimal"
-                  className="w-24"
-                  value={current.weeks}
+                  value={current.name}
                   readOnly={decided}
-                  aria-invalid={typedWeeksTenths === null || undefined}
-                  aria-describedby="timplan-weeks-hint"
-                  onChange={(event) => change({ weeks: event.target.value })}
+                  onChange={(event) => change({ name: event.target.value })}
                 />
-                {!decided && typedWeeksTenths !== Math.round(SUGGESTED_WEEKS * 10) ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => change({ weeks: weeksText(SUGGESTED_WEEKS) })}
+              </FormField>
+              <FormField id="timplan-version" label={t("versionLabel")}>
+                {(control) => (
+                  <Select
+                    value={current.versionId}
+                    onValueChange={(value) => change({ versionId: value })}
+                    disabled={decided}
                   >
-                    {t("weeksUseSuggestion")}
-                  </Button>
-                ) : null}
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {versions
+                        .filter((entry) => entry.schoolForm === shown.schoolForm)
+                        .map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {t("versionOption", {
+                              sfs: entry.sfs,
+                              total: entry.totalHours,
+                              term: entry.appliesFromCohortTerm,
+                            })}
+                            {entry.entries.length === 0 ? ` · ${t("versionUnpublished")}` : ""}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
+              {/* Wired by hand: the control is the field AND the suggestion
+                  button, and the line under it is the hint or the error. */}
+              <div className="space-y-1.5">
+                <Label htmlFor="timplan-weeks">{t("weeksLabel")}</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="timplan-weeks"
+                    inputMode="decimal"
+                    className="w-24"
+                    value={current.weeks}
+                    readOnly={decided}
+                    aria-invalid={typedWeeksTenths === null || undefined}
+                    aria-describedby="timplan-weeks-hint"
+                    onChange={(event) => change({ weeks: event.target.value })}
+                  />
+                  {!decided && typedWeeksTenths !== Math.round(SUGGESTED_WEEKS * 10) ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => change({ weeks: weeksText(SUGGESTED_WEEKS) })}
+                    >
+                      {t("weeksUseSuggestion")}
+                    </Button>
+                  ) : null}
+                </div>
+                <p
+                  id="timplan-weeks-hint"
+                  className={typedWeeksTenths === null ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+                >
+                  {typedWeeksTenths === null ? t("weeksInvalid") : t("weeksHint")}
+                </p>
               </div>
-              <p
-                id="timplan-weeks-hint"
-                className={typedWeeksTenths === null ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
-              >
-                {typedWeeksTenths === null ? t("weeksInvalid") : t("weeksHint")}
-              </p>
             </div>
-          </section>
+          </SectionCard>
 
+          {/* Spara sits next to the form it saves (the brief's exception for
+              a form page), with the plan's other acts after it. */}
           <div className="flex flex-wrap items-center gap-2">
             {!decided ? (
               <>
@@ -551,12 +580,8 @@ export default function TimplanPage() {
                 {t("importCsv")}
               </Button>
             ) : null}
-            <Button
-              variant="ghost"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setDialog("delete")}
-              disabled={dirty || pending}
-            >
+            {/* A neutral trigger: the confirmation it opens carries the red. */}
+            <Button variant="outline" onClick={() => setDialog("delete")} disabled={dirty || pending}>
               {t("delete")}
             </Button>
           </div>
@@ -567,32 +592,38 @@ export default function TimplanPage() {
             </p>
           ) : null}
           {invalidCells.length > 0 ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t("invalidCells", { count: invalidCells.length })}
-            </p>
+            <Notice tone="destructive">{t("invalidCells", { count: invalidCells.length })}</Notice>
           ) : null}
 
           {version && version.entries.length === 0 ? (
-            <div role="status" className="rounded-md border-l-4 border-l-warning bg-muted px-4 py-3 text-sm text-foreground">
-              <p className="font-medium">{t("unpublishedTitle")}</p>
-              <p>{t("unpublishedBody", { version: version.code, total: version.totalHours })}</p>
-            </div>
+            <Notice tone="warning" title={t("unpublishedTitle")}>
+              {t("unpublishedBody", { version: version.code, total: version.totalHours })}
+            </Notice>
           ) : null}
 
           {uncoded > 0 ? (
             // Above the grid AND the rail, at every width: below xl the rail
             // falls under twenty-odd rows, and its "under mål" rows are what
             // this sentence explains when no subject is coded yet.
-            <p role="status" className="rounded-md border-l-4 border-l-warning bg-muted px-4 py-3 text-sm text-foreground">
+            <Notice tone="warning">
               {t("uncodedNotice", { count: uncoded })}{" "}
               <Link href="/admin/subjects" className="underline">
                 {t("uncodedNoticeLink")}
               </Link>
-            </p>
+            </Notice>
           ) : null}
 
           {(subjects ?? []).length === 0 ? (
-            <EmptyState icon={Target} title={tCommon("noResults")} description={t("noSubjects")} />
+            <EmptyState
+              icon={Target}
+              title={t("noSubjectsTitle")}
+              description={t("noSubjects")}
+              action={
+                <Button asChild variant="outline">
+                  <Link href="/admin/subjects">{t("uncodedNoticeLink")}</Link>
+                </Button>
+              }
+            />
           ) : check ? (
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
               <div className="min-w-0 space-y-2">
@@ -623,9 +654,9 @@ export default function TimplanPage() {
               />
             </div>
           ) : (
-            <Skeleton className="h-96 w-full" />
+            <Skeleton className="h-96 w-full" aria-busy="true" />
           )}
-        </div>
+        </>
       )}
 
       {/* Its own boundary: a dialog's chunk loading must not hide the notice already shown. */}
@@ -636,10 +667,13 @@ export default function TimplanPage() {
             groups={groups}
             versions={national.versions}
             planForms={(plans ?? []).map((entry) => entry.schoolForm)}
-            className="mt-6"
           />
         ) : null}
       </Suspense>
+      {/* The manual's chain forward: the plan's minutes become the year's posts. */}
+      <div className="flex justify-end">
+        <NextStep href="/admin/requirements" name={tNav("requirements")} />
+      </div>
       <Suspense fallback={null}>
         {dialog === "create" ? (
           <CreateDialog
@@ -737,6 +771,6 @@ export default function TimplanPage() {
           />
         ) : null}
       </Suspense>
-    </div>
+    </Page>
   );
 }

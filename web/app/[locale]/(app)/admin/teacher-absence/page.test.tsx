@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TeacherAbsencePage from "./page";
@@ -84,18 +84,43 @@ describe("cancelling from Lärarfrånvaro", () => {
     const user = await chooseTeacher();
     const row = screen.getByText("7A").closest("tr")!;
     await user.click(within(row).getByRole("button", { name: /dayPlanner\.cancelAction/ }));
-    const dialog = await screen.findByRole("dialog");
+    // The lesson dialogs are a chunk of their own (React.lazy), shared with
+    // Dagsplanering, fetched on this first click: a cold import can take
+    // longer than findBy's default second under a loaded test run.
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
     await user.type(within(dialog).getByLabelText("dayPlanner.reason"), "Sjuk");
     await user.click(within(dialog).getByRole("button", { name: /dayPlanner\.cancelAction/ }));
     expect(cancel).toHaveBeenCalledWith({ id: "cl-1", cause: "TEACHER_UNAVAILABLE", reason: "Sjuk" });
   });
 
-  it("says it for every lesson of a whole-list cancel", async () => {
+  it("says it for every lesson of a whole-list cancel, once the count has been confirmed", async () => {
     const user = await chooseTeacher();
     await user.click(screen.getByRole("button", { name: /teacherAbsence\.cancelAll/ }));
+    // Every class is told: nothing is sent until the confirmation, which names the count.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("teacherAbsence.cancelAllTitle(2)");
+    expect(cancel).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "teacherAbsence.cancelAllConfirm(2)" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(2));
     expect(cancel.mock.calls.map(([body]) => body)).toEqual([
       { id: "cl-1", cause: "TEACHER_UNAVAILABLE" },
       { id: "cl-2", cause: "TEACHER_UNAVAILABLE" },
     ]);
+  });
+});
+
+describe("the register dialog beside the page's own filter", () => {
+  it("labels the dialog's teacher field, not the page's teacher filter behind it", async () => {
+    // Both fields are "Lärare" Selects; with one shared id the dialog's label
+    // pointed at the page's trigger, hidden behind the modal.
+    const user = userEvent.setup();
+    render(<TeacherAbsencePage />);
+    const filter = screen.getByLabelText("teacherAbsence.selectTeacher");
+    await user.click(screen.getByRole("button", { name: /teacherAbsence\.register/ }));
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
+    const field = within(dialog).getByLabelText("absenceForm.teacher");
+    expect(field).toHaveAttribute("role", "combobox");
+    expect(field.id).not.toBe(filter.id);
+    expect(document.querySelectorAll(`[id="${field.id}"]`)).toHaveLength(1);
   });
 });

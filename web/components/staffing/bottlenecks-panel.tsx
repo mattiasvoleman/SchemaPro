@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import type { TeacherLoadReport } from "@/lib/teacher-load";
 import { Badge } from "@/components/ui/badge";
+import { SectionCard } from "@/components/ui/section-card";
 
 /**
  * "Ämnesflaskhalsar" — Untis' Fach-Engpässe, as two numbers per subject.
@@ -27,11 +28,7 @@ export function BottlenecksPanel({
 }) {
   const t = useTranslations("staffing");
   return (
-    <section className="rounded-lg border bg-card p-4" aria-labelledby="staffing-bottlenecks">
-      <h2 id="staffing-bottlenecks" className="font-semibold">
-        {t("bottlenecksTitle")}
-      </h2>
-      <p className="mb-2 text-xs text-muted-foreground">{t("bottlenecksHint")}</p>
+    <SectionCard id="staffing-bottlenecks" title={t("bottlenecksTitle")} description={t("bottlenecksHint")}>
       {!report.bottlenecksComputed ? (
         <p className="text-sm text-foreground">{t("bottlenecksNotComputed")}</p>
       ) : report.subjectBottlenecks.length === 0 ? (
@@ -97,6 +94,6 @@ export function BottlenecksPanel({
           </table>
         </div>
       )}
-    </section>
+    </SectionCard>
   );
 }

@@ -3,24 +3,37 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Coffee, Pencil, Plus, Trash2 } from "lucide-react";
+import { Coffee, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCrudMutations, useRasts } from "@/lib/queries";
 import type { Rast } from "@/lib/types";
+import { clock } from "@/lib/clock";
 import { rastWindows } from "@/lib/rasts";
 import { formatTime } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import {
+  StageWeekMatrix,
+  WEEKDAYS,
+  stagesOf,
+  useSpanLabel,
+} from "@/components/schedule/stage-week-matrix";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -33,7 +46,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -57,7 +69,6 @@ import {
  * is the same rule the engine's rasts.py applies.
  */
 
-const WEEKDAYS = [1, 2, 3, 4, 5] as const;
 /** The select's stand-in for `dayOfWeek: null`, which a Select cannot hold. */
 const EVERY_DAY = "all";
 
@@ -87,8 +98,7 @@ export default function RastsPage() {
   const t = useTranslations("rasts");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
-  const tGrades = useTranslations("grades");
-  const { data: rasts, isLoading } = useRasts();
+  const { data: rasts, isLoading, isError } = useRasts();
 
   const mutations = useCrudMutations<{
     name: string;
@@ -105,28 +115,10 @@ export default function RastsPage() {
   const [deleting, setDeleting] = useState<Rast | null>(null);
   const [form, setForm] = useState<RastForm>(EMPTY_FORM);
 
-  const spanLabel = (min: number, max: number): string =>
-    min === max
-      ? tGrades("grade", { grade: min })
-      : `${tGrades("grade", { grade: min })}–${tGrades("grade", { grade: max })}`;
+  const spanLabel = useSpanLabel();
 
-  /**
-   * The stages the school has written about, in year order.
-   *
-   * Derived from the rows rather than from a fixed F-3/4-6/7-9, because the
-   * school decides what a stage is — one row per single year is an equally
-   * valid thing to say, and the week below has to show it back.
-   */
-  const spans = useMemo(() => {
-    const seen = new Map<string, { min: number; max: number }>();
-    for (const rast of rasts ?? []) {
-      seen.set(`${rast.minGradeLevel}-${rast.maxGradeLevel}`, {
-        min: rast.minGradeLevel,
-        max: rast.maxGradeLevel,
-      });
-    }
-    return [...seen.values()].sort((a, b) => a.min - b.min || a.max - b.max);
-  }, [rasts]);
+  /** The stages the school has written about, in year order (see stagesOf). */
+  const spans = useMemo(() => stagesOf(rasts), [rasts]);
 
   const openCreate = () => {
     setEditing(null);
@@ -185,100 +177,110 @@ export default function RastsPage() {
 
   const formValid = form.name.trim() !== "" && form.startTime < form.endTime;
 
+  const saving = mutations.create.isPending || mutations.update.isPending;
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
+        intro={t("hint")}
         actions={
           <Button onClick={openCreate}>
-            <Plus />
+            <Plus aria-hidden="true" />
             {t("add")}
           </Button>
         }
       />
 
-      <p className="mb-4 max-w-prose text-sm text-muted-foreground">{t("hint")}</p>
+      {isError && rasts !== undefined ? (
+        // A failed refetch keeps the rasts as last read, with this above them.
+        <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
+      ) : null}
 
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError && rasts === undefined ? (
+        /*
+          Not the empty state: "no rasts" means lessons may run back to back,
+          and a failed request is not evidence of that.
+        */
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !rasts || rasts.length === 0 ? (
-        <EmptyState icon={Coffee} title={tCommon("noResults")} description={t("empty")} />
+        <EmptyState icon={Coffee} title={t("emptyTitle")} description={t("empty")} headingLevel={2} />
       ) : (
         <>
           <section aria-labelledby="rasts-rows-title">
             <h2 id="rasts-rows-title" className="sr-only">
               {t("rowsTitle")}
             </h2>
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-foreground">{t("name")}</TableHead>
-                    <TableHead className="text-foreground">{t("gradeSpan")}</TableHead>
-                    <TableHead className="text-foreground">{t("day")}</TableHead>
-                    <TableHead className="text-foreground">{tCommon("time")}</TableHead>
-                    <TableHead className="w-24 text-right text-foreground">
-                      {tCommon("actions")}
-                    </TableHead>
+            <TableCard caption={t("rowsTitle")}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col" className="text-foreground">{t("name")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{t("gradeSpan")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{t("day")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{tCommon("time")}</TableHead>
+                  <TableHead scope="col" className="w-24 text-right text-foreground">
+                    {tCommon("actions")}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rasts.map((rast) => (
+                  <TableRow key={rast.id}>
+                    <TableCell className="font-medium">
+                      <span className="flex flex-wrap items-center gap-2">
+                        {rast.name}
+                        {/*
+                          Beside the name rather than in a column of its own:
+                          the flag is off for most schools, and a column that
+                          is empty on every row costs width the day and the
+                          clock need more.
+                        */}
+                        {rast.requiresLessonBefore ? (
+                          <Badge variant="secondary">{t("lessonBeforeShort")}</Badge>
+                        ) : null}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {spanLabel(rast.minGradeLevel, rast.maxGradeLevel)}
+                    </TableCell>
+                    <TableCell>
+                      {rast.dayOfWeek === null ? (
+                        <Badge variant="secondary">{t("everyDay")}</Badge>
+                      ) : (
+                        tDays(String(rast.dayOfWeek))
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      {formatTime(rast.startTime)}–{formatTime(rast.endTime)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <RowActions
+                        name={rast.name}
+                        actions={[
+                          {
+                            label: tCommon("edit"),
+                            icon: Pencil,
+                            onSelect: () => openEdit(rast),
+                            ariaLabel: t("editRast", { name: rast.name }),
+                          },
+                          {
+                            label: tCommon("delete"),
+                            icon: Trash2,
+                            onSelect: () => setDeleting(rast),
+                            ariaLabel: t("deleteRast", { name: rast.name }),
+                          },
+                        ]}
+                      />
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rasts.map((rast) => (
-                    <TableRow key={rast.id}>
-                      <TableCell className="font-medium">
-                        <span className="flex flex-wrap items-center gap-2">
-                          {rast.name}
-                          {/*
-                            Beside the name rather than in a column of its own:
-                            the flag is off for most schools, and a column that
-                            is empty on every row costs width the day and the
-                            clock need more.
-                          */}
-                          {rast.requiresLessonBefore ? (
-                            <Badge variant="secondary">{t("lessonBeforeShort")}</Badge>
-                          ) : null}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {spanLabel(rast.minGradeLevel, rast.maxGradeLevel)}
-                      </TableCell>
-                      <TableCell>
-                        {rast.dayOfWeek === null ? (
-                          <Badge variant="secondary">{t("everyDay")}</Badge>
-                        ) : (
-                          tDays(String(rast.dayOfWeek))
-                        )}
-                      </TableCell>
-                      <TableCell className="tabular-nums">
-                        {formatTime(rast.startTime)}–{formatTime(rast.endTime)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openEdit(rast)}
-                          aria-label={t("editRast", { name: rast.name })}
-                        >
-                          <Pencil />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDeleting(rast)}
-                          aria-label={t("deleteRast", { name: rast.name })}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                ))}
+              </TableBody>
+            </TableCard>
           </section>
 
           {/*
@@ -289,128 +291,102 @@ export default function RastsPage() {
             after a generation run — so the same function the engine mirrors,
             lib/rasts.ts, is asked here and its answer is printed.
           */}
-          <section aria-labelledby="rasts-week-title" className="mt-8">
-            <h2 id="rasts-week-title" className="mb-1 text-lg font-semibold">
-              {t("weekTitle")}
-            </h2>
-            <p className="mb-3 max-w-prose text-sm text-muted-foreground">
-              {t("weekHint")}
-            </p>
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-foreground">{t("gradeSpan")}</TableHead>
-                    {WEEKDAYS.map((day) => (
-                      <TableHead key={day} className="text-foreground">
-                        {tDays(String(day))}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {spans.map((span) => (
-                    <TableRow key={`${span.min}-${span.max}`}>
-                      <TableCell className="font-medium">
-                        {spanLabel(span.min, span.max)}
-                      </TableCell>
-                      {WEEKDAYS.map((day) => {
-                        const windows = rastWindows(rasts, span, day);
-                        return (
-                          <TableCell key={day} className="tabular-nums">
-                            {windows.length === 0 ? (
-                              <span className="text-muted-foreground">{t("noRast")}</span>
-                            ) : (
-                              <span className="flex flex-col gap-0.5">
-                                {windows.map((window) => (
-                                  <span key={window.id}>
-                                    {hhmm(window.startMinutes)}–{hhmm(window.endMinutes)}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
+          <StageWeekMatrix
+            id="rasts-week"
+            title={t("weekTitle")}
+            description={t("weekHint")}
+            stageLabel={t("gradeSpan")}
+            spans={spans}
+            renderCell={(span, day) => {
+              const windows = rastWindows(rasts, span, day);
+              if (windows.length === 0) {
+                return <span className="text-muted-foreground">{t("noRast")}</span>;
+              }
+              return (
+                <span className="flex flex-col gap-0.5">
+                  {windows.map((window) => (
+                    <span key={window.id}>
+                      {clock(window.startMinutes)}–{clock(window.endMinutes)}
+                    </span>
                   ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+                </span>
+              );
+            }}
+          />
         </>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("editTitle") : t("addTitle")}</DialogTitle>
+            <DialogDescription>{t("dialogDescription")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="rast-name">{t("name")}</Label>
+            <FormField id="rast-name" label={t("name")}>
               <Input
-                id="rast-name"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-            </div>
+            </FormField>
             {/* No "every year": the DTO requires both bounds, so the form has
                 no null to hold and nothing to fall back to at the submit. */}
             <GradeSpanField
               label={t("gradeSpan")}
+              fromLabel={t("gradeFromLabel")}
+              toLabel={t("gradeToLabel")}
               min={form.minGradeLevel}
               max={form.maxGradeLevel}
               onChange={(span) =>
                 setForm({ ...form, minGradeLevel: span.min, maxGradeLevel: span.max })
               }
             />
-            <div className="space-y-2">
-              <Label>{t("day")}</Label>
-              <Select
-                value={form.dayOfWeek}
-                onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
-              >
-                <SelectTrigger aria-label={t("day")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={EVERY_DAY}>{t("everyDay")}</SelectItem>
-                  {WEEKDAYS.map((day) => (
-                    <SelectItem key={day} value={String(day)}>
-                      {tDays(String(day))}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="rast-start">{t("startTime")}</Label>
+            <FormField id="rast-day" label={t("day")}>
+              {(control) => (
+                <Select
+                  value={form.dayOfWeek}
+                  onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={EVERY_DAY}>{t("everyDay")}</SelectItem>
+                    {WEEKDAYS.map((day) => (
+                      <SelectItem key={day} value={String(day)}>
+                        {tDays(String(day))}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="rast-start" label={t("startTime")}>
                 <Input
-                  id="rast-start"
                   type="time"
                   value={form.startTime}
                   onChange={(e) => setForm({ ...form, startTime: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="rast-end">{t("endTime")}</Label>
+              </FormField>
+              <FormField id="rast-end" label={t("endTime")}>
                 <Input
-                  id="rast-end"
                   type="time"
                   value={form.endTime}
                   onChange={(e) => setForm({ ...form, endTime: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
-            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
-              <div className="space-y-0.5">
+            <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+              <div className="space-y-1">
                 <Label htmlFor="rast-lesson-before">{t("lessonBefore")}</Label>
-                <p className="text-xs text-muted-foreground">{t("lessonBeforeHint")}</p>
+                <p id="rast-lesson-before-hint" className="text-xs text-muted-foreground">
+                  {t("lessonBeforeHint")}
+                </p>
               </div>
               <Switch
                 id="rast-lesson-before"
+                aria-describedby="rast-lesson-before-hint"
                 checked={form.requiresLessonBefore}
                 onCheckedChange={(checked) =>
                   setForm({ ...form, requiresLessonBefore: checked })
@@ -422,8 +398,15 @@ export default function RastsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={submit} disabled={!formValid}>
-              {tCommon("save")}
+            <Button onClick={submit} disabled={!formValid || saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -435,13 +418,9 @@ export default function RastsPage() {
         title={t("deleteTitle")}
         description={t("deleteBody", { name: deleting?.name ?? "" })}
         confirmLabel={tCommon("delete")}
+        loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
-}
-
-/** Minutes from midnight as a wall clock, for the resolved week. */
-function hhmm(minutes: number): string {
-  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }

@@ -7,6 +7,7 @@ import { Link } from "@/i18n/navigation";
 import type { UnstaffedRequirement } from "@/lib/teacher-load";
 import type { StaffingWarning } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { SectionCard } from "@/components/ui/section-card";
 import { TeacherSuggestions } from "@/components/staffing/teacher-suggestions";
 import { WarningsNotice } from "@/components/staffing/staffing-notices";
 
@@ -42,7 +43,6 @@ export function UnstaffedPanel({
   const [warned, setWarned] = useState<{ context: string; warnings: StaffingWarning[] } | null>(
     null,
   );
-  const sectionRef = useRef<HTMLElement>(null);
   const liveRef = useRef<HTMLDivElement>(null);
   /**
    * Where focus goes after a click that unmounts the button it was on (the
@@ -53,24 +53,21 @@ export function UnstaffedPanel({
   const [focusTo, setFocusTo] = useState<{ target: "live" | "panel"; at: number } | null>(null);
   useEffect(() => {
     if (!focusTo) return;
-    (focusTo.target === "live" ? liveRef.current : sectionRef.current)?.focus();
+    // The panel by its id: SectionCard takes no ref, and the anchor is unique.
+    (focusTo.target === "live" ? liveRef.current : document.getElementById(UNSTAFFED_ANCHOR))?.focus();
   }, [focusTo]);
 
   return (
-    <section
-      ref={sectionRef}
+    <SectionCard
       id={UNSTAFFED_ANCHOR}
       // Focusable by script only: a link to #unstaffed lands focus here.
       tabIndex={-1}
-      className="scroll-mt-4 rounded-lg border bg-card p-4"
-      aria-labelledby="staffing-unstaffed"
+      className="scroll-mt-4"
+      title={t("unstaffedTitle")}
+      description={t("unstaffedHint")}
     >
-      <h2 id="staffing-unstaffed" className="font-semibold">
-        {t("unstaffedTitle")}
-      </h2>
-      <p className="mb-2 text-xs text-muted-foreground">{t("unstaffedHint")}</p>
       {/* Always mounted, so the sentence is announced when it arrives. */}
-      <div ref={liveRef} role="status" aria-live="polite" tabIndex={-1} className="empty:hidden mb-2">
+      <div ref={liveRef} role="status" aria-live="polite" tabIndex={-1} className="empty:hidden">
         {warned ? (
           <WarningsNotice
             live={false}
@@ -142,6 +139,6 @@ export function UnstaffedPanel({
           })}
         </ul>
       )}
-    </section>
+    </SectionCard>
   );
 }

@@ -30,7 +30,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { CalendarClock, TriangleAlert } from "lucide-react";
+import { CalendarClock } from "lucide-react";
 import { useDeliveredCoverage } from "@/lib/timplan-delivered-queries";
 import {
   buildDeliveredMatrix,
@@ -49,6 +49,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CoverageTabProps } from "@/components/timplan/coverage-scheduled-tab";
 
@@ -100,9 +102,12 @@ export function CoverageDeliveredTab({
     document.getElementById("tackning-delivered-group")?.scrollIntoView?.({ block: "start" });
   }, [selected, chosen]);
 
-  if (overview.isLoading || (!coverage && !overview.isError)) return <Skeleton className="h-96 w-full" />;
+  if (overview.isLoading || (!coverage && !overview.isError)) {
+    return <Skeleton className="h-96 w-full" aria-busy="true" />;
+  }
   if (overview.isError || !coverage || !matrix) {
-    return <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />;
+    // Directly under the tablist, which sits under the h1: an h2.
+    return <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />;
   }
 
   const asOf = new Date(coverage.asOf);
@@ -135,6 +140,7 @@ export function CoverageDeliveredTab({
           icon={CalendarClock}
           title={t("delivered.notPublishedTitle")}
           description={t("delivered.notPublishedBody")}
+          headingLevel={2}
         />
       </div>
     );
@@ -166,15 +172,16 @@ export function CoverageDeliveredTab({
             ? ` ${t("delivered.creditsSummary", { count: coverage.credits.count, hours: hoursOf(coverage.credits.minutes) })}`
             : ""}
         </p>
+        {/* Facts of the year drawn with it, not news: no live role of their own. */}
         {notices.map((verdict, index) => (
-          <p key={`${verdict.code}-${index}`} className="rounded-md bg-muted px-3 py-2">
+          <Notice key={`${verdict.code}-${index}`} role={null}>
             <YearNotice verdict={verdict} />
-          </p>
+          </Notice>
         ))}
         <p className="text-xs text-muted-foreground">{t("delivered.legend")}</p>
       </section>
 
-      <div className="overflow-x-auto rounded-lg border bg-card">
+      <div className="relative overflow-x-auto rounded-lg border bg-card">
         <table className="w-full border-collapse text-sm">
           <caption className="sr-only">{t("delivered.caption", { year: year.name })}</caption>
           <thead>
@@ -436,7 +443,7 @@ function DeliveredDrillDown({ yearId, summary, overview, name, lineName, groupNa
       className="scroll-mt-4 space-y-4 rounded-lg border bg-card p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h2 id="tackning-delivered-title" className="text-lg font-semibold">
+        <h2 id="tackning-delivered-title" className="text-base font-semibold">
           {name}
         </h2>
         <span className="text-sm text-muted-foreground">
@@ -446,9 +453,9 @@ function DeliveredDrillDown({ yearId, summary, overview, name, lineName, groupNa
       </div>
 
       {drill.isError ? (
-        <p className="text-sm text-foreground">{t("loadFailed")}</p>
+        <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
       ) : !detail ? (
-        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full" aria-busy="true" />
       ) : (
         <ul className="space-y-3">
           {detail.lines.map((line) => (
@@ -545,7 +552,7 @@ function DeliveredLineCard({
   return (
     <article className="space-y-2 rounded-md border p-3" aria-label={name}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-semibold">{name}</h3>
+        <h3 className="text-sm font-semibold">{name}</h3>
         <span className="text-sm tabular-nums">
           {t("delivered.cellLine", {
             subject: name,

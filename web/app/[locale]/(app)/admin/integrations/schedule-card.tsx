@@ -5,9 +5,10 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { MessageLookup } from "@/lib/engine-message";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
 import { NATIVE_SELECT } from "./form-styles";
 import { errorText } from "./ss12000-messages";
@@ -43,38 +44,30 @@ export function ScheduleCard({ source }: { source: SourceView }) {
   const dirty = hour !== source.scheduleHourLocal || (fullEveryValid && fullEveryDays !== source.fullEveryDays);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("title")}</CardTitle>
-        <CardDescription>{t("body")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center gap-2">
+    <SectionCard id="ss-schedule-card" title={t("title")} description={t("body")}>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <Label htmlFor="ss-schedule">{t("enabled")}</Label>
           <Switch
             id="ss-schedule"
             checked={source.scheduleEnabled}
             disabled={save.isPending}
             onCheckedChange={(checked) => patch({ scheduleEnabled: checked })}
           />
-          <Label htmlFor="ss-schedule">{t("enabled")}</Label>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="ss-hour">{t("hour")}</Label>
-            <select id="ss-hour" className={NATIVE_SELECT} value={hour} onChange={(event) => setHour(Number(event.target.value))}>
+        <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+          <FormField id="ss-hour" label={t("hour")} hint={t("hourHint")}>
+            <select className={NATIVE_SELECT} value={hour} onChange={(event) => setHour(Number(event.target.value))}>
               {HOURS.map((value) => (
                 <option key={value} value={value}>
                   {t("hourOption", { hour: String(value).padStart(2, "0") })}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-muted-foreground">{t("hourHint")}</p>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ss-full">{t("fullEveryDays")}</Label>
-            <Input id="ss-full" type="number" min={1} max={31} value={fullEvery} aria-invalid={!fullEveryValid} onChange={(event) => setFullEvery(event.target.value)} />
-            <p className="text-xs text-muted-foreground">{t("fullEveryDaysHint")}</p>
-          </div>
+          </FormField>
+          <FormField id="ss-full" label={t("fullEveryDays")} hint={t("fullEveryDaysHint")}>
+            <Input type="number" min={1} max={31} value={fullEvery} aria-invalid={!fullEveryValid || undefined} onChange={(event) => setFullEvery(event.target.value)} />
+          </FormField>
         </div>
         <Button
           type="button"
@@ -87,23 +80,28 @@ export function ScheduleCard({ source }: { source: SourceView }) {
         </Button>
 
         <div className="space-y-2 rounded-md border p-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="ss-auto">{t("autoApply")}</Label>
+              <p id="ss-auto-hint" className="text-xs text-muted-foreground">
+                {source.scheduleEnabled ? t("autoApplyBody") : t("autoApplyNeedsSchedule")}
+              </p>
+            </div>
             <Switch
               id="ss-auto"
               checked={source.scheduleAutoApply}
               disabled={!source.scheduleEnabled || save.isPending}
+              aria-describedby="ss-auto-hint"
               onCheckedChange={(checked) => patch({ scheduleAutoApply: checked })}
             />
-            <Label htmlFor="ss-auto">{t("autoApply")}</Label>
           </div>
-          <p className="text-xs text-muted-foreground">{source.scheduleEnabled ? t("autoApplyBody") : t("autoApplyNeedsSchedule")}</p>
           <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
             <li>{t("autoApplyDoes")}</li>
             <li>{t("autoApplyNever")}</li>
             <li>{t("autoApplyBrake")}</li>
           </ul>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </SectionCard>
   );
 }

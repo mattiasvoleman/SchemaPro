@@ -6,6 +6,7 @@ import { ArrowLeftRight, BookOpen } from "lucide-react";
 import type { StaffingWarning } from "@/lib/types";
 import { formatLengths } from "@/lib/lesson-lengths-text";
 import { Button } from "@/components/ui/button";
+import { SectionCard } from "@/components/ui/section-card";
 import { TeacherSuggestions } from "@/components/staffing/teacher-suggestions";
 import { WarningsNotice } from "@/components/staffing/staffing-notices";
 
@@ -57,14 +58,13 @@ export function TeacherRequirementsCard({
     .sort((a, b) => a.label.localeCompare(b.label, "sv"));
 
   return (
-    <section className="rounded-lg border bg-card p-4" aria-labelledby={`requirements-${teacherId}`}>
-      <div className="mb-1 flex items-center gap-2">
-        <BookOpen className="size-4 text-muted-foreground" />
-        <h3 id={`requirements-${teacherId}`} className="font-semibold">
-          {t("teacherRowsTitle")}
-        </h3>
-      </div>
-      <p className="mb-2 text-xs text-muted-foreground">{t("teacherRowsHint")}</p>
+    <SectionCard
+      id={`requirements-${teacherId}`}
+      headingLevel={3}
+      icon={BookOpen}
+      title={t("teacherRowsTitle")}
+      description={t("teacherRowsHint")}
+    >
       <WarningsNotice warnings={warnings} onDismiss={() => setWarnings([])} />
       {mine.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("teacherRowsEmpty")}</p>
@@ -115,6 +115,6 @@ export function TeacherRequirementsCard({
           })}
         </ul>
       )}
-    </section>
+    </SectionCard>
   );
 }

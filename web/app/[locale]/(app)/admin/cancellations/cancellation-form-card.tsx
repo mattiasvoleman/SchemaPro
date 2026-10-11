@@ -22,8 +22,9 @@
  */
 
 import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { Eye, Loader2 } from "lucide-react";
 import {
   createInputOf,
   EMPTY_CANCELLATION_FORM,
@@ -36,13 +37,14 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { BatchCause, BatchScope, CancellationSelection } from "@/lib/publication-types";
 import type { AcademicYear, StudentGroup, Subject } from "@/lib/types";
-import { formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DateField } from "@/components/ui/date-field";
+import { FormField } from "@/components/ui/form-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -69,6 +71,7 @@ export function CancellationFormCard({
   const t = useTranslations("cancellations");
   const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
+  const locale = useLocale();
   const preview = useCancellationPreview();
   const create = useCreateCancellationBatch();
   const [form, setForm] = useState<CancellationForm>(EMPTY_CANCELLATION_FORM);
@@ -86,6 +89,18 @@ export function CancellationFormCard({
   const selection = selectionOf(form, year.id);
   const current = preview.data && sameSelection(previewed, selection) ? preview.data : null;
   const update = (patch: Partial<CancellationForm>) => setForm((previous) => ({ ...previous, ...patch }));
+  // A preview's days are calendar days (yyyy-mm-dd), read at UTC midnight so
+  // no time zone moves one to the day before.
+  const dayFormat = useMemo(
+    () => new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }),
+    [locale],
+  );
+  const dayText = (date: string) => dayFormat.format(new Date(`${date}T00:00:00.000Z`));
+  const clock = useMemo(
+    () => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
+    [locale],
+  );
+  const timeText = (iso: string) => clock.format(new Date(iso));
 
   const doPreview = async () => {
     setProblem(null);
@@ -115,96 +130,89 @@ export function CancellationFormCard({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("formTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm">
+    <SectionCard id="cancel-form" title={t("formTitle")}>
+      <div className="space-y-4 text-sm">
         <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-          <div className="space-y-1">
-            <Label htmlFor="cancel-name">{t("name")}</Label>
+          <FormField id="cancel-name" label={t("name")}>
             <Input
-              id="cancel-name"
               value={form.name}
               maxLength={120}
               placeholder={t("namePlaceholder")}
               onChange={(event) => update({ name: event.target.value })}
             />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="cancel-cause">{t("cause")}</Label>
-            <Select value={form.cause} onValueChange={(value) => update({ cause: value as BatchCause })}>
-              <SelectTrigger id="cancel-cause" aria-label={t("cause")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CAUSES.map((cause) => (
-                  <SelectItem key={cause} value={cause}>
-                    {t(`causes.${cause}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="cancel-from">{t("fromDate")}</Label>
+          </FormField>
+          <FormField id="cancel-cause" label={t("cause")}>
+            {(control) => (
+              <Select value={form.cause} onValueChange={(value) => update({ cause: value as BatchCause })}>
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CAUSES.map((cause) => (
+                    <SelectItem key={cause} value={cause}>
+                      {t(`causes.${cause}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
+          <FormField id="cancel-from" label={t("fromDate")}>
             <DateField
-              id="cancel-from"
               label={t("fromDate")}
               value={form.fromDate}
               min={year.startDate}
               max={year.endDate}
               onChange={(value) => update({ fromDate: value, toDate: form.toDate || value })}
             />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="cancel-to">{t("toDate")}</Label>
+          </FormField>
+          <FormField id="cancel-to" label={t("toDate")}>
             <DateField
-              id="cancel-to"
               label={t("toDate")}
               value={form.toDate}
               min={form.fromDate || year.startDate}
               max={year.endDate}
               onChange={(value) => update({ toDate: value })}
             />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="cancel-start">{t("startTime")}</Label>
+          </FormField>
+          <FormField id="cancel-start" label={t("startTime")}>
             <Input
-              id="cancel-start"
               type="time"
+              aria-describedby="cancel-time-hint"
               value={form.startTime}
               onChange={(event) => update({ startTime: event.target.value })}
             />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="cancel-end">{t("endTime")}</Label>
+          </FormField>
+          <FormField id="cancel-end" label={t("endTime")}>
             <Input
-              id="cancel-end"
               type="time"
+              aria-describedby="cancel-time-hint"
               value={form.endTime}
               onChange={(event) => update({ endTime: event.target.value })}
             />
-          </div>
+          </FormField>
         </div>
-        <p className="text-xs">{t("timeHint")}</p>
+        <p id="cancel-time-hint" className="text-xs text-muted-foreground">
+          {t("timeHint")}
+        </p>
 
         <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
-          <div className="space-y-1">
-            <Label htmlFor="cancel-scope">{t("scope")}</Label>
-            <Select value={form.scope} onValueChange={(value) => update({ scope: value as BatchScope })}>
-              <SelectTrigger id="cancel-scope" aria-label={t("scope")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SCOPES.map((scope) => (
-                  <SelectItem key={scope} value={scope}>
-                    {t(`scopes.${scope}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <FormField id="cancel-scope" label={t("scope")}>
+            {(control) => (
+              <Select value={form.scope} onValueChange={(value) => update({ scope: value as BatchScope })}>
+                <SelectTrigger {...control}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCOPES.map((scope) => (
+                    <SelectItem key={scope} value={scope}>
+                      {t(`scopes.${scope}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </FormField>
           {form.scope === "GRADES" ? (
             <GradeSpanField
               label={t("grades")}
@@ -214,10 +222,10 @@ export function CancellationFormCard({
             />
           ) : null}
         </div>
-        {form.scope === "GRADES" ? <p className="text-xs">{t("gradesHint")}</p> : null}
+        {form.scope === "GRADES" ? <p className="text-xs text-muted-foreground">{t("gradesHint")}</p> : null}
         {form.scope === "GROUPS" ? (
-          <fieldset className="space-y-1">
-            <legend className="font-medium">{t("groups")}</legend>
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">{t("groups")}</legend>
             <div className="grid max-h-48 grid-cols-2 gap-1 overflow-y-auto rounded-md border p-2 sm:grid-cols-4">
               {yearGroups.map((group) => (
                 <label key={group.id} className="flex items-center gap-2">
@@ -239,53 +247,52 @@ export function CancellationFormCard({
           </fieldset>
         ) : null}
 
-        <div className="space-y-2 rounded-md border p-3">
-          <div className="flex items-start gap-3">
+        <div className="space-y-3 rounded-md border p-3">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="cancel-credit">{t("credit")}</Label>
+              <p id="cancel-credit-hint" className="text-xs text-muted-foreground">
+                {t("creditHint")}
+              </p>
+            </div>
             <Switch
               id="cancel-credit"
               checked={form.credit}
               onCheckedChange={(checked) => update({ credit: checked })}
               aria-describedby="cancel-credit-hint"
             />
-            <span>
-              <Label htmlFor="cancel-credit">{t("credit")}</Label>
-              <span id="cancel-credit-hint" className="block text-xs">
-                {t("creditHint")}
-              </span>
-            </span>
           </div>
           {form.credit ? (
-            <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
-              <div className="space-y-1">
-                <Label htmlFor="cancel-credit-minutes">{t("creditMinutes")}</Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="cancel-credit-minutes" label={t("creditMinutes")}>
                 <Input
-                  id="cancel-credit-minutes"
                   type="number"
                   min={1}
                   max={600}
                   value={form.creditMinutes}
                   onChange={(event) => update({ creditMinutes: event.target.value })}
                 />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="cancel-credit-subject">{t("creditSubject")}</Label>
-                <Select
-                  value={form.creditSubjectId ?? NO_SUBJECT}
-                  onValueChange={(value) => update({ creditSubjectId: value === NO_SUBJECT ? null : value })}
-                >
-                  <SelectTrigger id="cancel-credit-subject" aria-label={t("creditSubject")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_SUBJECT}>{t("creditNoSubject")}</SelectItem>
-                    {subjects.map((subject) => (
-                      <SelectItem key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              </FormField>
+              <FormField id="cancel-credit-subject" label={t("creditSubject")}>
+                {(control) => (
+                  <Select
+                    value={form.creditSubjectId ?? NO_SUBJECT}
+                    onValueChange={(value) => update({ creditSubjectId: value === NO_SUBJECT ? null : value })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_SUBJECT}>{t("creditNoSubject")}</SelectItem>
+                      {subjects.map((subject) => (
+                        <SelectItem key={subject.id} value={subject.id}>
+                          {subject.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
             </div>
           ) : null}
         </div>
@@ -300,20 +307,22 @@ export function CancellationFormCard({
 
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={doPreview} disabled={problems.length > 0 || preview.isPending}>
+            {preview.isPending ? <Loader2 className="animate-spin" /> : <Eye />}
             {t("preview")}
           </Button>
           <Button
             onClick={doCreate}
             disabled={!current || current.matched === 0 || problems.length > 0 || create.isPending}
           >
+            {create.isPending ? <Loader2 className="animate-spin" /> : null}
             {t("confirm", { count: current?.matched ?? 0 })}
           </Button>
         </div>
-        {preview.data && !current ? <p>{t("previewOutdated")}</p> : null}
+        {preview.data && !current ? <Notice tone="warning">{t("previewOutdated")}</Notice> : null}
 
         {current ? (
-          <section aria-labelledby="cancel-preview-title" className="space-y-2">
-            <h3 id="cancel-preview-title" className="font-semibold">
+          <section aria-labelledby="cancel-preview-title" className="space-y-2 rounded-md border p-3">
+            <h3 id="cancel-preview-title" className="text-sm font-semibold">
               {t("previewTitle", { count: current.matched })}
             </h3>
             <p>
@@ -329,7 +338,7 @@ export function CancellationFormCard({
             {form.credit ? (
               <p>
                 {current.creditDates.length > 0
-                  ? t("creditDates", { count: current.creditDates.length, dates: current.creditDates.join(", ") })
+                  ? t("creditDates", { count: current.creditDates.length, dates: current.creditDates.map(dayText).join(", ") })
                   : t("creditNoDates")}
               </p>
             ) : null}
@@ -337,7 +346,7 @@ export function CancellationFormCard({
               <ul className="max-h-64 space-y-0.5 overflow-y-auto rounded-md border p-2 text-xs">
                 {current.lessons.map((lesson) => (
                   <li key={lesson.id} className="tabular-nums">
-                    {lesson.date} {formatTime(lesson.startsAt)}–{formatTime(lesson.endsAt)} · {lesson.subjectName} ·{" "}
+                    {dayText(lesson.date)} {timeText(lesson.startsAt)}–{timeText(lesson.endsAt)} · {lesson.subjectName} ·{" "}
                     {lesson.groupName}
                   </li>
                 ))}
@@ -349,12 +358,8 @@ export function CancellationFormCard({
           </section>
         ) : null}
 
-        {problem ? (
-          <p role="alert" className="font-medium">
-            {problem}
-          </p>
-        ) : null}
-      </CardContent>
-    </Card>
+        {problem ? <Notice tone="destructive">{problem}</Notice> : null}
+      </div>
+    </SectionCard>
   );
 }

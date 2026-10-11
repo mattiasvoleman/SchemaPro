@@ -53,4 +53,31 @@ describe("EmptyState", () => {
     expect(root).toHaveClass("py-8", "border-dashed");
     expect(root).not.toHaveClass("py-16");
   });
+
+  it("draws the icon size-6 and hides it from assistive tech", () => {
+    render(<EmptyState icon={Inbox} title="Empty" />);
+    const icon = screen.getByRole("heading", { name: "Empty" }).parentElement?.querySelector("svg");
+    expect(icon).toHaveClass("size-6", "text-muted-foreground");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("lets an AAA page put the description in foreground", () => {
+    render(
+      <EmptyState
+        icon={Inbox}
+        title="Inga lov ännu"
+        description="Lägg in skolans lov."
+        descriptionClassName="text-foreground"
+      />,
+    );
+    const description = screen.getByText("Lägg in skolans lov.");
+    expect(description).toHaveClass("text-foreground", "text-sm");
+    expect(description).not.toHaveClass("text-muted-foreground");
+  });
+
+  it("takes an h2 when it stands directly under the page's h1", () => {
+    render(<EmptyState icon={Inbox} title="Inget läsår ännu" headingLevel={2} />);
+    expect(screen.getByRole("heading", { level: 2, name: "Inget läsår ännu" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3 })).not.toBeInTheDocument();
+  });
 });

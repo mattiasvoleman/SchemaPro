@@ -3,16 +3,20 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock, Settings2 } from "lucide-react";
-import Link from "next/link";
-import { localePath } from "@/i18n/paths";
+import { Link } from "@/i18n/navigation";
 import { useAbsenceReasons, useAbsences } from "@/lib/cover-queries";
 import type { Absence, AbsenceCounts } from "@/lib/cover-types";
 import { absenceFormOf, absencePeriodText, shiftDate } from "@/lib/cover-absence-form";
 import { reasonName } from "@/lib/cover-view";
-import { toDateString } from "@/lib/utils";
+import { ABSENCE_PHASE_VARIANT, COVER_STATUS_VARIANT } from "@/lib/status-variants";
+import { cn, toDateString } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -45,12 +49,15 @@ const AbsenceWithdrawDialog = lazy(() =>
   import("@/components/cover/absence-end-dialog").then((module) => ({ default: module.AbsenceWithdrawDialog })),
 );
 
-const PHASE_VARIANT = {
-  PLANNED: "secondary",
-  ONGOING: "warning",
-  ENDED: "outline",
-  WITHDRAWN: "outline",
-} as const;
+/*
+ * The register sits inside its SectionCard, so its table takes the inner
+ * recipe (brief §9): no frame of its own, tighter rows, the first cell flush
+ * with the card's heading. Below sm only the teacher, the phase and the
+ * actions keep a column; the period moves under the name.
+ */
+const INNER_TH = "h-auto py-1.5 pr-3 text-xs";
+const INNER_TD = "py-1.5 pr-3";
+const WIDE = "hidden sm:table-cell";
 
 /** The day the board opens on: today for a running absence, else its first day. */
 export function boardDateOf(absence: Absence, today: string): string {
@@ -58,14 +65,15 @@ export function boardDateOf(absence: Absence, today: string): string {
   return absence.phase === "ONGOING" && first < today ? today : first;
 }
 
+/** The lessons' cover state as chips, in the board's colours (lib/status-variants.ts). */
 function CountsCell({ counts }: { counts: AbsenceCounts }) {
   const t = useTranslations("teacherAbsence");
-  const parts: { key: string; text: string; variant: "warning" | "success" | "secondary" | "outline" }[] = [];
-  if (counts.open > 0) parts.push({ key: "open", text: t("countOpen", { count: counts.open }), variant: "warning" });
-  if (counts.covered > 0) parts.push({ key: "covered", text: t("countCovered", { count: counts.covered }), variant: "success" });
-  if (counts.cancelled > 0) parts.push({ key: "cancelled", text: t("countCancelled", { count: counts.cancelled }), variant: "secondary" });
-  if (counts.handled > 0) parts.push({ key: "handled", text: t("countHandled", { count: counts.handled }), variant: "secondary" });
-  if (counts.passedOpen > 0) parts.push({ key: "passed", text: t("countPassed", { count: counts.passedOpen }), variant: "outline" });
+  const parts: { key: string; text: string; variant: (typeof COVER_STATUS_VARIANT)[keyof typeof COVER_STATUS_VARIANT] }[] = [];
+  if (counts.open > 0) parts.push({ key: "open", text: t("countOpen", { count: counts.open }), variant: COVER_STATUS_VARIANT.OPEN });
+  if (counts.covered > 0) parts.push({ key: "covered", text: t("countCovered", { count: counts.covered }), variant: COVER_STATUS_VARIANT.COVERED });
+  if (counts.cancelled > 0) parts.push({ key: "cancelled", text: t("countCancelled", { count: counts.cancelled }), variant: COVER_STATUS_VARIANT.CANCELLED });
+  if (counts.handled > 0) parts.push({ key: "handled", text: t("countHandled", { count: counts.handled }), variant: COVER_STATUS_VARIANT.HANDLED_SUPERVISED_STUDY });
+  if (counts.passedOpen > 0) parts.push({ key: "passed", text: t("countPassed", { count: counts.passedOpen }), variant: COVER_STATUS_VARIANT.PASSED });
   if (parts.length === 0) return <span className="text-muted-foreground">{t("countNone")}</span>;
   return (
     <div className="flex flex-wrap gap-1">
@@ -89,6 +97,7 @@ function CountsCell({ counts }: { counts: AbsenceCounts }) {
 export function AbsenceRegister({ teachers }: { teachers: { id: string; name: string }[] }) {
   const t = useTranslations("teacherAbsence");
   const tReasons = useTranslations("absenceReasons");
+  const tCommon = useTranslations("common");
   const locale = useLocale();
   const today = toDateString(new Date());
   const [showEnded, setShowEnded] = useState(false);
@@ -103,7 +112,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
     action();
   };
 
-  const { data: absences, isLoading } = useAbsences(
+  const { data: absences, isLoading, isError } = useAbsences(
     showEnded ? { includeEnded: true, from: shiftDate(today, -90) } : {},
   );
   const { data: reasons } = useAbsenceReasons();
@@ -112,17 +121,18 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
   const reasonOf = useMemo(() => new Map((reasons ?? []).map((reason) => [reason.id, reason])), [reasons]);
 
   return (
-    <section className="mb-6 space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-base font-semibold">{t("registerTitle")}</h2>
-          <p className="text-sm text-muted-foreground">{t("registerBody")}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={showEnded} onChange={(event) => setShowEnded(event.target.checked)} />
-            {t("showEnded")}
-          </label>
+    <SectionCard
+      id="absence-register"
+      title={t("registerTitle")}
+      description={t("registerBody")}
+      action={
+        <>
+          <div className="flex items-center gap-2">
+            <Switch id="absence-show-ended" checked={showEnded} onCheckedChange={setShowEnded} />
+            <Label htmlFor="absence-show-ended" className="font-normal">
+              {t("showEnded")}
+            </Label>
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -134,72 +144,113 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
             <Settings2 />
             {t("settings")}
           </Button>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {isLoading ? (
-        <Skeleton className="h-24 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : isError ? (
+        <LoadError variant="inline" title={t("registerLoadFailed")} hint={t("registerLoadFailedHint")} />
       ) : (absences ?? []).length === 0 ? (
-        <p className="rounded-lg border bg-card px-4 py-3 text-sm text-muted-foreground">{t("registerEmpty")}</p>
+        <p className="text-sm text-muted-foreground">{t("registerEmpty")}</p>
       ) : (
-        <div className="rounded-lg border bg-card">
+        <div className="overflow-x-auto">
           <Table>
+            <caption className="sr-only">{t("registerCaption")}</caption>
             <TableHeader>
-              <TableRow>
-                <TableHead>{t("columnTeacher")}</TableHead>
-                <TableHead>{t("columnPeriod")}</TableHead>
-                <TableHead>{t("columnReason")}</TableHead>
-                <TableHead>{t("columnPhase")}</TableHead>
-                <TableHead>{t("columnLessons")}</TableHead>
-                <TableHead className="text-right">{t("columnActions")}</TableHead>
+              <TableRow className="hover:bg-transparent">
+                <TableHead scope="col" className={cn(INNER_TH, "pl-0")}>
+                  {t("columnTeacher")}
+                </TableHead>
+                <TableHead scope="col" className={cn(INNER_TH, WIDE)}>
+                  {t("columnPeriod")}
+                </TableHead>
+                <TableHead scope="col" className={cn(INNER_TH, WIDE)}>
+                  {t("columnReason")}
+                </TableHead>
+                <TableHead scope="col" className={INNER_TH}>
+                  {t("columnPhase")}
+                </TableHead>
+                <TableHead scope="col" className={cn(INNER_TH, WIDE)}>
+                  {t("columnLessons")}
+                </TableHead>
+                <TableHead scope="col" className={cn(INNER_TH, "pr-0 text-right")}>
+                  {t("columnActions")}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {(absences ?? []).map((absence) => {
                 const live = absence.phase === "PLANNED" || absence.phase === "ONGOING";
+                const teacher = nameOf.get(absence.userId) ?? "—";
+                const period = absencePeriodText(absence, locale);
+                // "Återkalla Anna Lind 1–3 okt.": a teacher can have two absences in the list.
+                const named = (action: string) => tCommon("actionNamed", { action, name: `${teacher} ${period}` });
                 return (
                   <TableRow key={absence.id}>
-                    <TableCell className="font-medium">
-                      {nameOf.get(absence.userId) ?? "—"}
+                    <TableCell className={cn(INNER_TD, "pl-0 font-medium")}>
+                      {teacher}
+                      <span className="block text-xs font-normal tabular-nums text-muted-foreground sm:hidden">
+                        {period}
+                      </span>
                       {absence.selfReported ? (
                         <span className="block text-xs font-normal text-muted-foreground">{t("selfReported")}</span>
                       ) : null}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap tabular-nums">{absencePeriodText(absence, locale)}</TableCell>
-                    <TableCell>
+                    <TableCell className={cn(INNER_TD, WIDE, "whitespace-nowrap tabular-nums")}>{period}</TableCell>
+                    <TableCell className={cn(INNER_TD, WIDE)}>
                       {absence.reasonId ? reasonName(tReasons, reasonOf.get(absence.reasonId)) : tReasons("NONE")}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={PHASE_VARIANT[absence.phase]}>{t(`phases.${absence.phase}`)}</Badge>
+                    <TableCell className={cn(INNER_TD, "whitespace-nowrap")}>
+                      <Badge variant={ABSENCE_PHASE_VARIANT[absence.phase]}>{t(`phases.${absence.phase}`)}</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={cn(INNER_TD, WIDE)}>
                       {absence.status === "ACTIVE" ? <CountsCell counts={absence.counts} /> : null}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className={cn(INNER_TD, "pr-0 text-right")}>
+                      {/* Words, not RowActions' icons: the manual (6.2) sends the reader
+                          to Ändra, Avsluta i förtid and Återkalla by name, and the last
+                          two have no icon anyone would read as them. */}
                       <div className="flex flex-wrap justify-end gap-2">
                         {absence.status === "ACTIVE" ? (
                           <Button variant="outline" size="sm" asChild>
-                            <Link href={localePath(locale, `/admin/cover?date=${boardDateOf(absence, today)}`)}>
+                            <Link
+                              href={`/admin/cover?date=${boardDateOf(absence, today)}`}
+                              aria-label={named(t("openBoard"))}
+                            >
                               <CalendarClock />
                               {t("openBoard")}
                             </Link>
                           </Button>
                         ) : null}
                         {live ? (
-                          <Button variant="outline" size="sm" onClick={opening(() => setEditing(absence))}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={named(t("edit"))}
+                            onClick={opening(() => setEditing(absence))}
+                          >
                             {t("edit")}
                           </Button>
                         ) : null}
                         {absence.phase === "ONGOING" ? (
-                          <Button variant="outline" size="sm" onClick={opening(() => setEnding(absence))}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={named(t("end"))}
+                            onClick={opening(() => setEnding(absence))}
+                          >
                             {t("end")}
                           </Button>
                         ) : null}
+                        {/* Neutral: the withdraw dialog is the confirmation, and carries the red. */}
                         {live ? (
                           <Button
                             variant="outline"
                             size="sm"
-                            className="text-destructive"
+                            aria-label={named(t("withdraw"))}
                             onClick={opening(() => setWithdrawing(absence))}
                           >
                             {t("withdraw")}
@@ -233,6 +284,6 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
           <CoverSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} teachers={teachers} />
         </Suspense>
       ) : null}
-    </section>
+    </SectionCard>
   );
 }

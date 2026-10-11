@@ -850,7 +850,11 @@ function TimetableGridInner({
                     <div
                       key={band.id}
                       className={cn(
-                        "pointer-events-none absolute inset-x-0 z-0 flex items-start justify-end border-y border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-500",
+                        // The warning token's amber, as before, but the label
+                        // in the foreground: amber text on an amber tint was
+                        // a pair to tune per theme, and foreground reads on
+                        // the pale tint in both.
+                        "pointer-events-none absolute inset-x-0 z-0 flex items-start justify-end border-y border-warning/30 bg-warning/10 px-1 py-0.5 text-[10px] leading-none text-foreground",
                         bandDraggingId === band.id && "opacity-40",
                       )}
                       style={{
@@ -876,7 +880,10 @@ function TimetableGridInner({
                             title={band.moveLabel ?? band.label}
                             onPointerDown={(event) => startBandDrag(event, band)}
                             onKeyDown={(event) => handleBandKey(event, band)}
-                            className="flex cursor-grab items-center gap-0.5 rounded px-0.5 hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-amber-600 active:cursor-grabbing"
+                            // The focus outline in the ring colour (6.18 / 4.37
+                            // against the card): the amber it had measured
+                            // about 3:1, and the warning token 2.1:1 in light.
+                            className="flex cursor-grab items-center gap-0.5 rounded px-0.5 hover:bg-warning/20 focus-visible:outline-2 focus-visible:outline-ring active:cursor-grabbing"
                           >
                             {band.handPlaced ? <Lock aria-hidden className="size-2.5" /> : null}
                             {band.label}
@@ -887,7 +894,7 @@ function TimetableGridInner({
                               aria-label={band.removeLabel}
                               title={band.removeLabel}
                               onClick={() => onBandRemove(band.id)}
-                              className="rounded px-0.5 hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-amber-600"
+                              className="rounded px-0.5 hover:bg-warning/20 focus-visible:outline-2 focus-visible:outline-ring"
                             >
                               <X aria-hidden className="size-2.5" />
                             </button>
@@ -902,7 +909,7 @@ function TimetableGridInner({
                   <div
                     data-testid="band-ghost"
                     aria-hidden
-                    className="pointer-events-none absolute inset-x-0 z-20 border-2 border-dotted border-amber-500 bg-amber-500/20"
+                    className="pointer-events-none absolute inset-x-0 z-20 border-2 border-dotted border-warning bg-warning/20"
                     style={{
                       top: `${(bandGhost.startMinutes - startHour * 60) * pxPerMinute}px`,
                       height: `${Math.max(
@@ -1012,7 +1019,10 @@ function TimetableGridInner({
                           : "cursor-default",
                         editable && "touch-none",
                         lesson.cancelled && "opacity-45 line-through",
-                        lesson.conflicted && "ring-2 ring-red-500/80",
+                        // The destructive token rather than a raw red: one
+                        // colour for "this clashes" across the app, and one
+                        // that holds 3:1 against the card in both themes.
+                        lesson.conflicted && "ring-2 ring-destructive",
                         /*
                          * THE FOREGROUND COLOUR, not a blue one.
                          *
@@ -1053,7 +1063,7 @@ function TimetableGridInner({
                             // it settles one block on its own without holding
                             // it up against its neighbours.
                             <span className="rounded bg-foreground px-0.5 text-background">
-                              <Check className="h-3 w-3" />
+                              <Check className="size-3" />
                               <span className="sr-only">{t("selected")}</span>
                             </span>
                           ) : null}
@@ -1071,16 +1081,16 @@ function TimetableGridInner({
                           {lesson.remoteEditor ? (
                             <span
                               title={lesson.remoteEditor}
-                              className="rounded bg-amber-200/80 px-1 text-[9px] font-semibold text-amber-900"
+                              className="rounded bg-warning/25 px-1 text-[9px] font-semibold text-foreground"
                             >
                               {lesson.remoteEditor}
                             </span>
                           ) : null}
                           {lesson.conflicted ? (
-                            <TriangleAlert className="h-3 w-3 text-red-500" />
+                            <TriangleAlert className="size-3 text-destructive" />
                           ) : null}
                           {lesson.locked ? (
-                            <Lock className="h-3 w-3 text-muted-foreground" />
+                            <Lock className="size-3 text-muted-foreground" />
                           ) : null}
                         </div>
                       </div>
@@ -1122,9 +1132,13 @@ function TimetableGridInner({
                   <div
                     className={cn(
                       "pointer-events-none absolute inset-x-0.5 z-10 rounded-md border-2 border-dashed px-1.5 py-1 text-[11px] font-medium tabular-nums",
+                      // The edge carries the verdict (success 3.88 / 6.87,
+                      // destructive 4.8 / 4.59 against the card) and the
+                      // time label stays in the foreground: the success
+                      // token as small text is under 4.5:1 in light.
                       ghost.valid
-                        ? "border-emerald-500 bg-emerald-500/15 text-emerald-700"
-                        : "border-red-500 bg-red-500/15 text-red-700",
+                        ? "border-success bg-success/15 text-foreground"
+                        : "border-destructive bg-destructive/15 text-foreground",
                     )}
                     style={{
                       top: `${(ghost.startMinutes - startHour * 60) * pxPerMinute}px`,

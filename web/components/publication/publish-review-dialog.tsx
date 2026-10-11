@@ -48,6 +48,7 @@ import { DraftDiff } from "@/components/publication/draft-diff";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -165,7 +166,9 @@ export function PublishReviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      {/* max-w-2xl, the review size. DialogContent already caps its height
+          at the viewport and scrolls, so nothing more is added here. */}
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("reviewTitle")}</DialogTitle>
           <DialogDescription>
@@ -174,9 +177,9 @@ export function PublishReviewDialog({
         </DialogHeader>
 
         {loadFailed ? (
-          <p role="alert" className="text-sm">
+          <Notice tone="destructive">
             {publicationErrorText(tErrors, settings.error ?? timeline.error, tCommon("error"))}
-          </p>
+          </Notice>
         ) : null}
 
         {timeline.data ? (
@@ -187,8 +190,8 @@ export function PublishReviewDialog({
           </p>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
-          <div className="space-y-2">
+        <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+          <div className="space-y-1.5">
             <Label htmlFor="publish-valid-from">{t("validFrom")}</Label>
             <DateField
               id="publish-valid-from"
@@ -199,7 +202,7 @@ export function PublishReviewDialog({
               onChange={(value) => setEdited((previous) => ({ ...previous, validFrom: value }))}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <Label htmlFor="publish-valid-to">{t("validTo")}</Label>
             <DateField
               id="publish-valid-to"
@@ -211,12 +214,8 @@ export function PublishReviewDialog({
             />
           </div>
         </div>
-        {mode === "DRAFT" ? <p className="text-xs">{t("validFromHintDraft")}</p> : null}
-        {range && !valid ? (
-          <p role="alert" className="text-sm">
-            {t("windowInvalid")}
-          </p>
-        ) : null}
+        {mode === "DRAFT" ? <p className="text-xs text-muted-foreground">{t("validFromHintDraft")}</p> : null}
+        {range && !valid ? <Notice tone="destructive">{t("windowInvalid")}</Notice> : null}
 
         {mode === "DRAFT" ? (
           <section aria-labelledby="publish-draft-title" className="space-y-2">
@@ -233,9 +232,7 @@ export function PublishReviewDialog({
           </h3>
           {preview.isFetching && !result ? <p className="text-sm">{t("previewLoading")}</p> : null}
           {preview.isError ? (
-            <p role="alert" className="text-sm">
-              {publicationErrorText(tErrors, preview.error, tCommon("error"))}
-            </p>
+            <Notice tone="destructive">{publicationErrorText(tErrors, preview.error, tCommon("error"))}</Notice>
           ) : null}
           {result ? (
             <>
@@ -266,11 +263,7 @@ export function PublishReviewDialog({
           ) : null}
         </section>
 
-        {problem ? (
-          <p role="alert" className="text-sm font-medium">
-            {problem}
-          </p>
-        ) : null}
+        {problem ? <Notice tone="destructive">{problem}</Notice> : null}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => close(false)}>

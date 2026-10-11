@@ -74,7 +74,16 @@
     "sunday": "Sun",
     "copied": "Copied to clipboard",
     "select": "Select…",
-    "selected": "Selected"
+    "selected": "Selected",
+    "year": "School year",
+    "nextStep": "Next step: {name}",
+    "actionNamed": "{action} {name}",
+    "moreActionsFor": "More actions for {name}",
+    "stepDone": "done",
+    "skipToContent": "Skip to content",
+    "refetchFailedHint": "What you see is what was last fetched, and it may have changed since. Reload the page before you change anything.",
+    "confirmLoadFailed": "The confirmation could not be opened. Nothing has changed – try again.",
+    "formLoadFailed": "The form could not be opened. Nothing has changed – try again."
   },
   "days": {
     "1": "Monday",
@@ -143,11 +152,11 @@
     "constraints": "Availability",
     "frameTimes": "Frame times",
     "lunchServings": "Lunch sittings",
-    "breaks": "Holidays & staff days",
+    "breaks": "Holidays and staff days",
     "scheduling": "Scheduling",
     "generate": "Generate schedule",
     "timetable": "Master timetable",
-    "gaps": "Gaps & idle time",
+    "gaps": "Gaps and idle time",
     "operations": "Operations",
     "dayPlanner": "Day planner",
     "teacherAbsence": "Teacher absence",
@@ -167,7 +176,9 @@
     "publishing": "Publishing",
     "cancellations": "Bulk cancellation",
     "coverBoard": "Cover board",
-    "myCover": "Cover & absence"
+    "myCover": "Cover and absence",
+    "basics": "Basic data",
+    "label": "Main menu"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -183,14 +194,16 @@
     "quickActions": "Quick actions",
     "actionSetup": "Run school setup",
     "actionSetupHint": "Add subjects, rooms, classes and teachers",
-    "actionRequirements": "Add curriculum entries",
-    "actionRequirementsHint": "Who teaches what, how often",
     "actionGenerate": "Generate schedule",
     "actionGenerateHint": "Let the AI engine build the timetable",
     "actionPublish": "Review & publish",
     "actionPublishHint": "Turn the master timetable into a live calendar",
     "upcoming": "Today's lessons",
-    "noLessons": "No lessons scheduled for today."
+    "noLessons": "No lessons scheduled for today.",
+    "actionTimplan": "Set up the timplan",
+    "actionTimplanHint": "Minutes per week in each subject and year, against the national hours",
+    "loadFailed": "Some figures could not be loaded",
+    "loadFailedHint": "They show as —, not as zero. Nothing has changed; reload the page to try again."
   },
   "setup": {
     "title": "School setup",
@@ -215,15 +228,21 @@
     "groupsTitle": "Create your classes",
     "groupsHint": "Each class is scheduled as one unit. Students are assigned to a class.",
     "gradeLevel": "Grade",
-    "peopleTitle": "Invite teachers & students",
+    "peopleTitle": "Invite teachers and students",
     "peopleHint": "People sign in with their email address. Students must be assigned to a class.",
-    "done": "Setup complete — continue to the curriculum entries",
-    "goToRequirements": "Add curriculum entries",
     "yearsLink": "School years and rolling over to the next",
     "yearExistsHint": "A new year is created inactive when the school already has one. To create next year from this one, roll it over instead — classes, teaching requirements and teachers then carry over.",
     "yearTimplansButton": "Timplan per year",
     "yearTimplansFor": "Timplan per year group for {year}",
-    "yearTimplansDefaulted": "{year} follows {plan} in {count, plural, one {# year group} other {# year groups}}. Change it under Timplan per year."
+    "yearTimplansDefaulted": "{year} follows {plan} in {count, plural, one {# year group} other {# year groups}}. Change it under Timplan per year.",
+    "doneTimplan": "Setup complete — continue to the timplan",
+    "goToTimplan": "Go to the timplan",
+    "stepsLabel": "Getting started steps",
+    "loadFailed": "The school's basic data could not be loaded",
+    "loadFailedHint": "The steps are not shown, because they would look undone for the wrong reason. Nothing has changed; reload the page to try again.",
+    "goToPage": "Go to {page}",
+    "groupsNeedActiveYear": "A class belongs to a school year. Create and activate the year in the first step, and classes can be added here.",
+    "doneBody": "The year, subjects, rooms, classes and people are in place. Choose a step above to add more."
   },
   "subjects": {
     "title": "Subjects",
@@ -232,7 +251,7 @@
     "editSubject": "Edit subject",
     "namePlaceholder": "Mathematics",
     "codePlaceholder": "MA",
-    "empty": "No subjects yet. Add the first one to get started.",
+    "empty": "Subjects are used in the timplan, in staffing and in every schedule view. Add the first one, or import them all from a CSV file.",
     "requiredRoomType": "Required room type",
     "anyRoomType": "Any room",
     "requiredRoomTypeHint": "The optimizer will only place this subject in rooms of the selected type.",
@@ -250,7 +269,14 @@
     "notTeachingTime": "Not teaching time",
     "loadFactor": "Factor in staffing",
     "loadFactorHint": "0.5–3, 1 = the minutes as they are. Used only when staffing counts with Factor (Staffing › Settings): the teacher's load = lesson time × factor.",
-    "loadFactorInvalid": "Enter a number between 0.5 and 3 with at most three decimals."
+    "loadFactorInvalid": "Enter a number between 0.5 and 3 with at most three decimals.",
+    "loadFailed": "The subjects could not be loaded",
+    "loadFailedHint": "No list is shown, because an empty one would mean the school has no subjects. Nothing has changed; reload the page to try again.",
+    "emptyTitle": "No subjects yet",
+    "tableCaption": "The school's subjects with code, national subject code and colour",
+    "dialogHint": "The name and colour show in every schedule view. The national subject code decides which row of the timplan the subject's hours count toward.",
+    "roomTypeDialogHint": "The room type can then be chosen for both subjects and rooms.",
+    "roomTypesUnavailable": "The list of room types could not be loaded. The subject's room type does not change if you save without choosing a new one."
   },
   "rooms": {
     "title": "Rooms",
@@ -259,7 +285,7 @@
     "editRoom": "Edit room",
     "namePlaceholder": "Room A1",
     "codePlaceholder": "A1",
-    "empty": "No rooms yet. Add the first one to get started.",
+    "empty": "The schedule's lessons are placed in the rooms listed here. Add the first one to get started.",
     "requiresApproval": "Requires approval",
     "requiresApprovalHint": "Self-service bookings for this room need admin approval before they're confirmed.",
     "approvalBadge": "Approval",
@@ -283,7 +309,14 @@
       "middle": "Middle (4–6)",
       "upper": "Upper (7–9)",
       "primary": "F–6"
-    }
+    },
+    "loadFailed": "The rooms could not be loaded",
+    "loadFailedHint": "No list is shown, because an empty one would mean the school has no rooms. Nothing has changed; reload the page to try again.",
+    "emptyTitle": "No rooms yet",
+    "tableCaption": "The school's rooms with code, type, capacity, year levels and place",
+    "dialogHint": "The capacity and the year levels decide which lessons the schedule can place in the room. Building and floor are used by the room optimisation.",
+    "typesFailed": "The room types could not be loaded",
+    "typesFailedHint": "The Type column shows — until they have loaded. Nothing has changed; reload the page to try again."
   },
   "groups": {
     "title": "Classes",
@@ -293,7 +326,6 @@
     "namePlaceholder": "7A",
     "members": "Members",
     "year": "Academic year",
-    "empty": "No classes yet. Create the academic year first, then add classes.",
     "membersTitle": "Members of {name}",
     "membersHint": "Students in a teaching group keep their home class and are added here. Scheduling guarantees the group's lessons never clash with the class or other groups the student belongs to.",
     "membersSave": "Save ({count})",
@@ -304,8 +336,23 @@
     "kindClassHelp": "A home class such as 7A. Every student in it follows the class's lessons.",
     "kindTeachingGroupHelp": "A group cutting across classes, such as Ma71 or the language option En74. Add its students with the Members button.",
     "filterAll": "All",
-    "searchPlaceholder": "Search by group, academic year or student…",
-    "andMore": " + {count} more"
+    "andMore": " + {count} more",
+    "loadFailed": "The classes could not be loaded",
+    "loadFailedHint": "No list is shown, because an empty one would mean the school has no classes. Nothing has changed; reload the page to try again.",
+    "noYearTitle": "The school has no school year yet",
+    "noYearHint": "A class belongs to a school year. Create the year first, and the classes can be added here.",
+    "noYearAction": "Go to school years",
+    "emptyTitle": "The school has no classes yet",
+    "emptyHint": "Add the school's classes and teaching groups, or import them from a CSV file.",
+    "searchLabel": "Search by group, school year or student",
+    "noMatch": "No group matches the search and the kind you chose",
+    "tableCaption": "Classes and teaching groups in every school year, with their year and number of students",
+    "memberSearch": "Search students",
+    "dialogHint": "The group is scheduled as one unit in the school year it belongs to.",
+    "countsFailed": "The numbers of students could not be loaded",
+    "countsFailedHint": "The Students column shows —, not zero. Nothing has changed; reload the page to try again.",
+    "membersLoadFailed": "The group's students could not be loaded",
+    "membersLoadFailedHint": "The list cannot be saved now, since saving it would empty the group. Nothing has changed; close and open it again to retry."
   },
   "people": {
     "title": "People",
@@ -320,7 +367,6 @@
     "class": "Class",
     "activeState": "Active",
     "inactive": "Inactive",
-    "empty": "No people yet.",
     "filterAll": "All",
     "authHint": "The person signs in with this email via Supabase Auth.",
     "manageGuardians": "Manage guardians",
@@ -340,7 +386,6 @@
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
     "inviteAll": "Invite {count} not yet invited",
-    "searchPlaceholder": "Search by name, email or class…",
     "homeClassLabel": "Class",
     "teachingGroupsLabel": "Teaching groups",
     "noTeachingGroups": "This student is not in any teaching group.",
@@ -348,7 +393,29 @@
     "teachesNothing": "No timplan entry for the active academic year.",
     "asCoTeacher": "co-teacher",
     "noGroupInfo": "No group membership to show for this role.",
-    "workTimeLabel": "Working time"
+    "workTimeLabel": "Working time",
+    "loadFailed": "The people could not be loaded",
+    "loadFailedHint": "No list is shown, because an empty one would mean the school has neither staff nor pupils. Nothing has changed; reload the page to try again.",
+    "emptyTitle": "No people yet",
+    "emptyHint": "Add teachers, pupils and guardians one at a time, or import them from a CSV file.",
+    "searchLabel": "Search by name, email or class",
+    "noMatch": "Nobody matches the search and the role you chose",
+    "tableCaption": "The school's people with email, role, class, status and invitation. Each name expands to class, groups and post.",
+    "staffingYear": "Post and duties for the school year {year}",
+    "sendInvitationTo": "Send an invitation to {name}",
+    "resendInvitationTo": "Send the invitation to {name} again",
+    "editHint": "The email address cannot be changed here, because the person signs in with it.",
+    "guardiansHint": "A linked guardian sees the pupil's schedule and can report the pupil sick and apply for leave.",
+    "addGuardianLabel": "Link a guardian",
+    "unlinkGuardian": "Unlink {name}",
+    "unlinkTitle": "Unlink {guardian}?",
+    "unlinkBody": "{guardian} no longer sees the schedule of {pupil} and cannot report the pupil sick. The account stays, and the link can be made again here.",
+    "unlinkConfirm": "Unlink",
+    "guardianUnlinked": "{name} is unlinked.",
+    "detailsFailed": "Some details about the people could not be loaded",
+    "detailsFailedHint": "Class, groups, post or working time may show as — or be missing although they exist. Nothing has changed; reload the page to try again.",
+    "guardiansLoadFailed": "The pupil's guardians could not be loaded",
+    "guardiansLoadFailedHint": "No link has changed. Close and open it again to retry."
   },
   "requirements": {
     "title": "Curriculum entries",
@@ -378,14 +445,13 @@
     "minutesAfterHint": "Time the pupils need once the lesson ends, for instance a shower and changing. Only the pupils are occupied — the teacher and the room are free the moment the lesson ends.",
     "summary": "{lessons, plural, one {# lesson} other {# lessons}} in the busiest week · {hours} of teaching per year",
     "hoursCaveat": "Hours count the academic year's calendar weeks and deduct holidays and staff days: a whole break week disappears, a single staff day takes a fifth of its week. It is an estimate at requirement level — a requirement says how many lessons a week, never on which weekdays, so nothing can know whether the staff day fell on one of this subject's lesson days. Right averaged over a term, wrong for any single week.",
-    "hoursCaveatNoBreaks": "No holidays or staff days have been entered for this academic year, so the hours count every calendar week and read roughly 8–10 weeks high. Enter the year's breaks under Breaks and they will be deducted here.",
+    "hoursCaveatNoBreaks": "No holidays or staff days have been entered for this academic year, so the hours count every calendar week and read roughly 8–10 weeks high. Enter the year's holidays and staff days and they will be deducted here.",
     "hoursHeader": "Hours / year",
     "yearLabel": "Academic year",
     "peakHeader": "Peak / week",
     "tableCaption": "Curriculum entries by group and subject. The last column is the group's teaching hours per academic year, counted over the year's calendar weeks with holidays and staff days deducted — an estimate, because a requirement does not say on which weekdays the subject is taught.",
-    "empty": "No curriculum entries yet. The AI engine needs them to build a schedule.",
     "noYear": "Create and activate an academic year first.",
-    "loadFailed": "No figures are shown, because they would read zero for the wrong reason. Switch the year above to try again.",
+    "loadFailed": "The curriculum entries could not be loaded",
     "loadFailedHint": "No figures are shown, because they would read zero for the wrong reason. Switch the year above to try again.",
     "coTeacher": "Co-teacher",
     "coTeacherHint": "Both teachers are scheduled together. In the published timetable each lesson has two teachers: the lead and the co-teacher.",
@@ -444,7 +510,19 @@
       "hintNotCounted": "This subject does not count as teaching time and has no line in the timplan.",
       "hintTeachingGroup": "A teaching group has no target of its own; its pupils are counted against their class's target on the coverage page.",
       "hintNoGrade": "The class has no year, so it cannot be compared with a timplan."
-    }
+    },
+    "noYearTitle": "No school year yet",
+    "noYearAction": "To school years",
+    "deleteTitle": "Delete the curriculum entry {name}?",
+    "deleteBody": "The entry is removed from the year's curriculum entries, and the teacher's workload is recounted without it. This cannot be undone.",
+    "noSubjectsTitle": "The school has no subjects yet",
+    "noSubjects": "A curriculum entry gives a subject's time in a class. Add the subjects first, and the grid appears here.",
+    "noSubjectsAction": "To subjects",
+    "noClassesTitle": "The school year has no classes yet",
+    "noClasses": "A curriculum entry gives a subject's time in a class. Add the year's classes first, or choose another school year above.",
+    "noClassesAction": "To classes",
+    "hoursNoBreaksTitle": "Hours per year are counted without breaks",
+    "hoursNoBreaksAction": "Go to Holidays and staff days"
   },
   "timplan": {
     "title": "Timplan",
@@ -680,7 +758,8 @@
       "resultNext": "Set teachers and adjust entries under Curriculum entries.",
       "openRequirements": "Open Curriculum entries",
       "close": "Close"
-    }
+    },
+    "noSubjectsTitle": "No subjects yet"
   },
   "constraints": {
     "title": "Availability",
@@ -737,7 +816,18 @@
     "ruleAllGrades": "All years",
     "ruleGradesHint": "The rule applies to a group whose years all fit inside the span. A group spanning 6-7 is therefore not reached by a rule for 7-9.",
     "ruleGradeBadge": "Years {min}-{max}",
-    "ruleGradeBadgeOne": "Year {min}"
+    "ruleGradeBadgeOne": "Year {min}",
+    "listTitle": "Constraints",
+    "tableCaption": "Constraints: what they apply to, when and why",
+    "loadFailed": "The constraints could not be fetched",
+    "loadFailedHint": "No list is shown, because an empty one would mean everyone is always available. Nothing has changed. Reload the page to try again.",
+    "dialogDescription": "When a teacher, a room, a class or some years are unavailable, every week or on one date.",
+    "roomRulesLoadFailed": "The room rules could not be fetched",
+    "roomRulesLoadFailedHint": "No list is shown, because an empty one would mean there are no rules. Nothing has changed. Reload the page to try again.",
+    "deleteLockTitle": "Remove the lock?",
+    "deleteLockBody": "{rule} is removed and no longer applies the next time a timetable is generated. Timetables already generated do not change.",
+    "deletePreferenceTitle": "Remove the preference?",
+    "deletePreferenceBody": "{rule} is removed and is not weighed the next time a timetable is generated. Timetables already generated do not change."
   },
   "frameTimes": {
     "title": "Frame times",
@@ -749,7 +839,7 @@
     "everyDay": "Every day",
     "startTime": "From",
     "endTime": "To",
-    "empty": "No frame times. The whole school day is open to every year.",
+    "empty": "The whole school day is open to every year.",
     "hint": "A frame time says when a stage MAY have lessons. Everything outside it is closed — the engine places nothing there, the timetable warns if you drag something into it, and the gap search stops offering the time.",
     "overlapHint": "Frame times reaching the same group all apply at once, so the narrowest window wins. Writing “08:00–15:00 every day” and “08:00–13:00 Friday” makes Friday 08:00–13:00 with nothing to remove.",
     "effectiveTitle": "How the week turns out",
@@ -759,7 +849,16 @@
     "duplicate": "A frame time already exists for those years on that day.",
     "changeover": "Margin between lessons (minutes)",
     "changeoverHint": "Time a class or teacher needs to move. The solver leaves at least this much between two consecutive lessons. 0 means no margin. Several matching frames give the largest — a frame is a bound, a margin is a floor.",
-    "offerWholeSchool": "Add a frame for the whole school"
+    "offerWholeSchool": "Add a frame for the whole school",
+    "emptyTitle": "No frame times entered",
+    "loadFailed": "The frame times could not be fetched",
+    "loadFailedHint": "No list and no week are shown, because an empty list would mean the whole day is open. Nothing has changed. Reload the page to try again.",
+    "tableCaption": "Frame times entered: years, day and time",
+    "gradeFromLabel": "From year",
+    "gradeToLabel": "Up to and including year",
+    "dialogDescription": "The hours these years may have lessons, every day or on one weekday.",
+    "deleteTitle": "Remove the frame time?",
+    "deleteBody": "{row} is removed. If no other frame time covers these years that day, the whole day opens for lessons."
   },
   "lunchServings": {
     "title": "Lunch sittings",
@@ -774,7 +873,7 @@
     "seats": "Seats in this sitting",
     "seatsPlaceholder": "The hall's limit",
     "seatsHint": "Left blank, the dining hall's own seat count from the lunch card applies.",
-    "empty": "No sittings. The whole lunch window is open to every year at once.",
+    "empty": "The whole lunch window is open to every year at once.",
     "hint": "You write when a stage eats. The solver decides which class goes when inside the window, and splits a stage bigger than the hall into several waves.",
     "overlapHint": "Sittings reaching the same group add up — a year 6-7 group may eat at both the 4-6 and the 7-9 sitting. A row for one weekday replaces the every-day row that day rather than widening it.",
     "flowTitle": "Lunch flow",
@@ -788,7 +887,22 @@
     "flowTotal": "At most {count} at once",
     "flowPrint": "Print",
     "windowsTitle": "How the week turns out",
-    "windowsHint": "Computed from the rows above, with the rule the solver uses."
+    "windowsHint": "Computed from the rows above, with the rule the solver uses.",
+    "emptyTitle": "No sittings entered",
+    "loadFailed": "The sittings could not be fetched",
+    "loadFailedHint": "No list and no week are shown, because an empty list would mean every year eats at once. Nothing has changed. Reload the page to try again.",
+    "lunchLoadFailed": "Lunch could not be fetched",
+    "lunchLoadFailedHint": "Without the length of lunch no sitting can be called too short, so none is marked. Reload the page to try again.",
+    "flowLoadFailed": "The lunch flow could not be fetched",
+    "flowLoadFailedHint": "No flow is shown, because an empty one would look as if no timetable had been generated. Reload the page to try again.",
+    "tableCaption": "Sittings entered: years, day, time and seats",
+    "gradeFromLabel": "From year",
+    "gradeToLabel": "Up to and including year",
+    "dialogDescription": "When these years eat, every day or on one weekday.",
+    "deleteTitle": "Remove the sitting?",
+    "deleteBody": "{row} is removed. If these years have no other sitting that day, the whole lunch window opens to them.",
+    "flowYearsLoadFailedHint": "The flow belongs to the active academic year, and the years could not be loaded, so no flow is shown. Nothing has changed. Reload the page to try again.",
+    "flowNoYear": "There is no active academic year, so there is no lunch flow to show."
   },
   "breaks": {
     "title": "Holidays and staff days",
@@ -817,7 +931,7 @@
     "removedLessons": "{name} saved. {count, plural, =1 {1 published lesson was removed from the calendar.} other {# published lessons were removed from the calendar.}}",
     "removedNone": "{name} saved. No published lessons needed removing.",
     "deleteBody": "The break leaves the list and the curriculum's hours count that week as taught again. The lessons removed when the break was entered do not come back.",
-    "empty": "No holidays entered for this academic year. The curriculum's hours then count every calendar week as taught, which runs roughly 8–10 weeks high across a Swedish academic year.",
+    "empty": "The curriculum's hours then count every calendar week as taught, which runs roughly 8–10 weeks high across a Swedish academic year.",
     "noYear": "Create and activate an academic year first.",
     "loadFailed": "The list of holidays could not be fetched.",
     "loadFailedHint": "No list is shown, because an empty one would mean the school has no holidays at all. Switch the year above to try again.",
@@ -862,10 +976,13 @@
         "span": "The first year cannot be later than the last.",
         "group": "Choose a group.",
         "noteLong": "The note can be at most 500 characters."
-      }
+      },
+      "refetchFailed": "The decisions could not be loaded."
     },
     "cancellationsHint": "Should the lessons stay as cancelled, with the day's name, and be possible to take back – work experience, an outdoor day? Use Bulk cancellation instead of a holiday.",
-    "cancellationsLink": "To Bulk cancellation"
+    "cancellationsLink": "To Bulk cancellation",
+    "emptyTitle": "No holidays entered for this academic year",
+    "toYears": "To school years"
   },
   "generate": {
     "title": "Generate schedule",
@@ -911,7 +1028,34 @@
     "rulesEdit": "Change",
     "noYearTitle": "{count, plural, one {One group} other {# groups}} in the curriculum entries has no year",
     "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
-    "noYearLink": "Add members or a year under Classes"
+    "noYearLink": "Add members or a year under Classes",
+    "loadFailed": "The prerequisites could not be loaded",
+    "loadFailedHint": "The page cannot tell whether the timetable can be generated, so the button waits. Nothing has run and no timetable has changed. Reload the page.",
+    "groupsLoadFailed": "The groups’ year levels could not be checked",
+    "groupsLoadFailedHint": "The classes or their members could not be loaded, so the page cannot warn about groups without a year level. The run can still be started, but lessons for such a group may land right across a break.",
+    "rulesLoadFailed": "The school rules could not be loaded",
+    "rulesLoadFailedHint": "The run reads the school’s saved rules itself, so they still apply. Only the summary here is missing.",
+    "historyLoadFailed": "The run history could not be loaded",
+    "historyLoadFailedHint": "Earlier runs and the timetable are untouched. Reload the page to see the list.",
+    "historyEmpty": "No runs for this school year yet.",
+    "preState": {
+      "met": "Met",
+      "warn": "Warning",
+      "unmet": "Missing"
+    },
+    "historyStatus": {
+      "OPTIMAL": "Optimal",
+      "FEASIBLE": "Feasible",
+      "INFEASIBLE": "No valid timetable",
+      "TIMEOUT": "Ran out of time",
+      "FAILED": "Failed",
+      "PENDING": "Waiting",
+      "RUNNING": "Running",
+      "SUCCEEDED": "Done",
+      "UNSTAFFED": "Stopped: teachers missing"
+    },
+    "historyYearsLoadFailedHint": "The academic years could not be loaded, so the page does not know which year's runs to show. Earlier runs and the timetable are untouched. Reload the page.",
+    "historyNoYear": "There is no active academic year, so there are no runs to show."
   },
   "timetable": {
     "title": "Master timetable",
@@ -928,7 +1072,6 @@
     "filterRoom": "Rooms",
     "allRooms": "All rooms",
     "roomsSelected": "{count} rooms selected",
-    "empty": "No master timetable yet. Generate a schedule first.",
     "lessonCount": "{count, plural, one {# lesson} other {# lessons}} / week",
     "editTitle": "Adjust lesson",
     "editBody": "Move the lesson or change its room and teacher. The change is checked against the rest of the timetable.",
@@ -1065,7 +1208,28 @@
       "announceMore": "{count, plural, one {# more subject changed.} other {# more subjects changed.}}",
       "openCoverage": "See all in Coverage"
     },
-    "draftExportNotice": "Draft – not published"
+    "draftExportNotice": "Draft – not published",
+    "moreActions": "More actions",
+    "undoShortcut": "Undo (Ctrl+Z)",
+    "redoShortcut": "Redo (Ctrl+Shift+Z)",
+    "viewLabel": "View",
+    "loadFailed": "The master timetable could not be loaded",
+    "loadFailedHint": "Nothing in the timetable has changed. Reload the page before you move or add lessons.",
+    "emptyTitle": "No master timetable for this school year yet",
+    "emptyHint": "Generate a timetable from the curriculum entries, or place lessons by hand with Add lesson.",
+    "emptyAction": "Generate schedule",
+    "noYearTitle": "No active school year",
+    "noYearHint": "The master timetable belongs to a school year. Create and activate the school year first; then you can generate the timetable or place lessons here.",
+    "noYearAction": "Go to school years",
+    "yearsLoadFailed": "The school years could not be loaded",
+    "yearsLoadFailedHint": "The master timetable belongs to a school year, so it is not shown. Nothing in the timetable has changed. Reload the page.",
+    "versionNameLabel": "Version name",
+    "versionCompareNamed": "Compare “{name}” with the current timetable",
+    "versionRestoreNamed": "Restore “{name}”",
+    "versionDelete": "Delete the version",
+    "versionDeleteNamed": "Delete “{name}”",
+    "versionsLoadFailed": "The versions could not be loaded",
+    "versionsLoadFailedHint": "No version has been saved, restored or deleted, and the master timetable is untouched. Close Versions and open it again."
   },
   "roomOptimization": {
     "title": "Optimise rooms",
@@ -1103,7 +1267,6 @@
   "dayPlanner": {
     "title": "Day planner",
     "subtitle": "Cancel lessons and assign substitutes for a specific day",
-    "empty": "No lessons on this date.",
     "cancelAction": "Cancel lesson",
     "cancelTitle": "Cancel lesson?",
     "cancelBody": "The lesson stays visible as cancelled for teachers and students.",
@@ -1128,7 +1291,17 @@
     "roomChangedToast": "Room changed",
     "suggestions": "Suggested substitutes",
     "suggestionsPrimary": "Class teacher",
-    "suggestionsEmpty": "No qualified teacher is free at this time. Pick anyone below."
+    "suggestionsEmpty": "No qualified teacher is free at this time. Pick anyone below.",
+    "previousDay": "Previous day",
+    "nextDay": "Next day",
+    "loadFailed": "The day's lessons could not be loaded",
+    "loadFailedHint": "No lesson has changed. Reload the page or choose the day again in a moment.",
+    "emptyTitle": "No lessons on this day",
+    "emptyHint": "The calendar has no lessons on this date – it may be a weekend, a holiday or a day before the timetable is published. Choose another day.",
+    "tableCaption": "The day's lessons with time, subject, class, room, teacher and state",
+    "lookupsFailed": "The names of subjects, classes, rooms or teachers could not be loaded",
+    "lookupsFailedHint": "The lessons are shown anyway, with — where a name is missing. Nothing has changed; reload the page to try again.",
+    "dialogLoadFailed": "The form could not be loaded. Nothing has changed – try again."
   },
   "teacherAbsence": {
     "title": "Teacher absence",
@@ -1137,7 +1310,6 @@
     "selectTeacherPlaceholder": "Choose a teacher",
     "from": "From",
     "to": "To",
-    "chooseTitle": "Choose a teacher",
     "chooseBody": "Pick a teacher and date range to see the lessons that need covering.",
     "empty": "No scheduled lessons for this teacher in the selected range.",
     "affectedCount": "{count, plural, one {# affected lesson} other {# affected lessons}}",
@@ -1173,7 +1345,18 @@
     "countCancelled": "{count} cancelled",
     "countHandled": "{count} handled otherwise",
     "countPassed": "{count} passed without a decision",
-    "countNone": "No lessons"
+    "countNone": "No lessons",
+    "previewTitle": "Preview lessons",
+    "previewBody": "Choose a teacher and a period to see the lessons and handle them one at a time – assign a substitute, change room or cancel. With Register absence they go to the cover board instead.",
+    "loadFailed": "The teacher's lessons could not be loaded",
+    "loadFailedHint": "No lesson has changed. Choose the teacher or the period again, or reload the page.",
+    "tableCaption": "The teacher's scheduled lessons in the period, with date, time, subject, class and room",
+    "cancelAllTitle": "{count, plural, one {Cancel # lesson?} other {Cancel # lessons?}}",
+    "cancelAllBody": "Every lesson in the list is cancelled with the cause that the teacher is unavailable, and the classes and their guardians see them as cancelled. A lesson can be reinstated in the Day planner.",
+    "cancelAllConfirm": "{count, plural, one {Cancel # lesson} other {Cancel # lessons}}",
+    "registerLoadFailed": "The absence register could not be loaded",
+    "registerLoadFailedHint": "No absence has changed, and the cover board is not affected. Reload the page to try again.",
+    "registerCaption": "Registered absences with teacher, period, reason, state and the lessons' cover"
   },
   "roomBooking": {
     "statusPENDING": "Pending",
@@ -1191,7 +1374,6 @@
     "defaultTitle": "Room booking",
     "invalidWindow": "The end time must be after the start time.",
     "freeRooms": "Free rooms in this slot",
-    "noneFreeTitle": "No free rooms",
     "noneFreeBody": "Every room is booked or in use during this slot. Try another time.",
     "seats": "{count} seats",
     "approvalRequired": "Approval required",
@@ -1201,21 +1383,37 @@
     "cancelledToast": "Booking cancelled",
     "myBookings": "My bookings",
     "noBookings": "You have no room bookings yet.",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "freeRoomsNeedWindow": "Free rooms are shown once the end time is after the start time.",
+    "loadFailed": "Free rooms could not be loaded",
+    "loadFailedHint": "Without the rooms, the day's lessons and the day's bookings it cannot be said what is free. No booking has been made or changed. Reload the page in a moment.",
+    "noRooms": "The school has no rooms registered yet.",
+    "bookingsLoadFailed": "Your bookings could not be loaded",
+    "bookingsLoadFailedHint": "No bookings have changed. Reload the page in a moment.",
+    "cancelTitle": "Cancel {room}, {when}?",
+    "cancelBody": "The room becomes free for others again. If you still need it, book it again while it is free."
   },
   "adminRoomBookings": {
     "title": "Room bookings",
     "subtitle": "Approve or reject booking requests for special rooms",
-    "empty": "No bookings to show.",
     "requestedBy": "Requested by {name}",
-    "notePlaceholder": "Note (optional)",
     "approve": "Approve",
     "reject": "Reject",
     "approved": "Booking approved",
-    "rejected": "Booking rejected"
+    "rejected": "Booking rejected",
+    "filterLabel": "Show bookings",
+    "listTitle": "{status, select, PENDING {Waiting for a decision} APPROVED {Approved bookings} other {Rejected bookings}}",
+    "emptyTitle": "{status, select, PENDING {No booking is waiting for a decision} APPROVED {No approved bookings} other {No rejected bookings}}",
+    "emptyHint": "Teachers' requests for special rooms land here and wait until you approve or reject them.",
+    "loadFailed": "The bookings could not be loaded",
+    "loadFailedHint": "No decision has changed. Reload the page to try again.",
+    "namesFailed": "The names of rooms or people could not be loaded",
+    "namesFailedHint": "The requests are shown with — where a name is missing. No decision has changed.",
+    "noteLabel": "Note to the teacher",
+    "rejectTitle": "Reject the booking of {room}?",
+    "rejectBody": "The teacher is told, with your note if you wrote one. A decision cannot be changed afterwards."
   },
   "reports": {
-    "title": "Reports",
     "subtitle": "Attendance rates per class and student",
     "period": "Period",
     "class": "Class",
@@ -1237,14 +1435,15 @@
       "label": "Report",
       "attendance": "Attendance",
       "staffing": "Staffing",
-      "cover": "Cover hours"
+      "cover": "Cover hours",
+      "title": "Reports",
+      "subtitle": "Attendance, staffing and cover hours for a period"
     },
     "staffing": {
-      "title": "Reports",
-      "subtitle": "Staffing: planned, scheduled and delivered per teacher",
+      "subtitle": "Planned, scheduled and delivered time per teacher over a period",
       "year": "School year",
       "noYear": "No school year to show.",
-      "loadFailed": "The reconciliation could not be read.",
+      "loadFailed": "The reconciliation could not be loaded",
       "rangeCrossed": "From is after To. The figures below are for the last valid period.",
       "empty": "No teacher has planned, scheduled or delivered time in the period.",
       "comparison": "Planned and scheduled are compared {from} – {to}. Model: {model}. Minutes, rounded per row.",
@@ -1319,8 +1518,21 @@
           "GRADE_WITHOUT_TIMPLAN": "Grade {grade} has no timplan for the school year and is reported as compulsory school.",
           "ALL_LEFT_OUT": "{name}: the teaching on one row has no SCB column. State the subjects by hand."
         }
-      }
-    }
+      },
+      "loadFailedHint": "The reconciliation shows no figures until the server has answered. No plan, no timetable and no delivered time has changed – try again in a moment."
+    },
+    "chooseClassTitle": "Choose a class",
+    "emptyTitle": "No attendance recorded in the period",
+    "loadFailed": "Attendance could not be loaded",
+    "loadFailedHint": "The report shows no figures until attendance, classes and pupils have been read, so that no pupil looks as if they had no attendance. No attendance has changed – try again in a moment.",
+    "tableCaption": "Attendance per pupil in the period: recorded lessons, present, late and absence in minutes",
+    "kpiStudents": "Pupils",
+    "kpiStudentsDetail": "of {total} in the class have recorded attendance",
+    "kpiValid": "Excused absence",
+    "kpiInvalid": "Unexcused absence",
+    "kpiMinutes": "{minutes} min",
+    "csvFilename": "attendance_{group}_{from}_{to}.csv",
+    "classPlaceholder": "Choose class"
   },
   "schedule": {
     "title": "My schedule",
@@ -1329,11 +1541,16 @@
     "nextWeek": "Next week",
     "noLessons": "No lessons this week.",
     "cancelled": "Cancelled",
-    "substituteMarker": "Cover"
+    "substituteMarker": "Cover",
+    "subtitleTeacher": "Your lessons week by week, including the ones you cover",
+    "subtitleStudent": "Your lessons, lunch and breaks week by week",
+    "loadFailed": "This week's lessons could not be loaded",
+    "loadFailedHint": "Nothing in the schedule has changed. Try again in a moment.",
+    "thisWeek": "This week"
   },
   "teacherAttendance": {
     "title": "Attendance",
-    "subtitle": "Today's lessons — tap one to record attendance",
+    "subtitle": "Today's lessons, {date} — tap one to record attendance",
     "lessonTitle": "Record attendance",
     "recorded": "Attendance saved",
     "markAll": "Mark all present",
@@ -1341,15 +1558,31 @@
     "submitting": "Saving…",
     "studentCount": "{count} students",
     "recordedBadge": "{count}/{total} recorded",
-    "noLessonsToday": "You have no lessons today.",
+    "noLessonsToday": "You have no lessons today",
     "notesPlaceholder": "Note (optional)",
-    "reportedAbsent": "Reported absent"
+    "reportedAbsent": "Reported absent",
+    "loadFailed": "Today's lessons could not be loaded",
+    "loadFailedHint": "No attendance has changed. Reload the page in a moment.",
+    "lessonsLabel": "Today's lessons",
+    "backToLessons": "To today's lessons",
+    "lessonLoadFailed": "The lesson could not be loaded",
+    "rosterLoadFailed": "The class list could not be loaded",
+    "lessonLoadFailedHint": "No attendance has been saved or changed. Reload the page in a moment.",
+    "existingLoadFailed": "The attendance already recorded could not be loaded",
+    "existingLoadFailedHint": "So the students are shown unmarked. What you save applies only to the students you mark now.",
+    "rosterTitle": "Students"
   },
   "studentAttendance": {
     "title": "My attendance",
     "subtitle": "Your attendance history",
     "rate": "Attendance rate",
-    "empty": "No attendance recorded yet."
+    "empty": "Attendance shows here once a teacher has recorded it for one of your lessons.",
+    "loadFailed": "Your attendance could not be loaded",
+    "loadFailedHint": "Nothing in your attendance has changed. Reload the page in a moment.",
+    "emptyTitle": "No attendance recorded yet",
+    "rateNone": "No lesson has been recorded yet",
+    "rateDetail": "{present} of {counted} recorded lessons",
+    "tableCaption": "Your attendance per lesson: day, time, subject and status"
   },
   "guardian": {
     "title": "My children",
@@ -1402,18 +1635,36 @@
       "emptyToday": "Nothing on the schedule today.",
       "emptyDay": "Nothing on the schedule.",
       "emptyWeek": "Nothing on the schedule this week."
-    }
+    },
+    "loadFailed": "Your children could not be loaded",
+    "loadFailedHint": "No reports or requests have changed. Reload the page in a moment.",
+    "reportsLoadFailed": "The reports could not be loaded",
+    "leavesLoadFailed": "The requests could not be loaded",
+    "listsLoadFailedHint": "What you have already sent is still with the school. Reload the page in a moment.",
+    "sending": "Sending …",
+    "deleteReportNamed": "Delete the report for {name}, {date}",
+    "deleteReportTitle": "Delete the report for {name}, {date}?",
+    "deleteReportBody": "The school and the child's teachers no longer see the report. If the child is away that day after all, report again."
   },
   "adminLeave": {
     "title": "Leave requests",
     "subtitle": "Decide guardians' leave requests (ledighetsansökan)",
-    "empty": "No leave requests in this category.",
     "requestedBy": "Requested by {name}",
-    "notePlaceholder": "Decision note (optional)",
     "approve": "Approve",
     "reject": "Reject",
-    "approved": "Approved — {count} absence days registered",
-    "rejected": "Request rejected"
+    "approved": "Approved — {count, plural, one {# absence day registered} other {# absence days registered}}",
+    "rejected": "Request rejected",
+    "filterLabel": "Show requests",
+    "listTitle": "{status, select, PENDING {Waiting for a decision} APPROVED {Approved requests} other {Rejected requests}}",
+    "emptyTitle": "{status, select, PENDING {No request is waiting for a decision} APPROVED {No approved requests} other {No rejected requests}}",
+    "emptyHint": "Guardians' leave requests land here and wait until you approve or reject them.",
+    "loadFailed": "The leave requests could not be loaded",
+    "loadFailedHint": "No decision has changed. Reload the page to try again.",
+    "namesFailed": "The names of students or guardians could not be loaded",
+    "namesFailedHint": "The requests are shown with — where a name is missing. No decision has changed.",
+    "noteLabel": "Comment to the guardian",
+    "rejectTitle": "Reject the leave for {name}?",
+    "rejectBody": "The guardian is told, with your comment if you wrote one. A decision cannot be changed afterwards."
   },
   "notifications": {
     "title": "Notifications",
@@ -1435,7 +1686,7 @@
   },
   "integrations": {
     "title": "Integrations",
-    "subtitle": "SS12000 both ways: pull pupils, staff and classes from the student register, and let other systems read the timetable.",
+    "subtitle": "SS12000 both ways: pull pupils, staff and classes from the student register, and let other systems read the timetable",
     "tabSource": "Student register",
     "tabKeys": "API keys",
     "createTitle": "Create API key",
@@ -1643,7 +1894,8 @@
       "autoBlockedReview": "The night applied nothing: everything left needs an administrator. Review the diff.",
       "partlyApplied": "Partly applied {when}",
       "older": "Show older syncs",
-      "errorCodes": "Errors: {codes}"
+      "errorCodes": "Errors: {codes}",
+      "historyLoadFailed": "The sync history could not be loaded"
     },
     "review": {
       "title": "Review the sync",
@@ -1745,7 +1997,8 @@
           "NO_ACTIVE_CHILD": "No child with an active enrolment left",
           "ABSENT_FROM_SOURCE": "No longer in the register"
         }
-      }
+      },
+      "changesLoadFailed": "The changes could not be loaded"
     },
     "provisioning": {
       "title": "New people",
@@ -1756,7 +2009,8 @@
       "invite": "Invite chosen ({count})",
       "invited": "{sent} invitations were sent.",
       "chunked": "Invitations are sent {chunk} at a time.",
-      "report": "{sent} sent, {already} already had an account, {failed} failed."
+      "report": "{sent} sent, {already} already had an account, {failed} failed.",
+      "loadFailed": "The list of new people could not be loaded"
     },
     "codes": {
       "OK": "The connection works.",
@@ -1847,7 +2101,12 @@
       "INTEGRATION_KEY_SCOPES_INVALID": "Choose at least one valid scope.",
       "INTEGRATION_KEY_NOT_FOUND": "The key does not exist or is revoked.",
       "SUBSCRIPTION_NOT_FOUND": "The subscription no longer exists."
-    }
+    },
+    "tabsLabel": "Direction of the integration",
+    "loadFailed": "The source system could not be loaded",
+    "loadFailedHint": "Nothing has been fetched from the register or changed in the school. Reload the page in a moment.",
+    "keysTitle": "Keys",
+    "keysLoadFailed": "The keys could not be loaded"
   },
   "csvImport": {
     "title": "Import CSV",
@@ -1900,7 +2159,13 @@
     "summary": "Lunch {start}–{end}, {minutes} min",
     "summarySeats": "{seats} seats in the dining hall",
     "summaryNoSeats": "no seat limit",
-    "bandLabel": "Lunch"
+    "bandLabel": "Lunch",
+    "rulesTitle": "School rules",
+    "rulesIntro": "Hard rules for the whole school, which every generated timetable must keep.",
+    "loadFailed": "The school rules could not be fetched",
+    "loadFailedHint": "The form is not shown, because it would otherwise be filled with defaults that could be saved over the school's real rules. Reload the page to try again.",
+    "saveFailed": "The school rules were not saved",
+    "saveFailedHint": "The rules that applied before still stand."
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",
@@ -1976,7 +2241,12 @@
     "whoNoneOfKind": "None",
     "durationHours": "{hours} h {minutes} min",
     "durationHoursOnly": "{hours} h",
-    "durationMinutes": "{minutes} min"
+    "durationMinutes": "{minutes} min",
+    "loadFailed": "The timetable could not be loaded",
+    "loadFailedHint": "The answers here are computed from the whole timetable, with the school’s rules and class lists. When part of it is missing, the page shows no answers rather than wrong ones. Nothing has changed. Reload the page.",
+    "noYearTitle": "No active school year",
+    "noYearHint": "The questions are asked of a school year’s base schedule. Create and activate the school year first; then there is a schedule to ask.",
+    "noYearAction": "Go to school years"
   },
   "rasts": {
     "title": "Breaks",
@@ -1995,7 +2265,7 @@
     "lessonBefore": "Require a lesson before the break",
     "lessonBeforeHint": "The class must have at least one lesson between the previous break or lunch — or the start of the day — and this break, if it is still at school afterwards. Without it, a day may open with a break.",
     "lessonBeforeShort": "Lesson before",
-    "empty": "No breaks have been entered. Without them the solver places lessons back to back.",
+    "empty": "Without them the solver places lessons back to back.",
     "rowsTitle": "Entered breaks",
     "weekTitle": "The resulting week",
     "weekHint": "The rows above read as a week. A day-specific break replaces only the every-day break whose time it overlaps — the others still stand that day.",
@@ -2004,7 +2274,13 @@
     "deleteRast": "Delete {name}",
     "deleteTitle": "Delete this break?",
     "deleteBody": "{name} will be removed. The solver may then place lessons in that time on its next run.",
-    "bandLabel": "Break"
+    "bandLabel": "Break",
+    "emptyTitle": "No breaks entered",
+    "loadFailed": "The breaks could not be fetched",
+    "loadFailedHint": "No list and no week are shown, because an empty list would mean the school has no breaks. Nothing has changed. Reload the page to try again.",
+    "gradeFromLabel": "From year",
+    "gradeToLabel": "Up to and including year",
+    "dialogDescription": "Minutes when these years are not taught, every day or on one weekday."
   },
   "teacherWorkTime": {
     "title": "Working time for {name}",
@@ -2353,7 +2629,8 @@
       "factorFor": "Factor for {subject}",
       "invalid": "A factor is a number between 0.5 and 3 with at most three decimals.",
       "save": "{count, plural, =0 {Save factors} one {Save # factor} other {Save # factors}}",
-      "saved": "{count, plural, one {# factor saved} other {# factors saved}}"
+      "saved": "{count, plural, one {# factor saved} other {# factors saved}}",
+      "loadFailedHint": "No factors have changed. Reload the page to try again."
     },
     "drawerSubjectsFactor": "Counted time per subject (factor)",
     "printUppdrag": "Print assignment description",
@@ -2416,7 +2693,8 @@
         "subjectId": "Subject",
         "studentGroupId": "Group",
         "blockedConstraintId": "Blocked time"
-      }
+      },
+      "loadFailedHint": "Nothing has changed in the post or the duties; only the history is not shown. Reload the page to try again."
     },
     "proposal": {
       "open": "Propose staffing",
@@ -2504,14 +2782,22 @@
       "undoRefused": "Could not undo: {reason}",
       "engineUnavailable": "The engine cannot propose staffing right now. Try again in a while.",
       "yearMissing": "The academic year no longer exists. Choose another year."
-    }
+    },
+    "noYearTitle": "No school year yet",
+    "noYearAction": "To school years",
+    "emptyTitle": "No teachers with a post yet",
+    "policyLoadFailed": "The settings could not be loaded",
+    "policyLoadFailedHint": "Save stays off until the school's settings have been read, so the default values in the fields do not overwrite them. Reload the page to try again.",
+    "removeEmploymentTitle": "Remove the post of {name} for {year}?",
+    "removeEmploymentBody": "The employment rate, reduction and contract for the year are removed, and the teacher counts without a target until a post is saved again. Curriculum entries and duties stay.",
+    "dutiesLoadFailedHint": "Nothing has changed in the duties. Reload the page to try again."
   },
   "myStaffing": {
     "title": "My workload",
-    "subtitle": "Your teacher allocation for the {year} school year.",
+    "subtitle": "Your teacher allocation for the {year} school year",
     "readOnly": "Your allocation is set by the school leadership. If something looks wrong, talk to your principal.",
     "noYear": "No active school year",
-    "loadFailed": "Your workload could not be read right now. Reload the page in a moment.",
+    "loadFailed": "Your workload could not be loaded",
     "notRegistered": "No workload registered for {year}",
     "notRegisteredBody": "The school leadership has not entered an employment, teaching or any duty for you this school year.",
     "noEmployment": "No employment registered. Without one there is no target to compare with.",
@@ -2528,7 +2814,9 @@
     "shareHeader": "Share of post",
     "noTeaching": "No teaching has been allocated to you yet.",
     "noDuties": "No duties registered.",
-    "printLink": "Print assignment description"
+    "printLink": "Print assignment description",
+    "loadFailedHint": "Nothing in your workload has changed. Reload the page in a moment.",
+    "noYearBody": "My workload shows once the school leadership has activated a school year."
   },
   "planningYear": {
     "label": "Year to plan",
@@ -2823,7 +3111,15 @@
       "ROLLOVER_LINK_IS_FIXED": "The link to last year is set when the year is rolled over and cannot be changed.",
       "ROLLOVER_LINK_MISMATCH": "A group’s predecessor must be in the year before the group’s own year.",
       "ROLLOVER_GROUP_IS_LINKED": "The group is linked to a group in last or next year and cannot be moved to another year."
-    }
+    },
+    "loadFailed": "The school years could not be loaded",
+    "loadFailedHint": "Nothing has changed: no year has been activated, rolled over or deleted. Reload the page to try again.",
+    "tableCaption": "The school's years with their period, status and the pupil moves waiting for the activation",
+    "groupsTableCaption": "The groups of {name} and what each becomes next year",
+    "rolloverLoadFailed": "The school year and its groups could not be loaded",
+    "rolloverLoadFailedHint": "Nothing has been created and nothing in the year has changed. Reload the page to try again.",
+    "rolloverAbout": "Create next school year from an existing one, so classes, teaching requirements and teachers carry over",
+    "noSourceAction": "Choose a year"
   },
   "engineMessages": {
     "AVAIL_CONSTRAINT_BLOCKS_LESSONS": "A constraint on {kind, select, TEACHER {a teacher} ROOM {room {resource}} STUDENT_GROUP {class {resource}} other {years {grades}}} {day, select, 0 {on {date}} 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} 5 {on Fridays} 6 {on Saturdays} 7 {on Sundays} other {on day {day}}} {start}-{end} blocks lessons that have to be placed.",
@@ -2904,7 +3200,7 @@
     "title": "Coverage",
     "subtitle": "The year's timplan, curriculum entries, master timetable and calendar, compared per class, group and pupil",
     "yearLabel": "Academic year",
-    "backToTimplan": "Timplan",
+    "backToTimplan": "To the timplan",
     "loadFailed": "The coverage could not be loaded",
     "loadFailedHint": "Reload the page to try again.",
     "noYearTitle": "No academic year",
@@ -3187,7 +3483,10 @@
         "preschoolAfter2028": "In the year {year} the pupil was in a class with grade 0. The preschool class ends in 2028, so the year does not count.",
         "subjectsUnmapped": "{stageTitle}: none of the pupil's subjects has a national subject code ({planned} planned), so no national comparison is made."
       }
-    }
+    },
+    "noYearAction": "To school years",
+    "peopleFailed": "The pupils’ names could not be loaded",
+    "peopleFailedHint": "The coverage is still counted, but the pupils show as “unknown pupil” until the page is reloaded."
   },
   "teachingTime": {
     "title": "Teaching time",
@@ -3205,7 +3504,9 @@
     "unplanned": "Grade {grades} has no timplan in SchemaPro yet, so it is not part of Planned.",
     "backfilled": "The class until {date} is the one the pupil had when SchemaPro began keeping class history. A change of class before then does not show.",
     "unpublished": "The national distribution by subject for this stage is not published yet, so the timplan's hours are not shown.",
-    "footer": "Teaching time is the time the school offers; absence is not subtracted. So far is delivered and credited time, and for days the school has published no schedule, the planned time. Planned is the school's timplan for the stage, or for the grades the column names.{versions, select, none {} other { The timplan's hours are SchemaPro's reference data ({versions}).}}"
+    "footer": "Teaching time is the time the school offers; absence is not subtracted. So far is delivered and credited time, and for days the school has published no schedule, the planned time. Planned is the school's timplan for the stage, or for the grades the column names.{versions, select, none {} other { The timplan's hours are SchemaPro's reference data ({versions}).}}",
+    "loadFailed": "The teaching time could not be loaded",
+    "loadFailedHint": "The school's figures have not changed. Reload the page in a moment."
   },
   "timplanCohorts": {
     "title": "Timplans per cohort",
@@ -3276,9 +3577,12 @@
     "disclaimer": "The layout follows municipal templates for assignment descriptions (for example the City of Gothenburg's for teachers with a ferietjänst); the school's own template applies. Hours and days are the school's settings, not statute.",
     "noTeacher": "No post for the chosen teacher",
     "noTeacherHint": "Open the assignment description from a teacher's drawer under Staffing.",
-    "loadFailed": "The post could not be read right now. Reload the page in a moment.",
+    "loadFailed": "The post could not be loaded",
     "noOwnPost": "No post registered",
-    "noOwnPostHint": "The school leadership has not entered a post or teaching for you that school year."
+    "noOwnPostHint": "The school leadership has not entered a post or teaching for you that school year.",
+    "loadFailedHint": "Reload the page in a moment. Nothing in the post has changed.",
+    "backAdmin": "To staffing",
+    "backTeacher": "To My workload"
   },
   "publishing": {
     "title": "Publishing",
@@ -3505,7 +3809,24 @@
       "CANCELLATION_RANGE": "Dates and times: a cancellation lies within the school year, covers at most 31 days, and a time window has both a start and an end.",
       "CANCELLATION_SCOPE": "The selection matches no lessons, or does not say which year groups or groups it covers.",
       "CANCELLATION_CREDIT": "A credited day covers whole days after today. Remove the time window, or add the time as a credit of its own."
-    }
+    },
+    "subtitle": "The base timetable in the calendar and in the Timetable viewer",
+    "tabsLabel": "Publishing and the Timetable viewer",
+    "loadFailed": "The publishing settings could not be loaded",
+    "loadFailedHint": "Nothing has changed in how the school publishes or in what the Timetable viewer shows. Reload the page.",
+    "yearsLoadFailed": "The school years could not be loaded",
+    "yearsLoadFailedHint": "Validity and links belong to a school year, so they are not shown. No published timetable and no link has changed. Reload the page.",
+    "noYear": "No school year yet",
+    "noYearHint": "Validity and links belong to a school year. Add the school year first; then the base timetable can be published and links made for it.",
+    "noYearAction": "Go to School years",
+    "hiddenLoadFailed": "The teachers or the list of hidden teachers could not be loaded",
+    "hiddenLoadFailedHint": "No teacher has changed state, and hidden teachers are still not shown. Reload the page before you change anything here.",
+    "validityLoadFailed": "Validity could not be loaded",
+    "validityLoadFailedHint": "No published timetable has changed. Reload the page to see what is valid when.",
+    "linksLoadFailed": "The links could not be loaded",
+    "linksLoadFailedHint": "No link has been revoked or changed. Reload the page to see the list.",
+    "linkRevokeNamed": "Revoke the link to {name}",
+    "linkRevokeTitle": "Revoke the link to {name}?"
   },
   "cancellations": {
     "title": "Bulk cancellation",
@@ -3573,7 +3894,7 @@
     "reapply": "Apply again",
     "reapplied": "{count, plural, one {# more lesson was cancelled} other {# more lessons were cancelled}}.",
     "reverse": "Take back",
-    "reverseTitle": "Take back {name}",
+    "reverseTitle": "Take back {name}?",
     "reverseBody": "Lessons the cancellation cancelled that lie ahead are restored, with their earlier note. Days that have begun are not touched.",
     "reverseReinstate": "{count, plural, one {# lesson is restored} other {# lessons are restored}}.",
     "reverseRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room was booked or given another lesson meanwhile:",
@@ -3585,7 +3906,18 @@
     "reverseHistory": "{count, plural, one {# lesson has begun or changed since and is} other {# lessons have begun or changed since and are}} left as is.",
     "reverseCredits": "{count, plural, one {# credited day is removed} other {# credited days are removed}}.",
     "reverseConfirm": "Take back",
-    "reversed": "{count, plural, one {# lesson was restored} other {# lessons were restored}}."
+    "reversed": "{count, plural, one {# lesson was restored} other {# lessons were restored}}.",
+    "subtitle": "Cancel lessons for many classes at once, and take them back",
+    "loadFailed": "The school years could not be loaded",
+    "loadFailedHint": "No cancellation has changed. Reload the page to try again.",
+    "noYearTitle": "There is no school year yet",
+    "noYearBody": "A cancellation covers days within a school year. Set up the school year first.",
+    "goToYears": "Go to school years",
+    "lookupsFailed": "Classes, subjects or rooms could not be loaded",
+    "lookupsFailedHint": "The form lacks them until the page is reloaded, and the list shows ? where a name is missing. No cancellation has changed.",
+    "listLoadFailed": "The cancellations could not be loaded",
+    "listLoadFailedHint": "No cancellation has changed. Reload the page to see the list.",
+    "listCaption": "Cancellations {year} with days, scope, number of cancelled lessons and state"
   },
   "publicViewer": {
     "title": "Timetable",
@@ -3706,12 +4038,6 @@
     "date": "Date",
     "weekLabel": "Week {week}",
     "distributeDay": "Cover the day",
-    "summaryLabel": "Summary",
-    "summaryOpen": "{count} need cover",
-    "summaryCovered": "{count} covered",
-    "summaryCancelled": "{count} cancelled",
-    "summaryHandled": "{count} handled otherwise",
-    "summaryPassedOpen": "{count} passed without a decision",
     "publishing": "A publish is in progress. The board waits – try again in a moment.",
     "bulkSelected": "{count} selected",
     "bulkCancel": "Cancel selected ({count})",
@@ -3761,7 +4087,18 @@
     "counterName": "Name",
     "counterWeek": "Week",
     "counterTerm": "Term",
-    "pool": "Pool"
+    "pool": "Pool",
+    "kpiOpen": "Need cover",
+    "kpiCovered": "Covered",
+    "kpiCancelled": "Cancelled",
+    "kpiHandled": "Handled otherwise",
+    "kpiPassed": "Passed without a decision",
+    "loadFailed": "The cover board could not be loaded",
+    "loadFailedHint": "No decision has changed, but the lessons that need cover are not shown until the board can be read. Reload the page in a moment.",
+    "tableCaption": "Lessons that need cover, with the absent teacher, state, substitute and decisions",
+    "counterLoadFailed": "The cover counter could not be loaded",
+    "counterLoadFailedHint": "The board and its decisions are not affected, and the suggestions count covers as usual.",
+    "substituteLine": "Substitute: {name}"
   },
   "coverCandidates": {
     "title": "Assign substitute",
@@ -3776,7 +4113,9 @@
     "excludedTitle": "Cannot ({count})",
     "other": "Other teacher",
     "otherHint": "Outside the suggestions: you get a warning if the person you choose is not qualified, loses lunch or daily rest, has a duty or a room booking then, or has not said they can come. Someone with a lesson of their own then, or who is absent themself, can never be assigned and is not listed.",
-    "assign": "Assign"
+    "assign": "Assign",
+    "loadFailed": "The suggestions could not be loaded",
+    "loadFailedHint": "No substitute has been assigned. You can still choose another teacher below, or close and try again in a moment."
   },
   "coverReasons": {
     "QUAL_LEGITIMATION": "Certified in {subject} for grades {grades}",
@@ -3828,7 +4167,9 @@
     "excludedNote": "Left out: {names}",
     "recompute": "Recompute",
     "apply": "Apply {count}",
-    "applied": "{count, plural, one {# substitute assigned} other {# substitutes assigned}}"
+    "applied": "{count, plural, one {# substitute assigned} other {# substitutes assigned}}",
+    "failed": "The proposal could not be computed",
+    "failedHint": "No substitute has been assigned. Try again with Recompute."
   },
   "coverErrors": {
     "COVER_STALE": "The lesson changed after the board was read. Reload the board and try again.",
@@ -3926,14 +4267,15 @@
     "start": "From",
     "end": "Until",
     "addWindow": "Add hours",
-    "windowAdded": "The hours are added"
+    "windowAdded": "The hours are added",
+    "windowsLoadFailed": "The times could not be loaded",
+    "windowsLoadFailedHint": "No time has changed, and the suggestions still follow the times that are saved. Try again in a moment."
   },
   "coverHours": {
     "intro": "Held covers per person and period, in clock minutes – the same lessons staffing credits to the substitute. Covers booked but not yet held are shown here and never exported.",
     "exportLessons": "Export covers (CSV)",
     "exportSummary": "Export summary (CSV)",
     "rangeError": "Choose a period of at most {days} days.",
-    "empty": "No covers in the period.",
     "columnSubstitute": "Substitute",
     "columnKind": "Type",
     "columnLessons": "Held covers",
@@ -3947,7 +4289,12 @@
     "total": "Total {minutes} min ({hours} hours)",
     "privacy": "The files say who covered when – not who was away or why. No reason, no absence and no replaced teacher is in them.",
     "toCheckTitle": "Check before payroll",
-    "toCheckBody": "{count, plural, one {# cover} other {# covers}} stand in the calendar on a substitute who was registered away themself then. They are not in the files – correct the calendar if someone else held the lesson."
+    "toCheckBody": "{count, plural, one {# cover} other {# covers}} stand in the calendar on a substitute who was registered away themself then. They are not in the files – correct the calendar if someone else held the lesson.",
+    "loadFailed": "Cover hours could not be loaded",
+    "loadFailedHint": "No covers are shown and no file can be built until the server has answered. No cover has changed – try again in a moment.",
+    "emptyTitle": "No covers in the period",
+    "emptyHint": "A cover assigned on the cover board is counted here once it has been held. Choose another period to see earlier covers.",
+    "tableCaption": "Held and booked covers per substitute in the period, in clock minutes"
   },
   "teacherCover": {
     "title": "Cover and absence",
@@ -3966,11 +4313,14 @@
     "end": "End early",
     "withdraw": "Withdraw",
     "privacy": "Only you and the school leadership see the reason. Colleagues, students and guardians see only that a lesson has a substitute or is cancelled.",
-    "availabilityTitle": "My availability"
+    "availabilityTitle": "My availability",
+    "coversLoadFailed": "Your covers could not be loaded",
+    "absencesLoadFailed": "Your absence could not be loaded",
+    "loadFailedHint": "Nothing has changed. Reload the page in a moment."
   },
   "notificationSettings": {
     "title": "Notifications",
-    "subtitle": "Choose what is sent to you outside SchemaPro.",
+    "subtitle": "Choose what is sent to you outside SchemaPro",
     "cardTitle": "E-mail and push",
     "cardBody": "What you switch off is not sent as e-mail or push. The notification is still here in SchemaPro.",
     "loading": "Loading your choices …",
@@ -3991,6 +4341,8 @@
       "ROOM_BOOKING_DECIDED": "Room booking decisions",
       "TEACHER_ABSENCE_REPORTED": "Teacher absence",
       "LESSON_COVER_WITHDRAWN": "Withdrawn cover lessons"
-    }
+    },
+    "loadFailed": "Your choices could not be loaded",
+    "loadFailedHint": "Nothing has changed in what is sent to you. Reload the page in a moment."
   }
 }

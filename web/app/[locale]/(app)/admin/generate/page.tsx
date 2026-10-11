@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -16,6 +16,7 @@ import {
 import { Link } from "@/i18n/navigation";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
+  useAcademicYears,
   useGroupMemberships,
   useGroups,
   useLunchSettings,
@@ -26,14 +27,20 @@ import {
   useRooms,
   useStartOptimization,
   type ObjectiveWeights,
+  type OptimizationJob,
 } from "@/lib/queries";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime } from "@/lib/utils";
 import { buildGradeSpans } from "@/lib/grade-span";
+import { solverRunVariant } from "@/lib/status-variants";
 import { useStaffingPolicy } from "@/lib/staffing-queries";
 import { usePlanningYear } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
@@ -41,13 +48,20 @@ import {
   PlanningYearPicker,
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+
+/**
+ * A history row's word for how the run ended: the gateway's own refusal over
+ * unstaffed posts first (it travels as INFEASIBLE, but the engine was never
+ * asked), then a failed job, then the solver's verdict, then the job's state.
+ * The same order solverRunVariant reads them in for the colour.
+ */
+function historyStatusKey(run: OptimizationJob): string {
+  if (run.solverStatus === "INFEASIBLE" && run.conflictSummaryCode === "STAFF_UNSTAFFED_REQUIREMENTS") {
+    return "UNSTAFFED";
+  }
+  if (run.status === "FAILED") return "FAILED";
+  return run.solverStatus ?? run.status;
+}
 
 export default function GeneratePage() {
   const t = useTranslations("generate");
@@ -55,6 +69,7 @@ export default function GeneratePage() {
   const tConflicts = useTranslations("conflictCategories");
   const tEngine = useTranslations("engineMessages");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
   /*
    * The year generated for: this one, or next year before its activation.
    * Next year's classes have no home pupils until then, so the people are
@@ -71,15 +86,26 @@ export default function GeneratePage() {
    */
   const staffingHref = (section: "unstaffed" | "propose") =>
     `/admin/staffing${year ? `?year=${encodeURIComponent(year.id)}` : ""}#${section}`;
-  const { data: requirements } = useRequirements(year?.id ?? null);
-  const { data: rooms } = useRooms();
-  const { data: storedPeople } = usePeople();
+  /*
+   * The years themselves, for the state ladder only: usePlanningYear reads
+   * the same cached query, and while it is in flight there is no year yet —
+   * which the checklist below would otherwise draw as "no year".
+   */
+  const yearsQuery = useAcademicYears();
+  const requirementsQuery = useRequirements(year?.id ?? null);
+  const requirements = requirementsQuery.data;
+  const roomsQuery = useRooms();
+  const rooms = roomsQuery.data;
+  const peopleQuery = usePeople();
+  const storedPeople = peopleQuery.data;
   const people = useMemo(
     () => withProjectedHomes(storedPeople, planning.rosters),
     [storedPeople, planning.rosters],
   );
-  const { data: groups } = useGroups();
-  const { data: memberships } = useGroupMemberships();
+  const groupsQuery = useGroups();
+  const groups = groupsQuery.data;
+  const membershipsQuery = useGroupMemberships();
+  const memberships = membershipsQuery.data;
   /**
    * Whether the school refuses to generate while a timplanspost has no lärare
    * (StaffingPolicy.unstaffedGeneration). Read only to say so BEFORE the run:
@@ -136,7 +162,8 @@ export default function GeneratePage() {
   const startOptimization = useStartOptimization();
   const [jobId, setJobId] = useState<string | null>(null);
   const { data: job } = useOptimizationJob(jobId);
-  const { data: history } = useOptimizationHistory(year?.id ?? null);
+  const historyQuery = useOptimizationHistory(year?.id ?? null);
+  const history = historyQuery.data;
 
   // Optimization profile — persisted locally per browser.
   const [weights, setWeights] = useState<Required<ObjectiveWeights>>({
@@ -173,7 +200,8 @@ export default function GeneratePage() {
    * copy a given timetable came from. They are a property of the school now, so
    * this page shows what will be applied and links to where it is changed.
    */
-  const { data: lunchSettings } = useLunchSettings();
+  const lunchQuery = useLunchSettings();
+  const lunchSettings = lunchQuery.data;
 
   /**
    * The engine names a cause with an enum constant. Until this change the
@@ -254,7 +282,59 @@ export default function GeneratePage() {
     },
   ];
 
-  const canRun = prerequisites.every((prerequisite) => prerequisite.ok || prerequisite.warn);
+  /*
+   * The checklist is only true once everything it counts has answered. Until
+   * then each line would read as unmet — a red cross beside "Timplansposter
+   * 0" for a school that has hundreds — so it waits; and a read that failed
+   * says so instead of counting it as none. Neither changes what may run: a
+   * line that has not answered, or failed, was never met.
+   */
+  /*
+   * usePlanningYear holds the year back for one render, until ?year= has
+   * been read — but only a school with an active year ever gets one. Keyed
+   * on the active year, not on there being years at all: a school whose
+   * years are all inactive would otherwise wait here for good, where it
+   * should see "Läsår —" unmet as it always has.
+   */
+  const resolvingYear = planning.active !== null && year === null;
+  const prerequisitesLoading = Boolean(
+    yearsQuery.isLoading ||
+      resolvingYear ||
+      requirementsQuery.isLoading ||
+      roomsQuery.isLoading ||
+      peopleQuery.isLoading,
+  );
+  /*
+   * Failed with nothing in hand: the read never arrived, so the line cannot
+   * be counted. A refetch that fails over a read already in hand is another
+   * fact — the counts stand as last read, and the notice above the list says
+   * they may be out of date (refetchFailed) rather than taking them away.
+   */
+  const neverRead = (query: { isError: boolean; data: unknown }) =>
+    query.isError && query.data === undefined;
+  const prerequisitesFailed = [yearsQuery, requirementsQuery, roomsQuery, peopleQuery].some(neverRead);
+  /*
+   * The year-group warning is derived from the groups and their members. If
+   * either failed, the page cannot say whether a group lacks a year, and
+   * silence would read as "every group has one". Named, not a gate: the
+   * warning never stopped a run either.
+   */
+  const groupsFailed = [groupsQuery, membershipsQuery].some(neverRead);
+  const refetchFailed = [
+    yearsQuery,
+    requirementsQuery,
+    roomsQuery,
+    peopleQuery,
+    groupsQuery,
+    membershipsQuery,
+  ].some((query) => query.isError && query.data !== undefined);
+  const prerequisiteState = (prerequisite: { ok: boolean; warn?: boolean }) =>
+    prerequisite.ok ? "met" : prerequisite.warn ? "warn" : "unmet";
+
+  const canRun =
+    !prerequisitesLoading &&
+    !prerequisitesFailed &&
+    prerequisites.every((prerequisite) => prerequisite.ok || prerequisite.warn);
   const isRunning =
     startOptimization.isPending ||
     job?.status === "PENDING" ||
@@ -289,8 +369,18 @@ export default function GeneratePage() {
     solverStatus === "INFEASIBLE" &&
     job?.conflictSummaryCode === "STAFF_UNSTAFFED_REQUIREMENTS";
 
+  /** When a run was started, in the app's language — not the browser's. */
+  const runDate = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }),
+    [locale],
+  );
+
   return (
-    <div className="mx-auto max-w-3xl">
+    <Page width="wide">
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
@@ -315,126 +405,195 @@ export default function GeneratePage() {
       {/* A warning, not a gate: the run is legal, and the school may mean it.
           What it must not be is a surprise. */}
       {spanlessGroups.length > 0 ? (
-        <div
-          role="status"
-          className="mb-6 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
-        >
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+        <Notice tone="warning" title={t("noYearTitle", { count: spanlessGroups.length })}>
           <div className="space-y-1">
-            <p className="font-medium">
-              {t("noYearTitle", { count: spanlessGroups.length })}
-            </p>
             <p>{t("noYearBody")}</p>
             <p className="font-medium">{spanlessGroups.join(", ")}</p>
             <Link href="/admin/groups" className="underline underline-offset-4">
               {t("noYearLink")}
             </Link>
           </div>
-        </div>
+        </Notice>
+      ) : groupsFailed ? (
+        <LoadError variant="inline" title={t("groupsLoadFailed")} hint={t("groupsLoadFailedHint")} />
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("prerequisites")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2.5">
-            {prerequisites.map((prerequisite) => (
-              <li key={prerequisite.label} className="flex items-center gap-3 text-sm">
-                {prerequisite.ok ? (
-                  <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
-                ) : prerequisite.warn ? (
-                  <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
-                ) : (
-                  <XCircle className="h-5 w-5 shrink-0 text-destructive" />
-                )}
-                {prerequisite.href ? (
-                  <Link
-                    href={prerequisite.href}
-                    className="flex-1 underline underline-offset-4"
-                  >
-                    {prerequisite.label}
-                  </Link>
-                ) : (
-                  <span className="flex-1">{prerequisite.label}</span>
-                )}
-                <span className="tabular-nums text-muted-foreground">
-                  {prerequisite.detail}
-                </span>
-                {prerequisite.action ? (
-                  <Link
-                    href={prerequisite.action.href}
-                    className="font-medium text-primary underline-offset-4 hover:underline"
-                  >
-                    {prerequisite.action.label}
-                  </Link>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-
-          <div className="mt-6 rounded-md border p-4">
-            <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-              <SlidersHorizontal className="h-4 w-4" />
-              {t("profileTitle")}
-            </h3>
-            <p className="mb-4 text-xs text-muted-foreground">{t("profileHint")}</p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {(
-                [
-                  ["disruption", t("weightDisruption")],
-                  ["spread", t("weightSpread")],
-                  ["preferredFree", t("weightPreferredFree")],
-                  ["preferredBusy", t("weightPreferredBusy")],
-                  ["teacherGap", t("weightTeacherGap")],
-                ] as const
-              ).map(([key, label]) => (
-                <div key={key} className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor={`weight-${key}`} className="text-xs">
-                      {label}
-                    </Label>
-                    <span className="text-xs tabular-nums text-muted-foreground">
-                      {weights[key]}
-                    </span>
-                  </div>
-                  {/*
-                    50, while the API accepts 1000 — and that is deliberate,
-                    not an oversight nobody documented.
-
-                    These weights are RELATIVE: only the ratios between them
-                    reach the objective, so a ceiling of 50 across all five
-                    expresses every ratio up to 50:1, which is far past the
-                    point where one term stops trading against another at all.
-                    Widening the track to 1000 would leave the useful range —
-                    nought to ten — inside the first one percent of it, and
-                    unhittable with a mouse.
-                  */}
-                  <input
-                    id={`weight-${key}`}
-                    type="range"
-                    min={0}
-                    max={50}
-                    value={weights[key]}
-                    onChange={(e) => setWeight(key, Number(e.target.value))}
-                    className="w-full accent-primary"
-                  />
-                </div>
-              ))}
-            </div>
+      {/*
+        The run closes the checklist: the list says whether the week can be
+        laid, and the button that lays it stands at its foot, with the reason
+        beside it when it cannot be pressed — not loose between two cards.
+      */}
+      <SectionCard
+        id="prerequisites"
+        title={t("prerequisites")}
+        footer={
+          <div className="flex w-full flex-wrap items-center justify-end gap-3">
+            {/*
+              The same sentence as the prerequisite line, beside the button it
+              disables — a greyed button with no reason beside it is a button
+              people click at and then call support about.
+            */}
+            {blockedByStaffing ? (
+              <p id="generate-blocked-unstaffed" className="mr-auto max-w-prose text-sm text-foreground">
+                {t("preStaffed")} ({t("preStaffedMissing", { count: unstaffedCount })}).{" "}
+                {t("runBlockedUnstaffed")}{" "}
+                <Link href={staffingHref("unstaffed")} className="underline underline-offset-4">
+                  {t("preStaffedLink")}
+                </Link>
+                {" · "}
+                <Link href={staffingHref("propose")} className="underline underline-offset-4">
+                  {t("preStaffedPropose")}
+                </Link>
+              </p>
+            ) : null}
+            <Button
+              className="w-full sm:w-auto"
+              disabled={!canRun || isRunning}
+              onClick={run}
+              aria-describedby={blockedByStaffing ? "generate-blocked-unstaffed" : undefined}
+            >
+              {isRunning ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  {t("running")}
+                </>
+              ) : (
+                <>
+                  <Sparkles />
+                  {t("run")}
+                </>
+              )}
+            </Button>
           </div>
+        }
+      >
+        {refetchFailed ? (
+          <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
+        ) : null}
+        {prerequisitesLoading ? (
+          <div aria-busy="true">
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : prerequisitesFailed ? (
+          <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+        ) : (
+          <ul className="space-y-2.5">
+            {prerequisites.map((prerequisite) => {
+              /*
+               * The icon carries the verdict for a sighted reader, so it
+               * carries it for a screen reader too: a named image rather than
+               * a hidden one, since the line's text alone ("Salar
+               * tillgängliga 0") does not say whether 0 passes.
+               */
+              const verdict = t(`preState.${prerequisiteState(prerequisite)}`);
+              return (
+                <li key={prerequisite.label} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                  {prerequisite.ok ? (
+                    <CheckCircle2 role="img" aria-label={verdict} className="size-5 shrink-0 text-success-strong" />
+                  ) : prerequisite.warn ? (
+                    <AlertTriangle role="img" aria-label={verdict} className="size-5 shrink-0 text-warning-strong" />
+                  ) : (
+                    <XCircle role="img" aria-label={verdict} className="size-5 shrink-0 text-destructive" />
+                  )}
+                  {prerequisite.href ? (
+                    <Link href={prerequisite.href} className="flex-1 underline underline-offset-4">
+                      {prerequisite.label}
+                    </Link>
+                  ) : (
+                    <span className="flex-1">{prerequisite.label}</span>
+                  )}
+                  <span className="tabular-nums text-muted-foreground">{prerequisite.detail}</span>
+                  {prerequisite.action ? (
+                    <Link
+                      href={prerequisite.action.href}
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      {prerequisite.action.label}
+                    </Link>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </SectionCard>
 
-          <div className="mt-4 rounded-md border p-4">
-            <div className="mb-1 flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold">{t("rulesTitle")}</h3>
-              <Link
-                href="/admin/constraints"
-                className="text-xs font-medium text-primary underline-offset-4 hover:underline"
-              >
-                {t("rulesEdit")}
-              </Link>
+      {/* items-start: Skolregler is three lines; stretched to the profile's
+          height it was a card of empty space. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+        <SectionCard
+          id="profile"
+          title={t("profileTitle")}
+          icon={SlidersHorizontal}
+          description={t("profileHint")}
+        >
+          {/*
+            Two sliders a row only while the card is the page's full width
+            (sm to lg). Beside Skolregler (lg and up) the card is half the page,
+            and two columns there broke every label over two or three lines.
+          */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 [&>*]:min-w-0">
+            {(
+              [
+                ["disruption", t("weightDisruption")],
+                ["spread", t("weightSpread")],
+                ["preferredFree", t("weightPreferredFree")],
+                ["preferredBusy", t("weightPreferredBusy")],
+                ["teacherGap", t("weightTeacherGap")],
+              ] as const
+            ).map(([key, label]) => (
+              <div key={key} className="space-y-1.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <Label htmlFor={`weight-${key}`}>{label}</Label>
+                  <span className="shrink-0 text-sm tabular-nums text-muted-foreground">{weights[key]}</span>
+                </div>
+                {/*
+                  50, while the API accepts 1000 — and that is deliberate,
+                  not an oversight nobody documented.
+
+                  These weights are RELATIVE: only the ratios between them
+                  reach the objective, so a ceiling of 50 across all five
+                  expresses every ratio up to 50:1, which is far past the
+                  point where one term stops trading against another at all.
+                  Widening the track to 1000 would leave the useful range —
+                  nought to ten — inside the first one percent of it, and
+                  unhittable with a mouse.
+                */}
+                <input
+                  id={`weight-${key}`}
+                  type="range"
+                  min={0}
+                  max={50}
+                  value={weights[key]}
+                  onChange={(e) => setWeight(key, Number(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          id="rules"
+          title={t("rulesTitle")}
+          description={t("rulesHint")}
+          action={
+            <Button variant="outline" size="sm" asChild>
+              {/* #skolregler: the card on Tillgänglighet that holds them. */}
+              <Link href="/admin/constraints#skolregler">{t("rulesEdit")}</Link>
+            </Button>
+          }
+        >
+          {lunchQuery.isError && lunchQuery.data !== undefined ? (
+            <LoadError variant="inline" title={t("rulesLoadFailed")} hint={tCommon("refetchFailedHint")} />
+          ) : null}
+          {lunchQuery.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
             </div>
-            <p className="mb-3 text-xs text-muted-foreground">{t("rulesHint")}</p>
+          ) : lunchQuery.isError && lunchQuery.data === undefined ? (
+            <LoadError variant="inline" title={t("rulesLoadFailed")} hint={t("rulesLoadFailedHint")} />
+          ) : (
             <ul className="space-y-1 text-sm">
               <li>
                 {lunchSettings?.lunchEnabled ? (
@@ -463,191 +622,155 @@ export default function GeneratePage() {
                 </li>
               ) : null}
             </ul>
-          </div>
-
-          <Button
-            className="mt-6 w-full"
-            size="lg"
-            disabled={!canRun || isRunning}
-            onClick={run}
-            aria-describedby={blockedByStaffing ? "generate-blocked-unstaffed" : undefined}
-          >
-            {isRunning ? (
-              <>
-                <Loader2 className="animate-spin" />
-                {t("running")}
-              </>
-            ) : (
-              <>
-                <Sparkles />
-                {t("run")}
-              </>
-            )}
-          </Button>
-          {/*
-            The same sentence as the prerequisite line, under the button it
-            disables — a greyed button with no reason beside it is a button
-            people click at and then call support about.
-          */}
-          {blockedByStaffing ? (
-            <p id="generate-blocked-unstaffed" className="mt-2 text-sm text-foreground">
-              {t("preStaffed")} ({t("preStaffedMissing", { count: unstaffedCount })}).{" "}
-              {t("runBlockedUnstaffed")}{" "}
-              <Link href={staffingHref("unstaffed")} className="underline underline-offset-4">
-                {t("preStaffedLink")}
-              </Link>
-              {" · "}
-              <Link href={staffingHref("propose")} className="underline underline-offset-4">
-                {t("preStaffedPropose")}
-              </Link>
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
+          )}
+        </SectionCard>
+      </div>
 
       {job && (job.status === "SUCCEEDED" || job.status === "FAILED") ? (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        <SectionCard
+          id="last-run"
+          title={
+            <span className="flex items-center gap-2">
               {job.status === "FAILED" || noScheduleProduced ? (
-                <AlertTriangle className="h-5 w-5 text-warning" />
+                <AlertTriangle className="size-4 shrink-0 text-warning-strong" />
               ) : (
-                <CheckCircle2 className="h-5 w-5 text-success" />
+                <CheckCircle2 className="size-4 shrink-0 text-success-strong" />
               )}
               {t("lastRun")}
-            </CardTitle>
-            <CardDescription>
-              {job.status === "FAILED"
-                ? job.error
-                  ? engineText({
-                      code: job.errorCode,
-                      message: job.error,
-                      params: job.errorParams,
-                    })
-                  : tCommon("error")
-                : refusedUnstaffed
-                  ? t("statusUnstaffed")
-                  : solverStatus
-                    ? t(`status${solverStatus}`)
-                    : ""}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {job.status === "SUCCEEDED" && !noScheduleProduced ? (
-              <>
-                <Badge variant="success">
-                  {t("lessonsGenerated", { count: job.lessonsGenerated })}
-                </Badge>
-                <div>
-                  <Button asChild variant="outline">
-                    <Link
-                      href={
-                        year && !year.isActive
-                          ? `/admin/timetable?year=${year.id}`
-                          : "/admin/timetable"
-                      }
-                    >
-                      {t("viewTimetable")}
-                      <ArrowRight />
-                    </Link>
-                  </Button>
-                </div>
-              </>
-            ) : null}
-
-            {refusedUnstaffed ? (
-              <p className="text-sm text-muted-foreground">
+            </span>
+          }
+          description={
+            job.status === "FAILED"
+              ? job.error
+                ? engineText({
+                    code: job.errorCode,
+                    message: job.error,
+                    params: job.errorParams,
+                  })
+                : tCommon("error")
+              : refusedUnstaffed
+                ? t("statusUnstaffed")
+                : solverStatus
+                  ? t(`status${solverStatus}`)
+                  : undefined
+          }
+          descriptionClassName="text-foreground"
+        >
+          {job.status === "SUCCEEDED" && !noScheduleProduced ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge variant="success">{t("lessonsGenerated", { count: job.lessonsGenerated })}</Badge>
+              <Button asChild variant="outline">
                 <Link
-                  href={staffingHref("unstaffed")}
-                  className="font-medium text-foreground underline underline-offset-4"
+                  href={
+                    year && !year.isActive
+                      ? `/admin/timetable?year=${year.id}`
+                      : "/admin/timetable"
+                  }
                 >
-                  {t("preStaffedLink")}
+                  {t("viewTimetable")}
+                  <ArrowRight />
                 </Link>
-              </p>
-            ) : solverStatus === "INFEASIBLE" ? (
-              <p className="text-sm text-muted-foreground">{t("infeasibleHint")}</p>
+              </Button>
+            </div>
+          ) : null}
 
-            ) : solverStatus === "TIMEOUT" ? (
-              <p className="text-sm text-muted-foreground">{t("timeoutHint")}</p>
-            ) : null}
+          {refusedUnstaffed ? (
+            <p className="text-sm">
+              <Link
+                href={staffingHref("unstaffed")}
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                {t("preStaffedLink")}
+              </Link>
+            </p>
+          ) : solverStatus === "INFEASIBLE" ? (
+            <p className="max-w-prose text-sm text-muted-foreground">{t("infeasibleHint")}</p>
+          ) : solverStatus === "TIMEOUT" ? (
+            <p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>
+          ) : null}
 
-            {job.conflicts.length > 0 ? (
-              <div>
-                <h3 className="mb-2 text-sm font-semibold">{t("conflicts")}</h3>
-                {job.conflictSummary ? (
-                  <p className="mb-3 text-sm text-muted-foreground">
-                    {engineText({
-                      code: job.conflictSummaryCode,
-                      message: job.conflictSummary,
-                      params: job.conflictSummaryParams,
-                    })}
-                  </p>
-                ) : null}
-                <ul className="space-y-2">
-                  {job.conflicts.map((conflict, index) => (
-                    <li
-                      key={index}
-                      className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
-                    >
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-                      <div>
-                        <Badge variant="warning" className="mb-1">
-                          {conflictLabel(conflict.category)}
-                        </Badge>
-                        <p className="text-muted-foreground">{engineText(conflict)}</p>
+          {job.conflicts.length > 0 ? (
+            <section aria-labelledby="last-run-conflicts" className="space-y-2">
+              <h3 id="last-run-conflicts" className="text-sm font-semibold">
+                {t("conflicts")}
+              </h3>
+              {job.conflictSummary ? (
+                <p className="text-sm text-muted-foreground">
+                  {engineText({
+                    code: job.conflictSummaryCode,
+                    message: job.conflictSummary,
+                    params: job.conflictSummaryParams,
+                  })}
+                </p>
+              ) : null}
+              <ul className="space-y-2">
+                {job.conflicts.map((conflict, index) => (
+                  <li key={index}>
+                    {/* role null: a finished list, not news — the card above
+                        already said how the run ended. */}
+                    <Notice tone="warning" role={null}>
+                      <div className="space-y-1">
+                        <Badge variant="warning">{conflictLabel(conflict.category)}</Badge>
+                        {/* Foreground, not muted: muted text on the notice's
+                            muted surface falls under 4.5:1. */}
+                        <p>{engineText(conflict)}</p>
                         {conflict.resourceNames && conflict.resourceNames.length > 0 ? (
-                          <p className="mt-1 font-medium">{conflict.resourceNames.join(", ")}</p>
+                          <p className="font-medium">{conflict.resourceNames.join(", ")}</p>
                         ) : null}
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : job.status === "SUCCEEDED" && solverStatus === "INFEASIBLE" ? (
-              <p className="text-sm text-muted-foreground">{t("noConflicts")}</p>
-            ) : null}
-          </CardContent>
-        </Card>
+                    </Notice>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : job.status === "SUCCEEDED" && solverStatus === "INFEASIBLE" ? (
+            <p className="text-sm text-muted-foreground">{t("noConflicts")}</p>
+          ) : null}
+        </SectionCard>
       ) : null}
 
-      {(history ?? []).length > 0 ? (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <History className="h-5 w-5" />
-              {t("historyTitle")}
-            </CardTitle>
-            <CardDescription>{t("historyHint")}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2">
-              {(history ?? []).map((run) => (
-                <li
-                  key={run.id}
-                  className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
-                >
+      <SectionCard id="history" title={t("historyTitle")} icon={History} description={t("historyHint")}>
+        {historyQuery.isError && history !== undefined ? (
+          <LoadError variant="inline" title={t("historyLoadFailed")} hint={tCommon("refetchFailedHint")} />
+        ) : null}
+        {/*
+          The history is the year's, so it waits for the year as the checklist
+          does: without one the request is never made, and the list would read
+          as "no runs yet" for a school whose years are on their way or failed.
+        */}
+        {historyQuery.isLoading || yearsQuery.isLoading || resolvingYear ? (
+          <div aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : historyQuery.isError && history === undefined ? (
+          <LoadError variant="inline" title={t("historyLoadFailed")} hint={t("historyLoadFailedHint")} />
+        ) : !year && yearsQuery.isError ? (
+          <LoadError variant="inline" title={t("historyLoadFailed")} hint={t("historyYearsLoadFailedHint")} />
+        ) : !year ? (
+          <p className="text-sm text-muted-foreground">{t("historyNoYear")}</p>
+        ) : (history ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("historyEmpty")}</p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {(history ?? []).map((run) => (
+              <li
+                key={run.id}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2 text-sm"
+              >
+                <span className="whitespace-nowrap tabular-nums text-muted-foreground">
+                  {runDate.format(new Date(run.createdAt))}
+                </span>
+                <span className="flex items-center gap-2">
+                  <Badge variant={solverRunVariant(run)}>{t(`historyStatus.${historyStatusKey(run)}`)}</Badge>
                   <span className="tabular-nums text-muted-foreground">
-                    {new Date(run.createdAt).toLocaleString()}
+                    {t("lessonsGenerated", { count: run.lessonsGenerated })}
                   </span>
-                  <span className="flex items-center gap-2">
-                    {run.status === "FAILED" ? (
-                      <Badge variant="destructive">{run.status}</Badge>
-                    ) : run.solverStatus === "INFEASIBLE" ||
-                      run.solverStatus === "TIMEOUT" ? (
-                      <Badge variant="warning">{run.solverStatus}</Badge>
-                    ) : (
-                      <Badge variant="success">{run.solverStatus ?? run.status}</Badge>
-                    )}
-                    <span className="tabular-nums text-muted-foreground">
-                      {t("lessonsGenerated", { count: run.lessonsGenerated })}
-                    </span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
-    </div>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SectionCard>
+    </Page>
   );
 }

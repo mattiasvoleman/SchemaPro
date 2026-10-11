@@ -25,13 +25,22 @@ const state = vi.hoisted(() => ({
   job: undefined as unknown,
   /** Message keys this build has no translation for; see the next-intl stub. */
   untranslated: [] as string[],
-  requirements: [] as unknown[],
+  requirements: [] as unknown[] | undefined,
   groups: [] as unknown[],
   memberships: [] as unknown[],
   people: [] as unknown[],
   /** StaffingPolicy as GET /staffing-policy answers; undefined = not answered yet. */
   policy: undefined as unknown,
-  years: [] as unknown[],
+  // undefined with neither flag below is a read never made; with one, the
+  // years on their way or failed.
+  years: [] as unknown[] | undefined,
+  yearsLoading: false,
+  yearsFailed: false,
+  /** The last read of the timplan failed (a first read, or a refetch over one in hand). */
+  requirementsFailed: false,
+  /** The year's runs; undefined is a list never read. */
+  history: [] as unknown[] | undefined,
+  historyFailed: false,
   /** The year each year-keyed read was asked for, in order. */
   requirementsFor: [] as (string | null)[],
   historyFor: [] as (string | null)[],
@@ -64,10 +73,14 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 const noMutation = { mutateAsync: vi.fn(), isPending: false };
 
 vi.mock("@/lib/queries", () => ({
-  useAcademicYears: () => ({ data: state.years }),
+  useAcademicYears: () => ({
+    data: state.years,
+    isLoading: state.yearsLoading,
+    isError: state.yearsFailed,
+  }),
   useRequirements: (yearId: string | null) => {
     state.requirementsFor.push(yearId);
-    return { data: state.requirements };
+    return { data: state.requirements, isError: state.requirementsFailed };
   },
   useRooms: () => ({ data: [{ id: "r-1" }] }),
   usePeople: () => ({ data: state.people }),
@@ -77,7 +90,10 @@ vi.mock("@/lib/queries", () => ({
   useOptimizationJob: () => ({ data: state.job }),
   useOptimizationHistory: (yearId: string | null) => {
     state.historyFor.push(yearId);
-    return { data: [] };
+    // Disabled without a year, as the real hook is: never asked, never failed.
+    return yearId === null
+      ? { data: undefined, isLoading: false, isError: false }
+      : { data: state.history, isLoading: false, isError: state.historyFailed };
   },
   useLunchSettings: () => ({ data: null }),
 }));
@@ -130,6 +146,11 @@ beforeEach(() => {
   cleanup();
   apiGet.mockReset();
   state.years = [ACTIVE];
+  state.yearsLoading = false;
+  state.yearsFailed = false;
+  state.requirementsFailed = false;
+  state.history = [];
+  state.historyFailed = false;
   state.requirementsFor = [];
   state.historyFor = [];
   state.job = undefined;
@@ -575,5 +596,100 @@ describe("next year, before its activation", () => {
     render(<GeneratePage />);
 
     expect(screen.queryByRole("group", { name: "planningYear.label" })).toBeNull();
+  });
+});
+
+describe("the checklist's state ladder", () => {
+  it("shows the year unmet for a school whose years are all inactive, rather than waiting for good", () => {
+    // usePlanningYear holds the year back one render, for ?year=, but only a
+    // school with an active year ever gets one. Waiting on "there are years"
+    // instead kept the checklist a skeleton forever here.
+    state.years = [{ ...ACTIVE, isActive: false }];
+    const { container } = render(<GeneratePage />);
+
+    expect(screen.getByText("generate.preYear")).toBeTruthy();
+    expect(screen.getAllByRole("img", { name: "generate.preState.unmet" }).length).toBeGreaterThan(0);
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+});
+
+describe("the checklist when a read fails", () => {
+  it("says the prerequisites could not be read when the first read fails, and does not run", () => {
+    state.requirements = undefined;
+    state.requirementsFailed = true;
+    render(<GeneratePage />);
+
+    const checklist = screen.getByRole("region", { name: "generate.prerequisites" });
+    expect(within(checklist).getByText("generate.loadFailed")).toBeTruthy();
+    expect(within(checklist).getByText("generate.loadFailedHint")).toBeTruthy();
+    expect(within(checklist).queryByText("generate.preRequirements")).toBeNull();
+    expect(screen.getByRole("button", { name: "generate.run" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("keeps the checklist it has read when a refetch fails, and says so above it", () => {
+    state.requirementsFailed = true;
+    render(<GeneratePage />);
+
+    const checklist = screen.getByRole("region", { name: "generate.prerequisites" });
+    const notice = within(checklist).getByRole("alert");
+    expect(within(notice).getByText("generate.loadFailed")).toBeTruthy();
+    expect(within(notice).getByText("common.refetchFailedHint")).toBeTruthy();
+    expect(within(checklist).getByText("generate.preRequirements")).toBeTruthy();
+  });
+});
+
+describe("the run history's state ladder", () => {
+  const historySection = () => screen.getByRole("region", { name: "generate.historyTitle" });
+  const run = {
+    id: "job-1",
+    status: "SUCCEEDED",
+    solverStatus: "OPTIMAL",
+    conflictSummaryCode: null,
+    lessonsGenerated: 120,
+    createdAt: "2026-10-01T08:00:00.000Z",
+  };
+
+  it("waits for the years rather than saying there are no runs", () => {
+    state.years = undefined;
+    state.yearsLoading = true;
+    render(<GeneratePage />);
+
+    expect(historySection().querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(within(historySection()).queryByText("generate.historyEmpty")).toBeNull();
+  });
+
+  it("says the years could not be read rather than that there are no runs", () => {
+    state.years = undefined;
+    state.yearsFailed = true;
+    render(<GeneratePage />);
+
+    const notice = within(historySection()).getByRole("alert");
+    expect(within(notice).getByText("generate.historyLoadFailed")).toBeTruthy();
+    expect(within(notice).getByText("generate.historyYearsLoadFailedHint")).toBeTruthy();
+    expect(within(historySection()).queryByText("generate.historyEmpty")).toBeNull();
+  });
+
+  it("says there is no year rather than that there are no runs", () => {
+    state.years = [];
+    render(<GeneratePage />);
+
+    expect(within(historySection()).getByText("generate.historyNoYear")).toBeTruthy();
+    expect(within(historySection()).queryByText("generate.historyEmpty")).toBeNull();
+  });
+
+  it("says a year with no runs has none", () => {
+    render(<GeneratePage />);
+
+    expect(within(historySection()).getByText("generate.historyEmpty")).toBeTruthy();
+  });
+
+  it("keeps the runs it has read when a refetch fails, and says so above them", () => {
+    state.history = [run];
+    state.historyFailed = true;
+    render(<GeneratePage />);
+
+    const notice = within(historySection()).getByRole("alert");
+    expect(within(notice).getByText("common.refetchFailedHint")).toBeTruthy();
+    expect(within(historySection()).getByText("generate.lessonsGenerated(120)")).toBeTruthy();
   });
 });

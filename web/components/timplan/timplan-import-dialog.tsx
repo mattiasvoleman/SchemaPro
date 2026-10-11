@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -122,9 +123,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
     }
   };
 
-  const notice = (
-    <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">{t("importUpdates")}</p>
-  );
+  const notice = <Notice role={null}>{t("importUpdates")}</Notice>;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -165,9 +164,8 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
           <>
             <div className="space-y-4">
               {decided ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {t("importNotDraft")}
-                </p>
+                // A decision to make (Öppna igen) before a file can be read: a warning.
+                <Notice tone="warning">{t("importNotDraft")}</Notice>
               ) : (
                 <p className="text-sm text-foreground">{t("importInto", { name: plan.name })}</p>
               )}
@@ -179,7 +177,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
                 {tImport("downloadTemplate")}
               </Button>
               {notice}
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="timplan-import-file">{tImport("chooseFile")}</Label>
                 <Input
                   key={fileInputKey}

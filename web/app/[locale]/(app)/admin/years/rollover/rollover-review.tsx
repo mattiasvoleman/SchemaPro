@@ -89,7 +89,7 @@ export function RolloverReview({
   return (
     <div className="space-y-6 text-sm">
       <section aria-labelledby="review-year" className="space-y-1">
-        <h3 id="review-year" className="font-medium">
+        <h3 id="review-year" className="text-sm font-semibold">
           {t("reviewYear", { name: plan.target.name, start: plan.target.startDate, end: plan.target.endDate })}
         </h3>
         <p className="text-muted-foreground">
@@ -98,7 +98,7 @@ export function RolloverReview({
       </section>
 
       <section aria-labelledby="review-groups">
-        <h3 id="review-groups" className="mb-1 font-medium">
+        <h3 id="review-groups" className="mb-1 text-sm font-semibold">
           {t("reviewGroups")}
         </h3>
         <ul className="flex flex-wrap gap-1.5">
@@ -117,7 +117,7 @@ export function RolloverReview({
       </section>
 
       <section aria-labelledby="review-requirements" className="space-y-1">
-        <h3 id="review-requirements" className="font-medium">
+        <h3 id="review-requirements" className="text-sm font-semibold">
           {t("reviewRequirements")}
         </h3>
         <p>
@@ -186,7 +186,7 @@ export function RolloverReview({
       </section>
 
       <section aria-labelledby="review-timplans" className="space-y-1">
-        <h3 id="review-timplans" className="font-medium">
+        <h3 id="review-timplans" className="text-sm font-semibold">
           {t("reviewTimplans")}
         </h3>
         {plan.timplans.length === 0 ? (
@@ -202,7 +202,7 @@ export function RolloverReview({
                     from: row.fromGradeLevel ?? 0,
                   })}
                   {row.planStatus === "DRAFT" ? (
-                    <Badge variant="warning" className="ml-2 text-[10px]">
+                    <Badge variant="warning" className="ml-2">
                       {t("timplanDraft")}
                     </Badge>
                   ) : null}
@@ -223,7 +223,7 @@ export function RolloverReview({
       </section>
 
       <section aria-labelledby="review-rules" className="space-y-1">
-        <h3 id="review-rules" className="font-medium">
+        <h3 id="review-rules" className="text-sm font-semibold">
           {t("reviewClassRules", { count: plan.classRules.length })}
         </h3>
         {plan.classRules.length > 0 ? (
@@ -238,7 +238,7 @@ export function RolloverReview({
                   end: rule.endTime,
                 })}
                 {rule.stageChange ? (
-                  <Badge variant="warning" className="ml-2 text-[10px]">
+                  <Badge variant="warning" className="ml-2">
                     {t("flag.stageChange")}
                   </Badge>
                 ) : null}
@@ -249,7 +249,7 @@ export function RolloverReview({
       </section>
 
       <section aria-labelledby="review-breaks" className="space-y-1">
-        <h3 id="review-breaks" className="font-medium">
+        <h3 id="review-breaks" className="text-sm font-semibold">
           {t("reviewBreaks", { count: selectedBreaks.length })}
         </h3>
         {selectedBreaks.length > 0 ? (
@@ -270,7 +270,7 @@ export function RolloverReview({
       {plan.staffing ? <RolloverStaffingReview staffing={plan.staffing} teacherName={teacherName} /> : null}
 
       <section aria-labelledby="review-left" className="space-y-1">
-        <h3 id="review-left" className="font-medium">
+        <h3 id="review-left" className="text-sm font-semibold">
           {t("reviewLeftOut")}
         </h3>
         <ul className="ml-4 list-disc text-muted-foreground">

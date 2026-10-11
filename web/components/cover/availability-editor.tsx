@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const NATIVE_SELECT =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
@@ -38,7 +40,7 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
   const tDays = useTranslations("days");
   const tErrors = useTranslations("coverErrors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
-  const { data: windows, isLoading } = useAvailability(userId);
+  const { data: windows, isLoading, isError } = useAvailability(userId);
   const { add, remove } = useAvailabilityActions();
   const [kind, setKind] = useState<"weekday" | "date">("weekday");
   const [date, setDate] = useState(() => toDateString(new Date()));
@@ -75,8 +77,16 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">{own ? t("ownAvailabilityBody") : t("availabilityBody")}</p>
-      {isLoading ? null : mine.length === 0 ? (
-        <p className="text-sm italic text-muted-foreground">{t("noWindows")}</p>
+      {/* An empty list means "never suggested", so it is said only when the
+          windows were read: not while they load, not when the read failed. */}
+      {isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : isError ? (
+        <LoadError variant="inline" title={t("windowsLoadFailed")} hint={t("windowsLoadFailedHint")} />
+      ) : mine.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("noWindows")}</p>
       ) : (
         <ul className="divide-y rounded-md border">
           {mine.map((window) => {
@@ -98,8 +108,8 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
           })}
         </ul>
       )}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <div className="space-y-1">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 [&>*]:min-w-0">
+        <div className="space-y-1.5">
           <Label htmlFor="window-kind">{t("windowKind")}</Label>
           <select
             id="window-kind"
@@ -112,12 +122,12 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
           </select>
         </div>
         {kind === "date" ? (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Label htmlFor="window-date">{t("date")}</Label>
             <DateField id="window-date" label={t("date")} value={date} onChange={setDate} />
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Label htmlFor="window-weekday">{t("weekday")}</Label>
             <select
               id="window-weekday"
@@ -133,11 +143,11 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
             </select>
           </div>
         )}
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label htmlFor="window-start">{t("start")}</Label>
           <Input id="window-start" type="time" value={start} onChange={(event) => setStart(event.target.value)} />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label htmlFor="window-end">{t("end")}</Label>
           <Input id="window-end" type="time" value={end} onChange={(event) => setEnd(event.target.value)} />
         </div>

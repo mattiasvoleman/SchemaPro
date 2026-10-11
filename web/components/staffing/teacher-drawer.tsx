@@ -12,6 +12,7 @@ import type {
   TeacherEmployment,
   TeacherQualification,
 } from "@/lib/types";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { EmploymentCard } from "@/components/staffing/employment-card";
 import { QualificationsCard } from "@/components/staffing/qualifications-card";
@@ -20,6 +21,7 @@ import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { DutiesCard } from "@/components/staffing/duties-card";
 import { AnnualCard } from "@/components/staffing/annual-card";
 import { EmploymentHistoryCard } from "@/components/staffing/employment-history-card";
+import { SectionCard } from "@/components/ui/section-card";
 import {
   TeacherRequirementsCard,
   type TeacherRequirementRow,
@@ -109,13 +111,15 @@ export function TeacherDrawer({
 
         {load ? <LoadBar teacher={load} /> : null}
 
-        <Link
-          href={`/admin/staffing/uppdragsbeskrivning?teacher=${encodeURIComponent(teacher.id)}&year=${encodeURIComponent(academicYearId)}`}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline"
-        >
-          <Printer className="size-4" aria-hidden="true" />
-          {t("printUppdrag")}
-        </Link>
+        {/* The print action as the app draws one: an outline button with its icon. */}
+        <Button variant="outline" size="sm" asChild className="justify-self-start">
+          <Link
+            href={`/admin/staffing/uppdragsbeskrivning?teacher=${encodeURIComponent(teacher.id)}&year=${encodeURIComponent(academicYearId)}`}
+          >
+            <Printer aria-hidden="true" />
+            {t("printUppdrag")}
+          </Link>
+        </Button>
 
         <EmploymentCard
           teacher={teacher}
@@ -144,10 +148,11 @@ export function TeacherDrawer({
         />
 
         {load && load.subjects.length > 0 ? (
-          <section className="rounded-lg border bg-card p-4">
-            <h3 className="mb-2 font-semibold">
-              {loadModel === "FACTOR" ? t("drawerSubjectsFactor") : t("drawerSubjects")}
-            </h3>
+          <SectionCard
+            id={`drawer-subjects-${teacher.id}`}
+            headingLevel={3}
+            title={loadModel === "FACTOR" ? t("drawerSubjectsFactor") : t("drawerSubjects")}
+          >
             <ul className="space-y-1 text-sm">
               {load.subjects.map((subject) => (
                 <li key={subject.subjectId} className="flex justify-between gap-3">
@@ -168,12 +173,12 @@ export function TeacherDrawer({
               ))}
             </ul>
             {unqualified.length > 0 ? (
-              <p className="mt-2 text-sm font-medium text-destructive">
+              <p className="text-sm font-medium text-destructive">
                 {t("drawerUnqualified", { count: unqualified.length })}:{" "}
                 {unqualified.map((row) => `${row.groupName} · ${row.subjectName}`).join(", ")}
               </p>
             ) : null}
-          </section>
+          </SectionCard>
         ) : null}
 
         {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath /> : null}

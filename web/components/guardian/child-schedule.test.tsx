@@ -125,6 +125,17 @@ describe("the guardian's Schema card", () => {
     expect(screen.getByText("guardian.schedule.title(Alva)")).toBeInTheDocument();
   });
 
+  it("offers today and week as the app's named pill tabs, with the chosen view selected", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await screen.findByText("Matematik Alva");
+    const list = screen.getByRole("tablist", { name: "guardian.schedule.viewLabel" });
+    expect(within(list).getByRole("tab", { name: "guardian.schedule.today" })).toHaveAttribute("aria-selected", "true");
+    await user.click(within(list).getByRole("tab", { name: "guardian.schedule.week" }));
+    expect(within(list).getByRole("tab", { name: "guardian.schedule.week" })).toHaveAttribute("aria-selected", "true");
+    expect(within(list).getByRole("tab", { name: "guardian.schedule.today" })).toHaveAttribute("aria-selected", "false");
+  });
+
   it("draws the school's times as given, the room and the school's label, and the lunch", async () => {
     renderCard();
     const row = (await screen.findByText("Matematik Alva")).closest("li")!;
@@ -144,7 +155,7 @@ describe("the guardian's Schema card", () => {
     const user = userEvent.setup();
     renderCard();
     await screen.findByText("Matematik Alva");
-    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    await user.click(screen.getByRole("tab", { name: "guardian.schedule.week" }));
     const row = screen.getByText("Engelska").closest("li")!;
     expect(within(row).getByText("guardian.schedule.cancelled")).toBeInTheDocument();
     expect(screen.getByText("guardian.schedule.weekLabel(43)")).toBeInTheDocument();
@@ -154,7 +165,7 @@ describe("the guardian's Schema card", () => {
     const user = userEvent.setup();
     renderCard();
     await screen.findByText("Matematik Alva");
-    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    await user.click(screen.getByRole("tab", { name: "guardian.schedule.week" }));
     await user.click(screen.getByRole("button", { name: "guardian.schedule.previousWeek" }));
     await waitFor(() => expect(screen.getByText("guardian.schedule.weekLabel(42)")).toBeInTheDocument());
     expect(param(state.asked.at(-1)!, "week")).toBe("2026-10-12");
@@ -172,7 +183,7 @@ describe("the guardian's Schema card", () => {
     const user = userEvent.setup();
     renderCard();
     await screen.findByText("Matematik Alva");
-    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    await user.click(screen.getByRole("tab", { name: "guardian.schedule.week" }));
     let release: () => void = () => undefined;
     state.answer = (path) =>
       new Promise((resolve) => {
@@ -204,7 +215,7 @@ describe("the guardian's Schema card", () => {
     const user = userEvent.setup();
     renderCard(undefined, 0);
     await screen.findByText("Matematik Alva");
-    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    await user.click(screen.getByRole("tab", { name: "guardian.schedule.week" }));
     // Next week: nothing on "today" (2026-10-20) there.
     state.answer = (path) =>
       Promise.resolve({ ...week(ALVA, "Alva", param(path, "week") ?? "2026-10-19"), lessons: [], lunches: [] });
@@ -212,7 +223,7 @@ describe("the guardian's Schema card", () => {
     await waitFor(() => expect(screen.getByText("guardian.schedule.weekLabel(42)")).toBeInTheDocument());
     // Today's week, its cache entry long gone, held in flight.
     state.answer = () => new Promise(() => undefined);
-    await user.click(screen.getByRole("button", { name: "guardian.schedule.today" }));
+    await user.click(screen.getByRole("tab", { name: "guardian.schedule.today" }));
     expect(screen.queryByText("guardian.schedule.emptyToday")).not.toBeInTheDocument();
     expect(screen.getByText("guardian.schedule.loading")).toBeInTheDocument();
   });
@@ -253,7 +264,7 @@ describe("the guardian's Schema card", () => {
     renderCard();
     expect(await screen.findByText("guardian.schedule.emptyToday")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    await user.click(screen.getByRole("tab", { name: "guardian.schedule.week" }));
     expect(screen.getByText("guardian.schedule.emptyWeek")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "guardian.schedule.previousWeek" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "guardian.schedule.nextWeek" })).toHaveAttribute("aria-disabled", "true");

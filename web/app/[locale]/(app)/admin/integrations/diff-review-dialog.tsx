@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   endedGuardianLinks,
   isChosen,
@@ -141,7 +142,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
 
   return (
     <Dialog open onOpenChange={(open) => !open && !apply.isPending && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto" closeDisabled={apply.isPending}>
+      <DialogContent className="max-w-4xl" closeDisabled={apply.isPending}>
         <DialogHeader>
           <DialogTitle>{editable ? t("title") : t("titleReadOnly")}</DialogTitle>
           <DialogDescription>
@@ -155,12 +156,12 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
         </DialogHeader>
 
         {changes.isError ? (
-          <p role="alert" className="text-sm">
+          <Notice tone="destructive" title={t("changesLoadFailed")}>
             {errorText(tErrors, changes.error, tCommon("error"))}
-          </p>
+          </Notice>
         ) : !complete ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             {t("loading", { count: loaded })}
           </p>
         ) : null}
@@ -174,48 +175,43 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
               {summary.applied > 0 ? ` ${t("alreadyApplied", { count: summary.applied })}` : null}
             </p>
             {minimised ? <p className="text-xs text-muted-foreground">{t("minimised")}</p> : null}
-            {truncated && editable ? (
-              <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                {t("truncated")}
-              </p>
-            ) : null}
-            {stale ? (
-              <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                {t("stale")}
-              </p>
-            ) : null}
+            {truncated && editable ? <Notice tone="destructive">{t("truncated")}</Notice> : null}
+            {stale ? <Notice tone="destructive">{t("stale")}</Notice> : null}
             {editable && summary.protectedChosen > 0 ? (
               <p className="flex items-center gap-2 text-sm">
-                <ShieldAlert className="h-4 w-4" aria-hidden />
+                <ShieldAlert className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 {t("protectedChosen", { count: summary.protectedChosen })}
               </p>
             ) : null}
 
+            {/* No live role: the box holds a checkbox the admin must tick,
+                and a live region around a control announces its every change. */}
             {editable && guardianEnds.length > 0 ? (
-              <div className="space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-sm">
-                <p className="font-medium">{t("guardiansEndedTitle", { count: guardianEnds.length })}</p>
-                <p>{t("guardiansEndedBody")}</p>
-                <ul className="max-h-48 list-disc space-y-0.5 overflow-y-auto pl-5">
-                  {guardianEnds.map((entry) => (
-                    <li key={`${entry.pupilId}-${entry.guardianName ?? ""}`}>
-                      <Link className="underline" href={`/admin/people?guardians=${entry.pupilId}`}>
-                        {t("guardiansEndedLink", {
-                          pupil: localName(entry.pupilId) ?? t("unknownPerson"),
-                          guardian: entry.guardianName ?? t("unknownPerson"),
-                        })}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex items-start gap-2">
-                  <input id="ss-guardians-seen" type="checkbox" className={`${CHECKBOX} mt-0.5`} checked={guardiansSeen} onChange={(event) => setGuardiansSeen(event.target.checked)} />
-                  <label htmlFor="ss-guardians-seen">{t("guardiansEndedSeen", { count: guardianEnds.length })}</label>
+              <Notice tone="warning" role={null} title={t("guardiansEndedTitle", { count: guardianEnds.length })}>
+                <div className="space-y-2">
+                  <p>{t("guardiansEndedBody")}</p>
+                  <ul className="max-h-48 list-disc space-y-0.5 overflow-y-auto pl-5">
+                    {guardianEnds.map((entry) => (
+                      <li key={`${entry.pupilId}-${entry.guardianName ?? ""}`}>
+                        <Link className="underline" href={`/admin/people?guardians=${entry.pupilId}`}>
+                          {t("guardiansEndedLink", {
+                            pupil: localName(entry.pupilId) ?? t("unknownPerson"),
+                            guardian: entry.guardianName ?? t("unknownPerson"),
+                          })}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex items-start gap-2">
+                    <input id="ss-guardians-seen" type="checkbox" className={`${CHECKBOX} mt-0.5`} checked={guardiansSeen} onChange={(event) => setGuardiansSeen(event.target.checked)} />
+                    <label htmlFor="ss-guardians-seen">{t("guardiansEndedSeen", { count: guardianEnds.length })}</label>
+                  </div>
                 </div>
-              </div>
+              </Notice>
             ) : null}
 
             <div className="flex flex-wrap items-end gap-3">
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label htmlFor="ss-filter-entity">{t("filterEntity")}</Label>
                 <select
                   id="ss-filter-entity"
@@ -280,7 +276,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                         }
                       />
                     ) : (
-                      <span className="h-4 w-4 shrink-0" aria-hidden />
+                      <span className="size-4 shrink-0" aria-hidden="true" />
                     )}
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="flex flex-wrap items-center gap-2">
@@ -339,20 +335,22 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
               <li>{t("confirmNothingDeleted")}</li>
             </ul>
             {massLimit ? (
-              <div role="alert" className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                <p>{t("massDeactivation", { deactivations: massLimit.deactivations, limit: massLimit.limit })}</p>
-                <div className="flex items-start gap-2">
-                  <input id="ss-mass" type="checkbox" className={`${CHECKBOX} mt-0.5`} checked={massConfirmed} onChange={(event) => setMassConfirmed(event.target.checked)} />
-                  <label htmlFor="ss-mass">{t("massDeactivationConfirm")}</label>
+              <Notice tone="destructive">
+                <div className="space-y-2">
+                  <p>{t("massDeactivation", { deactivations: massLimit.deactivations, limit: massLimit.limit })}</p>
+                  <div className="flex items-start gap-2">
+                    <input id="ss-mass" type="checkbox" className={`${CHECKBOX} mt-0.5`} checked={massConfirmed} onChange={(event) => setMassConfirmed(event.target.checked)} />
+                    <label htmlFor="ss-mass">{t("massDeactivationConfirm")}</label>
+                  </div>
                 </div>
-              </div>
+              </Notice>
             ) : null}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeConfirm} disabled={apply.isPending}>
                 {tCommon("cancel")}
               </Button>
               <Button type="button" onClick={() => doApply(massLimit !== null)} disabled={apply.isPending || (massLimit !== null && !massConfirmed)}>
-                {apply.isPending ? <Loader2 className="animate-spin" /> : null}
+                {apply.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
                 {t("applyNow")}
               </Button>
             </DialogFooter>

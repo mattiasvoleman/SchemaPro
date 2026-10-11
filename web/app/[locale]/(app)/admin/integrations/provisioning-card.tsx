@@ -7,7 +7,10 @@ import { Loader2, Mail } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import type { BulkInvitationReport } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CHECKBOX } from "./form-styles";
 import { errorText } from "./ss12000-messages";
 import { INVITE_CHUNK } from "./ss12000-types";
@@ -45,70 +48,75 @@ export function ProvisioningCard() {
     });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("title")}</CardTitle>
-        <CardDescription>{t("body")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {people.isError ? <p role="alert" className="text-sm">{errorText(tErrors, people.error, tCommon("error"))}</p> : null}
-        {people.data && list.length === 0 ? <p className="text-sm text-muted-foreground">{t("empty")}</p> : null}
-        {list.length > 0 ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => setChosen(new Set(list.map((person) => person.id)))}>
-                {t("selectAll", { count: list.length })}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setChosen(new Set())} disabled={live.length === 0}>
-                {t("selectNone")}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={live.length === 0 || invite.isPending}
-                onClick={() =>
-                  invite.mutate(live, {
-                    onSuccess: (result) => {
-                      setReport(result);
-                      setChosen(new Set());
-                      toast.success(t("invited", { sent: result.sent }));
-                    },
-                    onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
-                  })
-                }
-              >
-                {invite.isPending ? <Loader2 className="animate-spin" /> : <Mail />}
-                {t("invite", { count: live.length })}
-              </Button>
-            </div>
-            {live.length > INVITE_CHUNK ? <p className="text-xs text-muted-foreground">{t("chunked", { chunk: INVITE_CHUNK })}</p> : null}
-            <ul className="max-h-96 divide-y overflow-y-auto rounded-md border" aria-label={t("title")}>
-              {list.map((person) => {
-                const id = `ss-prov-${person.id}`;
-                return (
-                  <li key={person.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                    <input id={id} type="checkbox" className={CHECKBOX} checked={chosen.has(person.id)} onChange={(event) => toggle(person.id, event.target.checked)} />
-                    <label htmlFor={id} className="min-w-0 flex-1">
-                      <span className="font-medium">
-                        {person.firstName} {person.lastName}
-                      </span>{" "}
-                      <span className="text-xs text-muted-foreground">
-                        {tRoles(person.role)}
-                        {person.studentGroup ? ` · ${person.studentGroup.name}` : ""} · {person.email}
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        ) : null}
-        {report ? (
-          <div role="status" className="rounded-md border p-3 text-sm">
-            <p>{t("report", { sent: report.sent, already: report.alreadyRegistered, failed: report.errors.length })}</p>
+    <SectionCard id="ss-provisioning" title={t("title")} description={t("body")}>
+      {people.isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : null}
+      {people.isError ? (
+        <LoadError
+          variant="inline"
+          title={t("loadFailed")}
+          hint={errorText(tErrors, people.error, tCommon("error"))}
+        />
+      ) : null}
+      {people.data && list.length === 0 ? <p className="text-sm text-muted-foreground">{t("empty")}</p> : null}
+      {list.length > 0 ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => setChosen(new Set(list.map((person) => person.id)))}>
+              {t("selectAll", { count: list.length })}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => setChosen(new Set())} disabled={live.length === 0}>
+              {t("selectNone")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={live.length === 0 || invite.isPending}
+              onClick={() =>
+                invite.mutate(live, {
+                  onSuccess: (result) => {
+                    setReport(result);
+                    setChosen(new Set());
+                    toast.success(t("invited", { sent: result.sent }));
+                  },
+                  onError: (error) => toast.error(errorText(tErrors, error, tCommon("error"))),
+                })
+              }
+            >
+              {invite.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Mail aria-hidden="true" />}
+              {t("invite", { count: live.length })}
+            </Button>
           </div>
-        ) : null}
-      </CardContent>
-    </Card>
+          {live.length > INVITE_CHUNK ? <p className="text-xs text-muted-foreground">{t("chunked", { chunk: INVITE_CHUNK })}</p> : null}
+          <ul className="max-h-96 divide-y overflow-y-auto rounded-md border" aria-label={t("title")}>
+            {list.map((person) => {
+              const id = `ss-prov-${person.id}`;
+              return (
+                <li key={person.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                  <input id={id} type="checkbox" className={CHECKBOX} checked={chosen.has(person.id)} onChange={(event) => toggle(person.id, event.target.checked)} />
+                  <label htmlFor={id} className="min-w-0 flex-1">
+                    <span className="font-medium">
+                      {person.firstName} {person.lastName}
+                    </span>{" "}
+                    <span className="text-xs text-muted-foreground">
+                      {tRoles(person.role)}
+                      {person.studentGroup ? ` · ${person.studentGroup.name}` : ""} · {person.email}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      ) : null}
+      {report ? (
+        <Notice tone={report.errors.length > 0 ? "warning" : "success"}>
+          {t("report", { sent: report.sent, already: report.alreadyRegistered, failed: report.errors.length })}
+        </Notice>
+      ) : null}
+    </SectionCard>
   );
 }

@@ -49,7 +49,11 @@ const updateMock = vi.fn();
 const removeMock = vi.fn();
 
 const state = vi.hoisted(() => ({
-  frames: { data: [] as unknown[], isLoading: false },
+  frames: { data: [], isLoading: false } as {
+    data: unknown[] | undefined;
+    isLoading: boolean;
+    isError?: boolean;
+  },
 }));
 
 vi.mock("@/lib/queries", async (importOriginal) => ({
@@ -90,7 +94,7 @@ beforeEach(() => {
   createMock.mockReset().mockResolvedValue({});
   updateMock.mockReset().mockResolvedValue({});
   removeMock.mockReset().mockResolvedValue({});
-  state.frames = { data: [], isLoading: false };
+  state.frames = { data: [], isLoading: false, isError: false };
 });
 
 /** The computed week, as "stage | mon | tue | wed | thu | fri". */
@@ -186,8 +190,10 @@ describe("the computed week", () => {
 // ---------------------------------------------------------------------------
 
 describe("saving a frame", () => {
+  // The header's button: with no frames the empty state offers the same act
+  // a second time (as Ämnen and Salar do), so "add" names two buttons.
   const open = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByRole("button", { name: "add" }));
+    await user.click(screen.getAllByRole("button", { name: "add" })[0]!);
   };
 
   const save = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -233,7 +239,7 @@ describe("saving a frame", () => {
     render(<FrameTimesPage />);
 
     await open(user);
-    await user.click(screen.getByRole("combobox", { name: "gradeSpan" }));
+    await user.click(screen.getByRole("combobox", { name: "gradeFromLabel" }));
     await user.click(await screen.findByRole("option", { name: "grade(9)" }));
     await save(user);
 
@@ -251,7 +257,7 @@ describe("saving a frame", () => {
     render(<FrameTimesPage />);
 
     await open(user);
-    await user.click(screen.getByRole("combobox", { name: "gradeSpan – to" }));
+    await user.click(screen.getByRole("combobox", { name: "gradeToLabel" }));
     await user.click(await screen.findByRole("option", { name: "grade(1)" }));
     await save(user);
 
@@ -307,7 +313,7 @@ describe("saving a frame", () => {
     const user = userEvent.setup();
     render(<FrameTimesPage />);
 
-    await user.click(screen.getAllByRole("button", { name: "edit" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: /^actionNamed\(edit\|/ })[0]!);
 
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByRole("button", { name: "save" })).not.toBeDisabled();
@@ -320,7 +326,7 @@ describe("saving a frame", () => {
     const user = userEvent.setup();
     render(<FrameTimesPage />);
 
-    await user.click(screen.getAllByRole("button", { name: "edit" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: /^actionNamed\(edit\|/ })[0]!);
 
     expect(screen.getByLabelText("startTime")).toHaveValue("09:30");
     expect(screen.getByLabelText("endTime")).toHaveValue("14:45");
@@ -331,7 +337,7 @@ describe("saving a frame", () => {
     const user = userEvent.setup();
     render(<FrameTimesPage />);
 
-    await user.click(screen.getAllByRole("button", { name: "edit" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: /^actionNamed\(edit\|/ })[0]!);
     await save(user);
 
     expect(updateMock).toHaveBeenCalledWith(
@@ -358,6 +364,27 @@ describe("the list", () => {
     expect(within(row).getByText("everyDay")).toBeTruthy();
   });
 
+  it("says the fetch failed instead of claiming the whole day is open", () => {
+    state.frames = { data: undefined, isLoading: false, isError: true };
+    render(<FrameTimesPage />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "loadFailed" })).toBeTruthy();
+    expect(screen.queryByText("empty")).toBeNull();
+  });
+
+  it("keeps the frames it has read when a refetch fails, and says so above them", () => {
+    // Every save invalidates the list; a background read that fails must not
+    // take away the rows the admin is working on.
+    state.frames = { data: [frame("f1", 4, 6, null, "08:00", "15:00")], isLoading: false, isError: true };
+    render(<FrameTimesPage />);
+
+    const notice = screen.getByRole("alert");
+    expect(notice).toHaveTextContent("loadFailed");
+    expect(notice).toHaveTextContent("refetchFailedHint");
+    expect(within(screen.getAllByRole("row")[1]!).getByText("everyDay")).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "loadFailed" })).toBeNull();
+  });
+
   it("shows the clock without its seconds", () => {
     state.frames = { data: [frame("f1", 4, 6, 1, "08:00", "15:00")], isLoading: false };
     render(<FrameTimesPage />);
@@ -377,7 +404,7 @@ describe("the corridor between two lessons", () => {
    * nothing useful, and is invisible to the type checker.
    */
   const openDialog = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByRole("button", { name: "add" }));
+    await user.click(screen.getAllByRole("button", { name: "add" })[0]!);
   };
   const saveDialog = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(screen.getByRole("button", { name: "save" }));
@@ -418,5 +445,47 @@ describe("the corridor between two lessons", () => {
     await user.click(screen.getByRole("button", { name: "offerWholeSchool" }));
 
     expect(screen.getByLabelText("changeover")).toBeInTheDocument();
+  });
+});
+
+describe("while the frames are not known", () => {
+  it("shows a skeleton, not the empty state, while they load", () => {
+    // "No frame times" means the whole day is open to every stage.
+    state.frames = { data: undefined, isLoading: true, isError: false };
+    render(<FrameTimesPage />);
+
+    expect(screen.queryByText("emptyTitle")).toBeNull();
+    expect(document.querySelector(".animate-pulse")).not.toBeNull();
+  });
+
+  it("says the fetch failed instead of offering a whole-school frame", () => {
+    // isLoading is isPending && isFetching, so a failed query falls through a
+    // loading check — and the empty state would offer to write a frame the
+    // school may already have.
+    state.frames = { data: undefined, isLoading: false, isError: true };
+    render(<FrameTimesPage />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("loadFailed");
+    expect(screen.queryByText("emptyTitle")).toBeNull();
+    expect(screen.queryByRole("button", { name: "offerWholeSchool" })).toBeNull();
+  });
+});
+
+describe("removing a frame", () => {
+  it("names the row on its buttons and asks before it removes it", async () => {
+    // Every row has a bin; "Ta bort" down a column of them named nothing.
+    state.frames = { data: [frame("f1", 4, 6, 5, "08:00", "13:00")], isLoading: false, isError: false };
+    const user = userEvent.setup();
+    render(<FrameTimesPage />);
+
+    await user.click(screen.getByRole("button", { name: "actionNamed(delete|grade(4)–grade(6), 5 08:00–13:00)" }));
+    const confirm = await screen.findByRole("dialog");
+    expect(within(confirm).getByText("deleteTitle")).toBeTruthy();
+    expect(within(confirm).getByText("deleteBody(grade(4)–grade(6), 5 08:00–13:00)")).toBeTruthy();
+    expect(removeMock).not.toHaveBeenCalled();
+
+    // The verb, not the default "Bekräfta".
+    await user.click(within(confirm).getByRole("button", { name: "delete" }));
+    expect(removeMock).toHaveBeenCalledWith("f1");
   });
 });

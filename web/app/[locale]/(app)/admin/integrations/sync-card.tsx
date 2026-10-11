@@ -5,9 +5,13 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { History, Loader2, RefreshCw } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
+import { SYNC_RUN_VARIANT } from "@/lib/status-variants";
 import { Button } from "@/components/ui/button";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { codeText, errorText, formatWhen } from "./ss12000-messages";
 import type { ChangeEntity, ChangeOp, RunCounts, RunMode, RunStatus, SourceView, SyncRun } from "./ss12000-types";
 import { RUNS_PAGE, fetchOlderRuns, useStartRun, useSyncRuns } from "./use-ss12000-sync";
@@ -30,18 +34,6 @@ const DiffReviewDialog = lazy(() =>
 const ENTITIES: ChangeEntity[] = ["PERSON", "GROUP", "CLASS_MEMBERSHIP", "GROUP_MEMBERSHIP", "RESPONSIBLE", "DUTY_LINK", "ORGANISATION"];
 const CHANGE_OPS: ChangeOp[] = ["CREATE", "LINK", "RELINK", "UPDATE", "MOVE", "DEACTIVATE", "REACTIVATE", "ADD", "END"];
 const NOTE_OPS: ChangeOp[] = ["CONFLICT", "INFO"];
-
-const STATUS_VARIANT: Record<RunStatus, BadgeProps["variant"]> = {
-  RUNNING: "secondary",
-  FETCH_FAILED: "destructive",
-  NO_CHANGES: "outline",
-  DIFF_READY: "warning",
-  APPLIED: "success",
-  APPLY_FAILED: "destructive",
-  DISCARDED: "outline",
-  SUPERSEDED: "outline",
-  SKIPPED: "outline",
-};
 
 /** Changes and notes a run's counts name ({entity: {op: n}}). */
 export function changeTotals(counts: RunCounts): { changes: number; notes: number; fetchedPersons: number; fetchedGroups: number } {
@@ -111,15 +103,11 @@ export function SyncCard({ source }: { source: SourceView }) {
     });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("title")}</CardTitle>
-        <CardDescription>{t("body")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <SectionCard id="ss-sync" title={t("title")} description={t("body")}>
+      <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" onClick={() => startRun("INCREMENTAL")} disabled={!ready || running || start.isPending}>
-            {running || start.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {running || start.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
             {t("syncNow")}
           </Button>
           <Button type="button" variant="outline" onClick={() => startRun("FULL")} disabled={!ready || running || start.isPending}>
@@ -133,47 +121,64 @@ export function SyncCard({ source }: { source: SourceView }) {
         <p className="text-xs text-muted-foreground">{t("modeHint")}</p>
 
         {waiting ? (
-          <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-sm">
-            <span>{t("waiting", { when: formatWhen(locale, waiting.startedAt) })}</span>
-            <Button type="button" size="sm" onClick={() => setReviewing(waiting.id)}>
-              {t("review")}
-            </Button>
-          </div>
+          <Notice
+            tone="warning"
+            action={
+              <Button type="button" size="sm" variant="outline" onClick={() => setReviewing(waiting.id)}>
+                {t("review")}
+              </Button>
+            }
+          >
+            {t("waiting", { when: formatWhen(locale, waiting.startedAt) })}
+          </Notice>
         ) : null}
 
-        <section aria-labelledby="ss-history-title" className="space-y-2">
+        <section aria-labelledby="ss-history-title" className="space-y-2 border-t pt-4">
           <h3 id="ss-history-title" className="flex items-center gap-2 text-sm font-semibold">
-            <History className="h-4 w-4" aria-hidden />
+            <History className="size-4 text-muted-foreground" aria-hidden="true" />
             {t("historyTitle")}
           </h3>
-          {runs.isError ? <p role="alert" className="text-sm">{errorText(tErrors, runs.error, tCommon("error"))}</p> : null}
+          {runs.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : null}
+          {runs.isError ? (
+            <LoadError
+              variant="inline"
+              title={t("historyLoadFailed")}
+              hint={errorText(tErrors, runs.error, tCommon("error"))}
+            />
+          ) : null}
           {runs.data && list.length === 0 ? <p className="text-sm text-muted-foreground">{t("historyEmpty")}</p> : null}
-          <ul className="space-y-2">
-            {list.map((run) => (
-              <RunRow
-                key={run.id}
-                run={run}
-                locale={locale}
-                codeLabel={(code) => codeText(tCodes, code)}
-                onOpen={() => setReviewing(run.id)}
-              />
-            ))}
-          </ul>
+          {list.length > 0 ? (
+            <ul className="divide-y rounded-md border">
+              {list.map((run) => (
+                <RunRow
+                  key={run.id}
+                  run={run}
+                  locale={locale}
+                  codeLabel={(code) => codeText(tCodes, code)}
+                  onOpen={() => setReviewing(run.id)}
+                />
+              ))}
+            </ul>
+          ) : null}
           {canPage ? (
             <Button type="button" size="sm" variant="outline" onClick={showOlder} disabled={loadingOlder}>
-              {loadingOlder ? <Loader2 className="animate-spin" /> : null}
+              {loadingOlder ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {t("older")}
             </Button>
           ) : null}
         </section>
-      </CardContent>
+      </div>
 
       {reviewRun ? (
         <Suspense fallback={null}>
           <DiffReviewDialog run={reviewRun} fullEveryDays={source.fullEveryDays} onClose={() => setReviewing(null)} />
         </Suspense>
       ) : null}
-    </Card>
+    </SectionCard>
   );
 }
 
@@ -193,11 +198,11 @@ function RunRow({
   const openable = HAS_DIFF.has(run.status) && totals.changes + totals.notes > 0;
   const applied = run.counts?.["applied"];
   return (
-    <li className="flex flex-wrap items-start justify-between gap-2 rounded-md border px-3 py-2 text-sm">
+    <li className="flex flex-wrap items-start justify-between gap-2 px-3 py-2 text-sm">
       <div className="min-w-0 space-y-0.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{formatWhen(locale, run.startedAt)}</span>
-          <Badge variant={STATUS_VARIANT[run.status]}>{t(`status.${run.status}`)}</Badge>
+          <Badge variant={SYNC_RUN_VARIANT[run.status]}>{t(`status.${run.status}`)}</Badge>
           <span className="text-xs text-muted-foreground">
             {t(`trigger.${run.trigger}`)} · {t(`mode.${run.mode}`)}
           </span>

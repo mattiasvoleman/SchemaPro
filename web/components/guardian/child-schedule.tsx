@@ -8,9 +8,10 @@
 //
 // Loaded with lazy() by the page, inside the core tier's budget: the page
 // carries only the import, and this module, its hook
-// (lib/guardian-schedule-queries.ts) and its mappers (lib/family-schedule.ts)
-// arrive after it. A chunk that does not arrive renders nothing, so the
-// absence report never depends on it.
+// (lib/guardian-schedule-queries.ts), its mappers (lib/family-schedule.ts)
+// and Radix Tabs for the day/week toggle arrive after it — none of them is
+// in /guardian's own JS. A chunk that does not arrive renders nothing, so
+// the absence report never depends on it.
 //
 // What it never shows: another family's child (the gateway's 404, RLS's
 // arms), a draft (the calendar is the published layer), a note, a cause, an
@@ -31,7 +32,12 @@ import {
   type FamilyEntry,
 } from "@/lib/family-schedule";
 import { useFamilySchedule } from "@/lib/guardian-schedule-queries";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 export interface ChildScheduleChild {
@@ -47,7 +53,7 @@ function DayList({ day, label, empty }: { day: FamilyDay; label: string; empty: 
     <section aria-label={label} className="space-y-1.5">
       {/* No CSS capitalize: the day names come capitalised, and it would
           also capitalise the month ("Måndag 12 Oktober"). */}
-      <h3 className="text-sm font-medium">{label}</h3>
+      <h3 className="text-sm font-semibold">{label}</h3>
       {day.entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
@@ -86,22 +92,14 @@ function EntryRow({ entry, lunch }: { entry: FamilyEntry; lunch: string }) {
         <span className="flex flex-wrap items-center gap-2">
           <span
             aria-hidden
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+            className="inline-block size-2.5 shrink-0 rounded-full"
             style={{ backgroundColor: lesson.subjectColor ?? "hsl(var(--primary))" }}
           />
           <span className={cn("font-medium", state === "cancelled" && "line-through text-muted-foreground")}>
             {lesson.subject}
           </span>
-          {state === "cancelled" ? (
-            <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
-              {t("cancelled")}
-            </span>
-          ) : null}
-          {state === "substitute" ? (
-            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-              {t("substitute")}
-            </span>
-          ) : null}
+          {state === "cancelled" ? <Badge variant="destructive">{t("cancelled")}</Badge> : null}
+          {state === "substitute" ? <Badge variant="warning">{t("substitute")}</Badge> : null}
         </span>
         {details.length > 0 ? (
           <span className="block truncate text-muted-foreground">{details.join(" · ")}</span>
@@ -149,42 +147,35 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
   };
   const message =
     error instanceof ApiError && error.code === "WEEK_OUT_OF_RANGE" ? t("weekOutOfRange") : error ? t("error") : null;
-  const titleId = `child-schedule-${selected.id}`;
 
   return (
-    <section aria-labelledby={titleId} className="mb-6 rounded-lg border bg-card p-4 text-card-foreground shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 id={titleId} className="font-semibold">
-            {t("title", { name: selected.firstName })}
-          </h2>
-          <p className="text-sm text-muted-foreground">{t("body")}</p>
-        </div>
-        <div className="flex gap-1" role="group" aria-label={t("viewLabel")}>
-          <Button
-            size="sm"
-            variant={view === "today" ? "default" : "outline"}
-            aria-pressed={view === "today"}
-            onClick={() => {
+    <SectionCard
+      id="child-schedule"
+      title={t("title", { name: selected.firstName })}
+      description={t("body")}
+      action={
+        // The app's segmented toggle (groups, staffing, cover): pill Tabs
+        // with a named list. "I dag" always means the school's own week.
+        <Tabs
+          value={view}
+          onValueChange={(value) => {
+            if (value === "today") {
               setView("today");
               setWeek(null);
-            }}
-          >
-            {t("today")}
-          </Button>
-          <Button
-            size="sm"
-            variant={view === "week" ? "default" : "outline"}
-            aria-pressed={view === "week"}
-            onClick={() => setView("week")}
-          >
-            {t("week")}
-          </Button>
-        </div>
-      </div>
-
+            } else {
+              setView("week");
+            }
+          }}
+        >
+          <TabsList aria-label={t("viewLabel")}>
+            <TabsTrigger value="today">{t("today")}</TabsTrigger>
+            <TabsTrigger value="week">{t("week")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      }
+    >
       {childList.length > 1 ? (
-        <div className="mt-3 flex flex-wrap gap-1" role="group" aria-label={t("childLabel")}>
+        <div className="flex flex-wrap gap-1" role="group" aria-label={t("childLabel")}>
           {childList.map((child) => (
             <Button
               key={child.id}
@@ -200,7 +191,7 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
       ) : null}
 
       {view === "week" && shown ? (
-        <div className="mt-3 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <Button
             variant="outline"
             size="icon"
@@ -209,9 +200,9 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
             className={cn(blocked(-1) && "cursor-not-allowed opacity-50")}
             aria-label={t("previousWeek")}
           >
-            <ChevronLeft />
+            <ChevronLeft aria-hidden="true" />
           </Button>
-          <span className="min-w-24 text-center text-sm font-medium" aria-live="polite">
+          <span className="min-w-24 text-center text-sm font-medium tabular-nums" aria-live="polite">
             {t("weekLabel", { week: weekNumber(shown.week.isoWeek) })}
           </span>
           <Button
@@ -222,20 +213,21 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
             className={cn(blocked(1) && "cursor-not-allowed opacity-50")}
             aria-label={t("nextWeek")}
           >
-            <ChevronRight />
+            <ChevronRight aria-hidden="true" />
           </Button>
         </div>
       ) : null}
 
-      <div className="mt-4 space-y-4">
+      <div className="space-y-4">
         {message ? (
-          <p role="alert" className="text-sm text-destructive">
-            {message}
-          </p>
+          <Notice tone="destructive">{message}</Notice>
         ) : isLoading || !shown || (view === "today" && isPlaceholderData) ? (
           // In today view a kept-over week (another week's answer while
           // today's loads) would read as "nothing today".
-          <p className="text-sm text-muted-foreground">{t("loading")}</p>
+          <div aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+            <span className="sr-only">{t("loading")}</span>
+          </div>
         ) : view === "today" ? (
           todayDay ? (
             <DayList day={todayDay} label={dayLabel(todayDay)} empty={t("emptyToday")} />
@@ -248,6 +240,6 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
           days.map((day) => <DayList key={day.date} day={day} label={dayLabel(day)} empty={t("emptyDay")} />)
         )}
       </div>
-    </section>
+    </SectionCard>
   );
 }

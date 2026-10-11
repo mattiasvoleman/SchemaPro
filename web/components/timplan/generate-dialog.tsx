@@ -65,6 +65,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -202,34 +203,39 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>{t("body", { plan: plan.name })}</DialogDescription>
         </DialogHeader>
 
         {result ? (
-          <div role="status" className="space-y-2 rounded-md bg-muted px-4 py-3 text-sm text-foreground">
-            <p className="font-medium">
-              {t("resultCreated", { count: result.created, year: years.find((y) => y.id === result.academicYearId)?.name ?? "" })}
-            </p>
-            {existingCount(result) > 0 ? <p>{t("resultSkipped", { count: existingCount(result) })}</p> : null}
-            <p>{t("resultNext")}</p>
-            <Link
-              href={`/admin/requirements?year=${encodeURIComponent(result.academicYearId)}`}
-              className="font-medium underline underline-offset-2"
-            >
-              {t("openRequirements")}
-            </Link>
-          </div>
+          <Notice
+            tone="success"
+            title={t("resultCreated", {
+              count: result.created,
+              year: years.find((y) => y.id === result.academicYearId)?.name ?? "",
+            })}
+          >
+            <div className="space-y-2">
+              {existingCount(result) > 0 ? <p>{t("resultSkipped", { count: existingCount(result) })}</p> : null}
+              <p>{t("resultNext")}</p>
+              <Link
+                href={`/admin/requirements?year=${encodeURIComponent(result.academicYearId)}`}
+                className="font-medium underline underline-offset-2"
+              >
+                {t("openRequirements")}
+              </Link>
+            </div>
+          </Notice>
         ) : (
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>{t("yearLabel")}</Label>
+                <Label htmlFor={years.length > 0 ? "generate-year" : undefined}>{t("yearLabel")}</Label>
                 {years.length > 0 ? (
                   <Select value={yearId ?? undefined} onValueChange={setYearId} disabled={generate.isPending}>
-                    <SelectTrigger aria-label={t("yearLabel")}>
+                    <SelectTrigger id="generate-year">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -287,9 +293,9 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
             </div>
 
             {plan.status === "DRAFT" ? (
-              <p className="rounded-md border-l-4 border-l-warning bg-muted px-3 py-2 text-sm text-foreground">
+              <Notice tone="warning" role={null}>
                 {t("draft")}
-              </p>
+              </Notice>
             ) : null}
 
             <Button
@@ -301,19 +307,11 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
             </Button>
 
             {current && length !== null ? <PreviewBody preview={current} edits={edits} classCount={classCount} length={length} onEdit={editRow} onReset={resetRow} yearName={year?.name ?? ""} planName={plan.name} /> : null}
-            {current && overrides === null ? (
-              <p role="alert" className="text-sm text-destructive">
-                {t("invalidRows")}
-              </p>
-            ) : null}
+            {current && overrides === null ? <Notice tone="destructive">{t("invalidRows")}</Notice> : null}
           </div>
         )}
 
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
+        {error ? <Notice tone="destructive">{error}</Notice> : null}
 
         <DialogFooter>
           {result ? (
@@ -376,9 +374,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
 
   if (preview.gradeLevels.length === 0) {
     return (
-      <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
-        {t("noGrades", { year: yearName, plan: planName })}
-      </p>
+      <Notice>{t("noGrades", { year: yearName, plan: planName })}</Notice>
     );
   }
 
@@ -495,7 +491,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                         edited.surplus !== null && edited.surplus < 0 && "font-medium text-warning-foreground dark:text-warning",
                       )}
                     >
-                      {edited.surplus === null ? "–" : signedMinutes(edited.surplus)}
+                      {edited.surplus === null ? "—" : signedMinutes(edited.surplus)}
                       {row.capped && !edited.changed ? <span className="ml-1 text-xs">{t("capped")}</span> : null}
                     </td>
                   </tr>

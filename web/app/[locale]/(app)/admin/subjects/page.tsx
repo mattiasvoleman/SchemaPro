@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,22 +36,20 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { FormField } from "@/components/ui/form-field";
+import { LoadError } from "@/components/ui/load-error";
+import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface SubjectForm {
   name: string;
@@ -94,7 +93,7 @@ export default function SubjectsPage() {
   const locale = useLocale();
   const tCommon = useTranslations("common");
   const tCsvImport = useTranslations("csvImport");
-  const { data: subjects, isLoading } = useSubjects();
+  const { data: subjects, isLoading, isError } = useSubjects();
   const mutations = useCrudMutations<{
     name: string;
     code?: string | null;
@@ -107,7 +106,7 @@ export default function SubjectsPage() {
     // refetched with the list.
   }>("/api/v1/subjects", [["subjects"], [...STAFFING_KEYS.load]]);
 
-  const { data: roomTypes } = useRoomTypes();
+  const { data: roomTypes, isError: roomTypesFailed } = useRoomTypes();
   const roomTypeActions = useRoomTypeActions();
   const nationalTimplans = useNationalTimplans();
   const nationalSections = sectionNationalSubjects(nationalTimplans.data?.subjects ?? []);
@@ -197,7 +196,7 @@ export default function SubjectsPage() {
   };
 
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
@@ -225,16 +224,17 @@ export default function SubjectsPage() {
       />
 
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !subjects || subjects.length === 0 ? (
         <EmptyState
           icon={BookOpen}
-          title={tCommon("noResults")}
+          title={t("emptyTitle")}
           description={t("empty")}
+          headingLevel={2}
           action={
             <Button onClick={openCreate}>
               <Plus />
@@ -243,207 +243,208 @@ export default function SubjectsPage() {
           }
         />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{tCommon("name")}</TableHead>
-                <TableHead>{tCommon("code")}</TableHead>
-                <TableHead>{t("nationalCode")}</TableHead>
-                <TableHead>{tCommon("color")}</TableHead>
-                <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
+        <TableCard caption={t("tableCaption")}>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{tCommon("name")}</TableHead>
+              <TableHead>{tCommon("code")}</TableHead>
+              <TableHead>{t("nationalCode")}</TableHead>
+              <TableHead>{tCommon("color")}</TableHead>
+              <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {subjects.map((subject) => (
+              <TableRow key={subject.id}>
+                <TableCell className="font-medium">{subject.name}</TableCell>
+                <TableCell>
+                  {subject.code ? (
+                    <Badge variant="secondary">{subject.code}</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {/*
+                    The badge is the mitigation the design names for the
+                    one mapping mistake that looks like a deficit: a school
+                    that mapped Svenska and forgot SvA sees the gap here,
+                    on the row, before any coverage page says "under mål".
+                  */}
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    {subject.nationalCode ? (
+                      <Badge
+                        variant="outline"
+                        className="font-mono"
+                        title={
+                          nationalByCode.get(subject.nationalCode)?.name ?? undefined
+                        }
+                      >
+                        {subject.nationalCode}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                    {subject.countsTowardTimplan ? null : (
+                      <Badge variant="warning">{t("notTeachingTime")}</Badge>
+                    )}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span
+                    className="inline-block size-4 rounded-full border align-middle"
+                    style={{ backgroundColor: subject.color ?? "#6366f1" }}
+                  />
+                </TableCell>
+                <TableCell className="text-right">
+                  <RowActions
+                    name={subject.name}
+                    actions={[
+                      {
+                        label: tCommon("edit"),
+                        icon: Pencil,
+                        ariaLabel: tCommon("editNamed", { name: subject.name }),
+                        onSelect: () => openEdit(subject),
+                      },
+                      {
+                        label: tCommon("delete"),
+                        icon: Trash2,
+                        ariaLabel: tCommon("deleteNamed", { name: subject.name }),
+                        onSelect: () => setDeleting(subject),
+                      },
+                    ]}
+                  />
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {subjects.map((subject) => (
-                <TableRow key={subject.id}>
-                  <TableCell className="font-medium">{subject.name}</TableCell>
-                  <TableCell>
-                    {subject.code ? <Badge variant="secondary">{subject.code}</Badge> : "—"}
-                  </TableCell>
-                  <TableCell>
-                    {/*
-                      The badge is the mitigation the design names for the
-                      one mapping mistake that looks like a deficit: a school
-                      that mapped Svenska and forgot SvA sees the gap here,
-                      on the row, before any coverage page says "under mål".
-                    */}
-                    <span className="inline-flex flex-wrap items-center gap-1">
-                      {subject.nationalCode ? (
-                        <Badge
-                          variant="outline"
-                          className="px-1.5 py-0 font-mono text-[11px]"
-                          title={
-                            nationalByCode.get(subject.nationalCode)?.name ?? undefined
-                          }
-                        >
-                          {subject.nationalCode}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                      {subject.countsTowardTimplan ? null : (
-                        <Badge variant="warning" className="px-1.5 py-0 text-[11px]">
-                          {t("notTeachingTime")}
-                        </Badge>
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className="inline-block h-4 w-4 rounded-full border align-middle"
-                      style={{ backgroundColor: subject.color ?? "#6366f1" }}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEdit(subject)}
-                      aria-label={tCommon("editNamed", { name: subject.name })}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeleting(subject)}
-                      aria-label={tCommon("deleteNamed", { name: subject.name })}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+            ))}
+          </TableBody>
+        </TableCard>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("editSubject") : t("addSubject")}</DialogTitle>
+            <DialogDescription>{t("dialogHint")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="subject-name">{tCommon("name")}</Label>
+            <FormField id="subject-name" label={tCommon("name")}>
               <Input
-                id="subject-name"
                 value={form.name}
                 placeholder={t("namePlaceholder")}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="subject-code">
-                  {tCommon("code")}{" "}
-                  <span className="text-muted-foreground">({tCommon("optional")})</span>
-                </Label>
+            </FormField>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="subject-code" label={tCommon("code")} optional>
                 <Input
-                  id="subject-code"
                   value={form.code}
                   placeholder={t("codePlaceholder")}
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="subject-color">{tCommon("color")}</Label>
+              </FormField>
+              <FormField id="subject-color" label={tCommon("color")}>
                 <Input
-                  id="subject-color"
                   type="color"
                   className="h-9 w-full p-1"
                   value={form.color}
                   onChange={(e) => setForm({ ...form, color: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
+            <FormField
+              id="subject-room-type"
+              label={t("requiredRoomType")}
+              optional
+              // A failed list leaves the picker empty; the stored type is still
+              // what Spara sends, and the hint says so instead of the rule.
+              hint={roomTypesFailed ? t("roomTypesUnavailable") : t("requiredRoomTypeHint")}
+            >
+              {(control) => (
+                <Select
+                  value={form.requiredRoomTypeId}
+                  onValueChange={(value) => {
+                    // The picker doubles as the place to coin a missing type,
+                    // which is where an administrator actually notices one is
+                    // missing: while saying "Slöjd needs a slöjdsal".
+                    if (value === ADD_NEW) {
+                      setCreatingType(true);
+                      return;
+                    }
+                    setForm({ ...form, requiredRoomTypeId: value });
+                  }}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ANY_ROOM}>{t("anyRoomType")}</SelectItem>
+                    {(roomTypes ?? []).map((roomType: RoomType) => (
+                      <SelectItem key={roomType.id} value={roomType.id}>
+                        {roomType.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value={ADD_NEW}>{t("addRoomType")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
             <div className="space-y-2">
-              <Label htmlFor="subject-room-type">
-                {t("requiredRoomType")}{" "}
-                <span className="text-muted-foreground">({tCommon("optional")})</span>
-              </Label>
-              <Select
-                value={form.requiredRoomTypeId}
-                onValueChange={(value) => {
-                  // The picker doubles as the place to coin a missing type,
-                  // which is where an administrator actually notices one is
-                  // missing: while saying "Slöjd needs a slöjdsal".
-                  if (value === ADD_NEW) {
-                    setCreatingType(true);
-                    return;
-                  }
-                  setForm({ ...form, requiredRoomTypeId: value });
-                }}
+              <FormField
+                id="subject-national-code"
+                label={t("nationalCode")}
+                hint={nationalTimplans.isError ? t("nationalCodeUnavailable") : t("nationalCodeHint")}
               >
-                <SelectTrigger id="subject-room-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ANY_ROOM}>{t("anyRoomType")}</SelectItem>
-                  {(roomTypes ?? []).map((roomType: RoomType) => (
-                    <SelectItem key={roomType.id} value={roomType.id}>
-                      {roomType.name}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value={ADD_NEW}>{t("addRoomType")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{t("requiredRoomTypeHint")}</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="subject-national-code">{t("nationalCode")}</Label>
-              <Select
-                value={form.nationalCode}
-                onValueChange={(value) => setForm({ ...form, nationalCode: value })}
-              >
-                <SelectTrigger id="subject-national-code">
-                  {/*
-                    The shown value is computed here rather than left to the
-                    selected item's text: while the statute document is still
-                    loading (or failed to), no item matches a stored code, and
-                    Radix would then show an EMPTY trigger — which for a mapped
-                    subject reads as "Utanför timplanen". The bare code is the
-                    honest fallback until the names arrive.
-                  */}
-                  <SelectValue>
-                    {form.nationalCode === OUTSIDE_TIMPLAN
-                      ? t("nationalCodeNone")
-                      : (() => {
-                          const known = nationalByCode.get(form.nationalCode);
-                          return known ? nationalLabel(known) : form.nationalCode;
-                        })()}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={OUTSIDE_TIMPLAN}>{t("nationalCodeNone")}</SelectItem>
-                  {nationalSections.map((section) =>
-                    section.group === null ? (
-                      section.options.map((option) => (
-                        <SelectItem key={option.code} value={option.code}>
-                          {nationalLabel(option)}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      // One section per ämnesgrupp, the group itself first:
-                      // lågstadiet teaches NO as one subject and maps to the
-                      // group, högstadiet teaches Kemi and maps to the child.
-                      <SelectGroup key={section.group.code}>
-                        <SelectLabel>{section.group.name}</SelectLabel>
-                        {section.options.map((option) => (
-                          <SelectItem key={option.code} value={option.code}>
-                            {nationalLabel(option)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {nationalTimplans.isError ? t("nationalCodeUnavailable") : t("nationalCodeHint")}
-              </p>
+                {(control) => (
+                  <Select
+                    value={form.nationalCode}
+                    onValueChange={(value) => setForm({ ...form, nationalCode: value })}
+                  >
+                    <SelectTrigger {...control}>
+                      {/*
+                        The shown value is computed here rather than left to the
+                        selected item's text: while the statute document is still
+                        loading (or failed to), no item matches a stored code, and
+                        Radix would then show an EMPTY trigger — which for a mapped
+                        subject reads as "Utanför timplanen". The bare code is the
+                        honest fallback until the names arrive.
+                      */}
+                      <SelectValue>
+                        {form.nationalCode === OUTSIDE_TIMPLAN
+                          ? t("nationalCodeNone")
+                          : (() => {
+                              const known = nationalByCode.get(form.nationalCode);
+                              return known ? nationalLabel(known) : form.nationalCode;
+                            })()}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={OUTSIDE_TIMPLAN}>{t("nationalCodeNone")}</SelectItem>
+                      {nationalSections.map((section) =>
+                        section.group === null ? (
+                          section.options.map((option) => (
+                            <SelectItem key={option.code} value={option.code}>
+                              {nationalLabel(option)}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          // One section per ämnesgrupp, the group itself first:
+                          // lågstadiet teaches NO as one subject and maps to the
+                          // group, högstadiet teaches Kemi and maps to the child.
+                          <SelectGroup key={section.group.code}>
+                            <SelectLabel>{section.group.name}</SelectLabel>
+                            {section.options.map((option) => (
+                              <SelectItem key={option.code} value={option.code}>
+                                {nationalLabel(option)}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
               {/*
                 Schools often already use the statute's codes as their own (MA,
                 EN, IDH, SV) and leave the mapping empty. Offered, never applied:
@@ -470,25 +471,21 @@ export default function SubjectsPage() {
                 onCheckedChange={(checked) => setForm({ ...form, countsTowardTimplan: checked })}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="subject-load-factor">{t("loadFactor")}</Label>
+            <FormField
+              id="subject-load-factor"
+              label={t("loadFactor")}
+              // The rule replaces the hint while the value breaks it: both say the
+              // range, and one sentence under the field is enough.
+              hint={loadFactor === null ? undefined : t("loadFactorHint")}
+              error={loadFactor === null ? t("loadFactorInvalid") : undefined}
+            >
               <Input
-                id="subject-load-factor"
                 inputMode="decimal"
                 className="max-w-28"
                 value={form.loadFactor}
-                aria-invalid={loadFactor === null}
-                aria-describedby="subject-load-factor-hint"
                 onChange={(e) => setForm({ ...form, loadFactor: e.target.value })}
               />
-              <p id="subject-load-factor-hint" className="text-xs text-muted-foreground">
-                {loadFactor === null ? (
-                  <span className="text-destructive">{t("loadFactorInvalid")}</span>
-                ) : (
-                  t("loadFactorHint")
-                )}
-              </p>
-            </div>
+            </FormField>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -514,16 +511,15 @@ export default function SubjectsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("addRoomType")}</DialogTitle>
+            <DialogDescription>{t("roomTypeDialogHint")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="new-room-type">{t("roomTypeName")}</Label>
+          <FormField id="new-room-type" label={t("roomTypeName")}>
             <Input
-              id="new-room-type"
               value={newTypeName}
               onChange={(event) => setNewTypeName(event.target.value)}
               placeholder={t("roomTypePlaceholder")}
             />
-          </div>
+          </FormField>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreatingType(false)}>
               {tCommon("cancel")}
@@ -568,6 +564,6 @@ export default function SubjectsPage() {
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
 }

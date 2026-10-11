@@ -41,30 +41,35 @@
 //
 //   foreground on background       18.69 / 16.36   AAA — intro, hints, labels
 //   foreground on card             18.69 / 15.43   AAA — every table cell
-//   foreground on muted            17.00 / 13.19   AAA — the dialog's warning
+//   foreground on muted            17.00 / 13.19   AAA — the removal notice,
+//                                                   the dialog's warning
 //   secondary-fg on secondary      16.12 / 13.19   AAA — the "Lov" badge
 //   foreground on card (outline)   18.69 / 15.43   AAA — the "Studiedag" badge
-//   destructive on card             4.80 /  4.59   over 4.5 — the notice icon
 //   muted-fg on the muted circle    4.40 /  5.28   see below — empty state
 //   border on card                  1.27 /  1.23   carries nothing, see below
 //
 // So AAA for every piece of text this page writes. `muted-foreground` is kept
 // off it as text entirely, the way admin/gaps does: PageHeader's subtitle slot
-// and EmptyState's description slot are left empty and the same sentences are
-// written as our own paragraphs, and TableHead's muted default is overridden
-// back to `foreground`. The token measures 4.83 / 6.17 on card — AA, and short
-// of 7:1 — and it is the product's secondary text colour on every page there
-// is, so moving it is a palette change rather than this file's business.
+// is left empty and the standfirst goes in its `intro` slot, which is
+// `foreground`; EmptyState and LoadError are handed `text-foreground` for the
+// sentence under their title; and TableHead's muted default is overridden back
+// to `foreground`. The token measures 4.83 / 6.17 on card — AA, and short of
+// 7:1 — and it is the product's secondary text colour on every page there is,
+// so moving it is a palette change rather than this file's business.
 //
-// `text-destructive` appears exactly once, on the removal notice's
-// TriangleAlert, and it is on `bg-card` rather than `bg-muted` for a measured
-// reason: the same token is 4.36 / 3.92 on muted, which fails. That is what
-// decided the notice's background. A destructive TINT for the notice
-// (`bg-destructive/10` with a `border-destructive/30`) was tried and dropped —
-// the border measures 1.60 / 1.43, a graphical object below 3:1 doing no work,
-// and the alarm belongs to the sentence rather than to a colour. The row's bin
-// icon is NOT red either; see the comment on it for the three states that
-// decided that.
+// `text-destructive` appears nowhere. The removal notice used to carry a red
+// TriangleAlert on `bg-card`, at 4.80 / 4.59 — chosen over `bg-muted`, where
+// the same token is 4.36 / 3.92 and fails. It is the shared Notice now, in its
+// neutral tone: `foreground` on `bg-muted` at 17.00 / 13.19, and no icon,
+// because the tones that draw one paint it on a tint below the 4.5 this page
+// holds its icons to (the destructive OctagonX is 4.45 / 4.41 on
+// `bg-destructive/5`). A destructive TINT for the notice (`bg-destructive/10`
+// with a `border-destructive/30`) was tried and dropped before, for the reason
+// that still holds — the border measures 1.60 / 1.43, a graphical object below
+// 3:1 doing no work, and the alarm belongs to the sentence rather than to a
+// colour. The credits' load failure is a neutral Notice with role=alert for
+// the same reason. The row's bin icon is NOT red either; see the comment on it
+// for the three states that decided that.
 //
 // The empty-state icon is the shared component's `muted-foreground` on its
 // muted circle. 4.40 in light is under 4.5 and above SC 1.4.11's 3:1; it is
@@ -91,9 +96,8 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarOff, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { CalendarOff, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
-  useAcademicYears,
   useGroups,
   useSchoolBreakActions,
   useSchoolBreaks,
@@ -107,20 +111,27 @@ import {
 } from "@/lib/timplan-credit-queries";
 import type { BreakKind, SchoolBreak } from "@/lib/types";
 import { Link } from "@/i18n/navigation";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
+import { YearSelect, useYearScope } from "@/components/schedule/year-select";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -133,7 +144,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -205,17 +215,16 @@ export default function BreaksPage() {
   const tCommon = useTranslations("common");
   const tGrades = useTranslations("grades");
 
-  const {
-    data: years,
-    isLoading: yearsLoading,
-    isError: yearsFailed,
-  } = useAcademicYears();
-  const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
   // The same fallback the timplan uses: the picker wins, then the active year,
   // then whatever the school has. A page that showed a different year from the
   // one whose hours it feeds would be worse than useless.
-  const activeYearId =
-    selectedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
+  const {
+    year,
+    yearId: activeYearId,
+    setYearId,
+    isLoading: yearsLoading,
+    isError: yearsFailed,
+  } = useYearScope();
 
   const {
     data: breaks,
@@ -231,7 +240,11 @@ export default function BreaksPage() {
   const [form, setForm] = useState<BreakForm>(EMPTY_FORM);
   const [notice, setNotice] = useState<RemovalNotice | null>(null);
 
-  const { data: credits, isError: creditsFailed } = useTimplanCredits(activeYearId);
+  const {
+    data: credits,
+    isLoading: creditsLoading,
+    isError: creditsFailed,
+  } = useTimplanCredits(activeYearId);
   const creditActions = useTimplanCreditActions();
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
@@ -258,18 +271,13 @@ export default function BreaksPage() {
     [groups, activeYearId],
   );
 
-  const year = useMemo(
-    () => years?.find((entry) => entry.id === activeYearId) ?? null,
-    [years, activeYearId],
-  );
-
   /**
    * The notice describes a write against the year it was made in. Left up while
    * the picker moves, "Sportlov sparat. 42 lektioner togs bort" would sit above
    * a list of a different läsår's lov and read as a claim about that one.
    */
   const pickYear = (value: string) => {
-    setSelectedYearId(value);
+    setYearId(value);
     setNotice(null);
   };
 
@@ -284,7 +292,15 @@ export default function BreaksPage() {
    * straight through a loading check into the empty state.
    */
   const loading = yearsLoading || breaksLoading;
-  const failed = yearsFailed || breaksFailed;
+  /*
+   * Failed with nothing in hand stops the list. A refetch that fails over a
+   * list already read keeps it, as last read, under a sentence saying so:
+   * every save invalidates these queries, and a background read that fails
+   * must not take the rows away from an admin working on them. The year is
+   * in hand exactly when one was derived from the years.
+   */
+  const failed = (yearsFailed && !activeYearId) || (breaksFailed && breaks === undefined);
+  const refetchFailed = (yearsFailed && !!activeYearId) || (breaksFailed && breaks !== undefined);
 
   /** "Åk 4–6", "Åk 5", or the whole school. */
   const gradeLabel = (schoolBreak: SchoolBreak): string => {
@@ -312,7 +328,7 @@ export default function BreaksPage() {
   const creditSubjectLabel = (credit: TimplanCredit): string => {
     if (credit.subjectId === null) return t("credits.subjectNoneShort");
     const subject = subjectById.get(credit.subjectId);
-    if (!subject) return "–";
+    if (!subject) return "—";
     return subject.countsTowardTimplan === false ? `${subject.name} (${t("credits.notCounted")})` : subject.name;
   };
   /** The sentence under a lov: "Räknas som 300 min Idrott och hälsa, åk 7–9", or why it does not count. */
@@ -325,7 +341,7 @@ export default function BreaksPage() {
     if (subject?.countsTowardTimplan === false) {
       return t("credits.countsAsNotCounted", { minutes: credit.minutes, subject: subject.name, scope });
     }
-    return t("credits.countsAs", { minutes: credit.minutes, subject: subject?.name ?? "–", scope });
+    return t("credits.countsAs", { minutes: credit.minutes, subject: subject?.name ?? "—", scope });
   };
 
   const confirmDeleteCredit = async () => {
@@ -435,59 +451,46 @@ export default function BreaksPage() {
   const saving = mutations.create.isPending || mutations.update.isPending;
 
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
+        /*
+          No subtitle: that slot is muted-foreground (4.83 / 6.17 — AA, not
+          AAA), and PageHeader draws it so on every page. The standfirst goes
+          in the intro slot instead, as ONE prose paragraph: foreground, the
+          measure held to max-w-prose, and leading-relaxed for the 1.5 line
+          spacing AAA asks for, where the app's default text-sm leading is 1.43.
+        */
+        intro={
+          <p className="leading-relaxed">
+            {t("intro")}{" "}
+            {/*
+              A lov removes the lessons; a prao week or a friluftsdag is usually
+              better as an avbokning, which keeps them as cancelled with the
+              day's name and can be taken back (/admin/cancellations). Said
+              here, where a school reaches for a lov out of habit.
+            */}
+            {t("cancellationsHint")}{" "}
+            <Link href="/admin/cancellations" className="font-medium underline underline-offset-4">
+              {t("cancellationsLink")}
+            </Link>
+          </p>
+        }
         actions={
           <>
-            {years && years.length > 0 ? (
-              <Select value={activeYearId ?? undefined} onValueChange={pickYear}>
-                {/*
-                  Its value is the year, so an unnamed trigger announces as
-                  "2026/2027, combobox" beside an "Lägg till"-button — the same
-                  problem the timplan's picker had, and the same fix.
-                */}
-                <SelectTrigger className="w-44" aria-label={t("yearLabel")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map((entry) => (
-                    <SelectItem key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
+            {/*
+              Named, because its value is the year: an unnamed trigger announces
+              as "2026/2027, combobox" beside an "Lägg till"-button — the same
+              problem the timplan's picker had, and the same fix.
+            */}
+            <YearSelect value={activeYearId} onValueChange={pickYear} label={t("yearLabel")} />
             <Button onClick={openCreate} disabled={!activeYearId}>
-              <Plus />
+              <Plus aria-hidden="true" />
               {t("addBreak")}
             </Button>
           </>
         }
       />
-
-      {/*
-        PageHeader's subtitle slot is muted-foreground (4.83 / 6.17 — AA, not
-        AAA), so the standfirst is a paragraph of ours. max-w-prose caps the
-        measure at about 65 characters and leading-relaxed gives the 1.5 line
-        spacing AAA asks for; the app's default text-sm leading is 1.43.
-      */}
-      <p className="-mt-4 mb-4 max-w-prose text-sm leading-relaxed text-foreground">
-        {t("intro")}
-      </p>
-      {/*
-        A lov removes the lessons; a prao week or a friluftsdag is usually
-        better as an avbokning, which keeps them as cancelled with the day's
-        name and can be taken back (/admin/cancellations). Said here, where a
-        school reaches for a lov out of habit.
-      */}
-      <p className="-mt-2 mb-4 max-w-prose text-sm leading-relaxed text-foreground">
-        {t("cancellationsHint")}{" "}
-        <Link href="/admin/cancellations" className="font-medium underline underline-offset-4">
-          {t("cancellationsLink")}
-        </Link>
-      </p>
 
       {/*
         Mounted from the first render, empty.
@@ -496,145 +499,171 @@ export default function BreaksPage() {
         by most screen readers — the region has to be there for the change to be
         a change. aria-atomic because the sentence only means anything whole:
         "42" on its own is not an answer to anything.
+
+        While it is empty it is sr-only rather than hidden: out of the flow, so
+        the page's space-y-4 does not draw a second gap around nothing, and
+        still in the accessibility tree, which display:none would take it out
+        of — and back in WITH its text, the very thing this region exists to
+        avoid. The Notice inside has no role of its own; this region speaks.
       */}
-      <div role="status" aria-live="polite" aria-atomic="true" className="mb-4">
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={notice ? undefined : "sr-only"}
+      >
         {notice ? (
-          <div className="flex max-w-prose items-start gap-2.5 rounded-lg border bg-card px-4 py-3 text-sm leading-relaxed text-foreground">
-            {notice.removed > 0 ? (
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            ) : null}
-            <span>
-              {notice.removed > 0
-                ? t("removedLessons", { name: notice.name, count: notice.removed })
-                : t("removedNone", { name: notice.name })}
-            </span>
-          </div>
+          <Notice role={null} className="max-w-prose leading-relaxed">
+            {notice.removed > 0
+              ? t("removedLessons", { name: notice.name, count: notice.removed })
+              : t("removedNone", { name: notice.name })}
+          </Notice>
         ) : null}
       </div>
 
+      {refetchFailed ? (
+        // Neutral with role=alert, for the contrast reasons at the top of this file.
+        <Notice role="alert" title={t("loadFailed")} className="max-w-prose leading-relaxed">
+          {tCommon("refetchFailedHint")}
+        </Notice>
+      ) : null}
+
       {loading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
       ) : failed ? (
-        <>
-          <EmptyState icon={TriangleAlert} title={t("loadFailed")} />
-          <p className="mx-auto mt-3 max-w-prose text-center text-sm leading-relaxed text-foreground">
-            {t("loadFailedHint")}
-          </p>
-        </>
+        <LoadError
+          title={t("loadFailed")}
+          hint={t("loadFailedHint")}
+          hintClassName="leading-relaxed text-foreground"
+          headingLevel={2}
+        />
       ) : !activeYearId ? (
         /*
           A claim about how the school is set up, and only true once the läsår
           list has actually answered and held nothing — both other ways of not
           knowing are taken above.
         */
-        <EmptyState icon={CalendarOff} title={t("noYear")} />
+        <EmptyState
+          icon={CalendarOff}
+          title={t("noYear")}
+          headingLevel={2}
+          action={
+            <Button variant="outline" asChild>
+              <Link href="/admin/years">{t("toYears")}</Link>
+            </Button>
+          }
+        />
       ) : !breaks || breaks.length === 0 ? (
-        <>
-          {/*
-            Title only; EmptyState's description slot is muted-foreground. The
-            hint is the honest half — an empty list is not neutral, it means the
-            timplan is counting every calendar week as taught.
-          */}
-          <EmptyState icon={CalendarOff} title={tCommon("noResults")} />
-          <p className="mx-auto mt-3 max-w-prose text-center text-sm leading-relaxed text-foreground">
-            {t("empty")}
-          </p>
-        </>
+        /*
+          The sentence is the honest half — an empty list is not neutral, it
+          means the timplan is counting every calendar week as taught — so it
+          is held to foreground like the rest of the page.
+        */
+        <EmptyState
+          icon={CalendarOff}
+          title={t("emptyTitle")}
+          description={t("empty")}
+          descriptionClassName="leading-relaxed text-foreground"
+          headingLevel={2}
+        />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
+        /*
+          The caption names the table for a reader whose table navigation lands
+          inside the grid, past the paragraph above that says what these rows
+          do to the calendar.
+        */
+        <TableCard caption={t("tableCaption")}>
+          <TableHeader>
             {/*
-              Table navigation lands inside the grid, past the paragraph above
-              that says what these rows do to the calendar.
+              text-foreground on all of them: TableHead's own base class is
+              text-muted-foreground, AA and short of the 7:1 this page holds
+              to. Overridden here rather than in table.tsx, which every page
+              in the product paints with.
             */}
-            <caption className="sr-only">{t("tableCaption")}</caption>
-            <TableHeader>
-              {/*
-                text-foreground on all of them: TableHead's own base class is
-                text-muted-foreground, AA and short of the 7:1 this page holds
-                to. Overridden here rather than in table.tsx, which every page
-                in the product paints with.
-              */}
-              <TableRow>
-                <TableHead scope="col" className="text-foreground">
-                  {tCommon("name")}
-                </TableHead>
-                <TableHead scope="col" className="text-foreground">
-                  {tCommon("type")}
-                </TableHead>
-                <TableHead scope="col" className="text-foreground">
-                  {tCommon("date")}
-                </TableHead>
-                <TableHead scope="col" className="text-foreground">
-                  {t("gradeSpan")}
-                </TableHead>
-                <TableHead scope="col" className="w-32 text-right text-foreground">
-                  {tCommon("actions")}
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {/*
-                In the order the query returned them, earliest first. Not
-                re-sorted here: useSchoolBreaks orders by startDate and so does
-                the API's own list, and a third opinion about the order is a
-                third place for it to drift.
-              */}
-              {breaks.map((schoolBreak) => (
-                <TableRow key={schoolBreak.id}>
-                  <TableCell className="font-medium text-foreground">
-                    {schoolBreak.name}
-                    {creditsInside(sortedCredits, schoolBreak).map((credit) => (
-                      <span key={credit.id} className="block text-xs font-normal leading-relaxed">
-                        {creditUnderBreak(credit)}
-                      </span>
-                    ))}
-                  </TableCell>
-                  <TableCell>
-                    {/*
-                      The word is the label — "Lov" and "Studiedag" — so the
-                      badge's colour is not carrying the distinction on its own.
-                      secondary measures 16.12 / 13.19 and outline inherits
-                      `foreground` on the card at 18.69 / 15.43.
-                    */}
-                    <Badge
-                      variant={schoolBreak.kind === "HOLIDAY" ? "secondary" : "outline"}
-                    >
-                      {t(schoolBreak.kind === "HOLIDAY" ? "kindHoliday" : "kindStaffDay")}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="tabular-nums text-foreground">
-                    {rangeLabel(schoolBreak)}
-                  </TableCell>
-                  <TableCell className="text-foreground">
-                    {gradeLabel(schoolBreak)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {/*
-                      Both controls are icon-only, so both carry the row's name
-                      as well as the verb — "Redigera" repeated down a column of
-                      six lov names nothing.
+            <TableRow>
+              <TableHead scope="col" className="text-foreground">
+                {tCommon("name")}
+              </TableHead>
+              <TableHead scope="col" className="text-foreground">
+                {tCommon("type")}
+              </TableHead>
+              <TableHead scope="col" className="text-foreground">
+                {tCommon("date")}
+              </TableHead>
+              <TableHead scope="col" className="text-foreground">
+                {t("gradeSpan")}
+              </TableHead>
+              <TableHead scope="col" className="w-32 text-right text-foreground">
+                {tCommon("actions")}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {/*
+              In the order the query returned them, earliest first. Not
+              re-sorted here: useSchoolBreaks orders by startDate and so does
+              the API's own list, and a third opinion about the order is a
+              third place for it to drift.
+            */}
+            {breaks.map((schoolBreak) => (
+              <TableRow key={schoolBreak.id}>
+                <TableCell className="font-medium text-foreground">
+                  {schoolBreak.name}
+                  {creditsInside(sortedCredits, schoolBreak).map((credit) => (
+                    <span key={credit.id} className="block text-xs font-normal leading-relaxed">
+                      {creditUnderBreak(credit)}
+                    </span>
+                  ))}
+                </TableCell>
+                <TableCell>
+                  {/*
+                    The word is the label — "Lov" and "Studiedag" — so the
+                    badge's colour is not carrying the distinction on its own.
+                    secondary measures 16.12 / 13.19 and outline inherits
+                    `foreground` on the card at 18.69 / 15.43.
+                  */}
+                  <Badge
+                    variant={schoolBreak.kind === "HOLIDAY" ? "secondary" : "outline"}
+                  >
+                    {t(schoolBreak.kind === "HOLIDAY" ? "kindHoliday" : "kindStaffDay")}
+                  </Badge>
+                </TableCell>
+                <TableCell className="whitespace-nowrap tabular-nums text-foreground">
+                  {rangeLabel(schoolBreak)}
+                </TableCell>
+                <TableCell className="text-foreground">
+                  {gradeLabel(schoolBreak)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {/*
+                    All three controls are icon-only, so each carries the row's
+                    name as well as the verb — "Redigera" repeated down a column
+                    of six lov names nothing. Hand-written rather than the
+                    shared RowActions, whose tooltip repeats the named label:
+                    the "+" is the one icon here whose meaning a pointer user
+                    cannot guess, and it needs its own short tooltip.
 
-                      NEITHER ICON IS PAINTED `text-destructive`, and dropping
-                      it from the bin was a measurement rather than a taste.
-                      At rest on the card the token is 4.80 / 4.59, which
-                      clears the 4.5:1 a graphic is held to here — but a glyph
-                      inherits currentColor through every state its ancestors
-                      have, and this one has two: the row's own
-                      `hover:bg-muted/50` takes it to 4.60 / 4.25 and the ghost
-                      button's `hover:bg-accent` to 4.15 / 3.84. Both fail in
-                      dark, on the control that deletes. Inherited, the bin is
-                      `foreground` — 18.69 / 15.43 at rest, 17.90 / 14.30 on
-                      the row, and `accent-foreground` at 9.79 / 7.33 once the
-                      button lights up. The bin glyph and the aria-label carry
-                      the meaning; the red was carrying emphasis only, and it
-                      was carrying it at a contrast a reader with low vision
-                      could not see. admin/constraints still paints its bin red
-                      — same tokens, same three states, worth fixing there too.
-                    */}
+                    NEITHER ICON IS PAINTED `text-destructive`, and dropping
+                    it from the bin was a measurement rather than a taste.
+                    At rest on the card the token is 4.80 / 4.59, which
+                    clears the 4.5:1 a graphic is held to here — but a glyph
+                    inherits currentColor through every state its ancestors
+                    have, and this one has two: the row's own
+                    `hover:bg-muted/50` takes it to 4.60 / 4.25 and the ghost
+                    button's `hover:bg-accent` to 4.15 / 3.84. Both fail in
+                    dark, on the control that deletes. Inherited, the bin is
+                    `foreground` — 18.69 / 15.43 at rest, 17.90 / 14.30 on
+                    the row, and `accent-foreground` at 9.79 / 7.33 once the
+                    button lights up. The bin glyph and the aria-label carry
+                    the meaning; the red was carrying emphasis only, and it
+                    was carrying it at a contrast a reader with low vision
+                    could not see. admin/constraints painted its bin red for
+                    the same three states until it moved to RowActions, which
+                    never does.
+                  */}
+                  <div className="flex items-center justify-end gap-1">
                     <Button
                       variant="ghost"
                       size="icon"
@@ -644,7 +673,7 @@ export default function BreaksPage() {
                       aria-label={t("credits.addForDayNamed", { name: schoolBreak.name })}
                       title={t("credits.addForDay")}
                     >
-                      <Plus />
+                      <Plus aria-hidden="true" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -652,7 +681,7 @@ export default function BreaksPage() {
                       onClick={() => openEdit(schoolBreak)}
                       aria-label={t("editNamed", { name: schoolBreak.name })}
                     >
-                      <Pencil />
+                      <Pencil aria-hidden="true" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -660,66 +689,79 @@ export default function BreaksPage() {
                       onClick={() => setDeleting(schoolBreak)}
                       aria-label={t("deleteNamed", { name: schoolBreak.name })}
                     >
-                      <Trash2 />
+                      <Trash2 aria-hidden="true" />
                     </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </TableCard>
       )}
 
       {activeYearId && !loading && !failed ? (
-        <section aria-labelledby="credits-title" className="mt-8 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="credits-title" className="text-lg font-semibold text-foreground">
-              {t("credits.title")}
-            </h2>
-            <Button variant="outline" onClick={() => openCredit(null)}>
-              <Plus />
+        <SectionCard
+          id="credits"
+          title={t("credits.title")}
+          description={t("credits.intro")}
+          descriptionClassName="max-w-prose leading-relaxed text-foreground"
+          action={
+            <Button variant="outline" size="sm" onClick={() => openCredit(null)}>
+              <Plus aria-hidden="true" />
               {t("credits.add")}
             </Button>
-          </div>
-          <p className="max-w-prose text-sm leading-relaxed text-foreground">{t("credits.intro")}</p>
-          {creditsFailed ? (
-            <p className="text-sm text-foreground">{t("credits.loadFailed")}</p>
+          }
+        >
+          {creditsFailed && credits !== undefined ? (
+            // A failed refetch keeps the decisions as last read, with this above them.
+            <Notice role="alert" title={t("credits.refetchFailed")}>
+              {tCommon("refetchFailedHint")}
+            </Notice>
+          ) : null}
+          {creditsLoading ? (
+            // Not the empty sentence: "no decisions" is a claim about the year.
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : creditsFailed && credits === undefined ? (
+            // Neutral rather than the destructive tone, for the contrast
+            // reasons at the top of this file; role=alert says it is a failure.
+            <Notice role="alert">{t("credits.loadFailed")}</Notice>
           ) : sortedCredits.length === 0 ? (
             <p className="text-sm text-foreground">{t("credits.empty")}</p>
           ) : (
-            <div className="rounded-lg border bg-card">
-              <Table>
-                <caption className="sr-only">{t("credits.title")}</caption>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead scope="col" className="text-foreground">{tCommon("date")}</TableHead>
-                    <TableHead scope="col" className="text-foreground">{tCommon("name")}</TableHead>
-                    <TableHead scope="col" className="text-right text-foreground">{t("credits.minutes")}</TableHead>
-                    <TableHead scope="col" className="text-foreground">{t("credits.subject")}</TableHead>
-                    <TableHead scope="col" className="text-foreground">{t("credits.scope")}</TableHead>
-                    <TableHead scope="col" className="text-foreground">{t("credits.note")}</TableHead>
-                    <TableHead scope="col" className="w-24 text-right text-foreground">
-                      {tCommon("actions")}
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedCredits.map((credit) => (
-                    <TableRow key={credit.id}>
-                      <TableCell className="tabular-nums text-foreground">{credit.date}</TableCell>
-                      <TableCell className="font-medium text-foreground">{credit.name}</TableCell>
-                      <TableCell className="text-right tabular-nums text-foreground">{credit.minutes}</TableCell>
-                      <TableCell className="text-foreground">{creditSubjectLabel(credit)}</TableCell>
-                      <TableCell className="text-foreground">{creditScopeLabel(credit)}</TableCell>
-                      <TableCell className="max-w-64 text-foreground">{credit.note ?? ""}</TableCell>
-                      <TableCell className="text-right">
+            <TableCard caption={t("credits.title")}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col" className="text-foreground">{tCommon("date")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{tCommon("name")}</TableHead>
+                  <TableHead scope="col" className="text-right text-foreground">{t("credits.minutes")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{t("credits.subject")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{t("credits.scope")}</TableHead>
+                  <TableHead scope="col" className="text-foreground">{t("credits.note")}</TableHead>
+                  <TableHead scope="col" className="w-24 text-right text-foreground">
+                    {tCommon("actions")}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedCredits.map((credit) => (
+                  <TableRow key={credit.id}>
+                    <TableCell className="whitespace-nowrap tabular-nums text-foreground">{credit.date}</TableCell>
+                    <TableCell className="font-medium text-foreground">{credit.name}</TableCell>
+                    <TableCell className="text-right tabular-nums text-foreground">{credit.minutes}</TableCell>
+                    <TableCell className="text-foreground">{creditSubjectLabel(credit)}</TableCell>
+                    <TableCell className="text-foreground">{creditScopeLabel(credit)}</TableCell>
+                    <TableCell className="max-w-64 text-foreground">{credit.note ?? ""}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => openCredit(credit)}
                           aria-label={t("editNamed", { name: credit.name })}
                         >
-                          <Pencil />
+                          <Pencil aria-hidden="true" />
                         </Button>
                         <Button
                           variant="ghost"
@@ -727,23 +769,25 @@ export default function BreaksPage() {
                           onClick={() => setDeletingCredit(credit)}
                           aria-label={t("deleteNamed", { name: credit.name })}
                         >
-                          <Trash2 />
+                          <Trash2 aria-hidden="true" />
                         </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </TableCard>
           )}
-        </section>
+        </SectionCard>
       ) : null}
 
       {creditDialogUsed && year ? (
         <DialogLoadBoundary
           key={creditDialogLoad}
-          onError={(error) => {
-            toast.error(error instanceof Error ? error.message : tCommon("error"));
+          onError={() => {
+            // A chunk that failed to load says so in English and in code;
+            // the admin reads that nothing changed and can try again.
+            toast.error(tCommon("formLoadFailed"));
             CreditDialog = lazyCreditDialog();
             setCreditDialog((current) => ({ ...current, open: false }));
             setCreditDialogUsed(false);
@@ -781,83 +825,86 @@ export default function BreaksPage() {
             <DialogTitle>{editing ? t("editBreak") : t("addBreak")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="break-name">{tCommon("name")}</Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="break-name" label={tCommon("name")}>
                 <Input
-                  id="break-name"
                   value={form.name}
                   placeholder={t("namePlaceholder")}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
+              </FormField>
+              <FormField id="break-kind" label={tCommon("type")}>
+                {(control) => (
+                  <Select
+                    value={form.kind}
+                    onValueChange={(value) => setForm({ ...form, kind: value as BreakKind })}
+                  >
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {KINDS.map((kind) => (
+                        <SelectItem key={kind} value={kind}>
+                          {t(kind === "HOLIDAY" ? "kindHoliday" : "kindStaffDay")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
+            </div>
+
+            {/*
+              min/max are the läsår's own bounds, so the picker opens on the
+              right months instead of on today. They are an affordance and not a
+              check — the refusal still comes from the API, which is the only
+              place that knows the year the id names. The hint under the pair
+              is read with each of them.
+            */}
+            <div className="space-y-1.5">
+              <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+                <FormField id="break-start" label={t("startDate")}>
+                  <DateField
+                    label={t("startDate")}
+                    min={year?.startDate}
+                    max={year?.endDate}
+                    value={form.startDate}
+                    onChange={(value) => setForm({ ...form, startDate: value })}
+                    aria-describedby="break-dates-hint"
+                  />
+                </FormField>
+                <FormField id="break-end" label={t("endDate")}>
+                  <DateField
+                    label={t("endDate")}
+                    min={year?.startDate}
+                    max={year?.endDate}
+                    value={form.endDate}
+                    onChange={(value) => setForm({ ...form, endDate: value })}
+                    aria-describedby="break-dates-hint"
+                  />
+                </FormField>
               </div>
-              <div className="space-y-2">
-                <Label>{tCommon("type")}</Label>
+              <p id="break-dates-hint" className="text-xs leading-relaxed text-foreground">
+                {t("datesHint")}
+              </p>
+            </div>
+
+            <FormField id="break-scope" label={t("scope")}>
+              {(control) => (
                 <Select
-                  value={form.kind}
-                  onValueChange={(value) => setForm({ ...form, kind: value as BreakKind })}
+                  value={form.scope}
+                  onValueChange={(value) => setForm({ ...form, scope: value as Scope })}
                 >
-                  <SelectTrigger aria-label={tCommon("type")}>
+                  <SelectTrigger {...control}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {KINDS.map((kind) => (
-                      <SelectItem key={kind} value={kind}>
-                        {t(kind === "HOLIDAY" ? "kindHoliday" : "kindStaffDay")}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="school">{t("scopeSchool")}</SelectItem>
+                    <SelectItem value="grades">{t("scopeGrades")}</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="break-start">{t("startDate")}</Label>
-                {/*
-                  min/max are the läsår's own bounds, so the picker opens on the
-                  right months instead of on today. They are an affordance and
-                  not a check — the refusal still comes from the API, which is
-                  the only place that knows the year the id names.
-                */}
-                <DateField
-                  label={t("startDate")}
-                  id="break-start"
-                  min={year?.startDate}
-                  max={year?.endDate}
-                  value={form.startDate}
-                  onChange={(value) => setForm({ ...form, startDate: value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="break-end">{t("endDate")}</Label>
-                <DateField
-                  label={t("endDate")}
-                  id="break-end"
-                  min={year?.startDate}
-                  max={year?.endDate}
-                  value={form.endDate}
-                  onChange={(value) => setForm({ ...form, endDate: value })}
-                />
-              </div>
-            </div>
-            <p className="text-xs leading-relaxed text-foreground">{t("datesHint")}</p>
-
-            <div className="space-y-2">
-              <Label>{t("scope")}</Label>
-              <Select
-                value={form.scope}
-                onValueChange={(value) => setForm({ ...form, scope: value as Scope })}
-              >
-                <SelectTrigger aria-label={t("scope")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="school">{t("scopeSchool")}</SelectItem>
-                  <SelectItem value="grades">{t("scopeGrades")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              )}
+            </FormField>
 
             {/*
               Shown only for the narrowed scope, and that is where "hela skolan"
@@ -883,20 +930,29 @@ export default function BreaksPage() {
 
             {/*
               Said before the save, because afterwards is too late for the half
-              of it that cannot be undone. `bg-muted` with `text-foreground`
+              of it that cannot be undone. It is the dialog's description, so a
+              screen reader hears it as the dialog opens rather than only on
+              reaching the bottom of the form. `bg-muted` with `text-foreground`
               measures 17.00 / 13.19 — the same box admin/requirements' import
               dialog uses for the sentence it must not let anybody miss.
             */}
-            <p className="rounded-md bg-muted px-3 py-2 text-xs leading-relaxed text-foreground">
+            <DialogDescription className="rounded-md bg-muted px-3 py-2 text-xs leading-relaxed text-foreground">
               {t("deletesWarning")}
-            </p>
+            </DialogDescription>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}
             </Button>
             <Button onClick={submit} disabled={!formValid || saving}>
-              {tCommon("save")}
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -914,6 +970,6 @@ export default function BreaksPage() {
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
 }

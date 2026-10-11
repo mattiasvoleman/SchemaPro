@@ -13,6 +13,9 @@ import {
   type HistoryLabels,
 } from "@/lib/employment-history-view";
 import { Button } from "@/components/ui/button";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export interface EmploymentHistoryCardProps {
   userId: string;
@@ -78,12 +81,12 @@ export function EmploymentHistoryCard({
   const entries = history.data?.entries ?? [];
 
   return (
-    <section className="rounded-lg border bg-card p-4" aria-labelledby="history-title">
-      <div className="flex items-center justify-between gap-2">
-        <h3 id="history-title" className="flex items-center gap-2 font-semibold">
-          <History className="size-4 text-muted-foreground" aria-hidden="true" />
-          {t("title")}
-        </h3>
+    <SectionCard
+      id="history"
+      headingLevel={3}
+      icon={History}
+      title={t("title")}
+      action={
         <Button
           variant="ghost"
           size="sm"
@@ -94,15 +97,19 @@ export function EmploymentHistoryCard({
           {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
           {open ? t("hide") : t("show")}
         </Button>
-      </div>
+      }
+    >
       {open ? (
-        <div id="history-body" className="mt-2 text-sm">
+        <div id="history-body" className="space-y-2 text-sm">
           {history.isLoading ? (
-            <p className="text-muted-foreground">{t("loading")}</p>
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
+              <p className="sr-only">{t("loading")}</p>
+            </div>
           ) : history.isError ? (
-            <p className="text-destructive">{t("loadFailed")}</p>
+            <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
           ) : entries.length === 0 ? (
-            <p>{t("empty")}</p>
+            <p className="text-muted-foreground">{t("empty")}</p>
           ) : (
             <ol className="divide-y">
               {entries.map((entry) => {
@@ -133,11 +140,11 @@ export function EmploymentHistoryCard({
             </ol>
           )}
           {history.data?.truncated ? (
-            <p className="mt-2 text-xs text-muted-foreground">{t("truncated")}</p>
+            <p className="text-xs text-muted-foreground">{t("truncated")}</p>
           ) : null}
-          <p className="mt-2 text-xs text-muted-foreground">{t("caption")}</p>
+          <p className="text-xs text-muted-foreground">{t("caption")}</p>
         </div>
       ) : null}
-    </section>
+    </SectionCard>
   );
 }
