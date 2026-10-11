@@ -18,9 +18,12 @@
 //
 // The keys tab and the diff review are fetched when they are first opened
 // (React's lazy(), not next/dynamic — see admin/people for why), so a school
-// that only reads its sync history does not download the key editor.
+// that only reads its sync history does not download the key editor. Once
+// opened, the keys tab stays mounted (hidden while the other tab shows): a
+// new key and a new signing secret are shown ONCE, from that tab's state, and
+// a tab switch — or one during the request — must not throw them away.
 
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { MessageLookup } from "@/lib/engine-message";
 import { PageHeader } from "@/components/layout/page-header";
@@ -40,11 +43,19 @@ export default function IntegrationsPage() {
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const source = useSs12000Source();
+  const [tab, setTab] = useState("source");
+  const [keysOpened, setKeysOpened] = useState(false);
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
-      <Tabs defaultValue="source">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          setTab(value);
+          if (value === "keys") setKeysOpened(true);
+        }}
+      >
         <TabsList>
           <TabsTrigger value="source">{t("tabSource")}</TabsTrigger>
           <TabsTrigger value="keys">{t("tabKeys")}</TabsTrigger>
@@ -69,7 +80,7 @@ export default function IntegrationsPage() {
             </>
           ) : null}
         </TabsContent>
-        <TabsContent value="keys">
+        <TabsContent value="keys" forceMount={keysOpened ? true : undefined} hidden={tab !== "keys"}>
           <Suspense fallback={<Skeleton className="h-64 w-full" />}>
             <KeysTab />
           </Suspense>

@@ -1455,6 +1455,7 @@
     "keys": {
       "name": "Nyckelns namn",
       "copy": "Kopiera",
+      "copyFailed": "Kunde inte kopiera. Markera värdet och kopiera det själv.",
       "done": "Jag har sparat den",
       "secretSet": "Signeringshemlighet skapad {when}.",
       "secretMissing": "Ingen signeringshemlighet: systemet kan inte prenumerera på ändringar förrän en finns.",
@@ -1578,7 +1579,8 @@
       "replacePlaceholder": "Klistra in ett nytt värde för att ersätta",
       "replace": "Ersätt",
       "save": "Spara",
-      "clear": "Ta bort"
+      "clear": "Ta bort",
+      "unused": "Används inte av det valda inloggningssättet. Ta bort den om den inte behövs."
     },
     "schedule": {
       "title": "Nattlig synk",
@@ -1596,7 +1598,7 @@
       "autoApplyNeedsSchedule": "Slå på den nattliga synken först.",
       "autoApplyDoes": "Tillämpas automatiskt: namn, klassbyten, nya medlemskap i undervisningsgrupper, vårdnadshavarkopplingar mellan redan kopplade personer utan skyddad identitet, tjänster, och avaktivering av elever och vårdnadshavare.",
       "autoApplyNever": "Aldrig automatiskt: nya personer, kopplingar, e-poständringar, återaktiveringar, avaktivering av personal, ändringar du gjort själv sedan senaste synk och allt som rör en person med skyddad identitet.",
-      "autoApplyBrake": "Fler avaktiveringar än 5 eller 2 % av de kopplade personerna stoppar natten helt."
+      "autoApplyBrake": "Fler än 5 avaktiveringar, eller fler än 2 % av de kopplade personerna om det är fler, stoppar natten helt."
     },
     "sync": {
       "title": "Synk",
@@ -1637,7 +1639,11 @@
       "counts": "{persons} personer och {groups} grupper lästa · {changes} ändringar · {notes} noteringar",
       "appliedCounts": "{applied} tillämpade, {skipped} överhoppade",
       "autoBlocked": "Natten tillämpade inget: för många avaktiveringar. Granska diffen.",
-      "errors": "{count, plural, one {# post lästes inte} other {# poster lästes inte}}"
+      "autoBlockedStale": "Natten tillämpade inget: skolan ändrades mellan hämtningen och tillämpningen. Granska diffen eller synka igen.",
+      "autoBlockedReview": "Natten tillämpade inget: allt som återstod kräver en administratör. Granska diffen.",
+      "partlyApplied": "Delvis tillämpad {when}",
+      "older": "Visa äldre synkar",
+      "errorCodes": "Fel: {codes}"
     },
     "review": {
       "title": "Granska synken",
@@ -1654,14 +1660,16 @@
       "guardiansEndedTitle": "{count, plural, one {# vårdnadshavare} other {# vårdnadshavare}} anges inte längre för ett barn",
       "guardiansEndedBody": "En synk tar aldrig bort en vårdnadshavare. Kontrollera var och en och ta bort kopplingen under Personer om den ska bort, så att ingen tidigare vårdnadshavare fortsätter se barnets schema.",
       "guardiansEndedLink": "{guardian} för {pupil}",
-      "guardiansEndedSeen": "Jag har sett vårdnadshavarna ovan.",
+      "guardiansEndedSeen": "{count, plural, one {Jag har sett barnet ovan.} other {Jag har sett alla # barnen ovan.}}",
       "unknownPerson": "Okänd person",
+      "unknownGroup": "Okänd grupp",
+      "unknownOrganisation": "Okänd skolenhet",
       "filterEntity": "Visa",
       "filterAll": "Allt ({count})",
       "entityCount": "{entity} ({count})",
       "filterAttention": "Bara konflikter, noteringar och skyddade",
-      "selectVisible": "Välj alla synliga",
-      "deselectVisible": "Välj bort alla synliga",
+      "selectVisible": "Välj alla visade utom flaggade",
+      "deselectVisible": "Välj bort alla visade",
       "emptyFilter": "Inget att visa med det här urvalet.",
       "listLabel": "Ändringar",
       "ops": {
@@ -1701,6 +1709,9 @@
       "applyNow": "Tillämpa",
       "confirmTitle": "Tillämpa {count, plural, one {# ändring} other {# ändringar}}?",
       "confirmBody": "Allt görs i en transaktion: antingen alla valda ändringar eller ingen.",
+      "markReviewed": "Markera som granskad",
+      "confirmReviewedTitle": "Markera synken som granskad utan ändringar?",
+      "confirmReviewedBody": "Ingenting i skolan ändras. Konflikterna står kvar och visas igen vid nästa fulla synk. Markörerna flyttas, så nästa synk hämtar bara det som ändrats efter den här.",
       "confirmDeactivations": "{count, plural, one {# person avaktiveras} other {# personer avaktiveras}}. Ingen raderas, och historiken finns kvar.",
       "confirmDeselected": "{count, plural, =0 {Inga ändringar är bortvalda.} one {# bortvald ändring kommer tillbaka vid nästa fulla synk, inom {days} dagar.} other {# bortvalda ändringar kommer tillbaka vid nästa fulla synk, inom {days} dagar.}}",
       "confirmNothingDeleted": "Nya personer får ingen inloggning: du bjuder in dem under Nya personer.",
@@ -1782,6 +1793,9 @@
       "EXPIRED": "Diffen granskades inte inom 30 dagar och kastades.",
       "REVIEW_PENDING": "Nattens synk hoppades över eftersom en manuell diff väntar på granskning.",
       "INVALID_RECORD": "En post i registret hade inte rätt form och lästes inte.",
+      "PERSON_RECORD_INVALID": "Registret skickade personen, men posten hade inte rätt form. Personen avaktiveras inte för det; rätta posten i registret.",
+      "ROSTER_HAS_INVALID_RECORDS": "Någon post i registret kunde inte läsas, så frånvaron kan bero på den. Avaktiveringen görs bara om du väljer den.",
+      "SS12000_LOOKUP_REFUSED": "Registret nekade uppslag av personer; vårdnadshavare och andra som bara nämns lästes inte.",
       "PERSON_NOT_YET_ENROLLED": "Eleven börjar senare och läggs in när inskrivningen börjar gälla.",
       "DELETED_BUT_RETURNED": "Registret både tog bort och skickade posten i samma körning; den behålls.",
       "PERSON_ROLE_MISMATCH": "Rollen i registret skiljer sig från rollen i SchemaPro. Rollen ändras aldrig av en synk.",

@@ -21,6 +21,7 @@ import {
   readChange,
   selectionBody,
   summarise,
+  unknownSubjectKey,
   withAll,
   type ChangeFilter,
 } from "./diff-view";
@@ -194,8 +195,8 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
               <div className="space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-sm">
                 <p className="font-medium">{t("guardiansEndedTitle", { count: guardianEnds.length })}</p>
                 <p>{t("guardiansEndedBody")}</p>
-                <ul className="list-disc space-y-0.5 pl-5">
-                  {guardianEnds.slice(0, 20).map((entry) => (
+                <ul className="max-h-48 list-disc space-y-0.5 overflow-y-auto pl-5">
+                  {guardianEnds.map((entry) => (
                     <li key={`${entry.pupilId}-${entry.guardianName ?? ""}`}>
                       <Link className="underline" href={`/admin/people?guardians=${entry.pupilId}`}>
                         {t("guardiansEndedLink", {
@@ -208,7 +209,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                 </ul>
                 <div className="flex items-start gap-2">
                   <input id="ss-guardians-seen" type="checkbox" className={`${CHECKBOX} mt-0.5`} checked={guardiansSeen} onChange={(event) => setGuardiansSeen(event.target.checked)} />
-                  <label htmlFor="ss-guardians-seen">{t("guardiansEndedSeen")}</label>
+                  <label htmlFor="ss-guardians-seen">{t("guardiansEndedSeen", { count: guardianEnds.length })}</label>
                 </div>
               </div>
             ) : null}
@@ -250,10 +251,10 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
               </label>
               {editable ? (
                 <div className="flex gap-2 pb-1">
-                  <Button type="button" size="sm" variant="outline" onClick={() => setOverrides((current) => withAll(current, visible, run.status, true))}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setOverrides((current) => withAll(current, visible.slice(0, shown), run.status, true))}>
                     {t("selectVisible")}
                   </Button>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setOverrides((current) => withAll(current, visible, run.status, false))}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setOverrides((current) => withAll(current, visible.slice(0, shown), run.status, false))}>
                     {t("deselectVisible")}
                   </Button>
                 </div>
@@ -288,7 +289,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                         </Badge>
                         <span className="text-xs text-muted-foreground">{t(`entities.${change.entity}`)}</span>
                         <label htmlFor={selectable ? inputId : undefined} className="font-medium">
-                          {subject ?? t("unknownPerson")}
+                          {subject ?? t(unknownSubjectKey(change.entity))}
                         </label>
                         {change.protectedIdentity ? <Badge variant="warning">{t("protected")}</Badge> : null}
                         {change.applied ? <Badge variant="success">{t("appliedBadge")}</Badge> : null}
@@ -316,8 +317,12 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
             <Button type="button" variant="outline" onClick={() => setDiscarding(true)} disabled={apply.isPending || discard.isPending}>
               {t("discard")}
             </Button>
-            <Button type="button" onClick={() => setConfirming(true)} disabled={!canApply || summary.chosen === 0 || apply.isPending}>
-              {t("apply", { count: summary.chosen })}
+            {/* Nothing chosen is still an answer: a run of conflicts only, or of
+                changes the admin left out, is marked reviewed by an apply of
+                nothing, which moves the cursors (A4.4: what was left out
+                returns at the next full sync). Discarding would not. */}
+            <Button type="button" onClick={() => setConfirming(true)} disabled={!canApply || apply.isPending}>
+              {summary.chosen === 0 ? t("markReviewed") : t("apply", { count: summary.chosen })}
             </Button>
           </DialogFooter>
         ) : null}
@@ -325,8 +330,8 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
         <Dialog open={confirming} onOpenChange={(open) => !open && !apply.isPending && closeConfirm()}>
           <DialogContent className="max-w-md" closeDisabled={apply.isPending}>
             <DialogHeader>
-              <DialogTitle>{t("confirmTitle", { count: summary.chosen })}</DialogTitle>
-              <DialogDescription>{t("confirmBody")}</DialogDescription>
+              <DialogTitle>{summary.chosen === 0 ? t("confirmReviewedTitle") : t("confirmTitle", { count: summary.chosen })}</DialogTitle>
+              <DialogDescription>{summary.chosen === 0 ? t("confirmReviewedBody") : t("confirmBody")}</DialogDescription>
             </DialogHeader>
             <ul className="list-disc space-y-1 pl-5 text-sm">
               {summary.deactivations > 0 ? <li>{t("confirmDeactivations", { count: summary.deactivations })}</li> : null}

@@ -87,11 +87,29 @@ export function matchesFilter(change: SyncChange, filter: ChangeFilter): boolean
   return true;
 }
 
-/** Ticks every selectable change in `visible` on or off, on top of `overrides`. */
-export function withAll(overrides: Overrides, visible: SyncChange[], status: RunStatus, chosen: boolean): Map<string, boolean> {
+/**
+ * Ticks every selectable change in `rows` — the rows the dialog RENDERS, not
+ * the whole filtered list behind "Visa fler" — on top of `overrides`.
+ * Unticking clears them all. Ticking leaves out what the gateway flagged on
+ * purpose: a protected identity, and any change with a code (a duty role
+ * that would give a TEACHER login, a local edit, a relink, an invited
+ * person's email): those are chosen one by one or not at all.
+ */
+export function withAll(overrides: Overrides, rows: SyncChange[], status: RunStatus, chosen: boolean): Map<string, boolean> {
   const next = new Map(overrides);
-  for (const change of visible) if (isSelectable(change, status)) next.set(change.id, chosen);
+  for (const change of rows) {
+    if (!isSelectable(change, status)) continue;
+    if (chosen && (change.protectedIdentity || change.conflictCode !== null)) continue;
+    next.set(change.id, chosen);
+  }
   return next;
+}
+
+/** What a row is called when nothing names it: by what it is about. */
+export function unknownSubjectKey(entity: ChangeEntity): "unknownPerson" | "unknownGroup" | "unknownOrganisation" {
+  if (entity === "GROUP") return "unknownGroup";
+  if (entity === "ORGANISATION") return "unknownOrganisation";
+  return "unknownPerson";
 }
 
 // ---------------------------------------------------------------------------
