@@ -55,6 +55,13 @@ describe('query: S1 parameters', () => {
     expect(() => parseQuery('GET /calendarEvents', { pageToken: token, sortkey: 'StartTimeDesc' }, KEY)).toThrow(expect.objectContaining({ code: 'INVALID_PAGE_TOKEN' }));
   });
 
+  it('refuses a token that lacks a parameter the operation requires (calendarEvents\' window), instead of answering 500', () => {
+    const forged = Buffer.from(JSON.stringify({ v: 1, k: KEY, r: 'GET /calendarEvents', p: {}, a: [null, '0'] })).toString('base64url');
+    expect(() => parseQuery('GET /calendarEvents', { pageToken: forged }, KEY)).toThrow(expect.objectContaining({ status: 400, code: 'INVALID_PAGE_TOKEN' }));
+    const half = encodePageToken(KEY, 'GET /calendarEvents', { 'startTime.onOrAfter': '2026-10-01T00:00:00.000Z' }, [null, '0']);
+    expect(() => parseQuery('GET /calendarEvents', { pageToken: half }, KEY)).toThrow(expect.objectContaining({ code: 'INVALID_PAGE_TOKEN' }));
+  });
+
   it('refuses a token of another key, another operation, a forged parameter or no token at all', () => {
     const token = encodePageToken(KEY, 'GET /persons', {}, [null, 'x']);
     expect(() => parseQuery('GET /persons', { pageToken: token }, OTHER)).toThrow(expect.objectContaining({ code: 'INVALID_PAGE_TOKEN' }));
