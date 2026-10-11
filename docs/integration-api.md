@@ -615,15 +615,21 @@ database directly. The manual describes it for the school in 7.2 and 7.3
   needs (`secrets/:kind`). The field is never filled from the server, is
   cleared once the request settles (also on a refusal), and the row shows only
   *Sparad <när>* or *Saknas*. A PEM key or certificate is a textarea; the
-  gateway parses it at save.
+  gateway parses it at save. Each row is a form (Enter saves), and the field
+  opts out of password managers (`autocomplete="off"` and their ignore
+  attributes) so none offers to generate or store a value there. A credential
+  stored for a sign-in type the source no longer uses is listed too, with only
+  *Ta bort*.
 * *Testa anslutning* — `POST …/test`; the outcome is shown as the code's
   sentence (`integrations.codes.*`), never the provider's words, and the
   listed skolenheter (at most 5 chosen) are saved with the source's stored
   configuration plus `organisationIds`.
 * *Synk* — *Synka nu* (`INCREMENTAL`; the gateway falls back to FULL when it
   must) and *Full synk*; the history (`GET …/runs?limit=20`) polls every 3 s
-  while a run is `RUNNING` and names each status, trigger, mode, counts and
-  status code.
+  while a run is `RUNNING` and names each status, trigger, mode, counts, status
+  code, each error code with how often it occurred, a partial night's
+  `appliedAt` and why a night applied nothing. *Visa äldre synkar* pages back
+  with `before=<oldest startedAt>`.
 * *Granska* — loads **every** change of the run (500 a page, up to the DTO's
   20 000) before anything can be applied, so the count shown is the count
   applied. The gateway's defaults arrive ticked or unticked; the apply sends
@@ -632,7 +638,12 @@ database directly. The manual describes it for the school in 7.2 and 7.3
   is no longer `DIFF_READY` are not selectable. `RESPONSIBLE_ENDED_AT_SOURCE`
   rows are listed with a link to `/admin/people?guardians=<pupil id>` (the
   people register's guardian dialog), and the apply stays disabled until the
-  admin ticks that they have seen them. A 409 `SS12000_MASS_DEACTIVATION`
+  admin ticks that they have seen them (all of them are listed). With nothing
+  chosen the button is *Markera som granskad*: an apply with empty `select` /
+  `deselect`, which changes nothing in the school but moves the cursors, so a
+  run of conflicts only does not have to be discarded. *Välj alla visade utom
+  flaggade* ticks the rows rendered (not those behind *Visa fler*) and never a
+  protected identity or a change with a code. A 409 `SS12000_MASS_DEACTIVATION`
   shows its `deactivations` and `limit` and must be confirmed explicitly
   (`confirmMassDeactivation: true`); `SS12000_DIFF_STALE` disables the apply
   and says to sync again. A run past `DIFF_READY` opens read-only, by kind,
@@ -649,7 +660,10 @@ key starts with the default scopes (`ss12000.v1`, `ss12000.v1.import`) ticked
 and can be given any of the twelve; *Ändra omfång* is `PATCH /:id {scopes}`
 and refuses an empty set. *Skapa / Byt signeringshemlighet* is
 `POST /:id/webhook-secret`; the secret, like the key, is shown once and held
-only until the admin closes the notice. Each key lists its subscriptions
+only until the admin closes the notice. Once opened the tab stays mounted
+(hidden while *Elevregister* shows), so a tab switch — also one while the
+request is in flight — does not lose a key or secret shown once. A copy that
+the browser refuses says so. Each key lists its subscriptions
 (target host only, resource types, expiry, last notice, failing since) with
 *Pausa* / *Återuppta* (`POST /:id/subscriptions/:sid/pause|resume`). Revoking
 a key asks first.
