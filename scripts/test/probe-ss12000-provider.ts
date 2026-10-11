@@ -8,7 +8,11 @@
  * served by /deletedEntities (sp-c); a subscription made with the key's
  * sealed signing secret, a committed change delivered once, signed, through
  * the xid watermark, and nothing for a revoked key (sp-d); another key's
- * subscription invisible (sp-e). In a school of its own (slug
+ * subscription invisible (sp-e); a teacher's deactivation buries their
+ * Duty and moves their activities, countsTowardTimplan moves an Activity,
+ * an HR-only edit without the Fas 3 opt-in moves no Duty, and the helpers
+ * that read across schools are no API role's to call (sp-f,
+ * 20261014140000). In a school of its own (slug
  * <marker>-ss12000-provider), swept whole before and after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
@@ -253,6 +257,59 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       await subscriptions.end(caller, mine.data[0]!.id);
       const ended = await one<{ endedAt: Date | null }>(`SELECT "endedAt" FROM "Ss12000Subscriptions" WHERE id = $1`, [mine.data[0]!.id]);
       assert.ok(ended.endedAt instanceof Date, 'DELETE removed the row instead of ending it');
+    });
+
+    await check('(sp-f) the record follows what is emitted: a deactivated teacher\'s Duty, activityType, and no HR side channel', async () => {
+      const metaOf = async (read: () => Promise<Record<string, unknown>>) => ((await read())['meta'] as { modified: string }).modified;
+      const dutyMeta = () => metaOf(() => provider.getDuty(caller, post.id, {}));
+      const activityMeta = () => metaOf(() => provider.getActivity(caller, master.id, {}));
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 15));
+
+      // HR-only, without shareEmploymentWithIntegrations: the Duty does not move.
+      const d0 = await dutyMeta();
+      await pause();
+      await owner.query(`UPDATE "TeacherEmployments" SET "employmentPercent" = 60, "updatedAt" = now() WHERE id = $1`, [post.id]);
+      assert.equal(await dutyMeta(), d0, 'an employmentPercent change moved the Duty while the school shares no HR figure');
+
+      // countsTowardTimplan flips activityType: the Activity moves.
+      const a0 = await activityMeta();
+      const type0 = (await provider.getActivity(caller, master.id, {}))['activityType'];
+      await pause();
+      await owner.query(`UPDATE "Subjects" SET "countsTowardTimplan" = NOT "countsTowardTimplan" WHERE id = $1`, [subject.id]);
+      const type1 = (await provider.getActivity(caller, master.id, {}))['activityType'];
+      assert.notEqual(type1, type0, 'the fixture did not flip activityType');
+      const a1 = await activityMeta();
+      assert.ok(a1 > a0, `activityType ${String(type0)} -> ${String(type1)} did not move the Activity (${a0} -> ${a1})`);
+      await owner.query(`UPDATE "Subjects" SET "countsTowardTimplan" = NOT "countsTowardTimplan" WHERE id = $1`, [subject.id]);
+
+      // The teacher leaves: their Duty is buried and the activity naming them moves.
+      const before = new Date().toISOString();
+      const a2 = await activityMeta();
+      await pause();
+      await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [teacher.id]);
+      const gone = await provider.deletedEntities(caller, { after: before, entities: ['Person', 'Duty'] });
+      assert.deepEqual(gone.data, { persons: [teacher.id], duties: [post.id] });
+      assert.ok((await activityMeta()) > a2, 'the activity naming the deactivated teacher did not move');
+      // Back again: no longer deleted, and the Duty is served.
+      await owner.query(`UPDATE "Users" SET "isActive" = true WHERE id = $1`, [teacher.id]);
+      const back = await provider.deletedEntities(caller, { after: before, entities: 'Duty' });
+      assert.deepEqual(back.data, { duties: [] });
+      assert.deepEqual((await provider.listDuties(caller, {})).data.map((duty) => duty.id), [post.id]);
+
+      // No API role calls the helpers that read across schools.
+      for (const sql of [
+        `SELECT app.ss12000_duty_id($1::uuid, $2::uuid, $3::uuid)`,
+        `SELECT app.ss12000_active_year($1::uuid), $2::uuid, $3::uuid`,
+        `SELECT app.ss12000_year_is_emitted($3::uuid), $1::uuid, $2::uuid`,
+      ]) {
+        await owner.query('BEGIN');
+        try {
+          await owner.query('SET LOCAL ROLE app_authenticated');
+          await assert.rejects(owner.query(sql, [school.id, teacher.id, year.id]), (error: { code?: string }) => error.code === '42501', sql);
+        } finally {
+          await owner.query('ROLLBACK');
+        }
+      }
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());
