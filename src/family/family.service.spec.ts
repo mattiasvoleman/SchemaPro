@@ -564,6 +564,41 @@ describe('FamilyService', () => {
       expect(tx.leaveRequest.create).not.toHaveBeenCalled();
     });
 
+    it('lets a student request leave for themselves, as pupil and requester, leaving the decision unwritten', async () => {
+      // The exact row is what leave_requests_student_insert (20261015130000)
+      // admits: the pupil's own school, the pupil as both student and
+      // requester, and no status or decision column, so the default PENDING.
+      arrangeStudent();
+      const user = testUser({ role: Role.STUDENT, userId: STUDENT_ID, schoolId: SCHOOL_ID });
+
+      await service.createLeaveRequest(leaveDto() as any, user);
+
+      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(tx.guardianStudent.findFirst).not.toHaveBeenCalled();
+      expect(tx.leaveRequest.create).toHaveBeenCalledWith({
+        data: {
+          schoolId: SCHOOL_ID,
+          studentId: STUDENT_ID,
+          requestedById: STUDENT_ID,
+          startDate: new Date('2026-08-10T00:00:00.000Z'),
+          endDate: new Date('2026-08-12T00:00:00.000Z'),
+          reason: 'Family trip',
+        },
+        select: { id: true, studentId: true, status: true },
+      });
+    });
+
+    it('forbids a student requesting leave for another student, before any write', async () => {
+      arrangeStudent();
+      const user = testUser({ role: Role.STUDENT, userId: GUARDIAN_ID, schoolId: SCHOOL_ID });
+
+      await expect(
+        service.createLeaveRequest(leaveDto() as any, user),
+      ).rejects.toThrow(new ForbiddenException('Students may only report for themselves.'));
+      expect(tx.user.findUnique).not.toHaveBeenCalled();
+      expect(tx.leaveRequest.create).not.toHaveBeenCalled();
+    });
+
     it('403s an admin principal without userId before touching the database', async () => {
       // requestedById is a required column: the same local guard as for
       // reportedById on an absence report, behind the same @Roles.

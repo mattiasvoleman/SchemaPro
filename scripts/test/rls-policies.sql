@@ -11025,3 +11025,162 @@ BEGIN
   IF bad::int <> 0 THEN RAISE EXCEPTION 'ss31f: % version triggers name columns', bad; END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 34: en elev ansöker om sin egen ledighet (LeaveRequests,
+-- 20261015130000).
+--
+-- POST /leave-requests lets a STUDENT file for themselves, and the table had
+-- no arm for it, so every pupil's request was a 42501 and a 500. The arm
+-- leave_requests_student_insert lets an active pupil, through the API's role,
+-- file one undecided request about themselves, in their own school, as its
+-- requester. Every narrowing is asserted from the side it refuses: another
+-- pupil, another school, another requester, each decided column on its own,
+-- PostgREST's role, and a teacher or a guardian naming themselves as the
+-- pupil. Then the request reaches the people who see it: the pupil, their
+-- guardian and the admin who decides.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_rls34_school_b', :'school_b', true);
+
+-- 34a: the admin finds the guardian's child, who can sign in, another pupil
+-- of the school and a teacher who can sign in.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  child uuid; other uuid; teacher uuid; guardian uuid;
+BEGIN
+  SELECT gs."studentId", gs."guardianId" INTO child, guardian FROM "GuardianStudents" gs JOIN "Users" g ON g.id = gs."guardianId"
+   WHERE g."authId" = '00000000-0000-4000-8000-000000000004' ORDER BY gs."studentId" LIMIT 1;
+  SELECT id INTO other FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND id <> child ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  IF child IS NULL OR other IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'student leave: the primary school lacks the guardian''s child, another pupil or a teacher';
+  END IF;
+  IF (SELECT "authId" FROM "Users" WHERE id = child AND "isActive") IS NULL THEN
+    RAISE EXCEPTION 'student leave: the guardian''s child cannot sign in';
+  END IF;
+  IF current_setting('app.test_rls34_school_b')::uuid = school THEN RAISE EXCEPTION 'student leave: school_b is the primary school'; END IF;
+  PERFORM set_config('app.test_rls34_child', child::text, true);
+  PERFORM set_config('app.test_rls34_other', other::text, true);
+  PERFORM set_config('app.test_rls34_guardian', guardian::text, true);
+  PERFORM set_config('app.test_rls34_child_sub', (SELECT "authId"::text FROM "Users" WHERE id = child), true);
+  PERFORM set_config('app.test_rls34_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
+END $$;
+
+-- 34b: through the API's role the pupil files their own request, undecided,
+-- and refuses every other row the arm could have let through.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls34_child_sub'))::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  school uuid := app.current_school_id();
+  r record; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'student leave: expected the STUDENT'; END IF;
+  IF me IS DISTINCT FROM current_setting('app.test_rls34_child')::uuid THEN RAISE EXCEPTION 'student leave: the claims are not the child''s'; END IF;
+
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, me, me, DATE '2095-06-01', DATE '2095-06-02', 'rls34 elevens egen');
+  SELECT count(*) INTO n FROM "LeaveRequests"
+   WHERE reason = 'rls34 elevens egen' AND "studentId" = me AND "requestedById" = me AND status = 'PENDING';
+  IF n <> 1 THEN RAISE EXCEPTION 'student leave: the pupil reads % of their own new request', n; END IF;
+
+  FOR r IN SELECT * FROM (VALUES
+      ('for another pupil', school, current_setting('app.test_rls34_other')::uuid, me, 'PENDING'::"LeaveRequestStatus", NULL::uuid, NULL::timestamptz, NULL::text),
+      ('in another school''s name', current_setting('app.test_rls34_school_b')::uuid, me, me, 'PENDING', NULL, NULL, NULL),
+      ('with the guardian as requester', school, me, current_setting('app.test_rls34_guardian')::uuid, 'PENDING', NULL, NULL, NULL),
+      ('already approved', school, me, me, 'APPROVED', NULL, NULL, NULL),
+      ('already rejected', school, me, me, 'REJECTED', NULL, NULL, NULL),
+      ('with a decider', school, me, me, 'PENDING', me, NULL, NULL),
+      ('with a decision time', school, me, me, 'PENDING', NULL, now(), NULL),
+      ('with a decision note', school, me, me, 'PENDING', NULL, NULL, 'rls34 beviljad av mig själv')
+    ) AS t(label, school_id, student_id, requester, status, decided_by, decided_at, note)
+  LOOP
+    BEGIN
+      INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, status, "decidedById", "decidedAt", "decisionNote")
+      VALUES (r.school_id, r.student_id, r.requester, DATE '2095-06-08', DATE '2095-06-08', 'rls34 ' || r.label, r.status, r.decided_by, r.decided_at, r.note);
+      RAISE EXCEPTION 'student leave: the pupil filed a request %', r.label;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
+-- 34c: the arm is the API's alone. Through PostgREST's role the same pupil
+-- files nothing, and still reads the request they filed through the API.
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE me uuid := app.current_user_id(); n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'student leave: expected the STUDENT'; END IF;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (app.current_school_id(), me, me, DATE '2095-06-15', DATE '2095-06-15', 'rls34 genom PostgREST');
+    RAISE EXCEPTION 'student leave: through PostgREST''s role the pupil filed a request';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" = me AND reason = 'rls34 elevens egen';
+  IF n <> 1 THEN RAISE EXCEPTION 'student leave: through PostgREST''s role the pupil reads % of their own request', n; END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+-- 34d: the arm is a pupil's. A teacher and a guardian who name themselves as
+-- the pupil file nothing, so no approval can write a staff member's or a
+-- parent's absence.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls34_teacher_sub'))::text, true);
+DO $$
+DECLARE me uuid := app.current_user_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'student leave: expected a TEACHER'; END IF;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (app.current_school_id(), me, me, DATE '2095-06-22', DATE '2095-06-22', 'rls34 lärarens egen');
+    RAISE EXCEPTION 'student leave: a teacher filed a request about themselves';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE me uuid := app.current_user_id(); n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'student leave: expected the GUARDIAN'; END IF;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (app.current_school_id(), me, me, DATE '2095-06-22', DATE '2095-06-22', 'rls34 vårdnadshavarens egen');
+    RAISE EXCEPTION 'student leave: a guardian filed a request about themselves';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- 34e: the guardian reads the request their child filed.
+  SELECT count(*) INTO n FROM "LeaveRequests"
+   WHERE "studentId" = current_setting('app.test_rls34_child')::uuid AND reason = 'rls34 elevens egen';
+  IF n <> 1 THEN RAISE EXCEPTION 'student leave: the guardian reads % of the request their child filed', n; END IF;
+END $$;
+
+-- 34f: the admin reads it and decides it. The pupil's one request is the
+-- only rls34 row the section wrote.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE reason LIKE 'rls34 %';
+  IF n <> 1 THEN RAISE EXCEPTION 'student leave: the admin reads % rls34 request(s), not the pupil''s one', n; END IF;
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE reason = 'rls34 elevens egen' AND "studentId" = current_setting('app.test_rls34_child')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'student leave: the admin decided % of the pupil''s one request', n; END IF;
+END $$;
+
+-- 34g: the arm as written: INSERT, for the API's role only.
+DO $$
+DECLARE arm record;
+BEGIN
+  SELECT cmd, roles::text AS roles INTO arm FROM pg_policies
+   WHERE schemaname = 'public' AND tablename = 'LeaveRequests' AND policyname = 'leave_requests_student_insert';
+  IF NOT FOUND THEN RAISE EXCEPTION 'student leave: LeaveRequests has no leave_requests_student_insert'; END IF;
+  IF arm.cmd <> 'INSERT' OR arm.roles <> '{app_authenticated}' THEN
+    RAISE EXCEPTION 'student leave: leave_requests_student_insert is % for %', arm.cmd, arm.roles;
+  END IF;
+END $$;
+ROLLBACK;

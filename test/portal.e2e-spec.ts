@@ -116,6 +116,48 @@ describe('Portal and platform surfaces (e2e)', () => {
         .expect(403);
     });
 
+    it('lets a pupil file their own leave request, never another pupil’s, and never decide one', async () => {
+      const pupil = asUser({ role: 'STUDENT' as never, userId: STUDENT_ID, schoolId: SCHOOL_ID });
+      harness.tx['user']!['findUnique']!.mockResolvedValue({
+        schoolId: SCHOOL_ID,
+      });
+      harness.tx['leaveRequest']!['create']!.mockResolvedValue({
+        id: RECORD_ID,
+        studentId: STUDENT_ID,
+        status: 'PENDING',
+      });
+      const body = (studentId: string) => ({
+        studentId,
+        startDate: dateOnly(60),
+        endDate: dateOnly(61),
+        reason: 'Tandläkaren',
+      });
+
+      await request(http())
+        .post('/api/v1/leave-requests')
+        .set('x-test-user', pupil)
+        .send(body(STUDENT_ID))
+        .expect(201);
+      expect(harness.tx['leaveRequest']!['create']).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ studentId: STUDENT_ID, requestedById: STUDENT_ID }),
+        }),
+      );
+
+      await request(http())
+        .post('/api/v1/leave-requests')
+        .set('x-test-user', pupil)
+        .send(body(GUARDIAN_ID))
+        .expect(403);
+      expect(harness.tx['leaveRequest']!['create']).toHaveBeenCalledTimes(1);
+
+      await request(http())
+        .patch(`/api/v1/leave-requests/${RECORD_ID}/decide`)
+        .set('x-test-user', pupil)
+        .send({ status: 'APPROVED' })
+        .expect(403);
+    });
+
     it('keeps guardian links an admin-only operation', async () => {
       for (const principal of [guardian(), teacher()]) {
         await request(http())
