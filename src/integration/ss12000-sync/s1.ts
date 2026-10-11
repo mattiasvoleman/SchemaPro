@@ -77,7 +77,14 @@ export type GroupType = (typeof GROUP_TYPES)[number];
 
 /** S1 Person.securityMarking and PersonReference.securityMarking. */
 export const SECURITY_MARKINGS = ['Ingen', 'Sekretessmarkering', 'Skyddad folkbokföring'] as const;
-export type SecurityMarking = (typeof SECURITY_MARKINGS)[number];
+/**
+ * A marking as parsed: one of S1's values, or UNRECOGNISED for any other
+ * value the source sent. Protection fails CLOSED: only "Ingen" (or no
+ * marking at all) is unprotected, so a value in another Unicode form, case
+ * or with stray whitespace — or one a later S1 adds — never makes a
+ * protected person's changes automatic (A2.4).
+ */
+export type SecurityMarking = (typeof SECURITY_MARKINGS)[number] | 'UNRECOGNISED';
 
 /** S1 Person.personStatus. */
 export const PERSON_STATUSES = ['Aktiv', 'Utvandrad', 'Avliden'] as const;
@@ -224,6 +231,14 @@ export function dateOf(value: unknown): string | null {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day ? day : null;
 }
 
+/** S1's marking for a present value (NFC, trimmed, case-insensitive), else UNRECOGNISED; null when absent. */
+export function parseMarking(value: unknown): SecurityMarking | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return 'UNRECOGNISED';
+  const wanted = value.normalize('NFC').trim().toLocaleLowerCase('sv');
+  return SECURITY_MARKINGS.find((marking) => marking.toLocaleLowerCase('sv') === wanted) ?? 'UNRECOGNISED';
+}
+
 function oneOf<T extends string>(values: readonly T[], value: unknown): T | null {
   return typeof value === 'string' && (values as readonly string[]).includes(value) ? (value as T) : null;
 }
@@ -286,7 +301,7 @@ export function parsePerson(raw: unknown): Parsed<S1Person> {
     if (!personId) continue;
     responsibles.push({
       personId,
-      securityMarking: isRecord(person) ? oneOf(SECURITY_MARKINGS, person['securityMarking']) : null,
+      securityMarking: isRecord(person) ? parseMarking(person['securityMarking']) : null,
       relationType: oneOf(RELATION_TYPES, entry['relationType']),
     });
   }
@@ -304,7 +319,7 @@ export function parsePerson(raw: unknown): Parsed<S1Person> {
       middleName: text(raw['middleName']),
       familyName,
       eduPersonPrincipalNames: eppn,
-      securityMarking: oneOf(SECURITY_MARKINGS, raw['securityMarking']),
+      securityMarking: parseMarking(raw['securityMarking']),
       personStatus: oneOf(PERSON_STATUSES, raw['personStatus']),
       emails,
       enrolments,
@@ -331,7 +346,7 @@ export function parseGroup(raw: unknown): Parsed<S1Group> {
     if (!personId) continue;
     memberships.push({
       personId,
-      personSecurityMarking: isRecord(person) ? oneOf(SECURITY_MARKINGS, person['securityMarking']) : null,
+      personSecurityMarking: isRecord(person) ? parseMarking(person['securityMarking']) : null,
       startDate: dateOf(entry['startDate']),
       endDate: dateOf(entry['endDate']),
     });
@@ -378,7 +393,7 @@ export function activeOn(day: string, startDate: string | null, endDate: string 
   return (startDate === null || startDate <= day) && (endDate === null || endDate >= day);
 }
 
-/** Whether a protected identity: securityMarking set and not "Ingen". */
+/** Whether a protected identity: securityMarking set and not "Ingen" (UNRECOGNISED is protected). */
 export function isProtected(marking: SecurityMarking | null): boolean {
   return marking !== null && marking !== 'Ingen';
 }

@@ -60,6 +60,37 @@ describe('S1 transcription (SS12000 2.1.0)', () => {
     expect(isProtected('Skyddad folkbokföring')).toBe(true);
   });
 
+  it('fails CLOSED on a marking that is not byte-identical to S1: NFD, case, whitespace or an unknown value is protected', () => {
+    const nfd = 'Skyddad folkbokföring'.normalize('NFD');
+    expect(nfd).not.toBe('Skyddad folkbokföring');
+    const marked = (value: unknown, on: 'person' | 'responsible' | 'member') => {
+      const id = 'bbbbbbbb-0000-4000-8000-000000000001';
+      const ref = { id: 'cccccccc-0000-4000-8000-000000000001', securityMarking: value };
+      if (on === 'member') {
+        const group = s1Group('eeeeeeee-0000-4000-8000-000000000001', '7A', 'Klass', ORG, []);
+        group['groupMemberships'] = [{ person: value === undefined ? { id: ref.id } : ref, startDate: '2026-08-15' }];
+        const parsed = parseGroup(group);
+        return parsed.ok ? parsed.value.memberships[0]!.personSecurityMarking : 'NOT PARSED';
+      }
+      const raw = s1Pupil(id, 'A', 'B', 'a@skola.se', ORG);
+      if (on === 'person') {
+        if (value === undefined) delete raw['securityMarking'];
+        else raw['securityMarking'] = value;
+      } else raw['responsibles'] = [{ person: value === undefined ? { id: ref.id } : ref, relationType: 'Vårdnadshavare' }];
+      const parsed = parsePerson(raw);
+      if (!parsed.ok) return 'NOT PARSED';
+      return on === 'person' ? parsed.value.securityMarking : parsed.value.responsibles[0]!.securityMarking;
+    };
+    for (const on of ['person', 'responsible', 'member'] as const) {
+      expect(marked(nfd, on)).toBe('Skyddad folkbokföring');
+      expect(marked('Skyddad Folkbokföring', on)).toBe('Skyddad folkbokföring');
+      expect(marked('Sekretessmarkering ', on)).toBe('Sekretessmarkering');
+      expect(marked(' ingen', on)).toBe('Ingen');
+      for (const odd of ['Okänd', '', 42]) expect(isProtected(marked(odd, on) as never)).toBe(true);
+      expect(isProtected(marked(undefined, on) as never)).toBe(false);
+    }
+  });
+
   describe('parsePerson', () => {
     const raw = s1Pupil('BBBBBBBB-0000-4000-8000-000000000001', ' Ella ', 'Ek', 'ella@skola.se', ORG, {
       schoolYear: 7,
