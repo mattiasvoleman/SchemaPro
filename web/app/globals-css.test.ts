@@ -91,7 +91,7 @@ describe.each([
   ["dark", dark],
 ])("globals.css contrast, %s theme", (_theme, t) => {
   it("parses the tokens it measures", () => {
-    for (const name of ["input-strong", "primary", "primary-hover", "primary-foreground"]) {
+    for (const name of ["background", "input-strong", "primary", "primary-hover", "primary-foreground"]) {
       expect(t[name], name).toBeDefined();
     }
   });
@@ -105,6 +105,23 @@ describe.each([
       expect(contrast(t["input-strong"]!, t[surface]!)).toBeGreaterThanOrEqual(3);
     },
   );
+
+  // SC 1.4.11 for the Switch: the track says a switch is there and the side
+  // its thumb sits on says whether it is on. Unchecked (input-strong) and
+  // checked (primary), the track holds 3:1 against every surface a switch
+  // sits on, and the thumb, painted in background, 3:1 against both tracks.
+  it.each(["background", "card", "popover", "muted", "sidebar"])(
+    "gives a switch's track 3:1 against %s, on or off",
+    (surface) => {
+      expect(contrast(t["input-strong"]!, t[surface]!)).toBeGreaterThanOrEqual(3);
+      expect(contrast(t["primary"]!, t[surface]!)).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  it("keeps a switch's thumb 3:1 against its track, on or off", () => {
+    expect(contrast(t["background"]!, t["input-strong"]!)).toBeGreaterThanOrEqual(3);
+    expect(contrast(t["background"]!, t["primary"]!)).toBeGreaterThanOrEqual(3);
+  });
 
   // SC 1.4.3: the default Button's label, at rest and under the pointer.
   it("keeps the primary label at 4.5:1 at rest and on hover", () => {
@@ -122,6 +139,7 @@ describe("globals.css contrast, as its comments state it", () => {
     expect(at(light, "input-strong", "background")).toBe("3.49");
     expect(at(light, "input-strong", "sidebar")).toBe("3.35");
     expect(at(light, "input-strong", "muted")).toBe("3.18");
+    expect(at(light, "background", "primary")).toBe("6.18");
     expect(at(light, "primary-foreground", "primary")).toBe("6.18");
     expect(at(light, "primary-foreground", "primary-hover")).toBe("5.09");
   });
@@ -133,6 +151,7 @@ describe("globals.css contrast, as its comments state it", () => {
     expect(at(dark, "input-strong", "card")).toBe("3.59");
     expect(at(dark, "input-strong", "sidebar")).toBe("3.68");
     expect(at(dark, "input-strong", "muted")).toBe("3.07");
+    expect(at(dark, "background", "primary")).toBe("5.12");
     expect(at(dark, "primary-foreground", "primary")).toBe("5.12");
     expect(at(dark, "primary-foreground", "primary-hover")).toBe("6.27");
   });

@@ -201,6 +201,19 @@ describe("TimplanGrid", () => {
     expect(cell).toHaveValue("236");
   });
 
+  // SC 1.4.11, as for every other field (DESIGN.md, The Field Edge Rule): an
+  // empty cell is found by its edge, and the hairline border-input measured
+  // 1.27:1 on white. A decided plan's cells are figures, not fields.
+  it("draws an editable cell's edge in the 3:1 field token, and none when read-only", () => {
+    const { unmount } = render(<Harness />);
+    expect(input("s-bi", 1)).toHaveClass("border-input-strong");
+    expect(input("s-bi", 1)).not.toHaveClass("border-input");
+    unmount();
+    render(<Harness readOnly />);
+    expect(input("s-bi", 1)).toHaveClass("border-transparent");
+    expect(input("s-bi", 1)).not.toHaveClass("border-input-strong");
+  });
+
   it("lights the cells and the sum a selected verdict is about, and nothing else", () => {
     render(<Harness highlightCode="TIMPLAN_GROUP_MINIMUM_UNMET" highlightChild="KE" />);
     expect(input("s-ke", 4)).toHaveAttribute("data-highlighted", "true");

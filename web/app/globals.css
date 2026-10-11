@@ -40,12 +40,16 @@
     --warning-strong: 38 92% 33%;
     --border: 240 6% 90%;
     --input: 240 6% 90%;
-    /* The edge of a text field, select or textarea. WCAG 2.1 SC 1.4.11 asks
-       3:1 of the boundary that tells a reader a control is there, and the
-       hairline --input measures 1.27:1 on white: an empty field had no
-       visible edge. --input stays the hairline of the outline Button, whose
-       label identifies it, and of the Switch track. 56% measures 3.49:1 on
-       background, card and popover, 3.35:1 on sidebar and 3.18:1 on muted. */
+    /* The edge of a text field, select or textarea, and the track of an
+       unchecked Switch. WCAG 2.1 SC 1.4.11 asks 3:1 of the boundary that
+       tells a reader a control is there, and the hairline --input measures
+       1.27:1 on white: an empty field had no visible edge, and an unchecked
+       switch was a white thumb on a near-white track. --input stays the
+       hairline of the outline Button, whose label identifies it. 56%
+       measures 3.49:1 on background, card and popover, 3.35:1 on sidebar
+       and 3.18:1 on muted. The Switch's thumb is painted in --background, so
+       it measures the same 3.49:1 on this track and 6.18:1 on the checked
+       one (--primary). */
     --input-strong: 240 6% 56%;
     --ring: 243 75% 59%;
     --radius: 0.625rem;
@@ -94,7 +98,8 @@
     --input: 240 6% 18%;
     /* --input measures 1.40:1 on background and 1.32:1 on card. 45% measures
        3.80:1 on background, 3.59:1 on card and popover, 3.68:1 on sidebar
-       and 3.07:1 on muted. */
+       and 3.07:1 on muted. The Switch's near-black thumb measures 3.80:1 on
+       the unchecked track and 5.12:1 on the checked one. */
     --input-strong: 240 6% 45%;
     --ring: 243 85% 68%;
     --sidebar: 240 8% 7%;

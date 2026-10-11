@@ -300,7 +300,7 @@
           "hsl(240 6% 80%)",
           "hsl(240 6% 95%)"
         ],
-        "note": "--input 240 6% 90% / 240 6% 18%: the outline Button's edge and the Switch track, 1.27:1 / 1.40:1 on background. Fields draw input-strong."
+        "note": "--input 240 6% 90% / 240 6% 18%: the outline Button's edge, 1.27:1 / 1.40:1 on background. Fields and the Switch's unchecked track draw input-strong."
       },
       "input-strong": {
         "role": "neutral",
@@ -317,7 +317,7 @@
           "hsl(240 6% 80%)",
           "hsl(240 6% 95%)"
         ],
-        "note": "The edge of Input, Textarea, SelectTrigger, NativeSelect and DateField (SC 1.4.11). Light 3.49:1 on background and card, 3.18:1 on muted; dark 3.80:1 on background, 3.59:1 on card, 3.07:1 on muted."
+        "note": "The edge of Input, Textarea, SelectTrigger, NativeSelect, DateField and the timplan grid's cells, and the track of an unchecked Switch (SC 1.4.11). Light 3.49:1 on background and card, 3.18:1 on muted; dark 3.80:1 on background, 3.59:1 on card, 3.07:1 on muted. The Switch's thumb (background) stands out from it by the same ratio."
       },
       "sidebar": {
         "role": "neutral",
@@ -628,7 +628,7 @@
     "rules": [
       {
         "name": "The Field Edge Rule",
-        "body": "A text field, select or textarea draws `border-input-strong` through the shared primitive or its exported class (`NATIVE_SELECT_CLASS`), never through a copy of it; `border-input` is only for boxes that a label already identifies.",
+        "body": "A text field, select or textarea draws `border-input-strong` through the shared primitive or its exported class (`NATIVE_SELECT_CLASS`), never through a copy of it. The one raw `<input>` is the timplan grid's 32px numeric cell, which names the token itself and whose test pins it. `border-input` is only for boxes that a label already identifies.",
         "section": "colors"
       },
       {

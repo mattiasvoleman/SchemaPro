@@ -148,7 +148,10 @@ export function TimplanGrid({
                     value={text}
                     onChange={(event) => onCellChange(key, event.target.value)}
                     className={cn(
-                      "h-8 w-14 rounded-md border border-input bg-background px-1.5 text-right text-sm tabular-nums",
+                      // The Field Edge Rule's one raw input (DESIGN.md): the
+                      // hairline border-input measured 1.27:1 and an empty
+                      // cell had no edge; input-strong holds 3:1 (SC 1.4.11).
+                      "h-8 w-14 rounded-md border border-input-strong bg-background px-1.5 text-right text-sm tabular-nums",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       readOnly && "border-transparent bg-transparent",
                       invalid && "border-destructive",
