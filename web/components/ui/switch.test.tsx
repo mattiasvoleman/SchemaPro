@@ -67,6 +67,17 @@ describe("Switch", () => {
     expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
   });
 
+  // SC 1.4.11: an unchecked switch is found by its track. The hairline
+  // bg-input measured 1.27:1 on white, under a white thumb; input-strong
+  // measures 3.49:1, and the thumb the same on it (app/globals-css.test.ts).
+  it("paints the unchecked track in the 3:1 field token, under a page-coloured thumb", () => {
+    render(<Switch aria-label="Notifications" />);
+    const toggle = screen.getByRole("switch", { name: "Notifications" });
+    expect(toggle).toHaveClass("data-[state=unchecked]:bg-input-strong", "data-[state=checked]:bg-primary");
+    expect(toggle).not.toHaveClass("data-[state=unchecked]:bg-input");
+    expect(toggle.firstElementChild).toHaveClass("bg-background");
+  });
+
   it("does not fire when disabled", async () => {
     const user = userEvent.setup();
     const onCheckedChange = vi.fn();
