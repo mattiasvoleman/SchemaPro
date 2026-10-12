@@ -723,74 +723,33 @@ export function useLesson(lessonId: string) {
   });
 }
 
+/** A pupil on a register: who, and the name the list shows. */
+export interface RosterPupil {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
 /**
- * Full roster of a calendar lesson: students of the primary class, of every
- * extra class, and individually participating students (deduplicated).
+ * Who the register lists for a calendar lesson: its active pupils, as the
+ * gateway's one roster reader answers it (src/calendar/lesson-roster.ts). The
+ * teacher app's broadcast carries the same list, and the register is checked
+ * against the same reader when it is sent. This hook assembled the union
+ * itself until then, from four reads of its own: a second definition of who
+ * attends, which a change to the reader would not have reached.
  */
-export function useLessonRoster(
-  calendarLessonId: string | null,
-  primaryGroupId: string | null,
-) {
+export function useLessonRoster(calendarLessonId: string | null) {
   return useQuery({
-    queryKey: ["lessonRoster", calendarLessonId, primaryGroupId],
-    enabled: calendarLessonId !== null && primaryGroupId !== null,
+    queryKey: ["lessonRoster", calendarLessonId],
+    enabled: calendarLessonId !== null,
     queryFn: async () => {
-      const supabase = createClient();
-      const [extraGroupsRes, participantsRes] = await Promise.all([
-        supabase
-          .from("CalendarLessonGroups")
-          .select("studentGroupId")
-          .eq("calendarLessonId", calendarLessonId!),
-        supabase
-          .from("CalendarLessonStudents")
-          .select("studentId")
-          .eq("calendarLessonId", calendarLessonId!),
-      ]);
-      if (extraGroupsRes.error) throw new Error(extraGroupsRes.error.message);
-      if (participantsRes.error) throw new Error(participantsRes.error.message);
-
-      const groupIds = [
-        primaryGroupId!,
-        ...(extraGroupsRes.data ?? []).map(
-          (row) => (row as { studentGroupId: string }).studentGroupId,
-        ),
-      ];
-
-      // A teaching group (Ma71) has no home-class members at all — its roster
-      // lives in StudentGroupMembers. Fetch those for every involved group so
-      // the id-filter below picks them up alongside individual participants.
-      const membershipRes = await supabase
-        .from("StudentGroupMembers")
-        .select("studentId")
-        .in("studentGroupId", groupIds);
-      if (membershipRes.error) throw new Error(membershipRes.error.message);
-
-      const studentIds = [
-        ...new Set([
-          ...(participantsRes.data ?? []).map(
-            (row) => (row as { studentId: string }).studentId,
-          ),
-          ...(membershipRes.data ?? []).map(
-            (row) => (row as { studentId: string }).studentId,
-          ),
-        ]),
-      ];
-
-      const filters = [`studentGroupId.in.(${groupIds.join(",")})`];
-      if (studentIds.length > 0) filters.push(`id.in.(${studentIds.join(",")})`);
-
-      const { data, error } = await supabase
-        .from("Users")
-        .select("id, role, firstName, lastName, email, phone, isActive, studentGroupId")
-        .eq("role", "STUDENT")
-        .eq("isActive", true)
-        .or(filters.join(","))
-        .order("lastName");
-      if (error) throw new Error(error.message);
+      const { students } = await api.get<{ students: RosterPupil[] }>(
+        `/api/v1/attendance/lessons/${calendarLessonId}/roster`,
+      );
       // The list a teacher ticks down, lesson by lesson. Out of Swedish order
       // it is worse than unsorted: the teacher scans for Åkesson where the
       // A-names are and does not find her.
-      return sortByPersonName((data ?? []) as Person[]);
+      return sortByPersonName(students);
     },
   });
 }

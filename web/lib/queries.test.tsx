@@ -582,88 +582,37 @@ describe("useTeacherLessons", () => {
 });
 
 describe("useLessonRoster", () => {
-  const students = [
-    {
-      id: "st-1",
-      role: "STUDENT",
-      firstName: "Alma",
-      lastName: "Berg",
-      email: "alma@example.com",
-      phone: null,
-      isActive: true,
-      studentGroupId: "g-1",
-    },
-  ];
-
-  it("queries students of the primary class, extra classes, teaching-group members and named participants", async () => {
-    stubTable("CalendarLessonGroups", ok([{ studentGroupId: "g-2" }]));
-    stubTable("CalendarLessonStudents", ok([{ studentId: "st-5" }]));
-    // Teaching-group roster: Ma71-style lessons have their students HERE, not
-    // in Users.studentGroupId — the fix this test pins.
-    stubTable("StudentGroupMembers", ok([{ studentId: "st-9" }]));
-    stubTable("Users", ok(students));
-    const { wrapper } = createHarness();
-    const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
+  it("asks the gateway's roster reader, and reads no table of its own", async () => {
+    // Who attends is defined once, in src/calendar/lesson-roster.ts: the
+    // classes joined to the lesson, their teaching groups (a Ma71 lesson's
+    // pupils are members only) and the pupils named on it are the reader's to
+    // gather, and which of them are active pupils is its filter, not ours.
+    mockApi.get.mockResolvedValue({ students: [{ id: "st-1", firstName: "Alma", lastName: "Berg" }] });
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useLessonRoster("cl-1"), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual(students);
-    expect(argsFor("Users", "or")).toEqual([
-      ["studentGroupId.in.(g-1,g-2),id.in.(st-5,st-9)"],
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/attendance/lessons/cl-1/roster");
+    expect(queryClient.getQueryData(["lessonRoster", "cl-1"])).toEqual([
+      { id: "st-1", firstName: "Alma", lastName: "Berg" },
     ]);
-    expect(argsFor("StudentGroupMembers", "in")).toEqual([
-      ["studentGroupId", ["g-1", "g-2"]],
-    ]);
-    expect(argsFor("Users", "eq")).toEqual([
-      ["role", "STUDENT"],
-      ["isActive", true],
-    ]);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 
-  it("deduplicates a student who is both a participant and a group member", async () => {
-    stubTable("CalendarLessonGroups", ok([]));
-    stubTable("CalendarLessonStudents", ok([{ studentId: "st-5" }]));
-    stubTable("StudentGroupMembers", ok([{ studentId: "st-5" }]));
-    stubTable("Users", ok(students));
+  it("orders the roster in Swedish, whatever order the gateway answers in", async () => {
+    // This is the list a teacher ticks off names in. PostgreSQL's collation
+    // puts Åberg and Öberg in the wrong place, so the order the rows arrive in
+    // is not the list's.
+    mockApi.get.mockResolvedValue({
+      students: [
+        { id: "st-1", firstName: "Nils", lastName: "Öberg" },
+        { id: "st-2", firstName: "Alma", lastName: "Berg" },
+        { id: "st-3", firstName: "Sara", lastName: "Åkesson" },
+        { id: "st-4", firstName: "Ali", lastName: "Ahmed" },
+      ],
+    });
     const { wrapper } = createHarness();
-    const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(argsFor("Users", "or")).toEqual([
-      ["studentGroupId.in.(g-1),id.in.(st-5)"],
-    ]);
-  });
-
-  it("omits the participant filter when no individual students are attached", async () => {
-    stubTable("CalendarLessonGroups", ok([]));
-    stubTable("CalendarLessonStudents", ok([]));
-    stubTable("StudentGroupMembers", ok([]));
-    stubTable("Users", ok(students));
-    const { wrapper } = createHarness();
-    const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(argsFor("Users", "or")).toEqual([["studentGroupId.in.(g-1)"]]);
-  });
-
-  it("orders the roster in Swedish, whatever order the rows arrive in", async () => {
-    // This is the list a teacher ticks off names in. The Supabase query cannot
-    // produce it: PostgreSQL's collation puts Åberg and Öberg in the wrong
-    // place, and a roster assembled from three separate id sets has no single
-    // ORDER BY to lean on anyway.
-    stubTable("CalendarLessonGroups", ok([]));
-    stubTable("CalendarLessonStudents", ok([]));
-    stubTable("StudentGroupMembers", ok([]));
-    stubTable(
-      "Users",
-      ok([
-        { ...students[0], id: "st-1", firstName: "Nils", lastName: "Öberg" },
-        { ...students[0], id: "st-2", firstName: "Alma", lastName: "Berg" },
-        { ...students[0], id: "st-3", firstName: "Sara", lastName: "Åkesson" },
-        { ...students[0], id: "st-4", firstName: "Ali", lastName: "Ahmed" },
-      ]),
-    );
-    const { wrapper } = createHarness();
-    const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
+    const { result } = renderHook(() => useLessonRoster("cl-1"), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.map((student) => student.lastName)).toEqual([
@@ -674,11 +623,11 @@ describe("useLessonRoster", () => {
     ]);
   });
 
-  it("requires both the lesson and its primary class before fetching", () => {
+  it("waits for the lesson before fetching", () => {
     const { wrapper } = createHarness();
-    const { result } = renderHook(() => useLessonRoster("cl-1", null), { wrapper });
+    const { result } = renderHook(() => useLessonRoster(null), { wrapper });
     expect(result.current.fetchStatus).toBe("idle");
-    expect(supabaseMocks.from).not.toHaveBeenCalled();
+    expect(mockApi.get).not.toHaveBeenCalled();
   });
 });
 

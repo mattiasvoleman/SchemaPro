@@ -55,9 +55,11 @@ mirrored to `CalendarLessonGroups` / `CalendarLessonStudents` at publish.
   other individual lessons block the slot.
 - **Publish** — participants are copied onto every materialized calendar
   lesson.
-- **Attendance** — the teacher's attendance roster (`useLessonRoster`) merges
-  the primary class, every extra class, and individual participants
-  (deduplicated); recording works unchanged.
+- **Attendance** — the teacher's attendance roster (`useLessonRoster`) reads
+  `GET /api/v1/attendance/lessons/:id/roster`, which asks the one roster
+  reader (`src/calendar/lesson-roster.ts`): the primary class, every extra
+  class, their teaching groups and individual participants, active pupils
+  only (deduplicated); recording works unchanged.
 - **Student visibility** — RLS `*_participant_select` policies on
   `MasterLessons`/`CalendarLessons` make participant lessons appear in
   students' schedules automatically (individually or via their class being an

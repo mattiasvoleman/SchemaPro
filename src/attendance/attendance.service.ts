@@ -23,6 +23,18 @@ export interface ReportedAbsencesResult {
   studentIds: string[];
 }
 
+/** A pupil on a register: who, and the name the list shows. */
+export interface RosterPupil {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+/** The pupils a register lists for a lesson. */
+export interface LessonRosterResult {
+  students: RosterPupil[];
+}
+
 /** The lesson as the register and the absence check read it. */
 const LESSON_SELECT = {
   id: true,
@@ -304,6 +316,51 @@ export class AttendanceService {
     });
   }
 
+  /**
+   * The pupils the register lists for the lesson, by name: its active pupils,
+   * as the one roster reader answers it (calendar/lesson-roster.ts), which is
+   * also the list the teacher app caches and the broadcast replaces. The web
+   * register assembled the same union itself, from four reads of its own,
+   * until this; now a change to who attends a lesson reaches the list and
+   * the check that accepts the register (RECORDED, a superset of this list:
+   * see assertStudentsAreOnRoster) at once.
+   *
+   * Names only, no contact details: the list shows a name and takes a
+   * status. A teacher must be assigned to the lesson, as for the report the
+   * list is taken for and for reportedAbsences beside it.
+   */
+  async lessonRoster(
+    calendarLessonId: string,
+    user: AuthenticatedUser,
+  ): Promise<LessonRosterResult> {
+    return this.prisma.withRls(user, async (tx) => {
+      const lesson = await tx.calendarLesson.findUnique({
+        where: { id: calendarLessonId },
+        select: LESSON_SELECT,
+      });
+
+      if (!lesson) {
+        throw new NotFoundException(
+          `Calendar lesson not found: ${calendarLessonId}`,
+        );
+      }
+
+      if (user.role === Role.TEACHER) {
+        await this.assertTeacherIsAssigned(tx, calendarLessonId, user);
+      }
+
+      const rosters = await calendarLessonRosters(tx, [lesson], { pupils: 'ACTIVE' });
+      const roster = [...(rosters.get(lesson.id) ?? [])];
+      if (roster.length === 0) return { students: [] };
+      const students = await tx.user.findMany({
+        where: { id: { in: roster } },
+        select: { id: true, firstName: true, lastName: true },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+      });
+      return { students };
+    });
+  }
+
   // ---------------------------------------------------------------------------
 
   private async assertTeacherIsAssigned(
@@ -341,9 +398,10 @@ export class AttendanceService {
    * class, any extra classes joined to it, teaching-group membership of any of
    * those groups (a nivågrupp or språkval group has no home-class members at
    * all — its roster lives entirely in StudentGroupMembers), and students
-   * named on the lesson individually. `useLessonRoster` in web/lib/queries.ts
-   * assembles exactly this set for the list the teacher ticks down; this is
-   * the server agreeing with the client rather than trusting it.
+   * named on the lesson individually. The list the teacher ticks down is the
+   * active pupils of this set, from the same reader (lessonRoster, and the
+   * teacher app's broadcast); this check asks it for the recorded ones and
+   * accepts nobody outside them, rather than trusting the client.
    *
    * Membership is deliberately not filtered by `isActive` or `role`: a batch
    * queued on a teacher's phone must still drain after the pupil has been

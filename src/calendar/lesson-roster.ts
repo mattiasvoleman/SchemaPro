@@ -14,9 +14,10 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  *   3. the pupils named on the lesson itself (CalendarLessonStudents,
  *      MasterLessonStudents).
  *
- * The attendance check asks it, and so do the teacher app's broadcast of a
- * changed lesson (realtime.service.ts) and every notice about a lesson: the
- * day operations (cancel, reinstate, vikarie, room), the cover board, a
+ * The attendance check asks it, and so do the register's list (GET
+ * attendance/lessons/:id/roster), the teacher app's broadcast of a changed
+ * lesson (realtime.service.ts) and every notice about a lesson: the day
+ * operations (cancel, reinstate, vikarie, room), the cover board, a
  * master-lesson edit, a DRAFT publish and the avbokning digest. Before it,
  * the notices read the home class alone (User.studentGroupId), so a lesson
  * taught to a teaching group told nobody in it, and a pupil named on a

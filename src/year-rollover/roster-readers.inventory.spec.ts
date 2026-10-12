@@ -64,7 +64,7 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   },
   'src/calendar/lesson-roster.ts': {
     basis: 'CURRENT',
-    why: 'who attends a lesson, for every caller: the attendance check (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
+    why: 'who attends a lesson, for every caller: the attendance check and the register’s list (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
   'src/integration/ss12000-sync/local-slice.ts': {
