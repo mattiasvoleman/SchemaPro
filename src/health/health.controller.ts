@@ -1,7 +1,8 @@
-import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
 import { PrismaService } from '../database/prisma.service';
+import { JobRunner, type JobsReadiness } from '../jobs/job-runner';
 
 export interface LivenessResult {
   status: 'ok';
@@ -11,6 +12,14 @@ export interface LivenessResult {
 export interface ReadinessResult {
   status: 'ready';
   database: 'up';
+  /**
+   * The background jobs, as counts (src/jobs): how many this process runs,
+   * how many failed their last pass and how many no instance has finished a
+   * pass of in three intervals. Absent when the job ledger cannot be read.
+   * Never part of the verdict: a stuck nightly job does not stop the API
+   * from serving.
+   */
+  jobs?: JobsReadiness;
 }
 
 /**
@@ -33,12 +42,17 @@ export interface ReadinessResult {
  * Neither response carries version, hostname, or dependency detail: these
  * endpoints are typically reachable from outside the cluster, and there is no
  * reason to hand an unauthenticated caller a fingerprint of the deployment.
+ * The jobs line on readiness is three numbers for the same reason: no job
+ * name, school, time or error.
  */
 @Controller('health')
 @Public()
 @SkipThrottle()
 export class HealthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly jobs?: JobRunner,
+  ) {}
 
   @Get()
   liveness(): LivenessResult {
@@ -57,6 +71,7 @@ export class HealthController {
       // surface it on an unauthenticated endpoint.
       throw new ServiceUnavailableException('Database is unreachable.');
     }
-    return { status: 'ready', database: 'up' };
+    const jobs = this.jobs ? await this.jobs.readiness() : null;
+    return jobs ? { status: 'ready', database: 'up', jobs } : { status: 'ready', database: 'up' };
   }
 }

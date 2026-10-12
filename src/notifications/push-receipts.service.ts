@@ -3,8 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { PushConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
+import { errorName, JobRunner, type JobCounts } from '../jobs/job-runner';
 import { ExpoPushClient } from './expo-push.client';
 
+/** The job's name in the runner and in JobRuns. */
+export const RECEIPT_JOB = 'push-receipts';
 /** How often the receipts are asked for. Expo: check about 15 minutes after sending; receipts live 24 h. */
 export const RECEIPT_INTERVAL_MS = 5 * 60 * 1000;
 export const RECEIPT_BATCH = 1000;
@@ -13,9 +16,10 @@ export const RECEIPT_BATCH = 1000;
  * Reads Expo's receipts for the tickets the delivery stored, and revokes the
  * tokens Expo says no longer reach a device (DeviceNotRegistered).
  *
- * Runs ONLY when push is enabled: with PUSH_NOTIFICATIONS off there is no
- * interval at all. The interval is unref'd, so it never keeps the process
- * alive, and is cleared on shutdown. Each tick:
+ * A job of the JobRunner (src/jobs), registered ONLY when push is enabled:
+ * with PUSH_NOTIFICATIONS off there is no interval at all. The interval is
+ * unref'd, so it never keeps the process alive, and is cleared on shutdown.
+ * Each pass is counted in JobRuns. Each tick:
  *
  *   1. app.push_due_receipts(1000) — housekeeping (tickets past 24 h, tokens
  *      revoked 30 days ago or unseen for 180), then a claim of the tickets
@@ -32,49 +36,52 @@ export const RECEIPT_BATCH = 1000;
 @Injectable()
 export class PushReceiptsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PushReceiptsService.name);
-  private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly config?: ConfigService,
     @Optional() private readonly expo?: ExpoPushClient,
+    @Optional() private readonly jobs?: JobRunner,
   ) {}
 
   onModuleInit(): void {
-    if (this.config?.get<PushConfig>('push')?.enabled !== true || !this.expo) return;
-    this.timer = setInterval(() => void this.tick(), RECEIPT_INTERVAL_MS);
-    this.timer.unref();
+    if (this.config?.get<PushConfig>('push')?.enabled !== true || !this.expo || !this.jobs) return;
+    this.jobs.register({ name: RECEIPT_JOB, intervalMs: RECEIPT_INTERVAL_MS, tick: () => this.tick() });
   }
 
   onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.jobs?.unregister(RECEIPT_JOB);
   }
 
   /** Whether the interval is set (push is on). */
   get scheduled(): boolean {
-    return this.timer !== null;
+    return this.jobs?.isScheduled(RECEIPT_JOB) ?? false;
   }
 
   /** One pass; a tick while the last one runs waits for it instead. Never throws. */
   async tick(): Promise<void> {
     if (this.running) return this.running;
+    const started = new Date();
     this.running = this.pass()
-      .catch((error: unknown) => this.logger.warn(`Receipt check failed [${error instanceof Error ? error.name : 'unknown'}]`))
+      .then((counts) => this.jobs?.settled(RECEIPT_JOB, started, { ok: true, counts }))
+      .catch((error: unknown) => {
+        this.logger.warn(`Receipt check failed [${errorName(error)}]`);
+        this.jobs?.settled(RECEIPT_JOB, started, { ok: false, error: errorName(error) });
+      })
       .finally(() => {
         this.running = null;
       });
     return this.running;
   }
 
-  private async pass(): Promise<void> {
-    if (!this.expo) return;
+  private async pass(): Promise<JobCounts> {
+    if (!this.expo) return {};
     const due = await this.prisma.withDeliveryService((tx) =>
       tx.$queryRaw<{ ticket_id: string }[]>(Prisma.sql`SELECT ticket_id FROM app.push_due_receipts(${RECEIPT_BATCH}::integer)`),
     );
     const ids = (due ?? []).map((row) => row.ticket_id);
-    if (ids.length === 0) return;
+    if (ids.length === 0) return { due: 0 };
     const receipts = await this.expo.receipts(ids);
     const checked = Object.keys(receipts);
     const dead: string[] = [];
@@ -88,10 +95,11 @@ export class PushReceiptsService implements OnModuleInit, OnModuleDestroy {
     if (errors.size > 0) {
       this.logger.warn(`Push receipts with errors [${[...errors].map(([code, n]) => `${code}=${n}`).join(', ')}]`);
     }
-    if (checked.length === 0) return;
+    if (checked.length === 0) return { due: ids.length, checked: 0, revoked: 0 };
     await this.prisma.withDeliveryService((tx) =>
       tx.$executeRaw(Prisma.sql`SELECT app.push_receipts_settled(${checked}::text[], ${dead}::text[])`),
     );
     this.logger.log(`Push receipts settled [checked=${checked.length}, waiting=${ids.length - checked.length}]`);
+    return { due: ids.length, checked: checked.length, revoked: dead.length };
   }
 }

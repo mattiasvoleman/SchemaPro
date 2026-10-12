@@ -486,6 +486,7 @@ describe('UsersService', () => {
       columns: [
         'id', 'schoolId', 'authId', 'role', 'firstName', 'lastName', 'email',
         'phone', 'isActive', 'invitedAt', 'createdAt', 'updatedAt', 'studentGroupId',
+        'deactivatedAt', 'pseudonymisedAt',
       ],
       lock: 'FOR NO KEY UPDATE',
     };
@@ -512,7 +513,22 @@ describe('UsersService', () => {
       storeUser({
         role: UserRole.STUDENT,
         studentGroupId: null,
+        pseudonymisedAt: null,
       });
+    });
+
+    it('refuses to make a pseudonymised person active again, naming the way out', async () => {
+      storeUser({ role: UserRole.STUDENT, studentGroupId: null, pseudonymisedAt: new Date('2026-10-21T01:10:00Z') });
+
+      await expect(service.update(USER_ID, { isActive: true }, testUser())).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'USER_IS_PSEUDONYMISED' },
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+      // Anything else about the row is still the admin's to edit.
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      await service.update(USER_ID, { phone: null }, testUser());
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
     });
 
     it('updates only the provided fields, under the caller RLS context', async () => {
@@ -552,7 +568,7 @@ describe('UsersService', () => {
       expect(writtenIn).toEqual(readIn);
       const [call] = queryRaw.mock.calls;
       expect(rawSql(call)).toMatch(
-        /SELECT "role", "studentGroupId"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+        /SELECT "role", "studentGroupId", "pseudonymisedAt"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
       );
       expect(call.slice(1)).toEqual([USER_ID]);
       expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(

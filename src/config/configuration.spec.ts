@@ -69,6 +69,8 @@ describe('loadConfiguration', () => {
       push: { enabled: false, accessToken: undefined, apiUrl: 'https://exp.host/--/api/v2/push' },
       // Unset: no credential can be sealed; the background tick runs; no loopback.
       ss12000: { secretsKey: undefined, secretsKeyPrevious: undefined, background: true, allowInsecureLocal: false },
+      // Unset: the nightly gallring ticks (and removes nothing until a school decides).
+      gallring: { background: true },
     });
   });
 
@@ -81,6 +83,11 @@ describe('loadConfiguration', () => {
     expect(on.background).toBe(false);
     expect(loadConfiguration(env({ SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(false);
     expect(loadConfiguration(env({ NODE_ENV: NodeEnv.Test, SS12000_ALLOW_INSECURE_LOCAL: '1' })).ss12000.allowInsecureLocal).toBe(true);
+  });
+
+  it('turns the gallring tick off only for GALLRING_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'off' })).gallring.background).toBe(false);
+    expect(loadConfiguration(env({ GALLRING_BACKGROUND: 'on' })).gallring.background).toBe(true);
   });
 
   it('turns push on only for PUSH_NOTIFICATIONS=expo, with the token when set and the URL without its trailing slash', () => {

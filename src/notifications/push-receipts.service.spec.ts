@@ -1,6 +1,7 @@
 import type { Logger } from '@nestjs/common';
 import { createPrismaMock, createTxMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import { JobRunner } from '../jobs/job-runner';
 import { PushReceiptsService, RECEIPT_INTERVAL_MS } from './push-receipts.service';
 
 describe('PushReceiptsService', () => {
@@ -17,7 +18,7 @@ describe('PushReceiptsService', () => {
     expo = { receipts: jest.fn().mockResolvedValue({}) };
   });
 
-  const service = () => new PushReceiptsService(prisma as unknown as PrismaService, config as never, expo as never);
+  const service = () => new PushReceiptsService(prisma as unknown as PrismaService, config as never, expo as never, new JobRunner());
 
   it('sets no interval while push is off, or without a client', () => {
     const spy = jest.spyOn(global, 'setInterval');
@@ -26,7 +27,7 @@ describe('PushReceiptsService', () => {
     off.onModuleInit();
     expect(off.scheduled).toBe(false);
     enabled = true;
-    const noClient = new PushReceiptsService(prisma as unknown as PrismaService, config as never);
+    const noClient = new PushReceiptsService(prisma as unknown as PrismaService, config as never, undefined, new JobRunner());
     noClient.onModuleInit();
     expect(noClient.scheduled).toBe(false);
     expect(spy).not.toHaveBeenCalled();

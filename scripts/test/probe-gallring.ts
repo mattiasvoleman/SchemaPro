@@ -1,0 +1,310 @@
+/**
+ * The adapter probe's checks for gallring (20261021090000–20261021110000),
+ * through the real GallringService, GallringJob and JobRunner on the API's
+ * role, against real Postgres as CI runs it. In a school of its own (slug
+ * <marker>-gallring), swept whole before and after, with rows on both sides
+ * of every cutoff written as the owner:
+ *
+ *   ga  the page as the school's admin: every kind ej beslutat, a period
+ *       recorded through the service waits a day and previews its count, KEEP
+ *       with months is a 400, and a teacher's preview is a 403;
+ *   gb  one night through GallringJob.runSchool with no principal, on
+ *       decisions dated two days back: exactly the rows older than each
+ *       cutoff go, none on or after it, nothing of the kind with no decision,
+ *       and no other school's row moves; the run counts what went and
+ *       "gallrat före" answers the cutoffs;
+ *   gc  the departed: an invited person's login is deleted before they are
+ *       pseudonymised, one whose login the provider would not delete waits
+ *       and is counted, a person with a tjänst this läsår waits for SCB, and
+ *       the next night takes the one who waited;
+ *   gd  the runner's own glue: app.gallring_schools names the school, the
+ *       nightly claim is taken once and not again once finished, and a
+ *       settled pass is a JobRuns row of counts.
+ *
+ * Imported by prisma-adapter-probe.ts, which hands in its `check`.
+ */
+import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
+import { ConsoleLogger, Logger } from '@nestjs/common';
+import type { Client } from 'pg';
+import { Role } from '../../src/auth/enums/role.enum';
+import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import type { PrismaService } from '../../src/database/prisma.service';
+import { GallringJob, GALLRING_JOB } from '../../src/gallring/gallring.job';
+import { GallringService } from '../../src/gallring/gallring.service';
+import { JobRunner } from '../../src/jobs/job-runner';
+import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
+
+type Check = (label: string, body: () => Promise<void>) => Promise<void>;
+
+export function gallringSlug(marker: string): string {
+  return `${marker}-gallring`;
+}
+
+export async function sweepGallringSchool(owner: Client, marker: string): Promise<void> {
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [gallringSlug(marker)]);
+  await owner.query(`DELETE FROM "JobRuns" WHERE job = $1`, [`${marker}-gallring`]);
+}
+
+export async function gallringChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
+  await sweepGallringSchool(owner, marker);
+  const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
+  const count = async (sql: string, params: unknown[] = []): Promise<number> => Number((await one<{ n: string }>(sql, params)).n);
+  const today = (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date)::text AS d`)).d;
+  const ago = (months: number) => `('${today}'::date - interval '${months} months')::date`;
+
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${marker} gallring`, gallringSlug(marker)],
+  );
+  const s = school.id;
+  const person = async (role: string, label: string, active = true, invited = false) => {
+    const authId = randomUUID();
+    const row = await one<{ id: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "invitedAt", "updatedAt")
+       VALUES ($1, $2, $3, 'Probe', $4, $5, $6, CASE WHEN $7 THEN now() END, now()) RETURNING id`,
+      [s, `${marker}-${label}@example.invalid`, label, role, authId, active, invited],
+    );
+    return { id: row.id, authId };
+  };
+  const admin = await person('SCHOOL_ADMIN', 'admin');
+  const teacher = await person('TEACHER', 'teacher');
+  const pupil = await person('STUDENT', 'pupil');
+  const guardian = await person('GUARDIAN', 'guardian');
+  const gone = await person('STUDENT', 'gone', true, true);
+  const stuck = await person('STUDENT', 'stuck', true, true);
+  const autumn = await person('TEACHER', 'autumn');
+  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s };
+  const asTeacher: AuthenticatedUser = { authId: teacher.authId, role: Role.TEACHER, userId: teacher.id, schoolId: s };
+
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, 'probe 2019/20', '2019-08-01', '2020-06-30', false, now()) RETURNING id`,
+    [s],
+  );
+  const current = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, 'probe i år', '${today}'::date - 30, '${today}'::date + 300, true, now()) RETURNING id`,
+    [s],
+  );
+  const lessonsYear = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, 'probe förra', ${ago(15)}, '${today}'::date - 62, false, now()) RETURNING id`,
+    [s],
+  );
+  const subject = await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES ($1, 'Probe', 'PRB', now()) RETURNING id`, [s]);
+  const group = await one<{ id: string }>(
+    `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES ($1, $2, 'P7', now()) RETURNING id`,
+    [s, lessonsYear.id],
+  );
+  for (const months of [13, 12, 11]) {
+    const lesson = await one<{ id: string }>(
+      `INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+       VALUES ($1, $2, $3, ${ago(months)}, ${ago(months)} + time '06:10', ${ago(months)} + time '06:50', now()) RETURNING id`,
+      [s, subject.id, group.id],
+    );
+    await owner.query(
+      `INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES ($1, $2, $3, 'PRESENT', now())`,
+      [s, lesson.id, pupil.id],
+    );
+  }
+  await owner.query(
+    `INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES ($1, $2, $3, ${ago(7)}), ($1, $2, $3, ${ago(5)})`,
+    [s, pupil.id, guardian.id],
+  );
+  await owner.query(
+    `INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+     VALUES ($1, $2, $3, ${ago(14)}, ${ago(13)}, $4), ($1, $2, $3, ${ago(14)}, ${ago(11)}, $4)`,
+    [s, pupil.id, guardian.id, marker],
+  );
+  await owner.query(`INSERT INTO "Notifications" ("schoolId", "userId", type, "createdAt") VALUES ($1, $2, 'SCHEDULE_CHANGED', now() - interval '5 years')`, [s, pupil.id]);
+  await owner.query(
+    `INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", action, "createdAt")
+     VALUES ($1, $2, 'UPDATE', now() - interval '25 months'), ($1, $2, 'UPDATE', now() - interval '23 months')`,
+    [s, lessonsYear.id],
+  );
+  await owner.query(
+    `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+     VALUES ($1, $2, $3, 100, 'PRB', now()), ($1, $2, $4, 100, 'PRB', now()), ($1, $5, $4, 60, 'AUT', now())`,
+    [s, teacher.id, year.id, current.id, autumn.id],
+  );
+  const reason = await one<{ id: string }>(`INSERT INTO "TeacherAbsenceReasons" ("schoolId", builtin) VALUES ($1, 'SICK') RETURNING id`, [s]);
+  await owner.query(
+    `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId")
+     VALUES ($1, $2, now() - interval '13 months 2 days', now() - interval '13 months', $3),
+            ($1, $2, now() - interval '11 months 2 days', now() - interval '11 months', $3)`,
+    [s, teacher.id, reason.id],
+  );
+  await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [s, guardian.id, gone.id]);
+
+  // Departed two years ago: the dating trigger stamps now(), so the owner
+  // back-dates with it off for these rows alone.
+  await owner.query(`UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = ANY($1::uuid[])`, [[gone.id, stuck.id, autumn.id]]);
+  await owner.query(`ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update"`);
+  try {
+    await owner.query(`UPDATE "Users" SET "deactivatedAt" = now() - interval '2 years' WHERE id = ANY($1::uuid[])`, [[gone.id, stuck.id, autumn.id]]);
+  } finally {
+    await owner.query(`ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update"`);
+  }
+
+  const other = await one<{ id: string }>(`SELECT id FROM "Schools" WHERE id <> $1 ORDER BY "createdAt" LIMIT 1`, [s]);
+  const othersRows = () =>
+    one<Record<string, string>>(
+      `SELECT (SELECT count(*) FROM "AttendanceRecords" WHERE "schoolId" <> $1) AS att,
+              (SELECT count(*) FROM "AbsenceReports" WHERE "schoolId" <> $1) AS abs,
+              (SELECT count(*) FROM "LeaveRequests" WHERE "schoolId" <> $1) AS leave,
+              (SELECT count(*) FROM "Notifications" WHERE "schoolId" <> $1) AS noti,
+              (SELECT count(*) FROM "ScheduleChangeLogs" WHERE "schoolId" <> $1) AS logs,
+              (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "schoolId" <> $1) AS emp,
+              (SELECT count(*) FROM "TeacherAbsences" WHERE "schoolId" <> $1 AND "reasonId" IS NOT NULL) AS reasons,
+              (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u WHERE "schoolId" <> $1) AS users`,
+      [s],
+    );
+  assert.ok(other, 'gallring: no other school to watch');
+
+  const service = new GallringService(api);
+  const deleted: string[] = [];
+  const supabase = {
+    deleteUser: async (authId: string) => {
+      if (authId === stuck.authId && !deleted.includes('retry')) throw new Error('Supabase delete failed: 500');
+      deleted.push(authId);
+    },
+  };
+  const runner = new JobRunner(api);
+  const job = new GallringJob(api, supabase as unknown as SupabaseAdminService, undefined, runner);
+  // The job's log lines are kept, to be read for names in (gc).
+  const lines: string[] = [];
+  Logger.overrideLogger({
+    log: (m: unknown) => void lines.push(String(m)),
+    warn: (m: unknown) => void lines.push(String(m)),
+    error: (m: unknown) => void lines.push(String(m)),
+    debug: (m: unknown) => void lines.push(String(m)),
+    verbose: (m: unknown) => void lines.push(String(m)),
+  });
+  try {
+
+    await check('(ga) the page: ej beslutat, a period that waits a day and previews, KEEP without months, the admin\'s alone', async () => {
+      const before = await service.overview(asAdmin);
+      assert.ok(before.kinds.every((kind) => kind.current === null && kind.preview === null), 'a kind was decided before anyone decided');
+      const after = await service.decide({ dataType: 'ATTENDANCE', decision: 'PURGE_AFTER', months: 12, reference: 'DHP probe' }, asAdmin);
+      const attendance = after.kinds.find((kind) => kind.dataType === 'ATTENDANCE')!;
+      assert.equal(attendance.current?.decidedBy, 'admin Probe');
+      assert.ok(attendance.waitsUntil && attendance.waitsUntil > today, `a new period applies at once (${attendance.waitsUntil})`);
+      assert.deepEqual(attendance.preview, { cutoff: (await one<{ d: string }>(`SELECT ${ago(12)}::text AS d`)).d, due: 1, held: 0 });
+      const preview = await service.preview({ dataType: 'DEPARTED_PEOPLE', months: 12 }, asAdmin);
+      assert.deepEqual([preview.due, preview.held], [2, 1], `departed preview ${JSON.stringify(preview)}`);
+      await assert.rejects(service.decide({ dataType: 'NOTIFICATIONS', decision: 'KEEP', months: 3 }, asAdmin), /Bara en gallringsperiod/);
+      await assert.rejects(service.preview({ dataType: 'ATTENDANCE', months: 12 }, asTeacher), /Bara skolans administratör/);
+    });
+
+    // The night below runs on periods the owner dates two days back, as if
+    // they had been made then. The admin's 12 months above stays the newest,
+    // and equal, so it changes nothing tonight.
+
+    await owner.query(`ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped"`);
+    try {
+      await owner.query(
+        `INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, "decidedById", "decidedAt")
+         SELECT $1, k::"RetentionDataType", 'PURGE_AFTER', m, $2, now() - interval '2 days'
+           FROM (VALUES ('ATTENDANCE', 12), ('ABSENCE_REPORTS', 6), ('LEAVE_REQUESTS', 12), ('CHANGE_LOGS', 24),
+                        ('ABSENCE_REASONS', 12), ('DEPARTED_PEOPLE', 12)) AS d(k, m)`,
+        [s, admin.id],
+      );
+    } finally {
+      await owner.query(`ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped"`);
+    }
+
+    await check('(gb) one night takes exactly what the periods say, and nothing of another school', async () => {
+      const othersBefore = await othersRows();
+      const result = await job.runSchool(s);
+      assert.deepEqual(await othersRows(), othersBefore, 'another school moved');
+      assert.equal(await count(`SELECT count(*) AS n FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."schoolId" = $1 AND l.date < ${ago(12)}`, [s]), 0);
+      assert.equal(await count(`SELECT count(*) AS n FROM "AttendanceRecords" WHERE "schoolId" = $1`, [s]), 2, 'attendance on or after the cutoff went');
+      assert.equal(await count(`SELECT count(*) AS n FROM "AbsenceReports" WHERE "schoolId" = $1`, [s]), 1);
+      assert.equal(await count(`SELECT count(*) AS n FROM "LeaveRequests" WHERE "schoolId" = $1 AND "endDate" >= ${ago(12)}`, [s]), 1, 'the request that ended after the cutoff went');
+      assert.equal(await count(`SELECT count(*) AS n FROM "LeaveRequests" WHERE "schoolId" = $1`, [s]), 1);
+      assert.equal(await count(`SELECT count(*) AS n FROM "Notifications" WHERE "schoolId" = $1 AND "createdAt" < now() - interval '4 years'`, [s]), 1, 'a notice went without a decision');
+      assert.equal(await count(`SELECT count(*) AS n FROM "ScheduleChangeLogs" WHERE "schoolId" = $1`, [s]), 1);
+      assert.equal(await count(`SELECT count(*) AS n FROM "TeacherEmploymentLogs" WHERE "academicYearId" = $1`, [year.id]), 0, '2019/20 history stayed');
+      assert.ok((await count(`SELECT count(*) AS n FROM "TeacherEmploymentLogs" WHERE "academicYearId" = $1`, [current.id])) >= 2, 'this läsår\'s history went');
+      assert.equal(await count(`SELECT count(*) AS n FROM "TeacherAbsences" WHERE "schoolId" = $1 AND "reasonId" IS NOT NULL`, [s]), 1);
+      assert.equal(await count(`SELECT count(*) AS n FROM "TeacherAbsences" WHERE "schoolId" = $1`, [s]), 2, 'an absence went with its reason');
+      // Attendance, an absence report, a request, a schedule log and 2019/20's
+      // one version, an absence's reason.
+      assert.equal(result.rows, 1 + 1 + 1 + 2 + 1, `rows ${result.rows}`);
+
+      const run = await one<{ status: string; counts: Record<string, number>; complete: Record<string, boolean> }>(
+        `SELECT status, counts, complete FROM "GallringRuns" WHERE "schoolId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
+        [s],
+      );
+      assert.equal(run.status, 'DONE');
+      assert.deepEqual(run.counts, { ATTENDANCE: 1, ABSENCE_REPORTS: 1, LEAVE_REQUESTS: 1, CHANGE_LOGS: 2, ABSENCE_REASONS: 1, DEPARTED_PEOPLE: 1 });
+      const purged = await service.purgedBefore(asTeacher);
+      assert.deepEqual(
+        purged.map((p) => p.dataType),
+        ['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'CHANGE_LOGS', 'ABSENCE_REASONS'],
+      );
+      assert.equal(purged[0]!.purgedBefore, (await one<{ d: string }>(`SELECT ${ago(12)}::text AS d`)).d);
+    });
+
+    await check('(gc) the departed: login first, the stuck one waits and is counted, SCB holds the autumn teacher, the next night takes the rest', async () => {
+      assert.deepEqual(deleted, [gone.authId], `logins deleted ${JSON.stringify(deleted)}`);
+      const people = await owner.query<{ id: string; firstName: string; email: string; authId: string; pseudonymisedAt: Date | null }>(
+        `SELECT id, "firstName", email, "authId", "pseudonymisedAt" FROM "Users" WHERE id = ANY($1::uuid[])`,
+        [[gone.id, stuck.id, autumn.id]],
+      );
+      const byId = new Map(people.rows.map((row) => [row.id, row]));
+      assert.equal(byId.get(gone.id)?.firstName, 'Pseudonym');
+      assert.equal(byId.get(gone.id)?.email, `pseudonym-${gone.id}@pseudonym.invalid`);
+      assert.notEqual(byId.get(gone.id)?.authId, gone.authId);
+      assert.equal(byId.get(stuck.id)?.pseudonymisedAt, null, 'a person whose login stayed was pseudonymised');
+      assert.equal(byId.get(autumn.id)?.pseudonymisedAt, null, 'SCB\'s teacher was pseudonymised');
+      assert.equal(await count(`SELECT count(*) AS n FROM "GuardianStudents" WHERE "studentId" = $1`, [gone.id]), 0);
+      const waiting = await one<{ waiting: Record<string, number> }>(
+        `SELECT waiting FROM "GallringRuns" WHERE "schoolId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
+        [s],
+      );
+      assert.deepEqual(waiting.waiting, { DEPARTED_PEOPLE_SCB: 1, DEPARTED_PEOPLE_LOGIN: 1 });
+
+      deleted.push('retry');
+      const next = await job.runSchool(s);
+      assert.equal(next.people, 1);
+      assert.equal(next.rows, 0, 'the second night took rows the first had left');
+      assert.ok((await one<{ p: Date | null }>(`SELECT "pseudonymisedAt" AS p FROM "Users" WHERE id = $1`, [stuck.id])).p !== null);
+      // The job logged ids and counts, and never a name or an e-mail.
+      assert.ok(lines.some((line) => line.startsWith(`Gallring [school=${s}, `)), `no summary line in ${JSON.stringify(lines)}`);
+      for (const line of lines) assert.ok(!/Probe|example\.invalid|Pseudonym/.test(line), `a log line carries a name: ${line}`);
+    });
+
+    await check('(gd) the runner: gallring_schools names the school, one claim a night, a settled pass is a row of counts', async () => {
+      const schools = await api.withDeliveryService((tx) => tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM app.gallring_schools() AS id`);
+      assert.ok(schools.some((row) => row.id === s), 'gallring_schools left out a school with periods');
+      const noon = new Date(`${today}T10:00:00Z`);
+      const job2 = `${marker}-gallring`;
+      const [claimed] = await runner.claimNightly(job2, 3, [s], 5, noon);
+      assert.equal(claimed?.schoolId, s);
+      assert.deepEqual(await runner.claimNightly(job2, 3, [s], 5, new Date(noon.getTime() + 3_600_000)), []);
+      await runner.finishNightly(job2, s, claimed!.localDay, new Date(noon.getTime() + 60_000));
+      assert.deepEqual(await runner.claimNightly(job2, 3, [s], 5, new Date(noon.getTime() + 5 * 3_600_000)), []);
+
+      runner.settled(job2, new Date(Date.now() - 1000), { ok: true, counts: { schools: 1, rows: 7 } });
+      runner.settled(job2, new Date(Date.now() - 500), { ok: false, error: 'PrismaClientKnownRequestError' });
+      for (let i = 0; i < 50; i += 1) {
+        const row = (await owner.query<{ runs: number; failures: number; counts: Record<string, number>; lastError: string | null }>(
+          `SELECT runs, failures, counts, "lastError" FROM "JobRuns" WHERE job = $1`,
+          [job2],
+        )).rows[0];
+        if (row?.runs === 2) {
+          assert.deepEqual([row.failures, row.counts, row.lastError], [1, { schools: 1, rows: 7 }, 'PrismaClientKnownRequestError']);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.fail('the two settled passes never reached JobRuns');
+    });
+    assert.equal(GALLRING_JOB, 'gallring');
+  } finally {
+    Logger.overrideLogger(new ConsoleLogger());
+    await sweepGallringSchool(owner, marker);
+  }
+}

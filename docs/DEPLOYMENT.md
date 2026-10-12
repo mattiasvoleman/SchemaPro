@@ -181,6 +181,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `INTEGRATION_SECRETS_KEY` | optional; base64 of exactly 32 random bytes (`openssl rand -base64 32`), kept in Railway's variables and nowhere else. The SS12000 source's credentials (client secret, static token, client key and certificate) are sealed with it (AES-256-GCM, bound to school, source, kind and the host they are sent to), and so are the integration keys' webhook signing secrets (bound to school and key, 20261014120000). Unset: an admin cannot save a credential or create a signing secret (503 `SS12000_SECRETS_NOT_CONFIGURED`), no sync runs, and no key can register a subscription. Losing it means every school re-enters its credentials and recreates its signing secrets; it never decrypts anything else |
 | `INTEGRATION_SECRETS_KEY_PREVIOUS` | optional, same shape: the key before a rotation, which still decrypts and never encrypts. Rotate by moving the current key here, setting a new one, letting each school's admin save its credential again (or waiting for the next save), then clearing it |
 | `SS12000_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that runs scheduled syncs and marks stale and expired runs, and the 1-minute tick that delivers v2.0 subscription notices and purges old tombstones and delivery rows. A school's sync runs at night only once its admin turns the schedule on, and auto-applies only once the admin turns that on too; a notice goes out only once a consumer has registered a subscription |
+| `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -331,6 +332,23 @@ Walk the full product loop once, in order:
 
 - **Backups**: enable Supabase PITR/daily backups. The database is the only
   stateful component — API, solver and web are stateless.
+- **Gallring cannot be undone in SchemaPro.** A school's retention periods
+  (`/admin/dataskydd`) delete attendance, absence reports, leave requests,
+  notices and logs older than the period, null old absence reasons, and
+  pseudonymise people who left, every night from 03:00 local time. Each
+  night's run is a `GallringRuns` row of counts (no ids, no names). If a
+  school recorded a wrong period, restoring rows means restoring the
+  database to a point before that night's run from PITR, within its
+  retention window, so keep PITR on before any school sets a period. The
+  page and the database guard against a wrong click: nothing goes until a
+  period is set, and a period that removes more than the one before it
+  waits 24 hours.
+- **Background jobs**: the SS12000 sync, the webhook notices, the push
+  receipts and the gallring run on one in-process runner (`src/jobs`).
+  `GET /health/ready` adds three counts, never names: how many jobs this
+  instance runs, how many failed their last pass, and how many no instance
+  has finished a pass of in three intervals. They never make the probe fail.
+  Each job's passes are counted per UTC day in `JobRuns` (owner-only).
 - **Logs**: the API logs are PII-free by design; ship container stdout to your
   log aggregator. Watch for `Optimization job failed` and Prisma connection
   errors.

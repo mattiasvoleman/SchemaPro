@@ -5,6 +5,7 @@ import type { PrismaService } from '../../database/prisma.service';
 import { Ss12000SourceError } from '../ss12000-sync/errors';
 import type { OutboundRequest } from '../ss12000-sync/outbound';
 import { Ss12000Outbound, Ss12000Secrets } from '../ss12000-sync/ss12000-sync.providers';
+import { JobRunner } from '../../jobs/job-runner';
 import { verifySignature, webhookSecretAad } from './signing';
 import { Ss12000WebhookDeliveryService } from './webhook-delivery.service';
 
@@ -29,7 +30,7 @@ function setup(options: { send?: (req: OutboundRequest) => Promise<{ status: num
       };
     }
   }
-  const service = new Ss12000WebhookDeliveryService(prisma as unknown as PrismaService, new Outbound(), secrets, config(options.background ?? false));
+  const service = new Ss12000WebhookDeliveryService(prisma as unknown as PrismaService, new Outbound(), secrets, config(options.background ?? false), new JobRunner());
   const settled: unknown[][] = [];
   let sealedRow: object | null = null;
   let due: object[] = [];
