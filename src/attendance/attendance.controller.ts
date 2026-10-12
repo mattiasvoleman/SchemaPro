@@ -19,6 +19,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import {
   AttendanceService,
   AttendanceReportResult,
+  LessonRosterResult,
   ReportedAbsencesResult,
 } from './attendance.service';
 import { ReportAttendanceDto } from './dto/report-attendance.dto';
@@ -74,5 +75,19 @@ export class AttendanceController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ReportedAbsencesResult> {
     return this.attendanceService.reportedAbsences(lessonId, user);
+  }
+
+  /**
+   * `GET /api/v1/attendance/lessons/:lessonId/roster`
+   *
+   * The pupils the register lists, by name: the lesson's active pupils, as
+   * the one roster reader answers it for the broadcast and the notices too.
+   */
+  @Get('lessons/:lessonId/roster')
+  async roster(
+    @Param('lessonId', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<LessonRosterResult> {
+    return this.attendanceService.lessonRoster(lessonId, user);
   }
 }

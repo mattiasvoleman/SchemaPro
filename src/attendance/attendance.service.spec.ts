@@ -889,4 +889,117 @@ describe('AttendanceService', () => {
       expect(tx.$queryRaw).not.toHaveBeenCalled();
     });
   });
+
+  describe('the register’s list', () => {
+    const LEFT = '88888888-8888-4888-8888-888888888888';
+    const STRANGER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const COLLEAGUE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const OTHER_GROUP = '11111111-1111-4111-8111-cccccccccccc';
+
+    const person = (id: string, firstName: string, studentGroupId: string | null, active = true, role = 'STUDENT') => ({
+      id,
+      firstName,
+      lastName: 'Ek',
+      email: `${firstName.toLowerCase()}@skola.se`,
+      phone: '070-000 00 00',
+      role,
+      isActive: active,
+      studentGroupId,
+    });
+
+    /**
+     * The rows the reader asks, every filter applied: Ada at home in the
+     * lesson's class, Bo a member of the group joined to it, Cy named on the
+     * lesson. Leif left the class and the lesson; Tove, a teacher, is wrongly
+     * a member of the joined group; Stina is in another class.
+     */
+    const arrangeWorld = () => {
+      storeLesson({ extraGroups: [{ studentGroupId: EXTRA_GROUP }] });
+      const users = [
+        person(STUDENT_A, 'Ada', PRIMARY_GROUP),
+        person(STUDENT_B, 'Bo', OTHER_GROUP),
+        person(STUDENT_C, 'Cy', null),
+        person(LEFT, 'Leif', PRIMARY_GROUP, false),
+        person(COLLEAGUE, 'Tove', null, true, 'TEACHER'),
+        person(STRANGER, 'Stina', OTHER_GROUP),
+      ];
+      const userOf = (id: string) => users.find((user) => user.id === id)!;
+      tx.user.findMany.mockImplementation(answerRows(users));
+      tx.studentGroupMember.findMany.mockImplementation(
+        answerRows(
+          [STUDENT_B, LEFT, COLLEAGUE].map((studentId) => ({
+            studentId,
+            studentGroupId: EXTRA_GROUP,
+            student: { role: userOf(studentId).role, isActive: userOf(studentId).isActive },
+          })),
+        ),
+      );
+      tx.calendarLessonStudent.findMany.mockImplementation(
+        answerRows([STUDENT_C, LEFT, COLLEAGUE].map((studentId) => ({ calendarLessonId: LESSON_ID, studentId }))),
+      );
+    };
+
+    it('lists the active pupils of the classes attending, their teaching groups and the pupils named, by name only', async () => {
+      arrangeWorld();
+
+      const { students } = await service.lessonRoster(LESSON_ID, teacher());
+
+      expect(students.map((student) => student.firstName).sort()).toEqual(['Ada', 'Bo', 'Cy']);
+      // A name and an id: the list shows a name and takes a status, so no
+      // address or number leaves with it.
+      expect(students.find((student) => student.id === STUDENT_A)).toEqual({
+        id: STUDENT_A,
+        firstName: 'Ada',
+        lastName: 'Ek',
+      });
+    });
+
+    it('asks the one roster reader, for the active pupils, and names only whom it answered', async () => {
+      arrangeWorld();
+
+      await service.lessonRoster(LESSON_ID, teacher());
+
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: [PRIMARY_GROUP, EXTRA_GROUP] }, role: 'STUDENT', isActive: true },
+        select: { id: true, studentGroupId: true },
+      });
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: [PRIMARY_GROUP, EXTRA_GROUP] }, student: { role: 'STUDENT', isActive: true } },
+        select: { studentId: true, studentGroupId: true },
+      });
+      const names = tx.user.findMany.mock.calls.at(-1)![0] as { where: { id: { in: string[] } } };
+      expect([...names.where.id.in].sort()).toEqual([STUDENT_A, STUDENT_B, STUDENT_C].sort());
+    });
+
+    it('answers an empty list without asking for names when nobody attends', async () => {
+      await expect(service.lessonRoster(LESSON_ID, teacher())).resolves.toEqual({ students: [] });
+      expect(tx.user.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a teacher who is not assigned to the lesson before reading any pupil', async () => {
+      tx.calendarLessonTeacher.findUnique.mockResolvedValue(null);
+
+      await expect(service.lessonRoster(LESSON_ID, teacher())).rejects.toThrow(ForbiddenException);
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+      expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin read any lesson of the school', async () => {
+      arrangeWorld();
+
+      const { students } = await service.lessonRoster(LESSON_ID, testUser({ role: Role.SCHOOL_ADMIN }));
+
+      expect(students).toHaveLength(3);
+      expect(tx.calendarLessonTeacher.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFound when RLS hides the lesson', async () => {
+      tx.calendarLesson.findUnique.mockResolvedValue(null);
+
+      await expect(service.lessonRoster(LESSON_ID, teacher())).rejects.toThrow(
+        new NotFoundException(`Calendar lesson not found: ${LESSON_ID}`),
+      );
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+    });
+  });
 });

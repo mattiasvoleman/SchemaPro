@@ -55,12 +55,14 @@ export default function LessonAttendancePage({
 
   const lessonQuery = useLesson(lessonId);
   const lesson = lessonQuery.data;
-  // Full roster: primary class + extra classes + individual participants.
+  // Who the register lists: the lesson's active pupils, as the gateway's
+  // roster reader answers it. Asked once the lesson has been read (the state
+  // ladder below).
   const {
     data: students,
     isLoading: studentsLoading,
     isError: studentsError,
-  } = useLessonRoster(lesson ? lessonId : null, lesson?.studentGroupId ?? null);
+  } = useLessonRoster(lesson ? lessonId : null);
   const { data: existingRecords, isError: existingError } = useLessonAttendance(lessonId);
   const { data: reported } = useLessonReportedAbsences(lessonId);
 
