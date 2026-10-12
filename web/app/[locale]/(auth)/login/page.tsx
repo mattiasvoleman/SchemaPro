@@ -34,7 +34,9 @@ import { LoginForm, type SchoolAccountOption } from "./login-form";
  *  - @/utils/supabase/client; see utils/supabase/load-client.ts.
  * The other unauthenticated pages follow the same rules.
  *
- * "Logga in med skolkonto" is offered when the gateway's address is known
+ * "Logga in med skolkonto" is offered when the deployment has turned it on
+ * (NEXT_PUBLIC_SCHOOL_ACCOUNTS=on, after the hook and the providers are set
+ * up, docs/DEPLOYMENT.md §11) and the gateway's address is known
  * (NEXT_PUBLIC_API_BASE_URL, which the lookup needs). A school-account
  * sign-in that came back without a session lands here with `?sso=<reason>`
  * from /auth/callback, and the reason is said above the form; anything else
@@ -51,7 +53,8 @@ export default async function LoginPage({
   const { sso } = await searchParams;
   const reason = isSsoReason(sso) ? sso : null;
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL;
-  const schoolAccount: SchoolAccountOption | undefined = apiBase
+  const enabled = apiBase !== undefined && apiBase !== "" && process.env.NEXT_PUBLIC_SCHOOL_ACCOUNTS === "on";
+  const schoolAccount: SchoolAccountOption | undefined = enabled
     ? {
         apiBase,
         callbackPath: localePath(locale, "/auth/callback"),
@@ -62,6 +65,7 @@ export default async function LoginPage({
           redirecting: t("schoolAccountRedirecting"),
           needsEmail: t("schoolAccountNeedsEmail"),
           notFound: t("schoolAccountNotFound"),
+          busy: t("schoolAccountBusy"),
         },
       }
     : undefined;

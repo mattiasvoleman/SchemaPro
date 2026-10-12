@@ -22,6 +22,8 @@ export interface SchoolAccountSession {
 }
 
 export interface SignInSettings {
+  /** False until the deployment turns school accounts on (SCHOOL_ACCOUNTS=on): nothing can be saved. */
+  available: boolean;
   method: SignInMethodView | null;
   session: { schoolAccount: SchoolAccountSession | null };
 }

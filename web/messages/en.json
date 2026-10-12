@@ -142,6 +142,7 @@
     "schoolAccountRedirecting": "Taking you to your school's sign-in…",
     "schoolAccountNeedsEmail": "Type your email address first, and we will find your school's sign-in.",
     "schoolAccountNotFound": "No school signs in with a school account on that address's domain. Sign in with your password, or check the address.",
+    "schoolAccountBusy": "Many people are signing in right now. Wait a minute and try again.",
     "ssoRequired": "Your school requires staff to sign in with their school account. Choose Sign in with school account.",
     "ssoReasons": {
       "no-account": "Your school account has an email address nobody has invited to SchemaPro. Ask your school's administrator to invite you with the same address your school account has.",
@@ -2149,7 +2150,9 @@
       "SUBSCRIPTION_NOT_FOUND": "The subscription no longer exists.",
       "SIGN_IN_TENANT_REQUIRED": "Microsoft Entra ID needs the organisation's tenant ID.",
       "SIGN_IN_HOSTED_DOMAIN_REQUIRED": "Google Workspace needs the organisation's domain.",
-      "SIGN_IN_SSO_ONLY_NEEDS_OWN_SCHOOL_ACCOUNT": "Sign in with a school account from this organisation before you require school accounts for staff, so that nobody is locked out."
+      "SIGN_IN_SSO_ONLY_NEEDS_OWN_SCHOOL_ACCOUNT": "Sign in with a school account from this organisation before you require school accounts for staff, so that nobody is locked out.",
+      "SIGN_IN_DOMAIN_TAKEN": "Another school signs in with another provider on {domains}. Remove the domain here, or contact whoever runs SchemaPro if the domain is yours.",
+      "SIGN_IN_NOT_AVAILABLE": "Signing in with school account is not turned on for SchemaPro yet."
     },
     "tabsLabel": "Direction of the integration",
     "loadFailed": "The source system could not be loaded",
@@ -2160,6 +2163,8 @@
       "title": "Sign in with school account",
       "body": "Staff sign in with the account they already have in the school's Microsoft Entra ID or Google Workspace. Only people the school has invited get in, and the account is linked by email address.",
       "loadFailed": "The sign-in settings could not be read.",
+      "notAvailableTitle": "Not turned on yet",
+      "notAvailableBody": "Signing in with school account is not turned on for SchemaPro yet. Whoever runs SchemaPro turns it on once sign-in is set up with Microsoft and Google.",
       "statusOff": "Off",
       "statusOn": "On",
       "statusSsoOnly": "Required for staff",
@@ -2178,7 +2183,7 @@
       "save": "Save sign-in",
       "saved": "Sign-in saved.",
       "ssoOnly": "Require school account for staff",
-      "ssoOnlyBody": "Teachers and administrators then cannot sign in with a password, and anyone signed in with a password is signed out within an hour. Pupils and guardians are not affected.",
+      "ssoOnlyBody": "Teachers and administrators then cannot sign in with a password, and anyone signed in with a password is signed out within an hour. Pupils and guardians are not affected. Do not turn it on until staff have a version of the app with the Sign in with school account button: an older app then cannot sign in at all. A school-account sign-in lasts one day at a time.",
       "ssoOnlyNeedsOwn": "Sign in with a school account from this organisation first. That shows the sign-in works before anyone depends on it.",
       "ssoOnlySaved": "Staff now sign in with their school account.",
       "ssoOnlyOff": "Staff can sign in with a password again.",
