@@ -53,7 +53,7 @@ describe('Logga in med skolkonto (e2e)', () => {
       const entraAdmin = asUser({ schoolAccount: { provider: 'azure', entraTenantId: TENANT } });
 
       const empty = await request(http()).get('/api/v1/sign-in-method').set('x-test-user', admin).expect(200);
-      expect(empty.body).toEqual({ method: null, session: { schoolAccount: null } });
+      expect(empty.body).toEqual({ available: true, method: null, session: { schoolAccount: null } });
 
       const created = await request(http())
         .put('/api/v1/sign-in-method')
@@ -126,6 +126,23 @@ describe('Logga in med skolkonto (e2e)', () => {
       expect(harness.tx['schoolSignInMethod']!['create']).not.toHaveBeenCalled();
     });
 
+    it('answers a domain another school uses with another provider as 409, naming only the school\'s own domain', async () => {
+      plantTable(harness);
+      // What @prisma/adapter-pg hands up for the domain trigger's RAISE.
+      harness.tx['schoolSignInMethod']!['create']!.mockRejectedValue(
+        Object.assign(new Error('Database error'), {
+          code: 'P2039',
+          meta: { driverAdapterError: { cause: { originalCode: 'SI409', detail: 'domains=delad.example' } } },
+        }),
+      );
+      const refused = await request(http())
+        .put('/api/v1/sign-in-method')
+        .set('x-test-user', asUser({}))
+        .send({ provider: 'google', domains: ['skola.example', 'delad.example'], googleHostedDomain: 'skola.example' })
+        .expect(409);
+      expect(refused.body).toMatchObject({ code: 'SIGN_IN_DOMAIN_TAKEN', params: { domains: 'delad.example' } });
+    });
+
     it('is the admin\'s alone', async () => {
       plantTable(harness);
       for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN']) {
@@ -170,12 +187,15 @@ describe('/login\'s lookup under the rate limit (e2e)', () => {
   beforeAll(async () => {
     process.env['THROTTLE_LIMIT'] = '1000';
     harness = await createTestApp({ throttle: true });
+    // Listen once: hundreds of requests on ephemeral ports can meet a closed
+    // keep-alive socket (see public-viewer.e2e-spec.ts).
+    await harness.app.listen(0, '127.0.0.1');
   });
   afterAll(async () => {
     await harness.close();
   });
 
-  it('stops one address after the route\'s own limit, well under the global one', async () => {
+  it('serves a school\'s morning from one address, and stops it only past the route\'s own limit', async () => {
     harness.tx.$queryRaw.mockResolvedValue([{ provider: null }]);
     const send = () => request(harness.app.getHttpServer()).get('/public/v1/sign-in-methods/okand.example');
     for (let i = 0; i < LOOKUPS_PER_MINUTE; i++) {

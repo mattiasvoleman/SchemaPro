@@ -85,6 +85,17 @@ describe('validateEnv', () => {
     );
   });
 
+  describe('school accounts', () => {
+    it('defaults to off, and takes on and off', () => {
+      expect(validateEnv(valid()).SCHOOL_ACCOUNTS).toBe('off');
+      expect(validateEnv({ ...valid(), SCHOOL_ACCOUNTS: 'on' }).SCHOOL_ACCOUNTS).toBe('on');
+    });
+
+    it('refuses anything else, naming the variable', () => {
+      expect(() => validateEnv({ ...valid(), SCHOOL_ACCOUNTS: 'yes' })).toThrow(/SCHOOL_ACCOUNTS/);
+    });
+  });
+
   describe('SS12000 consumer', () => {
     it.each([
       ['a 32-byte base64 key and its predecessor', { INTEGRATION_SECRETS_KEY: Buffer.alloc(32, 1).toString('base64'), INTEGRATION_SECRETS_KEY_PREVIOUS: Buffer.alloc(32, 2).toString('base64') }],

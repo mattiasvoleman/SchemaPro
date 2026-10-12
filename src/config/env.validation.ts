@@ -218,6 +218,18 @@ export class EnvironmentVariables {
   GALLRING_BACKGROUND: string = 'on';
 
   /**
+   * "Logga in med skolkonto" (src/sign-in, migration 20261020090000). `off`,
+   * the default and what an unset variable means, keeps it inert: no school
+   * can save a school-account row (409 SIGN_IN_NOT_AVAILABLE), so with no
+   * row /login's lookup answers no provider and deploying the code changes
+   * no sign-in. Turn it `on` after the access-token hook and the providers
+   * are set up (docs/DEPLOYMENT.md §11). Turning it off later only stops
+   * changes; the rows that exist keep working.
+   */
+  @IsIn(['on', 'off'])
+  SCHOOL_ACCOUNTS: string = 'off';
+
+  /**
    * Lets the SS12000 client connect to a loopback address (the tests' TLS
    * mock provider). Refused unless NODE_ENV=test; https is never relaxed.
    */

@@ -33,6 +33,9 @@ process.env['AI_ENGINE_API_KEY'] = 'test-key';
 process.env['AI_ENGINE_TIMEOUT_MS'] = '15000';
 process.env['THROTTLE_TTL_SECONDS'] = '60';
 process.env['THROTTLE_LIMIT'] = '1000';
+// "Logga in med skolkonto" is off unless a deployment turns it on; the suite
+// tests it on, and sign-in.e2e-spec.ts boots one app with it off.
+process.env['SCHOOL_ACCOUNTS'] = 'on';
 // The public viewer trusts X-Viewer-Client-Ip only beside this key.
 process.env['PUBLIC_VIEWER_PROXY_KEY'] = 'test-viewer-proxy-key-of-at-least-32-chars';
 // The SS12000 sync (src/integration/ss12000-sync): no background tick in

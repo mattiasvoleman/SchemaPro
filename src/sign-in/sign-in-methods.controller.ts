@@ -36,8 +36,16 @@ export class SignInMethodController {
   }
 }
 
-/** Per caller address: a person retyping their address, not a list being walked. */
-export const LOOKUPS_PER_MINUTE = 30;
+/**
+ * Per caller address. A whole school, or every school of a kommun, often
+ * reaches the API from one public address, and the morning a school starts
+ * requiring the school account its staff all take this route within the
+ * hour. The answer is one read of a small table, so the limit is set for
+ * that crowd rather than for one person retyping: 600 a minute, ten a
+ * second. The web and the app say a 429 as "wait a minute", not as a
+ * failure, and remember a domain's answer for the page or the app's life.
+ */
+export const LOOKUPS_PER_MINUTE = 600;
 
 /**
  * /login's lookup, before anyone has signed in: which school-account
@@ -45,8 +53,9 @@ export const LOOKUPS_PER_MINUTE = 30;
  * domain, never the address.
  *
  * It answers 200 with { provider } either way, null when no school names the
- * domain or the schools naming it disagree, so a domain that is no customer
- * looks like any other answer in a log and a browser console. It names no
+ * domain or when the schools naming it disagree (which the domain trigger
+ * keeps from happening), so a domain that is no customer looks like any
+ * other answer in a log and a browser console. It names no
  * school, tenant or setting. Never cached: an admin's change applies to the
  * next click.
  */
