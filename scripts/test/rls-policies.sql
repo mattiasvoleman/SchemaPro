@@ -12195,3 +12195,208 @@ BEGIN
   SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 50: en notis om en lektion når alla på lektionen.
+--
+-- Notiser som når fram (20261018090000). Every lesson notice reads its
+-- roster through one reader (src/calendar/lesson-roster.ts): the home class
+-- of the lesson's class and of every group joined to it, the members of
+-- those groups (StudentGroupMembers) and the pupils named on the lesson
+-- (CalendarLessonStudents), then their guardians (GuardianStudents). The
+-- reads run under the caller's RLS. Most callers are admins, but a TEACHER
+-- who withdraws or shortens their own absence undoes the board's decisions
+-- in their own transaction, and the class notices that the undo sends
+-- (LESSON_REINSTATED) are read and written as that teacher. A policy that
+-- hid one source from a teacher would cut people silently from the notice
+-- and fail nothing.
+--
+-- 50a, as an admin, plants one lesson that a pupil reaches each way: a
+-- home-class pupil, a member of a teaching group joined to the lesson, and a
+-- named pupil with a guardian. 50b, as a teacher on that lesson, runs the
+-- reader's statements as Prisma sends them, finds all three and the
+-- guardian, and writes the three new types for them without reading them
+-- back. 50c, as the guardian and as the named pupil, reads its own rows of
+-- the new types, and the guardian opts out of each of them (the
+-- NotificationOptOuts CHECKs refuse only the two notices the school must
+-- deliver). The delivery's door, app.delivery_opt_outs, answers the opt-outs
+-- by type.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date;
+  home_class uuid; grp uuid; lesson uuid;
+  p_home uuid; p_member uuid; p_named uuid; teacher uuid; guardian uuid;
+BEGIN
+  SELECT id, "startDate" INTO y, y_start FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT u.id, u."studentGroupId" INTO p_home, home_class FROM "Users" u
+   WHERE u."schoolId" = school AND u.role = 'STUDENT' AND u."isActive" AND u."studentGroupId" IS NOT NULL
+   ORDER BY u.id LIMIT 1;
+  SELECT u.id INTO p_member FROM "Users" u
+   WHERE u."schoolId" = school AND u.role = 'STUDENT' AND u."isActive" AND u."studentGroupId" IS DISTINCT FROM home_class
+   ORDER BY u.id LIMIT 1;
+  SELECT u.id INTO p_named FROM "Users" u
+   WHERE u."schoolId" = school AND u.role = 'STUDENT' AND u."isActive" AND u."authId" IS NOT NULL
+     AND u."studentGroupId" IS DISTINCT FROM home_class AND u.id <> p_member
+   ORDER BY u.id LIMIT 1;
+  SELECT id INTO teacher FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  SELECT id INTO guardian FROM "Users"
+   WHERE "schoolId" = school AND role = 'GUARDIAN' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  IF y IS NULL OR p_home IS NULL OR p_member IS NULL OR p_named IS NULL OR teacher IS NULL OR guardian IS NULL THEN
+    RAISE EXCEPTION 'roster: the fixtures lack a year, three pupils, a teacher or a guardian to test with';
+  END IF;
+
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, y, 'RLS50 nivågrupp', 'TEACHING_GROUP', now()) RETURNING id INTO grp;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, grp, p_member);
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT school, s.id, home_class, y_start, y_start::timestamptz + interval '5 hours', y_start::timestamptz + interval '6 hours', now()
+    FROM "Subjects" s WHERE s."schoolId" = school ORDER BY s.id LIMIT 1
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (school, lesson, grp);
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (school, lesson, p_named);
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, teacher, 'LEAD');
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (school, guardian, p_named)
+  ON CONFLICT ("guardianId", "studentId") DO NOTHING;
+
+  PERFORM set_config('app.test_rls50_lesson', lesson::text, true);
+  PERFORM set_config('app.test_rls50_pupils', array_to_string(ARRAY[p_home, p_member, p_named], ','), true);
+  PERFORM set_config('app.test_rls50_guardian', guardian::text, true);
+  PERFORM set_config('app.test_rls50_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
+  PERFORM set_config('app.test_rls50_guardian_sub', (SELECT "authId"::text FROM "Users" WHERE id = guardian), true);
+  PERFORM set_config('app.test_rls50_pupil_sub', (SELECT "authId"::text FROM "Users" WHERE id = p_named), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls50_teacher_sub'))::text, true);
+DO $$
+DECLARE
+  lesson   uuid := current_setting('app.test_rls50_lesson')::uuid;
+  expected uuid[] := string_to_array(current_setting('app.test_rls50_pupils'), ',')::uuid[];
+  guardian uuid := current_setting('app.test_rls50_guardian')::uuid;
+  groups uuid[]; named uuid[]; pupils uuid[]; guardians uuid[];
+  missing text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'roster: expected a TEACHER'; END IF;
+  SELECT array_agg(g) INTO groups FROM (
+    SELECT "studentGroupId" AS g FROM "CalendarLessons" WHERE id = lesson
+    UNION SELECT "studentGroupId" FROM "CalendarLessonGroups" WHERE "calendarLessonId" = lesson) x;
+  IF coalesce(cardinality(groups), 0) <> 2 THEN
+    RAISE EXCEPTION 'roster: a teacher reads % of the lesson''s class and its joined group, expected 2', coalesce(cardinality(groups), 0);
+  END IF;
+  SELECT array_agg("studentId") INTO named FROM "CalendarLessonStudents" WHERE "calendarLessonId" = lesson;
+  -- lesson-roster.ts, ACTIVE: three sources, active pupils only.
+  SELECT array_agg(DISTINCT id) INTO pupils FROM (
+    SELECT id FROM "Users" WHERE "studentGroupId" = ANY (groups) AND role = 'STUDENT' AND "isActive"
+    UNION
+    SELECT m."studentId" FROM "StudentGroupMembers" m
+     WHERE m."studentGroupId" = ANY (groups)
+       AND EXISTS (SELECT 1 FROM "Users" u WHERE u.id = m."studentId" AND u.role = 'STUDENT' AND u."isActive")
+    UNION
+    SELECT id FROM "Users" WHERE id = ANY (coalesce(named, '{}')) AND role = 'STUDENT' AND "isActive") x;
+  SELECT string_agg(e::text, ', ') INTO missing FROM unnest(expected) e WHERE NOT (e = ANY (coalesce(pupils, '{}')));
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'roster: a teacher''s transaction does not reach % of the lesson''s pupils (home class, teaching group, named): %',
+      cardinality(string_to_array(missing, ', ')), missing;
+  END IF;
+  SELECT array_agg(DISTINCT "guardianId") INTO guardians FROM "GuardianStudents" WHERE "studentId" = ANY (pupils);
+  IF NOT (guardian = ANY (coalesce(guardians, '{}'))) THEN
+    RAISE EXCEPTION 'roster: a teacher''s transaction does not reach the named pupil''s guardian';
+  END IF;
+  -- The class notices, written without RETURNING as notifyUsers writes them.
+  INSERT INTO "Notifications" (id, "schoolId", "userId", type, meta)
+  SELECT gen_random_uuid(), app.current_school_id(), u, t, '{"subjectName": "RLS50"}'::jsonb
+    FROM unnest(expected || guardian) u
+   CROSS JOIN unnest(ARRAY['LESSON_REINSTATED', 'LESSON_SUPERVISED_STUDY', 'CANCELLATION_DIGEST']::"NotificationType"[]) t;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls50_guardian_sub'))::text, true);
+DO $$
+DECLARE
+  n bigint;
+  types "NotificationType"[] := ARRAY['LESSON_REINSTATED', 'LESSON_SUPERVISED_STUDY', 'CANCELLATION_DIGEST']::"NotificationType"[];
+  t "NotificationType";
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'roster: expected a GUARDIAN'; END IF;
+  SELECT count(*) INTO n FROM "Notifications" WHERE "userId" = app.current_user_id() AND type = ANY (types) AND meta->>'subjectName' = 'RLS50';
+  IF n <> 3 THEN RAISE EXCEPTION 'roster: the guardian reads % of their own three new notices', n; END IF;
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type)
+  SELECT app.current_user_id(), app.current_school_id(), x FROM unnest(types) x;
+  FOREACH t IN ARRAY types LOOP
+    SELECT count(*) INTO n FROM app.delivery_opt_outs(app.current_school_id(), ARRAY[app.current_user_id()], t) u
+     WHERE u = app.current_user_id();
+    IF n <> 1 THEN RAISE EXCEPTION 'roster: the delivery does not see the guardian''s opt-out of %', t; END IF;
+  END LOOP;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls50_pupil_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'roster: expected a STUDENT'; END IF;
+  SELECT count(*) INTO n FROM "Notifications"
+   WHERE type IN ('LESSON_REINSTATED', 'LESSON_SUPERVISED_STUDY', 'CANCELLATION_DIGEST') AND meta->>'subjectName' = 'RLS50';
+  IF n <> 3 THEN RAISE EXCEPTION 'roster: the named pupil reads % new notice(s), expected their own three', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 51: en avbokning minns om den berättade.
+--
+-- CancellationBatches.notifies (20261018091000): whether a batch sent its
+-- digest, so its reversal sends one too. A batch written without it (every
+-- batch before the column, and one from a gateway that predates it) is
+-- false, never null. The admin writes it; a teacher, who reads no batch at
+-- all (27g), changes none.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date; quiet uuid; told uuid; flag boolean;
+BEGIN
+  SELECT id, "startDate" INTO y, y_start FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (school, y, 'RLS51 tyst', 'EVENT', y_start, y_start, 'SCHOOL') RETURNING id INTO quiet;
+  SELECT notifies INTO flag FROM "CancellationBatches" WHERE id = quiet;
+  IF flag IS DISTINCT FROM false THEN RAISE EXCEPTION 'notifies: a batch written without it is %, expected false', flag; END IF;
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope, notifies)
+  VALUES (school, y, 'RLS51 berättade', 'EVENT', y_start, y_start, 'SCHOOL', true) RETURNING id INTO told;
+  SELECT notifies INTO flag FROM "CancellationBatches" WHERE id = told;
+  IF flag IS DISTINCT FROM true THEN RAISE EXCEPTION 'notifies: the admin''s true reads back as %', flag; END IF;
+  BEGIN
+    UPDATE "CancellationBatches" SET notifies = NULL WHERE id = quiet;
+    RAISE EXCEPTION 'notifies: a batch was stored with no answer';
+  EXCEPTION WHEN not_null_violation THEN NULL;
+  END;
+  PERFORM set_config('app.test_rls51_batch', quiet::text, true);
+  PERFORM set_config('app.test_rls51_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls51_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'notifies: expected a TEACHER'; END IF;
+  -- No WHERE and no column read: a WHERE would apply the SELECT arms too,
+  -- and an UPDATE-only leak would then update nothing and pass.
+  UPDATE "CancellationBatches" SET notifies = true;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'notifies: a teacher made a batch tell its people'; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE flag boolean;
+BEGIN
+  SELECT notifies INTO flag FROM "CancellationBatches" WHERE id = current_setting('app.test_rls51_batch')::uuid;
+  IF flag IS DISTINCT FROM false THEN RAISE EXCEPTION 'notifies: the batch reads % after the teacher''s write', flag; END IF;
+END $$;
+ROLLBACK;
