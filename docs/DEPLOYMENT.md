@@ -239,9 +239,9 @@ values (
 ```
 
 `"invitedAt"` says the person has a login. Without it the row reads as a
-catalogue entry nobody invited: gallring would not delete the login when the
-person leaves, and the school-account domain checks (§11) would not count
-them.
+catalogue entry nobody invited: when gallring pseudonymises the person after
+they have left it would leave their login behind, and the school-account
+domain checks (§11) would not count them.
 
 `"updatedAt"` is mapped with Prisma's `@updatedAt`, which is maintained in the
 application layer and creates **no database default** — every hand-written
@@ -354,7 +354,8 @@ Walk the full product loop once, in order:
   retention window, so keep PITR on before any school sets a period. The
   page and the database guard against a wrong click: nothing goes until a
   period is set, and a period that removes more than the one before it
-  waits 24 hours.
+  waits 24 hours. A departed person's login is deleted at Auth just before
+  they are pseudonymised, if `"invitedAt"` says they had one (§7, §11.1).
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
@@ -480,9 +481,17 @@ person sees changes before the operator turns them on.
       and exists (select 1 from auth.users a where a.id = u."authId");
    ```
 
-   The domain checks (§11) count a login by `"invitedAt"`, as gallring does
-   when it deletes a departed person's login. Without it such an admin is
-   counted only when they save the row themselves.
+   The domain checks (§11) count a login by `"invitedAt"`; without it such
+   an admin is counted only when they save the row themselves. Gallring
+   counts a login the same way: when it pseudonymises someone who has left,
+   it first deletes their login at Auth if `"invitedAt"` is set, and takes
+   any other `authId` for a placeholder. So this update also makes gallring
+   delete these logins when their time comes, which is what the school's
+   retention period asks for: without it a hand-linked person's login, with
+   their address and password, would outlive the pseudonymised row. Where a
+   school's period for departed people is already in force, its next night
+   deletes the logins of those it covers who are already due, as it would
+   for anyone invited.
 2. Deploy the API, the web and the app's JavaScript with the switches off.
    The Inloggning tab is visible to every school admin from the merge on, and
    says the feature is not turned on yet.
