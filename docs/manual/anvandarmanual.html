@@ -294,6 +294,35 @@
     varje timplansumma. Koden visas som en liten bricka i tabellen, så att ett
     ämne som glömts bort syns på sin rad.
   </p>
+  <p>
+    <strong>Fördelning över veckan.</strong> Längst ned i ämnesdialogen säger
+    du hur ämnets lektioner får ligga. <span class="ui">Högst lektioner per
+    dag</span> är ett tal från 1 till 20; 1 betyder inte två gånger samma dag,
+    och ett tomt fält betyder ingen gräns. <span class="ui">Inte dagar i
+    följd</span> lämnar minst en dag utan lektion mellan två dagar med lektion:
+    måndag och onsdag går, måndag och tisdag inte. Två lektioner samma dag avgörs
+    av gränsen per dag, inte av den här regeln. Veckan går inte runt, så fredag
+    och måndag ligger inte i följd. Regeln gäller varje timplanspost i ämnet
+    som inte har en egen (se 4.2). Utan regel är allt som förut.
+  </p>
+  <p>
+    Genereringen håller regeln för varje lektion den lägger och räknar med de
+    lektioner du låst: är en idrottslektion låst på tisdag läggs ingen annan på
+    måndag, tisdag eller onsdag. Går regeln inte ihop med veckan säger
+    genereringen det med postens namn, till exempel <em>Idrott för 7A: 4
+    lektioner ryms inte på de 5 dagar den kan undervisas, med högst 1 per dag
+    och inte dagar i följd.</em> Dagarna räknas som de dagar posten faktiskt
+    kan läggas: en idrottslärare som inte arbetar fredagar ger fyra.
+  </p>
+  <div class="note">
+    <span class="label">En lektion du lägger för hand får bryta regeln</span>
+    <p>
+      Lägger eller flyttar du en lektion så att regeln bryts sparas den ändå,
+      och du får en varning som säger vilka dagar det gäller. I ämnesdialogen
+      listas allt i grundschemat som redan bryter regeln, så att du ser det
+      innan du ändrar den.
+    </p>
+  </div>
   <div class="note">
     <span class="label">Salstypen måste finnas först</span>
     <p>
@@ -1111,6 +1140,16 @@
     lektion med sin egen längd. Tar du bort den extra raden blir posten
     enhetlig igen. En post med en enda längd ser ut och fungerar precis som
     förut.
+  </p>
+  <p>
+    <strong>En post kan ha en egen fördelning över veckan.</strong> Ämnets
+    regel (se 3.2) gäller varje post i ämnet, och dialogen säger vilken den är.
+    Slå på <span class="ui">Egen regel för den här posten</span> när en post
+    behöver något annat — svenska i åk 1 med åtta lektioner på fem dagar kan
+    aldrig ha en per dag. Fälten fylls då med ämnets regel och du ändrar det
+    som ska vara annorlunda. Tomma fält betyder ingen regel för just den här
+    posten, även om ämnet har en. Stänger du av omkopplaren följer posten
+    ämnet igen. Dialogen visar också vad grundschemat redan bryter.
   </p>
   <p>
     <strong>Alla lektioner behöver inte ligga varje vecka.</strong> I dialogen
@@ -3350,7 +3389,8 @@
   </table>
   <p>
     Timplansposterna följer <em>årskullen</em>: 7A:s poster blir 8A:s, med
-    samma lärare och samma lektionslängder (1 × 80 + 1 × 40 förblir det).
+    samma lärare och samma lektionslängder (1 × 80 + 1 × 40 förblir det), och
+    en post med en egen fördelning över veckan behåller den.
     Perioder flyttas hela veckor, och en period som slutar
     på läsårets sista dag slutar på det nya läsårets sista dag. Skiljer sig
     en klass minuter från den beslutade timplanen för årskursen den flyttas

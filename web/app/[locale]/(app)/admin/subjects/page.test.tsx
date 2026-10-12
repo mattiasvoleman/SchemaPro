@@ -22,6 +22,12 @@ const state = vi.hoisted(() => ({
   subjects: [] as unknown[],
   national: undefined as { subjects: unknown[]; versions: unknown[] } | undefined,
   nationalError: false,
+  // The active year's timplan and grundschema, for the ämnesfördelning's list
+  // of what the timetable already breaks; read only while the dialog shows it.
+  requirements: [] as unknown[],
+  lessons: [] as unknown[],
+  groups: [] as unknown[],
+  yearsRead: [] as Array<string | null>,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -34,6 +40,13 @@ vi.mock("@/lib/queries", () => ({
     update: { mutateAsync: updateMock, isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
+  useActiveYear: () => ({ activeYear: { id: "y-1", isActive: true } }),
+  useRequirements: (yearId: string | null) => {
+    state.yearsRead.push(yearId);
+    return { data: yearId ? state.requirements : undefined };
+  },
+  useMasterLessons: (yearId: string | null) => ({ data: yearId ? state.lessons : undefined }),
+  useGroups: () => ({ data: state.groups }),
 }));
 
 // The CSV buttons bring the import machinery and its own queries; neither has
@@ -89,6 +102,10 @@ beforeEach(() => {
   state.subjects = [];
   state.national = { subjects: NATIONAL, versions: [] };
   state.nationalError = false;
+  state.requirements = [];
+  state.lessons = [];
+  state.groups = [];
+  state.yearsRead = [];
 });
 
 /** The Nationell ämneskod cell of the row naming the subject. */
@@ -403,5 +420,129 @@ describe("the Faktor field (staffing Fas 3)", () => {
     expect(screen.getByText("loadFactorInvalid")).toBeInTheDocument();
     expect(factor).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+  });
+});
+
+describe("ämnesfördelning", () => {
+  const perDay = () => screen.getByLabelText("perDay (optional)");
+  const apart = () => screen.getByRole("switch", { name: "notConsecutive" });
+  const lesson = (id: string, dayOfWeek: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    academicYearId: "y-1",
+    subjectId: "s-1",
+    studentGroupId: "g-7a",
+    dayOfWeek,
+    isParked: false,
+    recurrence: "ALL_WEEKS",
+    startDate: null,
+    endDate: null,
+    ...extra,
+  });
+
+  it("sends no rule for a new subject — rules are off until a school sets them", async () => {
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+    await user.type(screen.getByLabelText("name"), "Idrott");
+    expect(perDay()).toHaveValue("");
+    expect(apart()).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Idrott", maxLessonsPerDay: null, minDaysBetween: null }),
+    );
+  });
+
+  it("opens on the stored rule and sends it back changed, null clearing a half", async () => {
+    state.subjects = [{ ...subject("s-1", "Idrott", "IDH"), maxLessonsPerDay: 1, minDaysBetween: 2 }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Idrott)" }));
+    expect(perDay()).toHaveValue("1");
+    expect(apart()).toBeChecked();
+
+    await user.clear(perDay());
+    await user.type(perDay(), "2");
+    await user.click(apart());
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s-1", maxLessonsPerDay: 2, minDaysBetween: null }),
+    );
+  });
+
+  it("keeps a wider rule written elsewhere rather than narrowing it to consecutive days", async () => {
+    state.subjects = [{ ...subject("s-1", "Idrott", "IDH"), minDaysBetween: 3 }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Idrott)" }));
+    expect(apart()).toBeChecked();
+    expect(screen.getByText("widerHint(3)")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ minDaysBetween: 3 }));
+  });
+
+  it("refuses a count outside 1..20 on the field and keeps Spara disabled", async () => {
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+    await user.type(screen.getByLabelText("name"), "Idrott");
+    for (const typed of ["0", "21", "1,5"]) {
+      await user.clear(perDay());
+      await user.type(perDay(), typed);
+      expect(screen.getByText("perDayInvalid")).toBeInTheDocument();
+      expect(perDay()).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    }
+  });
+
+  it("lists what the grundschema already breaks under the rule as typed, and reads nothing before", async () => {
+    // Two idrott lessons on one Monday for 7A, placed by hand. 8A's row has a
+    // rule of its own, so the subject's rule says nothing about it.
+    state.subjects = [subject("s-1", "Idrott", "IDH")];
+    state.groups = [
+      { id: "g-7a", name: "7A" },
+      { id: "g-8a", name: "8A" },
+    ];
+    state.requirements = [
+      { id: "r-7a", subjectId: "s-1", studentGroupId: "g-7a", ownDistribution: false },
+      { id: "r-8a", subjectId: "s-1", studentGroupId: "g-8a", ownDistribution: true },
+    ];
+    state.lessons = [
+      lesson("l-1", 1),
+      lesson("l-2", 1),
+      lesson("l-3", 2, { studentGroupId: "g-8a" }),
+      lesson("l-4", 2, { studentGroupId: "g-8a" }),
+      // On the tray: occupies nothing, breaks nothing.
+      lesson("l-5", 3, { isParked: true }),
+      lesson("l-6", 3),
+    ];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Idrott)" }));
+    expect(screen.queryByText("breachesTitle")).not.toBeInTheDocument();
+    expect(state.yearsRead).toEqual([]);
+
+    await user.type(perDay(), "1");
+
+    expect(screen.getByText("breachesTitle")).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem").map((item) => item.textContent);
+    expect(items).toEqual(["breachPerDay(cellLabel(Idrott|7A)|2|1)"]);
+
+    await user.click(apart());
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "breachPerDay(cellLabel(Idrott|7A)|2|1)",
+    ]);
+    // Monday and Wednesday are not consecutive; a Tuesday lesson would be.
+    state.lessons = [...state.lessons, lesson("l-7", 2)];
+    await user.clear(perDay());
+    await user.type(perDay(), "2");
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "breachApart(cellLabel(Idrott|7A)|1|2)",
+      "breachApart(cellLabel(Idrott|7A)|2|3)",
+    ]);
   });
 });

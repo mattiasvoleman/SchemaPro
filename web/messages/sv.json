@@ -278,6 +278,27 @@
     "roomTypeDialogHint": "Salstypen går sedan att välja både för ämnen och för salar.",
     "roomTypesUnavailable": "Listan över salstyper kunde inte hämtas. Ämnets salstyp ändras inte om du sparar utan att välja en ny."
   },
+  "distribution": {
+    "title": "Fördelning över veckan",
+    "intro": "Genereringen håller regeln för varje lektion den lägger. En lektion du lägger för hand får bryta den, och du får en varning när du sparar.",
+    "perDay": "Högst lektioner per dag",
+    "perDayHint": "Tomt betyder ingen gräns. 1 betyder inte två gånger samma dag.",
+    "perDayInvalid": "Ange ett heltal från 1 till 20, eller lämna fältet tomt.",
+    "notConsecutive": "Inte dagar i följd",
+    "notConsecutiveHint": "Mellan två dagar med lektioner ligger minst en dag utan. Två lektioner samma dag avgörs av gränsen per dag.",
+    "widerHint": "Regeln säger att lektionsdagarna ligger minst {days} dagar isär. Stäng av för att ta bort den.",
+    "rulePerDay": "högst {count} per dag",
+    "ruleNotConsecutive": "inte dagar i följd",
+    "ruleApart": "minst {days} dagar isär",
+    "ruleNone": "ingen regel",
+    "own": "Egen regel för den här posten",
+    "ownOff": "Följer ämnet {subject}: {rule}.",
+    "ownOn": "Reglerna nedan gäller bara den här posten. Tomma fält betyder ingen regel, även om ämnet har en.",
+    "breachesTitle": "Grundschemat bryter redan regeln",
+    "breachesHint": "Lektionerna ligger kvar. Nästa generering håller regeln för de lektioner den lägger.",
+    "breachPerDay": "{requirement}: {count} lektioner på {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} 6 {lördag} 7 {söndag} other {dag {day}}}",
+    "breachApart": "{requirement}: lektioner på {firstDay, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} 6 {lördag} 7 {söndag} other {dag {firstDay}}} och {secondDay, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} 6 {lördag} 7 {söndag} other {dag {secondDay}}}"
+  },
   "rooms": {
     "title": "Salar",
     "subtitle": "Fysiska salar tillgängliga för schemaläggning",

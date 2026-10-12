@@ -111,7 +111,9 @@ export function useSubjects() {
             // row the subjects form writes back: left out of this list, the
             // dialog would open on "Utanför timplanen" for every mapped subject
             // (or on factor 1) and the next save would clear the mapping.
-            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor",
+            // maxLessonsPerDay and minDaysBetween too, for the same reason: the
+            // dialog would open on "no rule" and the next save would clear it.
+            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween",
             "name",
           )
         ).map((subject) => ({
@@ -259,7 +261,9 @@ export function useRequirements(academicYearId: string | null) {
             // dialog would save every row back at 100.
             // And lessonLengths: left out, a split row (1 × 80 + 1 × 40) would
             // read as 2 × 80 everywhere, and the dialog save it back so.
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, lessonLengths, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, recurrence, startDate, endDate",
+            // And the ämnesfördelning: left out, a row with its own rule would
+            // open as following its subject, and the dialog save it back so.
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, lessonLengths, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, ownDistribution, maxLessonsPerDay, minDaysBetween, recurrence, startDate, endDate",
           )
           .eq("academicYearId", academicYearId!)
           .order("id")
@@ -1129,7 +1133,12 @@ export function useCreateMasterLesson() {
   const invalidate = useInvalidateSchedule();
   return useMutation({
     mutationFn: (body: CreateMasterLessonInput) =>
-      api.post<MasterLessonResponse>("/api/v1/master-lessons", body),
+      // `warnings`: the ämnesfördelning the new lesson breaks, if any — a
+      // hand-placed lesson may, and is told so beside the save.
+      api.post<MasterLessonResponse & { warnings?: StaffingWarning[] }>(
+        "/api/v1/master-lessons",
+        body,
+      ),
     onSuccess: invalidate,
   });
 }

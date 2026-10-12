@@ -278,6 +278,27 @@
     "roomTypeDialogHint": "The room type can then be chosen for both subjects and rooms.",
     "roomTypesUnavailable": "The list of room types could not be loaded. The subject's room type does not change if you save without choosing a new one."
   },
+  "distribution": {
+    "title": "Distribution over the week",
+    "intro": "Generation keeps the rule for every lesson it places. A lesson you place by hand may break it, and you are warned when you save.",
+    "perDay": "At most lessons a day",
+    "perDayHint": "Empty means no limit. 1 means never twice on the same day.",
+    "perDayInvalid": "Enter a whole number from 1 to 20, or leave the field empty.",
+    "notConsecutive": "Not on consecutive days",
+    "notConsecutiveHint": "At least one day without lies between two days with lessons. Two lessons on the same day are the per-day limit's question.",
+    "widerHint": "The rule keeps lesson days at least {days} days apart. Switch it off to remove it.",
+    "rulePerDay": "at most {count} a day",
+    "ruleNotConsecutive": "not on consecutive days",
+    "ruleApart": "at least {days} days apart",
+    "ruleNone": "no rule",
+    "own": "A rule of its own for this entry",
+    "ownOff": "Follows the subject {subject}: {rule}.",
+    "ownOn": "The rules below apply to this entry only. Empty fields mean no rule, even if the subject has one.",
+    "breachesTitle": "The timetable already breaks the rule",
+    "breachesHint": "The lessons stay where they are. The next generation keeps the rule for the lessons it places.",
+    "breachPerDay": "{requirement}: {count} lessons on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}",
+    "breachApart": "{requirement}: lessons on {firstDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {firstDay}}} and {secondDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {secondDay}}}"
+  },
   "rooms": {
     "title": "Rooms",
     "subtitle": "Physical rooms available for scheduling",

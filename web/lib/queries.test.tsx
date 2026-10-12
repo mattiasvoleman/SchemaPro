@@ -183,10 +183,13 @@ describe("useSubjects", () => {
     expect(queryClient.getQueryData(["subjects"])).toEqual(read);
     expect(supabaseMocks.from).toHaveBeenCalledWith("Subjects");
     expect(argsFor("Subjects", "select")).toEqual([
-      // The two timplan columns and the factor are part of the row the
-      // subjects form writes back; missing here, the dialog would clear a
-      // mapping (or reset a factor to 1) on every save.
-      ["id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor"],
+      // The two timplan columns, the factor and the ämnesfördelning are part
+      // of the row the subjects form writes back; missing here, the dialog
+      // would clear a mapping, reset a factor to 1, or drop a rule on every
+      // save.
+      [
+        "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween",
+      ],
     ]);
     // Paged reads sort by a tie-break column as well; see selectAll.
     expect(argsFor("Subjects", "order")).toEqual([["name"], ["id"]]);
@@ -478,6 +481,20 @@ describe("useRequirements", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(argsFor("TeachingRequirements", "eq")).toEqual([["academicYearId", "y-1"]]);
     expect(queryClient.getQueryData(["requirements", "y-1"])).toEqual(rows);
+  });
+
+  it("reads the row's own ämnesfördelning, which the dialog writes back", async () => {
+    // Left out of the list, a post with its own rule would open as following
+    // its subject, and the next save would switch the rule off without a word.
+    stubTable("TeachingRequirements", ok(rows));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useRequirements("y-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [[columns]] = argsFor("TeachingRequirements", "select") as [[string]];
+    expect(columns.split(", ")).toEqual(
+      expect.arrayContaining(["ownDistribution", "maxLessonsPerDay", "minDaysBetween"]),
+    );
   });
 });
 
