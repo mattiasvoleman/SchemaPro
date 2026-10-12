@@ -3498,7 +3498,18 @@
     id, under Översikt i Microsoft Entra administrationscenter) eller
     Workspace-domänen. Bara konton från just den organisationen släpps in,
     vad domänerna än säger. Organisationens IT-administratör behöver först
-    godkänna SchemaPro i Entra ID eller tillåta det i Google Workspace.
+    godkänna SchemaPro i Entra ID eller tillåta det i Google Workspace. Står
+    det <em>Inte påslaget än</em> på fliken har den som driftar SchemaPro inte
+    slagit på inloggning med skolkonto ännu.
+  </p>
+  <p>
+    Flera skolor kan ha samma domän, till exempel kommunens, men bara med
+    samma inloggning. Använder en annan skola redan domänen med en annan
+    inloggning säger fliken det, och domänen sparas inte. En inloggning med
+    skolkonto gäller ett dygn; sedan loggar man in med skolkontot igen. Den
+    som har slutat och stängts av i Entra ID eller Google Workspace kommer
+    alltså inte in längre än så, och inaktiverar du personen i SchemaPro
+    gäller det direkt.
   </p>
   <h4>Kräv skolkonto för personal</h4>
   <p>
@@ -3507,7 +3518,10 @@
     med lösenord loggas ut inom en timme. Elever och vårdnadshavare påverkas
     inte. Du kan bara slå på det när du själv är inloggad med ett skolkonto
     från den sparade organisationen. Då vet du att inloggningen fungerar innan
-    någon är beroende av den. Avstängt kan det alltid bli.
+    någon är beroende av den. Avstängt kan det alltid bli. Slå inte på det
+    förrän personalen har en version av appen med knappen
+    <span class="ui">Logga in med skolkonto</span>: en äldre app kan då inte
+    logga in alls.
   </p>
   <div class="warn">
     <span class="label">Stänga av skolkonton</span>
