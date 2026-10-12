@@ -267,7 +267,11 @@ describe('SS12000 sync (e2e)', () => {
       expect(protectedCreate).toMatchObject({ selected: false, autoApplicable: false, protectedIdentity: true });
       // Nothing written to the school, and nothing of what the source sent beyond what a diff needs.
       expect(harness.tx.user.createMany).not.toHaveBeenCalled();
-      const stored = JSON.stringify(w.changes);
+      // Row ids and the run id are random, and '1440' (the duty's hoursPerYear) is
+      // four hex digits that an id can contain: …1822dc14407c failed CI run
+      // 38218096480 with nothing leaked. No value guarded here is UUID-shaped, so
+      // masking every UUID hides none of them.
+      const stored = JSON.stringify(w.changes).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>');
       for (const leaked of ['201001012384', '198001012381', 'Hemliga vägen', '070-0000000', 'Skyddad folkbokföring', 'dutyPercent', '1440']) {
         expect(stored).not.toContain(leaked);
       }
