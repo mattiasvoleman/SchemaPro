@@ -14,6 +14,12 @@
  * the absence and substitute flows see a lesson nobody holds, and a reversal
  * can put it back.
  *
+ * WHO IS TOLD. Nobody, unless the admin ticks the digest in the preview: one
+ * notice per pupil, guardian and teacher the batch touches, with how many of
+ * their lessons and over which days, and another if it is taken back. The
+ * preview says how many of each it would reach. Unticked by default, since
+ * every cancelled lesson already carries the note.
+ *
  * TIME. An EVENT avbokning counts as lost undervisningstid in Täckning (P3,
  * cancelledEvent) unless the school counts the day as teaching — the credit
  * below writes a TimplanCredit for each whole day after today. The two go
@@ -342,6 +348,20 @@ export function CancellationFormCard({
                   : t("creditNoDates")}
               </p>
             ) : null}
+            <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+              <div className="space-y-1">
+                <Label htmlFor="cancel-notify">{t("notify")}</Label>
+                <p id="cancel-notify-hint" className="text-xs text-muted-foreground">
+                  {current.audience ? t("notifyHint", current.audience) : t("notifyHintNoCount")}
+                </p>
+              </div>
+              <Switch
+                id="cancel-notify"
+                checked={form.notify}
+                onCheckedChange={(checked) => update({ notify: checked })}
+                aria-describedby="cancel-notify-hint"
+              />
+            </div>
             {current.lessons.length > 0 ? (
               <ul className="max-h-64 space-y-0.5 overflow-y-auto rounded-md border p-2 text-xs">
                 {current.lessons.map((lesson) => (

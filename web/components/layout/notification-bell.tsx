@@ -27,7 +27,10 @@ interface NotificationRow {
     | "SCHEDULE_CHANGED"
     | "ROOM_BOOKING_DECIDED"
     | "TEACHER_ABSENCE_REPORTED"
-    | "LESSON_COVER_WITHDRAWN";
+    | "LESSON_COVER_WITHDRAWN"
+    | "LESSON_REINSTATED"
+    | "LESSON_SUPERVISED_STUDY"
+    | "CANCELLATION_DIGEST";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -98,6 +101,28 @@ export function NotificationBell() {
           subject: str("subjectName"),
           when: new Date(str("startsAt")).toLocaleString(),
         });
+      case "LESSON_REINSTATED":
+        return t("lessonReinstated", {
+          subject: str("subjectName"),
+          when: new Date(str("startsAt")).toLocaleString(),
+        });
+      case "LESSON_SUPERVISED_STUDY":
+        return t("lessonSupervisedStudy", {
+          subject: str("subjectName"),
+          when: new Date(str("startsAt")).toLocaleString(),
+        });
+      case "CANCELLATION_DIGEST": {
+        // One per person per avbokning: how many of their lessons, and the
+        // days; the reversal says they go ahead after all.
+        const from = str("startDate");
+        const to = str("endDate");
+        const values = {
+          name: str("name"),
+          count: Number(meta.lessonCount ?? 0),
+          span: from === to ? from : `${from} – ${to}`,
+        };
+        return t(meta.reversed === true ? "cancellationDigestReversed" : "cancellationDigest", values);
+      }
       case "LESSON_SUBSTITUTE":
       case "LESSON_COVER_WITHDRAWN": {
         // The substitute's own notice (`cover: true`) and its withdrawal name

@@ -10,8 +10,9 @@
  * lessons come back, which stay cancelled because their room was booked or
  * given to another lesson meanwhile (named, so the admin can sort it out by
  * hand rather than find two classes in one room), how many have begun or
- * been changed since and are history, and the credits it deletes. Then it
- * reverses, once — a second reversal is refused.
+ * been changed since and are history, the credits it deletes, and — for a
+ * batch that sent a digest — how many people are told the lessons go ahead.
+ * Then it reverses, once — a second reversal is refused.
  */
 
 import { useMemo, useState } from "react";
@@ -177,6 +178,9 @@ export function BatchesCard({
                       {t("addedSince", { count: batch.addedSince })}
                     </span>
                   ) : null}
+                  {batch.notifies ? (
+                    <span className="block pt-1 text-xs text-muted-foreground">{t("notified")}</span>
+                  ) : null}
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex flex-wrap justify-end gap-2">
@@ -255,6 +259,7 @@ export function BatchesCard({
               ) : null}
               {plan.notReinstatable > 0 ? <p>{t("reverseHistory", { count: plan.notReinstatable })}</p> : null}
               {plan.creditsDeleted > 0 ? <p>{t("reverseCredits", { count: plan.creditsDeleted })}</p> : null}
+              {plan.notify ? <p>{t("reverseNotify", { count: plan.notify })}</p> : null}
             </div>
           ) : null}
           <DialogFooter>

@@ -15,6 +15,11 @@ import type { BatchCause, BatchScope, CancellationInput, CancellationSelection }
  *     for whole days — a partly held day credited in full would count the
  *     morning twice — and only for days after today, which the gateway
  *     decides on the school's clock and the preview lists (creditDates).
+ *
+ * The digest (one notice per person the batch touches, CANCELLATION_DIGEST)
+ * is ticked in the preview and unticked by default: every cancelled lesson
+ * already carries "Inställd: <namn>". It is sent only when ticked, so an
+ * unticked create is the request it always was.
  */
 
 export interface CancellationForm {
@@ -34,6 +39,8 @@ export interface CancellationForm {
   creditMinutes: string;
   /** null = no subject: undervisningstid without one. */
   creditSubjectId: string | null;
+  /** Ticked in the preview: one digest per person, and another on reversal. */
+  notify: boolean;
 }
 
 export const EMPTY_CANCELLATION_FORM: CancellationForm = {
@@ -50,6 +57,7 @@ export const EMPTY_CANCELLATION_FORM: CancellationForm = {
   credit: false,
   creditMinutes: "",
   creditSubjectId: null,
+  notify: false,
 };
 
 export const MAX_DAYS = 31;
@@ -115,11 +123,12 @@ export function selectionOf(form: CancellationForm, academicYearId: string): Can
   };
 }
 
-/** The create: the previewed selection, its digest, and the credit when asked for. */
+/** The create: the previewed selection, its digest, and the credit and the notices when asked for. */
 export function createInputOf(form: CancellationForm, academicYearId: string, digest: string): CancellationInput {
   return {
     ...selectionOf(form, academicYearId),
     expectedDigest: digest,
+    ...(form.notify ? { notify: true as const } : {}),
     ...(form.credit
       ? {
           credit: {

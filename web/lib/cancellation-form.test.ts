@@ -79,6 +79,14 @@ describe("the bulk avbokning form", () => {
     expect(createInputOf(form({ credit: true, creditMinutes: "300" }), "y26", "d").credit).toEqual({ minutes: 300 });
   });
 
+  it("asks for the digest only when it is ticked, unticked from the start, and never as part of the selection", () => {
+    expect(EMPTY_CANCELLATION_FORM.notify).toBe(false);
+    expect(createInputOf(form(), "y26", "d")).not.toHaveProperty("notify");
+    expect(createInputOf(form({ notify: true }), "y26", "d")).toMatchObject({ expectedDigest: "d", notify: true });
+    // Ticking it after the preview leaves the preview describing the form.
+    expect(sameSelection(selectionOf(form(), "y26"), selectionOf(form({ notify: true }), "y26"))).toBe(true);
+  });
+
   it("knows when the preview no longer describes the form", () => {
     const previewed = selectionOf(form(), "y26");
     expect(sameSelection(previewed, selectionOf(form(), "y26"))).toBe(true);

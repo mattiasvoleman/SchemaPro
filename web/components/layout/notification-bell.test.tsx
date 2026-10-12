@@ -394,6 +394,40 @@ describe("NotificationBell inbox", () => {
     ).toBeInTheDocument();
   });
 
+  it("tells the class a lesson goes ahead after all, becomes självstudier, and an avbokning's count and days", async () => {
+    const user = userEvent.setup();
+    const startsAt = "2026-10-14T06:00:00.000Z";
+    const when = new Date(startsAt).toLocaleString();
+    supabaseState.selectResults.push(
+      ok([
+        notif({ type: "LESSON_REINSTATED", meta: { subjectName: "Matematik", startsAt } }),
+        notif({ type: "LESSON_SUPERVISED_STUDY", meta: { subjectName: "Engelska", startsAt } }),
+        notif({
+          type: "CANCELLATION_DIGEST",
+          meta: { batchId: "b-1", name: "Prao åk 9", lessonCount: 12, startDate: "2026-10-19", endDate: "2026-10-23", reversed: false },
+        }),
+        notif({
+          type: "CANCELLATION_DIGEST",
+          meta: { batchId: "b-2", name: "Friluftsdag", lessonCount: 1, startDate: "2026-10-20", endDate: "2026-10-20", reversed: true },
+        }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    expect(screen.getByText(`lessonReinstated(subject=Matematik|when=${when})`)).toBeInTheDocument();
+    expect(screen.getByText(`lessonSupervisedStudy(subject=Engelska|when=${when})`)).toBeInTheDocument();
+    expect(
+      screen.getByText("cancellationDigest(name=Prao åk 9|count=12|span=2026-10-19 – 2026-10-23)"),
+    ).toBeInTheDocument();
+    // One day is that day; the reversal says the lessons go ahead.
+    expect(
+      screen.getByText("cancellationDigestReversed(name=Friluftsdag|count=1|span=2026-10-20)"),
+    ).toBeInTheDocument();
+  });
+
   it("renders a null meta as empty interpolation values and shows the created time", async () => {
     const user = userEvent.setup();
     const createdAt = "2026-08-06T09:30:00.000Z";

@@ -151,6 +151,50 @@ describe("/admin/cancellations", () => {
     expect(toast.success).toHaveBeenCalledWith("62 lektioner ställdes in. Tillgodoräknade dagar: 2.");
   });
 
+  it("offers the digest in the preview, unticked, says who it reaches, and sends it only when ticked", async () => {
+    post.mockImplementation(async (path: string) =>
+      path.endsWith("/preview")
+        ? { ...PREVIEW, audience: { pupils: 52, guardians: 87, teachers: 1 } }
+        : { batch: BATCH, cancelled: 62, credits: 0 },
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.type(screen.getByLabelText("Namn"), "Prao åk 9");
+    typeDate("Från och med", "2026-11-02");
+    typeDate("Till och med", "2026-11-06");
+    // Nothing to tick before there is a preview.
+    expect(screen.queryByRole("switch", { name: "Skicka en sammanfattning till de berörda" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Förhandsgranska" }));
+
+    const notify = await screen.findByRole("switch", { name: "Skicka en sammanfattning till de berörda" });
+    expect(notify).not.toBeChecked();
+    expect(notify).toHaveAccessibleDescription(
+      "52 elever, 87 vårdnadshavare och 1 lärare får en notis var om hur många av sina lektioner som ställs in, och en till om avbokningen tas tillbaka. Varje inställd lektion visar redan avbokningens namn i schemat.",
+    );
+    await user.click(notify);
+    // Ticking it does not outdate the preview: it is not part of the selection.
+    await user.click(screen.getByRole("button", { name: "Ställ in 62 lektioner" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        "/api/v1/cancellation-batches",
+        expect.objectContaining({ expectedDigest: DIGEST, notify: true }),
+      ),
+    );
+  });
+
+  it("words the digest without counts for a gateway that sends none", async () => {
+    post.mockImplementation(async () => PREVIEW);
+    const user = userEvent.setup();
+    renderPage();
+    await user.type(screen.getByLabelText("Namn"), "Studiedag");
+    typeDate("Från och med", "2026-11-02");
+    typeDate("Till och med", "2026-11-02");
+    await user.click(screen.getByRole("button", { name: "Förhandsgranska" }));
+    expect(await screen.findByRole("switch", { name: "Skicka en sammanfattning till de berörda" })).toHaveAccessibleDescription(
+      /^Var och en som har en inställd lektion får en notis/,
+    );
+  });
+
   it("will not confirm a form changed after its preview, and says a stale create in words", async () => {
     post.mockImplementation(async (path: string) => {
       if (path.endsWith("/preview")) return PREVIEW;
@@ -218,5 +262,30 @@ describe("/admin/cancellations", () => {
     expect(dialog).toHaveTextContent("1 tillgodoräknad dag tas bort.");
     await user.click(within(dialog).getByRole("button", { name: "Ta tillbaka" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cancellation-batches/b-1/reverse"));
+    // A batch that sent no digest tells nobody of its reversal, and says nothing about it.
+    expect(row).not.toHaveTextContent("Sammanfattning skickad");
+  });
+
+  it("says a batch sent a digest, and how many its reversal tells", async () => {
+    get.mockImplementation(async () => [{ ...BATCH, notifies: true }]);
+    post.mockImplementation(async () => ({
+      reinstate: 330,
+      notify: 412,
+      skippedRoomTaken: [],
+      removedTemplateMoved: [],
+      notReinstatable: 0,
+      creditsDeleted: 0,
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    const row = (await screen.findByText("Friluftsdag")).closest("tr")!;
+    expect(row).toHaveTextContent("Sammanfattning skickad");
+    await user.click(within(row).getByRole("button", { name: "Ta tillbaka Friluftsdag" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText(
+        "412 personer får en notis om att lektionerna blir av som planerat, eftersom avbokningen skickade en sammanfattning.",
+      ),
+    ).toBeInTheDocument();
   });
 });
