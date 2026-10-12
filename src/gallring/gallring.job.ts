@@ -20,16 +20,17 @@ export const NIGHTLY_ROW_CAP = 100_000;
 /** People pseudonymised per school per night: each invited one costs a call to the auth provider. */
 export const NIGHTLY_PEOPLE_CAP = 200;
 
-interface DuePerson {
-  user_id: string;
+/** app.gallring_claim_person's one row, while the person is still due. */
+interface ClaimedPerson {
   auth_id: string;
   invited: boolean;
 }
 
 /**
- * The nightly gallring (20261021110000), a job of the JobRunner. Off when
- * GALLRING_BACKGROUND=off (the test setup). With no school having recorded a
- * period it is one query every five minutes and removes nothing.
+ * The nightly gallring (20261021110000, 20261021120000), a job of the
+ * JobRunner. Off when GALLRING_BACKGROUND=off (the test setup). With no
+ * school having recorded a period it is one query every five minutes and
+ * removes nothing.
  *
  * Each tick:
  *   1. app.gallring_schools(): the schools whose current decision for some
@@ -41,10 +42,12 @@ interface DuePerson {
  *        decision that gallrar more waits 24 hours) and their cutoffs;
  *      - each row kind in batches of 2 000, each batch its own transaction
  *        counted on the run, until fewer than a batch remain or 100 000 went;
- *      - departed people: the login of each invited one is deleted at the
- *        auth provider first; whoever's login could not be deleted waits for
- *        the next night and is counted as waiting; the rest are
- *        pseudonymised (app.gallring_pseudonymise asks again who is due);
+ *      - departed people, one at a time: app.gallring_claim_person locks
+ *        the person's row and asks whether they are still due, so whoever
+ *        was reactivated or spared since the list was read keeps their
+ *        login; an invited one's login is then deleted at the auth provider,
+ *        and the person is pseudonymised at once. Whoever's login could not
+ *        be deleted waits for the next night and is counted as waiting;
  *      - app.gallring_finish closes the run, and the claim is marked done.
  *
  * A school that fails is logged by id and error class and left for the claim
@@ -144,32 +147,42 @@ export class GallringJob implements OnModuleInit, OnModuleDestroy {
     }
 
     const due = await this.prisma.withDeliveryService((tx) =>
-      tx.$queryRaw<DuePerson[]>(
-        Prisma.sql`SELECT user_id, auth_id, invited FROM app.gallring_departed_due(${run}::uuid, ${NIGHTLY_PEOPLE_CAP}::integer)`,
+      tx.$queryRaw<Array<{ user_id: string }>>(
+        Prisma.sql`SELECT user_id FROM app.gallring_departed_due(${run}::uuid, ${NIGHTLY_PEOPLE_CAP}::integer)`,
       ),
     );
-    const ready: string[] = [];
+    let people = 0;
     let loginsLeft = 0;
-    for (const person of due ?? []) {
+    for (const { user_id: userId } of due ?? []) {
+      // Asked again right before the login goes, with the row locked: the
+      // list is minutes old by the last person, and a login is not undone.
+      const [claimed] = await this.prisma.withDeliveryService((tx) =>
+        tx.$queryRaw<ClaimedPerson[]>(
+          Prisma.sql`SELECT auth_id, invited FROM app.gallring_claim_person(${run}::uuid, ${userId}::uuid)`,
+        ),
+      );
+      if (!claimed) continue;
       // A person never invited has a placeholder authId that matches no
       // login (UsersService); there is nothing to delete.
-      if (person.invited) {
+      if (claimed.invited) {
         try {
-          await this.supabaseAdmin.deleteUser(person.auth_id);
+          await this.supabaseAdmin.deleteUser(claimed.auth_id);
         } catch (error) {
           loginsLeft += 1;
           this.logger.warn(`Gallring could not delete a login [school=${schoolId}, ${errorName(error)}]`);
           continue;
         }
       }
-      ready.push(person.user_id);
-    }
-    let people = 0;
-    if (ready.length > 0) {
+      // At once, so a reactivation has one call to the provider to fall
+      // into rather than the rest of the list.
       const [done] = await this.prisma.withDeliveryService((tx) =>
-        tx.$queryRaw<Array<{ n: number }>>(Prisma.sql`SELECT app.gallring_pseudonymise(${run}::uuid, ${ready}::uuid[]) AS n`),
+        tx.$queryRaw<Array<{ n: number }>>(Prisma.sql`SELECT app.gallring_pseudonymise(${run}::uuid, ${[userId]}::uuid[]) AS n`),
       );
-      people = Number(done?.n ?? 0);
+      const n = Number(done?.n ?? 0);
+      people += n;
+      if (n === 0 && claimed.invited) {
+        this.logger.warn(`Gallring removed the login of a person no longer due [school=${schoolId}]`);
+      }
     }
 
     const waiting = loginsLeft > 0 ? { DEPARTED_PEOPLE_LOGIN: loginsLeft } : {};
