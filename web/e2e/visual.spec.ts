@@ -72,7 +72,7 @@ test.describe("component states", () => {
     // which is exactly the error surface worth pinning.
     await page.getByLabel(/email/i).fill("nobody@example.com");
     await page.getByLabel(/password/i).fill("wrong-password");
-    await page.getByRole("button", { name: /sign in/i }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
     // Wait for the request to settle rather than the specific copy, so the
     // baseline — not the assertion — owns what the error looks like.
@@ -88,7 +88,7 @@ test.describe("component states", () => {
     await page.goto("/en/login");
     await settle(page);
 
-    const submit = page.getByRole("button", { name: /sign in/i });
+    const submit = page.getByRole("button", { name: "Sign in", exact: true });
     await submit.focus();
 
     await expect(submit).toHaveScreenshot("button-primary-focus.png");

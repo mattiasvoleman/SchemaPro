@@ -19,6 +19,10 @@ const ROUTES = [
   { path: "/en/forgot-password", name: "forgot password (en)" },
   { path: "/sv/update-password", name: "update password (sv)" },
   { path: "/sv/no-profile", name: "no profile (sv)" },
+  // A school-account sign-in that came back refused (/auth/callback): the
+  // reason sits above the form.
+  { path: "/sv/login?sso=no-account", name: "login with a school-account refusal (sv)" },
+  { path: "/en/login?sso=other-organisation", name: "login with a school-account refusal (en)" },
 ];
 
 const WCAG_AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
@@ -128,6 +132,24 @@ test.describe("keyboard access", () => {
     );
   });
 
+  test("the school-account button follows the password's, and asks for the address by keyboard alone", async ({
+    page,
+  }) => {
+    await page.goto("/sv/login");
+    const submit = page.getByRole("button", { name: "Logga in", exact: true });
+    const schoolAccount = page.getByRole("button", { name: "Logga in med skolkonto" });
+    await submit.focus();
+    await page.keyboard.press("Tab");
+    await expect(schoolAccount).toBeFocused();
+
+    // No address yet: it says so and puts the cursor in the address field,
+    // without asking anyone anything.
+    await page.keyboard.press("Enter");
+    // Next's route announcer is an alert too; this one is the form's.
+    await expect(page.getByRole("alert").filter({ hasText: "Skriv din e-postadress först" })).toBeVisible();
+    await expect(page.getByLabel(/e-post/i)).toBeFocused();
+  });
+
   test("login form can be submitted by keyboard alone", async ({ page }) => {
     await page.goto("/en/login");
 
@@ -143,12 +165,12 @@ test.describe("keyboard access", () => {
     // The placeholder Supabase project rejects the credentials; what matters is
     // that the attempt happened at all, so wait for the request to settle.
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("button", { name: /sign in/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   });
 
   test("focus is visible on the primary action", async ({ page }) => {
     await page.goto("/en/login");
-    const submit = page.getByRole("button", { name: /sign in/i });
+    const submit = page.getByRole("button", { name: "Sign in", exact: true });
     await submit.focus();
 
     const outline = await submit.evaluate((el) => {

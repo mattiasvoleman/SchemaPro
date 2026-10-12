@@ -39,6 +39,7 @@ import { SyncCard } from "./sync-card";
 import { useSs12000Source } from "./use-ss12000-source";
 
 const KeysTab = lazy(() => import("./keys-tab").then((module) => ({ default: module.KeysTab })));
+const SignInTab = lazy(() => import("./sign-in-tab").then((module) => ({ default: module.SignInTab })));
 
 export default function IntegrationsPage() {
   const t = useTranslations("integrations");
@@ -65,6 +66,7 @@ export default function IntegrationsPage() {
         <TabsList aria-label={t("tabsLabel")}>
           <TabsTrigger value="source">{t("tabSource")}</TabsTrigger>
           <TabsTrigger value="keys">{t("tabKeys")}</TabsTrigger>
+          <TabsTrigger value="sign-in">{t("tabSignIn")}</TabsTrigger>
         </TabsList>
         <TabsContent value="source" className="space-y-4">
           {source.isLoading ? (
@@ -101,6 +103,18 @@ export default function IntegrationsPage() {
             }
           >
             <KeysTab />
+          </Suspense>
+        </TabsContent>
+        {/* Rendered only while chosen (radix unmounts an inactive tab), so its chunk is fetched on the first click. */}
+        <TabsContent value="sign-in">
+          <Suspense
+            fallback={
+              <div aria-busy="true">
+                <Skeleton className="h-64 w-full" />
+              </div>
+            }
+          >
+            <SignInTab />
           </Suspense>
         </TabsContent>
       </Tabs>

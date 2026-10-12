@@ -15,13 +15,13 @@ test.describe("auth gating and locale routing", () => {
 
   test("login page renders in Swedish by default", async ({ page }) => {
     await page.goto("/sv/login");
-    await expect(page.getByRole("button", { name: /logga in/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Logga in", exact: true })).toBeVisible();
     await expect(page.getByLabel(/e-post/i)).toBeVisible();
   });
 
   test("login page renders in English under /en", async ({ page }) => {
     await page.goto("/en/login");
-    await expect(page.getByRole("button", { name: /sign in/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
     await expect(page.getByLabel(/email/i)).toBeVisible();
   });
 
@@ -33,7 +33,7 @@ test.describe("auth gating and locale routing", () => {
 
   test("login form validates before submitting", async ({ page }) => {
     await page.goto("/en/login");
-    const submit = page.getByRole("button", { name: /sign in/i });
+    const submit = page.getByRole("button", { name: "Sign in", exact: true });
     // Empty form must not navigate away (HTML5 required fields).
     await submit.click();
     await expect(page).toHaveURL(/\/en\/login$/);
