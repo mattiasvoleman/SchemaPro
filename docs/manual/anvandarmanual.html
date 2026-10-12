@@ -61,6 +61,7 @@
       <li><span>7.1 Schemavisaren</span><span class="dots"></span><span class="pg" data-pg="s71"></span></li>
       <li><span>7.2 Hämta från elevregistret (SS12000)</span><span class="dots"></span><span class="pg" data-pg="s72"></span></li>
       <li><span>7.3 API-nycklar, omfång och prenumerationer</span><span class="dots"></span><span class="pg" data-pg="s73"></span></li>
+      <li><span>7.4 Dataskydd och gallring</span><span class="dots"></span><span class="pg" data-pg="s74"></span></li>
     </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
@@ -3036,7 +3037,7 @@
 <!-- ============================ 7 ============================ -->
 <section class="chapter" id="ch7">
   <h2><span class="num">7</span>Integrationer</h2>
-  <p class="lede">Koppla SchemaPro till skolans övriga system.</p>
+  <p class="lede">Koppla SchemaPro till skolans övriga system, och bestäm hur länge uppgifterna sparas.</p>
 
   <p>
     SchemaPro talar <strong>SS12000</strong>, den svenska standarden för
@@ -3361,6 +3362,116 @@
     och återuppta en prenumeration. En återkallad nyckel får inga fler
     notiser.
   </p>
+
+  <h3 id="s74"><span class="num">7.4</span>Dataskydd och gallring</h3>
+  <p>
+    Skolan får inte spara personuppgifter längre än de behövs. Hur länge
+    varje slags uppgift sparas bestämmer huvudmannen i sin
+    dokumenthanteringsplan. Under <span class="path">Dataskydd</span>, bredvid
+    <span class="path">Integrationer</span> i menyn, skriver du in de
+    besluten, och SchemaPro gallrar efter dem varje natt från klockan 03.
+    Liksom integrationerna ställs gallringen in en gång och gäller i alla
+    faser.
+  </p>
+  <p>
+    <strong>Inget gallras förrän du har valt en period.</strong> Varje slag
+    börjar som <span class="ui">Ej beslutat</span>, och ett slag som ingen
+    har beslutat om rörs aldrig. <span class="ui">Bevaras</span> är också ett
+    beslut: inget gallras, men beslutet står i historiken.
+  </p>
+  <p>
+    Gränsdagen är dagens datum minus perioden. Med
+    <span class="ui">Gallras efter 1 år</span> gallras den 21 oktober 2026
+    allt som är daterat före den 21 oktober 2025.
+  </p>
+  <table>
+    <thead><tr><th style="width:20%">Slag</th><th style="width:42%">Det här gallras</th><th>Det här finns kvar</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Närvaro</td><td>Närvaroregistreringar för lektioner före gränsdagen.</td><td>Lektionerna. Undervisningstiden räknas på lektionerna, inte på närvaron.</td></tr>
+      <tr><td class="k">Frånvaroanmälningar</td><td>Anmälningar från vårdnadshavare och elever, och dagarna i beviljad ledighet, före gränsdagen.</td><td>—</td></tr>
+      <tr><td class="k">Ledighetsansökningar</td><td>Ansökningar vars sista dag är före gränsdagen, med anledning och beslut.</td><td>—</td></tr>
+      <tr><td class="k">Notiser</td><td>Notiser i SchemaPro som skapades före gränsdagen.</td><td>—</td></tr>
+      <tr><td class="k">Ändringsloggar</td><td>Schemats ändringslogg och historiken över kopplingar till vårdnadshavare före gränsdagen. Tjänsternas versioner för läsår som slutade före gränsdagen, ett helt läsår i taget.</td><td>Tjänsterna och uppdragen. Ett tjänstefördelningsförslag som tillämpades före gränsdagen kan inte längre ångras.</td></tr>
+      <tr><td class="k">Frånvaroorsaker</td><td>Orsaken på lärarfrånvaro som slutade före gränsdagen. I listorna står det <span class="ui">Gallrad</span>.</td><td>Frånvaron och vikariebesluten, så att vikarietimmar och lön stämmer.</td></tr>
+      <tr><td class="k">Slutade personer</td><td>Namn, e-post, telefon, inloggning och SS12000-id för den som avaktiverades före gränsdagen. Personen pseudonymiseras: namnet blir <em>Pseudonym</em> och sex tecken.</td><td>Personen som rad, med närvaro, beslut, klasshistorik och tjänster. Kopplingar till vårdnadshavare tas bort.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Så bestämmer du en period</h4>
+  <ol>
+    <li>Öppna <span class="path">Dataskydd</span> och klicka på
+      <span class="ui">Ändra</span> vid slaget.</li>
+    <li>Välj <span class="ui">Ej beslutat</span>,
+      <span class="ui">Bevaras</span> eller en period. Skriv gärna referensen
+      i dokumenthanteringsplanen, till exempel diarienummer eller punkt.</li>
+    <li>Läs vad perioden skulle gallra i dag. Antalet räknas innan något
+      sparas, och det är samma räkning som natten gör.</li>
+    <li>Klicka på <span class="ui">Spara beslut</span>. Ett slag i taget:
+      varje beslut sparas för sig.</li>
+  </ol>
+
+  <div class="warn">
+    <span class="label">En gallring går inte att ångra</span>
+    <p>
+      Det som gallras är borta i SchemaPro. Ta först ut det som
+      dokumenthanteringsplanen säger ska bevaras. SchemaPro gör ännu inga
+      arkivuttag till huvudmannens e-arkiv. Har fel period sparats och natten
+      redan körts, kan raderna bara återställas från databasens
+      säkerhetskopia, av den som driftar SchemaPro och bara inom
+      säkerhetskopians tid (DEPLOYMENT.md §10).
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Ett dygns betänketid</span>
+    <p>
+      En period som gallrar mer än den som gäller börjar gälla först efter ett
+      dygn. Sidan säger vilken natt. Ändrar du dig före dess försvinner
+      ingenting. En längre period, <span class="ui">Bevaras</span> och
+      <span class="ui">Ej beslutat</span> gäller direkt.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Slutade lärare och SCB</span>
+    <p>
+      SCB:s Pedagogisk personal räknar vem som var anställd den 15 oktober.
+      En lärare med en tjänst under ett läsår vars 15 oktober ligger mindre än
+      sju veckor bakåt pseudonymiseras inte förrän den 1 december, så att
+      SCB-underlaget kan lämnas med namn (6.9). Sidan och körningen räknar
+      dem som väntande.
+    </p>
+  </div>
+  <p>
+    En pseudonymiserad person kan inte aktiveras igen. Kommer personen
+    tillbaka lägger du upp den på nytt. Den som hade fått en inbjudan förlorar
+    också sin inloggning. Går den inte att ta bort försöker natten igen, och
+    personen pseudonymiseras först när inloggningen är borta.
+  </p>
+  <p>
+    Den första natten efter ett beslut kan ha flera års uppgifter att gallra.
+    Natten tar högst 100&nbsp;000 rader av varje slag och fortsätter nästa
+    natt. Under <span class="ui">Senaste gallringar</span> står en rad per
+    natt med antalet som gallrades av varje slag, vad som väntar och vad som
+    fortsätter. Bara antal sparas, aldrig vad som gallrades.
+    <span class="ui">Beslutshistorik</span> visar varje beslut med datum,
+    referens och vem som fattade det. Ett beslut kan inte ändras eller tas
+    bort, bara ersättas av ett nytt. Både körningarna och historiken är
+    underlag för dataskyddsombudet.
+  </p>
+  <p>
+    Där en rapport eller en lista når före gränsdagen står det till exempel
+    <em>Närvaro före 21 oktober 2025 är gallrad enligt skolans beslut</em>,
+    i stället för en tom tabell eller en nolla.
+  </p>
+
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Öppna <span class="path">Dataskydd</span> morgonen efter att en period
+      har börjat gälla. Under <span class="ui">Senaste gallringar</span> står
+      natten med antal per slag, och vid slaget står
+      <span class="ui">Gallrat före</span> med gränsdagen.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 8 ============================ -->
@@ -3641,6 +3752,11 @@
   <table>
     <thead><tr><th style="width:27%">Symtom</th><th style="width:33%">Trolig orsak</th><th>Åtgärd</th></tr></thead>
     <tbody>
+      <tr>
+        <td class="k">En rapport säger att uppgifter är gallrade, eller visar inget före ett visst datum</td>
+        <td>Skolan har beslutat en gallringsperiod för det slaget, och natten har gallrat det som var äldre.</td>
+        <td>Se beslutet och körningarna under <span class="path">Dataskydd</span> (7.4). Det som gallrats kan inte tas fram i SchemaPro.</td>
+      </tr>
       <tr>
         <td class="k">En lärare som är borta syns inte på vikarietavlan</td>
         <td>Frånvaron är inte registrerad, bara förhandsvisad på Lärarfrånvaro.</td>
