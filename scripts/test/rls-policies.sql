@@ -13412,7 +13412,7 @@ BEGIN
     RAISE EXCEPTION 'retention tables: the gateway''s role cannot record a period';
   END IF;
 
-  -- The functions: the eight the gateway calls are its alone; the helpers
+  -- The functions: the nine the gateway calls are its alone; the helpers
   -- they share (the predicate, the period in force, the guard's test) are
   -- the owner's.
   SELECT string_agg(p.oid::regprocedure::text || ' for ' || r.rolname, ', ') INTO bad
@@ -13421,27 +13421,30 @@ BEGIN
    WHERE n.nspname = 'app' AND (p.proname LIKE 'gallring\_%' OR p.proname LIKE 'retention\_%')
      AND (r.rolname IN ('authenticated', 'anon', 'service_role')
           OR (r.rolname = 'app_authenticated' AND p.proname NOT IN (
-                'gallring_schools', 'gallring_begin', 'gallring_purge', 'gallring_departed_due',
+                'gallring_schools', 'gallring_begin', 'gallring_purge', 'gallring_departed_due', 'gallring_claim_person',
                 'gallring_pseudonymise', 'gallring_finish', 'gallring_preview', 'retention_purged_before')))
      AND has_function_privilege(r.oid, p.oid, 'EXECUTE');
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'retention functions: a role may run more than it needs: %', bad; END IF;
   IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE n.nspname = 'app' AND p.prosecdef AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')
-         AND p.proname IN ('gallring_schools', 'gallring_begin', 'gallring_purge', 'gallring_departed_due',
-                           'gallring_pseudonymise', 'gallring_finish', 'gallring_preview', 'retention_purged_before')) <> 8 THEN
-    RAISE EXCEPTION 'retention functions: the gateway lacks one of its eight definer functions';
+         AND p.proname IN ('gallring_schools', 'gallring_begin', 'gallring_purge', 'gallring_departed_due', 'gallring_claim_person',
+                           'gallring_pseudonymise', 'gallring_finish', 'gallring_preview', 'retention_purged_before')) <> 9 THEN
+    RAISE EXCEPTION 'retention functions: the gateway lacks one of its nine definer functions';
   END IF;
 END $$;
 
--- 81d: every foreign key into LeaveRequests cascades.
+-- 81d: a foreign key into LeaveRequests cascades (a row that is part of the
+-- request goes with it) or sets NULL (a row of another kind of data keeps its
+-- own period and loses the link, 20261021120000). NO ACTION or RESTRICT would
+-- refuse the purge, SET DEFAULT would point the row at another request.
 DO $$
 DECLARE bad text;
 BEGIN
   SELECT string_agg(format('%s (%s)', con.conname, con.conrelid::regclass), ', ') INTO bad
     FROM pg_constraint con
-   WHERE con.contype = 'f' AND con.confrelid = '"LeaveRequests"'::regclass AND con.confdeltype <> 'c';
+   WHERE con.contype = 'f' AND con.confrelid = '"LeaveRequests"'::regclass AND con.confdeltype NOT IN ('c', 'n');
   IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'leave retention: % would keep a row gallring takes, or refuse the purge; cascade it', bad;
+    RAISE EXCEPTION 'leave retention: % neither cascades nor sets NULL; cascade it if it is part of the request, SET NULL if it is a row of another kind', bad;
   END IF;
 END $$;
 ROLLBACK;
@@ -14104,5 +14107,135 @@ BEGIN
                   AND purged_before = ((now() AT TIME ZONE 'Europe/Stockholm')::date - interval '12 months')::date) THEN
     RAISE EXCEPTION 'purged before: attendance is not gallrat after the run that finished it';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 88: en slutad persons inloggning tas bort bara medan personen
+-- fortfarande ska pseudonymiseras (app.gallring_claim_person, 20261021120000).
+--
+-- With no principal, as the job asks it right before deleting a login. The
+-- claim answers the invited pupil who left two years ago with their login,
+-- and the teacher whose only tjänst was 2019/20 with no login to delete. It
+-- answers nothing for the pupil who left a month ago, the teacher SCB holds,
+-- an active pupil, school B's departed pupil or an id nobody has; nothing for
+-- a pseudonym or for the pupil once an admin has made them active again; and
+-- it writes no row. In a second transaction: nothing once a KEEP is recorded
+-- after the run began (the period in force is asked at clock_timestamp(),
+-- not at the run's start), and GL404 for a run that has finished. That it
+-- waits for a reactivation in flight needs two connections: the adapter
+-- probe's (gf).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls88_b_gone', COALESCE((
+    SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000089' AND NOT "isActive"), ''), true);
+  IF current_setting('app.test_rls88_b_gone') = '' THEN
+    RAISE EXCEPTION 'claim: school B''s departed pupil is not in the fixtures';
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls88_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls88_people', (
+    SELECT jsonb_object_agg(right("authId"::text, 2), id)::text FROM "Users"
+     WHERE "authId"::text LIKE '00000000-0000-4000-8000-00000000008_'), true);
+  PERFORM set_config('app.test_rls88_users', (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  people jsonb := current_setting('app.test_rls88_people')::jsonb;
+  run uuid := app.gallring_begin(current_setting('app.test_rls88_school')::uuid, clock_timestamp());
+  c record;
+  nobody text;
+BEGIN
+  PERFORM set_config('app.test_rls88_run', run::text, true);
+  SELECT * INTO c FROM app.gallring_claim_person(run, (people ->> '85')::uuid);
+  IF c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-000000000085' OR c.invited IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'claim: the invited pupil who left two years ago was not claimed with their login (% %)', c.auth_id, c.invited;
+  END IF;
+  SELECT * INTO c FROM app.gallring_claim_person(run, (people ->> '87')::uuid);
+  IF c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-000000000087' OR c.invited IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'claim: the teacher whose tjänst was 2019/20 was not claimed, or claimed with a login (% %)', c.auth_id, c.invited;
+  END IF;
+  SELECT string_agg(who, ', ') INTO nobody
+    FROM (VALUES ('the pupil who left a month ago', (people ->> '86')::uuid),
+                 ('the teacher SCB holds', (people ->> '88')::uuid),
+                 ('an active pupil', (people ->> '83')::uuid),
+                 ('school B''s departed pupil', current_setting('app.test_rls88_b_gone')::uuid),
+                 ('an id nobody has', gen_random_uuid())) AS t(who, id)
+   WHERE EXISTS (SELECT 1 FROM app.gallring_claim_person(run, t.id));
+  IF nobody IS NOT NULL THEN RAISE EXCEPTION 'claim: answered for %', nobody; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  IF (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u) IS DISTINCT FROM current_setting('app.test_rls88_users') THEN
+    RAISE EXCEPTION 'claim: a claim changed a person';
+  END IF;
+  UPDATE "Users" SET "isActive" = true WHERE "authId" = '00000000-0000-4000-8000-000000000085';
+  IF NOT FOUND THEN RAISE EXCEPTION 'claim: the admin could not make the pupil active again'; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  people jsonb := current_setting('app.test_rls88_people')::jsonb;
+  run uuid := current_setting('app.test_rls88_run')::uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM app.gallring_claim_person(run, (people ->> '85')::uuid)) THEN
+    RAISE EXCEPTION 'claim: answered for a pupil made active again since the run began';
+  END IF;
+  IF app.gallring_pseudonymise(run, ARRAY[(people ->> '87')::uuid]) <> 1 THEN
+    RAISE EXCEPTION 'claim: the claimed teacher was not pseudonymised';
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.gallring_claim_person(run, (people ->> '87')::uuid)) THEN
+    RAISE EXCEPTION 'claim: answered for a pseudonym';
+  END IF;
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls88_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls88_pupil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000085'), true);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls88_school')::uuid, clock_timestamp());
+BEGIN
+  PERFORM set_config('app.test_rls88_run', run::text, true);
+  IF NOT EXISTS (SELECT 1 FROM app.gallring_claim_person(run, current_setting('app.test_rls88_pupil')::uuid)) THEN
+    RAISE EXCEPTION 'claim: the departed pupil was not claimed before the KEEP';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision)
+VALUES (current_setting('app.test_rls88_school')::uuid, 'DEPARTED_PEOPLE', 'KEEP');
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := current_setting('app.test_rls88_run')::uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM app.gallring_claim_person(run, current_setting('app.test_rls88_pupil')::uuid)) THEN
+    RAISE EXCEPTION 'claim: answered under a KEEP recorded after the run began';
+  END IF;
+  PERFORM app.gallring_finish(run, '{}', clock_timestamp());
+  BEGIN
+    PERFORM app.gallring_claim_person(run, current_setting('app.test_rls88_pupil')::uuid);
+    RAISE EXCEPTION 'claim: a finished run claimed a person';
+  EXCEPTION WHEN SQLSTATE 'GL404' THEN NULL;
+  END;
 END $$;
 ROLLBACK;

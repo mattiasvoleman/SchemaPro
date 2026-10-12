@@ -13,9 +13,20 @@ const config = (background: boolean) => ({ get: () => ({ background }) }) as unk
 /**
  * A database stand-in for one night: `purges` says what each
  * app.gallring_purge call answers per kind, in order; `due` is
- * app.gallring_departed_due's list.
+ * app.gallring_departed_due's list, and app.gallring_claim_person answers
+ * each listed person's login unless `spared` names them (reactivated or
+ * spared since the list was read).
  */
-function night(options: { schools?: string[]; purges?: Record<string, number[]>; due?: Array<{ user_id: string; auth_id: string; invited: boolean }>; failBegin?: string } = {}) {
+function night(
+  options: {
+    schools?: string[];
+    purges?: Record<string, number[]>;
+    due?: Array<{ user_id: string; auth_id: string; invited: boolean }>;
+    spared?: string[];
+    gone?: string[];
+    failBegin?: string;
+  } = {},
+) {
   const tx = createTxMock();
   const prisma = createPrismaMock(tx);
   const calls: Array<{ text: string; values: unknown[] }> = [];
@@ -30,8 +41,14 @@ function night(options: { schools?: string[]; purges?: Record<string, number[]>;
       return [{ run: `run-${values[0] as string}` }];
     }
     if (text.includes('app.gallring_purge(')) return [{ n: purges[values[1] as string]?.shift() ?? 0 }];
-    if (text.includes('app.gallring_departed_due(')) return options.due ?? [];
-    if (text.includes('app.gallring_pseudonymise(')) return [{ n: (values[1] as string[]).length }];
+    if (text.includes('app.gallring_departed_due(')) return (options.due ?? []).map(({ user_id }) => ({ user_id }));
+    if (text.includes('app.gallring_claim_person(')) {
+      const person = (options.due ?? []).find((p) => p.user_id === values[1]);
+      return person && !options.spared?.includes(person.user_id) ? [{ auth_id: person.auth_id, invited: person.invited }] : [];
+    }
+    if (text.includes('app.gallring_pseudonymise(')) {
+      return [{ n: (values[1] as string[]).filter((id) => !options.gone?.includes(id)).length }];
+    }
     return [];
   });
   tx.$executeRaw = jest.fn(async (statement: unknown) => {
@@ -116,7 +133,7 @@ describe('GallringJob', () => {
     expect(attendance).toHaveLength(Math.ceil(NIGHTLY_ROW_CAP / PURGE_BATCH));
   });
 
-  it('deletes an invited person\'s login before pseudonymising, and leaves whoever\'s login stays for the next night', async () => {
+  it('claims each person right before their login goes, pseudonymises them at once, and leaves whoever\'s login stays for the next night', async () => {
     const due = [
       { user_id: 'u-invited', auth_id: 'a-1', invited: true },
       { user_id: 'u-catalogue', auth_id: 'a-2', invited: false },
@@ -124,16 +141,49 @@ describe('GallringJob', () => {
     ];
     const { job, calls, supabase, settled } = night({ schools: ['s1'], due });
     supabase.deleteUser.mockImplementation(async (authId: string) => {
+      calls.push({ text: 'deleteUser', values: [authId] });
       if (authId === 'a-3') throw new Error('Supabase delete failed: 500');
     });
     await job.tick();
     // Never for a catalogue-only person: their authId matches no login.
     expect(supabase.deleteUser.mock.calls).toEqual([['a-1'], ['a-3']]);
-    const pseudonymise = calls.find((c) => c.text.includes('app.gallring_pseudonymise('))!;
-    expect(pseudonymise.values).toEqual(['run-s1', ['u-invited', 'u-catalogue']]);
+    const people = calls.filter((c) => /app\.gallring_(claim_person|pseudonymise)\(|^deleteUser$/.test(c.text));
+    expect(people.map((c) => (c.text === 'deleteUser' ? ['deleteUser', c.values[0]] : [/app\.gallring_(\w+)\(/.exec(c.text)![1], c.values[1]]))).toEqual([
+      ['claim_person', 'u-invited'],
+      ['deleteUser', 'a-1'],
+      ['pseudonymise', ['u-invited']],
+      ['claim_person', 'u-catalogue'],
+      ['pseudonymise', ['u-catalogue']],
+      ['claim_person', 'u-stuck'],
+      ['deleteUser', 'a-3'],
+    ]);
+    for (const call of people.filter((c) => c.text !== 'deleteUser')) expect(call.values[0]).toBe('run-s1');
     const finish = calls.find((c) => c.text.includes('app.gallring_finish('))!;
     expect(JSON.parse(finish.values[1] as string)).toEqual({ DEPARTED_PEOPLE_LOGIN: 1 });
     expect(settled).toHaveBeenCalledWith(GALLRING_JOB, expect.any(Date), expect.objectContaining({ counts: expect.objectContaining({ people: 2 }) }));
+  });
+
+  it('keeps the login of a person the claim no longer answers for, and names them for nothing', async () => {
+    const due = [
+      { user_id: 'u-reactivated', auth_id: 'a-1', invited: true },
+      { user_id: 'u-gone', auth_id: 'a-2', invited: true },
+    ];
+    const { job, calls, supabase, settled } = night({ schools: ['s1'], due, spared: ['u-reactivated'] });
+    await job.tick();
+    expect(supabase.deleteUser.mock.calls).toEqual([['a-2']]);
+    const pseudonymised = calls.filter((c) => c.text.includes('app.gallring_pseudonymise(')).map((c) => c.values[1]);
+    expect(pseudonymised).toEqual([['u-gone']]);
+    const finish = calls.find((c) => c.text.includes('app.gallring_finish('))!;
+    expect(JSON.parse(finish.values[1] as string)).toEqual({});
+    expect(settled).toHaveBeenCalledWith(GALLRING_JOB, expect.any(Date), expect.objectContaining({ counts: expect.objectContaining({ people: 1 }) }));
+  });
+
+  it('says so, by school id alone, when a login went and the person was no longer due a moment later', async () => {
+    const due = [{ user_id: 'u-late', auth_id: 'a-1', invited: true }];
+    const { job, supabase } = night({ schools: ['s1'], due, gone: ['u-late'] });
+    await job.tick();
+    expect(supabase.deleteUser.mock.calls).toEqual([['a-1']]);
+    expect(spies[1]!.mock.calls.map((call) => call[0])).toContain('Gallring removed the login of a person no longer due [school=s1]');
   });
 
   it('carries on with the next school when one fails, and leaves the failed one unfinished for the claim to retry', async () => {

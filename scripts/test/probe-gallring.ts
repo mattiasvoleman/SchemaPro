@@ -19,7 +19,12 @@
  *       the next night takes the one who waited;
  *   gd  the runner's own glue: app.gallring_schools names the school, the
  *       nightly claim is taken once and not again once finished, and a
- *       settled pass is a JobRuns row of counts.
+ *       settled pass is a JobRuns row of counts;
+ *   gf  a person reactivated mid-run keeps their login (20261021120000):
+ *       the claim waits for a reactivation in flight and then answers
+ *       nothing, a reactivation committed while the night deletes an
+ *       earlier person's login spares the later one, and a KEEP recorded
+ *       mid-run spares whoever is left.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -137,15 +142,18 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
   );
   await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [s, guardian.id, gone.id]);
 
-  // Departed two years ago: the dating trigger stamps now(), so the owner
-  // back-dates with it off for these rows alone.
-  await owner.query(`UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = ANY($1::uuid[])`, [[gone.id, stuck.id, autumn.id]]);
-  await owner.query(`ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update"`);
-  try {
-    await owner.query(`UPDATE "Users" SET "deactivatedAt" = now() - interval '2 years' WHERE id = ANY($1::uuid[])`, [[gone.id, stuck.id, autumn.id]]);
-  } finally {
-    await owner.query(`ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update"`);
-  }
+  // Departed two years ago (and `days` more): the dating trigger stamps
+  // now(), so the owner back-dates with it off for these rows alone.
+  const depart = async (ids: string[], days = 0) => {
+    await owner.query(`UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = ANY($1::uuid[])`, [ids]);
+    await owner.query(`ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update"`);
+    try {
+      await owner.query(`UPDATE "Users" SET "deactivatedAt" = now() - interval '2 years' - make_interval(days => $2) WHERE id = ANY($1::uuid[])`, [ids, days]);
+    } finally {
+      await owner.query(`ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update"`);
+    }
+  };
+  await depart([gone.id, stuck.id, autumn.id]);
 
   const other = await one<{ id: string }>(`SELECT id FROM "Schools" WHERE id <> $1 ORDER BY "createdAt" LIMIT 1`, [s]);
   const othersRows = () =>
@@ -164,9 +172,12 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
 
   const service = new GallringService(api);
   const deleted: string[] = [];
+  // (gf) acts in here, as if somebody did something while a login was being deleted.
+  let whileDeleting: ((authId: string) => Promise<void>) | null = null;
   const supabase = {
     deleteUser: async (authId: string) => {
       if (authId === stuck.authId && !deleted.includes('retry')) throw new Error('Supabase delete failed: 500');
+      await whileDeleting?.(authId);
       deleted.push(authId);
     },
   };
@@ -301,6 +312,81 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       assert.fail('the two settled passes never reached JobRuns');
+    });
+
+    await check('(gf) a person reactivated or spared mid-run keeps their login: the claim waits for the lock, then answers nothing', async () => {
+      const begin = async () =>
+        (await api.withDeliveryService((tx) =>
+          tx.$queryRaw<Array<{ run: string }>>`SELECT app.gallring_begin(${s}::uuid, ${new Date()}::timestamptz) AS run`,
+        ))[0]!.run;
+      const claim = (run: string, userId: string) =>
+        api.withDeliveryService((tx) =>
+          tx.$queryRaw<Array<{ auth_id: string; invited: boolean }>>`SELECT auth_id, invited FROM app.gallring_claim_person(${run}::uuid, ${userId}::uuid)`,
+        );
+      const state = (id: string) =>
+        one<{ isActive: boolean; authId: string; pseudonymisedAt: Date | null }>(
+          `SELECT "isActive", "authId", "pseudonymisedAt" FROM "Users" WHERE id = $1`,
+          [id],
+        );
+
+      // A reactivation in flight: the owner holds the row's lock, uncommitted.
+      const back = await person('STUDENT', 'back', true, true);
+      await depart([back.id]);
+      let run = await begin();
+      assert.deepEqual(await claim(run, back.id), [{ auth_id: back.authId, invited: true }], 'a due person was not claimed');
+      await owner.query('BEGIN');
+      let settled = false;
+      let waited = false;
+      let claimed: Promise<Array<{ auth_id: string; invited: boolean }>> | null = null;
+      try {
+        await owner.query(`UPDATE "Users" SET "isActive" = true, "updatedAt" = now() WHERE id = $1`, [back.id]);
+        claimed = claim(run, back.id);
+        void claimed.then(() => (settled = true), () => (settled = true));
+        for (let i = 0; i < 100 && !waited && !settled; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          await owner.query('SELECT pg_stat_clear_snapshot()');
+          waited = (await owner.query(
+            `SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%gallring_claim_person%' AND pid <> pg_backend_pid()`,
+          )).rowCount === 1;
+        }
+      } finally {
+        await owner.query('COMMIT');
+      }
+      assert.ok(waited && !settled, `the claim answered before the reactivation committed (waited ${waited}, settled ${settled})`);
+      assert.deepEqual(await claimed, [], 'the claim answered for a person reactivated while it waited');
+
+      // Through the night: while the first person's login is being deleted,
+      // the second is reactivated, and the night no longer touches them.
+      const first = await person('STUDENT', 'first', true, true);
+      const second = await person('STUDENT', 'second', true, true);
+      await depart([first.id], 1);
+      await depart([second.id]);
+      whileDeleting = async (authId) => {
+        if (authId === first.authId) {
+          await owner.query(`UPDATE "Users" SET "isActive" = true, "updatedAt" = now() WHERE id = $1`, [second.id]);
+        }
+      };
+      const before = deleted.length;
+      try {
+        const night = await job.runSchool(s);
+        assert.equal(night.people, 1, `people ${night.people}`);
+      } finally {
+        whileDeleting = null;
+      }
+      assert.deepEqual(deleted.slice(before), [first.authId], `logins deleted ${JSON.stringify(deleted.slice(before))}`);
+      assert.ok((await state(first.id)).pseudonymisedAt !== null, 'the first person was not pseudonymised');
+      const kept = await state(second.id);
+      assert.deepEqual([kept.isActive, kept.authId, kept.pseudonymisedAt], [true, second.authId, null], 'the reactivated person was touched');
+      assert.ok(!lines.some((line) => line.includes('no longer due')), 'a login went for a person no longer due');
+
+      // A KEEP recorded mid-run: nobody is claimed after it.
+      const third = await person('STUDENT', 'third');
+      await depart([third.id]);
+      run = await begin();
+      assert.equal((await claim(run, third.id)).length, 1, 'a due person was not claimed');
+      await service.decide({ dataType: 'DEPARTED_PEOPLE', decision: 'KEEP' }, asAdmin);
+      assert.deepEqual(await claim(run, third.id), [], 'the claim answered under KEEP');
+      assert.equal((await state(third.id)).pseudonymisedAt, null);
     });
     assert.equal(GALLRING_JOB, 'gallring');
   } finally {
