@@ -78,7 +78,7 @@ async function openTab() {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  settings = { method: null, session: { schoolAccount: null } };
+  settings = { available: true, method: null, session: { schoolAccount: null } };
   answer();
 });
 
@@ -146,6 +146,7 @@ describe("/admin/integrations — Inloggning", () => {
 
   it("keeps SSO-only out of reach from a password session, and says why", async () => {
     settings = {
+      available: true,
       method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
       session: { schoolAccount: null },
     };
@@ -157,6 +158,7 @@ describe("/admin/integrations — Inloggning", () => {
 
   it("turns SSO-only on from a session signed in with the school's own tenant", async () => {
     settings = {
+      available: true,
       method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
       session: { schoolAccount: { provider: "azure", entraTenantId: TENANT } },
     };
@@ -178,6 +180,7 @@ describe("/admin/integrations — Inloggning", () => {
 
   it("says the gateway's refusal in words", async () => {
     settings = {
+      available: true,
       method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
       session: { schoolAccount: { provider: "azure", entraTenantId: TENANT } },
     };
@@ -189,6 +192,7 @@ describe("/admin/integrations — Inloggning", () => {
 
   it("turns school accounts off only after the dialog says what follows", async () => {
     settings = {
+      available: true,
       method: { provider: "google", domains: ["skola.example"], entraTenantId: null, googleHostedDomain: "skola.example", ssoOnlyForStaff: true, updatedAt: "2026-10-20T08:00:00.000Z" },
       session: { schoolAccount: { provider: "google", googleHostedDomain: "skola.example" } },
     };
@@ -203,6 +207,36 @@ describe("/admin/integrations — Inloggning", () => {
 
     await waitFor(() => expect(del).toHaveBeenCalledWith("/api/v1/sign-in-method"));
     expect(toast.success).toHaveBeenCalledWith("Inloggning med skolkonto är avstängd.");
+  });
+
+  it("says a domain another school uses with another provider, in words with the domain", async () => {
+    put.mockRejectedValue(new ApiError(409, "conflict", "SIGN_IN_DOMAIN_TAKEN", { domains: "delad.example" }));
+    const card = await openTab();
+    const user = userEvent.setup();
+    await user.type(within(card).getByLabelText("E-postdomäner"), "delad.example");
+    await user.type(within(card).getByLabelText("Klient-id (tenant id)"), TENANT);
+    await user.click(within(card).getByRole("button", { name: "Spara inloggningen" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "En annan skola loggar in med en annan inloggning på delad.example. Ta bort domänen här, eller kontakta den som driftar SchemaPro om domänen är er.",
+      ),
+    );
+  });
+
+  it("says school accounts are not turned on yet, sends nothing, and still lets a row be removed", async () => {
+    settings = {
+      available: false,
+      method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
+      session: { schoolAccount: { provider: "azure", entraTenantId: TENANT } },
+    };
+    const card = await openTab();
+    const user = userEvent.setup();
+    expect(within(card).getByText("Inte påslaget än")).toBeInTheDocument();
+    await user.type(within(card).getByLabelText("E-postdomäner"), "\nelev.skola.example");
+    expect(within(card).getByRole("button", { name: "Spara inloggningen" })).toBeDisabled();
+    expect(within(card).getByRole("switch", { name: "Kräv skolkonto för personal" })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: "Stäng av skolkonton" })).toBeEnabled();
+    expect(put).not.toHaveBeenCalled();
   });
 
   it("says the settings could not be read", async () => {

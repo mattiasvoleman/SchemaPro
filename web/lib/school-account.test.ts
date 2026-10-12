@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  LookupBusyError,
   SSO_REASONS,
+  forgetLookups,
   emailDomain,
   isSsoReason,
   isSsoRequired,
@@ -27,6 +29,8 @@ describe("emailDomain", () => {
 });
 
 describe("lookupProvider", () => {
+  beforeEach(() => forgetLookups());
+
   const respond = (body: unknown, status = 200) =>
     vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 
@@ -45,8 +49,23 @@ describe("lookupProvider", () => {
     await expect(lookupProvider("https://api.example", "skola.example", respond({}))).resolves.toBeNull();
   });
 
-  it("throws when the gateway did not answer, so the form says it failed", async () => {
-    await expect(lookupProvider("https://api.example", "skola.example", respond({}, 429))).rejects.toThrow("429");
+  it("throws a busy error on 429 and another on any other refusal, and remembers neither", async () => {
+    await expect(lookupProvider("https://api.example", "skola.example", respond({}, 429))).rejects.toBeInstanceOf(LookupBusyError);
+    const failure = await lookupProvider("https://api.example", "skola.example", respond({}, 500)).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(LookupBusyError);
+    await expect(lookupProvider("https://api.example", "skola.example", respond({ provider: "azure" }))).resolves.toBe("azure");
+  });
+
+  it("remembers a domain's answer, the absence of one too, for the page's life", async () => {
+    const azure = respond({ provider: "azure" });
+    await lookupProvider("https://api.example", "skola.example", azure);
+    await expect(lookupProvider("https://api.example", "skola.example", azure)).resolves.toBe("azure");
+    const none = respond({ provider: null });
+    await lookupProvider("https://api.example", "okand.example", none);
+    await expect(lookupProvider("https://api.example", "okand.example", none)).resolves.toBeNull();
+    expect(azure).toHaveBeenCalledTimes(1);
+    expect(none).toHaveBeenCalledTimes(1);
   });
 });
 

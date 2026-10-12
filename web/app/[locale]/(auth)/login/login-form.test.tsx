@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetLookups } from "@/lib/school-account";
 import { LoginForm } from "./login-form";
 
 /**
@@ -53,6 +54,7 @@ const schoolAccount = {
     redirecting: "Skickar dig till skolans inloggning…",
     needsEmail: "Skriv din e-postadress först.",
     notFound: "Ingen skola loggar in med skolkonto på den domänen.",
+    busy: "Många loggar in just nu. Vänta en minut och försök igen.",
   },
 };
 
@@ -89,6 +91,7 @@ beforeEach(() => {
   authMocks.unavailable = false;
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+  forgetLookups();
 });
 
 const answer = (body: unknown, status = 200) =>
@@ -240,7 +243,7 @@ describe("LoginForm", () => {
   });
 
   it("says something went wrong, not that there is no school account, when the gateway or Auth fails", async () => {
-    fetchMock.mockReturnValue(answer({ message: "Too Many Requests" }, 429));
+    fetchMock.mockReturnValue(answer({ message: "Internal Server Error" }, 500));
     renderForm({ withSchoolAccount: true });
     await chooseSchoolAccount("larare@skola.example");
     expect(await screen.findByRole("alert")).toHaveTextContent(labels.failed);
@@ -251,6 +254,24 @@ describe("LoginForm", () => {
     await waitFor(() => expect(authMocks.signInWithOAuth).toHaveBeenCalled());
     expect(await screen.findByRole("alert")).toHaveTextContent(labels.failed);
     expect(screen.getByRole("button", { name: "Logga in med skolkonto" })).toBeEnabled();
+  });
+
+  it("says a crowd at the lookup as wait-a-minute, not as a failure, and remembers an answer", async () => {
+    fetchMock.mockReturnValueOnce(answer({ message: "ThrottlerException: Too Many Requests" }, 429));
+    renderForm({ withSchoolAccount: true });
+    await chooseSchoolAccount("larare@skola.example");
+    expect(await screen.findByRole("alert")).toHaveTextContent(schoolAccount.labels.busy);
+
+    // Asked again, answered, and the next click on the page need not ask.
+    fetchMock.mockReturnValue(answer({ provider: "azure" }));
+    authMocks.signInWithOAuth.mockResolvedValue({ error: { message: "the provider page did not open" } });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Logga in med skolkonto" }));
+    await waitFor(() => expect(authMocks.signInWithOAuth).toHaveBeenCalledTimes(1));
+    await screen.findByText(labels.failed);
+    await user.click(screen.getByRole("button", { name: "Logga in med skolkonto" }));
+    await waitFor(() => expect(authMocks.signInWithOAuth).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("still signs in with the password on Enter", async () => {

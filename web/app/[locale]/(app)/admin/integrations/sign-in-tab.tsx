@@ -11,6 +11,7 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -46,6 +47,10 @@ import { useRemoveSignInMethod, useSaveSignInMethod, useSignInSettings } from ".
  * anywhere else could lock every member of staff out, the admin included.
  * Turning it off is always possible, and so is removing the row, which signs
  * school-account sessions out within the hour; the dialog says so.
+ *
+ * Until the deployment turns school accounts on (SCHOOL_ACCOUNTS=on, after
+ * the hook and the providers are set up) the gateway saves nothing, and the
+ * card says so above a form that cannot be sent.
  */
 
 export function SignInTab() {
@@ -97,7 +102,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
   const t = useTranslations("integrations.signIn");
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
-  const { method, session } = settings;
+  const { available, method, session } = settings;
   const [form, setForm] = useState<FormState>(() => formOf(method));
   const [confirmRemove, setConfirmRemove] = useState(false);
   const save = useSaveSignInMethod();
@@ -123,7 +128,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
     input.entraTenantId !== method.entraTenantId ||
     input.googleHostedDomain !== method.googleHostedDomain ||
     input.domains.join("\n") !== method.domains.join("\n");
-  const canSave = complete && !domainsProblem && !tenantProblem && !hostedProblem && dirty && !busy;
+  const canSave = available && complete && !domainsProblem && !tenantProblem && !hostedProblem && dirty && !busy;
 
   const persist = (next: SignInMethodInput, okMessage: string) =>
     save.mutate(next, {
@@ -148,6 +153,9 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
       action={<Badge variant={method === null ? "outline" : "success"}>{status}</Badge>}
     >
       <div className="space-y-6">
+        {!available ? (
+          <Notice title={t("notAvailableTitle")}>{t("notAvailableBody")}</Notice>
+        ) : null}
         <p className="text-sm text-muted-foreground">{signedInWith}</p>
 
         <form
@@ -229,7 +237,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               <Switch
                 id="sign-in-sso-only"
                 checked={method.ssoOnlyForStaff}
-                disabled={busy || (!method.ssoOnlyForStaff && !fits)}
+                disabled={busy || !available || (!method.ssoOnlyForStaff && !fits)}
                 aria-describedby={
                   !method.ssoOnlyForStaff && !fits ? "sign-in-sso-only-hint sign-in-sso-only-needs" : "sign-in-sso-only-hint"
                 }

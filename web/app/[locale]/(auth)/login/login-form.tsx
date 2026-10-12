@@ -3,7 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { emailDomain, isSsoRequired, lookupProvider, providerHints, providerScopes } from "@/lib/school-account";
+import {
+  LookupBusyError,
+  emailDomain,
+  isSsoRequired,
+  lookupProvider,
+  providerHints,
+  providerScopes,
+} from "@/lib/school-account";
 import { loadClient, warmClient } from "@/utils/supabase/load-client";
 
 export type LoginFormLabels = {
@@ -31,6 +38,8 @@ export type SchoolAccountOption = {
     needsEmail: string;
     /** No school signs in with a school account on that domain. */
     notFound: string;
+    /** The lookup was refused for now (429): many sign in at once. */
+    busy: string;
   };
 };
 
@@ -134,8 +143,8 @@ export function LoginForm({
         if (!oauthError) return;
         failure = labels.failed;
       }
-    } catch {
-      failure = labels.failed;
+    } catch (lookupError) {
+      failure = lookupError instanceof LookupBusyError ? schoolAccount.labels.busy : labels.failed;
     }
     setError(failure);
     setPending(null);

@@ -109,6 +109,10 @@ export default defineConfig({
         "placeholder-publishable-key",
       NEXT_PUBLIC_API_BASE_URL:
         process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000",
+      // "Logga in med skolkonto" is off unless a deployment turns it on; the
+      // browser suites check /login with the button, as staff will see it.
+      NEXT_PUBLIC_SCHOOL_ACCOUNTS:
+        process.env.NEXT_PUBLIC_SCHOOL_ACCOUNTS ?? "on",
     },
   },
 });

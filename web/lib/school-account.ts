@@ -43,26 +43,51 @@ export function emailDomain(email: string): string | null {
   return HOSTNAME.test(domain) ? domain : null;
 }
 
+/** The lookup was refused for now (429): a crowd at one address, not a failure. */
+export class LookupBusyError extends Error {
+  constructor() {
+    super("lookup answered 429");
+    this.name = "LookupBusyError";
+  }
+}
+
+/**
+ * Answers this page has already had, per domain. A whole school signs in
+ * from one address on the morning it starts requiring the school account,
+ * and a second click after a cancelled sign-in need not ask again.
+ */
+const answered = new Map<string, SchoolAccountProvider | null>();
+
+/** For tests: forget every remembered answer. */
+export function forgetLookups(): void {
+  answered.clear();
+}
+
 /**
  * Asks the gateway which provider a domain signs in with
  * (GET /public/v1/sign-in-methods/:domain). Only the domain leaves the
- * browser, never the address. Null when no school names it; throws when the
- * gateway could not be asked, which the form reports as a failure rather
- * than as "no school account".
+ * browser, never the address. Null when no school names it. Throws
+ * LookupBusyError on a 429, which the form says as "wait a minute", and an
+ * Error when the gateway could not be asked, which it reports as a failure
+ * rather than as "no school account".
  */
 export async function lookupProvider(
   apiBase: string,
   domain: string,
   fetcher: typeof fetch = fetch,
 ): Promise<SchoolAccountProvider | null> {
+  if (answered.has(domain)) return answered.get(domain) ?? null;
   const base = apiBase.replace(/\/+$/, "");
   const response = await fetcher(`${base}/public/v1/sign-in-methods/${encodeURIComponent(domain)}`, {
     headers: { Accept: "application/json" },
     cache: "no-store",
   });
+  if (response.status === 429) throw new LookupBusyError();
   if (!response.ok) throw new Error(`lookup answered ${response.status}`);
   const body = (await response.json()) as { provider?: unknown };
-  return body.provider === "azure" || body.provider === "google" ? body.provider : null;
+  const provider = body.provider === "azure" || body.provider === "google" ? body.provider : null;
+  answered.set(domain, provider);
+  return provider;
 }
 
 /**
