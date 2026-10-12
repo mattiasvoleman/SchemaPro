@@ -3088,6 +3088,14 @@ describe('ImportService', () => {
       lockedRoles = { [KARIN]: 'TEACHER', [BO]: 'SCHOOL_ADMIN' };
       queryRaw = jest.fn((...call: unknown[]) => {
         const sql = rawSql(call).replace(/\s+/g, ' ').trim();
+        // The year's bounds, FOR SHARE, for a file with Från and Till.
+        if (sql === 'SELECT "startDate", "endDate" FROM "AcademicYears" WHERE "id" = ?::uuid FOR SHARE') {
+          return Promise.resolve(
+            call[1] === YEAR_ID
+              ? [{ startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') }]
+              : [],
+          );
+        }
         if (sql !== 'SELECT "id", "role" FROM "Users" WHERE "id" = ANY(?::uuid[]) FOR NO KEY UPDATE') {
           throw new Error(`unexpected raw read: ${sql}`);
         }
@@ -3119,6 +3127,8 @@ describe('ImportService', () => {
           countsAsTeaching: false,
           subjectId: null,
           studentGroupId: GROUP_7A,
+          validFrom: null,
+          validTo: null,
           note: null,
         },
       });
@@ -3186,6 +3196,64 @@ describe('ImportService', () => {
       const report = await run([row({ minutesPerWeek: 90 })]);
       expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('redan 2 uppdrag') }]);
       expect(tx.teacherDuty.update).not.toHaveBeenCalled();
+    });
+
+    describe('Från and Till (20261017090000)', () => {
+      const DATED = [...ALL, 'validFrom', 'validTo'] as const;
+      const yearReads = () =>
+        queryRaw.mock.calls.filter((call) => rawSql(call).includes('"AcademicYears"')).length;
+
+      it('writes the dates of a file that has the columns, measured against the year read FOR SHARE once', async () => {
+        const report = await run(
+          [row({ validTo: '2026-12-18' }), row({ teacherEmail: 'bo@example.com', validFrom: '2027-01-07', validTo: null })],
+          DATED,
+        );
+        expect(report).toEqual({ created: 2, updated: 0, skipped: 0, errors: [] });
+        expect(yearReads()).toBe(1);
+        expect(tx.teacherDuty.create.mock.calls[0][0].data).toMatchObject({
+          validFrom: null,
+          validTo: new Date('2026-12-18T00:00:00.000Z'),
+        });
+        expect(tx.teacherDuty.create.mock.calls[1][0].data).toMatchObject({
+          userId: BO,
+          validFrom: new Date('2027-01-07T00:00:00.000Z'),
+          validTo: null,
+        });
+      });
+
+      it.each<[string, Partial<ImportTeacherDutyRowDto>, string]>([
+        ['Till before Från', { validFrom: '2027-01-07', validTo: '2026-12-18' }, 'ligger före startdatumet'],
+        ['a Från before the year', { validFrom: '2026-08-01' }, 'Startdatumet (2026-08-01) ligger utanför läsåret (2026-08-17–2027-06-11)'],
+        ['a Till after the year', { validTo: '2027-06-30' }, 'Slutdatumet (2027-06-30) ligger utanför läsåret'],
+      ])('reports %s as a row error and imports the rest', async (_case, patch, message) => {
+        const report = await run([row(patch), row({ label: 'Mentor 7A bis' })], DATED);
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining(message) }]);
+      });
+
+      it('measures a file with only Till against the Från the row already has', async () => {
+        arrangeRows(tx.teacherDuty.findMany, [stored({ validFrom: new Date('2027-01-07T00:00:00.000Z'), validTo: null })]);
+        const report = await run([row({ validTo: '2026-12-18' })], [...ALL, 'validTo']);
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('ligger före startdatumet') }]);
+        expect(tx.teacherDuty.update).not.toHaveBeenCalled();
+      });
+
+      it('skips a dated row the file states as stored: the same day is the same date, whatever Date object holds it', async () => {
+        arrangeRows(tx.teacherDuty.findMany, [stored({ validFrom: null, validTo: new Date('2026-12-18T00:00:00.000Z') })]);
+        const report = await run([row({ validTo: '2026-12-18' })], DATED);
+        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+      });
+
+      it('clears the dates with empty cells in the columns, and leaves them alone in a file without them', async () => {
+        arrangeRows(tx.teacherDuty.findMany, [stored({ validFrom: new Date('2027-01-07T00:00:00.000Z'), validTo: null })]);
+        expect(await run([row({ validFrom: null, validTo: null })], DATED)).toMatchObject({ updated: 1 });
+        expect(tx.teacherDuty.update.mock.calls[0][0].data).toMatchObject({ validFrom: null, validTo: null });
+        tx.teacherDuty.update.mockClear();
+        queryRaw.mockClear();
+        expect(await run([row()])).toMatchObject({ skipped: 1 });
+        expect(tx.teacherDuty.update).not.toHaveBeenCalled();
+        expect(yearReads()).toBe(0);
+      });
     });
 
     it('reads no lock at all for a file naming nobody it knows', async () => {

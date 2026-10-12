@@ -138,6 +138,18 @@ describe('groups', () => {
     const group = await service.getGroup(caller(), W.c7aSource, { expand: 'assignmentRoles' });
     expect(group['_embedded']).toEqual({ assignmentRoles: [{ duty: { id: W.emp1 }, assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2027-06-11' }] });
   });
+
+  it('a mentorship with its own Från and Till carries them, on the class and on the Duty (20261017090000)', async () => {
+    const { world, service } = setup();
+    // The mentor until the jullov; the year's bound where the uppdrag has none.
+    Object.assign(world.mentorships[0]!, { validFrom: null, validTo: new Date('2026-12-18T00:00:00.000Z') });
+    const group = await service.getGroup(caller(), W.c7aSource, { expand: 'assignmentRoles' });
+    expect(group['_embedded']).toEqual({ assignmentRoles: [{ duty: { id: W.emp1 }, assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2026-12-18' }] });
+    const [duty] = (await service.listDuties(caller(), { person: W.t1 })).data;
+    expect(duty!['assignmentRole']).toEqual([
+      expect.objectContaining({ assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2026-12-18' }),
+    ]);
+  });
 });
 
 describe('duties', () => {

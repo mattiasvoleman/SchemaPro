@@ -43,7 +43,11 @@
 
 /** How one column of a carried row is filled. */
 export type ColumnRule =
-  /** A fresh id from the database default. */
+  /**
+   * A fresh id: the database default, or — for an uppdrag and the
+   * constraints holding its times — a random UUID the duties step draws, so
+   * the step's link rows can name both in the same run.
+   */
   | 'NEW_ID'
   /** The source row's value, unchanged. */
   | 'COPY'
@@ -102,11 +106,20 @@ export type ColumnRule =
    */
   | 'FOLLOW_GROUP'
   /**
-   * A NEW constraint holding the uppdrag's blocked time in the new year, made
-   * by dutySlotConstraintData; null when the source has no slot or its slot is
-   * off the solver's grid. The source's own constraint stays with its year.
+   * A NEW constraint holding one of the uppdrag's times in the new year, made
+   * by dutySlotConstraintData: one link per time of the source uppdrag that is
+   * on the solver's grid. The source's own constraints stay with their year.
    */
   | 'NEW_SLOT'
+  /** The new uppdrag this run wrote for the source uppdrag the link's time belongs to. */
+  | 'NEW_DUTY'
+  /**
+   * Written as null whatever the source row holds. An uppdrag's Från and Till:
+   * a carried uppdrag runs the whole new year, and one whose Till ended
+   * before the source year did is not carried at all (rollover-staffing.ts).
+   * And the old one-time column, blockedConstraintId: the times are links.
+   */
+  | 'CLEARED'
   /** DUTY_SLOT_REASON, the bare word a colleague may read; never the source row's reason. */
   | 'DUTY_SLOT_REASON'
   /**
@@ -448,7 +461,8 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason:
       'Uppdrag carry with the tjänster: a mentorskap follows its class to the successor ("Mentor 7B" becomes ' +
       '"Mentor 8B") and is left behind with a class that graduates or ends; another uppdrag of such a class is ' +
-      'carried without it; a blocked slot becomes a new slot of the new year.',
+      'carried without it; one whose Till ended before the year did is left behind; a carried uppdrag runs the ' +
+      'whole new year, and each of its times becomes a new time of the new year.',
     whenOff: {
       reason:
         'Uppdrag and their blocked slots are rolled by staffing Fas 5 (mentorskap through the group link); ' +
@@ -466,9 +480,34 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       countsAsTeaching: 'COPY',
       subjectId: 'COPY',
       studentGroupId: 'FOLLOW_GROUP',
-      blockedConstraintId: 'NEW_SLOT',
+      validFrom: 'CLEARED',
+      validTo: 'CLEARED',
+      blockedConstraintId: 'CLEARED',
       note: 'COPY',
       ...timestamps,
+    },
+  },
+  /**
+   * An uppdrag's times (20261017090000): one link per time, a child of the
+   * carried uppdrag and so carried with it, by the same step and option.
+   */
+  TeacherDutySlot: {
+    kind: 'COPIED',
+    step: 'duties',
+    option: 'carryStaffing',
+    reason:
+      'Each time of a carried uppdrag on the schedule’s grid becomes a new time of the new year, linking the new ' +
+      'uppdrag to a new constraint of its teacher; a time off the grid is left behind and named.',
+    whenOff: {
+      reason: 'An uppdrag’s fixed times stay with the uppdrag, which is left behind; the preview counts them.',
+      previewCount: true,
+    },
+    columns: {
+      id: 'NEW_ID',
+      schoolId: 'COPY',
+      teacherDutyId: 'NEW_DUTY',
+      availabilityConstraintId: 'NEW_SLOT',
+      createdAt: 'DEFAULT',
     },
   },
   ScheduleVersion: {

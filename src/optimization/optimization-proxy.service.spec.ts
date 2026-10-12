@@ -110,8 +110,16 @@ const matchesWhere = (row: Row, where: Row = {}): boolean =>
         return (filter as Row[]).every((part) => matchesWhere(row, part));
       case 'OR':
         return (filter as Row[]).some((part) => matchesWhere(row, part));
+      case 'teacherDutySlot': {
+        // The 1:0..1 back-relation to an uppdrag's link (20261017090000), by
+        // `is`: null, or a link whose duty is of the year.
+        const slot = (row['teacherDutySlot'] ?? null) as Row | null;
+        const is = (filter as { is?: Row | null }).is;
+        if (is === null) return slot === null;
+        return slot !== null && matchesWhere(slot, is ?? {});
+      }
       case 'teacherDuty': {
-        // The 1:0..1 back-relation, by `is`: null, or the duty's year.
+        // From a link to its duty, by `is`: the duty's year.
         const duty = (row['teacherDuty'] ?? null) as Row | null;
         const is = (filter as { is?: Row | null }).is;
         if (is === null) return duty === null;
@@ -2694,15 +2702,23 @@ describe('OptimizationProxyService', () => {
       arrange({
         constraints: [
           constraintRow({ id: 'c-plain', userId: TEACHER_ID, dayOfWeek: 1 }),
-          constraintRow({ id: 'c-this', userId: TEACHER_ID, dayOfWeek: 2, teacherDuty: { academicYearId: ACADEMIC_YEAR } }),
-          constraintRow({ id: 'c-next', userId: TEACHER_ID, dayOfWeek: 3, teacherDuty: { academicYearId: 'next-year' } }),
+          constraintRow({ id: 'c-this', userId: TEACHER_ID, dayOfWeek: 2, teacherDutySlot: { teacherDuty: { academicYearId: ACADEMIC_YEAR } } }),
+          constraintRow({ id: 'c-next', userId: TEACHER_ID, dayOfWeek: 3, teacherDutySlot: { teacherDuty: { academicYearId: 'next-year' } } }),
+          // A dated uppdrag of this year: its time still blocks the weekly
+          // master all year (duty-slot-year.ts), only its own läsår.
+          constraintRow({
+            id: 'c-dated',
+            userId: TEACHER_ID,
+            dayOfWeek: 4,
+            teacherDutySlot: { teacherDuty: { academicYearId: ACADEMIC_YEAR, validFrom: new Date('2027-01-07T00:00:00.000Z') } },
+          }),
         ],
       });
       echoEngine();
 
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-      expect(postedPayload().constraints.map((c: { dayOfWeek: number }) => c.dayOfWeek).sort()).toEqual([1, 2]);
+      expect(postedPayload().constraints.map((c: { dayOfWeek: number }) => c.dayOfWeek).sort()).toEqual([1, 2, 4]);
     });
 
     it('formats date-bound constraints as YYYY-MM-DD', async () => {

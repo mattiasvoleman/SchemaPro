@@ -69,8 +69,20 @@ import {
  * teaching as "uppdrag" and consume nothing, because the riktmärke is a measure
  * of undervisning and a school that counts mentorskap against it says so on the
  * duty. percentOfEmployment per subject stays a share of the TEACHING minutes:
- * SCB's tjänsteomfattning per ämne has no column for rastvakt. Duties carry no
- * week pattern, so they enter neither the toppvecka nor the annual hours.
+ * SCB's tjänsteomfattning per ämne has no column for rastvakt.
+ *
+ * AN UPPDRAG COUNTS THE WEEKS IT RUNS. A duty has Från and Till (migration
+ * 20261017090000), and a mentor until the jullov is not a mentor in March.
+ * Its standardvecka is minutesPerWeek × its share of the year's teaching
+ * weeks — standardWeekWeight, the dated requirement's arithmetic, with
+ * school-wide lov only, since an uppdrag sits in no grade. Its annual hours
+ * are its minutes over the teaching weeks it runs, and dutyPeakMinutesPerWeek
+ * is the busiest ISO week of the teacher's uppdrag, each counted only in the
+ * weeks it runs (lov not subtracted, as for the teaching peak). The teaching
+ * toppvecka stays the teaching's. An UNDATED duty runs the whole year and
+ * every figure is the one it always was: its weight is exactly 1 (no
+ * division), its annual hours are the integer sum × the year's weeks as
+ * before, and its peak is its minutes.
  *
  * ÄMNESFLASKHALSAR are the question the unstaffed list cannot answer on its
  * own: is there anybody left to take these rows? Per subject with an unstaffed
@@ -230,11 +242,15 @@ export interface LoadRequirement extends TeachingPeriod {
   gradeSpan: GradeSpan | null;
 }
 
-/** One uppdrag of the year: what it costs a week and whether it is teaching. */
+/** One uppdrag of the year: what it costs a week, whether it is teaching, and when it runs. */
 export interface LoadDuty {
   userId: string;
   minutesPerWeek: number;
   countsAsTeaching: boolean;
+  /** Från, yyyy-mm-dd inclusive; null or absent = the year's first day. */
+  validFrom?: string | null;
+  /** Till, yyyy-mm-dd inclusive; null or absent = the year's last day. */
+  validTo?: string | null;
 }
 
 export interface LoadQualification {
@@ -317,8 +333,10 @@ export interface TeacherLoad {
   assignedMinutesPerWeek: number;
   /** Toppvecka of the teaching, whole minutes. */
   peakMinutesPerWeek: number;
-  /** Every uppdrag of the year, counted or not. */
+  /** Every uppdrag of the year, counted or not: standardvecka, whole minutes. */
   dutyMinutesPerWeek: number;
+  /** Toppvecka of the uppdrag, each in the weeks it runs, whole minutes. */
+  dutyPeakMinutesPerWeek: number;
   /** The uppdrag marked countsAsTeaching — the part of dutyMinutes that meets the target. */
   countedDutyMinutesPerWeek: number;
   /** assigned + counted uppdrag: what the target is compared with. */
@@ -347,7 +365,7 @@ export interface TeacherLoad {
     unregulatedHoursPerYear: number | null;
     /** SEMESTER: policy.semesterHoursPerWeek × (tjänst − nedsättning) / 100, one decimal; else null. */
     semesterHoursPerWeek: number | null;
-    /** dutyMinutesPerWeek over the year's teaching weeks (school-wide lov out) / 60, one decimal. */
+    /** Each uppdrag's minutes over the teaching weeks it runs (school-wide lov out) / 60, one decimal. */
     dutyHoursPerYear: number;
     /** The year's teaching weeks with school-wide lov subtracted. */
     teachingWeeksPerYear: number;
@@ -468,6 +486,32 @@ export function standardWeekWeight(
 
 function singleGrade(span: GradeSpan | null): number | null {
   return span !== null && span.min === span.max ? span.min : null;
+}
+
+const isDated = (duty: Pick<LoadDuty, 'validFrom' | 'validTo'>): boolean =>
+  Boolean(duty.validFrom) || Boolean(duty.validTo);
+
+/** An uppdrag's dates as the period the week arithmetic reads. */
+const dutyPeriod = (duty: Pick<LoadDuty, 'validFrom' | 'validTo'>): TeachingPeriod => ({
+  startDate: duty.validFrom ?? null,
+  endDate: duty.validTo ?? null,
+});
+
+/**
+ * An uppdrag's standardvecka, before rounding: its minutes, untouched, when
+ * it is undated — so every figure an undated duty reaches is the integer it
+ * always was — and otherwise × its share of the year's teaching weeks, lov
+ * that close the whole school subtracted (standardWeekWeight with no grade).
+ * The report, countedMinutesByTeacher and the staffing proposal's basis all
+ * charge a duty through here.
+ */
+export function dutyStandardWeekMinutes(
+  duty: Pick<LoadDuty, 'minutesPerWeek' | 'validFrom' | 'validTo'>,
+  year: YearBounds,
+  closures: ClosedRange[],
+): number {
+  if (!isDated(duty)) return duty.minutesPerWeek;
+  return duty.minutesPerWeek * standardWeekWeight(dutyPeriod(duty), year, closures);
 }
 
 /**
@@ -608,8 +652,13 @@ interface Accumulator {
   assigned: number;
   annualMinutes: number;
   requirementCount: number;
+  /** Standardvecka of every uppdrag; an integer while every one is undated. */
   dutyMinutes: number;
   countedDutyMinutes: number;
+  /** Σ minutes of the undated uppdrag, × the year's weeks for the annual hours. */
+  undatedDutyMinutes: number;
+  /** Σ minutes × teaching weeks run, of the dated ones. */
+  datedDutyAnnualMinutes: number;
   dutyCount: number;
   subjects: Map<string, { subjectName: string; minutes: number }>;
   assignments: TeacherAssignment[];
@@ -620,8 +669,8 @@ const STATUS_ORDER: Record<LoadStatus, number> = { OVER: 0, UNDER: 1, OK: 2, NO_
 export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const policy = input.policy ?? DEFAULT_LOAD_POLICY;
   const { year, closures } = input;
-  // The year's teaching weeks with school-wide lov out: the frame uppdrag,
-  // which carry no week pattern, are taken over.
+  // The year's teaching weeks with school-wide lov out: the frame an undated
+  // uppdrag, which runs every week, is taken over.
   const schoolTeachingWeeks = teachingWeeks({}, year, closures, null);
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
@@ -635,6 +684,8 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         requirementCount: 0,
         dutyMinutes: 0,
         countedDutyMinutes: 0,
+        undatedDutyMinutes: 0,
+        datedDutyAnnualMinutes: 0,
         dutyCount: 0,
         subjects: new Map(),
         assignments: [],
@@ -651,10 +702,25 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   // is a row in the matrix like one whose only line is a post.
   for (const duty of input.duties) {
     const acc = accumulatorFor(duty.userId);
-    acc.dutyMinutes += duty.minutesPerWeek;
+    const minutes = dutyStandardWeekMinutes(duty, year, closures);
+    acc.dutyMinutes += minutes;
     acc.dutyCount += 1;
-    if (duty.countsAsTeaching) acc.countedDutyMinutes += duty.minutesPerWeek;
+    if (duty.countsAsTeaching) acc.countedDutyMinutes += minutes;
+    if (isDated(duty)) {
+      acc.datedDutyAnnualMinutes +=
+        duty.minutesPerWeek * teachingWeeks(dutyPeriod(duty), year, closures, null);
+    } else {
+      acc.undatedDutyMinutes += duty.minutesPerWeek;
+    }
   }
+  // The uppdrag's own toppvecka: an undated one is in every week, a dated one
+  // only in the weeks its dates touch.
+  const dutyPeaks = peakPerWeekByKey(
+    input.duties.map((duty) => ({ key: duty.userId, minutes: duty.minutesPerWeek, ...dutyPeriod(duty) })),
+    year,
+    (item) => item.key,
+    (item) => item.minutes,
+  );
 
   const unstaffedRequirements: UnstaffedRequirement[] = [];
   const unqualifiedAssignments: UnqualifiedAssignment[] = [];
@@ -820,8 +886,9 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       targetMinutesPerWeek: target,
       assignedMinutesPerWeek: assigned,
       peakMinutesPerWeek: Math.round(peaks.get(userId) ?? 0),
-      dutyMinutesPerWeek: acc.dutyMinutes,
-      countedDutyMinutesPerWeek: acc.countedDutyMinutes,
+      dutyMinutesPerWeek: Math.round(acc.dutyMinutes),
+      dutyPeakMinutesPerWeek: Math.round(dutyPeaks.get(userId) ?? 0),
+      countedDutyMinutesPerWeek: Math.round(acc.countedDutyMinutes),
       countedMinutesPerWeek: Math.round(counted),
       balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
       percentOfTarget: percentOfTarget(counted, target),
@@ -848,7 +915,12 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
           semester && activePercent !== null
             ? round1(((policy.semesterHoursPerWeek ?? DEFAULT_LOAD_POLICY.semesterHoursPerWeek!) * activePercent) / 100)
             : null,
-        dutyHoursPerYear: round1((acc.dutyMinutes * schoolTeachingWeeks) / 60),
+        // The undated sum × the year's weeks is the figure this always was;
+        // the dated ones add their own weeks (0 without any, which adds
+        // nothing to the double).
+        dutyHoursPerYear: round1(
+          (acc.undatedDutyMinutes * schoolTeachingWeeks + acc.datedDutyAnnualMinutes) / 60,
+        ),
         teachingWeeksPerYear: schoolTeachingWeeks,
         percentOfRegulated:
           regulated === null || regulated <= 0
@@ -928,7 +1000,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     totals: {
       teacherMinutesPerWeek: Math.round(teacherMinutesPerWeek),
       lessonMinutesPerWeek: Math.round(lessonMinutesPerWeek),
-      dutyMinutesPerWeek,
+      dutyMinutesPerWeek: Math.round(dutyMinutesPerWeek),
     },
   };
 }
@@ -957,7 +1029,10 @@ export function countedMinutesByTeacher(
   const add = (userId: string, minutes: number) =>
     counted.set(userId, (counted.get(userId) ?? 0) + minutes);
   for (const duty of input.duties) {
-    add(duty.userId, duty.countsAsTeaching ? duty.minutesPerWeek : 0);
+    add(
+      duty.userId,
+      duty.countsAsTeaching ? dutyStandardWeekMinutes(duty, input.year, input.closures) : 0,
+    );
   }
   for (const requirement of input.requirements) {
     const charged = chargedMinutes(requirement, input.year, input.closures);

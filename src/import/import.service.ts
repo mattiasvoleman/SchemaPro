@@ -452,11 +452,14 @@ export class ImportService {
    * blocked time: an uppdrag's slot is the API's, and an update here leaves
    * the link and the constraint exactly as they are.
    *
-   * The four optional columns are written only when the FILE had them (the
+   * The optional columns are written only when the FILE had them (the
    * `columns` header, as the requirements import carries it), so uploading a
-   * four-column list does not clear a class or a note set in the app. Within
-   * a column the file has, an empty cell means "none" — false for
-   * countsAsTeaching, null for the rest.
+   * four-column list does not clear a class, a note or the dates set in the
+   * app. Within a column the file has, an empty cell means "none" — false for
+   * countsAsTeaching, the läsår's own bound for Från and Till, null for the
+   * rest. Från and Till are measured against the year's bounds, read FOR
+   * SHARE once for the upload, and a row outside the year is a row error, as
+   * a requirement's period is.
    *
    * The teachers are read FOR NO KEY UPDATE, the lock a role PATCH takes
    * (staff-lock.ts), in the upload's own transaction — a person demoted to
@@ -515,6 +518,12 @@ export class ImportService {
         select: { id: true, name: true },
       });
       const groupByName = new Map(groups.map((group) => [this.normalizeName(group.name), group.id]));
+      const datedFile = writable.has('validFrom') || writable.has('validTo');
+      // FOR SHARE until the upload commits, as importRequirements reads it.
+      const year =
+        datedFile && dto.rows.some((row) => row.validFrom || row.validTo)
+          ? await readYearBoundsForShare(tx, dto.academicYearId)
+          : null;
 
       const existing = await tx.teacherDuty.findMany({
         where: { academicYearId: dto.academicYearId },
@@ -527,6 +536,8 @@ export class ImportService {
           countsAsTeaching: true,
           subjectId: true,
           studentGroupId: true,
+          validFrom: true,
+          validTo: true,
           note: true,
         },
       });
@@ -586,11 +597,18 @@ export class ImportService {
           }
         }
 
+        // The pair as it will end up: a file with only Till keeps the Från
+        // the row already has, once the row is known (below).
+        const fromCell = writable.has('validFrom') ? (row.validFrom ? parseDateString(row.validFrom) : null) : undefined;
+        const toCell = writable.has('validTo') ? (row.validTo ? parseDateString(row.validTo) : null) : undefined;
+
         const values = {
           minutesPerWeek: row.minutesPerWeek,
           ...(writable.has('countsAsTeaching') ? { countsAsTeaching: row.countsAsTeaching ?? false } : {}),
           ...(writable.has('subject') ? { subjectId } : {}),
           ...(writable.has('groupName') ? { studentGroupId } : {}),
+          ...(fromCell !== undefined ? { validFrom: fromCell } : {}),
+          ...(toCell !== undefined ? { validTo: toCell } : {}),
           ...(writable.has('note') ? { note: row.note?.trim() || null } : {}),
         };
 
@@ -603,6 +621,17 @@ export class ImportService {
           continue;
         }
         const current = matches[0];
+        if (datedFile) {
+          const problem = this.describePeriodProblem(
+            year,
+            fromCell !== undefined ? fromCell : (current?.validFrom ?? null),
+            toCell !== undefined ? toCell : (current?.validTo ?? null),
+          );
+          if (problem) {
+            report.errors.push({ row: rowNumber, message: problem });
+            continue;
+          }
+        }
         if (!current) {
           await tx.teacherDuty.create({
             data: {
@@ -615,6 +644,8 @@ export class ImportService {
               countsAsTeaching: false,
               subjectId: null,
               studentGroupId: null,
+              validFrom: null,
+              validTo: null,
               note: null,
               ...values,
             },
@@ -622,8 +653,13 @@ export class ImportService {
           report.created += 1;
           continue;
         }
-        const unchanged = (Object.keys(values) as (keyof typeof values)[]).every(
-          (field) => current[field] === values[field],
+        // Dates by timestamp: Prisma hands back a fresh Date per read.
+        const same = (a: unknown, b: unknown) =>
+          a instanceof Date || b instanceof Date
+            ? (a instanceof Date ? a.getTime() : a) === (b instanceof Date ? b.getTime() : b)
+            : a === b;
+        const unchanged = (Object.keys(values) as (keyof typeof values)[]).every((field) =>
+          same(current[field], values[field]),
         );
         if (unchanged) {
           report.skipped += 1;

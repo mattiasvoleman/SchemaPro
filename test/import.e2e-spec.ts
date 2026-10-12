@@ -142,6 +142,8 @@ describe('CSV import (e2e)', () => {
           countsAsTeaching: false,
           subjectId: null,
           studentGroupId: GROUP_ID,
+          validFrom: null,
+          validTo: null,
           note: null,
         });
 

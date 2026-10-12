@@ -12197,6 +12197,569 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Section 40: ett uppdrags tider är länkar som uppdraget själv läses genom
+-- (TeacherDutySlots, 20261017090000).
+--
+-- An uppdrag holds any number of fixed times, one link row per time. The
+-- link carries nothing but two ids, and it is read exactly as the uppdrag
+-- is: the admin all of the school's, a TEACHER the links of their OWN
+-- uppdrag (through an EXISTS that their own arm on TeacherDuties narrows),
+-- nobody else — not a colleague, a pupil, a guardian or the service
+-- principal, and nobody another school's. Which of a colleague's weekly
+-- UNAVAILABLE rows is an uppdrag is exactly what teacher_own_select keeps
+-- from them, so the teacher's read is an exact count against links the
+-- colleague holds in the same transaction, under the API's role and under
+-- PostgREST's. A teacher writes no link: an uppdrag is assigned.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; colleague uuid; year uuid;
+  c1 uuid; c2 uuid; c3 uuid; d_me uuid; d_col uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'duty links: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  IF me IS NULL OR colleague IS NULL OR year IS NULL THEN
+    RAISE EXCEPTION 'duty links: the seed lacks two teachers or an active year';
+  END IF;
+  -- The tenant half first: the second school's fixture uppdrag holds a time,
+  -- and none of its links is this admin's to see.
+  SELECT count(*) INTO n FROM "TeacherDutySlots";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duty links: % link row(s) visible before any were written — the seed has none and school B''s must not show', n;
+  END IF;
+
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 1, '10:00', '10:20', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO c1;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 3, '10:00', '10:20', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO c2;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', colleague, 2, '12:00', '12:30', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO c3;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'RASTVAKT', 'RLS40 rastvakt', 40, now()) RETURNING id INTO d_me;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, colleague, year, 'FORSTELARARE', 'RLS40 förstelärare', 60, now()) RETURNING id INTO d_col;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+  VALUES (school, d_me, c1), (school, d_me, c2), (school, d_col, c3);
+  SELECT count(*) INTO n FROM "TeacherDutySlots";
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'duty links: the admin reads % of the three links they wrote', n;
+  END IF;
+  PERFORM set_config('app.test_rls40_mine', d_me::text, true);
+  PERFORM set_config('app.test_rls40_theirs', d_col::text, true);
+END $$;
+
+-- The first teacher, under both roles.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+DO $$
+DECLARE
+  mine uuid := current_setting('app.test_rls40_mine')::uuid;
+  theirs uuid := current_setting('app.test_rls40_theirs')::uuid;
+  school uuid := app.current_school_id();
+  via text; n bigint; c uuid;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION 'duty links: expected the teacher, am %', app.current_user_role();
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'duty links: running as %, not %', current_user, via; END IF;
+    SELECT count(*) INTO n FROM "TeacherDutySlots";
+    IF n <> 2 THEN
+      RAISE EXCEPTION 'duty links: through % a teacher reads % link(s), expected exactly the 2 of their own uppdrag', via, n;
+    END IF;
+    SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = theirs;
+    IF n <> 0 THEN
+      RAISE EXCEPTION 'duty links: through % a teacher reads which of a colleague''s times is an uppdrag', via;
+    END IF;
+    -- No write: not a new link, not a removed one.
+    SELECT "availabilityConstraintId" INTO c FROM "TeacherDutySlots" WHERE "teacherDutyId" = mine LIMIT 1;
+    BEGIN
+      INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, mine, c);
+      RAISE EXCEPTION 'duty links: through % a teacher linked a time to their uppdrag', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    DELETE FROM "TeacherDutySlots" WHERE "teacherDutyId" = mine;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN
+      RAISE EXCEPTION 'duty links: through % a teacher removed % of their uppdrag''s times', via, n;
+    END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- A pupil and a guardian of the school: nothing.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'duty links: expected the guardian'; END IF;
+  SELECT count(*) INTO n FROM "TeacherDutySlots";
+  IF n <> 0 THEN RAISE EXCEPTION 'duty links: a guardian reads % link(s)', n; END IF;
+END $$;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT' AND "authId" IS NOT NULL
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'duty links: expected a pupil, am %', app.current_user_role(); END IF;
+  SELECT count(*) INTO n FROM "TeacherDutySlots";
+  IF n <> 0 THEN RAISE EXCEPTION 'duty links: a pupil reads % link(s)', n; END IF;
+END $$;
+
+-- School B's admin: their fixture uppdrag's link, made from its old column by
+-- the trigger, and none of school A's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE n bigint; mine bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'duty links: expected school B''s admin'; END IF;
+  SELECT count(*) INTO n FROM "TeacherDutySlots";
+  SELECT count(*) INTO mine FROM "TeacherDutySlots" s
+    JOIN "TeacherDuties" d ON d.id = s."teacherDutyId" WHERE d.label = 'RLS fixture APT';
+  IF mine <> 1 OR n <> 1 THEN
+    RAISE EXCEPTION 'duty links: school B''s admin reads % link(s), % of them its fixture uppdrag''s; expected exactly that one', n, mine;
+  END IF;
+END $$;
+
+-- The service principal, user cleared: no arm, no link.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', :'school_a', true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_service_school_id() IS NULL THEN RAISE EXCEPTION 'duty links: the service principal is not in force'; END IF;
+  SELECT count(*) INTO n FROM "TeacherDutySlots";
+  IF n <> 0 THEN RAISE EXCEPTION 'duty links: the service principal reads % link(s); no integration reads an uppdrag''s times', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 41: en länk pekar på uppdragslärarens egen veckotid, och tiden
+-- förblir den (20261017090000).
+--
+-- 20261007090000's three rules, held for every link: the constraint is a
+-- weekly UNAVAILABLE TEACHER row of the duty's own teacher (TD409 on the
+-- link's INSERT for a colleague's, a ROOM's, a wish and a one-off date), a
+-- duty moved to another teacher may not take its times along (TD409 on the
+-- duty's UPDATE of userId), and a linked constraint keeps its shape under an
+-- admin (TD409) and is the admin's under a teacher (TD403), found through
+-- the link alone. A constraint of another school under a row stamped with
+-- this one is the composite key's (23503), and a time is one uppdrag's (the
+-- unique pair, 23505). A link is never updated: the API's two roles hold no
+-- UPDATE on it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_constraint_b', :'constraint_b', true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; colleague uuid; year uuid; room_c uuid;
+  c_me uuid; c_col uuid; c_wish uuid; c_date uuid; d_me uuid; d_other uuid;
+  n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  SELECT id INTO room_c FROM "AvailabilityConstraints" WHERE "schoolId" = school AND "resourceType" = 'ROOM' LIMIT 1;
+  IF room_c IS NULL THEN RAISE EXCEPTION 'duty link guards: the seed lacks a ROOM constraint'; END IF;
+
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 2, '15:00', '17:00', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO c_me;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', colleague, 2, '15:00', '17:00', 'UNAVAILABLE', 'RLS41 kollegans', now()) RETURNING id INTO c_col;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 3, '08:00', '09:00', 'PREFERRED_FREE', 'RLS41 önskemål', now()) RETURNING id INTO c_wish;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "date", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, DATE '2099-01-05', '08:00', '09:00', 'UNAVAILABLE', 'RLS41 en dag', now()) RETURNING id INTO c_date;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'APT_KONFERENS', 'RLS41 APT', 120, now()) RETURNING id INTO d_me;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'ANNAT', 'RLS41 annat', 30, now()) RETURNING id INTO d_other;
+
+  -- The link the service writes: accepted.
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me, c_me);
+
+  -- Every wrong target. Only TD409 is caught: any other error would mean the
+  -- guard never got its say.
+  BEGIN
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_other, c_col);
+    RAISE EXCEPTION 'duty link guards: a link took a colleague''s constraint as the uppdrag''s time';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_other, room_c);
+    RAISE EXCEPTION 'duty link guards: a link took a ROOM constraint';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_other, c_wish);
+    RAISE EXCEPTION 'duty link guards: a link took a PREFERRED_FREE wish';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_other, c_date);
+    RAISE EXCEPTION 'duty link guards: a link took a one-off dated constraint as a weekly time';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  -- Another school's constraint under this school's id: the key's 23503,
+  -- not the guard describing school B's row to school A.
+  BEGIN
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+    VALUES (school, d_other, current_setting('app.test_constraint_b')::uuid);
+    RAISE EXCEPTION 'duty link guards: a link reached another school''s constraint';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- One time, one uppdrag.
+  BEGIN
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_other, c_me);
+    RAISE EXCEPTION 'duty link guards: one time was linked to two uppdrag';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+
+  -- The duty moved to the colleague, its time along: refused.
+  BEGIN
+    UPDATE "TeacherDuties" SET "userId" = colleague WHERE id = d_me;
+    RAISE EXCEPTION 'duty link guards: an uppdrag moved to a colleague took its teacher''s time with it';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  -- A duty with no time may move (PostgREST can; the DTO cannot).
+  UPDATE "TeacherDuties" SET "userId" = colleague WHERE id = d_other;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'duty link guards: a duty without a time could not move (% rows)', n; END IF;
+
+  -- The linked constraint keeps its shape, found through the link alone.
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET "userId" = colleague WHERE id = c_me;
+    RAISE EXCEPTION 'duty link guards: a linked time moved to a colleague';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET type = 'PREFERRED_FREE' WHERE id = c_me;
+    RAISE EXCEPTION 'duty link guards: a linked time became a wish';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET "dayOfWeek" = NULL, date = DATE '2099-01-06' WHERE id = c_me;
+    RAISE EXCEPTION 'duty link guards: a linked weekly time became one date';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  -- Retimed, it stays the same link: allowed.
+  UPDATE "AvailabilityConstraints" SET "startTime" = '15:30' WHERE id = c_me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'duty link guards: an admin could not retime a linked time'; END IF;
+
+  PERFORM set_config('app.test_rls41_c_me', c_me::text, true);
+END $$;
+
+-- The teacher, under both roles: not their uppdrag's time (TD403), their own
+-- other rows yes; and no UPDATE of a link for either role.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+DO $$
+DECLARE
+  c_me uuid := current_setting('app.test_rls41_c_me')::uuid;
+  via text; n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    BEGIN
+      UPDATE "AvailabilityConstraints" SET "startTime" = '16:00' WHERE id = c_me;
+      RAISE EXCEPTION 'duty link guards: through % a teacher moved the time their uppdrag holds', via;
+    EXCEPTION WHEN SQLSTATE 'TD403' THEN NULL;
+    END;
+    BEGIN
+      DELETE FROM "AvailabilityConstraints" WHERE id = c_me;
+      RAISE EXCEPTION 'duty link guards: through % a teacher deleted the time their uppdrag holds', via;
+    EXCEPTION WHEN SQLSTATE 'TD403' THEN NULL;
+    END;
+    UPDATE "AvailabilityConstraints" SET reason = 'RLS41 eget' WHERE reason = 'RLS41 önskemål';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'duty link guards: through % a teacher lost their own wish (% rows)', via, n; END IF;
+    UPDATE "AvailabilityConstraints" SET reason = 'RLS41 önskemål' WHERE reason = 'RLS41 eget';
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE via text;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    BEGIN
+      UPDATE "TeacherDutySlots" SET "createdAt" = now();
+      RAISE EXCEPTION 'duty link guards: through % an admin updated a link; a link is deleted and made again', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 42: en tid går med sin länk, en länk med sin tid och sitt uppdrag,
+-- och den gamla kolumnen blir en länk (20261017090000).
+--
+-- A link removed takes its constraint (no weekly UNAVAILABLE row outlives the
+-- uppdrag time it was); a constraint the admin deletes takes its link and
+-- leaves the uppdrag; a duty deleted takes its links and their constraints.
+-- The previous API release and PostgREST still write blockedConstraintId: a
+-- value there is a link row in the same statement, the same value again is
+-- no second link, and a time another uppdrag already holds is TD409.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; year uuid;
+  c1 uuid; c2 uuid; c3 uuid; c4 uuid; d1 uuid; d2 uuid; d3 uuid;
+  n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  FOR n IN 1..4 LOOP
+    INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+    VALUES (school, 'TEACHER', me, n, '07:30', '07:55', 'UNAVAILABLE', 'RLS42 ' || n, now());
+  END LOOP;
+  SELECT id INTO c1 FROM "AvailabilityConstraints" WHERE reason = 'RLS42 1';
+  SELECT id INTO c2 FROM "AvailabilityConstraints" WHERE reason = 'RLS42 2';
+  SELECT id INTO c3 FROM "AvailabilityConstraints" WHERE reason = 'RLS42 3';
+  SELECT id INTO c4 FROM "AvailabilityConstraints" WHERE reason = 'RLS42 4';
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'RASTVAKT', 'RLS42 morgonvakt', 60, now()) RETURNING id INTO d1;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d1, c1), (school, d1, c2);
+
+  -- A link removed: its constraint goes, the uppdrag stays.
+  DELETE FROM "TeacherDutySlots" WHERE "availabilityConstraintId" = c1;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints" WHERE id = c1;
+  IF n <> 0 THEN RAISE EXCEPTION 'duty link cleanup: a removed link left its time as a plain UNAVAILABLE row'; END IF;
+  -- A constraint deleted: its link goes, the uppdrag stays.
+  DELETE FROM "AvailabilityConstraints" WHERE id = c2;
+  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = d1;
+  IF n <> 0 THEN RAISE EXCEPTION 'duty link cleanup: a deleted time left % link(s)', n; END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE id = d1;
+  IF n <> 1 THEN RAISE EXCEPTION 'duty link cleanup: deleting a time deleted its uppdrag'; END IF;
+
+  -- The old column, as the previous API writes it: a link in the same statement.
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, year, 'APT_KONFERENS', 'RLS42 gammal APT', 90, c3, now()) RETURNING id INTO d2;
+  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = d2 AND "availabilityConstraintId" = c3;
+  IF n <> 1 THEN RAISE EXCEPTION 'duty link cleanup: the old column''s write made no link'; END IF;
+  -- The same value again: no second link.
+  UPDATE "TeacherDuties" SET "blockedConstraintId" = c3, "minutesPerWeek" = 91 WHERE id = d2;
+  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = d2;
+  IF n <> 1 THEN RAISE EXCEPTION 'duty link cleanup: re-saving the old column made % links', n; END IF;
+  -- A time another uppdrag holds through its link: refused.
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'ANNAT', 'RLS42 annat', 30, now()) RETURNING id INTO d3;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d3, c4);
+  BEGIN
+    UPDATE "TeacherDuties" SET "blockedConstraintId" = c4 WHERE id = d2;
+    RAISE EXCEPTION 'duty link cleanup: the old column took a time another uppdrag holds';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+
+  -- A duty deleted: its links and their constraints with it.
+  DELETE FROM "TeacherDuties" WHERE id IN (d2, d3);
+  SELECT count(*) INTO n FROM "AvailabilityConstraints" WHERE id IN (c3, c4);
+  IF n <> 0 THEN RAISE EXCEPTION 'duty link cleanup: deleted uppdrag left % time(s) behind', n; END IF;
+  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" IN (d2, d3);
+  IF n <> 0 THEN RAISE EXCEPTION 'duty link cleanup: deleted uppdrag left % link(s)', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 43: ett uppdrags tider är en version, en per sats och uppdrag
+-- (20261017090000).
+--
+-- The history (20261010090000) logs the duty row; the times live in the link
+-- table, so a statement adding or removing links writes ONE DUTY UPDATE
+-- version per uppdrag it touched, {"slotCount": before} -> {"slotCount":
+-- after}, by the admin. A duty created with three times is its CREATE and
+-- one "0 -> 3"; two removed in one statement one "3 -> 1"; a deleted duty is
+-- its DELETE alone, its links' cascade adding nothing. blockedConstraintId is
+-- no longer logged: its SET NULL is no version, and the link's removal says it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  admin uuid := app.current_user_id();
+  me uuid; colleague uuid; y uuid;
+  c1 uuid; c2 uuid; c3 uuid; c4 uuid; d1 uuid; d2 uuid;
+  got text; n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS43 år', DATE '2100-08-16', DATE '2101-06-10', false, now()) RETURNING id INTO y;
+  FOR n IN 1..3 LOOP
+    INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+    VALUES (school, 'TEACHER', me, (n * 2) - 1, '12:00', '12:20', 'UNAVAILABLE', 'RLS43 ' || n, now());
+  END LOOP;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', colleague, 2, '12:00', '12:20', 'UNAVAILABLE', 'RLS43 kollegans', now()) RETURNING id INTO c4;
+  SELECT id INTO c1 FROM "AvailabilityConstraints" WHERE reason = 'RLS43 1';
+  SELECT id INTO c2 FROM "AvailabilityConstraints" WHERE reason = 'RLS43 2';
+  SELECT id INTO c3 FROM "AvailabilityConstraints" WHERE reason = 'RLS43 3';
+
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, y, 'RASTVAKT', 'RLS43 rastvakt', 60, now()) RETURNING id INTO d1;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, colleague, y, 'RASTVAKT', 'RLS43 kollegans rastvakt', 20, now()) RETURNING id INTO d2;
+  -- One statement, two uppdrag: one version each.
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+  VALUES (school, d1, c1), (school, d1, c2), (school, d1, c3), (school, d2, c4);
+  -- Two removed in one statement.
+  DELETE FROM "TeacherDutySlots" WHERE "availabilityConstraintId" IN (c1, c3);
+
+  SELECT string_agg(format('%s:%s:%s:%s', version, action, coalesce(before::text, '-'), coalesce(after::text, '-')), ' | ' ORDER BY version)
+    INTO got FROM "TeacherEmploymentLogs" WHERE "userId" = me AND "academicYearId" = y;
+  IF got IS DISTINCT FROM concat_ws(' | ',
+       format('1:CREATE:-:%s', (SELECT after::text FROM "TeacherEmploymentLogs" WHERE "entityId" = d1 AND version = 1)),
+       '2:UPDATE:{"slotCount": 0}:{"slotCount": 3}',
+       '3:UPDATE:{"slotCount": 3}:{"slotCount": 1}') THEN
+    RAISE EXCEPTION 'times history: the first teacher''s versions are %', got;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = colleague AND "academicYearId" = y AND version = 2 AND entity = 'DUTY' AND action = 'UPDATE'
+     AND "entityId" = d2 AND after = '{"slotCount": 1}'::jsonb AND before = '{"slotCount": 0}'::jsonb AND "actorId" = admin;
+  IF n <> 1 THEN RAISE EXCEPTION 'times history: the colleague''s link in the same statement is not one version of its own'; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "academicYearId" = y AND ("actorId" IS DISTINCT FROM admin OR COALESCE(before, after) ? 'blockedConstraintId');
+  IF n <> 0 THEN RAISE EXCEPTION 'times history: % version(s) without the admin as actor, or logging blockedConstraintId', n; END IF;
+
+  -- The old column's SET NULL is no version; the link's removal is.
+  UPDATE "TeacherDuties" SET "blockedConstraintId" = c2 WHERE id = d1;
+  DELETE FROM "AvailabilityConstraints" WHERE id = c2;
+  SELECT string_agg(format('%s:%s:%s', version, action, coalesce(after::text, '-')), ' | ' ORDER BY version)
+    INTO got FROM "TeacherEmploymentLogs" WHERE "userId" = me AND "academicYearId" = y AND version > 3;
+  IF got IS DISTINCT FROM '4:UPDATE:{"slotCount": 0}' THEN
+    RAISE EXCEPTION 'times history: setting and clearing the old column wrote %', got;
+  END IF;
+
+  -- A duty deleted with its links: its DELETE alone.
+  DELETE FROM "TeacherDuties" WHERE id = d2;
+  SELECT string_agg(format('%s:%s', version, action), ' | ' ORDER BY version)
+    INTO got FROM "TeacherEmploymentLogs" WHERE "userId" = colleague AND "academicYearId" = y;
+  IF got IS DISTINCT FROM '1:CREATE | 2:UPDATE | 3:DELETE' THEN
+    RAISE EXCEPTION 'times history: deleting an uppdrag with a time wrote %', got;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 44: ett uppdrags Till ligger inte före dess Från (20261017090000).
+--
+-- TeacherDuties_dates_are_ordered, for every writer: Till before Från is a
+-- 23514; the same day, one bound alone and none are accepted. That the dates
+-- lie inside the läsår is the service's (academic-year-bounds.ts), as for a
+-- requirement's period, and not asserted here.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; year uuid; n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "validFrom", "validTo", "updatedAt")
+    VALUES (school, me, year, 'MENTORSKAP', 'RLS44 baklänges', 90, DATE '2027-01-07', DATE '2026-12-18', now());
+    RAISE EXCEPTION 'duty dates: an uppdrag ending before it starts was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "validFrom", "validTo", "updatedAt")
+  VALUES (school, me, year, 'ANNAT', 'RLS44 en dag', 30, DATE '2027-03-01', DATE '2027-03-01', now()),
+         (school, me, year, 'MENTORSKAP', 'RLS44 till jul', 90, NULL, DATE '2026-12-18', now()),
+         (school, me, year, 'MENTORSKAP', 'RLS44 från januari', 90, DATE '2027-01-07', NULL, now());
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 3 THEN RAISE EXCEPTION 'duty dates: % of three ordered uppdrag stored', n; END IF;
+  BEGIN
+    UPDATE "TeacherDuties" SET "validTo" = DATE '2027-01-06' WHERE label = 'RLS44 från januari';
+    RAISE EXCEPTION 'duty dates: an UPDATE put Till before Från';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 45: länktabellen börjar som en ny tabell ska (20261017090000).
+--
+-- Row security on, and the grants of a table created after 20261016130000:
+-- the API role reads, inserts and deletes and never updates (a link is
+-- deleted and made again); PostgREST's role likewise has no UPDATE; anon
+-- holds nothing and service_role SELECT alone. Sections 36 to 38 hold every
+-- table to the general rule; this holds the link table to its own.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  rel regclass := '"TeacherDutySlots"'::regclass;
+  wrong text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = rel) THEN
+    RAISE EXCEPTION 'link table rights: TeacherDutySlots has row security off';
+  END IF;
+  SELECT string_agg(item, ', ') INTO wrong FROM (
+    SELECT format('%s %s %s', r, p, has_table_privilege(r, rel, p)) AS item
+      FROM (VALUES ('app_authenticated', 'SELECT', true), ('app_authenticated', 'INSERT', true),
+                   ('app_authenticated', 'DELETE', true), ('app_authenticated', 'UPDATE', false),
+                   ('authenticated', 'UPDATE', false), ('authenticated', 'TRUNCATE', false),
+                   ('authenticated', 'REFERENCES', false), ('authenticated', 'TRIGGER', false))
+           AS t(r, p, expected)
+     WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+       AND has_table_privilege(r, rel, p) IS DISTINCT FROM expected
+  ) x;
+  IF wrong IS NOT NULL THEN
+    RAISE EXCEPTION 'link table rights: %', wrong;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND has_any_column_privilege('anon', rel, 'SELECT') THEN
+    RAISE EXCEPTION 'link table rights: anon reads TeacherDutySlots';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
+     AND (has_table_privilege('service_role', rel, 'INSERT') OR has_table_privilege('service_role', rel, 'UPDATE')
+          OR has_table_privilege('service_role', rel, 'DELETE')) THEN
+    RAISE EXCEPTION 'link table rights: service_role writes TeacherDutySlots';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Section 50: en notis om en lektion når alla på lektionen.
 --
 -- Notiser som når fram (20261018090000). Every lesson notice reads its

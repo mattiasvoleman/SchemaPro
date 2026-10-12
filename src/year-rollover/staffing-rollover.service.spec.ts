@@ -96,13 +96,27 @@ describe('StaffingRolloverService — execute', () => {
     const result = await service.execute(yearB, preview.planHash, admin);
     expect(result).toEqual({ targetYearId: yearB, counts: { employments: 2, duties: 5, dutySlots: 2 }, planHash: preview.planHash });
     const writes = writesOf(world.calls);
+    // Four statements: the posts, the times' constraints, the uppdrag, and the
+    // links naming both (20261017090000).
     expect(writes.map((call) => `${call.model}.${call.method}`)).toEqual([
       'teacherEmployment.createMany',
-      'availabilityConstraint.createManyAndReturn',
+      'availabilityConstraint.createMany',
       'teacherDuty.createMany',
+      'teacherDutySlot.createMany',
     ]);
-    for (const call of writes.filter((entry) => entry.model.startsWith('teacher'))) {
+    for (const call of writes.filter((entry) => entry.model.startsWith('teacher') && entry.model !== 'teacherDutySlot')) {
       for (const row of (call.args as { data: Row[] }).data) expect(row['academicYearId']).toBe(yearB);
+    }
+    // Each link names an uppdrag of the target and a new constraint of its teacher.
+    const linkCall = writes.find((call) => call.model === 'teacherDutySlot')!;
+    for (const link of (linkCall.args as { data: Row[] }).data) {
+      const duty = world.rows['teacherDuty']!.find((row) => row['id'] === link['teacherDutyId'])!;
+      const constraint = world.rows['availabilityConstraint']!.find((row) => row['id'] === link['availabilityConstraintId'])!;
+      expect({ year: duty['academicYearId'], teacher: constraint['userId'], reason: constraint['reason'] }).toEqual({
+        year: yearB,
+        teacher: duty['userId'],
+        reason: 'Uppdrag',
+      });
     }
     const b8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === '8A')!['id'];
     expect(world.rows['teacherDuty']!.find((row) => row['academicYearId'] === yearB && row['kind'] === 'MENTORSKAP')).toMatchObject({

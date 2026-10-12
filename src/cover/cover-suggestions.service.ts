@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
 import { gradesParam } from '../staffing/staffing-checks';
 import { targetMinutesPerWeek } from '../staffing/teacher-load';
@@ -346,11 +347,17 @@ export class CoverSuggestionsService {
           select: { teacherId: true, coTeacherId: true, studentGroupId: true, subjectId: true },
         })) ?? [])
       : [];
+    // The class's mentor ON THE DAY: a mentorship that ends at the jullov
+    // names nobody in March (duty-dates.ts).
     const mentors = year
       ? ((await tx.teacherDuty.findMany({
           where: { academicYearId: year.id, kind: 'MENTORSKAP', studentGroupId: { in: groupIds } },
-          select: { userId: true, studentGroupId: true },
+          select: { userId: true, studentGroupId: true, validFrom: true, validTo: true },
         })) ?? [])
+          .filter((duty) =>
+            dutyRunsOn({ validFrom: dayOf(duty.validFrom ?? null), validTo: dayOf(duty.validTo ?? null) }, date),
+          )
+          .map((duty) => ({ userId: duty.userId, studentGroupId: duty.studentGroupId }))
       : [];
     const policy = await tx.staffingPolicy.findUnique({
       where: { schoolId },

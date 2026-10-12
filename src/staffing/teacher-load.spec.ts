@@ -821,15 +821,68 @@ describe('Fas 2: uppdrag', () => {
     expect(result.totals.dutyMinutesPerWeek).toBe(40);
   });
 
-  it('leaves uppdrag out of the toppvecka and the annual hours: they carry no week pattern', () => {
+  it('leaves uppdrag out of the teaching’s toppvecka and annual hours, and keeps their own beside them', () => {
     const row = teacherRow({
       requirements: [requirement({ lessonsPerWeek: 2 })],
       duties: [duty({ minutesPerWeek: 120, countsAsTeaching: true })],
     });
     expect(row.peakMinutesPerWeek).toBe(120);
     expect(row.annual.assignedHoursPerYear).toBe(86);
+    // An undated uppdrag: its peak is its minutes, its year every week's.
+    expect(row.dutyPeakMinutesPerWeek).toBe(120);
+    expect(row.annual.dutyHoursPerYear).toBe(86);
   });
 });
+
+describe('Daterade uppdrag (20261017090000): an uppdrag counts the weeks it runs', () => {
+  // 43 ISO weeks; 18 of them up to 2026-12-18.
+  const untilJul = (overrides: Partial<LoadDuty> = {}) => duty({ minutesPerWeek: 90, validTo: '2026-12-18', ...overrides });
+
+  it('charges a dated uppdrag its share of the year’s weeks, its whole minutes in its own toppvecka, and its weeks in the annual hours', () => {
+    const row = teacherRow({ requirements: [], duties: [untilJul()] });
+    expect(row.dutyMinutesPerWeek).toBe(Math.round((90 * 18) / 43));
+    expect(row.dutyPeakMinutesPerWeek).toBe(90);
+    expect(row.annual.dutyHoursPerYear).toBe(27);
+    expect(row.dutyCount).toBe(1);
+  });
+
+  it('leaves an undated uppdrag exactly what it was: the dates are absent, null or both', () => {
+    for (const shape of [{}, { validFrom: null, validTo: null }]) {
+      const row = teacherRow({ requirements: [], duties: [duty({ minutesPerWeek: 90, ...shape })] });
+      expect(row).toMatchObject({ dutyMinutesPerWeek: 90, dutyPeakMinutesPerWeek: 90 });
+      expect(row.annual.dutyHoursPerYear).toBe(round1Of((90 * 43) / 60));
+    }
+  });
+
+  it('meets the target only in its weeks, and the write-time figure is the report’s', () => {
+    const own = { employments: [employment({ teachingTargetMinutesPerWeek: 600 })] };
+    const requirements = [requirement({ lessonsPerWeek: 10 })];
+    // 120 counted minutes all year would push 600 to 720, OVER; until the
+    // jullov they weigh 18/43 of that, 50, inside the tolerance.
+    const undated = teacherRow({ ...own, requirements, duties: [duty({ minutesPerWeek: 120, countsAsTeaching: true })] });
+    const dated = teacherRow({ ...own, requirements, duties: [untilJul({ minutesPerWeek: 120, countsAsTeaching: true })] });
+    expect(undated.status).toBe('OVER');
+    expect(dated).toMatchObject({ status: 'OK', countedDutyMinutesPerWeek: 50, countedMinutesPerWeek: 650 });
+    const counted = countedMinutesByTeacher({
+      year: YEAR,
+      closures: [],
+      requirements,
+      duties: [untilJul({ minutesPerWeek: 120, countsAsTeaching: true })],
+    });
+    expect(Math.round(counted.get(ANNA)!)).toBe(dated.countedMinutesPerWeek);
+  });
+
+  it('adds two dated uppdrag that never meet into the standardvecka, but not into the toppvecka', () => {
+    const row = teacherRow({
+      requirements: [],
+      duties: [untilJul({ minutesPerWeek: 60 }), duty({ minutesPerWeek: 90, validFrom: '2027-01-04' })],
+    });
+    expect(row.dutyPeakMinutesPerWeek).toBe(90);
+    expect(row.dutyMinutesPerWeek).toBe(Math.round((60 * 18 + 90 * 23) / 43));
+  });
+});
+
+const round1Of = (value: number) => Math.round(value * 10) / 10;
 
 describe('Fas 2: ämnesflaskhalsar', () => {
   const CY = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';

@@ -430,11 +430,18 @@ export class Ss12000V2Service {
       if (expand.has('assignmentRoles')) {
         const bounds = model.yearBounds(group.academicYearId)!;
         item['_embedded'] = {
+          // Each mentorship with its own Från and Till, the year's where it
+          // has none (ss12000-duties.ts says why).
           assignmentRoles: mentorships
             .filter((duty) => duty.studentGroupId === group.id && duty.academicYearId === group.academicYearId)
-            .map((duty) => model.dutyRef(duty.userId, group.academicYearId))
-            .filter((duty): duty is Ref => duty !== null)
-            .map((duty) => ({ duty, assignmentRoleType: 'Mentor', startDate: bounds.startDate, endDate: bounds.endDate })),
+            .map((duty) => ({ ref: model.dutyRef(duty.userId, group.academicYearId), duty }))
+            .filter((entry): entry is { ref: Ref; duty: (typeof mentorships)[number] } => entry.ref !== null)
+            .map(({ ref, duty }) => ({
+              duty: ref,
+              assignmentRoleType: 'Mentor',
+              startDate: duty.validFrom ? dayOf(duty.validFrom) : bounds.startDate,
+              endDate: duty.validTo ? dayOf(duty.validTo) : bounds.endDate,
+            })),
         };
       }
       out.push(item);

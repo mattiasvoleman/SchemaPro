@@ -29,6 +29,7 @@ import {
   DEFAULT_LOAD_POLICY,
   chargedMinutes,
   countedMinutesByTeacher,
+  dutyStandardWeekMinutes,
   loadStatus,
   percentOfTarget,
   qualificationCovers,
@@ -1176,7 +1177,14 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
   const loadPolicy = input.policy ?? DEFAULT_LOAD_POLICY;
   const counted = new Map<string, number>();
   for (const duty of input.duties) {
-    if (duty.countsAsTeaching) counted.set(duty.userId, (counted.get(duty.userId) ?? 0) + duty.minutesPerWeek);
+    // Its standardvecka: an undated duty's minutes as they always were, a
+    // dated one's over the weeks it runs, so moving Till moves the basis.
+    if (duty.countsAsTeaching) {
+      counted.set(
+        duty.userId,
+        (counted.get(duty.userId) ?? 0) + dutyStandardWeekMinutes(duty, input.year, input.closures),
+      );
+    }
   }
   const byFirst = (a: unknown[], b: unknown[]) => compareIds(JSON.stringify(a), JSON.stringify(b));
   const canonical = {

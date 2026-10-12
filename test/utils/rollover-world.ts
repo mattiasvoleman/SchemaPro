@@ -455,6 +455,9 @@ function relationMatches(row: Row, key: string, wanted: unknown, context: MatchC
     const back: Record<string, (subject: Row) => Row | undefined> = {
       'availabilityConstraint.teacherDuty': (subject) =>
         context.table('teacherDuty').find((duty) => duty['blockedConstraintId'] === subject['id']),
+      // The link a constraint is an uppdrag's time through (20261017090000).
+      'availabilityConstraint.teacherDutySlot': (subject) =>
+        context.table('teacherDutySlot').find((link) => link['availabilityConstraintId'] === subject['id']),
     };
     const resolve = back[`${context.model}.${key}`];
     const forward = typeof row[`${key}Id`] === 'string' || row[`${key}Id`] === null;
@@ -541,6 +544,22 @@ export function givenRolloverWorld(
     },
   };
   const table = (model: string): Row[] => (rows[model] ??= []);
+  // An uppdrag's times are TeacherDutySlots rows (20261017090000), and the
+  // database makes every blockedConstraintId one (the backfill, then a
+  // trigger). The world does the same, so a fixture can keep stating a duty's
+  // one time on the duty and still be read through the link as the code reads it.
+  for (const duty of rows['teacherDuty'] ?? []) {
+    const constraintId = duty['blockedConstraintId'];
+    if (typeof constraintId !== 'string') continue;
+    if (table('teacherDutySlot').some((link) => link['availabilityConstraintId'] === constraintId)) continue;
+    table('teacherDutySlot').push({
+      id: `f9${constraintId.slice(2)}`,
+      schoolId: duty['schoolId'] ?? IDS.school,
+      teacherDutyId: duty['id'],
+      availabilityConstraintId: constraintId,
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+  }
   const model = (name: string) =>
     new Proxy(
       {} as Record<string, unknown>,
@@ -633,6 +652,14 @@ export function givenRolloverWorld(
                             ...row,
                             blockedConstraint:
                               table('availabilityConstraint').find((constraint) => constraint['id'] === row['blockedConstraintId']) ?? null,
+                            // Its times through their links, each with its constraint.
+                            slots: table('teacherDutySlot')
+                              .filter((link) => link['teacherDutyId'] === row['id'])
+                              .map((link) => ({
+                                ...link,
+                                availabilityConstraint:
+                                  table('availabilityConstraint').find((constraint) => constraint['id'] === link['availabilityConstraintId']) ?? null,
+                              })),
                           }
                         : row,
               );

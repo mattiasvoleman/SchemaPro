@@ -184,6 +184,7 @@ model School {
   teacherEmployments      TeacherEmployment[]
   teacherQualifications   TeacherSubjectQualification[]
   teacherDuties           TeacherDuty[]
+  teacherDutySlots        TeacherDutySlot[]
   teacherEmploymentLogs   TeacherEmploymentLog[]
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
@@ -2096,6 +2097,10 @@ model AvailabilityConstraint {
   /// (migration 20261007090000) keep the pair a weekly UNAVAILABLE TEACHER row
   /// for the duty's own teacher, and refuse a TEACHER writing it.
   teacherDuty  TeacherDuty?  @relation("DutyBlockedSlot")
+  /// The uppdrag time this constraint holds, when it is one (migration
+  /// 20261017090000): the link table that replaces blockedConstraintId. The
+  /// same guards keep it a weekly UNAVAILABLE row of the duty's own teacher.
+  teacherDutySlot TeacherDutySlot? @relation("DutySlotConstraint")
 
   /// The target TeacherDuty's composite (blockedConstraintId, schoolId) key
   /// needs; see User.
@@ -2403,17 +2408,24 @@ model TeacherDuty {
   subjectId      String?         @db.Uuid
   /// Mentorskap's class. ON DELETE SET NULL of this column only.
   studentGroupId String?         @db.Uuid
-  /// The UNAVAILABLE TEACHER constraint holding the duty's fixed weekly slot,
-  /// created by the service in the duty's transaction; never client-supplied.
-  /// ON DELETE SET NULL of this column only. Prisma's SetNull below cannot say
-  /// "this column only"; the migration's FK does.
+  /// LEGACY, read by the previous API release only (migration 20261017090000
+  /// backfilled it into `slots` and a trigger turns every write of it into a
+  /// slot row). The current code reads and writes `slots`; a later migration
+  /// drops this column. ON DELETE SET NULL of this column only.
   blockedConstraintId String?    @db.Uuid
   /// At most 500 characters.
   note           String?
+  /// Från, inclusive; null = the läsår's first day. Inside the läsår (the
+  /// service checks it against the year's bounds, read FOR SHARE).
+  validFrom      DateTime?       @db.Date
+  /// Till, inclusive; null = the läsår's last day. Not before validFrom (CHECK).
+  validTo        DateTime?       @db.Date
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
+  /// The uppdrag's fixed weekly times, one UNAVAILABLE TEACHER constraint each.
+  slots             TeacherDutySlot[]
   school            School                  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   user              User                    @relation("DutyTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
   academicYear      AcademicYear            @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
@@ -2422,8 +2434,33 @@ model TeacherDuty {
   blockedConstraint AvailabilityConstraint? @relation("DutyBlockedSlot", fields: [blockedConstraintId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([blockedConstraintId, schoolId])
+  /// The composite target TeacherDutySlot's key needs.
+  @@unique([id, schoolId])
   @@index([schoolId, academicYearId, userId])
+  /// "Who holds MENTORSKAP for this class": the mentor lookup and the class's SET NULL.
+  @@index([schoolId, studentGroupId, kind])
   @@map("TeacherDuties")
+}
+
+/// One fixed weekly time of an uppdrag: the link to the UNAVAILABLE TEACHER
+/// AvailabilityConstraint that holds it (migration 20261017090000). The time
+/// lives on the constraint; this row is the link and is never updated. The
+/// guards keep the constraint a weekly row of the duty's own teacher, a
+/// deleted link takes its constraint, and RLS is TeacherDuties' own.
+model TeacherDutySlot {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                 String   @db.Uuid
+  teacherDutyId            String   @db.Uuid
+  availabilityConstraintId String   @db.Uuid
+  createdAt                DateTime @default(now()) @db.Timestamptz(6)
+
+  school                 School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  teacherDuty            TeacherDuty            @relation(fields: [teacherDutyId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  availabilityConstraint AvailabilityConstraint @relation("DutySlotConstraint", fields: [availabilityConstraintId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([availabilityConstraintId, schoolId])
+  @@index([teacherDutyId, schoolId])
+  @@map("TeacherDutySlots")
 }
 
 /// What a TeacherEmploymentLog row is about.

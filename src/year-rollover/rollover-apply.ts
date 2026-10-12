@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
-import { parseDateString, toWallClock } from '../common/utils/time';
+import { parseDateString } from '../common/utils/time';
 import { dutySlotConstraintData } from '../staffing/duty-slot';
 import type { RolloverWrites } from './rollover-plan';
 import { ROLLOVER_STEP_ORDER, type RolloverStepName } from './rollover-registry';
@@ -228,16 +229,18 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
  * last steps, and the whole of the carry into an already rolled year.
  *
  *  - employments: one createMany.
- *  - duties: the slots first, one createManyAndReturn of NEW constraints
+ *  - duties: the times first, one createMany of NEW constraints
  *    (dutySlotConstraintData — the shape TeacherDutiesService writes), then
- *    one createMany of the duties linking them. A returned slot is matched to
- *    its duty by teacher, weekday and times; two identical slots of one
- *    teacher are interchangeable, so the order RETURNING gives them in does
- *    not matter and the ids stay the database's own. The Fas 2 trigger
- *    TeacherDuties_block_is_the_teachers checks every duty row as it lands; a
- *    refusal (TD409) aborts the whole transaction.
+ *    one createMany of the duties, then one createMany of the TeacherDutySlots
+ *    rows linking each duty to its times (migration 20261017090000). The
+ *    duties' and the constraints' ids are drawn here, so a link names its
+ *    two rows without a RETURNING to match back — an uppdrag may hold three
+ *    times on one weekday, and two uppdrag of one teacher may be identical.
+ *    TeacherDutySlots_are_the_teachers checks every link as it lands; a
+ *    refusal (TD409) aborts the whole transaction. A carried uppdrag is
+ *    undated and never writes the old one-time column.
  *
- * Three statements whatever the school's size. The source's own slots are
+ * Four statements whatever the school's size. The source's own times are
  * never touched: they stay with their year (constraintsOfYear).
  */
 export async function applyStaffingWrites(
@@ -266,48 +269,39 @@ export async function applyStaffingWrites(
   }
   if (staffing.duties.length === 0) return counts;
 
-  const bucket = (userId: string, slot: { dayOfWeek: number; startTime: string; endTime: string }) =>
-    `${userId}|${slot.dayOfWeek}|${slot.startTime.slice(0, 5)}|${slot.endTime.slice(0, 5)}`;
-  const withSlot = staffing.duties.filter((duty) => duty.slot !== null);
-  const slotsByKey = new Map<string, string[]>();
-  if (withSlot.length > 0) {
-    const created = await tx.availabilityConstraint.createManyAndReturn({
-      data: withSlot.map((duty) => dutySlotConstraintData(schoolId, duty.userId, duty.slot!)),
-      select: { id: true, userId: true, dayOfWeek: true, startTime: true, endTime: true },
-    });
-    for (const row of created) {
-      const key = bucket(row.userId as string, {
-        dayOfWeek: row.dayOfWeek as number,
-        startTime: toWallClock(row.startTime),
-        endTime: toWallClock(row.endTime),
-      });
-      slotsByKey.set(key, [...(slotsByKey.get(key) ?? []), row.id]);
+  const constraints: (ReturnType<typeof dutySlotConstraintData> & { id: string })[] = [];
+  const links: { schoolId: string; teacherDutyId: string; availabilityConstraintId: string }[] = [];
+  const duties = staffing.duties.map((duty) => {
+    const id = randomUUID();
+    for (const slot of duty.slots) {
+      const constraintId = randomUUID();
+      constraints.push({ id: constraintId, ...dutySlotConstraintData(schoolId, duty.userId, slot) });
+      links.push({ schoolId, teacherDutyId: id, availabilityConstraintId: constraintId });
     }
-    counts.dutySlots = created.length;
-  }
-  const { count } = await tx.teacherDuty.createMany({
-    data: staffing.duties.map((duty) => {
-      let blockedConstraintId: string | null = null;
-      if (duty.slot) {
-        blockedConstraintId = slotsByKey.get(bucket(duty.userId, duty.slot))?.pop() ?? null;
-        if (!blockedConstraintId) throw new Error('Rollover: a created slot did not come back.');
-      }
-      return {
-        schoolId,
-        userId: duty.userId,
-        academicYearId: targetYearId,
-        kind: duty.kind,
-        label: duty.label,
-        minutesPerWeek: duty.minutesPerWeek,
-        countsAsTeaching: duty.countsAsTeaching,
-        subjectId: duty.subjectId,
-        studentGroupId: duty.groupKey === null ? null : groupOf(duty.groupKey),
-        blockedConstraintId,
-        note: duty.note,
-      };
-    }),
+    return {
+      id,
+      schoolId,
+      userId: duty.userId,
+      academicYearId: targetYearId,
+      kind: duty.kind,
+      label: duty.label,
+      minutesPerWeek: duty.minutesPerWeek,
+      countsAsTeaching: duty.countsAsTeaching,
+      subjectId: duty.subjectId,
+      studentGroupId: duty.groupKey === null ? null : groupOf(duty.groupKey),
+      validFrom: null,
+      validTo: null,
+      blockedConstraintId: null,
+      note: duty.note,
+    };
   });
+  if (constraints.length > 0) {
+    const { count } = await tx.availabilityConstraint.createMany({ data: constraints });
+    counts.dutySlots = count;
+  }
+  const { count } = await tx.teacherDuty.createMany({ data: duties });
   counts.duties = count;
+  if (links.length > 0) await tx.teacherDutySlot.createMany({ data: links });
   return counts;
 }
 

@@ -381,7 +381,26 @@ export class AcademicYearsService {
       },
     });
 
-    if (stranded === 0 && strandedBreaks === 0) return;
+    /*
+     * An uppdrag's Från and Till (20261017090000) are dated against the same
+     * year. One left outside it would count weeks of no year in the load
+     * report and could not be saved back without moving its dates, so it is
+     * counted like the other two; TeacherDutiesService reads the bounds FOR
+     * SHARE for the same reason the other writers do.
+     */
+    const strandedDuties = await tx.teacherDuty.count({
+      where: {
+        academicYearId: id,
+        OR: [
+          { validFrom: { lt: startDate } },
+          { validFrom: { gt: endDate } },
+          { validTo: { lt: startDate } },
+          { validTo: { gt: endDate } },
+        ],
+      },
+    });
+
+    if (stranded === 0 && strandedBreaks === 0 && strandedDuties === 0) return;
 
     const asDate = (value: Date): string => value.toISOString().slice(0, 10);
     const parts: string[] = [];
@@ -393,8 +412,11 @@ export class AcademicYearsService {
     if (strandedBreaks > 0) {
       parts.push(`${strandedBreaks} break${strandedBreaks === 1 ? '' : 's'}`);
     }
+    if (strandedDuties > 0) {
+      parts.push(`${strandedDuties} uppdrag`);
+    }
     throw new BadRequestException(
-      `${parts.join(' and ')} would fall outside the new academic year ` +
+      `${parts.join(parts.length > 2 ? ', ' : ' and ')} would fall outside the new academic year ` +
         `(${asDate(startDate)} to ${asDate(endDate)}). ` +
         'Move or clear them first.',
     );

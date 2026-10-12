@@ -52,6 +52,22 @@ async function previewAndExecute(
 const writesOf = (calls: RecordedCall[]) =>
   calls.filter((call) => /^(create|update|delete|upsert)/.test(call.method));
 
+/**
+ * Whether a row is one this run wrote: the world's fresh id, or an id the
+ * duties step drew itself (an uppdrag and the constraints of its times, so
+ * its TeacherDutySlots rows can name them, rollover-apply.ts).
+ */
+const writtenBy = (calls: RecordedCall[]) => {
+  const drawn = new Set(
+    calls
+      .filter((call) => call.method.startsWith('create'))
+      .flatMap((call) => [(call.args as { data: Row | Row[] }).data].flat())
+      .map((row) => row['id'])
+      .filter((id) => typeof id === 'string'),
+  );
+  return (row: Row) => String(row['id'] ?? '').startsWith('90000000') || drawn.has(row['id']);
+};
+
 describe('YearRolloverService — rollover preview', () => {
   it('plans 7A → 8A, 8A → 9A, graduates 9A, and promotes the teaching group, in one withRls call', async () => {
     const { prisma, service, world } = setup();
@@ -348,7 +364,8 @@ describe('YearRolloverService — rollover preview', () => {
 describe('YearRolloverService — rollover execute', () => {
   it('writes the plan into a new year, inserts only, in one withRls call', async () => {
     const { world, prisma, service } = setup();
-    const before = JSON.stringify(defaultRolloverRows());
+    // The rows as a world holds them (an uppdrag's one time as its link).
+    const before = JSON.stringify(givenRolloverWorld(defaultRolloverRows()).rows);
     const { result, preview } = await previewAndExecute(world, service, {
       ...OPTIONS,
       breaks: [{ sourceBreakId: IDS.hostlov }, { sourceBreakId: IDS.vecka53, startDate: '2027-12-27', endDate: '2027-12-29' }],
@@ -385,11 +402,12 @@ describe('YearRolloverService — rollover execute', () => {
     expect(lov.map((row) => (row['startDate'] as Date).toISOString().slice(0, 10)).sort()).toEqual(['2027-11-01', '2027-12-27']);
 
     // Nothing of the source year changed.
+    const written = writtenBy(world.calls);
     const sourceNow = JSON.stringify(
       Object.fromEntries(
         Object.entries(world.rows).map(([model, rows]) => [
           model,
-          rows.filter((row) => !String(row['id'] ?? '').startsWith('90000000')),
+          rows.filter((row) => !written(row)),
         ]),
       ),
     );
@@ -503,16 +521,21 @@ describe('YearRolloverService — rollover execute', () => {
     });
     const target = result.academicYear.id;
     const created = (id: unknown) => world.rows['studentGroup']!.find((group) => group['id'] === id)!;
-    /** The source duty a carried slot holds the time of: the teacher's, on that weekday and start. */
-    const dutyOfSlot = (row: Row) =>
-      source['teacherDuty']!.find((duty) => {
-        const slot = source['availabilityConstraint']!.find((constraint) => constraint['id'] === duty['blockedConstraintId']);
+    /**
+     * The source time a carried time copies: a link of a source duty of the
+     * teacher's, whose constraint is on that weekday and start.
+     */
+    const sourceLinkOfSlot = (row: Row) =>
+      source['teacherDutySlot']!.find((link) => {
+        const duty = source['teacherDuty']!.find((candidate) => candidate['id'] === link['teacherDutyId']);
+        const slot = source['availabilityConstraint']!.find((constraint) => constraint['id'] === link['availabilityConstraintId']);
         return (
-          duty['userId'] === row['userId'] &&
+          duty?.['userId'] === row['userId'] &&
           slot?.['dayOfWeek'] === row['dayOfWeek'] &&
           slot?.['startTime'] === (row['startTime'] as Date).toISOString()
         );
       });
+    const writtenRow = (model: string, id: unknown) => world.rows[model]!.find((row) => row['id'] === id);
     // The source group a new group continues: its link, or (the intake twin) its name.
     const sourceGroupOf = (id: unknown): unknown => {
       const group = created(id);
@@ -538,13 +561,19 @@ describe('YearRolloverService — rollover execute', () => {
       // uppdrag's slot (C12) copies the slot of the duty it is carried with.
       availabilityConstraint: (row) =>
         row['resourceType'] === 'TEACHER'
-          ? source['availabilityConstraint']!.find((constraint) => constraint['id'] === dutyOfSlot(row)?.['blockedConstraintId'])
+          ? source['availabilityConstraint']!.find((constraint) => constraint['id'] === sourceLinkOfSlot(row)?.['availabilityConstraintId'])
           : source['availabilityConstraint']!.find(
               (rule) => rule['dayOfWeek'] === row['dayOfWeek'] && rule['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
             ),
       teacherEmployment: (row) => source['teacherEmployment']!.find((post) => post['userId'] === row['userId']),
       // Every source duty carries a note naming it (staffingRows).
       teacherDuty: (row) => source['teacherDuty']!.find((duty) => duty['note'] === row['note']),
+      // A carried time's link continues the source link of the time its
+      // constraint copies.
+      teacherDutySlot: (row) => {
+        const constraint = writtenRow('availabilityConstraint', row['availabilityConstraintId']);
+        return constraint ? sourceLinkOfSlot(constraint) : undefined;
+      },
       // The source row a written grade comes from (timplanOrigin).
       academicYearTimplan: (row) => timplanOrigin(row).from,
     };
@@ -585,10 +614,12 @@ describe('YearRolloverService — rollover execute', () => {
     // JSON.parse turned the source's Decimals into strings; read them as numbers.
     const comparableSource = (column: string, value: unknown) =>
       /Percent$/.test(column) && typeof value === 'string' ? Number(value).toFixed(3) : comparable(value);
+    // The constraints this run made for uppdrag times: TEACHER rows of a create.
     const newSlots = new Set<unknown>();
     for (const call of world.calls) {
-      if (call.model === 'availabilityConstraint' && call.method === 'createManyAndReturn') {
-        for (const row of world.rows['availabilityConstraint']!.slice(-((call.args as { data: Row[] }).data.length))) newSlots.add(row['id']);
+      if (call.model !== 'availabilityConstraint' || !call.method.startsWith('create')) continue;
+      for (const row of [(call.args as { data: Row | Row[] }).data].flat()) {
+        if (row['resourceType'] === 'TEACHER') newSlots.add(row['id']);
       }
     }
     const staffingRules: string[] = [];
@@ -613,7 +644,7 @@ describe('YearRolloverService — rollover execute', () => {
             : disposition.columns;
         for (const [column, rule] of Object.entries(columns)) {
           const at = { model: call.model, column, rule };
-          if (['PROMOTE_LABEL', 'FOLLOW_GROUP', 'NEW_SLOT', 'DUTY_SLOT_REASON'].includes(rule)) staffingRules.push(rule);
+          if (['PROMOTE_LABEL', 'FOLLOW_GROUP', 'NEW_SLOT', 'DUTY_SLOT_REASON', 'NEW_DUTY', 'CLEARED'].includes(rule)) staffingRules.push(rule);
           if (rule === 'COPY') {
             const expected = column === 'schoolId' ? admin.schoolId : comparableSource(column, from![column]);
             expect({ ...at, written: column in row, value: comparable(row[column]) }).toEqual({ ...at, written: true, value: expected });
@@ -664,17 +695,28 @@ describe('YearRolloverService — rollover execute', () => {
             expect({ ...at, value: row[column] }).toEqual({ ...at, value: expected });
             checked++;
           } else if (rule === 'NEW_SLOT') {
-            // A slot made in this run for this teacher, never the source's own;
-            // none where the source had none (or one off the grid: 15:02).
+            // A constraint made in this run for the new uppdrag's teacher, on
+            // the source time's weekday and start, never the source's own.
+            const slot = writtenRow('availabilityConstraint', row[column]);
+            const duty = writtenRow('teacherDuty', row['teacherDutyId']);
             const sourceSlot = source['availabilityConstraint']!.find((constraint) => constraint['id'] === from![column]);
-            const onGrid = sourceSlot !== undefined && new Date(String(sourceSlot['startTime'])).getUTCMinutes() % 5 === 0;
-            const slot = world.rows['availabilityConstraint']!.find((constraint) => constraint['id'] === row[column]);
-            expect({ ...at, made: row[column] === null ? null : newSlots.has(row[column]), sameTeacher: slot ? slot['userId'] === row['userId'] : null }).toEqual({
+            expect({
               ...at,
-              made: onGrid ? true : null,
-              sameTeacher: onGrid ? true : null,
-            });
-            expect(row[column]).not.toBe(from![column] ?? 'none');
+              made: newSlots.has(row[column]),
+              sameTeacher: slot?.['userId'] === duty?.['userId'],
+              sameTime: slot?.['dayOfWeek'] === sourceSlot?.['dayOfWeek'] && (slot?.['startTime'] as Date).toISOString() === sourceSlot?.['startTime'],
+            }).toEqual({ ...at, made: true, sameTeacher: true, sameTime: true });
+            expect(row[column]).not.toBe(from![column]);
+            checked++;
+          } else if (rule === 'NEW_DUTY') {
+            // The uppdrag this run carried from the source time's own uppdrag.
+            const duty = writtenRow('teacherDuty', row[column]);
+            const sourceDuty = source['teacherDuty']!.find((candidate) => candidate['id'] === from!['teacherDutyId']);
+            expect({ ...at, target: duty?.['academicYearId'], note: duty?.['note'] }).toEqual({ ...at, target, note: sourceDuty?.['note'] });
+            checked++;
+          } else if (rule === 'CLEARED') {
+            // Written, and null, whatever the source holds.
+            expect({ ...at, written: column in row, value: row[column] }).toEqual({ ...at, written: true, value: null });
             checked++;
           } else if (rule === 'DUTY_SLOT_REASON') {
             expect({ ...at, value: row[column] }).toEqual({ ...at, value: 'Uppdrag' });
@@ -688,7 +730,7 @@ describe('YearRolloverService — rollover execute', () => {
     expect(timplanKinds.sort()).toEqual(['CARRIED', 'CARRIED', 'DEFAULT']);
     // And every staffing rule, when tjänster are carried; none without.
     expect([...new Set(staffingRules)].sort()).toEqual(
-      carryStaffing ? ['DUTY_SLOT_REASON', 'FOLLOW_GROUP', 'NEW_SLOT', 'PROMOTE_LABEL'] : [],
+      carryStaffing ? ['CLEARED', 'DUTY_SLOT_REASON', 'FOLLOW_GROUP', 'NEW_DUTY', 'NEW_SLOT', 'PROMOTE_LABEL'] : [],
     );
   });
 
@@ -832,7 +874,19 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         minDaysBetween: true,
       });
     }
+    // The SECOND, named the same way: the count of the uppdrag's times reads
+    // their links (TeacherDutySlots, 20261017090000) where fa4a3d6 counted the
+    // duties holding one. Every duty of that era held at most one, and its
+    // link is the backfill's, so the number is the same; asserted on its
+    // own, then put back as fa4a3d6 sent it.
+    const slotCounts = world.calls.filter((call) => call.model === 'teacherDutySlot');
+    expect(slotCounts).toEqual([
+      { model: 'teacherDutySlot', method: 'count', args: { where: { teacherDuty: { is: { academicYearId: IDS.yearA } } } } },
+    ]);
     const asAtFa4a3d6 = world.calls.map((call) => {
+      if (call.model === 'teacherDutySlot') {
+        return { model: 'teacherDuty', method: 'count', args: { where: { academicYearId: IDS.yearA, blockedConstraintId: { not: null } } } };
+      }
       if (call.model !== 'teachingRequirement' || call.method !== 'findMany') return call;
       const args = call.args as { select: Record<string, unknown> };
       const {
@@ -857,6 +911,8 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect(preview.skipped.filter((entry) => entry.model.startsWith('Teacher'))).toEqual([
       { model: 'TeacherEmployment', reason: 'Tjänster are rolled by staffing Fas 5, which decides what a post carries into the next year.', count: 1 },
       expect.objectContaining({ model: 'TeacherDuty', count: 1 }),
+      // An uppdrag's times, left behind with it and counted (20261017090000).
+      expect.objectContaining({ model: 'TeacherDutySlot', count: 1 }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', count: null }),
     ]);
     world.calls.length = 0;
@@ -865,7 +921,12 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       { ...OPTIONS, ...option, graduatingGradeLevel: 9, planHash: preview.planHash },
       admin,
     );
-    expect(callNames(world.calls)).toEqual(FA4A3D6_EXECUTE_CALLS);
+    // fa4a3d6's names, the count of the times read through the links.
+    expect(callNames(world.calls)).toEqual(
+      FA4A3D6_EXECUTE_CALLS.map((name, index) =>
+        name === 'teacherDuty.count' && FA4A3D6_EXECUTE_CALLS.indexOf('teacherDuty.count') + 1 === index ? 'teacherDutySlot.count' : name,
+      ),
+    );
     expect(result.staffing).toBeNull();
     expect(result.planHash).toBe(PINNED);
   });
@@ -949,9 +1010,13 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     const g8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === '8A')!['id'];
     expect(carried.find((row) => row['kind'] === 'MENTORSKAP')).toMatchObject({ label: 'Mentor 8A', studentGroupId: g8a, countsAsTeaching: true });
     expect(carried.find((row) => row['note'] === 'studie')).toMatchObject({ studentGroupId: null, label: 'Studiehandledning 9A' });
-    expect(carried.find((row) => row['note'] === 'apt')).toMatchObject({ blockedConstraintId: null });
-    const slots = carried.filter((row) => row['blockedConstraintId'] !== null).map((row) =>
-      world.rows['availabilityConstraint']!.find((constraint) => constraint['id'] === row['blockedConstraintId'])!,
+    // Never the old one-time column, and undated: the times are links.
+    expect(carried.every((row) => row['blockedConstraintId'] === null && row['validFrom'] === null && row['validTo'] === null)).toBe(true);
+    const carriedIds = new Set(carried.map((row) => row['id']));
+    const links = world.rows['teacherDutySlot']!.filter((link) => carriedIds.has(link['teacherDutyId']));
+    expect(links.some((link) => carried.find((row) => row['id'] === link['teacherDutyId'])!['note'] === 'apt')).toBe(false);
+    const slots = links.map((link) =>
+      world.rows['availabilityConstraint']!.find((constraint) => constraint['id'] === link['availabilityConstraintId'])!,
     );
     expect(slots.map((slot) => [slot['userId'], slot['dayOfWeek'], slot['reason'], slot['type'], slot['resourceType']]).sort()).toEqual([
       [IDS.anna, 1, 'Uppdrag', 'UNAVAILABLE', 'TEACHER'],
@@ -965,16 +1030,20 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect([...created].sort()).toEqual(
       carriedModels({ carryStaffing: true }).map(({ model }) => model[0]!.toLowerCase() + model.slice(1)).sort(),
     );
-    for (const call of world.calls.filter((entry) => entry.method.startsWith('create') && entry.model.startsWith('teacher'))) {
+    // A time's link has no year of its own: it names a carried uppdrag.
+    for (const call of world.calls.filter(
+      (entry) => entry.method.startsWith('create') && entry.model.startsWith('teacher') && entry.model !== 'teacherDutySlot',
+    )) {
       for (const row of (call.args as { data: Row[] }).data) expect(row['academicYearId']).toBe(target);
     }
     expect(writesOf(world.calls).every((call) => call.method.startsWith('create'))).toBe(true);
     // The source year, its staff and their slots, untouched.
+    const written = writtenBy(world.calls);
     const sourceNow = JSON.stringify(
       Object.fromEntries(
         Object.entries(world.rows).map(([model, list]) => [
           model,
-          list.filter((row) => !String(row['id'] ?? '').startsWith('90000000') && row['academicYearId'] !== target),
+          list.filter((row) => !written(row) && row['academicYearId'] !== target),
         ]),
       ),
     );

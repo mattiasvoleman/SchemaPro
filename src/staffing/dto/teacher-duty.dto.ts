@@ -1,6 +1,8 @@
 import { TeacherDutyKind } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
@@ -16,6 +18,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { MaxCodePoints } from '../../common/utils/max-code-points';
+import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
+import { DUTY_SLOTS_MAX } from '../duty-slot';
 
 /** HH:MM, or HH:MM:SS as PostgREST writes a time — the AvailabilityConstraints shape. */
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -29,10 +33,12 @@ const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
  * this", and the table's trigger would refuse most of them anyway.
  *
  * Weekly only (a weekday, no date): the link trigger requires exactly that,
- * because a dated block cannot be read back as this shape.
+ * because a dated block cannot be read back as this shape. The uppdrag's own
+ * Från and Till say which weeks it runs; the time says when in the week.
  *
  * The shape here; the grid (whole minutes on the five-minute grid, start
- * before end) is the service's, where the message can name both ends.
+ * before end) and that two times of one uppdrag do not overlap are the
+ * service's, where the message can name both ends and both times.
  */
 export class TeacherDutySlotDto {
   @IsInt({ message: 'blockedSlot.dayOfWeek: anges som veckodag 1 (måndag) till 7 (söndag).' })
@@ -96,12 +102,40 @@ export class CreateTeacherDutyDto {
   @IsUUID('4', { message: 'studentGroupId: anges som gruppens id.' })
   studentGroupId?: string | null;
 
-  /** A fixed weekly time to block in the timetable; null or absent: none. */
+  /**
+   * The fixed weekly times to block in the timetable (migration
+   * 20261017090000): a rastvakt on Monday, Wednesday and Friday is one
+   * uppdrag with three. Absent or empty: none. At most DUTY_SLOTS_MAX.
+   */
+  @IsOptional()
+  @IsArray({ message: 'slots: anges som en lista med veckodag, starttid och sluttid.' })
+  @ArrayMaxSize(DUTY_SLOTS_MAX, { message: `slots: högst ${DUTY_SLOTS_MAX} tider per uppdrag.` })
+  @ValidateNested({ each: true })
+  @Type(() => TeacherDutySlotDto)
+  slots?: TeacherDutySlotDto[] | null;
+
+  /**
+   * LEGACY, for one release: the single time the previous web sends. The
+   * same as `slots: [blockedSlot]`; a body carrying both is refused.
+   */
   @IsOptional()
   @IsNotEmptyObject({}, { message: 'blockedSlot: anges med dayOfWeek, startTime och endTime.' })
   @ValidateNested()
   @Type(() => TeacherDutySlotDto)
   blockedSlot?: TeacherDutySlotDto | null;
+
+  /**
+   * Från, YYYY-MM-DD, inclusive; null or absent: the läsår's first day. Inside
+   * the läsår — the service measures it against the year's bounds.
+   */
+  @IsOptional()
+  @IsCalendarDate({ message: 'validFrom: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validFrom?: string | null;
+
+  /** Till, YYYY-MM-DD, inclusive; null or absent: the läsår's last day. */
+  @IsOptional()
+  @IsCalendarDate({ message: 'validTo: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validTo?: string | null;
 
   @IsOptional()
   @IsString({ message: 'note: anges som text.' })
@@ -115,11 +149,15 @@ export class CreateTeacherDutyDto {
  * time would otherwise have to change owner under the trigger that exists to
  * keep a slot its teacher's own. Delete and create instead.
  *
- * `blockedSlot`: absent leaves the time as it is; null removes it (and its
- * constraint); an object creates or moves it. `subjectId`, `studentGroupId`
- * and `note` read null the same way. The four NOT NULL fields refuse null
- * (ValidateIf on `!== undefined`, as the lokal timplan's DTOs do) rather than
- * letting @IsOptional wave it through to a Prisma error and a 500.
+ * `slots`: absent leaves the times as they are; a list REPLACES them — an
+ * empty list (or null) removes every one, and with them their constraints.
+ * A time that stays where it was keeps its constraint; one that moves moves
+ * its constraint rather than making a new one. `blockedSlot` (legacy, one
+ * release) is `slots: [it]`, or `[]` for null. `validFrom`, `validTo`,
+ * `subjectId`, `studentGroupId` and `note`: absent leaves, null clears. The
+ * four NOT NULL fields refuse null (ValidateIf on `!== undefined`, as the
+ * lokal timplan's DTOs do) rather than letting @IsOptional wave it through to
+ * a Prisma error and a 500.
  */
 export class UpdateTeacherDutyDto {
   @ValidateIf((_, value) => value !== undefined)
@@ -155,10 +193,26 @@ export class UpdateTeacherDutyDto {
   studentGroupId?: string | null;
 
   @IsOptional()
+  @IsArray({ message: 'slots: anges som en lista med veckodag, starttid och sluttid.' })
+  @ArrayMaxSize(DUTY_SLOTS_MAX, { message: `slots: högst ${DUTY_SLOTS_MAX} tider per uppdrag.` })
+  @ValidateNested({ each: true })
+  @Type(() => TeacherDutySlotDto)
+  slots?: TeacherDutySlotDto[] | null;
+
+  /** LEGACY, for one release; see CreateTeacherDutyDto.blockedSlot. */
+  @IsOptional()
   @IsNotEmptyObject({}, { message: 'blockedSlot: anges med dayOfWeek, startTime och endTime.' })
   @ValidateNested()
   @Type(() => TeacherDutySlotDto)
   blockedSlot?: TeacherDutySlotDto | null;
+
+  @IsOptional()
+  @IsCalendarDate({ message: 'validFrom: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validFrom?: string | null;
+
+  @IsOptional()
+  @IsCalendarDate({ message: 'validTo: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validTo?: string | null;
 
   @IsOptional()
   @IsString({ message: 'note: anges som text.' })

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { AxiosError } from 'axios';
 import { of, throwError } from 'rxjs';
-import { lockingRead, type LockedTable } from './utils/locking-read';
+import { lockingRead, rawSql, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
 import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, staffingRows, type Row } from './utils/rollover-world';
@@ -2619,7 +2619,7 @@ describe('Planning surface (e2e)', () => {
       const CONSTRAINT_ID = '90909090-9090-4090-8090-909090909090';
       const DUTIES: LockedTable = {
         name: 'TeacherDuties',
-        columns: ['id', 'schoolId', 'userId', 'academicYearId', 'label', 'blockedConstraintId'],
+        columns: ['id', 'schoolId', 'userId', 'academicYearId', 'label', 'blockedConstraintId', 'validFrom', 'validTo'],
         lock: 'FOR NO KEY UPDATE',
       };
       const storedDuty = (overrides: Record<string, unknown> = {}) => ({
@@ -2633,11 +2633,14 @@ describe('Planning surface (e2e)', () => {
         countsAsTeaching: false,
         subjectId: null,
         studentGroupId: null,
-        blockedConstraintId: CONSTRAINT_ID,
+        blockedConstraintId: null,
         note: null,
+        validFrom: null,
+        validTo: null,
         createdAt: new Date('2026-09-01T00:00:00.000Z'),
         updatedAt: new Date('2026-09-01T00:00:00.000Z'),
-        blockedConstraint: { dayOfWeek: 2, startTime: wallClock('10:00'), endTime: wallClock('10:20') },
+        // Its times through their links (20261017090000).
+        slots: [{ availabilityConstraint: { dayOfWeek: 2, startTime: wallClock('10:00'), endTime: wallClock('10:20') } }],
         ...overrides,
       });
       const body = {
@@ -2658,6 +2661,10 @@ describe('Planning surface (e2e)', () => {
         expect(list.body).toEqual([
           expect.objectContaining({
             id: DUTY_ID,
+            validFrom: null,
+            validTo: null,
+            slots: [{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }],
+            // The previous web's field, for one release.
             blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
           }),
         ]);
@@ -2665,19 +2672,36 @@ describe('Planning surface (e2e)', () => {
           expect.objectContaining({ where: { academicYearId: YEAR_ID, userId: COLLEAGUE_ID } }),
         );
 
-        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        // The staff lock, then the year's bounds FOR SHARE for the Till.
+        const yearBounds: LockedTable = { name: 'AcademicYears', columns: ['id', 'startDate', 'endDate'], lock: 'FOR SHARE' };
+        Object.assign(harness.tx, {
+          $queryRaw: jest.fn((...call: unknown[]) =>
+            Promise.resolve(
+              rawSql(call).includes('"AcademicYears"')
+                ? lockingRead(yearBounds, [{ id: YEAR_ID, startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') }], call)
+                : lockingRead(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }], call),
+            ),
+          ),
+        });
         harness.tx['availabilityConstraint']!['create']!.mockResolvedValue({ id: CONSTRAINT_ID });
-        harness.tx['teacherDuty']!['create']!.mockResolvedValue(storedDuty());
+        harness.tx['teacherDuty']!['create']!.mockResolvedValue({ id: DUTY_ID });
+        harness.tx['teacherDuty']!['findUniqueOrThrow']!.mockResolvedValue(storedDuty());
         const created = await request(http())
           .post('/api/v1/teacher-duties')
           .set('x-test-user', admin())
-          .send(body)
+          .send({ ...body, blockedSlot: undefined, slots: [body.blockedSlot], validTo: '2026-12-18' })
           .expect(201);
-        expect(created.body).toMatchObject({ id: DUTY_ID, blockedConstraintId: CONSTRAINT_ID });
+        expect(created.body).toMatchObject({ id: DUTY_ID, slots: [{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }] });
         expect(harness.tx['availabilityConstraint']!['create']).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({ resourceType: 'TEACHER', type: 'UNAVAILABLE', userId: COLLEAGUE_ID, dayOfWeek: 2 }),
           }),
+        );
+        expect(harness.tx['teacherDutySlot']!['createMany']).toHaveBeenCalledWith({
+          data: [{ schoolId: SCHOOL_ID, teacherDutyId: DUTY_ID, availabilityConstraintId: CONSTRAINT_ID }],
+        });
+        expect(harness.tx['teacherDuty']!['create']).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ validFrom: null, validTo: new Date('2026-12-18T00:00:00.000Z') }) }),
         );
 
         givenLockedRows(DUTIES, [storedDuty()]);
@@ -2689,13 +2713,14 @@ describe('Planning surface (e2e)', () => {
           .expect(200);
         expect(patched.body).toMatchObject({ minutesPerWeek: 30 });
 
+        harness.tx['teacherDutySlot']!['findMany']!.mockResolvedValue([{ availabilityConstraintId: CONSTRAINT_ID }]);
         await request(http())
           .delete(`/api/v1/teacher-duties/${DUTY_ID}`)
           .set('x-test-user', admin())
           .expect(204);
         expect(harness.tx['teacherDuty']!['delete']).toHaveBeenCalledWith({ where: { id: DUTY_ID } });
         expect(harness.tx['availabilityConstraint']!['deleteMany']).toHaveBeenCalledWith({
-          where: { id: CONSTRAINT_ID },
+          where: { id: { in: [CONSTRAINT_ID] } },
         });
       });
 
@@ -2770,7 +2795,9 @@ describe('Planning surface (e2e)', () => {
 
         givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
         harness.tx['availabilityConstraint']!['create']!.mockResolvedValue({ id: CONSTRAINT_ID });
-        harness.tx['teacherDuty']!['create']!.mockRejectedValue(
+        harness.tx['teacherDuty']!['create']!.mockResolvedValue({ id: DUTY_ID });
+        // The link is the row the database refuses (TeacherDutySlots_are_the_teachers).
+        harness.tx['teacherDutySlot']!['createMany']!.mockRejectedValue(
           new Prisma.PrismaClientKnownRequestError('TEACHER_DUTY_BLOCK_MISMATCH: x', {
             code: 'P2010',
             clientVersion: Prisma.prismaVersion.client,

@@ -347,6 +347,36 @@ describe('CreateTeacherDutyDto and UpdateTeacherDutyDto mirror the TeacherDuties
     await expect(failing(UpdateTeacherDutyDto, {})).resolves.toEqual([]);
   });
 
+  it('takes several times as `slots`, each checked nested and named by its place, at most fifteen', async () => {
+    const time = (dayOfWeek: number) => ({ dayOfWeek, startTime: '10:00', endTime: '10:20' });
+    await expect(failing(CreateTeacherDutyDto, { ...base, slots: [time(1), time(3), time(5)] })).resolves.toEqual([]);
+    await expect(failing(CreateTeacherDutyDto, { ...base, slots: [] })).resolves.toEqual([]);
+    await expect(
+      failing(CreateTeacherDutyDto, { ...base, slots: [time(1), { dayOfWeek: 0, startTime: '10:00', endTime: '1020' }] }),
+    ).resolves.toEqual(['slots.1.dayOfWeek', 'slots.1.endTime']);
+    await expect(failing(CreateTeacherDutyDto, { ...base, slots: time(1) })).resolves.toEqual(['slots']);
+    await expect(
+      failing(CreateTeacherDutyDto, { ...base, slots: Array.from({ length: 16 }, (_, index) => time((index % 5) + 1)) }),
+    ).resolves.toEqual(['slots']);
+    await expect(
+      failing(UpdateTeacherDutyDto, { slots: Array.from({ length: 15 }, (_, index) => time((index % 5) + 1)) }),
+    ).resolves.toEqual([]);
+    await expect(messagesOf(CreateTeacherDutyDto, { ...base, slots: Array(16).fill(time(1)) })).resolves.toContain(
+      'slots: högst 15 tider per uppdrag.',
+    );
+  });
+
+  it('takes Från and Till as real dates, null as the year’s own bound, on create and PATCH alike', async () => {
+    await expect(failing(CreateTeacherDutyDto, { ...base, validFrom: '2027-01-07', validTo: null })).resolves.toEqual([]);
+    await expect(failing(UpdateTeacherDutyDto, { validFrom: null, validTo: '2026-12-18' })).resolves.toEqual([]);
+    await expect(
+      failing(CreateTeacherDutyDto, { ...base, validFrom: '2027-02-30', validTo: '2027-01-07T00:00:00Z' }),
+    ).resolves.toEqual(['validFrom', 'validTo']);
+    await expect(messagesOf(UpdateTeacherDutyDto, { validTo: '18/12/2026' })).resolves.toContain(
+      'validTo: anges som ett datum som finns, ÅÅÅÅ-MM-DD.',
+    );
+  });
+
   it('names the field in Swedish', async () => {
     await expect(messagesOf(CreateTeacherDutyDto, { ...base, minutesPerWeek: 2401 })).resolves.toContain(
       'minutesPerWeek: högst 2400 minuter (40 timmar) per vecka.',

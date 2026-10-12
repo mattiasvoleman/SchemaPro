@@ -50,8 +50,15 @@ export const DUTY_FIELDS = [
   'label',
   'minutesPerWeek',
   'countsAsTeaching',
+  // Från and Till (20261017090000), where the form has them.
+  'validFrom',
+  'validTo',
   'subjectId',
   'studentGroupId',
+  // How many fixed times the uppdrag holds: a version of its own, written by
+  // the link table's trigger (20261017090000).
+  'slotCount',
+  // Versions written before 20261017090000 only.
   'blockedConstraintId',
   'noteChanged',
 ] as const;

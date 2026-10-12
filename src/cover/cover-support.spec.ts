@@ -133,9 +133,9 @@ describe('cover support', () => {
         { id: 'c2', userId: 'a', startTime: new Date('1970-01-01T12:00:00Z'), endTime: new Date('1970-01-01T13:00:00Z'), type: 'UNAVAILABLE' },
         { id: 'c3', userId: 'a', startTime: new Date('1970-01-01T14:00:00Z'), endTime: new Date('1970-01-01T15:00:00Z'), type: 'PREFERRED_FREE' },
       ]);
-      tx.teacherDuty.findMany.mockResolvedValue([
-        { blockedConstraintId: 'c1', label: 'Rastvakt', academicYearId: 'y' },
-        { blockedConstraintId: 'c2', label: 'Förra årets', academicYearId: 'old' },
+      tx.teacherDutySlot.findMany.mockResolvedValue([
+        { availabilityConstraintId: 'c1', teacherDuty: { label: 'Rastvakt', academicYearId: 'y', validFrom: null, validTo: null } },
+        { availabilityConstraintId: 'c2', teacherDuty: { label: 'Förra årets', academicYearId: 'old', validFrom: null, validTo: null } },
       ]);
       tx.teacherWorkRule.findMany.mockResolvedValue([
         { userId: 'a', lunchMinutes: 30, lunchStartTime: new Date('1970-01-01T11:00:00Z'), lunchEndTime: new Date('1970-01-01T13:00:00Z'), minDailyRestMinutes: 660 },
@@ -154,6 +154,32 @@ describe('cover support', () => {
       empty.user.findMany.mockResolvedValue([]);
       expect((await readPersonDays(empty as never, { date: '2026-10-14', timezone: 'Europe/Stockholm', academicYearId: null })).days.size).toBe(0);
       expect(empty.calendarLessonTeacher.findMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps a teacher busy for an uppdrag’s time only on the days the uppdrag runs (Från and Till, both inclusive)', async () => {
+      // Anna is 7B's mentor until the jullov; the same weekly row on a
+      // Wednesday in March keeps nobody busy. The rastvakt from January keeps
+      // her busy from its first day, and not the day before.
+      const read = async (date: string) => {
+        const tx = createTxMock();
+        tx.user.findMany.mockResolvedValue([{ id: 'a', role: 'TEACHER', isActive: true }]);
+        tx.calendarLessonTeacher.findMany.mockResolvedValue([]);
+        tx.availabilityConstraint.findMany.mockResolvedValue([
+          { id: 'c1', userId: 'a', startTime: new Date('1970-01-01T10:00:00Z'), endTime: new Date('1970-01-01T11:00:00Z'), type: 'UNAVAILABLE' },
+          { id: 'c2', userId: 'a', startTime: new Date('1970-01-01T12:00:00Z'), endTime: new Date('1970-01-01T13:00:00Z'), type: 'UNAVAILABLE' },
+        ]);
+        tx.teacherDutySlot.findMany.mockResolvedValue([
+          { availabilityConstraintId: 'c1', teacherDuty: { label: 'Mentor 7B', academicYearId: 'y', validFrom: null, validTo: new Date('2026-12-18T00:00:00Z') } },
+          { availabilityConstraintId: 'c2', teacherDuty: { label: 'Rastvakt', academicYearId: 'y', validFrom: new Date('2027-01-07T00:00:00Z'), validTo: null } },
+        ]);
+        const days = await readPersonDays(tx as never, { date, timezone: 'Europe/Stockholm', academicYearId: 'y' });
+        return days.days.get('a')!.closures.map((closure) => closure.label);
+      };
+      expect(await read('2026-12-16')).toEqual(['Mentor 7B']);
+      expect(await read('2026-12-18')).toEqual(['Mentor 7B']);
+      expect(await read('2027-01-06')).toEqual([]);
+      expect(await read('2027-01-07')).toEqual(['Rastvakt']);
+      expect(await read('2027-03-03')).toEqual(['Rastvakt']);
     });
   });
 });

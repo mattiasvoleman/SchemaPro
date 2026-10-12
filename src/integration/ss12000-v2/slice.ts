@@ -345,7 +345,7 @@ export class SchoolSlice {
     async () =>
       await this.tx.teacherDuty.findMany({
         where: { schoolId: this.schoolId, kind: 'MENTORSKAP' },
-        select: { userId: true, academicYearId: true, studentGroupId: true, updatedAt: true },
+        select: { userId: true, academicYearId: true, studentGroupId: true, updatedAt: true, validFrom: true, validTo: true },
       }),
   );
 
