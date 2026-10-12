@@ -20,7 +20,9 @@ import { createTestApp, type TestHarness } from './utils/test-app';
 // limit (src/publication/public-timetable.controller.ts).
 // ss12000/v2.0: the SS12000 2.1 provider, authenticated by an integration key
 // as S1's bearer and limited per key (src/integration/ss12000-v2), like v1.
-const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'ss12000/v1', 'ss12000/v2.0'];
+// public/v1/sign-in-methods: /login's lookup of a domain's school-account
+// provider, before anyone has signed in (src/sign-in).
+const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'public/v1/sign-in-methods', 'ss12000/v1', 'ss12000/v2.0'];
 
 interface RouteInfo {
   controller: string;

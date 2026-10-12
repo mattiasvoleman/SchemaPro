@@ -1,4 +1,5 @@
 import type { Role } from '../enums/role.enum';
+import type { SchoolAccountSession } from '../school-account';
 
 /**
  * The normalized principal attached to `request.user` after JWT verification.
@@ -14,4 +15,10 @@ export interface AuthenticatedUser {
   userId?: string;
   /** Tenant id, when present in the token. */
   schoolId?: string;
+  /**
+   * The school account this session signed in with, when it signed in with
+   * one and nothing else (src/auth/school-account.ts). Read from metadata the
+   * person can rewrite, so it is a self-lockout check and never a permission.
+   */
+  schoolAccount?: SchoolAccountSession;
 }

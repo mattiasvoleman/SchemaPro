@@ -38,6 +38,7 @@ import { PublicationModule } from './publication/publication.module';
 import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
 import { GallringModule } from './gallring/gallring.module';
+import { SignInModule } from './sign-in/sign-in.module';
 import type { ThrottleConfig } from './config/configuration';
 
 /**
@@ -128,6 +129,7 @@ import type { ThrottleConfig } from './config/configuration';
     PublicationModule,
     CoverModule,
     GallringModule,
+    SignInModule,
   ],
 
   providers: [

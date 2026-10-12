@@ -25,4 +25,8 @@ export interface JwtPayload {
   aud?: string | string[];
   iat?: number;
   exp?: number;
+  /** Supabase: the session's authentication methods ({ method, timestamp }). */
+  amr?: unknown;
+  /** Supabase: the user's metadata, which a school-account sign-in merges its identity into. */
+  user_metadata?: unknown;
 }

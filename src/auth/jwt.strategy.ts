@@ -8,6 +8,7 @@ import { PrismaService } from '../database/prisma.service';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
+import { schoolAccountOf } from './school-account';
 import {
   ACCEPTED_ALGORITHMS,
   createSigningKeyProvider,
@@ -86,11 +87,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     );
 
     if (profile && profile.isActive) {
+      // Which school account this session signed in with, if it did: only
+      // for "would this lock me out?" (SignInMethodsService), never a grant.
+      const schoolAccount = schoolAccountOf(payload);
       return {
         authId: payload.sub,
         role: profile.role as Role,
         userId: profile.id,
         schoolId: profile.schoolId,
+        ...(schoolAccount ? { schoolAccount } : {}),
       };
     }
 
