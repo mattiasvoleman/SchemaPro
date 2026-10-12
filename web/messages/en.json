@@ -2152,7 +2152,9 @@
       "SIGN_IN_HOSTED_DOMAIN_REQUIRED": "Google Workspace needs the organisation's domain.",
       "SIGN_IN_SSO_ONLY_NEEDS_OWN_SCHOOL_ACCOUNT": "Sign in with a school account from this organisation before you require school accounts for staff, so that nobody is locked out.",
       "SIGN_IN_DOMAIN_TAKEN": "Another school signs in with another provider on {domains}. Remove the domain here, or contact whoever runs SchemaPro if the domain is yours.",
-      "SIGN_IN_NOT_AVAILABLE": "Signing in with school account is not turned on for SchemaPro yet."
+      "SIGN_IN_NOT_AVAILABLE": "Signing in with school account is not turned on for SchemaPro yet.",
+      "SIGN_IN_DOMAIN_UNUSED": "No active person at the school has an address on {domains}. List only domains the school's staff or pupils use.",
+      "SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT": "Staff with addresses on {domains} could not sign in with a school account. Add the domains, or change their addresses, before you require school accounts for staff."
     },
     "tabsLabel": "Direction of the integration",
     "loadFailed": "The source system could not be loaded",
