@@ -13091,6 +13091,574 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Section 70: en skolas inloggning med skolkonto är skolans administratörs
+-- (SchoolSignInMethods, 20261020090000).
+--
+-- The row says how a school's people may sign in with their school account
+-- and pins the access-token hook to the school's Entra tenant or Google
+-- Workspace. A teacher who could turn ssoOnlyForStaff off, or an admin of
+-- another school who could change the tenant, would decide who may sign in
+-- at a school that is not theirs. So: the school's admin reads and writes
+-- the row through the API's role; through PostgREST's role the admin reads
+-- it and writes nothing; nobody else in the school reads it; nobody reaches
+-- the other school's row, which the fixtures plant (Entra, SSO-only).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('app.test_rls70_school_b', :'school_b', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+
+-- 70a: school A's admin.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  school_b uuid := current_setting('app.test_rls70_school_b')::uuid;
+  via text; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'sign-in methods: expected school A''s SCHOOL_ADMIN'; END IF;
+  PERFORM set_config('app.test_rls70_school', school::text, true);
+  PERFORM set_config('app.test_rls70_teacher_sub', coalesce((SELECT "authId"::text FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), ''), true);
+  PERFORM set_config('app.test_rls70_pupil_sub', coalesce((SELECT "authId"::text FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), ''), true);
+  IF current_setting('app.test_rls70_teacher_sub') = '' OR current_setting('app.test_rls70_pupil_sub') = '' THEN
+    RAISE EXCEPTION 'sign-in methods: school A has no active teacher or pupil to ask';
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'sign-in methods: running as %, not %', current_user, via; END IF;
+    SELECT count(*) INTO n FROM "SchoolSignInMethods";
+    IF n <> 0 THEN RAISE EXCEPTION 'sign-in methods: through % school A''s admin reads % row(s) before school A has one', via, n; END IF;
+  END LOOP;
+
+  -- The API's role writes the school's own row, all four ways.
+  SET LOCAL ROLE app_authenticated;
+  INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+  VALUES (school, 'google', ARRAY['rls70-a.example'], 'rls70-a.example', now());
+  UPDATE "SchoolSignInMethods" SET "ssoOnlyForStaff" = true, "updatedAt" = now() WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: the admin updated % of the school''s row', n; END IF;
+  DELETE FROM "SchoolSignInMethods" WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: the admin deleted % of the school''s row', n; END IF;
+  INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+  VALUES (school, 'google', ARRAY['rls70-a.example', 'rls-delad.example'], 'rls70-a.example', now());
+
+  -- School B's row: not written, not changed, not removed, through either
+  -- role. The UPDATEs and the DELETE carry no WHERE: a WHERE on a column
+  -- needs SELECT, which brings the SELECT arm in, and that arm would hide a
+  -- weaker UPDATE or DELETE arm behind it. So the arms alone decide what a
+  -- statement reaches, and through the API's role that is the school's own
+  -- row and nothing else. 70c reads school B's row back as it was planted.
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    BEGIN
+      INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "updatedAt")
+      VALUES (school_b, 'azure', ARRAY['rls70-b.example'], gen_random_uuid(), now());
+      RAISE EXCEPTION 'sign-in methods: through % school A''s admin wrote school B''s row', via;
+    EXCEPTION
+      WHEN insufficient_privilege THEN NULL;
+      WHEN unique_violation THEN
+        RAISE EXCEPTION 'sign-in methods: through % school A''s admin got past the arm with school B''s row; only the one-row index stopped it', via;
+    END;
+    BEGIN
+      UPDATE "SchoolSignInMethods" SET "ssoOnlyForStaff" = true, "updatedAt" = now();
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: through % school A''s admin changed % row(s), not the school''s own one', via, n; END IF;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF via = 'app_authenticated' THEN RAISE EXCEPTION 'sign-in methods: the API''s role could not change the school''s own row'; END IF;
+    END;
+    BEGIN
+      UPDATE "SchoolSignInMethods" SET "schoolId" = school_b, "updatedAt" = now();
+      RAISE EXCEPTION 'sign-in methods: through % school A''s admin moved the school''s row to school B', via;
+    EXCEPTION
+      WHEN insufficient_privilege THEN NULL;
+      WHEN unique_violation THEN
+        RAISE EXCEPTION 'sign-in methods: through % school A''s admin moved the school''s row past the arm; only the one-row index stopped it', via;
+    END;
+    BEGIN
+      DELETE FROM "SchoolSignInMethods";
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: through % school A''s admin removed % row(s), not the school''s own one', via, n; END IF;
+      INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+      VALUES (school, 'google', ARRAY['rls70-a.example', 'rls-delad.example'], 'rls70-a.example', now());
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF via = 'app_authenticated' THEN RAISE EXCEPTION 'sign-in methods: the API''s role could not remove the school''s own row'; END IF;
+    END;
+    SELECT count(*) INTO n FROM "SchoolSignInMethods" WHERE "schoolId" <> school;
+    IF n <> 0 THEN RAISE EXCEPTION 'sign-in methods: through % school A''s admin reads % row(s) of another school', via, n; END IF;
+    SELECT count(*) INTO n FROM "SchoolSignInMethods" WHERE "schoolId" = school;
+    IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: through % school A''s admin reads % of the school''s own row', via, n; END IF;
+  END LOOP;
+
+  -- PostgREST's role reads and writes nothing: the admin card goes through the API.
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE "SchoolSignInMethods" SET "ssoOnlyForStaff" = false, "updatedAt" = now() WHERE "schoolId" = school;
+    RAISE EXCEPTION 'sign-in methods: through authenticated the admin changed the row';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "SchoolSignInMethods" WHERE "schoolId" = school;
+    RAISE EXCEPTION 'sign-in methods: through authenticated the admin removed the row';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "updatedAt")
+    VALUES (school, 'azure', ARRAY['rls70-c.example'], gen_random_uuid(), now());
+    RAISE EXCEPTION 'sign-in methods: through authenticated the admin wrote a row';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- 70b: the school's teacher, pupil and guardian read nothing and write nothing,
+-- through either role, while the school has a row.
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls70_school')::uuid;
+  sub text; via text; who text; n bigint;
+BEGIN
+  FOREACH sub IN ARRAY ARRAY[current_setting('app.test_rls70_teacher_sub'), current_setting('app.test_rls70_pupil_sub'), '00000000-0000-4000-8000-000000000004'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    who := app.current_user_role()::text;
+    IF app.current_school_id() IS DISTINCT FROM school OR who NOT IN ('TEACHER', 'STUDENT', 'GUARDIAN') THEN
+      RAISE EXCEPTION 'sign-in methods: expected a TEACHER, STUDENT or GUARDIAN of school A, got %', who;
+    END IF;
+    FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      SELECT count(*) INTO n FROM "SchoolSignInMethods";
+      IF n <> 0 THEN RAISE EXCEPTION 'sign-in methods: through % a % reads % row(s)', via, who, n; END IF;
+      -- No WHERE, as in 70a: the UPDATE and DELETE arms alone decide.
+      BEGIN
+        UPDATE "SchoolSignInMethods" SET "ssoOnlyForStaff" = false, "updatedAt" = now();
+        GET DIAGNOSTICS n = ROW_COUNT;
+        IF n <> 0 THEN RAISE EXCEPTION 'sign-in methods: through % a % changed % row(s)', via, who, n; END IF;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+      BEGIN
+        DELETE FROM "SchoolSignInMethods";
+        GET DIAGNOSTICS n = ROW_COUNT;
+        IF n <> 0 THEN RAISE EXCEPTION 'sign-in methods: through % a % removed % row(s)', via, who, n; END IF;
+      EXCEPTION WHEN insufficient_privilege THEN NULL;
+      END;
+      BEGIN
+        INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "updatedAt")
+        VALUES (school, 'azure', ARRAY['rls70-d.example'], gen_random_uuid(), now());
+        RAISE EXCEPTION 'sign-in methods: through % a % wrote a row', via, who;
+      EXCEPTION
+        WHEN insufficient_privilege THEN NULL;
+        WHEN unique_violation THEN
+          RAISE EXCEPTION 'sign-in methods: through % a % got past the arm; only the one-row index stopped the row', via, who;
+      END;
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+END $$;
+
+-- 70c: school B's admin reads school B's row, Entra and SSO-only as the
+-- fixtures planted it, and not school A's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE
+  school_b uuid := current_setting('app.test_rls70_school_b')::uuid;
+  via text; n bigint;
+BEGIN
+  IF app.current_school_id() IS DISTINCT FROM school_b OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'sign-in methods: expected school B''s SCHOOL_ADMIN';
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT count(*) INTO n FROM "SchoolSignInMethods";
+    IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: through % school B''s admin reads % row(s), not its own one', via, n; END IF;
+    SELECT count(*) INTO n FROM "SchoolSignInMethods"
+     WHERE "schoolId" = school_b AND provider = 'azure' AND "ssoOnlyForStaff" AND "entraTenantId" IS NOT NULL;
+    IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: school B''s fixture row is missing or not Entra and SSO-only'; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- 70d: no principal reads anything.
+SELECT set_config('request.jwt.claims', '{}', true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'sign-in methods: the empty claims resolved to a user'; END IF;
+  SELECT count(*) INTO n FROM "SchoolSignInMethods";
+  IF n <> 0 THEN RAISE EXCEPTION 'sign-in methods: with no principal % row(s) are read', n; END IF;
+END $$;
+
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 71: en inloggningsrad har en form som kroken kan lita på
+-- (SchoolSignInMethods' CHECKs, 20261020090000).
+--
+-- The hook compares a school-account identity with entraTenantId or
+-- googleHostedDomain, and /login compares a typed domain with `domains`, all
+-- in lower case. A row with both pins, the wrong one, none, an upper-case
+-- domain or a domain that is no host name would make the hook or the lookup
+-- answer something nobody chose. Each shape is written by school A's admin
+-- through the API's role; the bad ones must be refused by a CHECK (or the
+-- NOT NULL, or the one-row-per-school index), the good ones must go in.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  r record;
+  got text;
+  twenty text[] := ARRAY(SELECT 'd' || i || '.rls71.example' FROM generate_series(1, 20) i);
+  long_label text := repeat('a', 64) || '.example';
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'sign-in shape: expected school A''s SCHOOL_ADMIN'; END IF;
+  SET LOCAL ROLE app_authenticated;
+  FOR r IN SELECT * FROM (VALUES
+      ('Entra with its tenant',                 'azure',  ARRAY['skola.rls71.example'], '9f8e7d6c-5b4a-4321-8fed-cba987654321'::uuid, NULL::text, 'ok'),
+      ('Google with its hd',                    'google', ARRAY['skola.rls71.example'], NULL, 'skola.rls71.example', 'ok'),
+      ('punycode and hyphens',                  'azure',  ARRAY['xn--skla-ppa.rls71.example', 'a-b.c-d.rls71.example'], gen_random_uuid(), NULL, 'ok'),
+      ('twenty domains',                        'azure',  twenty, gen_random_uuid(), NULL, 'ok'),
+      ('Entra without a tenant',                'azure',  ARRAY['skola.rls71.example'], NULL, NULL, '23514'),
+      ('Entra with an hd as well',              'azure',  ARRAY['skola.rls71.example'], gen_random_uuid(), 'skola.rls71.example', '23514'),
+      ('Google without an hd',                  'google', ARRAY['skola.rls71.example'], NULL, NULL, '23514'),
+      ('Google with a tenant as well',          'google', ARRAY['skola.rls71.example'], gen_random_uuid(), 'skola.rls71.example', '23514'),
+      ('no domain',                             'azure',  '{}'::text[], gen_random_uuid(), NULL, '23514'),
+      ('a NULL domain',                         'azure',  ARRAY['skola.rls71.example', NULL], gen_random_uuid(), NULL, '23514'),
+      ('twenty-one domains',                    'azure',  twenty || 'd21.rls71.example'::text, gen_random_uuid(), NULL, '23514'),
+      ('an upper-case domain',                  'azure',  ARRAY['Skola.rls71.example'], gen_random_uuid(), NULL, '23514'),
+      ('a domain without a dot',                'azure',  ARRAY['localhost'], gen_random_uuid(), NULL, '23514'),
+      ('a domain with a space',                 'azure',  ARRAY['skola rls71.example'], gen_random_uuid(), NULL, '23514'),
+      ('a domain ending in a dot',              'azure',  ARRAY['skola.rls71.example.'], gen_random_uuid(), NULL, '23514'),
+      ('a label starting with a hyphen',        'azure',  ARRAY['-skola.rls71.example'], gen_random_uuid(), NULL, '23514'),
+      ('an address, not a domain',              'azure',  ARRAY['anna@skola.rls71.example'], gen_random_uuid(), NULL, '23514'),
+      ('an IP address',                         'azure',  ARRAY['10.0.0.1'], gen_random_uuid(), NULL, '23514'),
+      ('a label of 64 characters',              'azure',  ARRAY[long_label], gen_random_uuid(), NULL, '23514'),
+      ('a good domain beside a bad one',        'azure',  ARRAY['skola.rls71.example', 'Bad.example'], gen_random_uuid(), NULL, '23514'),
+      ('an upper-case hd',                      'google', ARRAY['skola.rls71.example'], NULL, 'Skola.rls71.example', '23514'),
+      ('an hd that is no host name',            'google', ARRAY['skola.rls71.example'], NULL, 'skola', '23514'),
+      ('no domains at all',                     'azure',  NULL::text[], gen_random_uuid(), NULL, '23502')
+    ) AS t(label, provider, domains, tenant, hd, expect)
+  LOOP
+    BEGIN
+      INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "googleHostedDomain", "updatedAt")
+      VALUES (school, r.provider::"SignInProvider", r.domains, r.tenant, r.hd, now());
+      got := 'ok';
+      DELETE FROM "SchoolSignInMethods" WHERE "schoolId" = school;
+    EXCEPTION WHEN check_violation OR not_null_violation THEN
+      got := SQLSTATE;
+    END;
+    IF got <> r.expect THEN
+      RAISE EXCEPTION 'sign-in shape: % gave %, expected %', r.label, got, r.expect;
+    END IF;
+  END LOOP;
+
+  -- One row per school.
+  INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "updatedAt")
+  VALUES (school, 'azure', ARRAY['skola.rls71.example'], gen_random_uuid(), now());
+  BEGIN
+    INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+    VALUES (school, 'google', ARRAY['skola.rls71.example'], 'skola.rls71.example', now());
+    RAISE EXCEPTION 'sign-in shape: a school got a second row';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+END $$;
+
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 72: kroken körs bara av Supabase Auth, och uppslaget bara av API:t
+-- (the four functions of 20261020090000).
+--
+-- app.custom_access_token_hook decides whether a token is issued, and
+-- app.sign_in_rules hands out any person's role and their school's pins by
+-- Auth id. Either one callable through PostgREST would let a signed-in user
+-- read another school's tenant or probe who exists. So:
+--
+--   * the hook runs with its caller's rights (Supabase's advice): no
+--     SECURITY DEFINER, and an empty search_path;
+--   * sign_in_rules and sign_in_provider_for_domain are SECURITY DEFINER
+--     with an empty search_path;
+--   * sign_in_verdict is IMMUTABLE, invoker-rights, and reads nothing;
+--   * EXECUTE: the hook and sign_in_rules for supabase_auth_admin only (when
+--     the role exists, as on Supabase); the lookup for app_authenticated only;
+--     the verdict for those two. Never PUBLIC, anon, authenticated or
+--     service_role. Counted with has_function_privilege, so a grant to a role
+--     they inherit from counts too.
+--
+-- Then the refusals are run: as app_authenticated and as authenticated the
+-- hook and sign_in_rules answer 42501, and as authenticated so does the
+-- lookup.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r record;
+  who text;
+  allowed boolean;
+  expected boolean;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('app.custom_access_token_hook(jsonb)', false, 's', ARRAY['supabase_auth_admin']),
+      ('app.sign_in_rules(uuid)', true, 's', ARRAY['supabase_auth_admin']),
+      ('app.sign_in_verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb)', false, 'i', ARRAY['supabase_auth_admin', 'app_authenticated']),
+      ('app.sign_in_provider_for_domain(text)', true, 's', ARRAY['app_authenticated'])
+    ) AS t(fn, definer, volatility, callers)
+  LOOP
+    IF (SELECT prosecdef FROM pg_proc WHERE oid = r.fn::regprocedure) IS DISTINCT FROM r.definer THEN
+      RAISE EXCEPTION 'sign-in functions: % is % SECURITY DEFINER', r.fn, CASE WHEN r.definer THEN 'not' ELSE 'unexpectedly' END;
+    END IF;
+    IF (SELECT provolatile FROM pg_proc WHERE oid = r.fn::regprocedure) <> r.volatility THEN
+      RAISE EXCEPTION 'sign-in functions: % is not of volatility %', r.fn, r.volatility;
+    END IF;
+    IF NOT coalesce((SELECT 'search_path=""' = ANY (proconfig) FROM pg_proc WHERE oid = r.fn::regprocedure), false) THEN
+      RAISE EXCEPTION 'sign-in functions: % does not pin an empty search_path', r.fn;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                WHERE p.oid = r.fn::regprocedure AND a.grantee = 0) THEN
+      RAISE EXCEPTION 'sign-in functions: PUBLIC may execute %', r.fn;
+    END IF;
+    FOREACH who IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated', 'supabase_auth_admin'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = who);
+      allowed := has_function_privilege(who, r.fn::regprocedure, 'EXECUTE');
+      expected := who = ANY (r.callers);
+      IF allowed IS DISTINCT FROM expected THEN
+        RAISE EXCEPTION 'sign-in functions: % % execute %', who, CASE WHEN allowed THEN 'may' ELSE 'may not' END, r.fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+END $$;
+
+BEGIN;
+DO $$
+DECLARE
+  via text;
+  ignored jsonb;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'sign-in functions: running as %, not %', current_user, via; END IF;
+    BEGIN
+      ignored := app.custom_access_token_hook(jsonb_build_object('user_id', gen_random_uuid(), 'claims', '{}'::jsonb, 'authentication_method', 'password'));
+      RAISE EXCEPTION 'sign-in functions: % ran the access-token hook', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      PERFORM * FROM app.sign_in_rules(gen_random_uuid());
+      RAISE EXCEPTION 'sign-in functions: % read a person''s sign-in rules', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM app.sign_in_provider_for_domain('rls-fixture-b.example');
+    RAISE EXCEPTION 'sign-in functions: authenticated looked a domain up';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 73: kroken släpper igenom skolans skolkonton och personalens
+-- lösenord bara när skolan vill (app.sign_in_verdict, 20261020090000).
+--
+-- The verdict is the whole decision of the access-token hook; the hook only
+-- gathers its inputs (the person's role and school row by Auth id, the
+-- session's methods from the claims, and the person's identities from
+-- auth.identities, which CI's database does not have). Each case below is a
+-- session and a person, with the answer the hook must give: NULL issues the
+-- token, a code refuses it with 403. The identities are shaped as Supabase
+-- Auth stores them (identity_data.iss is the ID token's issuer, the token's
+-- other claims sit in identity_data.custom_claims).
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  tid text := '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
+  other_tid text := '5e4d3c2b-1a09-4877-8665-544332211000';
+  entra jsonb := jsonb_build_object('provider', 'azure', 'identity_data', jsonb_build_object(
+    'iss', 'https://login.microsoftonline.com/' || tid || '/v2.0', 'sub', 'entra-sub',
+    'custom_claims', jsonb_build_object('tid', tid, 'email', 'anna@skola.rls73.example')));
+  entra_other jsonb := jsonb_build_object('provider', 'azure', 'identity_data', jsonb_build_object(
+    'iss', 'https://login.microsoftonline.com/' || other_tid || '/v2.0', 'sub', 'other-sub',
+    'custom_claims', jsonb_build_object('tid', other_tid)));
+  entra_upper jsonb := jsonb_build_object('provider', 'azure', 'identity_data', jsonb_build_object(
+    'iss', 'https://login.microsoftonline.com/' || upper(tid) || '/v2.0', 'sub', 'upper-sub'));
+  entra_disagrees jsonb := jsonb_build_object('provider', 'azure', 'identity_data', jsonb_build_object(
+    'iss', 'https://login.microsoftonline.com/' || tid || '/v2.0', 'sub', 'odd-sub',
+    'custom_claims', jsonb_build_object('tid', other_tid)));
+  entra_common jsonb := jsonb_build_object('provider', 'azure', 'identity_data', jsonb_build_object(
+    'iss', 'https://login.microsoftonline.com/common/v2.0', 'sub', 'common-sub',
+    'custom_claims', jsonb_build_object('tid', tid)));
+  entra_ciam jsonb := jsonb_build_object('provider', 'azure', 'identity_data', jsonb_build_object(
+    'iss', 'https://skola.ciamlogin.com/' || tid || '/v2.0', 'sub', 'ciam-sub'));
+  google jsonb := jsonb_build_object('provider', 'google', 'identity_data', jsonb_build_object(
+    'iss', 'https://accounts.google.com', 'sub', 'google-sub', 'custom_claims', jsonb_build_object('hd', 'skola.rls73.example')));
+  google_upper jsonb := jsonb_build_object('provider', 'google', 'identity_data', jsonb_build_object(
+    'iss', 'accounts.google.com', 'sub', 'google-upper', 'custom_claims', jsonb_build_object('hd', 'Skola.RLS73.example')));
+  google_other jsonb := jsonb_build_object('provider', 'google', 'identity_data', jsonb_build_object(
+    'iss', 'https://accounts.google.com', 'sub', 'google-other', 'custom_claims', jsonb_build_object('hd', 'annan.rls73.example')));
+  google_consumer jsonb := jsonb_build_object('provider', 'google', 'identity_data', jsonb_build_object(
+    'iss', 'https://accounts.google.com', 'sub', 'google-consumer'));
+  google_userinfo jsonb := jsonb_build_object('provider', 'google', 'identity_data', jsonb_build_object(
+    'iss', 'https://www.googleapis.com/userinfo/v2/me', 'sub', 'google-userinfo', 'custom_claims', jsonb_build_object('hd', 'skola.rls73.example')));
+  github jsonb := jsonb_build_object('provider', 'github', 'identity_data', jsonb_build_object('sub', 'gh'));
+  -- Filed under another provider than its issuer's: Auth never stores one, and
+  -- the verdict reads both, so neither alone lets an identity through.
+  misfiled jsonb := jsonb_build_object('provider', 'google', 'identity_data', jsonb_build_object(
+    'iss', 'https://login.microsoftonline.com/' || tid || '/v2.0', 'sub', 'misfiled', 'custom_claims', jsonb_build_object('tid', tid)));
+  saml jsonb := jsonb_build_object('provider', 'sso:5f1c', 'identity_data', jsonb_build_object('sub', 'saml'));
+  address jsonb := jsonb_build_object('provider', 'email', 'identity_data', jsonb_build_object('sub', 'x', 'email', 'anna@skola.rls73.example'));
+  r record;
+  got text;
+  cases int := 0;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      -- Passwords and links, by role and by the school's choice.
+      ('a teacher''s password, no school row',             'TEACHER',      NULL, NULL::text, NULL::text, NULL::boolean, ARRAY['password'], ''::text, NULL::text),
+      ('a teacher''s password, school accounts optional',  'TEACHER',      'azure', 'T', NULL, false, ARRAY['password'], '', NULL),
+      ('a teacher''s password, SSO-only',                  'TEACHER',      'azure', 'T', NULL, true, ARRAY['password'], '', 'sso_required'),
+      ('an admin''s password, SSO-only',                   'SCHOOL_ADMIN', 'google', NULL, 'skola.rls73.example', true, ARRAY['password'], '', 'sso_required'),
+      ('a pupil''s password, SSO-only',                    'STUDENT',      'azure', 'T', NULL, true, ARRAY['password'], '', NULL),
+      ('a guardian''s password, SSO-only',                 'GUARDIAN',     'azure', 'T', NULL, true, ARRAY['password'], '', NULL),
+      ('a teacher''s recovery link, SSO-only',             'TEACHER',      'azure', 'T', NULL, true, ARRAY['recovery'], '', 'sso_required'),
+      ('a teacher''s invitation link, SSO-only',           'TEACHER',      'azure', 'T', NULL, true, ARRAY['invite'], '', 'sso_required'),
+      ('a teacher''s magic link, SSO-only',                'TEACHER',      'azure', 'T', NULL, true, ARRAY['magiclink', 'otp'], '', 'sso_required'),
+      ('a teacher''s password session refreshed, SSO-only', 'TEACHER',     'azure', 'T', NULL, true, ARRAY['password', 'token_refresh'], '', 'sso_required'),
+      ('a teacher''s password session refreshed, optional', 'TEACHER',     'azure', 'T', NULL, false, ARRAY['password', 'token_refresh'], '', NULL),
+      ('a session of no method, SSO-only',                 'TEACHER',      'azure', 'T', NULL, true, '{}'::text[], '', 'sso_required'),
+      ('a session of no method, no school row',            'TEACHER',      NULL, NULL, NULL, NULL, '{}'::text[], '', NULL),
+      ('password and a school account mixed, SSO-only',    'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'password'], 'E', 'sso_required'),
+      -- School accounts.
+      ('a school account, no school row',                  'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['oauth'], 'E', 'sso_not_enabled'),
+      ('a pupil''s school account, no school row',         'STUDENT',      NULL, NULL, NULL, NULL, ARRAY['oauth'], 'E', 'sso_not_enabled'),
+      ('Entra, the school''s tenant',                      'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'E', NULL),
+      ('Entra, the school''s tenant, SSO-only',            'SCHOOL_ADMIN', 'azure', 'T', NULL, true, ARRAY['oauth'], 'E', NULL),
+      ('Entra beside the address identity',                'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth'], 'EA', NULL),
+      ('Entra with a second factor',                       'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'totp'], 'E', NULL),
+      ('Entra refreshed',                                  'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'token_refresh'], 'E', NULL),
+      ('Entra, a pupil, SSO-only',                         'STUDENT',      'azure', 'T', NULL, true, ARRAY['oauth'], 'E', NULL),
+      ('Entra, the tenant in upper case',                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'U', NULL),
+      ('Entra, another tenant',                            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'O', 'sso_identity_not_allowed'),
+      ('Entra, the right tenant and another one',          'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'EO', 'sso_identity_not_allowed'),
+      ('Entra, the claimed tid disagrees with iss',        'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'D', 'sso_identity_not_allowed'),
+      ('Entra, the common issuer',                         'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'C', 'sso_identity_not_allowed'),
+      ('Entra, a CIAM issuer',                             'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'M', 'sso_identity_not_allowed'),
+      ('Entra refreshed, another tenant',                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth', 'token_refresh'], 'O', 'sso_identity_not_allowed'),
+      ('Google at an Entra school',                        'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'G', 'sso_identity_not_allowed'),
+      ('Entra and Google at an Entra school',              'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'EG', 'sso_identity_not_allowed'),
+      ('Google, the school''s hd',                         'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'G', NULL),
+      ('Google, the hd in upper case',                     'TEACHER',      'google', NULL, 'skola.rls73.example', true, ARRAY['oauth'], 'g', NULL),
+      ('Google, another hd',                               'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'H', 'sso_identity_not_allowed'),
+      ('Google, no hd',                                    'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'N', 'sso_identity_not_allowed'),
+      ('Google, read from the userinfo endpoint',          'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'I', 'sso_identity_not_allowed'),
+      ('Entra at a Google school',                         'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'E', 'sso_identity_not_allowed'),
+      ('another provider',                                 'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'E2', 'sso_identity_not_allowed'),
+      ('a SAML identity',                                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'ES', 'sso_identity_not_allowed'),
+      ('the school''s Entra issuer filed as Google',       'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'F', 'sso_identity_not_allowed'),
+      ('a school account and no identity',                 'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], '', 'sso_identity_not_allowed'),
+      ('a school account and only the address',            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'A', 'sso_identity_not_allowed'),
+      ('a school account and no identity list',            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], NULL, 'sso_identity_not_allowed')
+    ) AS t(label, role, provider, tenant, hd, sso_only, methods, ids, expect)
+  LOOP
+    got := app.sign_in_verdict(
+      r.role::"UserRole",
+      r.provider::"SignInProvider",
+      CASE WHEN r.tenant = 'T' THEN tid::uuid END,
+      r.hd,
+      r.sso_only,
+      r.methods,
+      CASE WHEN r.ids IS NULL THEN NULL ELSE (
+        SELECT coalesce(jsonb_agg(CASE c WHEN 'E' THEN entra WHEN 'O' THEN entra_other WHEN 'U' THEN entra_upper
+                                         WHEN 'D' THEN entra_disagrees WHEN 'C' THEN entra_common WHEN 'M' THEN entra_ciam
+                                         WHEN 'G' THEN google WHEN 'g' THEN google_upper WHEN 'H' THEN google_other
+                                         WHEN 'N' THEN google_consumer WHEN 'I' THEN google_userinfo WHEN '2' THEN github
+                                         WHEN 'S' THEN saml WHEN 'A' THEN address WHEN 'F' THEN misfiled END ORDER BY o), '[]'::jsonb)
+          FROM unnest(string_to_array(r.ids, NULL)) WITH ORDINALITY AS x(c, o)
+         WHERE r.ids <> '') END);
+    IF got IS DISTINCT FROM r.expect THEN
+      RAISE EXCEPTION 'sign-in verdict: % gave %, expected %', r.label, coalesce(got, 'a token'), coalesce(r.expect, 'a token');
+    END IF;
+    cases := cases + 1;
+  END LOOP;
+  IF cases < 40 THEN RAISE EXCEPTION 'sign-in verdict: only % case(s) ran', cases; END IF;
+END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 74: inloggningen hittar skolkontot från e-postadressens domän och
+-- säger inget annat (app.sign_in_provider_for_domain, 20261020090000).
+--
+-- /login asks the gateway which provider a typed address's domain signs in
+-- with; the gateway asks this function, with no principal. It answers the
+-- provider every school naming the domain agrees on, else NULL, and nothing
+-- more: no school, no tenant, no SSO-only. A domain two schools name with
+-- different providers answers NULL, so neither school's people are sent to
+-- the other's provider.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  r record;
+  got text;
+BEGIN
+  IF (SELECT prorettype FROM pg_proc WHERE oid = 'app.sign_in_provider_for_domain(text)'::regprocedure)
+     <> '"SignInProvider"'::regtype THEN
+    RAISE EXCEPTION 'sign-in lookup: the function answers more than a provider';
+  END IF;
+
+  SET LOCAL ROLE app_authenticated;
+  -- School A, Google, on a domain of its own and on the one school B names too.
+  INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+  VALUES (school, 'google', ARRAY['rls74-a.example', 'rls-delad.example'], 'rls74-a.example', now());
+  PERFORM set_config('request.jwt.claims', '{}', true);
+
+  FOR r IN SELECT * FROM (VALUES
+      ('school B''s own domain',                  'rls-fixture-b.example', 'azure'),
+      ('the same, in capitals and padded',        '  RLS-Fixture-B.Example ', 'azure'),
+      ('school A''s own domain',                  'rls74-a.example', 'google'),
+      ('a domain the schools disagree on',        'rls-delad.example', NULL::text),
+      ('a domain nobody names',                   'okand.example', NULL),
+      ('an empty string',                         '', NULL),
+      ('NULL',                                    NULL, NULL),
+      ('a whole address',                         'anna@rls-fixture-b.example', NULL),
+      ('a pattern, which is no wildcard',         '%.example', NULL)
+    ) AS t(label, domain, expect)
+  LOOP
+    got := app.sign_in_provider_for_domain(r.domain)::text;
+    IF got IS DISTINCT FROM r.expect THEN
+      RAISE EXCEPTION 'sign-in lookup: % gave %, expected %', r.label, coalesce(got, 'nothing'), coalesce(r.expect, 'nothing');
+    END IF;
+  END LOOP;
+END $$;
+
+-- When school A moves to Entra too, the shared domain answers Entra.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE got text;
+BEGIN
+  UPDATE "SchoolSignInMethods"
+     SET provider = 'azure', "googleHostedDomain" = NULL, "entraTenantId" = gen_random_uuid(), "updatedAt" = now()
+   WHERE "schoolId" = app.current_school_id();
+  got := app.sign_in_provider_for_domain('rls-delad.example')::text;
+  IF got IS DISTINCT FROM 'azure' THEN
+    RAISE EXCEPTION 'sign-in lookup: two Entra schools on one domain gave %, expected azure', coalesce(got, 'nothing');
+  END IF;
+END $$;
+
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 80: ett jobb körs en gång per skola och natt, och varje körning
 -- räknas (JobRuns, JobClaims, 20261021090000).
 --

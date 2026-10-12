@@ -736,6 +736,17 @@ BEGIN
   ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
 END $$;
 
+-- The SECOND school's sign-in method (20261020090000): Entra ID, SSO-only for
+-- staff, on a domain of its own and on one it shares. Sections 70 and 74 ask
+-- whether school A's admin sees or changes it and what /login's lookup makes
+-- of a domain two schools name; with nothing planted over there both pass
+-- while proving nothing.
+INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "ssoOnlyForStaff", "updatedAt")
+SELECT id, 'azure', ARRAY['rls-fixture-b.example', 'rls-delad.example'],
+       '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5b', true, now()
+FROM "Schools" WHERE slug = 'rls-fixture-school'
+ON CONFLICT ("schoolId") DO NOTHING;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
