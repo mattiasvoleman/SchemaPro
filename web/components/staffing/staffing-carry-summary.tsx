@@ -73,6 +73,11 @@ export function StaffingCarrySummary({
   // STAFFING_TEACHERS_NOT_CARRIED counts them: name them by their uppdrag.
   const withPost = new Set(employments.notCarried.map((row) => row.userId));
   const dutyOnlyNotCarried = notCarried("TEACHER_NOT_CARRIED").filter((row) => !withPost.has(row.userId));
+  // One entry per time left behind: an uppdrag that lost two of three times
+  // is named once.
+  const slotDropped = duties.slotDropped.filter(
+    (row, index, all) => all.findIndex((other) => other.sourceDutyId === row.sourceDutyId) === index,
+  );
 
   return (
     <div className="space-y-3 text-sm">
@@ -87,6 +92,14 @@ export function StaffingCarrySummary({
       <Section title={t("withReduction")} items={names(employments.withReduction)} warn />
       <Section title={t("withTargetOverride")} items={names(employments.withTargetOverride)} warn />
       <Section title={t("mentorskapLeft")} items={notCarried("GROUP_LEAVES").map(duty)} warn />
+      <Section title={t("endedBeforeYear")} items={notCarried("ENDS_BEFORE_YEAR").map(duty)} />
+      <Section
+        title={t("fromCleared")}
+        items={(duties.fromCleared ?? []).map((row) =>
+          t("fromClearedLine", { label: row.label, from: row.validFrom, teacher: teacherName(row.userId) }),
+        )}
+        warn
+      />
       <Section title={t("groupDropped")} items={duties.groupDropped.map(duty)} warn />
       <Section
         title={t("relabelled")}
@@ -94,7 +107,7 @@ export function StaffingCarrySummary({
           t("relabelLine", { from: row.from, to: row.to, teacher: teacherName(row.userId) }),
         )}
       />
-      <Section title={t("slotDropped")} items={duties.slotDropped.map(duty)} warn />
+      <Section title={t("slotDropped")} items={slotDropped.map(duty)} warn />
       <Section title={t("inactive")} items={people("INACTIVE")} />
       <Section title={t("notStaff")} items={people("NOT_STAFF")} />
       <Section title={t("dutyOnlyNotCarried")} items={dutyOnlyNotCarried.map(duty)} />

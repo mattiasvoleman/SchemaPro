@@ -3,19 +3,24 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarClock, ClipboardList, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, CalendarRange, ClipboardList, Pencil, Plus, Trash2, X } from "lucide-react";
+import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
+import { useAcademicYears } from "@/lib/queries";
 import { useTeacherDuties, useTeacherDutyActions } from "@/lib/staffing-queries";
 import {
   DUTY_KINDS,
   DUTY_LABEL_MAX,
   DUTY_MINUTES_MAX,
   DUTY_NOTE_MAX,
+  DUTY_SLOTS_MAX,
   EMPTY_DUTY_DRAFT,
+  EMPTY_SLOT_DRAFT,
   dutyDraftToBody,
   dutyToDraft,
   validateDutyDraft,
   type DutyDraft,
   type DutyProblem,
+  type SlotDraft,
 } from "@/lib/duty-forms";
 import type { TeacherDuty, TeacherDutyKind } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -57,21 +62,32 @@ const PROBLEM_FIELDS: Record<DutyProblem["reason"], (keyof DutyDraft)[]> = {
   dutyLabelTooLong: ["label"],
   dutyMinutesOutOfRange: ["minutesPerWeek"],
   dutyNoteTooLong: ["note"],
-  slotTimeRequired: ["startTime", "endTime"],
-  slotOffGrid: ["startTime", "endTime"],
-  slotReversed: ["startTime", "endTime"],
+  dutyDatesReversed: ["validFrom", "validTo"],
+  dutyDateOutsideYear: ["validFrom", "validTo"],
+  slotTimeRequired: ["slots"],
+  slotOffGrid: ["slots"],
+  slotReversed: ["slots"],
+  slotsOverlap: ["slots"],
+  slotsTooMany: ["slots"],
 };
 
 /**
  * A teacher's övriga uppdrag for one läsår: mentorskap, ämnesansvar, APT,
  * rastvakt — and, for an uppdrag with a fixed time, the time it keeps free.
  *
- * THE BLOCKED TIME IS PART OF THE UPPDRAG, not a constraint the admin goes
+ * THE BLOCKED TIMES ARE PART OF THE UPPDRAG, not constraints the admin goes
  * and makes on tillgänglighet. "Blockera tid i schemat" writes one weekly
- * UNAVAILABLE constraint for this teacher in the same transaction as the
- * uppdrag (the gateway's TeacherDutiesService), moves it when the time
- * changes and deletes it with the uppdrag; the solver then keeps the slot
- * free through a rule it already has. The card never names the constraint.
+ * UNAVAILABLE constraint per time for this teacher in the same transaction
+ * as the uppdrag (the gateway's TeacherDutiesService), moves them when the
+ * times change and deletes them with the uppdrag; the solver then keeps the
+ * slots free through a rule it already has. A rastvakt on Monday, Wednesday
+ * and Friday is one uppdrag with three times. The card never names a
+ * constraint.
+ *
+ * DATES ARE THE UPPDRAG'S. Från and Till, empty for the läsår's own bound,
+ * say which weeks it runs: the load counts only those, and the vikarietavla
+ * keeps the teacher busy only on them. A mentor change at jul is two
+ * uppdrag, each with its dates. The weekly master holds the times all year.
  *
  * COUNTED OR NOT. "Räknas som undervisning" is the school's choice for
  * resurstid and pedagogisk lunch; off (the default), the minutes are drawn in
@@ -94,6 +110,11 @@ export function DutiesCard({
   const tDays = useTranslations("days");
   const { data: duties, isLoading, isError } = useTeacherDuties(academicYearId, teacher.id);
   const actions = useTeacherDutyActions();
+  // The year's bounds, for the date fields' min/max and the form's own check;
+  // the gateway measures the same, so a year not loaded yet only defers the
+  // sentence to the save.
+  const { data: years } = useAcademicYears();
+  const year = years?.find((candidate) => candidate.id === academicYearId) ?? null;
   /** null: reading; "new": the add form; an id: that uppdrag's form. */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<DutyDraft>(EMPTY_DUTY_DRAFT);
@@ -111,7 +132,9 @@ export function DutiesCard({
     setDraft((previous) => ({ ...previous, ...change }));
     setTouched((previous) => new Set([...previous, ...(Object.keys(change) as (keyof DutyDraft)[])]));
   };
-  const problem: DutyProblem | null = editing ? validateDutyDraft(draft) : null;
+  const problem: DutyProblem | null = editing ? validateDutyDraft(draft, year) : null;
+  const patchSlot = (index: number, change: Partial<SlotDraft>) =>
+    patch({ slots: draft.slots.map((slot, at) => (at === index ? { ...slot, ...change } : slot)) });
   const shownProblem = problem && PROBLEM_FIELDS[problem.reason].some((field) => touched.has(field)) ? problem : null;
   const problemText = (p: DutyProblem) => {
     const { reason, ...values } = p;
@@ -122,7 +145,6 @@ export function DutiesCard({
     id ? (subjects.find((subject) => subject.id === id)?.name ?? null) : null;
   const groupName = (id: string | null) =>
     id ? (groups.find((group) => group.id === id)?.name ?? null) : null;
-  const clock = (value: string) => value.slice(0, 5);
 
   const openNew = () => {
     setDraft(EMPTY_DUTY_DRAFT);
@@ -209,14 +231,16 @@ export function DutiesCard({
                           : t("dutyMinutes", { minutes: duty.minutesPerWeek })}
                         {about.length > 0 ? ` · ${about.join(" · ")}` : ""}
                       </p>
-                      {duty.blockedSlot ? (
+                      {dutyPeriodLine(t, duty) ? (
                         <p className="flex items-center gap-1 text-foreground">
-                          <CalendarClock className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                          {t("dutyBlocks", {
-                            day: tDays(String(duty.blockedSlot.dayOfWeek)),
-                            start: clock(duty.blockedSlot.startTime),
-                            end: clock(duty.blockedSlot.endTime),
-                          })}
+                          <CalendarRange className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                          {dutyPeriodLine(t, duty)}
+                        </p>
+                      ) : null}
+                      {dutySlotsLine(t, tDays, duty.slots) ? (
+                        <p className="flex items-start gap-1 text-foreground">
+                          <CalendarClock className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          {dutySlotsLine(t, tDays, duty.slots)}
                         </p>
                       ) : null}
                       {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}
@@ -345,6 +369,41 @@ export function DutiesCard({
             </div>
           </div>
 
+          <fieldset className="space-y-2 rounded-md border p-3">
+            <legend className="px-1 text-sm font-medium">{t("dutyPeriodLegend")}</legend>
+            <p className="text-xs text-muted-foreground">{t("dutyPeriodHint")}</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor={idFor("validFrom")}>
+                  {t("dutyValidFrom")}{" "}
+                  <span className="text-muted-foreground">({tCommon("optional")})</span>
+                </Label>
+                <Input
+                  id={idFor("validFrom")}
+                  type="date"
+                  min={year?.startDate}
+                  max={year?.endDate}
+                  value={draft.validFrom}
+                  onChange={(event) => patch({ validFrom: event.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={idFor("validTo")}>
+                  {t("dutyValidTo")}{" "}
+                  <span className="text-muted-foreground">({tCommon("optional")})</span>
+                </Label>
+                <Input
+                  id={idFor("validTo")}
+                  type="date"
+                  min={year?.startDate}
+                  max={year?.endDate}
+                  value={draft.validTo}
+                  onChange={(event) => patch({ validTo: event.target.value })}
+                />
+              </div>
+            </div>
+          </fieldset>
+
           <div className="space-y-2 rounded-md border p-3">
             <div className="flex items-center gap-2">
               <Switch
@@ -356,42 +415,72 @@ export function DutiesCard({
             </div>
             <p className="text-xs text-muted-foreground">{t("dutyBlockTimeHint")}</p>
             {draft.blocks ? (
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor={idFor("day")}>{t("dutyDay")}</Label>
-                  <Select value={draft.dayOfWeek} onValueChange={(value) => patch({ dayOfWeek: value })}>
-                    <SelectTrigger id={idFor("day")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {WEEKDAYS.map((day) => (
-                        <SelectItem key={day} value={day}>
-                          {tDays(day)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor={idFor("start")}>{t("dutyStart")}</Label>
-                  <Input
-                    id={idFor("start")}
-                    type="time"
-                    step={300}
-                    value={draft.startTime}
-                    onChange={(event) => patch({ startTime: event.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor={idFor("end")}>{t("dutyEnd")}</Label>
-                  <Input
-                    id={idFor("end")}
-                    type="time"
-                    step={300}
-                    value={draft.endTime}
-                    onChange={(event) => patch({ endTime: event.target.value })}
-                  />
-                </div>
+              <div className="space-y-3">
+                {draft.slots.map((slot, index) => (
+                  <fieldset key={index} className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end">
+                    <legend className="sr-only">{t("dutySlotLegend", { index: index + 1 })}</legend>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={idFor(`day-${index}`)}>{t("dutyDay")}</Label>
+                      <Select value={slot.dayOfWeek} onValueChange={(value) => patchSlot(index, { dayOfWeek: value })}>
+                        <SelectTrigger id={idFor(`day-${index}`)}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {WEEKDAYS.map((day) => (
+                            <SelectItem key={day} value={day}>
+                              {tDays(day)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={idFor(`start-${index}`)}>{t("dutyStart")}</Label>
+                      <Input
+                        id={idFor(`start-${index}`)}
+                        type="time"
+                        step={300}
+                        value={slot.startTime}
+                        onChange={(event) => patchSlot(index, { startTime: event.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={idFor(`end-${index}`)}>{t("dutyEnd")}</Label>
+                      <Input
+                        id={idFor(`end-${index}`)}
+                        type="time"
+                        step={300}
+                        value={slot.endTime}
+                        onChange={(event) => patchSlot(index, { endTime: event.target.value })}
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="justify-self-end"
+                      disabled={draft.slots.length === 1}
+                      onClick={() => patch({ slots: draft.slots.filter((_, at) => at !== index) })}
+                      aria-label={t("dutyRemoveSlot", { index: index + 1 })}
+                    >
+                      <X aria-hidden="true" />
+                    </Button>
+                  </fieldset>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={draft.slots.length >= DUTY_SLOTS_MAX}
+                  onClick={() => {
+                    const last = draft.slots[draft.slots.length - 1] ?? EMPTY_SLOT_DRAFT;
+                    // The next weekday at the same time: the rastvakt on
+                    // Monday, Wednesday and Friday is two clicks and two days.
+                    const next = String(Math.min(7, Number(last.dayOfWeek) + 1));
+                    patch({ slots: [...draft.slots, { ...last, dayOfWeek: next }] });
+                  }}
+                >
+                  <Plus />
+                  {t("dutyAddSlot")}
+                </Button>
               </div>
             ) : null}
           </div>
@@ -426,7 +515,7 @@ export function DutiesCard({
         open={removing !== null}
         onOpenChange={(open) => !open && setRemoving(null)}
         title={t("removeDutyTitle", { label: removing?.label ?? "" })}
-        description={removing?.blockedSlot ? t("removeDutyBodySlot") : t("removeDutyBody")}
+        description={(removing?.slots.length ?? 0) > 0 ? t("removeDutyBodySlot") : t("removeDutyBody")}
         confirmLabel={tCommon("delete")}
         loading={actions.remove.isPending}
         onConfirm={() => void remove()}

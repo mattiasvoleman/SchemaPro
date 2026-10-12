@@ -664,10 +664,13 @@ export interface TeacherDutySlot {
 /**
  * An uppdrag for one teacher and one läsår — mentorskap 7B, APT, rastvakt.
  *
- * `blockedSlot` is read back from the linked UNAVAILABLE constraint the
- * gateway writes in the same transaction; the client never names that
- * constraint, and `blockedConstraintId` is only there so a constraint list
- * can say which rows an uppdrag holds.
+ * `slots` are its fixed weekly times, Monday first, read back from the
+ * UNAVAILABLE constraints the gateway writes in the same transaction (one
+ * link each, migration 20261017090000); the client never names a
+ * constraint. `validFrom`/`validTo` are its Från and Till, yyyy-mm-dd, null
+ * for the läsår's own bound. `blockedSlot` (the first time) and
+ * `blockedConstraintId` are the previous release's fields, still served for
+ * one release; nothing here reads them.
  */
 export interface TeacherDuty {
   id: string;
@@ -680,8 +683,11 @@ export interface TeacherDuty {
   countsAsTeaching: boolean;
   subjectId: string | null;
   studentGroupId: string | null;
-  blockedConstraintId: string | null;
-  blockedSlot: TeacherDutySlot | null;
+  validFrom: string | null;
+  validTo: string | null;
+  slots: TeacherDutySlot[];
+  blockedConstraintId?: string | null;
+  blockedSlot?: TeacherDutySlot | null;
   note: string | null;
 }
 
@@ -922,11 +928,18 @@ export interface StaffingCarryPreview {
     relabelled: { sourceDutyId: string; userId: string; from: string; to: string }[];
     groupDropped: (StaffingDutyRef & { groupName: string | null })[];
     slotDropped: (StaffingDutyRef & { reason: "OFF_GRID" })[];
+    /** A carried uppdrag that started during the source year: it runs the whole new year. */
+    fromCleared?: (StaffingDutyRef & { validFrom: string })[];
     overlapsTargetDuty: (StaffingDutyRef & { targetDutyId: string })[];
     successorHasMentor: (StaffingDutyRef & { groupName: string })[];
     notCarried: (StaffingDutyRef & {
       groupName: string | null;
-      reason: "GROUP_LEAVES" | "TEACHER_NOT_CARRIED" | "TEACHER_ALREADY_SET_UP" | "ALREADY_PRESENT";
+      reason:
+        | "GROUP_LEAVES"
+        | "TEACHER_NOT_CARRIED"
+        | "TEACHER_ALREADY_SET_UP"
+        | "ALREADY_PRESENT"
+        | "ENDS_BEFORE_YEAR";
     })[];
   };
   /** Per teacher, sorted by userId. */

@@ -73,6 +73,8 @@ export function EmploymentHistoryCard({
     empty: "—",
     removed: t("removed"),
     blocked: t("blocked"),
+    times: (count) => t("times", { count }),
+    yearBound: t("yearBound"),
     // Percentages are stored with up to three decimals (66.667).
     decimal: (value) => new Intl.NumberFormat(locale, { maximumFractionDigits: 3, useGrouping: false }).format(value),
     noteChanged: t("noteChanged"),

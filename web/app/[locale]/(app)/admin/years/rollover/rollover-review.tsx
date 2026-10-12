@@ -36,9 +36,11 @@ const HISTORY = new Set([
 /**
  * Rows whose parent's sentence already says what happens to them: a
  * published statement's rows (timplan P4) go wherever the statement goes, and
- * skipped.TimplanStatementPublication says where.
+ * skipped.TimplanStatementPublication says where; an uppdrag's times
+ * (TeacherDutySlot, 20261017090000) go with the uppdrag, and
+ * skipped.TeacherDuty names them.
  */
-const SAID_BY_PARENT = new Set(["TimplanStatement"]);
+const SAID_BY_PARENT = new Set(["TimplanStatement", "TeacherDutySlot"]);
 
 /**
  * Steg 4, Granska: everything the rollover will write and everything it

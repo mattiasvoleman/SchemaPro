@@ -561,7 +561,7 @@ export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<Teach
 }
 
 /**
- * One row of uppdrag.csv after mapping — ImportTeacherDutyRowDto. The four
+ * One row of uppdrag.csv after mapping — ImportTeacherDutyRowDto. The
  * optional fields are present only when the file had their column.
  */
 export type TeacherDutyRow = {
@@ -574,6 +574,9 @@ export type TeacherDutyRow = {
   subject?: string | null;
   /** A group of the dialog's läsår, by name. */
   groupName?: string | null;
+  /** Från and Till, yyyy-mm-dd; null is the läsår's own bound (20261017090000). */
+  validFrom?: string | null;
+  validTo?: string | null;
   note?: string | null;
 };
 
@@ -585,6 +588,9 @@ const DUTY_COLUMNS = {
   countsAsTeaching: ["raknassomundervisning", "raknas", "countsasteaching"],
   subject: ["amne", "amneskod", "subject"],
   groupName: ["grupp", "klass", "group", "groupname"],
+  // As the timplan file spells its period, "Fr.o.m." included.
+  validFrom: ["fran", "franochmed", "from", "fom", "giltigfran", "validfrom"],
+  validTo: ["till", "tillochmed", "tom", "giltigtill", "validto"],
   note: ["anteckning", "kommentar", "note"],
 } satisfies Record<string, string[]>;
 
@@ -598,6 +604,8 @@ const DUTY_LABELS: Record<DutyField, string> = {
   countsAsTeaching: "raknas_som_undervisning",
   subject: "amne",
   groupName: "grupp",
+  validFrom: "fran",
+  validTo: "till",
   note: "anteckning",
 };
 
@@ -704,6 +712,21 @@ export function mapTeacherDutyRows(parsed: ParsedCsv): MappedRows<TeacherDutyRow
     }
     if (columnOf.has("subject")) row.subject = cell("subject") || null;
     if (columnOf.has("groupName")) row.groupName = cell("groupName") || null;
+    // Från and Till as the timplan file reads its period; whether they lie
+    // inside the läsår is the gateway's, which knows its bounds.
+    const rawFrom = cell("validFrom");
+    if (rawFrom !== "" && !isCalendarDate(rawFrom)) {
+      return fail(`Rad ${rowNumber}: fran "${rawFrom}" är inte ett datum som finns. Skriv det som åååå-mm-dd.`);
+    }
+    const rawTo = cell("validTo");
+    if (rawTo !== "" && !isCalendarDate(rawTo)) {
+      return fail(`Rad ${rowNumber}: till "${rawTo}" är inte ett datum som finns. Skriv det som åååå-mm-dd.`);
+    }
+    if (rawFrom !== "" && rawTo !== "" && rawFrom > rawTo) {
+      return fail(`Rad ${rowNumber}: fran "${rawFrom}" ligger efter till "${rawTo}".`);
+    }
+    if (columnOf.has("validFrom")) row.validFrom = rawFrom || null;
+    if (columnOf.has("validTo")) row.validTo = rawTo || null;
     if (columnOf.has("note")) {
       const note = cell("note");
       if ([...note].length > 500) return fail(`Rad ${rowNumber}: anteckning är längre än 500 tecken.`);

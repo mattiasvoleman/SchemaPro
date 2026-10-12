@@ -367,6 +367,10 @@ describe("every refusal has a sentence in both locales", () => {
     "slotTimeRequired",
     "slotOffGrid",
     "slotReversed",
+    "slotsOverlap",
+    "slotsTooMany",
+    "dutyDatesReversed",
+    "dutyDateOutsideYear",
   ];
   type Messages = { staffing: Record<string, string> };
 

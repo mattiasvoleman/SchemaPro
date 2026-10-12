@@ -24,6 +24,9 @@ const labels: HistoryLabels = {
       kind: "Typ",
       blockedConstraintId: "Blockerad tid",
       subjectId: "Ämne",
+      validFrom: "Gäller från",
+      validTo: "Gäller till och med",
+      slotCount: "Fasta tider",
     })[field] ?? null,
   contract: (kind) => (kind === "FERIE" ? "Ferietjänst" : "Semestertjänst"),
   dutyKind: (kind) => (kind === "MENTORSKAP" ? "Mentorskap" : kind),
@@ -36,6 +39,8 @@ const labels: HistoryLabels = {
   empty: "—",
   removed: "borttaget",
   blocked: "blockerad tid",
+  times: (count) => (count === 1 ? "1 tid" : `${count} tider`),
+  yearBound: "läsårets egen gräns",
   decimal: (value) => new Intl.NumberFormat("sv", { maximumFractionDigits: 3, useGrouping: false }).format(value),
   noteChanged: "Anteckningen skrevs eller ändrades (texten sparas inte i historiken).",
 };
@@ -118,6 +123,25 @@ describe("historyLines", () => {
     });
     expect(historyLines(deleted, labels)).toEqual(["Benämning: Mentor 7B", "Ämne: borttaget"]);
     expect(dutyLabelOf(deleted)).toBe("Mentor 7B");
+  });
+
+  it("says an uppdrag's Från and Till as days, an empty one as the year's own bound, and its times as a count", () => {
+    const moved = entry({
+      entity: "DUTY",
+      action: "UPDATE",
+      changes: [
+        { field: "validFrom", before: null, after: "2027-01-07" },
+        { field: "validTo", before: "2026-12-18", after: null },
+      ],
+    });
+    expect(historyLines(moved, labels)).toEqual([
+      "Gäller från: läsårets egen gräns → 2027-01-07",
+      "Gäller till och med: 2026-12-18 → läsårets egen gräns",
+    ]);
+    const times = entry({ entity: "DUTY", action: "UPDATE", changes: [{ field: "slotCount", before: 1, after: 3 }] });
+    expect(historyLines(times, labels)).toEqual(["Fasta tider: 1 tid → 3 tider"]);
+    // A post has no dates: an empty value there is still just empty.
+    expect(formatHistoryValue("EMPLOYMENT", "validFrom", null, labels)).toBe("—");
   });
 
   it("never hides a field it does not know: its own name and raw value", () => {

@@ -41,7 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime } from "@/lib/utils";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { solverRunVariant } from "@/lib/status-variants";
-import { useStaffingPolicy } from "@/lib/staffing-queries";
+import { useStaffingPolicy, useTeacherDuties } from "@/lib/staffing-queries";
 import { usePlanningYear } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
 import {
@@ -120,6 +120,24 @@ export default function GeneratePage() {
     [requirements],
   );
   const refusesUnstaffed = staffingPolicy?.unstaffedGeneration === "REFUSE";
+
+  /**
+   * Uppdrag with Från or Till and fixed times (migration 20261017090000).
+   * The master is one week, so the engine holds such a time free in every
+   * week of the year, as it holds a dated requirement's lessons: the
+   * vikarietavla and the load count only the uppdrag's dates, the weekly
+   * timetable cannot. Said here, before the run, because a teacher missing
+   * from Tuesday 15:00 in September for an APT that starts in January is
+   * otherwise a mystery in the grid.
+   */
+  const { data: yearDuties } = useTeacherDuties(year?.id ?? null);
+  const datedTimes = useMemo(
+    () =>
+      (yearDuties ?? []).filter(
+        (duty) => (duty.validFrom || duty.validTo) && (duty.slots?.length ?? 0) > 0,
+      ).length,
+    [yearDuties],
+  );
   const blockedByStaffing = refusesUnstaffed && unstaffedCount > 0;
 
   /**
@@ -416,6 +434,12 @@ export default function GeneratePage() {
         </Notice>
       ) : groupsFailed ? (
         <LoadError variant="inline" title={t("groupsLoadFailed")} hint={t("groupsLoadFailedHint")} />
+      ) : null}
+
+      {datedTimes > 0 ? (
+        <Notice title={t("datedDutyTimesTitle", { count: datedTimes })}>
+          {t("datedDutyTimesBody")}
+        </Notice>
       ) : null}
 
       {/*

@@ -22,6 +22,10 @@ vi.mock("@/lib/staffing-queries", () => ({
     remove: { mutateAsync: remove, isPending: false },
   }),
 }));
+// The year's bounds, for the date fields and the form's own check.
+vi.mock("@/lib/queries", () => ({
+  useAcademicYears: () => ({ data: [{ id: "y1", startDate: "2026-08-17", endDate: "2027-06-11" }] }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
@@ -39,8 +43,9 @@ const mentor: TeacherDuty = {
   countsAsTeaching: false,
   subjectId: null,
   studentGroupId: "g-7b",
-  blockedConstraintId: null,
-  blockedSlot: null,
+  validFrom: null,
+  validTo: "2026-12-18",
+  slots: [],
   note: null,
 };
 const apt: TeacherDuty = {
@@ -51,9 +56,24 @@ const apt: TeacherDuty = {
   minutesPerWeek: 120,
   countsAsTeaching: true,
   studentGroupId: null,
-  blockedConstraintId: "c-apt",
-  blockedSlot: { dayOfWeek: 2, startTime: "15:00:00", endTime: "17:00:00" },
+  validTo: null,
+  slots: [{ dayOfWeek: 2, startTime: "15:00:00", endTime: "17:00:00" }],
   note: "Varannan tisdag",
+};
+const rastvakt: TeacherDuty = {
+  ...mentor,
+  id: "d-rast",
+  kind: "RASTVAKT",
+  label: "Rastvakt",
+  minutesPerWeek: 60,
+  studentGroupId: null,
+  validFrom: "2027-01-07",
+  validTo: null,
+  slots: [
+    { dayOfWeek: 1, startTime: "10:00:00", endTime: "10:20:00" },
+    { dayOfWeek: 3, startTime: "10:00:00", endTime: "10:20:00" },
+    { dayOfWeek: 5, startTime: "10:00:00", endTime: "10:20:00" },
+  ],
 };
 
 const renderCard = () =>
@@ -87,23 +107,38 @@ describe("DutiesCard", () => {
     expect(screen.getByText("noDuties")).toBeInTheDocument();
   });
 
-  it("lists an uppdrag without a slot and one with, naming the blocked time and what counts", () => {
+  it("lists an uppdrag without a time and one with, naming the blocked time, the dates and what counts", () => {
     duties.data = [mentor, apt];
     renderCard();
     const mentorRow = screen.getByText("Mentor 7B").closest("li")!;
     expect(within(mentorRow).getByText("dutyKindMENTORSKAP")).toBeInTheDocument();
     expect(within(mentorRow).getByText("dutyMinutes(90) · 7B")).toBeInTheDocument();
     expect(within(mentorRow).queryByText(/dutyBlocks/)).toBeNull();
+    // Until the jullov: the line says so; an undated uppdrag says nothing.
+    expect(within(mentorRow).getByText("dutyRunsTo(2026-12-18)")).toBeInTheDocument();
 
     const aptRow = screen.getByText("APT").closest("li")!;
     expect(within(aptRow).getByText("dutyMinutesCounted(120)")).toBeInTheDocument();
-    // The slot is read back from the linked constraint, seconds cut.
-    expect(within(aptRow).getByText("dutyBlocks(day2|15:00|17:00)")).toBeInTheDocument();
+    // The time is read back from the linked constraint, seconds cut.
+    expect(within(aptRow).getByText("dutyBlocksList(dutySlotTime(day2|15:00|17:00))")).toBeInTheDocument();
+    expect(within(aptRow).queryByText(/dutyRuns/)).toBeNull();
     expect(within(aptRow).getByText("Varannan tisdag")).toBeInTheDocument();
     expect(screen.getByText("dutiesTotal(210|2)")).toBeInTheDocument();
   });
 
-  it("adds an uppdrag with a blocked slot, sending the slot and never a constraint id", async () => {
+  it("lists a rastvakt on Monday, Wednesday and Friday as one uppdrag with its three times, Monday first", () => {
+    duties.data = [rastvakt];
+    renderCard();
+    const row = screen.getByText("Rastvakt").closest("li")!;
+    expect(
+      within(row).getByText(
+        "dutyBlocksList(dutySlotTime(day1|10:00|10:20), dutySlotTime(day3|10:00|10:20), dutySlotTime(day5|10:00|10:20))",
+      ),
+    ).toBeInTheDocument();
+    expect(within(row).getByText("dutyRunsFrom(2027-01-07)")).toBeInTheDocument();
+  });
+
+  it("adds an uppdrag with a blocked time, sending the times and never a constraint id", async () => {
     const user = userEvent.setup();
     renderCard();
     await user.click(screen.getByRole("button", { name: "addDuty" }));
@@ -125,10 +160,51 @@ describe("DutiesCard", () => {
       countsAsTeaching: false,
       subjectId: null,
       studentGroupId: null,
-      blockedSlot: { dayOfWeek: 2, startTime: "15:00", endTime: "17:00" },
+      validFrom: null,
+      validTo: null,
+      slots: [{ dayOfWeek: 2, startTime: "15:00", endTime: "17:00" }],
       note: null,
     });
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("blockedConstraintId");
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("blockedSlot");
+  });
+
+  it("adds a second time on the next weekday at the same clock, and a mentorskap until the jullov", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "addDuty" }));
+    type("dutyLabel", "Mentor 7B");
+    type("dutyMinutesLabel", "90");
+    fireEvent.change(screen.getByLabelText(/dutyValidTo/), { target: { value: "2026-12-18" } });
+    await user.click(screen.getByRole("switch", { name: "dutyBlockTime" }));
+    type("dutyStart", "08:00");
+    type("dutyEnd", "08:30");
+    await user.click(screen.getByRole("button", { name: "dutyAddSlot" }));
+    // The removal of a row is offered once there are two.
+    expect(screen.getByRole("button", { name: "dutyRemoveSlot(2)" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validFrom: null,
+        validTo: "2026-12-18",
+        slots: [
+          { dayOfWeek: 1, startTime: "08:00", endTime: "08:30" },
+          { dayOfWeek: 2, startTime: "08:00", endTime: "08:30" },
+        ],
+      }),
+    );
+  });
+
+  it("refuses a Till outside the läsår before anything is sent", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "addDuty" }));
+    type("dutyLabel", "Mentor 7B");
+    type("dutyMinutesLabel", "90");
+    fireEvent.change(screen.getByLabelText(/dutyValidTo/), { target: { value: "2027-06-30" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_dutyDateOutsideYear(2027-06-30|2026-08-17|2027-06-11)");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    expect((screen.getByLabelText(/dutyValidTo/) as HTMLInputElement).max).toBe("2027-06-11");
   });
 
   it("says nothing is wrong with a form nobody has typed in yet, and keeps Save off until it is whole", async () => {
@@ -160,11 +236,11 @@ describe("DutiesCard", () => {
     await user.click(screen.getByRole("switch", { name: "dutyBlockTime" }));
     type("dutyStart", "10:02");
     type("dutyEnd", "10:30");
-    expect(screen.getByRole("alert")).toHaveTextContent("problem_slotOffGrid(10:02|5)");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_slotOffGrid(1|10:02|5)");
     expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
   });
 
-  it("edits an uppdrag and, with the slot switched off, sends null so the constraint goes", async () => {
+  it("edits an uppdrag and, with the times switched off, sends none so the constraints go", async () => {
     const user = userEvent.setup();
     duties.data = [apt];
     renderCard();
@@ -173,7 +249,7 @@ describe("DutiesCard", () => {
     await user.click(screen.getByRole("switch", { name: "dutyBlockTime" }));
     await user.click(screen.getByRole("button", { name: "save" }));
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "d-apt", label: "APT", countsAsTeaching: true, blockedSlot: null }),
+      expect.objectContaining({ id: "d-apt", label: "APT", countsAsTeaching: true, slots: [] }),
     );
   });
 
