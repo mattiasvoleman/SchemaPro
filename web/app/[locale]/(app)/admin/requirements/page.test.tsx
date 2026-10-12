@@ -313,6 +313,11 @@ const freshState = () => ({
    */
   yearTimplans: loaded([] as YearTimplanFixture[]),
   planDetails: { data: [] as PlanFixture[] | undefined, isError: false },
+  /**
+   * The grundschema, for the ämnesfördelning's list of what it already breaks.
+   * Read only while the dialog holds a rule; the ämnesfördelning tests set it.
+   */
+  masterLessons: loaded([] as Record<string, unknown>[]),
 });
 
 interface YearTimplanFixture {
@@ -366,6 +371,7 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
       ? loaded(state.requirementsByYear[yearId ?? ""] ?? [])
       : state.requirements,
   useSchoolBreaks: () => state.breaks,
+  useMasterLessons: () => state.masterLessons,
   useCrudMutations: () => ({
     create: { mutateAsync: createMock, isPending: false },
     update: { mutateAsync: updateMock, isPending: false },
@@ -2211,5 +2217,125 @@ describe("Timplan cell dialog: the teacher pickers", () => {
     await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
     expect(screen.getByRole("combobox", { name: "teacher" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "coTeacher" })).toBeInTheDocument();
+  });
+});
+
+describe("ämnesfördelning on the timplanspost", () => {
+  const openCell = async (label: string) => {
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(label));
+    return user;
+  };
+  /** Bild, with the subject's rule: one a day, not on consecutive days. */
+  const ruledBild = () => {
+    state.subjects = loaded(
+      subjects.map((subject) =>
+        subject.id === "s-bi" ? { ...subject, maxLessonsPerDay: 1, minDaysBetween: 2 } : subject,
+      ),
+    );
+  };
+  const lesson = (id: string, dayOfWeek: number) => ({
+    id,
+    academicYearId: "y1",
+    subjectId: "s-bi",
+    studentGroupId: "g-7a",
+    dayOfWeek,
+    isParked: false,
+    recurrence: "ALL_WEEKS",
+    startDate: null,
+    endDate: null,
+  });
+  const own = () => screen.getByRole("switch", { name: "own" });
+
+  it("a post that follows its subject says which rule, and sends the flag alone", async () => {
+    ruledBild();
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabel(7A|Bild)");
+
+    expect(own()).not.toBeChecked();
+    expect(screen.getByText("ownOff(Bild|rulePerDay(1) · ruleNotConsecutive)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    const sent = createMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.ownDistribution).toBe(false);
+    // The numbers would be refused beside a false flag, so they are not sent.
+    expect(Object.hasOwn(sent, "maxLessonsPerDay")).toBe(false);
+    expect(Object.hasOwn(sent, "minDaysBetween")).toBe(false);
+  });
+
+  it("a rule of its own starts from the subject's, and is sent whole", async () => {
+    ruledBild();
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabel(7A|Bild)");
+
+    await user.click(own());
+    const perDay = screen.getByLabelText("perDay (optional)");
+    expect(perDay).toHaveValue("1");
+    expect(screen.getByRole("switch", { name: "notConsecutive" })).toBeChecked();
+    await user.clear(perDay);
+    await user.type(perDay, "2");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(createMock.mock.calls[0][0]).toMatchObject({
+      ownDistribution: true,
+      maxLessonsPerDay: 2,
+      minDaysBetween: 2,
+    });
+  });
+
+  it("an own rule of none reads back as none, and is sent as nulls", async () => {
+    ruledBild();
+    state.requirements = loaded([
+      {
+        ...requirements[0],
+        subjectId: "s-bi",
+        recurrence: "ALL_WEEKS",
+        ownDistribution: true,
+        maxLessonsPerDay: null,
+        minDaysBetween: null,
+      } as RequirementFixture,
+    ]);
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabelSet(7A|Bild|2|60)");
+
+    expect(own()).toBeChecked();
+    expect(screen.getByLabelText("perDay (optional)")).toHaveValue("");
+    expect(screen.getByRole("switch", { name: "notConsecutive" })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock.mock.calls[0][0]).toMatchObject({
+      ownDistribution: true,
+      maxLessonsPerDay: null,
+      minDaysBetween: null,
+    });
+  });
+
+  it("lists what the grundschema already breaks under the rule the dialog holds", async () => {
+    ruledBild();
+    state.masterLessons = loaded([lesson("l-1", 1), lesson("l-2", 1), lesson("l-3", 4)]);
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabel(7A|Bild)");
+
+    expect(screen.getByText("breachesTitle")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "breachPerDay(cellLabel(Bild|7A)|2|1)",
+    ]);
+
+    // Its own rule of two a day and no spacing: Monday's pair is allowed.
+    await user.click(own());
+    await user.clear(screen.getByLabelText("perDay (optional)"));
+    await user.type(screen.getByLabelText("perDay (optional)"), "2");
+    await user.click(screen.getByRole("switch", { name: "notConsecutive" }));
+    expect(screen.queryByText("breachesTitle")).not.toBeInTheDocument();
+  });
+
+  it("refuses a per-day count outside 1..20 and keeps Spara disabled", async () => {
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabel(7A|Bild)");
+    await user.click(own());
+    await user.type(screen.getByLabelText("perDay (optional)"), "0");
+
+    expect(screen.getByText("perDayInvalid")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
   });
 });

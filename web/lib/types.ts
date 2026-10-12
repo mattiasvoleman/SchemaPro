@@ -84,6 +84,15 @@ export interface Subject {
    * Optional because a row read before staffing Fas 3 has none; absent is 1.
    */
   loadFactor?: number;
+  /**
+   * Ämnesfördelning, the subject's default for every timplanspost without its
+   * own (TeachingRequirement.ownDistribution): at most this many lessons a
+   * weekday, 1..20, and lesson days at least this many weekdays apart, 2..6 —
+   * 2 is "inte dagar i följd". Null is no rule, which is every subject until a
+   * school writes one. Optional because only useSubjects names the columns.
+   */
+  maxLessonsPerDay?: number | null;
+  minDaysBetween?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +327,16 @@ export interface TeachingRequirement {
    */
   teacherLoadPercent: number;
   coTeacherLoadPercent: number;
+  /**
+   * Ämnesfördelning of this row's own. False — the default — follows the
+   * subject's rule and carries no numbers; true makes the two numbers this
+   * row's whole rule, null in either meaning none, so a row can have no limit
+   * although its subject has one. See lib/subject-distribution.ts. Optional
+   * because only useRequirements names the columns; absent is false.
+   */
+  ownDistribution?: boolean;
+  maxLessonsPerDay?: number | null;
+  minDaysBetween?: number | null;
   /**
    * Which weeks the subject is read over
  — said once on the requirement and

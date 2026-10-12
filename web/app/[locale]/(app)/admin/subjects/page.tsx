@@ -50,6 +50,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  DistributionFields,
+  SubjectDistributionBreaches,
+  perDayInRange,
+  perDayValue,
+} from "@/components/timplan/distribution-fields";
 
 interface SubjectForm {
   name: string;
@@ -61,6 +67,10 @@ interface SubjectForm {
   countsTowardTimplan: boolean;
   /** Tjänstefördelningens faktor as typed, "1" by default; see lib/load-factor.ts. */
   loadFactor: string;
+  /** Ämnesfördelning: "" for no limit, else the count as typed. */
+  maxLessonsPerDay: string;
+  /** Null for no rule; 2 is "inte dagar i följd". */
+  minDaysBetween: number | null;
 }
 
 const ANY_ROOM = "__any__";
@@ -83,6 +93,9 @@ const EMPTY_FORM: SubjectForm = {
   // otherwise — which is also the column's own default.
   countsTowardTimplan: true,
   loadFactor: "1",
+  // No ämnesfördelning: school rules are off until a school sets them.
+  maxLessonsPerDay: "",
+  minDaysBetween: null,
 };
 
 /** "Matematik (MA)" — the statute's name with the code the CSV column takes. */
@@ -93,6 +106,7 @@ export default function SubjectsPage() {
   const locale = useLocale();
   const tCommon = useTranslations("common");
   const tCsvImport = useTranslations("csvImport");
+  const tDistribution = useTranslations("distribution");
   const { data: subjects, isLoading, isError } = useSubjects();
   const mutations = useCrudMutations<{
     name: string;
@@ -102,6 +116,8 @@ export default function SubjectsPage() {
     nationalCode?: string | null;
     countsTowardTimplan?: boolean;
     loadFactor?: number;
+    maxLessonsPerDay?: number | null;
+    minDaysBetween?: number | null;
     // A factor moves every teacher's load under FACTOR, so the report is
     // refetched with the list.
   }>("/api/v1/subjects", [["subjects"], [...STAFFING_KEYS.load]]);
@@ -150,14 +166,21 @@ export default function SubjectsPage() {
       nationalCode: subject.nationalCode ?? OUTSIDE_TIMPLAN,
       countsTowardTimplan: subject.countsTowardTimplan,
       loadFactor: formatLoadFactor(subject.loadFactor, locale),
+      maxLessonsPerDay: subject.maxLessonsPerDay ? String(subject.maxLessonsPerDay) : "",
+      minDaysBetween: subject.minDaysBetween ?? null,
     });
     setDialogOpen(true);
   };
 
   const loadFactor = parseLoadFactor(form.loadFactor);
+  const perDayValid = perDayInRange(form.maxLessonsPerDay);
+  const rule = {
+    maxLessonsPerDay: perDayValid ? perDayValue(form.maxLessonsPerDay) : null,
+    minDaysBetween: form.minDaysBetween,
+  };
 
   const submit = async () => {
-    if (loadFactor === null) return;
+    if (loadFactor === null || !perDayValid) return;
     const body = {
       name: form.name.trim(),
       code: form.code.trim() || null,
@@ -169,6 +192,10 @@ export default function SubjectsPage() {
       nationalCode: form.nationalCode === OUTSIDE_TIMPLAN ? null : form.nationalCode,
       countsTowardTimplan: form.countsTowardTimplan,
       loadFactor,
+      // Both sent on every save, null included, for the national code's
+      // reason: an absent key keeps the old rule, and "no rule" is a decision.
+      maxLessonsPerDay: rule.maxLessonsPerDay,
+      minDaysBetween: rule.minDaysBetween,
     };
     try {
       if (editing) {
@@ -486,6 +513,25 @@ export default function SubjectsPage() {
                 onChange={(e) => setForm({ ...form, loadFactor: e.target.value })}
               />
             </FormField>
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium">{tDistribution("title")}</legend>
+              <p className="text-xs text-muted-foreground">{tDistribution("intro")}</p>
+              <DistributionFields
+                id="subject-distribution"
+                perDay={form.maxLessonsPerDay}
+                apart={form.minDaysBetween}
+                onPerDay={(value) => setForm({ ...form, maxLessonsPerDay: value })}
+                onApart={(value) => setForm({ ...form, minDaysBetween: value })}
+              />
+              {/*
+                What the grundschema already breaks under the rule as typed,
+                before it is saved. Mounted only for a saved subject with a
+                rule, so the page reads no timetable until somebody asks.
+              */}
+              {editing && (rule.maxLessonsPerDay !== null || rule.minDaysBetween !== null) ? (
+                <SubjectDistributionBreaches subjectId={editing.id} subjectName={form.name.trim() || editing.name} rule={rule} />
+              ) : null}
+            </fieldset>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -496,6 +542,7 @@ export default function SubjectsPage() {
               disabled={
                 form.name.trim().length === 0 ||
                 loadFactor === null ||
+                !perDayValid ||
                 mutations.create.isPending ||
                 mutations.update.isPending
               }

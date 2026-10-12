@@ -201,6 +201,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import {
+  DistributionFields,
+  RequirementDistributionBreaches,
+  perDayInRange,
+  perDayValue,
+  useRuleSummary,
+} from "@/components/timplan/distribution-fields";
+import { effectiveDistribution, hasDistributionRule } from "@/lib/subject-distribution";
 import {
   Dialog,
   DialogContent,
@@ -308,6 +317,15 @@ interface CellForm {
   /** "" for the academic year's own boundary — the shape RecurrenceFields speaks. */
   startDate: string;
   endDate: string;
+  /**
+   * Ämnesfördelning: off follows the subject's rule; on makes the two fields
+   * below this post's whole rule, an empty one meaning none.
+   */
+  ownDistribution: boolean;
+  /** "" for no limit, else the count as typed. */
+  maxLessonsPerDay: string;
+  /** Null for no rule; 2 is "inte dagar i följd". */
+  minDaysBetween: number | null;
 }
 
 export default function RequirementsPage() {
@@ -326,6 +344,8 @@ export default function RequirementsPage() {
   // A STAFF_* refusal is the engine catalogue's sentence (lib/staffing-warnings.ts),
   // so the dialog and the staffing workspace word the same 409 the same way.
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
+  const tDistribution = useTranslations("distribution");
+  const ruleSummary = useRuleSummary();
   const {
     data: years,
     isLoading: yearsLoading,
@@ -493,6 +513,9 @@ export default function RequirementsPage() {
     minutesAfter?: number;
     teacherLoadPercent?: number;
     coTeacherLoadPercent?: number;
+    ownDistribution?: boolean;
+    maxLessonsPerDay?: number | null;
+    minDaysBetween?: number | null;
     recurrence?: LessonRecurrence;
     startDate?: string | null;
     endDate?: string | null;
@@ -563,6 +586,9 @@ export default function RequirementsPage() {
     recurrence: "ALL_WEEKS",
     startDate: "",
     endDate: "",
+    ownDistribution: false,
+    maxLessonsPerDay: "",
+    minDaysBetween: null,
   });
 
   const teachers = useMemo(
@@ -784,6 +810,9 @@ export default function RequirementsPage() {
       recurrence: existing?.recurrence ?? "ALL_WEEKS",
       startDate: existing?.startDate ?? "",
       endDate: existing?.endDate ?? "",
+      ownDistribution: existing?.ownDistribution ?? false,
+      maxLessonsPerDay: existing?.maxLessonsPerDay ? String(existing.maxLessonsPerDay) : "",
+      minDaysBetween: existing?.minDaysBetween ?? null,
     });
   };
 
@@ -842,6 +871,16 @@ export default function RequirementsPage() {
     // write that adds minutes).
     const teacherLoadPercent = Number(form.teacherLoadPercent);
     const coTeacherLoadPercent = Number(form.coTeacherLoadPercent);
+    // Ämnesfördelning: the flag always, the numbers only with it. A post that
+    // follows its subject carries none of its own, and the gateway clears them
+    // when the flag goes off; sending them then would be refused.
+    const distribution = form.ownDistribution
+      ? {
+          ownDistribution: true,
+          maxLessonsPerDay: perDayValue(form.maxLessonsPerDay),
+          minDaysBetween: form.minDaysBetween,
+        }
+      : { ownDistribution: false };
     const label = `${groupOf(cell.groupId)?.name ?? ""} · ${subjectOf(cell.subjectId)?.name ?? ""}`;
     setRefusal(null);
     try {
@@ -858,6 +897,7 @@ export default function RequirementsPage() {
           coTeacherId,
           teacherLoadPercent,
           coTeacherLoadPercent,
+          ...distribution,
           recurrence: form.recurrence,
           startDate,
           endDate,
@@ -876,6 +916,7 @@ export default function RequirementsPage() {
           minutesAfter,
           teacherLoadPercent,
           coTeacherLoadPercent,
+          ...distribution,
           recurrence: form.recurrence,
           startDate,
           endDate,
@@ -934,6 +975,20 @@ export default function RequirementsPage() {
 
   const subjectOf = (id: string) => subjects?.find((subject) => subject.id === id);
   const groupOf = (id: string) => yearGroups.find((group) => group.id === id);
+
+  // The rule the open post is held to as the dialog holds it — its own, or its
+  // subject's — or null while the per-day field holds nothing the API takes.
+  const cellRule =
+    cell && (!form.ownDistribution || perDayInRange(form.maxLessonsPerDay))
+      ? effectiveDistribution(
+          {
+            ownDistribution: form.ownDistribution,
+            maxLessonsPerDay: form.ownDistribution ? perDayValue(form.maxLessonsPerDay) : null,
+            minDaysBetween: form.minDaysBetween,
+          },
+          subjectOf(cell.subjectId),
+        )
+      : null;
 
   /**
    * The timplan on screen, as the file the importer reads back.
@@ -1714,6 +1769,69 @@ export default function RequirementsPage() {
                 onChange={(next) => setForm({ ...form, ...next })}
               />
             </Suspense>
+            {cell ? (
+              <fieldset className="space-y-3 rounded-md border px-3 py-2">
+                <legend className="px-1 text-sm font-medium">{tDistribution("title")}</legend>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="req-own-distribution">{tDistribution("own")}</Label>
+                    <p id="req-own-distribution-hint" className="text-xs text-muted-foreground">
+                      {form.ownDistribution
+                        ? tDistribution("ownOn")
+                        : tDistribution("ownOff", {
+                            subject: subjectOf(cell.subjectId)?.name ?? "",
+                            rule: ruleSummary(effectiveDistribution({}, subjectOf(cell.subjectId))),
+                          })}
+                    </p>
+                  </div>
+                  <Switch
+                    id="req-own-distribution"
+                    aria-describedby="req-own-distribution-hint"
+                    checked={form.ownDistribution}
+                    onCheckedChange={(checked) => {
+                      // Switched on, the post starts from its subject's rule, so
+                      // an exception is one change away rather than a retyping.
+                      const subjectRule = effectiveDistribution({}, subjectOf(cell.subjectId));
+                      setForm({
+                        ...form,
+                        ownDistribution: checked,
+                        maxLessonsPerDay:
+                          checked && subjectRule.maxLessonsPerDay !== null
+                            ? String(subjectRule.maxLessonsPerDay)
+                            : "",
+                        minDaysBetween: checked ? subjectRule.minDaysBetween : null,
+                      });
+                    }}
+                  />
+                </div>
+                {form.ownDistribution ? (
+                  <DistributionFields
+                    id="req-distribution"
+                    perDay={form.maxLessonsPerDay}
+                    apart={form.minDaysBetween}
+                    onPerDay={(value) => setForm({ ...form, maxLessonsPerDay: value })}
+                    onApart={(value) => setForm({ ...form, minDaysBetween: value })}
+                  />
+                ) : null}
+                {/*
+                  What the grundschema already breaks under the rule as the
+                  dialog holds it. Mounted only while there is a rule, so a
+                  post without one reads no timetable.
+                */}
+                {activeYearId && cellRule && hasDistributionRule(cellRule) ? (
+                  <RequirementDistributionBreaches
+                    yearId={activeYearId}
+                    groupId={cell.groupId}
+                    subjectId={cell.subjectId}
+                    label={t("cellLabel", {
+                      subject: subjectOf(cell.subjectId)?.name ?? "",
+                      group: groupOf(cell.groupId)?.name ?? "",
+                    })}
+                    rule={cellRule}
+                  />
+                ) : null}
+              </fieldset>
+            ) : null}
             {/*
               Avancerat: what each teacher is CHARGED of this row in
               tjänstefördelningen — Skola24's "Justera längd för lärare (%)".
@@ -1814,6 +1932,7 @@ export default function RequirementsPage() {
                   !bufferInRange(form.minutesAfter) ||
                   !loadPercentInRange(form.teacherLoadPercent) ||
                   !loadPercentInRange(form.coTeacherLoadPercent) ||
+                  (form.ownDistribution && !perDayInRange(form.maxLessonsPerDay)) ||
                   mutations.create.isPending ||
 
                   mutations.update.isPending

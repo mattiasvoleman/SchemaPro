@@ -994,6 +994,46 @@ describe("a re-teachered lesson under the staffing policy", () => {
     expect(toasts.success).not.toHaveBeenCalled();
   });
 
+  it("says an ämnesfördelning breach the same way: saved, with the rule's sentence", async () => {
+    // Two idrott on one Monday by hand is allowed and warned about, never a 409.
+    const TOO_MANY = {
+      code: "DISTRIBUTION_TOO_MANY_ON_DAY",
+      params: { requirement: "Slöjd för 5.1", day: 1, count: 2, maxPerDay: 1 },
+    };
+    noMutation.mutateAsync.mockResolvedValue({ id: "l-slojd", propagatedLessons: 0, warnings: [TOO_MANY] });
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalledTimes(1));
+    const [title, options] = toasts.warning.mock.calls[0]!;
+    expect(title).toBe("timetable.editSaved(0)");
+    expect(options.description).toBe("engineMessages.DISTRIBUTION_TOO_MANY_ON_DAY(Slöjd för 5.1|1|2|1)");
+  });
+
+  it("warns about a lesson placed by hand as it is created, too", async () => {
+    // Duplicated, so the new lesson's subject and class are filled in.
+    const TOO_CLOSE = {
+      code: "DISTRIBUTION_DAYS_TOO_CLOSE",
+      params: { requirement: "Slöjd för 5.1", firstDay: 1, secondDay: 2, minDaysBetween: 2 },
+    };
+    noMutation.mutateAsync.mockResolvedValue({ id: "l-copy", warnings: [TOO_CLOSE] });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    await user.click(await screen.findByRole("button", { name: "timetable.duplicateLesson" }));
+    await user.click(await screen.findByRole("button", { name: "timetable.addConfirm" }));
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalledTimes(1));
+    const [title, options] = toasts.warning.mock.calls[0]!;
+    expect(title).toBe("timetable.created");
+    expect(options.description).toBe("engineMessages.DISTRIBUTION_DAYS_TOO_CLOSE(Slöjd för 5.1|1|2|2)");
+    expect(toasts.success).not.toHaveBeenCalled();
+  });
+
   it("shows a REFUSE as the policy's sentence, not as a schedule clash", async () => {
     noMutation.mutateAsync.mockRejectedValue(
       new ApiError(409, "Läraren saknar behörighet i Slöjd för åk 5.", NOT_QUALIFIED.code, NOT_QUALIFIED.params),

@@ -328,10 +328,11 @@ export default function TimetablePage() {
       : saved;
   };
   /**
-   * The saved toast, or — when a new teacher drew the staffing policy's WARN —
-   * the same line as a warning with the policy's sentence under it, rendered
-   * from the engine catalogue so an English reader gets English. Held longer
-   * than a plain save: it names a behörighet the admin may want to undo.
+   * The saved toast, or — when a new teacher drew the staffing policy's WARN,
+   * or the move broke the post's ämnesfördelning — the same line as a warning
+   * with the sentence under it, rendered from the engine catalogue so an
+   * English reader gets English. Held longer than a plain save: it names
+   * something the admin may want to undo.
    */
   const announceSaved = (result: {
     propagatedLessons: number;
@@ -1807,7 +1808,7 @@ export default function TimetablePage() {
   const doCreate = async () => {
     if (!creating || !shownYear) return;
     try {
-      await undoableCreate({
+      const created = await undoableCreate({
         academicYearId: shownYear.id,
         subjectId: creating.subjectId,
         studentGroupId: creating.studentGroupId,
@@ -1823,7 +1824,9 @@ export default function TimetablePage() {
         extraGroupIds: creating.extraGroupIds,
         studentIds: creating.studentIds,
       });
-      toast.success(t("created"));
+      // A lesson placed by hand may break its subject's ämnesfördelning; it is
+      // saved all the same, and the toast says which rule (savedToast).
+      savedToast(tEngine, t("created"), created.warnings);
       setCreating(null);
     } catch (error) {
       showError(error);
