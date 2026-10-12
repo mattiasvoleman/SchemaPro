@@ -13142,7 +13142,7 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: the admin deleted % of the school''s row', n; END IF;
   INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
-  VALUES (school, 'google', ARRAY['rls70-a.example', 'rls-delad.example'], 'rls70-a.example', now());
+  VALUES (school, 'google', ARRAY['rls70-a.example'], 'rls70-a.example', now());
 
   -- School B's row: not written, not changed, not removed, through either
   -- role. The UPDATEs and the DELETE carry no WHERE: a WHERE on a column
@@ -13181,7 +13181,7 @@ BEGIN
       GET DIAGNOSTICS n = ROW_COUNT;
       IF n <> 1 THEN RAISE EXCEPTION 'sign-in methods: through % school A''s admin removed % row(s), not the school''s own one', via, n; END IF;
       INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
-      VALUES (school, 'google', ARRAY['rls70-a.example', 'rls-delad.example'], 'rls70-a.example', now());
+      VALUES (school, 'google', ARRAY['rls70-a.example'], 'rls70-a.example', now());
     EXCEPTION WHEN insufficient_privilege THEN
       IF via = 'app_authenticated' THEN RAISE EXCEPTION 'sign-in methods: the API''s role could not remove the school''s own row'; END IF;
     END;
@@ -13381,8 +13381,9 @@ ROLLBACK;
 --
 --   * the hook runs with its caller's rights (Supabase's advice): no
 --     SECURITY DEFINER, and an empty search_path;
---   * sign_in_rules and sign_in_provider_for_domain are SECURITY DEFINER
---     with an empty search_path;
+--   * sign_in_rules, sign_in_provider_for_domain and the domain trigger's
+--     sign_in_domain_keeps_its_provider are SECURITY DEFINER with an empty
+--     search_path, and nobody executes the trigger function;
 --   * sign_in_verdict is IMMUTABLE, invoker-rights, and reads nothing;
 --   * EXECUTE: the hook and sign_in_rules for supabase_auth_admin only (when
 --     the role exists, as on Supabase); the lookup for app_authenticated only;
@@ -13405,8 +13406,9 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('app.custom_access_token_hook(jsonb)', false, 's', ARRAY['supabase_auth_admin']),
       ('app.sign_in_rules(uuid)', true, 's', ARRAY['supabase_auth_admin']),
-      ('app.sign_in_verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb)', false, 'i', ARRAY['supabase_auth_admin', 'app_authenticated']),
-      ('app.sign_in_provider_for_domain(text)', true, 's', ARRAY['app_authenticated'])
+      ('app.sign_in_verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb,interval)', false, 'i', ARRAY['supabase_auth_admin', 'app_authenticated']),
+      ('app.sign_in_provider_for_domain(text)', true, 's', ARRAY['app_authenticated']),
+      ('app.sign_in_domain_keeps_its_provider()', true, 'v', '{}'::text[])
     ) AS t(fn, definer, volatility, callers)
   LOOP
     IF (SELECT prosecdef FROM pg_proc WHERE oid = r.fn::regprocedure) IS DISTINCT FROM r.definer THEN
@@ -13466,14 +13468,18 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 73: kroken släpper igenom skolans skolkonton och personalens
--- lösenord bara när skolan vill (app.sign_in_verdict, 20261020090000).
+-- lösenord bara när skolan vill, och ett skolkonto högst ett dygn i taget
+-- (app.sign_in_verdict, 20261020090000).
 --
 -- The verdict is the whole decision of the access-token hook; the hook only
 -- gathers its inputs (the person's role and school row by Auth id, the
 -- session's methods from the claims, and the person's identities from
--- auth.identities, which CI's database does not have). Each case below is a
--- session and a person, with the answer the hook must give: NULL issues the
--- token, a code refuses it with 403. The identities are shaped as Supabase
+-- auth.identities, which CI's database does not have, and how long ago the
+-- session signed in at the provider). Each case below is a session and a
+-- person, with the answer the hook must give: NULL issues the token, a code
+-- refuses it with 403. A school-account session older than 24 hours, or with
+-- no sign-in time, goes back to the provider; a password session's age is
+-- not the hook's business. The identities are shaped as Supabase
 -- Auth stores them (identity_data.iss is the ID token's issuer, the token's
 -- other claims sit in identity_data.custom_claims).
 -- ---------------------------------------------------------------------------
@@ -13521,51 +13527,59 @@ DECLARE
 BEGIN
   FOR r IN SELECT * FROM (VALUES
       -- Passwords and links, by role and by the school's choice.
-      ('a teacher''s password, no school row',             'TEACHER',      NULL, NULL::text, NULL::text, NULL::boolean, ARRAY['password'], ''::text, NULL::text),
-      ('a teacher''s password, school accounts optional',  'TEACHER',      'azure', 'T', NULL, false, ARRAY['password'], '', NULL),
-      ('a teacher''s password, SSO-only',                  'TEACHER',      'azure', 'T', NULL, true, ARRAY['password'], '', 'sso_required'),
-      ('an admin''s password, SSO-only',                   'SCHOOL_ADMIN', 'google', NULL, 'skola.rls73.example', true, ARRAY['password'], '', 'sso_required'),
-      ('a pupil''s password, SSO-only',                    'STUDENT',      'azure', 'T', NULL, true, ARRAY['password'], '', NULL),
-      ('a guardian''s password, SSO-only',                 'GUARDIAN',     'azure', 'T', NULL, true, ARRAY['password'], '', NULL),
-      ('a teacher''s recovery link, SSO-only',             'TEACHER',      'azure', 'T', NULL, true, ARRAY['recovery'], '', 'sso_required'),
-      ('a teacher''s invitation link, SSO-only',           'TEACHER',      'azure', 'T', NULL, true, ARRAY['invite'], '', 'sso_required'),
-      ('a teacher''s magic link, SSO-only',                'TEACHER',      'azure', 'T', NULL, true, ARRAY['magiclink', 'otp'], '', 'sso_required'),
-      ('a teacher''s password session refreshed, SSO-only', 'TEACHER',     'azure', 'T', NULL, true, ARRAY['password', 'token_refresh'], '', 'sso_required'),
-      ('a teacher''s password session refreshed, optional', 'TEACHER',     'azure', 'T', NULL, false, ARRAY['password', 'token_refresh'], '', NULL),
-      ('a session of no method, SSO-only',                 'TEACHER',      'azure', 'T', NULL, true, '{}'::text[], '', 'sso_required'),
-      ('a session of no method, no school row',            'TEACHER',      NULL, NULL, NULL, NULL, '{}'::text[], '', NULL),
-      ('password and a school account mixed, SSO-only',    'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'password'], 'E', 'sso_required'),
+      ('a teacher''s password, no school row',             'TEACHER',      NULL, NULL::text, NULL::text, NULL::boolean, ARRAY['password'], ''::text, NULL::text, interval '1 hour'),
+      ('a teacher''s password, school accounts optional',  'TEACHER',      'azure', 'T', NULL, false, ARRAY['password'], '', NULL, interval '1 hour'),
+      ('a teacher''s password, SSO-only',                  'TEACHER',      'azure', 'T', NULL, true, ARRAY['password'], '', 'sso_required', interval '1 hour'),
+      ('an admin''s password, SSO-only',                   'SCHOOL_ADMIN', 'google', NULL, 'skola.rls73.example', true, ARRAY['password'], '', 'sso_required', interval '1 hour'),
+      ('a pupil''s password, SSO-only',                    'STUDENT',      'azure', 'T', NULL, true, ARRAY['password'], '', NULL, interval '1 hour'),
+      ('a guardian''s password, SSO-only',                 'GUARDIAN',     'azure', 'T', NULL, true, ARRAY['password'], '', NULL, interval '1 hour'),
+      ('a teacher''s recovery link, SSO-only',             'TEACHER',      'azure', 'T', NULL, true, ARRAY['recovery'], '', 'sso_required', interval '1 hour'),
+      ('a teacher''s invitation link, SSO-only',           'TEACHER',      'azure', 'T', NULL, true, ARRAY['invite'], '', 'sso_required', interval '1 hour'),
+      ('a teacher''s magic link, SSO-only',                'TEACHER',      'azure', 'T', NULL, true, ARRAY['magiclink', 'otp'], '', 'sso_required', interval '1 hour'),
+      ('a teacher''s password session refreshed, SSO-only', 'TEACHER',     'azure', 'T', NULL, true, ARRAY['password', 'token_refresh'], '', 'sso_required', interval '1 hour'),
+      ('a teacher''s password session refreshed, optional', 'TEACHER',     'azure', 'T', NULL, false, ARRAY['password', 'token_refresh'], '', NULL, interval '1 hour'),
+      ('a session of no method, SSO-only',                 'TEACHER',      'azure', 'T', NULL, true, '{}'::text[], '', 'sso_required', interval '1 hour'),
+      ('a session of no method, no school row',            'TEACHER',      NULL, NULL, NULL, NULL, '{}'::text[], '', NULL, interval '1 hour'),
+      ('password and a school account mixed, SSO-only',    'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'password'], 'E', 'sso_required', interval '1 hour'),
       -- School accounts.
-      ('a school account, no school row',                  'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['oauth'], 'E', 'sso_not_enabled'),
-      ('a pupil''s school account, no school row',         'STUDENT',      NULL, NULL, NULL, NULL, ARRAY['oauth'], 'E', 'sso_not_enabled'),
-      ('Entra, the school''s tenant',                      'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'E', NULL),
-      ('Entra, the school''s tenant, SSO-only',            'SCHOOL_ADMIN', 'azure', 'T', NULL, true, ARRAY['oauth'], 'E', NULL),
-      ('Entra beside the address identity',                'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth'], 'EA', NULL),
-      ('Entra with a second factor',                       'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'totp'], 'E', NULL),
-      ('Entra refreshed',                                  'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'token_refresh'], 'E', NULL),
-      ('Entra, a pupil, SSO-only',                         'STUDENT',      'azure', 'T', NULL, true, ARRAY['oauth'], 'E', NULL),
-      ('Entra, the tenant in upper case',                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'U', NULL),
-      ('Entra, another tenant',                            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'O', 'sso_identity_not_allowed'),
-      ('Entra, the right tenant and another one',          'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'EO', 'sso_identity_not_allowed'),
-      ('Entra, the claimed tid disagrees with iss',        'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'D', 'sso_identity_not_allowed'),
-      ('Entra, the common issuer',                         'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'C', 'sso_identity_not_allowed'),
-      ('Entra, a CIAM issuer',                             'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'M', 'sso_identity_not_allowed'),
-      ('Entra refreshed, another tenant',                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth', 'token_refresh'], 'O', 'sso_identity_not_allowed'),
-      ('Google at an Entra school',                        'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'G', 'sso_identity_not_allowed'),
-      ('Entra and Google at an Entra school',              'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'EG', 'sso_identity_not_allowed'),
-      ('Google, the school''s hd',                         'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'G', NULL),
-      ('Google, the hd in upper case',                     'TEACHER',      'google', NULL, 'skola.rls73.example', true, ARRAY['oauth'], 'g', NULL),
-      ('Google, another hd',                               'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'H', 'sso_identity_not_allowed'),
-      ('Google, no hd',                                    'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'N', 'sso_identity_not_allowed'),
-      ('Google, read from the userinfo endpoint',          'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'I', 'sso_identity_not_allowed'),
-      ('Entra at a Google school',                         'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'E', 'sso_identity_not_allowed'),
-      ('another provider',                                 'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'E2', 'sso_identity_not_allowed'),
-      ('a SAML identity',                                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'ES', 'sso_identity_not_allowed'),
-      ('the school''s Entra issuer filed as Google',       'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'F', 'sso_identity_not_allowed'),
-      ('a school account and no identity',                 'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], '', 'sso_identity_not_allowed'),
-      ('a school account and only the address',            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'A', 'sso_identity_not_allowed'),
-      ('a school account and no identity list',            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], NULL, 'sso_identity_not_allowed')
-    ) AS t(label, role, provider, tenant, hd, sso_only, methods, ids, expect)
+      ('a school account, no school row',                  'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['oauth'], 'E', 'sso_not_enabled', interval '1 hour'),
+      ('a pupil''s school account, no school row',         'STUDENT',      NULL, NULL, NULL, NULL, ARRAY['oauth'], 'E', 'sso_not_enabled', interval '1 hour'),
+      ('Entra, the school''s tenant',                      'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'E', NULL, interval '1 hour'),
+      ('Entra, the school''s tenant, SSO-only',            'SCHOOL_ADMIN', 'azure', 'T', NULL, true, ARRAY['oauth'], 'E', NULL, interval '1 hour'),
+      ('Entra beside the address identity',                'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth'], 'EA', NULL, interval '1 hour'),
+      ('Entra with a second factor',                       'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'totp'], 'E', NULL, interval '1 hour'),
+      ('Entra refreshed',                                  'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'token_refresh'], 'E', NULL, interval '1 hour'),
+      ('Entra, a pupil, SSO-only',                         'STUDENT',      'azure', 'T', NULL, true, ARRAY['oauth'], 'E', NULL, interval '1 hour'),
+      ('Entra, the tenant in upper case',                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'U', NULL, interval '1 hour'),
+      ('Entra, another tenant',                            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'O', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra, the right tenant and another one',          'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'EO', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra, the claimed tid disagrees with iss',        'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'D', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra, the common issuer',                         'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'C', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra, a CIAM issuer',                             'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'M', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra refreshed, another tenant',                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth', 'token_refresh'], 'O', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Google at an Entra school',                        'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'G', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra and Google at an Entra school',              'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'EG', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Google, the school''s hd',                         'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'G', NULL, interval '1 hour'),
+      ('Google, the hd in upper case',                     'TEACHER',      'google', NULL, 'skola.rls73.example', true, ARRAY['oauth'], 'g', NULL, interval '1 hour'),
+      ('Google, another hd',                               'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'H', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Google, no hd',                                    'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'N', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Google, read from the userinfo endpoint',          'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'I', 'sso_identity_not_allowed', interval '1 hour'),
+      ('Entra at a Google school',                         'TEACHER',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth'], 'E', 'sso_identity_not_allowed', interval '1 hour'),
+      ('another provider',                                 'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'E2', 'sso_identity_not_allowed', interval '1 hour'),
+      ('a SAML identity',                                  'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'ES', 'sso_identity_not_allowed', interval '1 hour'),
+      ('the school''s Entra issuer filed as Google',       'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'F', 'sso_identity_not_allowed', interval '1 hour'),
+      ('a school account and no identity',                 'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], '', 'sso_identity_not_allowed', interval '1 hour'),
+      ('a school account and only the address',            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], 'A', 'sso_identity_not_allowed', interval '1 hour'),
+      ('a school account and no identity list',            'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth'], NULL, 'sso_identity_not_allowed', interval '1 hour'),
+      -- How long ago the session signed in at the provider.
+      ('Entra refreshed 23 hours after signing in',         'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'token_refresh'], 'E', NULL, interval '23 hours'),
+      ('Entra refreshed 25 hours after signing in',         'TEACHER',      'azure', 'T', NULL, true, ARRAY['oauth', 'token_refresh'], 'E', 'sso_reauth_required', interval '25 hours'),
+      ('Entra with no sign-in time',                        'SCHOOL_ADMIN', 'azure', 'T', NULL, false, ARRAY['oauth'], 'E', 'sso_reauth_required', NULL::interval),
+      ('Google, a pupil, 25 hours after signing in',        'STUDENT',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth', 'token_refresh'], 'G', 'sso_reauth_required', interval '25 hours'),
+      ('another tenant, long ago: the tenant is the answer', 'TEACHER',     'azure', 'T', NULL, false, ARRAY['oauth'], 'O', 'sso_identity_not_allowed', interval '30 days'),
+      ('a password with no sign-in time, optional',         'TEACHER',      'azure', 'T', NULL, false, ARRAY['password', 'token_refresh'], '', NULL, NULL),
+      ('a password a month old, no school row',             'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['password', 'token_refresh'], '', NULL, interval '30 days')
+    ) AS t(label, role, provider, tenant, hd, sso_only, methods, ids, expect, age)
   LOOP
     got := app.sign_in_verdict(
       r.role::"UserRole",
@@ -13581,13 +13595,14 @@ BEGIN
                                          WHEN 'N' THEN google_consumer WHEN 'I' THEN google_userinfo WHEN '2' THEN github
                                          WHEN 'S' THEN saml WHEN 'A' THEN address WHEN 'F' THEN misfiled END ORDER BY o), '[]'::jsonb)
           FROM unnest(string_to_array(r.ids, NULL)) WITH ORDINALITY AS x(c, o)
-         WHERE r.ids <> '') END);
+         WHERE r.ids <> '') END,
+      r.age);
     IF got IS DISTINCT FROM r.expect THEN
       RAISE EXCEPTION 'sign-in verdict: % gave %, expected %', r.label, coalesce(got, 'a token'), coalesce(r.expect, 'a token');
     END IF;
     cases := cases + 1;
   END LOOP;
-  IF cases < 40 THEN RAISE EXCEPTION 'sign-in verdict: only % case(s) ran', cases; END IF;
+  IF cases < 50 THEN RAISE EXCEPTION 'sign-in verdict: only % case(s) ran', cases; END IF;
 END $$;
 
 
@@ -13597,10 +13612,10 @@ END $$;
 --
 -- /login asks the gateway which provider a typed address's domain signs in
 -- with; the gateway asks this function, with no principal. It answers the
--- provider every school naming the domain agrees on, else NULL, and nothing
--- more: no school, no tenant, no SSO-only. A domain two schools name with
--- different providers answers NULL, so neither school's people are sent to
--- the other's provider.
+-- provider and nothing more: no school, no tenant, no SSO-only. Two schools
+-- may name one domain only with one provider (section 75), so a domain's
+-- answer is the same whichever school names it, and a second school naming
+-- it with that provider changes nothing.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -13618,16 +13633,16 @@ BEGIN
   END IF;
 
   SET LOCAL ROLE app_authenticated;
-  -- School A, Google, on a domain of its own and on the one school B names too.
+  -- School A, Google, on a domain of its own.
   INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
-  VALUES (school, 'google', ARRAY['rls74-a.example', 'rls-delad.example'], 'rls74-a.example', now());
+  VALUES (school, 'google', ARRAY['rls74-a.example'], 'rls74-a.example', now());
   PERFORM set_config('request.jwt.claims', '{}', true);
 
   FOR r IN SELECT * FROM (VALUES
       ('school B''s own domain',                  'rls-fixture-b.example', 'azure'),
       ('the same, in capitals and padded',        '  RLS-Fixture-B.Example ', 'azure'),
       ('school A''s own domain',                  'rls74-a.example', 'google'),
-      ('a domain the schools disagree on',        'rls-delad.example', NULL::text),
+      ('the domain only school B names',          'rls-delad.example', 'azure'),
       ('a domain nobody names',                   'okand.example', NULL),
       ('an empty string',                         '', NULL),
       ('NULL',                                    NULL, NULL),
@@ -13642,17 +13657,111 @@ BEGIN
   END LOOP;
 END $$;
 
--- When school A moves to Entra too, the shared domain answers Entra.
+-- When school A moves to Entra and names the shared domain too, both
+-- schools' domains answer Entra.
 SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
 DO $$
 DECLARE got text;
 BEGIN
   UPDATE "SchoolSignInMethods"
-     SET provider = 'azure', "googleHostedDomain" = NULL, "entraTenantId" = gen_random_uuid(), "updatedAt" = now()
+     SET provider = 'azure', "googleHostedDomain" = NULL, "entraTenantId" = gen_random_uuid(),
+         domains = ARRAY['rls74-a.example', 'rls-delad.example'], "updatedAt" = now()
    WHERE "schoolId" = app.current_school_id();
-  got := app.sign_in_provider_for_domain('rls-delad.example')::text;
-  IF got IS DISTINCT FROM 'azure' THEN
-    RAISE EXCEPTION 'sign-in lookup: two Entra schools on one domain gave %, expected azure', coalesce(got, 'nothing');
+  FOREACH got IN ARRAY ARRAY[app.sign_in_provider_for_domain('rls-delad.example')::text, app.sign_in_provider_for_domain('rls74-a.example')::text] LOOP
+    IF got IS DISTINCT FROM 'azure' THEN
+      RAISE EXCEPTION 'sign-in lookup: two Entra schools on one domain gave %, expected azure', coalesce(got, 'nothing');
+    END IF;
+  END LOOP;
+END $$;
+
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 75: en skola kan inte ändra vad /login svarar för en annan skolas
+-- domän (the trigger app.sign_in_domain_keeps_its_provider, 20261020090000).
+--
+-- /login sends a typed address to the provider its domain signs in with,
+-- and at a school that requires the school account that is the only way in
+-- for staff. If school A could name school B's domain with the other
+-- provider, the lookup would have no single answer, B's staff would find no
+-- school-account sign-in, and the hook would refuse their passwords. So a
+-- domain another school names may be named again only with the same
+-- provider, on insert and on every update that changes the provider or the
+-- domains, whatever else the row says. The refusal is SQLSTATE SI409 and
+-- names only the saving school's own domains. Sharing one provider stays
+-- allowed: a kommun's schools often share a domain, and the hook pins each
+-- school's people to its own tenant or Workspace anyway. The fixtures plant
+-- school B on Entra with rls-fixture-b.example and rls-delad.example.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  detail text;
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'domain rule: expected school A''s SCHOOL_ADMIN'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = '"SchoolSignInMethods"'::regclass
+                  AND t.tgname = 'SchoolSignInMethods_domain_keeps_its_provider' AND t.tgenabled = 'O') THEN
+    RAISE EXCEPTION 'domain rule: the trigger is missing or disabled';
+  END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  -- 75a: Google on school B's Entra domain is refused, naming only that domain.
+  BEGIN
+    INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+    VALUES (school, 'google', ARRAY['rls75-a.example', 'rls-delad.example'], 'rls75-a.example', now());
+    RAISE EXCEPTION 'domain rule: school A named school B''s Entra domain with Google';
+  EXCEPTION WHEN SQLSTATE 'SI409' THEN
+    GET STACKED DIAGNOSTICS detail = PG_EXCEPTION_DETAIL;
+    IF detail IS DISTINCT FROM 'domains=rls-delad.example' THEN
+      RAISE EXCEPTION 'domain rule: the refusal said %, expected only the saving school''s own taken domain', detail;
+    END IF;
+  END;
+
+  -- 75b: Entra on the same domain is allowed: one provider, one answer.
+  BEGIN
+    INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "updatedAt")
+    VALUES (school, 'azure', ARRAY['rls75-a.example', 'rls-delad.example'], gen_random_uuid(), now());
+  EXCEPTION WHEN SQLSTATE 'SI409' THEN
+    RAISE EXCEPTION 'domain rule: school A could not share school B''s domain on the same provider';
+  END;
+
+  -- 75c: switching to Google while the shared domain is named is refused.
+  BEGIN
+    UPDATE "SchoolSignInMethods"
+       SET provider = 'google', "entraTenantId" = NULL, "googleHostedDomain" = 'rls75-a.example', "updatedAt" = now();
+    RAISE EXCEPTION 'domain rule: school A moved a domain school B names to Google';
+  EXCEPTION WHEN SQLSTATE 'SI409' THEN NULL;
+  END;
+
+  -- 75d: without the shared domain, the switch is the school's own business,
+  -- and its own earlier row does not count against it.
+  BEGIN
+    UPDATE "SchoolSignInMethods"
+       SET provider = 'google', "entraTenantId" = NULL, "googleHostedDomain" = 'rls75-a.example',
+           domains = ARRAY['rls75-a.example'], "updatedAt" = now();
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION WHEN SQLSTATE 'SI409' THEN
+    RAISE EXCEPTION 'domain rule: school A''s own earlier row was counted against its own switch';
+  END;
+  IF n <> 1 THEN RAISE EXCEPTION 'domain rule: school A could not move its own domain to Google'; END IF;
+
+  -- 75e: adding school B's other domain to the Google row is refused too.
+  BEGIN
+    UPDATE "SchoolSignInMethods" SET domains = ARRAY['rls75-a.example', 'rls-fixture-b.example'], "updatedAt" = now();
+    RAISE EXCEPTION 'domain rule: school A added school B''s Entra domain to its Google row';
+  EXCEPTION WHEN SQLSTATE 'SI409' THEN NULL;
+  END;
+
+  -- And school B's answer never moved.
+  IF app.sign_in_provider_for_domain('rls-delad.example') IS DISTINCT FROM 'azure'
+     OR app.sign_in_provider_for_domain('rls-fixture-b.example') IS DISTINCT FROM 'azure' THEN
+    RAISE EXCEPTION 'domain rule: school B''s domains no longer answer Entra';
   END IF;
 END $$;
 

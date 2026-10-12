@@ -30,9 +30,20 @@
 -- school accounts off.
 --
 -- A kommun's schools can share a domain, so `domains` is not unique across
--- schools. app.sign_in_provider_for_domain() answers a provider only when
--- every school naming the domain agrees on one; otherwise /login says it
--- found nothing and the person signs in with a password.
+-- schools. What /login does with a domain is to ask which provider it signs
+-- in with (app.sign_in_provider_for_domain), and that answer must not be
+-- something one school can change for another. So a school may name a domain
+-- another school already names only with the same provider: the trigger
+-- app.sign_in_domain_keeps_its_provider() refuses anything else with SQLSTATE
+-- SI409 (the gateway's 409 SIGN_IN_DOMAIN_TAKEN), under one advisory lock so
+-- two concurrent saves cannot both pass. Two schools on one provider can
+-- share a domain safely: the lookup answers only the provider, and the hook
+-- pins each school's people to its own tenant or Workspace. Without the
+-- trigger, a school naming another school's domain with the other provider
+-- would make the lookup answer nothing for that domain, and staff of an
+-- SSO-only school, whose passwords the hook refuses, could not sign in at
+-- all. The lookup still answers NULL for a domain whose schools disagree, as
+-- a second wall; the trigger keeps that from happening.
 --
 -- ## The access-token hook
 --
@@ -61,7 +72,17 @@
 --                               passwords, recovery and invitation links, and
 --                               the refresh of a session started before the
 --                               school turned it on, so a password session
---                               ends within the token's lifetime.
+--                               ends within the token's lifetime;
+--   * sso_reauth_required       a school-account session whose sign-in at the
+--                               provider is more than 24 hours old (the amr
+--                               entry's timestamp), or has no timestamp.
+--                               Auth never asks the provider again at a
+--                               refresh, so without this limit someone the
+--                               kommun disables in Entra ID or Google
+--                               Workspace would keep their session for as
+--                               long as the app kept refreshing it. With it,
+--                               they are out within a day: the next sign-in
+--                               goes through the provider, which refuses them.
 --
 -- Everything else gets its claims back unchanged, including a person with no
 -- Users row (the web's /no-profile handles them).
@@ -105,16 +126,21 @@
 --     lookup, the provider and nothing else. The gateway calls it without a
 --     principal (PrismaService.withPublicViewer). EXECUTE for
 --     app_authenticated only.
+--   * app.sign_in_domain_keeps_its_provider()  SECURITY DEFINER trigger
+--     function: it reads the other schools' rows, which the saving admin's
+--     RLS hides, and answers only which of the admin's own domains are taken.
+--     Nobody executes it but the trigger.
 --
--- All four live in "app", which PostgREST does not serve. supabase_auth_admin
+-- All five live in "app", which PostgREST does not serve. supabase_auth_admin
 -- gets USAGE on "app" for the first two; the helpers there that PUBLIC may
 -- execute only read transaction-local settings.
 --
 -- Additive: a new type, a new table and four new functions. Nothing that
 -- exists changes, and nothing calls the hook until the dashboard does.
 --
--- RLS sections 70 to 74 assert the table's arms and CHECKs, the functions'
--- privileges and settings, the verdict's cases and the lookup.
+-- RLS sections 70 to 75 assert the table's arms and CHECKs, the functions'
+-- privileges and settings, the verdict's cases, the lookup and the domain
+-- rule.
 
 CREATE TYPE "SignInProvider" AS ENUM ('azure', 'google');
 
@@ -157,6 +183,43 @@ CREATE TABLE "SchoolSignInMethods" (
 
 CREATE UNIQUE INDEX "SchoolSignInMethods_schoolId_key" ON "SchoolSignInMethods"("schoolId");
 
+-- ---------------------------------------------------------------------------
+-- A domain keeps its provider: no school changes /login's answer for another.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION app.sign_in_domain_keeps_its_provider()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  taken text[];
+BEGIN
+  -- One save at a time across schools. Each statement below then reads what
+  -- the save before it committed (READ COMMITTED takes a snapshot per
+  -- statement), so two schools cannot claim one domain with two providers
+  -- at once.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('SchoolSignInMethods.domains'));
+  SELECT array_agg(DISTINCT d ORDER BY d) INTO taken
+    FROM public."SchoolSignInMethods" m
+   CROSS JOIN LATERAL unnest(m."domains") d
+   WHERE m."schoolId" <> NEW."schoolId"
+     AND m."provider" <> NEW."provider"
+     AND d = ANY (NEW."domains");
+  IF taken IS NOT NULL THEN
+    -- Names the saving school's own domains, never the other school.
+    RAISE EXCEPTION 'SIGN_IN_DOMAIN_TAKEN'
+      USING ERRCODE = 'SI409', DETAIL = 'domains=' || array_to_string(taken, ',');
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+COMMENT ON FUNCTION app.sign_in_domain_keeps_its_provider() IS
+  'Logga in med skolkonto (20261020090000): refuses (SI409) a row naming a domain another school names with another provider.';
+
+CREATE TRIGGER "SchoolSignInMethods_domain_keeps_its_provider"
+    BEFORE INSERT OR UPDATE OF "provider", "domains", "schoolId" ON "SchoolSignInMethods"
+    FOR EACH ROW EXECUTE FUNCTION app.sign_in_domain_keeps_its_provider();
+
 ALTER TABLE "SchoolSignInMethods"
     ADD CONSTRAINT "SchoolSignInMethods_schoolId_fkey"
     FOREIGN KEY ("schoolId") REFERENCES "Schools"("id")
@@ -193,7 +256,8 @@ CREATE FUNCTION app.sign_in_verdict(
     p_google_hosted_domain text,
     p_sso_only_for_staff   boolean,
     p_methods              text[],
-    p_identities           jsonb
+    p_identities           jsonb,
+    p_school_account_age   interval
 ) RETURNS text
 LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
 DECLARE
@@ -257,12 +321,18 @@ BEGIN
   IF seen = 0 THEN
     RETURN 'sso_identity_not_allowed';
   END IF;
+
+  -- The provider was last asked when the session signed in with it. Past a
+  -- day, or with no time at all, it is asked again.
+  IF p_school_account_age IS NULL OR p_school_account_age > interval '24 hours' THEN
+    RETURN 'sso_reauth_required';
+  END IF;
   RETURN NULL;
 END
 $$;
 
-COMMENT ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb) IS
-  'Logga in med skolkonto (20261020090000): NULL when a token may be issued, else sso_not_enabled, sso_identity_not_allowed or sso_required.';
+COMMENT ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) IS
+  'Logga in med skolkonto (20261020090000): NULL when a token may be issued, else sso_not_enabled, sso_identity_not_allowed, sso_required or sso_reauth_required.';
 
 -- ---------------------------------------------------------------------------
 -- The person's role and their school's row, for the hook.
@@ -298,6 +368,7 @@ DECLARE
   methods text[];
   rules record;
   identities jsonb := '[]'::jsonb;
+  school_account_age interval;
   verdict text;
 BEGIN
   -- The session's methods, from the claims Auth is about to sign (objects
@@ -314,16 +385,25 @@ BEGIN
     RETURN jsonb_build_object('claims', event->'claims');
   END IF;
 
-  -- Only a school-account session needs the identities.
+  -- Only a school-account session needs the identities, and how long ago it
+  -- signed in at the provider: the newest oauth entry's timestamp (epoch
+  -- seconds), NULL when there is none.
   IF 'oauth' = ANY (methods) THEN
     SELECT coalesce(jsonb_agg(jsonb_build_object('provider', i.provider, 'identity_data', i.identity_data)), '[]'::jsonb)
       INTO identities
       FROM auth.identities i
      WHERE i.user_id = auth_id;
+    SELECT now() - to_timestamp(max((a->>'timestamp')::double precision))
+      INTO school_account_age
+      FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(event->'claims'->'amr') = 'array' THEN event->'claims'->'amr' ELSE '[]'::jsonb END) a
+     WHERE jsonb_typeof(a) = 'object' AND a->>'method' = 'oauth'
+       AND jsonb_typeof(a->'timestamp') = 'number';
   END IF;
 
   verdict := app.sign_in_verdict(rules."role", rules."provider", rules."entraTenantId",
-                                 rules."googleHostedDomain", rules."ssoOnlyForStaff", methods, identities);
+                                 rules."googleHostedDomain", rules."ssoOnlyForStaff", methods, identities,
+                                 school_account_age);
   IF verdict IS NULL THEN
     RETURN jsonb_build_object('claims', event->'claims');
   END IF;
@@ -332,7 +412,7 @@ END
 $$;
 
 COMMENT ON FUNCTION app.custom_access_token_hook(jsonb) IS
-  'Logga in med skolkonto (20261020090000): Supabase Auth''s custom access token hook. Returns the claims unchanged, or a 403 whose message is sso_not_enabled, sso_identity_not_allowed or sso_required.';
+  'Logga in med skolkonto (20261020090000): Supabase Auth''s custom access token hook. Returns the claims unchanged, or a 403 whose message is sso_not_enabled, sso_identity_not_allowed, sso_required or sso_reauth_required.';
 
 -- ---------------------------------------------------------------------------
 -- /login's lookup: the provider for an e-mail domain, and nothing else.
@@ -375,8 +455,9 @@ BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'app.custom_access_token_hook(jsonb)',
     'app.sign_in_rules(uuid)',
-    'app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb)',
-    'app.sign_in_provider_for_domain(text)'
+    'app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval)',
+    'app.sign_in_provider_for_domain(text)',
+    'app.sign_in_domain_keeps_its_provider()'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated', 'supabase_auth_admin'] LOOP
@@ -391,13 +472,13 @@ BEGIN
     GRANT USAGE ON SCHEMA app TO "supabase_auth_admin";
     GRANT EXECUTE ON FUNCTION app.custom_access_token_hook(jsonb) TO "supabase_auth_admin";
     GRANT EXECUTE ON FUNCTION app.sign_in_rules(uuid) TO "supabase_auth_admin";
-    GRANT EXECUTE ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb) TO "supabase_auth_admin";
+    GRANT EXECUTE ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) TO "supabase_auth_admin";
   END IF;
 
   -- The gateway: the lookup; and the verdict, for the RLS suite.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
     GRANT EXECUTE ON FUNCTION app.sign_in_provider_for_domain(text) TO "app_authenticated";
-    GRANT EXECUTE ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb) TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) TO "app_authenticated";
   END IF;
 END
 $$;
