@@ -34,6 +34,7 @@ import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
+import { PeopleEffects } from "./people-effects";
 import { periodLabel } from "./period";
 import { retentionErrorText, useRecordDecision, useRetentionPreview } from "./use-retention";
 
@@ -136,6 +137,8 @@ export function DecisionDialog({
               </div>
             )}
           </div>
+
+          {people && months !== null ? <PeopleEffects className="space-y-0.5 text-sm" /> : null}
 
           {willTake ? (
             <Notice tone="warning" title={t("dialogWarningTitle")}>

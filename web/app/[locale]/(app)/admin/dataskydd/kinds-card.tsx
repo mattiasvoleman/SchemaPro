@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
 import { DecisionDialog } from "./decision-dialog";
+import { PeopleEffects } from "./people-effects";
 import { decisionLabel } from "./period";
 
 export function KindsCard({ kinds, timeZone }: { kinds: RetentionKind[]; timeZone: string }) {
@@ -57,6 +58,7 @@ function KindRow({ kind, timeZone, onEdit }: { kind: RetentionKind; timeZone: st
           </Badge>
         </p>
         <p className="max-w-prose text-sm text-muted-foreground">{t(`kind.${kind.dataType}.body`)}</p>
+        {people ? <PeopleEffects className="max-w-prose space-y-0.5 text-sm text-muted-foreground" /> : null}
         {decided ? (
           <p className="text-sm text-muted-foreground">
             {decided.decidedBy

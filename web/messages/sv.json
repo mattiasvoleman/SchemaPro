@@ -4452,8 +4452,17 @@
       },
       "DEPARTED_PEOPLE": {
         "name": "Slutade personer",
-        "body": "Personer som avaktiverades före gränsdagen pseudonymiseras. Namn, e-post, telefon, inloggning och SS12000-id ersätts. Raden finns kvar, så närvaro, beslut och SCB-underlag hänger ihop. En lärare med tjänst ett läsår vars 15 oktober ligger mindre än sju veckor bakåt väntar, så att SCB-underlaget kan lämnas."
+        "body": "Personer som avaktiverades före gränsdagen pseudonymiseras. Raden finns kvar, så närvaro, beslut och SCB-underlag hänger ihop. En lärare med tjänst under ett läsår väntar till och med den 30 november det läsåret, så att SCB-underlaget kan lämnas."
       }
+    },
+    "peopleEffectsTitle": "När en person pseudonymiseras:",
+    "peopleEffects": {
+      "names": "Namn, e-post, telefon och SS12000-id ersätts.",
+      "login": "Inloggningen tas bort.",
+      "notices": "Alla personens egna notiser tas bort, oavsett beslutet för Notiser. Notiser till andra som nämner personen följer det beslutet.",
+      "links": "Kopplingar mellan personen och vårdnadshavare eller elever tas bort.",
+      "devices": "Personens enheter för push och val av e-post och push tas bort.",
+      "posts": "Signatur och anteckning tas bort från personens tjänster. Tjänsterna finns kvar, och tidigare versioner behåller signaturen tills Ändringsloggar gallrar läsåret."
     },
     "undecided": "Ej beslutat",
     "keep": "Bevaras",
@@ -4465,7 +4474,7 @@
     "reference": "Referens: {reference}",
     "waitsUntil": "Börjar gälla natten mot {date}. Fram till dess gäller det tidigare beslutet.",
     "tonightRows": "{count, plural, =0 {Inget är daterat före {date}.} one {# post är daterad före {date} och gallras vid nästa körning.} other {# poster är daterade före {date} och gallras vid nästa körning.}}",
-    "tonightPeople": "{count, plural, =0 {Ingen som har slutat avaktiverades före {date}.} one {# person avaktiverades före {date} och pseudonymiseras vid nästa körning.} other {# personer avaktiverades före {date} och pseudonymiseras vid nästa körning.}}",
+    "tonightPeople": "{count, plural, =0 {Ingen som har slutat avaktiverades före {date}.} one {# person avaktiverades före {date} och pseudonymiseras vid nästa körning, som listan beskriver.} other {# personer avaktiverades före {date} och pseudonymiseras vid nästa körning, som listan beskriver.}}",
     "previewHeld": "{count, plural, one {# lärare väntar på SCB-underlaget.} other {# lärare väntar på SCB-underlaget.}}",
     "purgedBefore": "Gallrat före {date}.",
     "change": "Ändra",
@@ -4482,7 +4491,7 @@
     "previewLoading": "Räknar vad perioden skulle gallra…",
     "previewFailed": "Det gick inte att räkna vad perioden skulle gallra. Du kan ändå spara beslutet.",
     "previewRows": "{count, plural, =0 {Inget är daterat före {date} i dag.} one {I dag är # post daterad före {date}. Den gallras när perioden börjar gälla.} other {I dag är # poster daterade före {date}. De gallras när perioden börjar gälla.}}",
-    "previewPeople": "{count, plural, =0 {Ingen som har slutat avaktiverades före {date}.} one {# person avaktiverades före {date} och pseudonymiseras när perioden börjar gälla.} other {# personer avaktiverades före {date} och pseudonymiseras när perioden börjar gälla.}}",
+    "previewPeople": "{count, plural, =0 {Ingen som har slutat avaktiverades före {date}.} one {# person avaktiverades före {date} och pseudonymiseras när perioden börjar gälla, som listan beskriver.} other {# personer avaktiverades före {date} och pseudonymiseras när perioden börjar gälla, som listan beskriver.}}",
     "dialogWarningTitle": "Det som gallras kan inte återställas",
     "dialogWarning": "En period som gallrar mer än den som gäller nu börjar gälla först efter ett dygn. Efter det försvinner det som räknas här, och det går inte att få tillbaka i SchemaPro.",
     "save": "Spara beslut",

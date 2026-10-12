@@ -20,6 +20,9 @@
  *   gd  the runner's own glue: app.gallring_schools names the school, the
  *       nightly claim is taken once and not again once finished, and a
  *       settled pass is a JobRuns row of counts;
+ *   ge  with Notiser bevaras, a departed person's own notices go with the
+ *       name, recent and old alike, while a guardian's notice that names
+ *       them stays, as does every other kept notice;
  *   gf  a person reactivated mid-run keeps their login (20261021120000):
  *       the claim waits for a reactivation in flight and then answers
  *       nothing, a reactivation committed while the night deletes an
@@ -312,6 +315,42 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       assert.fail('the two settled passes never reached JobRuns');
+    });
+
+    await check('(ge) Notiser bevaras: a departed person\'s own notices go with the name, a guardian\'s that names them stays', async () => {
+      await service.decide({ dataType: 'NOTIFICATIONS', decision: 'KEEP' }, asAdmin);
+      const quiet = await person('STUDENT', 'quiet');
+      await owner.query(
+        `INSERT INTO "Notifications" ("schoolId", "userId", type, "createdAt")
+         VALUES ($1, $2, 'SCHEDULE_CHANGED', now() - interval '1 hour'), ($1, $2, 'LESSON_CANCELLED', now() - interval '3 years')`,
+        [s, quiet.id],
+      );
+      const kept = await one<{ id: string }>(
+        `INSERT INTO "Notifications" ("schoolId", "userId", type, meta, "createdAt")
+         VALUES ($1, $2, 'ABSENCE_UNREPORTED', jsonb_build_object('studentName', 'quiet Probe'), now() - interval '1 hour') RETURNING id`,
+        [s, guardian.id],
+      );
+      await depart([quiet.id]);
+      const others = await count(`SELECT count(*) AS n FROM "Notifications" WHERE "schoolId" = $1 AND "userId" <> $2`, [s, quiet.id]);
+
+      const night = await job.runSchool(s);
+      assert.equal(night.people, 1, `people ${night.people}`);
+      assert.equal(
+        (await one<{ f: string }>(`SELECT "firstName" AS f FROM "Users" WHERE id = $1`, [quiet.id])).f,
+        'Pseudonym',
+      );
+      assert.equal(await count(`SELECT count(*) AS n FROM "Notifications" WHERE "userId" = $1`, [quiet.id]), 0, 'a pseudonym kept a notice of their own');
+      assert.equal(await count(`SELECT count(*) AS n FROM "Notifications" WHERE id = $1`, [kept.id]), 1, 'the guardian\'s notice went with the pupil\'s name');
+      assert.equal(
+        await count(`SELECT count(*) AS n FROM "Notifications" WHERE "schoolId" = $1 AND "userId" <> $2`, [s, quiet.id]),
+        others,
+        'a notice of somebody else went under Notiser bevaras',
+      );
+      const run = await one<{ counts: Record<string, number> }>(
+        `SELECT counts FROM "GallringRuns" WHERE "schoolId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
+        [s],
+      );
+      assert.equal(run.counts['NOTIFICATIONS'], undefined, `the run counted notices under KEEP: ${JSON.stringify(run.counts)}`);
     });
 
     await check('(gf) a person reactivated or spared mid-run keeps their login: the claim waits for the lock, then answers nothing', async () => {
