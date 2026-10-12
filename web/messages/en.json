@@ -2154,7 +2154,7 @@
       "SIGN_IN_DOMAIN_TAKEN": "Another school signs in with another provider on {domains}. Remove the domain here, or contact whoever runs SchemaPro if the domain is yours.",
       "SIGN_IN_NOT_AVAILABLE": "Signing in with school account is not turned on for SchemaPro yet.",
       "SIGN_IN_DOMAIN_UNUSED": "No invited teacher or administrator at the school has an address on {domains}. List only domains the school's staff sign in with.",
-      "SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT": "Staff with addresses on {domains} could not sign in with a school account. If the domain is the organisation's, add it here. If it is a personal address such as gmail.com, the person needs an address in the organisation before you require school accounts for staff."
+      "SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT": "Staff with addresses on {domains} could not sign in with a school account. If the domain is the organisation's, add it here. If it is a personal address such as gmail.com, the person needs an address in the organisation, and their login has to move there with it: a new address in SchemaPro, from SS12000 too, does not move the login. Ask whoever runs SchemaPro to move the login before you require school accounts for staff."
     },
     "tabsLabel": "Direction of the integration",
     "loadFailed": "The source system could not be loaded",
@@ -2176,7 +2176,7 @@
       "domains": "Email domains",
       "domainsHint": "Anyone who types an address on one of these domains may choose Sign in with school account. One domain per line, for example skola.se: domains the school's teachers and administrators have addresses on.",
       "domainsInvalid": "Write each domain without @ and without https, for example skola.se. At most 20.",
-      "domainsPersonal": "Personal mail domains cannot sign in with a school account: {domains}. Staff with such an address need one in the organisation.",
+      "domainsPersonal": "Personal mail domains cannot sign in with a school account: {domains}. Staff with such an address need one in the organisation, and their login has to move there with it: a new address in SchemaPro, from SS12000 too, does not move the login. Ask whoever runs SchemaPro to move the login.",
       "tenant": "Tenant ID",
       "tenantHint": "Found under Overview in the Microsoft Entra admin center. Only accounts from that organisation get in.",
       "tenantInvalid": "A tenant ID is a GUID: 32 characters in five groups separated by hyphens.",

@@ -431,21 +431,27 @@ every save that turns it on or keeps it on:
 
 "Who can sign in" is an active teacher or admin whom SchemaPro has invited
 (`"invitedAt"` set), and the admin saving. A catalogue entry nobody invited
-has no login to lose and is not counted. The check runs when the row is
-saved, not when people change: staff invited, reactivated or given a new
-address later are a case for 11.7.
+has no login to lose and is not counted. The check reads the address
+SchemaPro holds for each person (`"Users".email`), not their login's own, and
+runs when the row is saved. So it misses staff invited or reactivated after
+the save, and anyone whose address changed in SchemaPro without their login
+following, which is what an SS12000 e-mail change does, before the save as
+much as after it. Those are cases for 11.7.
 
-A school may add a domain only if at least one of those staff has an
-address on it (`SIGN_IN_DOMAIN_UNUSED`; a domain already on the row is not
-asked again, so the switch can always be turned off). It may never list or
-pin a consumer mail domain such as gmail.com or hotmail.se: the API and a
-CHECK refuse them, since a personal account belongs to no school's
-organisation and the hook could never let it in. And it may name a domain
-another school already names only with the same provider (a kommun's schools
-often share one); anything else is refused (`SIGN_IN_DOMAIN_TAKEN`, and the
-gateway logs the collision for the operator), because it would leave the
-other school's domain with no answer at `/login`, and an SSO-only school's
-staff with no way in.
+A school may add a domain only if at least one of those staff has an address
+on it (`SIGN_IN_DOMAIN_UNUSED`). A domain already on the row with the same
+provider is not asked again, so while `SCHOOL_ACCOUNTS` is on the switch can
+always be turned off; a change of provider asks about every domain again, so
+that a domain nobody uses any more is not kept for the new provider against
+the schools whose staff use it with the old one. It may never list or pin a
+consumer mail domain such as gmail.com or hotmail.se: the API and a CHECK
+refuse them, since a personal account belongs to no school's organisation
+and the hook could never let it in. And it may name a domain another school
+already names only with the same provider (a kommun's schools often share
+one); anything else is refused (`SIGN_IN_DOMAIN_TAKEN`, and the gateway logs
+the collision for the operator), because it would leave the other school's
+domain with no answer at `/login`, and an SSO-only school's staff with no
+way in.
 
 **Decision: one multi-tenant Entra app for every kommun.** SchemaPro has one
 Entra app registration that accepts any organisation's accounts; each
@@ -513,7 +519,11 @@ person sees changes before the operator turns them on.
    time).
 
 Turning `SCHOOL_ACCOUNTS` off again later only stops changes; the rows that
-exist keep working, and the lookup keeps answering them.
+exist keep working, and the lookup keeps answering them. It also stops a
+school turning *Kräv skolkonto för personal* off: the switch is disabled on
+the tab. A school that wants passwords back then removes its row (*Stäng av
+skolkonton*, which puts everyone at the school back on passwords), or an
+operator sets `"ssoOnlyForStaff"` to false as in 11.7 ("locked out").
 
 ### 11.2 The access-token hook (Supabase dashboard)
 
@@ -593,7 +603,13 @@ For each kommun (or school) that wants it:
 2. Its staff's addresses in Entra (the `mail` attribute) must be the
    addresses the school invited them with. A person whose Entra address
    differs is told at `/login` that their school account's address was never
-   invited; the school invites them again with the right address.
+   invited. Either the Entra administrator corrects `mail` to the invited
+   address, or, for a person who should keep their Entra address, an
+   operator moves their address in SchemaPro and their login as 11.7
+   describes: a school admin cannot edit an invited person's address, and
+   inviting again only reaches the old one. Removing the person and adding
+   them again is only for someone with no schedule history, since it drops
+   them from their lessons.
 3. The school's admin saves the tenant id (Entra admin center → Overview) on
    /admin/integrations → Inloggning.
 
@@ -652,25 +668,31 @@ fails at Auth, before any provider.
   above; until it is, the hook refuses them.
 - **A member of staff on a domain the school has not listed, while *Kräv
   skolkonto för personal* is on.** The gateway checks the domains when the
-  row is saved, not when people change, so this follows a change made
-  after that save:
-  - someone invited later, for example with a kommun address;
-  - someone the SS12000 sync reactivates;
+  row is saved, against the address SchemaPro holds for each person, not
+  their login's own. So it misses:
+  - someone invited after the save, for example with a kommun address;
+  - someone the SS12000 sync reactivates after the save;
   - an SS12000 e-mail change the admin applied to an invited person
-    (`PERSON_EMAIL_CHANGE_INVITED`). SchemaPro then shows the new address,
-    but the login keeps the one the person was invited with, and that is the
-    address they type at `/login` and the one the school account links by.
+    (`PERSON_EMAIL_CHANGE_INVITED`), before the save or after it. SchemaPro
+    then shows the new address, but the login keeps the one the person was
+    invited with, and that is the address they type at `/login` and the one
+    the school account links by. The check counts the new address, so the
+    switch goes on, and the person is refused from their next refresh.
 
   That person finds no school-account sign-in, or one that does not link,
   and has their password refused. If the domain is the organisation's, the
   school's admin adds it on Inloggning (the save is checked again). A
   personal address such as gmail.com can never be listed: the person needs
-  an address in the organisation. After an e-mail change, the person signs
-  in with the old address for as long as the old domain is listed, until an
-  operator changes the login's own address to the new one (Auth's admin
-  API, `updateUserById`); inviting them again instead would leave the old
-  login behind. If no admin can sign in, an operator turns the switch off
-  as in "locked out" below.
+  an address in the organisation, and their login has to move to it. A
+  school admin can do neither for an invited person, so an operator does:
+  as the owner in the SQL editor, set the person's `email` in `"Users"` to
+  the new address unless SS12000 already has, then move the login itself to
+  it (Auth's admin API, `updateUserById`, with the new e-mail confirmed).
+  Inviting them again instead would leave the old login behind. After an
+  SS12000 e-mail change the person can sign in with the old address only
+  while the old domain is listed, which a personal domain never is. If no
+  admin can sign in, an operator turns the switch off as in "locked out"
+  below.
 - **A school is told "En annan skola loggar in med en annan inloggning på
   …" (`SIGN_IN_DOMAIN_TAKEN`).** Another school names that domain with the
   other provider. If the domain is really the asking school's, the other
