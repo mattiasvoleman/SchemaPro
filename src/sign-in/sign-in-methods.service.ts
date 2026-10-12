@@ -1,10 +1,13 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma, type SchoolSignInMethod, type SignInProvider } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { SchoolAccountSession } from '../auth/school-account';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import type { SignInConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
+import { sqlStateOf } from '../integration/ss12000-sync/errors';
 import { HOSTNAME, type SignInMethodDto } from './dto';
 
 /** The row as the admin card shows it. */
@@ -19,6 +22,8 @@ export interface SignInMethodView {
 
 /** What GET answers: the school's row, and how the asking admin signed in. */
 export interface SignInSettings {
+  /** False until the deployment turns school accounts on (SCHOOL_ACCOUNTS=on). */
+  available: boolean;
   method: SignInMethodView | null;
   /** The school account this admin's session signed in with, or null. */
   session: { schoolAccount: SchoolAccountSession | null };
@@ -33,6 +38,19 @@ function viewOf(row: SchoolSignInMethod): SignInMethodView {
     ssoOnlyForStaff: row.ssoOnlyForStaff,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * The domain trigger's refusal (SQLSTATE SI409, app.sign_in_domain_keeps_its_provider):
+ * the saving school's own domains that another school names with another
+ * provider, read from DETAIL domains=a,b. Null for any other error.
+ */
+export function domainTakenRefusal(error: unknown): string[] | null {
+  if (sqlStateOf(error) !== 'SI409') return null;
+  const meta = (error as { meta?: { driverAdapterError?: { cause?: { detail?: unknown } } } }).meta;
+  const detail = meta?.driverAdapterError?.cause?.detail;
+  const listed = typeof detail === 'string' ? /^domains=(.+)$/.exec(detail)?.[1] : undefined;
+  return listed ? listed.split(',').filter((domain) => HOSTNAME.test(domain)) : [];
 }
 
 /** Whether a session's school account is one this row would let sign in. */
@@ -62,21 +80,51 @@ export function accountFits(
  * their next refresh, the admin saving it included, and the only way back
  * would be an operator. Signing in with it first proves the provider, the
  * pin and the admin's own account work together before anyone depends on it.
+ *
+ * Two more refusals come from the deployment and the database:
+ *   - SCHOOL_ACCOUNTS=off (the default): nothing is saved
+ *     (409 SIGN_IN_NOT_AVAILABLE), so before the operator has set up the
+ *     hook and the providers no school has a row and no address is sent
+ *     anywhere. Removing a row is always allowed. The lookup does not read
+ *     the flag: turned off after a school requires the school account, it
+ *     would leave that school's staff with no way in.
+ *   - A domain another school names with another provider: the trigger
+ *     refuses it (SQLSTATE SI409), answered as 409 SIGN_IN_DOMAIN_TAKEN
+ *     naming the saving school's own domains and nothing about the other
+ *     school. Otherwise one school could leave another's domain with no
+ *     answer at /login.
  */
 @Injectable()
 export class SignInMethodsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly schoolAccounts: boolean;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    config: ConfigService,
+  ) {
+    this.schoolAccounts = config.get<SignInConfig>('signIn')?.schoolAccounts === true;
+  }
 
   async get(user: AuthenticatedUser): Promise<SignInSettings> {
     const schoolId = requireSchoolId(user);
     const row = await this.prisma.withRls(user, (tx) =>
       tx.schoolSignInMethod.findUnique({ where: { schoolId } }),
     );
-    return { method: row ? viewOf(row) : null, session: { schoolAccount: user.schoolAccount ?? null } };
+    return {
+      available: this.schoolAccounts,
+      method: row ? viewOf(row) : null,
+      session: { schoolAccount: user.schoolAccount ?? null },
+    };
   }
 
   async put(user: AuthenticatedUser, dto: SignInMethodDto): Promise<SignInSettings> {
     const schoolId = requireSchoolId(user);
+    if (!this.schoolAccounts) {
+      throw new ConflictException({
+        message: 'Inloggning med skolkonto är inte påslagen för SchemaPro ännu.',
+        code: 'SIGN_IN_NOT_AVAILABLE',
+      });
+    }
     const entraTenantId = dto.provider === 'azure' ? (dto.entraTenantId ?? null) : null;
     const googleHostedDomain = dto.provider === 'google' ? (dto.googleHostedDomain ?? null) : null;
     if (dto.provider === 'azure' && entraTenantId === null) {
@@ -113,8 +161,20 @@ export class SignInMethodsService {
           ? tx.schoolSignInMethod.update({ where: { schoolId }, data: config })
           : tx.schoolSignInMethod.create({ data: { schoolId, ...config } });
       });
-      return { method: viewOf(row), session: { schoolAccount: user.schoolAccount ?? null } };
+      return {
+        available: this.schoolAccounts,
+        method: viewOf(row),
+        session: { schoolAccount: user.schoolAccount ?? null },
+      };
     } catch (error) {
+      const taken = domainTakenRefusal(error);
+      if (taken) {
+        throw new ConflictException({
+          message: 'En annan skola använder domänen med en annan inloggning.',
+          code: 'SIGN_IN_DOMAIN_TAKEN',
+          params: { domains: taken.join(', ') },
+        });
+      }
       rethrowPrismaError(error);
     }
   }

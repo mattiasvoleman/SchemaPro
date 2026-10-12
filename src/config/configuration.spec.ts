@@ -65,6 +65,8 @@ describe('loadConfiguration', () => {
       },
       // Unset: the viewer trusts no forwarded address.
       publicViewer: { proxyKey: undefined },
+      // Unset: no school can save a school-account row.
+      signIn: { schoolAccounts: false },
       // Unset: push is off, and Expo's own address.
       push: { enabled: false, accessToken: undefined, apiUrl: 'https://exp.host/--/api/v2/push' },
       // Unset: no credential can be sealed; the background tick runs; no loopback.
@@ -101,6 +103,11 @@ describe('loadConfiguration', () => {
       accessToken: undefined,
       apiUrl: 'https://exp.host/--/api/v2/push',
     });
+  });
+
+  it('turns school accounts on only for SCHOOL_ACCOUNTS=on', () => {
+    expect(loadConfiguration(env({ SCHOOL_ACCOUNTS: 'on' })).signIn).toEqual({ schoolAccounts: true });
+    expect(loadConfiguration(env({ SCHOOL_ACCOUNTS: 'off' })).signIn).toEqual({ schoolAccounts: false });
   });
 
   it('carries the public viewer\'s proxy key when it is set, and treats an empty one as unset', () => {

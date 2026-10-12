@@ -34,6 +34,11 @@ export interface SupabaseAdminConfig {
   serviceRoleKey?: string;
 }
 
+/** "Logga in med skolkonto": SCHOOL_ACCOUNTS=on. Off, no school-account row can be saved. */
+export interface SignInConfig {
+  schoolAccounts: boolean;
+}
+
 export interface PublicViewerConfig {
   /** Undefined: X-Viewer-Client-Ip is never trusted. */
   proxyKey?: string;
@@ -73,6 +78,7 @@ export interface Configuration {
   throttle: ThrottleConfig;
   supabase: SupabaseAdminConfig;
   publicViewer: PublicViewerConfig;
+  signIn: SignInConfig;
   push: PushConfig;
   ss12000: Ss12000Config;
   gallring: GallringConfig;
@@ -120,6 +126,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     publicViewer: {
       proxyKey: env.PUBLIC_VIEWER_PROXY_KEY && env.PUBLIC_VIEWER_PROXY_KEY.length > 0 ? env.PUBLIC_VIEWER_PROXY_KEY : undefined,
+    },
+    signIn: {
+      schoolAccounts: env.SCHOOL_ACCOUNTS === 'on',
     },
     push: {
       enabled: env.PUSH_NOTIFICATIONS === PushMode.Expo,

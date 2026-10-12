@@ -3,9 +3,10 @@ import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import type { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../database/prisma.service';
 import type { SignInMethodDto } from './dto';
-import { accountFits, SignInMethodsService } from './sign-in-methods.service';
+import { accountFits, domainTakenRefusal, SignInMethodsService } from './sign-in-methods.service';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const TENANT = '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
@@ -33,6 +34,16 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const config = (schoolAccounts: boolean) =>
+  ({ get: (key: string) => (key === 'signIn' ? { schoolAccounts } : undefined) }) as unknown as ConfigService;
+
+/** What @prisma/adapter-pg hands up for the domain trigger's RAISE (SQLSTATE SI409). */
+const domainTaken = (detail?: string) =>
+  Object.assign(new Error('Database error'), {
+    code: 'P2039',
+    meta: { driverAdapterError: { cause: { originalCode: 'SI409', originalMessage: 'SIGN_IN_DOMAIN_TAKEN', ...(detail ? { detail } : {}) } } },
+  });
+
 const entra = (overrides: Partial<SignInMethodDto> = {}): SignInMethodDto =>
   ({ provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, ...overrides }) as SignInMethodDto;
 
@@ -44,7 +55,7 @@ describe('SignInMethodsService', () => {
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    service = new SignInMethodsService(prisma as unknown as PrismaService);
+    service = new SignInMethodsService(prisma as unknown as PrismaService, config(true));
   });
 
   describe('get', () => {
@@ -53,6 +64,7 @@ describe('SignInMethodsService', () => {
       const account = { provider: 'azure' as const, entraTenantId: TENANT };
 
       await expect(service.get(admin(account))).resolves.toEqual({
+        available: true,
         method: { provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: NOW },
         session: { schoolAccount: account },
       });
@@ -62,7 +74,7 @@ describe('SignInMethodsService', () => {
 
     it('answers null for a school without school accounts and for a password session', async () => {
       tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
-      await expect(service.get(admin())).resolves.toEqual({ method: null, session: { schoolAccount: null } });
+      await expect(service.get(admin())).resolves.toEqual({ available: true, method: null, session: { schoolAccount: null } });
     });
 
     it('refuses a principal without a school', async () => {
@@ -142,12 +154,60 @@ describe('SignInMethodsService', () => {
       });
     });
 
+    it('names the school\'s own domains another school uses with another provider', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
+      tx.schoolSignInMethod.create.mockRejectedValue(domainTaken('domains=delad.example,skola.example'));
+      await expect(service.put(admin(), entra({ domains: ['skola.example', 'delad.example'] }))).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'SIGN_IN_DOMAIN_TAKEN', params: { domains: 'delad.example, skola.example' } },
+      });
+    });
+
     it('answers a lost race for the one row as a conflict, not a 500', async () => {
       tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
       tx.schoolSignInMethod.create.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test', meta: { target: ['schoolId'] } }),
       );
       await expect(service.put(admin(), entra())).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('with school accounts off for the deployment (SCHOOL_ACCOUNTS=off)', () => {
+    beforeEach(() => {
+      service = new SignInMethodsService(prisma as unknown as PrismaService, config(false));
+    });
+
+    it('says so, saves nothing, and still removes a row', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
+      await expect(service.get(admin())).resolves.toMatchObject({ available: false });
+      await expect(service.put(admin({ provider: 'azure', entraTenantId: TENANT }), entra())).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'SIGN_IN_NOT_AVAILABLE' },
+      });
+      expect(tx.schoolSignInMethod.create).not.toHaveBeenCalled();
+      tx.schoolSignInMethod.deleteMany.mockResolvedValue({ count: 1 });
+      await expect(service.remove(admin())).resolves.toEqual({ removed: true });
+    });
+
+    it('still answers the lookup, so a school that requires the school account keeps a way in', async () => {
+      tx.$queryRaw.mockResolvedValue([{ provider: 'azure' }]);
+      await expect(service.providerFor('skola.example')).resolves.toBe('azure');
+    });
+
+    it('reads a missing config as off', async () => {
+      const unset = new SignInMethodsService(prisma as unknown as PrismaService, { get: () => undefined } as unknown as ConfigService);
+      await expect(unset.get(admin())).resolves.toMatchObject({ available: false });
+    });
+  });
+
+  describe('domainTakenRefusal', () => {
+    it('reads the taken domains from the trigger\'s DETAIL, and nothing else', () => {
+      expect(domainTakenRefusal(domainTaken('domains=a.example,b.example'))).toEqual(['a.example', 'b.example']);
+      expect(domainTakenRefusal(domainTaken('domains=a.example,<script>'))).toEqual(['a.example']);
+      expect(domainTakenRefusal(domainTaken())).toEqual([]);
+      expect(domainTakenRefusal(domainTaken('something else'))).toEqual([]);
+      expect(domainTakenRefusal(new Error('boom'))).toBeNull();
+      expect(domainTakenRefusal(null)).toBeNull();
     });
   });
 
