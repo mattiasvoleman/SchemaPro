@@ -20,6 +20,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
 import { coverLockedLessons } from './locked-coverage';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
+import { effectiveDistribution, hasDistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 
 /** A hand-placed lesson's length, from its two @db.Time columns (midnight-anchored UTC). */
@@ -627,6 +628,11 @@ export class OptimizationProxyService {
         // occupancy, never the teacher's or the room's.
         minutesBefore: true,
         minutesAfter: true,
+        // Ämnesfördelning: the row's own rule, when it carries one. The
+        // subject's default rides on the subject join below.
+        ownDistribution: true,
+        maxLessonsPerDay: true,
+        minDaysBetween: true,
         // Never forwarded — the engine has no notion of weeks. Read here
         // because the subtraction below compares a preserved lesson's weeks
         // against these, and stamped on the lessons the run produces so a
@@ -643,6 +649,8 @@ export class OptimizationProxyService {
             requiredRoomTypeId: true,
             name: true,
             requiredRoomType: { select: { name: true } },
+            maxLessonsPerDay: true,
+            minDaysBetween: true,
           },
         },
       },
@@ -909,7 +917,10 @@ export class OptimizationProxyService {
     // unambiguous. The lessons themselves rather than a count, because whether
     // any of them cancels anything is a question about the requirement's
     // period and cannot be answered until the requirement is in hand.
-    const preservedByDemand = new Map<string, (RecurrenceWindow & { startTime: Date; endTime: Date })[]>();
+    const preservedByDemand = new Map<
+      string,
+      (RecurrenceWindow & { dayOfWeek: number; startTime: Date; endTime: Date })[]
+    >();
     for (const lesson of preservedLessons) {
       const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
       const forDemand = preservedByDemand.get(key);
@@ -935,6 +946,18 @@ export class OptimizationProxyService {
       // carries the list, with its count and its longest as the scalars.
       const split = canonicalShape(remainingLengths);
       const needs = roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject);
+      // Ämnesfördelning: the row's own rule or its subject's, each half sent
+      // only when set — see AnonymousRequirement.maxLessonsPerDay. The locked
+      // weekdays go with a rule and never without one, and they are EVERY
+      // preserved lesson of the row, not only the ones that cancel demand
+      // above: a lesson locked on odd weeks is still on Monday in the weeks it
+      // runs, and the engine, which has no weeks, has to count it there.
+      const rule = effectiveDistribution(r, r.subject);
+      const lockedDays = hasDistributionRule(rule)
+        ? (preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? [])
+            .map((lesson) => lesson.dayOfWeek as DayOfWeek)
+            .sort((a, b) => a - b)
+        : [];
       return [
         {
           id: anonId(requirementAnonMap, r.id),
@@ -952,6 +975,9 @@ export class OptimizationProxyService {
           // clear for 90, and a sum would lose which of the two it was told.
           minutesBefore: r.minutesBefore,
           minutesAfter: r.minutesAfter,
+          ...(rule.maxLessonsPerDay !== null ? { maxLessonsPerDay: rule.maxLessonsPerDay } : {}),
+          ...(rule.minDaysBetween !== null ? { minDaysBetween: rule.minDaysBetween } : {}),
+          ...(lockedDays.length > 0 ? { lockedDays } : {}),
           studentGroupSize: needs.studentGroupSize,
           minGradeLevel: needs.minGradeLevel,
           maxGradeLevel: needs.maxGradeLevel,
