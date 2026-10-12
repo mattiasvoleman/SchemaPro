@@ -39,6 +39,14 @@ export function providerHints(provider: SchoolAccountProvider, email: string, do
   return provider === 'azure' ? { login_hint: address, domain_hint: domain } : { login_hint: address };
 }
 
+/**
+ * The scopes Auth asks the provider for beyond its own: Entra ID returns an
+ * address only when asked for email (see the web's providerScopes).
+ */
+export function providerScopes(provider: SchoolAccountProvider): string | undefined {
+  return provider === 'azure' ? 'email' : undefined;
+}
+
 /** The screen's codes for a school-account sign-in that did not end in a session. */
 export type SchoolAccountRefusal =
   | 'SSO_NO_ACCOUNT'

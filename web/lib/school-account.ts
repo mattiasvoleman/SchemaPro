@@ -78,6 +78,16 @@ export function providerHints(provider: SchoolAccountProvider, email: string, do
 }
 
 /**
+ * The scopes Auth asks the provider for beyond its own. Entra ID returns an
+ * e-mail address only when the email scope is asked for, and without one
+ * Auth cannot link the school account to the invited person (Supabase's
+ * Azure guide). Google's provider asks for email and profile itself.
+ */
+export function providerScopes(provider: SchoolAccountProvider): string | undefined {
+  return provider === "azure" ? "email" : undefined;
+}
+
+/**
  * The access-token hook refused a password sign-in for staff at a school
  * that requires the school account: Auth answers 403 with the hook's code as
  * the message ({"code":403,"error_code":"unknown","msg":"sso_required"},

@@ -6,6 +6,7 @@ import {
   isSsoRequired,
   lookupProvider,
   providerHints,
+  providerScopes,
   schoolAccountAddressOf,
   ssoReasonFor,
 } from "./school-account";
@@ -56,6 +57,13 @@ describe("providerHints", () => {
       domain_hint: "skola.example",
     });
     expect(providerHints("google", "anna@skola.example", "skola.example")).toEqual({ login_hint: "anna@skola.example" });
+  });
+});
+
+describe("providerScopes", () => {
+  it("asks Entra for the address, and leaves Google to its own scopes", () => {
+    expect(providerScopes("azure")).toBe("email");
+    expect(providerScopes("google")).toBeUndefined();
   });
 });
 

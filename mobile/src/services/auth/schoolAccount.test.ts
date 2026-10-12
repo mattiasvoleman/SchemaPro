@@ -1,5 +1,5 @@
 import { apiRequest } from '../api';
-import { callbackParams, emailDomain, lookupProvider, providerHints, refusalFor } from './schoolAccount';
+import { callbackParams, emailDomain, lookupProvider, providerHints, providerScopes, refusalFor } from './schoolAccount';
 import { en } from '../../i18n/en';
 import { sv } from '../../i18n/sv';
 
@@ -42,6 +42,13 @@ describe('providerHints', () => {
   it('gives Entra the address and the domain, and Google the address', () => {
     expect(providerHints('azure', ' anna@skola.example ', 'skola.example')).toEqual({ login_hint: 'anna@skola.example', domain_hint: 'skola.example' });
     expect(providerHints('google', 'anna@skola.example', 'skola.example')).toEqual({ login_hint: 'anna@skola.example' });
+  });
+});
+
+describe('providerScopes', () => {
+  it('asks Entra for the address, and leaves Google to its own scopes', () => {
+    expect(providerScopes('azure')).toBe('email');
+    expect(providerScopes('google')).toBeUndefined();
   });
 });
 

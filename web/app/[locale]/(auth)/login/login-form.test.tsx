@@ -201,6 +201,8 @@ describe("LoginForm", () => {
       options: {
         redirectTo: `${window.location.origin}/sv/auth/callback`,
         queryParams: { login_hint: "Anna.Andersson@Skola.Example", domain_hint: "skola.example" },
+        // Entra returns an address only when asked for it.
+        scopes: "email",
       },
     });
     // On its way to the provider: still busy, nothing to retry.
@@ -218,7 +220,10 @@ describe("LoginForm", () => {
 
     await waitFor(() =>
       expect(authMocks.signInWithOAuth).toHaveBeenCalledWith(
-        expect.objectContaining({ provider: "google", options: expect.objectContaining({ queryParams: { login_hint: "elev@skola.example" } }) }),
+        expect.objectContaining({
+          provider: "google",
+          options: { redirectTo: `${window.location.origin}/sv/auth/callback`, queryParams: { login_hint: "elev@skola.example" } },
+        }),
       ),
     );
   });

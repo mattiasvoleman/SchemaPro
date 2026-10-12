@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { emailDomain, isSsoRequired, lookupProvider, providerHints } from "@/lib/school-account";
+import { emailDomain, isSsoRequired, lookupProvider, providerHints, providerScopes } from "@/lib/school-account";
 import { loadClient, warmClient } from "@/utils/supabase/load-client";
 
 export type LoginFormLabels = {
@@ -121,11 +121,13 @@ export function LoginForm({
         failure = schoolAccount.labels.notFound;
       } else {
         const supabase = await loadClient();
+        const scopes = providerScopes(provider);
         const { error: oauthError } = await supabase.auth.signInWithOAuth({
           provider,
           options: {
             redirectTo: new URL(schoolAccount.callbackPath, window.location.origin).toString(),
             queryParams: providerHints(provider, email, domain),
+            ...(scopes ? { scopes } : {}),
           },
         });
         // On its way to the provider: the button stays busy until the page goes.
