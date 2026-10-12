@@ -33,6 +33,12 @@
 
 import { weeklyMinutesOf } from "@/lib/lesson-lengths";
 import {
+  qualificationCovers,
+  qualificationValidInYear,
+  singleGrade,
+  standardWeekWeight,
+} from "@/lib/standard-week";
+import {
   peakPerWeekByKey,
   teachingWeeks,
   type ClosedRange,
@@ -44,6 +50,11 @@ import type {
   TeacherContractKind,
   TeacherQualificationKind,
 } from "@/lib/types";
+
+// Moved to lib/standard-week.ts so a page that only weighs a timplanspost or
+// checks a behörighet need not take this whole module; re-exported here for
+// everything that already imports them from teacher-load.
+export { qualificationCovers, qualificationValidInYear, standardWeekWeight };
 
 export type LoadStatus = "UNDER" | "OK" | "OVER" | "NO_TARGET";
 
@@ -365,30 +376,6 @@ const round4 = (value: number): number => Math.round(value * 10_000) / 10_000;
 const byName = (a: string, b: string): number => a.localeCompare(b, "sv");
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/**
- * How much of a standardvecka one requirement is worth, 0..1: undated rows 1
- * (every week) or 0.5 (varannan vecka); a dated row its share of the year's
- * teaching weeks, lov subtracted from both sides. The grade reaches the lov
- * arithmetic only for a single-grade group — see the gateway's header.
- */
-export function standardWeekWeight(
-  requirement: TeachingPeriod & { gradeSpan?: GradeSpan | null },
-  year: YearBounds,
-  closures: ClosedRange[],
-): number {
-  if (!requirement.startDate && !requirement.endDate) {
-    return (requirement.recurrence ?? "ALL_WEEKS") === "ALL_WEEKS" ? 1 : 0.5;
-  }
-  const gradeLevel = singleGrade(requirement.gradeSpan ?? null);
-  const yearWeeks = teachingWeeks({}, year, closures, gradeLevel);
-  if (yearWeeks === 0) return 0;
-  return teachingWeeks(requirement, year, closures, gradeLevel) / yearWeeks;
-}
-
-function singleGrade(span: GradeSpan | null): number | null {
-  return span !== null && span.min === span.max ? span.min : null;
-}
-
 const isDated = (duty: Pick<LoadDuty, "validFrom" | "validTo">): boolean =>
   Boolean(duty.validFrom) || Boolean(duty.validTo);
 
@@ -444,35 +431,6 @@ export function loadStatus(
   if (minutes > target + band) return "OVER";
   if (minutes < target - band) return "UNDER";
   return "OK";
-}
-
-/** Whether a qualification is valid at some point of the year. */
-export function qualificationValidInYear(
-  qualification: Pick<LoadQualification, "validFrom" | "validTo">,
-  year: YearBounds,
-): boolean {
-  if (qualification.validFrom && qualification.validFrom > year.endDate) return false;
-  if (qualification.validTo && qualification.validTo < year.startDate) return false;
-  return true;
-}
-
-/**
- * Whether one qualification covers a requirement: same subject, the whole
- * grade span inside the qualification's, and valid at some point of the year.
- * A requirement whose group has no derivable grade is covered by any
- * qualification in the subject — the span cannot be judged, and refusing it
- * would flag every memberless teaching group.
- */
-export function qualificationCovers(
-  qualification: LoadQualification,
-  requirement: Pick<LoadRequirement, "subjectId" | "gradeSpan">,
-  year: YearBounds,
-): boolean {
-  if (qualification.subjectId !== requirement.subjectId) return false;
-  if (!qualificationValidInYear(qualification, year)) return false;
-  const span = requirement.gradeSpan;
-  if (span === null) return true;
-  return qualification.minGradeLevel <= span.min && qualification.maxGradeLevel >= span.max;
 }
 
 /**

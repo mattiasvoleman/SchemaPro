@@ -31,7 +31,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useSchoolBreaks } from "@/lib/queries";
-import { standardWeekWeight } from "@/lib/teacher-load";
+import { standardWeekWeight } from "@/lib/standard-week";
 import { computeScheduledCoverage, lessonMinutes, type ScheduledCoverage } from "@/lib/timplan-scheduled";
 import {
   buildScheduleDelta,

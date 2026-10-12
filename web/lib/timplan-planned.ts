@@ -19,7 +19,7 @@
 // uses; keep it that way, so a diff of the two shows only the header.
 
 import { shortestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
-import { standardWeekWeight } from "@/lib/teacher-load";
+import { standardWeekWeight } from "@/lib/standard-week";
 import {
   teachingWeeks,
   type ClosedRange,
