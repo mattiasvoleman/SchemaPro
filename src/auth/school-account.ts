@@ -47,7 +47,7 @@ export function firstFactorsOf(amr: unknown): string[] {
 
 /**
  * The school account of a session that signed in with one and nothing else,
- * as the access-token hook counts it (app.sign_in_verdict); null for any other
+ * as the access-token hook counts it (sign_in.verdict); null for any other
  * session, or when the metadata names neither an Entra tenant nor a Google
  * Workspace.
  */

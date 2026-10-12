@@ -13299,7 +13299,10 @@ ROLLBACK;
 -- googleHostedDomain, and /login compares a typed domain with `domains`, all
 -- in lower case. A row with both pins, the wrong one, none, an upper-case
 -- domain or a domain that is no host name would make the hook or the lookup
--- answer something nobody chose. Each shape is written by school A's admin
+-- answer something nobody chose. So would a consumer mail domain such as
+-- gmail.com, listed or as the hd: a personal account carries no hd and is no
+-- tenant's, so the hook could never let it in, and /login would send every
+-- address on it to this provider. Each shape is written by school A's admin
 -- through the API's role; the bad ones must be refused by a CHECK (or the
 -- NOT NULL, or the one-row-per-school index), the good ones must go in.
 -- ---------------------------------------------------------------------------
@@ -13340,6 +13343,10 @@ BEGIN
       ('a good domain beside a bad one',        'azure',  ARRAY['skola.rls71.example', 'Bad.example'], gen_random_uuid(), NULL, '23514'),
       ('an upper-case hd',                      'google', ARRAY['skola.rls71.example'], NULL, 'Skola.rls71.example', '23514'),
       ('an hd that is no host name',            'google', ARRAY['skola.rls71.example'], NULL, 'skola', '23514'),
+      ('a personal mail domain beside a good one', 'azure', ARRAY['skola.rls71.example', 'gmail.com'], gen_random_uuid(), NULL, '23514'),
+      ('a Swedish personal mail domain',        'google', ARRAY['hotmail.se'], NULL, 'skola.rls71.example', '23514'),
+      ('a personal mail domain as the hd',      'google', ARRAY['skola.rls71.example'], NULL, 'gmail.com', '23514'),
+      ('a domain that only contains one',       'azure',  ARRAY['gmail.com.rls71.example', 'outlook.se.rls71.example'], gen_random_uuid(), NULL, 'ok'),
       ('no domains at all',                     'azure',  NULL::text[], gen_random_uuid(), NULL, '23502')
     ) AS t(label, provider, domains, tenant, hd, expect)
   LOOP
@@ -13354,6 +13361,25 @@ BEGIN
     IF got <> r.expect THEN
       RAISE EXCEPTION 'sign-in shape: % gave %, expected %', r.label, got, r.expect;
     END IF;
+  END LOOP;
+
+  -- The personal mail domains are refused by their own CHECK, not by
+  -- another one that happened to object, listed or as the hd.
+  FOR r IN SELECT * FROM (VALUES
+      ('listed', ARRAY['skola.rls71.example', 'proton.me'], 'skola.rls71.example'),
+      ('as the hd', ARRAY['skola.rls71.example'], 'googlemail.com')
+    ) AS t(label, domains, hd)
+  LOOP
+    BEGIN
+      INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "googleHostedDomain", "updatedAt")
+      VALUES (school, 'google', r.domains, r.hd, now());
+      RAISE EXCEPTION 'sign-in shape: a personal mail domain % went in', r.label;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS got = CONSTRAINT_NAME;
+      IF got IS DISTINCT FROM 'SchoolSignInMethods_no_personal_mail_domains' THEN
+        RAISE EXCEPTION 'sign-in shape: a personal mail domain % was refused by %, expected SchoolSignInMethods_no_personal_mail_domains', r.label, got;
+      END IF;
+    END;
   END LOOP;
 
   -- One row per school.
@@ -13730,8 +13756,12 @@ ROLLBACK;
 -- domains, whatever else the row says. The refusal is SQLSTATE SI409 and
 -- names only the saving school's own domains. Sharing one provider stays
 -- allowed: a kommun's schools often share a domain, and the hook pins each
--- school's people to its own tenant or Workspace anyway. The fixtures plant
--- school B on Entra with rls-fixture-b.example and rls-delad.example.
+-- school's people to its own tenant or Workspace anyway. A school that
+-- requires the school account names every domain its staff are on (the
+-- gateway refuses anything else), so what another school later does with its
+-- own row never changes the answer for them: a shared domain it names is one
+-- this trigger keeps on its provider. The fixtures plant school B on Entra
+-- with rls-fixture-b.example and rls-delad.example.
 -- ---------------------------------------------------------------------------
 
 BEGIN;

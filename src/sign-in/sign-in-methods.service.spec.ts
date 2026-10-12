@@ -45,17 +45,22 @@ const domainTaken = (detail?: string) =>
   });
 
 /**
- * The school's people by e-mail domain, and what /login answers for other
- * domains: the two statements the domain checks send, told apart by text.
+ * The school's staff who can sign in, by e-mail domain, as the domain checks'
+ * one statement returns them. The lookup /login uses answers for another
+ * school's domains here too, so a check that asked it would be fooled the
+ * way the guard once was.
  */
-function people(tx: TxMock, uses: Array<{ domain: string; people: number; staff: number }>, lookups: Record<string, string> = {}) {
+function staff(tx: TxMock, uses: Array<{ domain: string; staff: number }>, lookups: Record<string, string> = {}) {
   tx.$queryRaw.mockImplementation(async (query: { strings: string[]; values: unknown[] }) => {
     const text = query.strings.join('?');
-    if (text.includes('split_part')) return uses.map((use) => ({ ...use, people: BigInt(use.people), staff: BigInt(use.staff) }));
+    if (text.includes('split_part')) return uses.map((use) => ({ ...use, staff: BigInt(use.staff) }));
     if (text.includes('sign_in_provider_for_domain')) return [{ provider: lookups[String(query.values[0])] ?? null }];
     return [];
   });
 }
+
+/** The statements put sent, as text. */
+const asked = (tx: TxMock) => tx.$queryRaw.mock.calls.map(([query]) => (query as { strings: string[] }).strings.join('?'));
 
 const entra = (overrides: Partial<SignInMethodDto> = {}): SignInMethodDto =>
   ({ provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, ...overrides }) as SignInMethodDto;
@@ -69,8 +74,8 @@ describe('SignInMethodsService', () => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     service = new SignInMethodsService(prisma as unknown as PrismaService, config(true));
-    // By default the school's people are all on skola.example.
-    people(tx, [{ domain: 'skola.example', people: 120, staff: 14 }]);
+    // By default the school's staff are all on skola.example.
+    staff(tx, [{ domain: 'skola.example', staff: 14 }]);
   });
 
   describe('get', () => {
@@ -169,7 +174,19 @@ describe('SignInMethodsService', () => {
       });
     });
 
-    it('refuses a domain none of the school\'s active people use, before writing', async () => {
+    it('counts invited, active teachers and admins, and the admin saving, by the domain of their address', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
+      tx.schoolSignInMethod.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      await service.put(admin(), entra());
+      const [query] = tx.$queryRaw.mock.calls[0] as [{ strings: string[]; values: unknown[] }];
+      const text = query.strings.join('?');
+      expect(text).toContain('"isActive"');
+      expect(text).toContain(`"role" IN ('SCHOOL_ADMIN', 'TEACHER')`);
+      expect(text).toContain('"invitedAt" IS NOT NULL OR "id" = ?::uuid');
+      expect(query.values).toEqual([SCHOOL, admin().userId]);
+    });
+
+    it('refuses a domain the save adds that none of those staff use, before writing', async () => {
       tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
       await expect(service.put(admin(), entra({ domains: ['skola.example', 'annan.example'] }))).rejects.toMatchObject({
         status: 409,
@@ -178,79 +195,90 @@ describe('SignInMethodsService', () => {
       expect(tx.schoolSignInMethod.create).not.toHaveBeenCalled();
     });
 
-    it('requires the school account of staff only when every staff domain still gets an answer at /login', async () => {
+    it('does not ask again about a domain already on the row, so the switch always goes off', async () => {
+      // The last teacher on gammal.example has left since it was listed.
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(row({ domains: ['skola.example', 'gammal.example'], ssoOnlyForStaff: true }));
+      tx.schoolSignInMethod.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      await expect(
+        service.put(admin(), entra({ domains: ['skola.example', 'gammal.example'], ssoOnlyForStaff: false })),
+      ).resolves.toMatchObject({ method: { ssoOnlyForStaff: false } });
+    });
+
+    it('requires the school account of staff only when every staff domain is on the row itself', async () => {
       tx.schoolSignInMethod.findUnique.mockResolvedValue(row());
       tx.schoolSignInMethod.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
-      people(
-        tx,
-        [
-          { domain: 'skola.example', people: 120, staff: 14 },
-          { domain: 'kommun.example', people: 12, staff: 12 },
-          { domain: 'gmail.example', people: 300, staff: 0 },
-          { domain: 'delad.example', people: 3, staff: 3 },
-        ],
-        // Another school names delad.example on Entra, so /login answers it; nobody names kommun.example.
-        { 'delad.example': 'azure' },
-      );
+      staff(tx, [
+        { domain: 'skola.example', staff: 14 },
+        { domain: 'kommun.example', staff: 12 },
+        { domain: 'gmail.com', staff: 1 },
+      ]);
       const account = admin({ provider: 'azure', entraTenantId: TENANT });
       await expect(service.put(account, entra({ ssoOnlyForStaff: true }))).rejects.toMatchObject({
         status: 409,
-        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'kommun.example (12)' } },
+        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'kommun.example (12), gmail.com (1)' } },
       });
       expect(tx.schoolSignInMethod.update).not.toHaveBeenCalled();
 
-      // With kommun.example listed it goes through; guardians' gmail.example never mattered.
-      people(
-        tx,
-        [
-          { domain: 'skola.example', people: 120, staff: 14 },
-          { domain: 'kommun.example', people: 12, staff: 12 },
-          { domain: 'gmail.example', people: 300, staff: 0 },
-          { domain: 'delad.example', people: 3, staff: 3 },
-        ],
-        { 'delad.example': 'azure' },
-      );
+      // kommun.example can be listed; the teacher on gmail.com needs a school address first.
+      staff(tx, [
+        { domain: 'skola.example', staff: 14 },
+        { domain: 'kommun.example', staff: 12 },
+      ]);
       await expect(
         service.put(account, entra({ domains: ['skola.example', 'kommun.example'], ssoOnlyForStaff: true })),
       ).resolves.toMatchObject({ method: { ssoOnlyForStaff: true } });
     });
 
-    it('does not look at other domains when the school account is not required', async () => {
-      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
-      tx.schoolSignInMethod.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
-      people(tx, [
-        { domain: 'skola.example', people: 120, staff: 14 },
-        { domain: 'kommun.example', people: 12, staff: 12 },
-      ]);
-      await expect(service.put(admin(), entra())).resolves.toMatchObject({ method: { ssoOnlyForStaff: false } });
-      const asked = tx.$queryRaw.mock.calls.map(([query]) => (query as { strings: string[] }).strings.join('?'));
-      expect(asked.some((text) => text.includes('sign_in_provider_for_domain'))).toBe(false);
+    it('refuses dropping a staff domain while the switch stays on, though the old row still names it', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(
+        row({ domains: ['skola.example', 'kommun.example'], ssoOnlyForStaff: true }),
+      );
+      // Asked inside the save, the lookup would still find the row being replaced.
+      staff(tx, [
+        { domain: 'skola.example', staff: 14 },
+        { domain: 'kommun.example', staff: 12 },
+      ], { 'kommun.example': 'azure' });
+      await expect(
+        service.put(admin({ provider: 'azure', entraTenantId: TENANT }), entra({ domains: ['skola.example'], ssoOnlyForStaff: true })),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'kommun.example (12)' } },
+      });
+      expect(tx.schoolSignInMethod.update).not.toHaveBeenCalled();
+      expect(asked(tx).some((text) => text.includes('sign_in_provider_for_domain'))).toBe(false);
     });
 
-    it('counts a staff domain another school names with another provider as left out', async () => {
+    it('does not count a staff domain as covered because another school names it with the same provider', async () => {
       tx.schoolSignInMethod.findUnique.mockResolvedValue(row());
-      people(
-        tx,
-        [
-          { domain: 'skola.example', people: 120, staff: 14 },
-          { domain: 'google-skola.example', people: 2, staff: 2 },
-        ],
-        // /login offers Google there, so these two would find no Entra sign-in and lose their password.
-        { 'google-skola.example': 'google' },
-      );
+      // Another school names delad.example on Entra today; it may drop it tomorrow.
+      staff(tx, [
+        { domain: 'skola.example', staff: 14 },
+        { domain: 'delad.example', staff: 3 },
+      ], { 'delad.example': 'azure' });
       await expect(
         service.put(admin({ provider: 'azure', entraTenantId: TENANT }), entra({ ssoOnlyForStaff: true })),
       ).rejects.toMatchObject({
         status: 409,
-        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'google-skola.example (2)' } },
+        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'delad.example (3)' } },
       });
       expect(tx.schoolSignInMethod.update).not.toHaveBeenCalled();
+      expect(asked(tx).some((text) => text.includes('sign_in_provider_for_domain'))).toBe(false);
+    });
+
+    it('does not hold the switch off for staff domains when the school account is not required', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
+      tx.schoolSignInMethod.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      staff(tx, [
+        { domain: 'skola.example', staff: 14 },
+        { domain: 'kommun.example', staff: 12 },
+      ]);
+      await expect(service.put(admin(), entra())).resolves.toMatchObject({ method: { ssoOnlyForStaff: false } });
     });
 
     it('names the school\'s own domains another school uses with another provider', async () => {
-      people(tx, [
-        { domain: 'skola.example', people: 120, staff: 14 },
-        { domain: 'delad.example', people: 3, staff: 3 },
+      staff(tx, [
+        { domain: 'skola.example', staff: 14 },
+        { domain: 'delad.example', staff: 3 },
       ]);
       tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
       tx.schoolSignInMethod.create.mockRejectedValue(domainTaken('domains=delad.example,skola.example'));
