@@ -5,7 +5,15 @@ import { clearCachedSchoolData } from '../database/localDatabase';
 import { SecureTokenStore } from './secureTokenStore';
 import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import type { AuthState } from '../../types';
-import { callbackParams, emailDomain, lookupProvider, providerHints, refusalFor, type SchoolAccountRefusal } from './schoolAccount';
+import {
+  callbackParams,
+  emailDomain,
+  lookupProvider,
+  providerHints,
+  providerScopes,
+  refusalFor,
+  type SchoolAccountRefusal,
+} from './schoolAccount';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Authentication via Supabase Auth: e-mail and password, or "Logga in med
@@ -157,9 +165,15 @@ export const AuthService = {
 
     const supabase = getSupabase();
     const redirectTo = Linking.createURL('auth/callback');
+    const scopes = providerScopes(provider);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo, skipBrowserRedirect: true, queryParams: providerHints(provider, email, domain) },
+      options: {
+        redirectTo,
+        skipBrowserRedirect: true,
+        queryParams: providerHints(provider, email, domain),
+        ...(scopes ? { scopes } : {}),
+      },
     });
     if (error || !data?.url) throw new AuthError('LOGIN_FAILED', error?.message ?? 'No sign-in URL.');
 

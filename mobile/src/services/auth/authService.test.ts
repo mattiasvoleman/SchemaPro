@@ -187,6 +187,8 @@ describe('AuthService.loginWithSchoolAccount', () => {
         redirectTo: 'schemapro://auth/callback',
         skipBrowserRedirect: true,
         queryParams: { login_hint: 'Anna@Skola.Example', domain_hint: 'skola.example' },
+        // Entra returns an address only when asked for it.
+        scopes: 'email',
       },
     });
     expect(browser).toHaveBeenCalledWith('https://auth.example/authorize?provider=azure', 'schemapro://auth/callback');
