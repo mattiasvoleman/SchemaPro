@@ -186,6 +186,15 @@ describe('GallringJob', () => {
     expect(spies[1]!.mock.calls.map((call) => call[0])).toContain('Gallring removed the login of a person no longer due [school=s1]');
   });
 
+  it('says so too, with no login to speak of, when a person never invited was no longer due a moment later', async () => {
+    const due = [{ user_id: 'u-catalogue', auth_id: 'a-1', invited: false }];
+    const { job, supabase, settled } = night({ schools: ['s1'], due, gone: ['u-catalogue'] });
+    await job.tick();
+    expect(supabase.deleteUser).not.toHaveBeenCalled();
+    expect(spies[1]!.mock.calls.map((call) => call[0])).toEqual(['Gallring did not pseudonymise a person no longer due [school=s1]']);
+    expect(settled).toHaveBeenCalledWith(GALLRING_JOB, expect.any(Date), expect.objectContaining({ counts: expect.objectContaining({ people: 0, failed: 0 }) }));
+  });
+
   it('carries on with the next school when one fails, and leaves the failed one unfinished for the claim to retry', async () => {
     const { job, finish, settled } = night({ schools: ['s1', 's2'], failBegin: 's1' });
     await job.tick();

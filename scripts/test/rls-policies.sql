@@ -14700,9 +14700,12 @@ ROLLBACK;
 -- and login and keep their row; the teacher's signature and note go without
 -- a new version of the tjänst; the pupil's guardian link goes and is
 -- recorded as an unlink. The pupil deactivated a month ago, the teacher SCB
--- holds and every active person are untouched. A pseudonym cannot be made
--- active again, and an active person cannot be given a deactivation date by
--- hand.
+-- holds and every active person are untouched. Every person named to the
+-- step is locked before it asks who is due (20261021130000), so a
+-- reactivation in flight is waited for rather than failing the night; that
+-- it waits needs two connections, the adapter probe's (gg). A pseudonym
+-- cannot be made active again, and an active person cannot be given a
+-- deactivation date by hand.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -14775,6 +14778,14 @@ BEGIN
   IF (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u WHERE "pseudonymisedAt" IS NULL)
      IS DISTINCT FROM current_setting('app.test_rls84_before') THEN
     RAISE EXCEPTION 'pseudonymisation: somebody not due changed (the recent leaver, the teacher SCB holds or an active person)';
+  END IF;
+  -- The three named but not due were locked all the same: a row's xmax is the
+  -- transaction that last locked it, and nothing else in this one has.
+  SELECT count(*) INTO n FROM "Users"
+   WHERE id = ANY (string_to_array(current_setting('app.test_rls84_others'), ',')::uuid[])
+     AND xmax = pg_current_xact_id()::xid;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'pseudonymisation: % of the three people named but not due were locked before the step asked; a reactivation in flight would fail the night', n;
   END IF;
 
   SELECT count(*) INTO n FROM "TeacherEmployments" e JOIN "Users" u ON u.id = e."userId"
