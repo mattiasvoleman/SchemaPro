@@ -1,9 +1,6 @@
 import type { GradeSpan } from "@/lib/grade-span";
-import {
-  qualificationCovers,
-  type LoadQualification,
-  type TeacherLoad,
-} from "@/lib/teacher-load";
+import { qualificationCovers } from "@/lib/standard-week";
+import type { LoadQualification, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherQualification, TeacherQualificationKind } from "@/lib/types";
 
 /*

@@ -20,7 +20,7 @@
 // file with the quotes this package's style uses; keep it that way, so a diff
 // of the two shows only the header.
 
-import { standardWeekWeight } from "@/lib/teacher-load";
+import { standardWeekWeight } from "@/lib/standard-week";
 import { shortestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import type { ClosedRange, YearBounds } from "@/lib/teaching-hours";
 import type {
