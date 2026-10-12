@@ -14172,7 +14172,8 @@ ROLLBACK;
 -- gallring functions. PostgREST's role reaches neither table. Last, a rule for
 -- later phases: every foreign key into LeaveRequests cascades, so whatever a
 -- later phase hangs off a leave request (a mentor's decision, say) goes with
--- it when gallring takes the request.
+-- it when gallring takes the request, or sets only its nullable link column
+-- NULL, so a row of another kind stays and the purge is never refused.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -14345,15 +14346,50 @@ END $$;
 -- request goes with it) or sets NULL (a row of another kind of data keeps its
 -- own period and loses the link, 20261021120000). NO ACTION or RESTRICT would
 -- refuse the purge, SET DEFAULT would point the row at another request.
+--
+-- A SET NULL clears only columns that may be NULL. Keys between a school's
+-- tables are composite with "schoolId", which is NOT NULL, so a plain
+-- ON DELETE SET NULL on a key into a request would clear it too: 23502
+-- inside app.gallring_purge, and the school's LEAVE_REQUESTS purge failing
+-- every night. Such a key names its link column, ON DELETE SET NULL
+-- ("…Id"), as section 19's predecessor keys do. The columns a SET NULL
+-- clears are those it names (confdelsetcols), or else the whole key.
+--
+-- The same reading runs over a stand-in of the session's own, two temporary
+-- tables with one key of each kind, so it is shown to refuse what it must.
+CREATE TEMP TABLE rls81d_request (id uuid, "schoolId" uuid NOT NULL, UNIQUE (id), UNIQUE (id, "schoolId")) ON COMMIT DROP;
+CREATE TEMP TABLE rls81d_row (
+  "requestId" uuid,
+  "schoolId" uuid NOT NULL,
+  CONSTRAINT rls81d_part FOREIGN KEY ("requestId", "schoolId") REFERENCES rls81d_request (id, "schoolId") ON DELETE CASCADE,
+  CONSTRAINT rls81d_link FOREIGN KEY ("requestId", "schoolId") REFERENCES rls81d_request (id, "schoolId") ON DELETE SET NULL ("requestId"),
+  CONSTRAINT rls81d_loose FOREIGN KEY ("requestId") REFERENCES rls81d_request (id) ON DELETE SET NULL,
+  CONSTRAINT rls81d_whole FOREIGN KEY ("requestId", "schoolId") REFERENCES rls81d_request (id, "schoolId") ON DELETE SET NULL,
+  CONSTRAINT rls81d_school FOREIGN KEY ("requestId", "schoolId") REFERENCES rls81d_request (id, "schoolId") ON DELETE SET NULL ("schoolId"),
+  CONSTRAINT rls81d_refuses FOREIGN KEY ("requestId", "schoolId") REFERENCES rls81d_request (id, "schoolId")
+) ON COMMIT DROP;
 DO $$
-DECLARE bad text;
+DECLARE
+  target regclass;
+  bad text;
 BEGIN
-  SELECT string_agg(format('%s (%s)', con.conname, con.conrelid::regclass), ', ') INTO bad
-    FROM pg_constraint con
-   WHERE con.contype = 'f' AND con.confrelid = '"LeaveRequests"'::regclass AND con.confdeltype NOT IN ('c', 'n');
-  IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'leave retention: % neither cascades nor sets NULL; cascade it if it is part of the request, SET NULL if it is a row of another kind', bad;
-  END IF;
+  FOREACH target IN ARRAY ARRAY['"LeaveRequests"'::regclass, 'rls81d_request'::regclass] LOOP
+    SELECT string_agg(format('%s (%s)', con.conname, con.conrelid::regclass), ', ' ORDER BY con.conname) INTO bad
+      FROM pg_constraint con
+     WHERE con.contype = 'f' AND con.confrelid = target
+       AND (con.confdeltype NOT IN ('c', 'n')
+            OR (con.confdeltype = 'n' AND EXISTS (
+                  SELECT 1 FROM pg_attribute a
+                   WHERE a.attrelid = con.conrelid AND a.attnotnull
+                     AND a.attnum = ANY (COALESCE(con.confdelsetcols, con.conkey)))));
+    IF target = '"LeaveRequests"'::regclass AND bad IS NOT NULL THEN
+      RAISE EXCEPTION 'leave retention: % neither cascades nor sets only nullable columns NULL; cascade it if it is part of the request, ON DELETE SET NULL ("…Id") naming the link if it is a row of another kind', bad;
+    END IF;
+    IF target = 'rls81d_request'::regclass
+       AND bad IS DISTINCT FROM 'rls81d_refuses (rls81d_row), rls81d_school (rls81d_row), rls81d_whole (rls81d_row)' THEN
+      RAISE EXCEPTION 'leave retention: of the stand-in''s keys the rule refused %, not the NO ACTION one and the two that clear "schoolId"', COALESCE(bad, 'none');
+    END IF;
+  END LOOP;
 END $$;
 ROLLBACK;
 
