@@ -27,7 +27,11 @@
  *       the claim waits for a reactivation in flight and then answers
  *       nothing, a reactivation committed while the night deletes an
  *       earlier person's login spares the later one, and a KEEP recorded
- *       mid-run spares whoever is left.
+ *       mid-run spares whoever is left;
+ *   gg  a reactivation that holds the row while the night pseudonymises the
+ *       person (20261021130000): the night waits for it, leaves the person
+ *       active with their links and notices, counts only whom it
+ *       pseudonymised, logs the lost login and finishes.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -426,6 +430,76 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
       await service.decide({ dataType: 'DEPARTED_PEOPLE', decision: 'KEEP' }, asAdmin);
       assert.deepEqual(await claim(run, third.id), [], 'the claim answered under KEEP');
       assert.equal((await state(third.id)).pseudonymisedAt, null);
+    });
+
+    await check('(gg) a reactivation in flight while a person is pseudonymised: the night waits for it, leaves the person whole and finishes', async () => {
+      // (gf)'s KEEP is taken back, so the period applies again tonight.
+      await owner.query(`ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_append_only"`);
+      try {
+        await owner.query(`DELETE FROM "RetentionDecisions" WHERE "schoolId" = $1 AND "dataType" = 'DEPARTED_PEOPLE' AND decision = 'KEEP'`, [s]);
+      } finally {
+        await owner.query(`ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_append_only"`);
+      }
+      // (gf)'s third person, spared by the KEEP, is due again.
+      const third = await one<{ id: string }>(`SELECT id FROM "Users" WHERE email = $1`, [`${marker}-third@example.invalid`]);
+      const late = await person('STUDENT', 'late', true, true);
+      await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [s, guardian.id, late.id]);
+      await owner.query(`INSERT INTO "Notifications" ("schoolId", "userId", type, "createdAt") VALUES ($1, $2, 'SCHEDULE_CHANGED', now() - interval '1 hour')`, [s, late.id]);
+      await depart([late.id]);
+
+      // The claim has committed and the login is going when an admin makes
+      // the person active again, and holds the row until the night's
+      // pseudonymise waits for it.
+      const reactivation: { held?: Promise<boolean> } = {};
+      whileDeleting = async (authId) => {
+        if (authId !== late.authId) return;
+        await owner.query('BEGIN');
+        await owner.query(`UPDATE "Users" SET "isActive" = true, "updatedAt" = now() WHERE id = $1`, [late.id]);
+        reactivation.held = (async () => {
+          let waited = false;
+          try {
+            for (let i = 0; i < 100 && !waited; i += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              await owner.query('SELECT pg_stat_clear_snapshot()');
+              waited = (await owner.query(
+                `SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%gallring_pseudonymise%' AND pid <> pg_backend_pid()`,
+              )).rowCount === 1;
+            }
+          } finally {
+            await owner.query('COMMIT');
+          }
+          return waited;
+        })();
+      };
+      const before = deleted.length;
+      let night: { rows: number; people: number };
+      let waited: boolean | undefined;
+      try {
+        night = await job.runSchool(s);
+      } finally {
+        whileDeleting = null;
+        waited = await reactivation.held;
+      }
+      assert.equal(waited, true, 'the reactivation committed before the night asked for the row');
+      assert.deepEqual(deleted.slice(before), [late.authId], `logins deleted ${JSON.stringify(deleted.slice(before))}`);
+      assert.equal(night.people, 1, `people ${night.people}`);
+      assert.ok(
+        (await one<{ p: Date | null }>(`SELECT "pseudonymisedAt" AS p FROM "Users" WHERE id = $1`, [third.id])).p !== null,
+        'the person still due was not pseudonymised',
+      );
+      const run = await one<{ status: string; counts: Record<string, number>; complete: Record<string, boolean> }>(
+        `SELECT status, counts, complete FROM "GallringRuns" WHERE "schoolId" = $1 ORDER BY "startedAt" DESC LIMIT 1`,
+        [s],
+      );
+      assert.deepEqual([run.status, run.counts['DEPARTED_PEOPLE'], run.complete['DEPARTED_PEOPLE']], ['DONE', 1, true], JSON.stringify(run));
+      const kept = await one<{ isActive: boolean; firstName: string; pseudonymisedAt: Date | null }>(
+        `SELECT "isActive", "firstName", "pseudonymisedAt" FROM "Users" WHERE id = $1`,
+        [late.id],
+      );
+      assert.deepEqual([kept.isActive, kept.firstName, kept.pseudonymisedAt], [true, 'late', null], 'the reactivated person was pseudonymised');
+      assert.equal(await count(`SELECT count(*) AS n FROM "GuardianStudents" WHERE "studentId" = $1`, [late.id]), 1, 'the reactivated person lost a guardian link');
+      assert.equal(await count(`SELECT count(*) AS n FROM "Notifications" WHERE "userId" = $1`, [late.id]), 1, 'the reactivated person lost a notice');
+      assert.ok(lines.includes(`Gallring removed the login of a person no longer due [school=${s}]`), `no line for the lost login in ${JSON.stringify(lines)}`);
     });
     assert.equal(GALLRING_JOB, 'gallring');
   } finally {

@@ -46,8 +46,11 @@ interface ClaimedPerson {
  *        the person's row and asks whether they are still due, so whoever
  *        was reactivated or spared since the list was read keeps their
  *        login; an invited one's login is then deleted at the auth provider,
- *        and the person is pseudonymised at once. Whoever's login could not
- *        be deleted waits for the next night and is counted as waiting;
+ *        and the person is pseudonymised at once. app.gallring_pseudonymise
+ *        locks the row before it asks again (20261021130000), so whoever is
+ *        made active in between is waited for and kept whole, and the job
+ *        logs it. Whoever's login could not be deleted waits for the next
+ *        night and is counted as waiting;
  *      - app.gallring_finish closes the run, and the claim is marked done.
  *
  * A school that fails is logged by id and error class and left for the claim
@@ -180,8 +183,14 @@ export class GallringJob implements OnModuleInit, OnModuleDestroy {
       );
       const n = Number(done?.n ?? 0);
       people += n;
-      if (n === 0 && claimed.invited) {
-        this.logger.warn(`Gallring removed the login of a person no longer due [school=${schoolId}]`);
+      // Made active again (or spared) after the claim: the person keeps
+      // their row whole, and an invited one has lost their login.
+      if (n === 0) {
+        this.logger.warn(
+          claimed.invited
+            ? `Gallring removed the login of a person no longer due [school=${schoolId}]`
+            : `Gallring did not pseudonymise a person no longer due [school=${schoolId}]`,
+        );
       }
     }
 
