@@ -153,7 +153,7 @@
       "blocked": "The account is blocked. Contact your school's administrator.",
       "failed": "Signing in with your school account did not finish. Try again, or sign in with your password."
     },
-    "noProfileSchoolAccount": "You signed in with the school account {email}, but nobody at your school has invited that address to SchemaPro. Ask your school's administrator to invite you with exactly that address. If you are already in SchemaPro with another address, the administrator sends your invitation again once SchemaPro has this one, and your login moves there.",
+    "noProfileSchoolAccount": "You signed in with the school account {email}, but nobody at your school has invited that address to SchemaPro. Ask your school's administrator to invite you with exactly that address. If you are already in SchemaPro with another address, the administrator connects you to the school account you just signed in with: SchemaPro needs this address, and then the administrator sends your invitation again. Your old login is then removed with its password, and you sign in with the school account.",
     "linkNeedsSchoolAccount": "Your school requires staff to sign in with their school account, so this link cannot be used to choose a password. Go to the sign-in page and choose Sign in with school account."
   },
   "nav": {

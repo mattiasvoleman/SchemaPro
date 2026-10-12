@@ -153,7 +153,7 @@
       "blocked": "Kontot är spärrat. Kontakta skolans administratör.",
       "failed": "Inloggningen med skolkonto blev inte klar. Försök igen, eller logga in med lösenord."
     },
-    "noProfileSchoolAccount": "Du loggade in med skolkontot {email}, men ingen på din skola har bjudit in den adressen till SchemaPro. Be skolans administratör bjuda in dig med just den adressen. Finns du redan i SchemaPro med en annan adress skickar administratören inbjudan igen när SchemaPro har den här, och då flyttar din inloggning dit.",
+    "noProfileSchoolAccount": "Du loggade in med skolkontot {email}, men ingen på din skola har bjudit in den adressen till SchemaPro. Be skolans administratör bjuda in dig med just den adressen. Finns du redan i SchemaPro med en annan adress kopplar administratören dig till skolkontot du nyss loggade in med: SchemaPro behöver få den här adressen, och sedan skickar administratören inbjudan igen. Din gamla inloggning tas då bort med sitt lösenord, och du loggar in med skolkontot.",
     "linkNeedsSchoolAccount": "Din skola kräver att personal loggar in med skolkonto, så länken kan inte användas för att välja lösenord. Gå till inloggningen och välj Logga in med skolkonto."
   },
   "nav": {
