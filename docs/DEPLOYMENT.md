@@ -228,15 +228,20 @@ There is intentionally no public signup. One-time, in the Supabase dashboard:
 insert into "Schools" (name, slug, timezone, "updatedAt")
 values ('Demo School', 'demo-school', 'Europe/Stockholm', now());
 
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
+insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "invitedAt", "updatedAt")
 values (
   (select id from "Schools" where slug = 'demo-school'),
   '<AUTH_USER_UUID>',
   'SCHOOL_ADMIN',
   'Anna', 'Andersson', '<same email as the auth user>',
-  now()
+  now(), now()
 );
 ```
+
+`"invitedAt"` says the person has a login. Without it the row reads as a
+catalogue entry nobody invited: gallring would not delete the login when the
+person leaves, and the school-account domain checks (§11) would not count
+them.
 
 `"updatedAt"` is mapped with Prisma's `@updatedAt`, which is maintained in the
 application layer and creates **no database default** — every hand-written
@@ -407,28 +412,39 @@ issues any token, at sign-in and at every refresh, the hook:
 Each school sets this up itself on **/admin/integrations → Inloggning**: the
 provider, the e-mail domains `/login` offers it for, the organisation (Entra
 tenant id or Google Workspace domain), and, separately and off by default,
-*Kräv skolkonto för personal*. The gateway guards that switch three ways:
+*Kräv skolkonto för personal*. The gateway guards that switch two ways, on
+every save that turns it on or keeps it on:
 
 - it turns on, or stays on through a change of provider or organisation,
   only from a session signed in with a school account of the saved
   organisation, so the provider, the pin and the admin's own account are
   known to work together;
 - it is refused (`SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT`, naming the domains and
-  how many staff are on each) while any active teacher or admin of the
-  school has an address on a domain `/login` would not answer with this
-  provider, so a missing or mistyped domain cannot leave staff with no way
-  in;
-- the domains are checked on every save, so editing them later is held to
-  the same rule.
+  how many staff are on each) while any teacher or admin who can sign in has
+  an address on a domain that is not on the row itself. Only the row's own
+  domains count: neither the row being replaced nor another school's row,
+  since another school may drop, narrow or switch its row at any time with
+  nothing to check this one. A school whose staff use a kommun's shared
+  domain lists that domain itself, and from then on no school can switch it
+  to another provider.
 
-A school may only name domains its own active people use
-(`SIGN_IN_DOMAIN_UNUSED`), and may name a domain another school already
-names only with the same provider (a kommun's schools often share one);
-anything else is refused (`SIGN_IN_DOMAIN_TAKEN`, and the gateway logs the
-collision for the operator), because it would leave the other school's
-domain with no answer at `/login`, and an SSO-only school's staff with no
-way in. A staff member added later on a domain the school has not listed
-is a case for 11.7.
+"Who can sign in" is an active teacher or admin whom SchemaPro has invited
+(`"invitedAt"` set), and the admin saving. A catalogue entry nobody invited
+has no login to lose and is not counted. The check runs when the row is
+saved, not when people change: staff invited, reactivated or given a new
+address later are a case for 11.7.
+
+A school may add a domain only if at least one of those staff has an
+address on it (`SIGN_IN_DOMAIN_UNUSED`; a domain already on the row is not
+asked again, so the switch can always be turned off). It may never list or
+pin a consumer mail domain such as gmail.com or hotmail.se: the API and a
+CHECK refuse them, since a personal account belongs to no school's
+organisation and the hook could never let it in. And it may name a domain
+another school already names only with the same provider (a kommun's schools
+often share one); anything else is refused (`SIGN_IN_DOMAIN_TAKEN`, and the
+gateway logs the collision for the operator), because it would leave the
+other school's domain with no answer at `/login`, and an SSO-only school's
+staff with no way in.
 
 **Decision: one multi-tenant Entra app for every kommun.** SchemaPro has one
 Entra app registration that accepts any organisation's accounts; each
@@ -454,7 +470,19 @@ person sees changes before the operator turns them on.
 1. Run the migration (§2) **before** the code that uses it is deployed: the
    gateway's `/api/v1/sign-in-method` and `/public/v1/sign-in-methods/:domain`
    read the new table and functions. The migration is additive and changes no
-   sign-in by itself.
+   sign-in by itself. Then, as the owner in the SQL editor, give an
+   `"invitedAt"` to every member of staff who has a login but was linked by
+   hand rather than invited (the first admin of §7, before §7 set it):
+
+   ```sql
+   update "Users" u set "invitedAt" = u."createdAt"
+    where u."invitedAt" is null and u.role in ('SCHOOL_ADMIN', 'TEACHER')
+      and exists (select 1 from auth.users a where a.id = u."authId");
+   ```
+
+   The domain checks (§11) count a login by `"invitedAt"`, as gallring does
+   when it deletes a departed person's login. Without it such an admin is
+   counted only when they save the row themselves.
 2. Deploy the API, the web and the app's JavaScript with the switches off.
    The Inloggning tab is visible to every school admin from the merge on, and
    says the feature is not turned on yet.
@@ -614,19 +642,36 @@ fails at Auth, before any provider.
   identity is linked by address) and their old-tenant identity is removed as
   above; until it is, the hook refuses them.
 - **A member of staff on a domain the school has not listed, while *Kräv
-  skolkonto för personal* is on** (for example someone added later with a
-  kommun address). The gateway checks the domains when the row is saved,
-  not when a person is added. That person finds no school-account sign-in
-  and has their password refused. The school's admin adds the domain on
-  Inloggning (the save is checked again), or gives the person an address on
-  a listed domain. If no admin can sign in, an operator turns the switch
-  off as in "locked out" below.
+  skolkonto för personal* is on.** The gateway checks the domains when the
+  row is saved, not when people change, so this follows a change made
+  after that save:
+  - someone invited later, for example with a kommun address;
+  - someone the SS12000 sync reactivates;
+  - an SS12000 e-mail change the admin applied to an invited person
+    (`PERSON_EMAIL_CHANGE_INVITED`). SchemaPro then shows the new address,
+    but the login keeps the one the person was invited with, and that is the
+    address they type at `/login` and the one the school account links by.
+
+  That person finds no school-account sign-in, or one that does not link,
+  and has their password refused. If the domain is the organisation's, the
+  school's admin adds it on Inloggning (the save is checked again). A
+  personal address such as gmail.com can never be listed: the person needs
+  an address in the organisation. After an e-mail change, the person signs
+  in with the old address for as long as the old domain is listed, until an
+  operator changes the login's own address to the new one (Auth's admin
+  API, `updateUserById`); inviting them again instead would leave the old
+  login behind. If no admin can sign in, an operator turns the switch off
+  as in "locked out" below.
 - **A school is told "En annan skola loggar in med en annan inloggning på
   …" (`SIGN_IN_DOMAIN_TAKEN`).** Another school names that domain with the
   other provider. If the domain is really the asking school's, the other
-  school's row is wrong: the operator removes the domain from that row (SQL
-  editor as the owner, or that school's admin on Inloggning), after checking
-  that no SSO-only school depends on it.
+  school's row is wrong: that school's admin removes the domain on
+  Inloggning, where the gateway refuses it while that school requires the
+  school account and has staff on the domain. If the operator removes it in
+  the SQL editor instead, nothing checks that: first make sure that school
+  has no staff on the domain, or does not require the school account. No
+  other school can depend on that row: a school that requires the school
+  account lists its staff's domains itself.
 - **The school's staff are locked out** (for example the provider is down
   while *Kräv skolkonto för personal* is on). Admins are staff, so none of
   them can sign in with a password either. An operator turns the switch off
