@@ -22,7 +22,11 @@ vi.mock("@/utils/supabase/client", () => ({
   },
 }));
 
-const labels = { updatePassword: "Uppdatera lösenord", failed: "Något gick fel" };
+const labels = {
+  updatePassword: "Uppdatera lösenord",
+  failed: "Något gick fel",
+  linkNeedsSchoolAccount: "Din skola kräver att personal loggar in med skolkonto.",
+};
 
 function renderForm() {
   return render(
@@ -44,6 +48,7 @@ beforeEach(() => {
   routerMocks.refresh.mockReset();
   authMocks.updateUser.mockReset();
   authMocks.unavailable = false;
+  window.history.replaceState(null, "", "/sv/update-password");
 });
 
 describe("UpdatePasswordForm", () => {
@@ -81,5 +86,29 @@ describe("UpdatePasswordForm", () => {
 
     expect(await screen.findByText(labels.failed)).toBeInTheDocument();
     expect(routerMocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("says a refused invitation or recovery link needs the school account, and offers no password", async () => {
+    // How Auth comes back when the access-token hook refuses the link's token.
+    window.history.replaceState(null, "", "/sv/update-password#error=access_denied&error_code=&error_description=sso_required");
+    renderForm();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(labels.linkNeedsSchoolAccount);
+    expect(screen.getByRole("button", { name: "Uppdatera lösenord" })).toBeDisabled();
+  });
+
+  it("reads the same refusal from the query, where a PKCE recovery link puts it", async () => {
+    window.history.replaceState(null, "", "/sv/update-password?error=access_denied&error_description=sso_required");
+    renderForm();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(labels.linkNeedsSchoolAccount);
+  });
+
+  it("says nothing of the school account for any other link", () => {
+    window.history.replaceState(null, "", "/sv/update-password#error_description=Email+link+is+invalid+or+has+expired");
+    renderForm();
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Uppdatera lösenord" })).toBeEnabled();
   });
 });

@@ -23,7 +23,11 @@ export default async function UpdatePasswordPage() {
         <UpdatePasswordForm
           home={localePath(locale, "/")}
           submitClassName={cn(buttonVariants({ className: "w-full" }))}
-          labels={{ updatePassword: t("updatePassword"), failed: tCommon("error") }}
+          labels={{
+            updatePassword: t("updatePassword"),
+            failed: tCommon("error"),
+            linkNeedsSchoolAccount: t("linkNeedsSchoolAccount"),
+          }}
         >
           <div className="space-y-2">
             <label htmlFor="password" className={labelClassName}>

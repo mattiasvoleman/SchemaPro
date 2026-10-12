@@ -12,6 +12,7 @@ export const INTEGRATION_KEYS = {
   changes: ["ss12000Changes"],
   provisioning: ["ss12000Provisioning"],
   providerKeys: ["integrationKeysProvider"],
+  signIn: ["signInMethod"],
 } as const;
 
 /** What an applied diff makes stale elsewhere: the register and the classes. */
