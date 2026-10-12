@@ -26,7 +26,7 @@ describe('CoverService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let realtime: { notifyLessonChanged: jest.Mock; notifyLessonsChanged: jest.Mock; notifyCoverBoardChanged: jest.Mock };
-  let notifications: { notifyUsers: jest.Mock; recipientsForGroups: jest.Mock };
+  let notifications: { notifyUsers: jest.Mock; recipientsForLessons: jest.Mock };
   let cover: CoverService;
   let calendar: CalendarLessonsService;
 
@@ -38,7 +38,7 @@ describe('CoverService', () => {
       notifyLessonsChanged: jest.fn().mockResolvedValue(undefined),
       notifyCoverBoardChanged: jest.fn(),
     };
-    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), recipientsForGroups: jest.fn().mockResolvedValue([]) };
+    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), recipientsForLessons: jest.fn().mockResolvedValue([]) };
     calendar = new CalendarLessonsService(
       prisma as unknown as PrismaService,
       realtime as unknown as RealtimeService,
@@ -215,7 +215,7 @@ describe('CoverService', () => {
     });
 
     it('the class, its guardians and the outgoing teachers are told after the commit, as the old page tells them — never why', async () => {
-      notifications.recipientsForGroups.mockResolvedValue(['pupil', 'parent']);
+      notifications.recipientsForLessons.mockResolvedValue(['pupil', 'parent']);
       world({ teachers: [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }] });
       let committed = false;
       prisma.withRls.mockImplementation((_user: unknown, body: (client: unknown) => unknown) => {
@@ -244,7 +244,9 @@ describe('CoverService', () => {
       const cancelled = notifications.notifyUsers.mock.calls.find(([, arg]) => arg.userIds.includes('pupil'))?.[1];
       expect(cancelled).toMatchObject({ type: 'LESSON_CANCELLED', userIds: ['pupil', 'parent', A] });
       expect(Object.keys(cancelled.meta).sort()).toEqual(['startsAt', 'subjectName']);
-      expect(cancelled.email.body).not.toMatch(/Reason/);
+      expect(cancelled.email.body).not.toMatch(/Anledning/);
+      // Swedish, on the school's clock.
+      expect(cancelled.email.subject).toBe('Inställd lektion: Matematik ons 14 okt 10:00');
     });
 
     it('SUPERVISED_STUDY removes the absent row, writes the constant note and keeps the old one', async () => {
@@ -255,8 +257,25 @@ describe('CoverService', () => {
       expect(tx.teacherAbsenceCover.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ decision: 'SUPERVISED_STUDY', previousNote: 'Ta med miniräknare' }),
       });
-      // No notice: the class reads the lesson and its note.
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('SUPERVISED_STUDY tells the class, its guardians and the teacher who left, after the commit — never why', async () => {
+      notifications.recipientsForLessons.mockResolvedValue(['pupil', 'parent']);
+      world({ teachers: [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }] });
+      await cover.decide(LESSON, { absenceId: ABSENCE, kind: 'SUPERVISED_STUDY', expected: 'OPEN' }, testUser());
+      // The class used to read it only in the lesson's note.
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [{ groupIds: ['grp'], participantIds: [] }]);
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
+        schoolId: SCHOOL,
+        userIds: ['pupil', 'parent', A],
+        type: 'LESSON_SUPERVISED_STUDY',
+        meta: { subjectName: 'Matematik', startsAt: START.toISOString() },
+        email: {
+          subject: 'Självstudier: Matematik ons 14 okt 10:00',
+          body: 'Matematik ons 14 okt 10:00 blir självstudier under tillsyn.\n\nSe schemat i SchemaPro.',
+        },
+      });
     });
 
     it('CO_TEACHER needs another teacher who is present; an absent co-teacher does not count', async () => {
@@ -269,6 +288,9 @@ describe('CoverService', () => {
       expect(tx.teacherAbsenceCover.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ decision: 'CO_TEACHER', removedTeachers: [{ teacherId: A, role: 'LEAD' }] }),
       });
+      // The lesson runs as planned with a teacher already on it: no family is told.
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(notifications.recipientsForLessons).not.toHaveBeenCalled();
     });
 
     it('SUBSTITUTE needs its substitute; the others take none', async () => {
@@ -385,6 +407,74 @@ describe('CoverService', () => {
       world({ note: SUPERVISED_STUDY_NOTE, teachers: [] }, [decision({ decision: 'SUPERVISED_STUDY', substituteId: null, previousNote: 'Gammal' })]);
       await cover.undo(LESSON, ABSENCE, testUser());
       expect(tx.calendarLesson.update).toHaveBeenCalledWith({ where: { id: LESSON }, data: { note: 'Gammal' } });
+    });
+
+    describe('what the class is told', () => {
+      const classNotices = () =>
+        notifications.notifyUsers.mock.calls.map(([, arg]) => arg).filter((arg) => arg.type !== 'LESSON_COVER_WITHDRAWN');
+
+      beforeEach(() => notifications.recipientsForLessons.mockResolvedValue(['pupil', 'parent']));
+
+      it('an undone SUBSTITUTE: the lesson goes ahead as planned, to the class and the teacher it puts back', async () => {
+        world({ teachers: [{ teacherId: S, role: 'SUBSTITUTE' }] }, [decision()]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([
+          {
+            schoolId: SCHOOL,
+            userIds: ['pupil', 'parent', A],
+            type: 'LESSON_REINSTATED',
+            meta: { subjectName: 'Matematik', startsAt: START.toISOString() },
+            email: {
+              subject: 'Lektionen blir av: Matematik ons 14 okt 10:00',
+              body: 'Matematik ons 14 okt 10:00 blir av som planerat.\n\nSe schemat i SchemaPro.',
+            },
+          },
+        ]);
+      });
+
+      it('an undone CANCELLED that reinstates tells the class and the lesson’s teachers; one an avbokning holds says nothing', async () => {
+        world({ status: 'CANCELLED', cancelCause: 'TEACHER_UNAVAILABLE', teachers: [{ teacherId: A, role: 'LEAD' }] }, [
+          decision({ decision: 'CANCELLED', removedTeachers: [], substituteId: null }),
+        ]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([expect.objectContaining({ type: 'LESSON_REINSTATED', userIds: ['pupil', 'parent', A] })]);
+
+        notifications.notifyUsers.mockClear();
+        world({ status: 'CANCELLED', cancelCause: 'EVENT', teachers: [{ teacherId: A, role: 'LEAD' }] }, [
+          decision({ decision: 'CANCELLED', removedTeachers: [], substituteId: null }),
+        ]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([]);
+      });
+
+      it('an undone SUPERVISED_STUDY tells the class; an undone CO_TEACHER tells nobody, as the decision told nobody', async () => {
+        world({ note: SUPERVISED_STUDY_NOTE, teachers: [] }, [decision({ decision: 'SUPERVISED_STUDY', substituteId: null })]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([expect.objectContaining({ type: 'LESSON_REINSTATED', userIds: ['pupil', 'parent', A] })]);
+
+        notifications.notifyUsers.mockClear();
+        world({ teachers: [{ teacherId: B, role: 'ASSISTANT' }] }, [decision({ decision: 'CO_TEACHER', substituteId: null })]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([]);
+      });
+
+      it('says nothing while another decision the class was told about still stands on the lesson', async () => {
+        world({ teachers: [{ teacherId: S, role: 'SUBSTITUTE' }] }, [
+          decision({ id: 'dec-0', absenceId: 'abs-b', absentTeacherId: B, removedTeachers: [{ teacherId: B, role: 'ASSISTANT' }], decidedAt: new Date('2026-10-13T11:00:00.000Z') }),
+          decision(),
+        ]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([]);
+
+        // A co-teacher decision beside it was never told, so it does not hold the notice back.
+        notifications.notifyUsers.mockClear();
+        world({ teachers: [{ teacherId: S, role: 'SUBSTITUTE' }] }, [
+          decision({ id: 'dec-0', absenceId: 'abs-b', absentTeacherId: B, decision: 'CO_TEACHER', substituteId: null, removedTeachers: [{ teacherId: B, role: 'ASSISTANT' }], decidedAt: new Date('2026-10-13T11:00:00.000Z') }),
+          decision(),
+        ]);
+        await cover.undo(LESSON, ABSENCE, testUser());
+        expect(classNotices()).toEqual([expect.objectContaining({ type: 'LESSON_REINSTATED' })]);
+      });
     });
 
     it('404 COVER_NO_DECISION without one; COVER_LESSON_HELD once the lesson has ended', async () => {

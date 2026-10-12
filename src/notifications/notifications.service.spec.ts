@@ -33,6 +33,8 @@ describe('NotificationsService', () => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     delivery = new NotificationDeliveryService(prisma as unknown as PrismaService);
+    // No pause between mails here, but in the test of the pause itself.
+    delivery.emailIntervalMs = 0;
     service = new NotificationsService(prisma as unknown as PrismaService, delivery);
     for (const key of ENV_KEYS) {
       savedEnv[key] = process.env[key];
@@ -114,8 +116,8 @@ describe('NotificationsService', () => {
       expect(data.map((row) => row.userId)).toEqual(['user-1', 'user-2']);
     });
 
-    it('caps the fan-out at 500 recipients', async () => {
-      const userIds = Array.from({ length: 502 }, (_, i) => `user-${i}`);
+    it('writes every recipient past 500, in statements of 500, and never cuts one off', async () => {
+      const userIds = Array.from({ length: 1203 }, (_, i) => `user-${i}`);
 
       await expect(
         service.notifyUsers(client(), {
@@ -124,14 +126,70 @@ describe('NotificationsService', () => {
           type: 'SCHEDULE_CHANGED',
           meta: {},
         }),
-      ).resolves.toBe(500);
+      ).resolves.toBe(1203);
 
-      const { data } = tx.notification.createMany.mock.calls[0][0] as {
-        data: Array<{ userId: string }>;
-      };
-      expect(data).toHaveLength(500);
-      expect(data[0].userId).toBe('user-0');
-      expect(data[499].userId).toBe('user-499');
+      const written = tx.notification.createMany.mock.calls.map(
+        (call) => (call[0] as { data: Array<{ userId: string }> }).data.map((row) => row.userId),
+      );
+      expect(written.map((chunk) => chunk.length)).toEqual([500, 500, 203]);
+      expect(written.flat()).toEqual(userIds);
+    });
+
+    it('resolves addresses and queues the outbox per chunk, and mails all 1,203 in mails of 50', async () => {
+      process.env.RESEND_API_KEY = 'resend-key';
+      process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
+      delivery.emailIntervalMs = 0;
+      const userIds = Array.from({ length: 1203 }, (_, i) => `user-${i}`);
+      tx.user.findMany.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in.map((id) => ({ id, email: `${id}@school.se` }))),
+      );
+
+      await inTransaction((c) =>
+        service.notifyUsers(c, {
+          schoolId: SCHOOL_ID,
+          userIds,
+          type: 'CANCELLATION_DIGEST',
+          meta: {},
+          email: { subject: 'Inställda lektioner: Prao', body: 'x' },
+        }),
+      );
+      expect(tx.user.findMany.mock.calls.map((call) => (call[0] as { where: { id: { in: string[] } } }).where.id.in.length)).toEqual([
+        500, 500, 203,
+      ]);
+      expect(prisma.onCommit).toHaveBeenCalledTimes(1);
+
+      await flushDelivery();
+      const mails = fetchMock.mock.calls.map((call) => JSON.parse((call[1] as { body: string }).body) as { to: string[]; bcc: string[] });
+      // 49 on BCC beside the sender's own `to`: 50 per mail, the provider's documented cap.
+      expect(mails.every((mail) => mail.to.length + mail.bcc.length <= 50)).toBe(true);
+      expect(mails).toHaveLength(Math.ceil(500 / 49) * 2 + Math.ceil(203 / 49));
+      expect(mails.flatMap((mail) => mail.bcc)).toEqual(userIds.map((id) => `${id}@school.se`));
+    });
+
+    it('waits between two mails for the provider’s rate', async () => {
+      process.env.RESEND_API_KEY = 'resend-key';
+      delivery.emailIntervalMs = 40;
+      tx.user.findMany.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(where.id.in.map((id) => ({ id, email: `${id}@school.se` }))),
+      );
+      const sentAt: number[] = [];
+      fetchMock.mockImplementation(() => {
+        sentAt.push(Date.now());
+        return Promise.resolve({ ok: true, status: 200 });
+      });
+
+      await inTransaction((c) =>
+        service.notifyUsers(c, {
+          schoolId: SCHOOL_ID,
+          userIds: Array.from({ length: 120 }, (_, i) => `user-${i}`),
+          type: 'LESSON_CANCELLED',
+          meta: {},
+          email: { subject: 'S', body: 'B' },
+        }),
+      );
+      await flushDelivery();
+      expect(sentAt).toHaveLength(3);
+      for (let i = 1; i < sentAt.length; i++) expect(sentAt[i]! - sentAt[i - 1]!).toBeGreaterThanOrEqual(39);
     });
 
     it('writes nothing and returns 0 for an empty recipient list', async () => {
@@ -364,48 +422,49 @@ describe('NotificationsService', () => {
     });
   });
 
-  describe('recipientsForGroups', () => {
-    it('returns [] without querying when no groups are given', async () => {
-      await expect(service.recipientsForGroups(client(), [])).resolves.toEqual(
-        [],
-      );
-
+  describe('recipientsForLessons', () => {
+    it('asks nothing for no lesson', async () => {
+      await expect(service.recipientsForLessons(client(), [])).resolves.toEqual([]);
       expect(tx.user.findMany).not.toHaveBeenCalled();
       expect(tx.guardianStudent.findMany).not.toHaveBeenCalled();
     });
 
-    it('returns active students of the groups plus all their guardians', async () => {
-      tx.user.findMany.mockResolvedValue([{ id: 'student-1' }, { id: 'student-2' }]);
-      tx.guardianStudent.findMany.mockResolvedValue([
-        { guardianId: 'guardian-1' },
-        { guardianId: 'guardian-2' },
-      ]);
+    it('reaches the active pupils of the classes, their teaching groups and the pupils named, plus all their guardians', async () => {
+      tx.user.findMany.mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          where.studentGroupId
+            ? [{ id: 'home-1', studentGroupId: 'group-1' }]
+            : // The named pupils who are active pupils.
+              [{ id: 'named-1' }],
+        ),
+      );
+      tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: 'member-1', studentGroupId: 'group-2' }]);
+      tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: 'guardian-1' }]);
 
       await expect(
-        service.recipientsForGroups(client(), ['group-1', 'group-2']),
-      ).resolves.toEqual(['student-1', 'student-2', 'guardian-1', 'guardian-2']);
+        service.recipientsForLessons(client(), [
+          { groupIds: ['group-1'], participantIds: [] },
+          { groupIds: ['group-2'], participantIds: ['named-1', 'named-gone'] },
+        ]),
+      ).resolves.toEqual(['home-1', 'member-1', 'named-1', 'guardian-1']);
 
+      // Active STUDENT rows only: who is told.
       expect(tx.user.findMany).toHaveBeenCalledWith({
-        where: {
-          role: 'STUDENT',
-          isActive: true,
-          studentGroupId: { in: ['group-1', 'group-2'] },
-        },
+        where: { studentGroupId: { in: ['group-1', 'group-2'] }, role: 'STUDENT', isActive: true },
+        select: { id: true, studentGroupId: true },
+      });
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: ['group-1', 'group-2'] }, student: { role: 'STUDENT', isActive: true } },
+        select: { studentId: true, studentGroupId: true },
+      });
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['named-1', 'named-gone'] }, role: 'STUDENT', isActive: true },
         select: { id: true },
       });
       expect(tx.guardianStudent.findMany).toHaveBeenCalledWith({
-        where: { studentId: { in: ['student-1', 'student-2'] } },
+        where: { studentId: { in: ['home-1', 'member-1', 'named-1'] } },
         select: { guardianId: true },
       });
-    });
-
-    it('returns [] when the groups have no active students', async () => {
-      tx.user.findMany.mockResolvedValue([]);
-      tx.guardianStudent.findMany.mockResolvedValue([]);
-
-      await expect(
-        service.recipientsForGroups(client(), ['group-1']),
-      ).resolves.toEqual([]);
     });
   });
 

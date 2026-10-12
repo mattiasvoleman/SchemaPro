@@ -73,14 +73,14 @@ describe('absence periods', () => {
 describe('TeacherAbsencesService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
-  let notifications: { notifyUsers: jest.Mock; recipientsForGroups: jest.Mock };
+  let notifications: { notifyUsers: jest.Mock; recipientsForLessons: jest.Mock };
   let realtime: { notifyCoverBoardChanged: jest.Mock; notifyLessonsChanged: jest.Mock; notifyLessonChanged: jest.Mock };
   let service: TeacherAbsencesService;
 
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
-    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), recipientsForGroups: jest.fn().mockResolvedValue([]) };
+    notifications = { notifyUsers: jest.fn().mockResolvedValue(1), recipientsForLessons: jest.fn().mockResolvedValue([]) };
     realtime = { notifyCoverBoardChanged: jest.fn(), notifyLessonsChanged: jest.fn(), notifyLessonChanged: jest.fn() };
     const calendar = new CalendarLessonsService(
       prisma as unknown as PrismaService,

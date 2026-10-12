@@ -146,7 +146,7 @@ describe('MasterLessonsService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let realtime: { notifyMasterTimetableChanged: jest.Mock };
-  let notifications: { recipientsForGroups: jest.Mock; notifyUsers: jest.Mock };
+  let notifications: { recipientsForLessons: jest.Mock; notifyUsers: jest.Mock };
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(NOW);
@@ -154,7 +154,7 @@ describe('MasterLessonsService', () => {
     prisma = createPrismaMock(tx);
     realtime = { notifyMasterTimetableChanged: jest.fn() };
     notifications = {
-      recipientsForGroups: jest.fn().mockResolvedValue([]),
+      recipientsForLessons: jest.fn().mockResolvedValue([]),
       notifyUsers: jest.fn().mockResolvedValue(0),
     };
     service = new MasterLessonsService(
@@ -2050,7 +2050,7 @@ describe('MasterLessonsService', () => {
         { id: CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') },
       ]);
       tx.subject.findUnique.mockResolvedValue({ name: 'Mathematics' });
-      notifications.recipientsForGroups.mockResolvedValue([STUDENT_ID]);
+      notifications.recipientsForLessons.mockResolvedValue([STUDENT_ID]);
 
       await expect(
         service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser()),
@@ -2254,7 +2254,7 @@ describe('MasterLessonsService', () => {
       ]);
       tx.subject.findUnique.mockResolvedValue({ name: 'Mathematics' });
       const recipients = [STUDENT_ID, '00000000-eeee-4eee-8eee-000000000001'];
-      notifications.recipientsForGroups.mockResolvedValue(recipients);
+      notifications.recipientsForLessons.mockResolvedValue(recipients);
 
       await service.update(
         LESSON_ID,
@@ -2262,9 +2262,10 @@ describe('MasterLessonsService', () => {
         testUser(),
       );
 
-      expect(notifications.recipientsForGroups).toHaveBeenCalledWith(tx, [
-        GROUP_ID,
-        EXTRA_GROUP_ID,
+      // The one roster reader's scope: the classes, and the pupils named on
+      // the lesson (none here).
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
+        { groupIds: [GROUP_ID, EXTRA_GROUP_ID], participantIds: [] },
       ]);
       expect(tx.subject.findUnique).toHaveBeenCalledWith({
         where: { id: SUBJECT_ID },
@@ -2307,9 +2308,28 @@ describe('MasterLessonsService', () => {
         testUser(),
       );
 
-      expect(notifications.recipientsForGroups).toHaveBeenCalledWith(tx, [
-        GROUP_ID,
-        OTHER_EXTRA_GROUP_ID, // the attached group — not the one it replaced
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
+        // the attached group — not the one it replaced
+        { groupIds: [GROUP_ID, OTHER_EXTRA_GROUP_ID], participantIds: [] },
+      ]);
+    });
+
+    // A pupil named on the lesson itself (MasterLessonStudents) attends it
+    // as much as the class does: the notice used to read the classes alone.
+    it('tells the pupils named on the lesson after the update too', async () => {
+      arrangeUpdate(
+        { participants: [{ studentId: STUDENT_ID }] },
+        { dayOfWeek: 3, participants: [{ studentId: STUDENT_ID }] },
+      );
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') },
+      ]);
+      tx.subject.findUnique.mockResolvedValue({ name: 'Mathematics' });
+
+      await service.update(LESSON_ID, { dayOfWeek: 3 }, testUser());
+
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [
+        { groupIds: [GROUP_ID], participantIds: [STUDENT_ID] },
       ]);
     });
 
@@ -2341,7 +2361,7 @@ describe('MasterLessonsService', () => {
         removedCalendarLessons: 0,
       });
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
-      expect(notifications.recipientsForGroups).not.toHaveBeenCalled();
+      expect(notifications.recipientsForLessons).not.toHaveBeenCalled();
     });
 
     it('moves both ends of the slot when both are patched', async () => {

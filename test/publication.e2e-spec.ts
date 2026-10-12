@@ -337,6 +337,7 @@ describe('Publicering (e2e)', () => {
       reversedAt: null,
       reinstated: 0,
       skippedRoomTaken: 0,
+      notifies: false,
       _count: { credits: 0 },
     };
 
@@ -456,6 +457,135 @@ describe('Publicering (e2e)', () => {
       harness.tx.cancellationBatch.findUnique.mockResolvedValue({ ...stored, reversedAt: new Date() });
       const again = await request(http()).post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse`).set('x-test-user', admin()).expect(409);
       expect(again.body.code).toBe('CANCELLATION_REVERSED');
+    });
+    describe('the digest', () => {
+      const PUPIL = 'bbbbbbbb-0000-4000-8000-000000000001';
+      const GUARDIAN = 'bbbbbbbb-0000-4000-8000-000000000002';
+      const TEACHER = 'bbbbbbbb-0000-4000-8000-000000000003';
+      /** Every digest row written, by recipient: its type and meta. */
+      const digests = () =>
+        new Map(
+          harness.tx.notification.createMany.mock.calls.flatMap(([arg]) =>
+            (arg as { data: { userId: string; type: string; meta: Record<string, unknown> }[] }).data.map(
+              (row) => [row.userId, { type: row.type, ...row.meta }] as const,
+            ),
+          ),
+        );
+
+      beforeEach(() => {
+        // 9A's one pupil sits both lessons through the home class; a guardian;
+        // the first lesson's teacher.
+        harness.tx.user.findMany.mockImplementation((query: { where?: { studentGroupId?: unknown } }) =>
+          Promise.resolve(query?.where?.studentGroupId ? [{ id: PUPIL, studentGroupId: 'g9a' }] : []),
+        );
+        harness.tx.studentGroupMember.findMany.mockResolvedValue([]);
+        harness.tx.calendarLessonStudent.findMany.mockResolvedValue([]);
+        harness.tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: GUARDIAN, studentId: PUPIL }]);
+        harness.tx.calendarLessonTeacher.findMany.mockResolvedValue([{ calendarLessonId: future(1).id, teacherId: TEACHER }]);
+      });
+
+      it('the preview says who a digest would reach, and a create sends none unless it is ticked', async () => {
+        const preview = await request(http())
+          .post('/api/v1/cancellation-batches/preview')
+          .set('x-test-user', admin())
+          .send(selection)
+          .expect(200);
+        expect(preview.body.audience).toEqual({ pupils: 1, guardians: 1, teachers: 1 });
+
+        await request(http())
+          .post('/api/v1/cancellation-batches')
+          .set('x-test-user', admin())
+          .send({ ...selection, expectedDigest: preview.body.digest })
+          .expect(201);
+        expect(harness.tx.cancellationBatch.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ notifies: false }) }),
+        );
+        expect(harness.tx.notification.createMany).not.toHaveBeenCalled();
+
+        const refused = await request(http())
+          .post('/api/v1/cancellation-batches')
+          .set('x-test-user', admin())
+          .send({ ...selection, expectedDigest: preview.body.digest, notify: 'ja' })
+          .expect(400);
+        expect(JSON.stringify(refused.body)).toContain('notify');
+      });
+
+      it('ticked: each person is told once, with their own lessons and days, and the batch remembers it', async () => {
+        const preview = await request(http())
+          .post('/api/v1/cancellation-batches/preview')
+          .set('x-test-user', admin())
+          .send(selection)
+          .expect(200);
+        await request(http())
+          .post('/api/v1/cancellation-batches')
+          .set('x-test-user', admin())
+          .send({ ...selection, expectedDigest: preview.body.digest, notify: true })
+          .expect(201);
+        expect(harness.tx.cancellationBatch.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ notifies: true }) }),
+        );
+        const told = digests();
+        const both = { type: 'CANCELLATION_DIGEST', batchId: BATCH_ID, name: 'Prao åk 9', reversed: false };
+        expect(told).toEqual(
+          new Map([
+            [PUPIL, { ...both, lessonCount: 2, startDate: '2099-03-01', endDate: '2099-03-02' }],
+            [GUARDIAN, { ...both, lessonCount: 2, startDate: '2099-03-01', endDate: '2099-03-02' }],
+            [TEACHER, { ...both, lessonCount: 1, startDate: '2099-03-01', endDate: '2099-03-01' }],
+          ]),
+        );
+      });
+
+      const reversible = () => {
+        harness.tx.cancellationBatchLesson.findMany.mockResolvedValue([
+          { previousNote: null, calendarLesson: { ...future(1), masterLessonId: 'm1', status: 'CANCELLED', cancelCause: 'EVENT', roomId: null } },
+        ]);
+        // 1 March 2099 is a Sunday, 08:00 in Stockholm.
+        harness.tx.masterLesson.findMany.mockResolvedValue([
+          {
+            id: 'm1',
+            isParked: false,
+            dayOfWeek: 7,
+            startTime: new Date('1970-01-01T08:00:00.000Z'),
+            endTime: new Date('1970-01-01T09:00:00.000Z'),
+            recurrence: 'ALL_WEEKS',
+            startDate: null,
+            endDate: null,
+          },
+        ]);
+        // The lesson the reversal reinstates, as the digest reads it.
+        harness.tx.calendarLesson.findMany.mockResolvedValue([future(1)]);
+      };
+
+      it('a batch that told tells again about the lessons its reversal reinstates', async () => {
+        reversible();
+        harness.tx.cancellationBatch.findUnique.mockResolvedValue({ ...stored, notifies: true });
+        const preview = await request(http())
+          .post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse/preview`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(preview.body).toMatchObject({ reinstate: 1, notify: 3 });
+        expect(harness.tx.notification.createMany).not.toHaveBeenCalled();
+
+        const reversed = await request(http())
+          .post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(reversed.body).toMatchObject({ reinstate: 1, notify: 3 });
+        const again = { type: 'CANCELLATION_DIGEST', batchId: BATCH_ID, name: 'Prao åk 9', reversed: true, lessonCount: 1, startDate: '2099-03-01', endDate: '2099-03-01' };
+        expect(digests()).toEqual(new Map([[PUPIL, again], [GUARDIAN, again], [TEACHER, again]]));
+      });
+
+      it('a batch that told nobody stays silent when it is reversed', async () => {
+        reversible();
+        const preview = await request(http())
+          .post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse/preview`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(preview.body).toMatchObject({ reinstate: 1, notify: 0 });
+        await request(http()).post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse`).set('x-test-user', admin()).expect(200);
+        expect(harness.tx.notification.createMany).not.toHaveBeenCalled();
+        expect(harness.tx.guardianStudent.findMany).not.toHaveBeenCalled();
+      });
     });
   });
 

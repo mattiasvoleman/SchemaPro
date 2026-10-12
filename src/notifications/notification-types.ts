@@ -7,7 +7,10 @@ import type { NotificationKind } from './notifications.service';
  * The lists are what each role actually receives today (the recipients of
  * notifyUsers' callers): families the lesson and schedule notices and their
  * own leave decisions; staff the lesson notices, their cover bookings and
- * their room bookings. TEACHER_ABSENCE_REPORTED is in nobody's list: it never
+ * their room bookings. The lesson notices include the three of Notiser som
+ * når fram: an avbokning's digest, a lesson that goes ahead as planned after
+ * all, and självstudier — each to the lesson's roster, its guardians and the
+ * teachers concerned. TEACHER_ABSENCE_REPORTED is in nobody's list: it never
  * leaves the inbox, so a switch for it would do nothing.
  */
 
@@ -21,21 +24,38 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'ROOM_BOOKING_DECIDED',
   'TEACHER_ABSENCE_REPORTED',
   'LESSON_COVER_WITHDRAWN',
+  'LESSON_REINSTATED',
+  'LESSON_SUPERVISED_STUDY',
+  'CANCELLATION_DIGEST',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
 
 const STAFF: readonly NotificationKind[] = [
   'LESSON_CANCELLED',
+  'CANCELLATION_DIGEST',
+  'LESSON_REINSTATED',
   'LESSON_SUBSTITUTE',
+  'LESSON_SUPERVISED_STUDY',
   'LESSON_COVER_WITHDRAWN',
   'LESSON_ROOM_CHANGED',
   'ROOM_BOOKING_DECIDED',
 ];
 
+/** What a family hears about the pupil's lessons, in the order the settings list them. */
+const LESSONS: readonly NotificationKind[] = [
+  'LESSON_CANCELLED',
+  'CANCELLATION_DIGEST',
+  'LESSON_REINSTATED',
+  'LESSON_SUBSTITUTE',
+  'LESSON_SUPERVISED_STUDY',
+  'LESSON_ROOM_CHANGED',
+  'SCHEDULE_CHANGED',
+];
+
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
-  GUARDIAN: ['LESSON_CANCELLED', 'LESSON_SUBSTITUTE', 'LESSON_ROOM_CHANGED', 'SCHEDULE_CHANGED', 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED'],
-  STUDENT: ['LESSON_CANCELLED', 'LESSON_SUBSTITUTE', 'LESSON_ROOM_CHANGED', 'SCHEDULE_CHANGED', 'LEAVE_DECIDED'],
+  GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED'],
+  STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
   TEACHER: STAFF,
   SCHOOL_ADMIN: STAFF,
 };

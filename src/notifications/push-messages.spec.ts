@@ -14,6 +14,8 @@ const SENSITIVE = {
   subjectName: 'Modersmål arabiska',
   groupName: 'Särskild undervisningsgrupp',
   roomName: 'Kuratorns rum',
+  // An avbokning's name is free text the admin typed.
+  name: 'Prao Anpassade grundskolan',
 };
 
 const META = {
@@ -24,6 +26,7 @@ const META = {
   endDate: '2026-10-21',
   status: 'APPROVED',
   cover: true,
+  lessonCount: 3,
 };
 
 describe('push messages', () => {
@@ -33,8 +36,9 @@ describe('push messages', () => {
     for (const kind of KINDS) {
       const sv = PUSH_TEMPLATES.sv[kind];
       const en = PUSH_TEMPLATES.en[kind];
-      for (const approved of [true, false]) {
-        const pick = (t: unknown) => (typeof t === 'function' ? (t as (a: boolean) => string)(approved) : (t as string));
+      for (const context of [true, false].flatMap((approved) => [1, 3].map((lessons) => ({ approved, lessons })))) {
+        const pick = (t: unknown) =>
+          typeof t === 'function' ? (t as (c: typeof context) => string)(context) : (t as string);
         expect(holes(pick(en.one))).toEqual(holes(pick(sv.one)));
         expect(holes(pick(en.bare))).toEqual([]);
         expect(holes(pick(sv.bare))).toEqual([]);
@@ -73,6 +77,27 @@ describe('push messages', () => {
     expect(pushText('LEAVE_DECIDED', { ...META, status: 'REJECTED' }, 'en', TZ).body).toBe('The leave request 19 Oct–21 Oct has been rejected.');
     expect(pushText('ROOM_BOOKING_DECIDED', META, 'sv', TZ).body).toBe('Din lokalbokning tis 13 okt 08:00 har godkänts.');
     expect(pushText('ROOM_BOOKING_DECIDED', { ...META, status: 'REJECTED' }, 'sv', TZ).body).toBe('Din lokalbokning tis 13 okt 08:00 har avslagits.');
+    expect(pushText('LESSON_REINSTATED', META, 'sv', TZ)).toEqual({ title: 'Lektion enligt schema', body: 'En lektion tis 13 okt 08:00 blir av som planerat.' });
+    expect(pushText('LESSON_REINSTATED', META, 'en', TZ).body).toBe('A lesson Tue 13 Oct 08:00 goes ahead as planned.');
+    expect(pushText('LESSON_SUPERVISED_STUDY', META, 'sv', TZ)).toEqual({ title: 'Självstudier', body: 'En lektion tis 13 okt 08:00 blir självstudier under tillsyn.' });
+    expect(pushText('LESSON_SUPERVISED_STUDY', META, 'en', TZ).body).toBe('A lesson Tue 13 Oct 08:00 becomes supervised self-study.');
+  });
+
+  it('says how many of the person’s lessons an avbokning takes, over which days, and never its name', () => {
+    expect(pushText('CANCELLATION_DIGEST', META, 'sv', TZ)).toEqual({ title: 'Inställda lektioner', body: '3 lektioner 19 okt–21 okt är inställda.' });
+    expect(pushText('CANCELLATION_DIGEST', META, 'en', TZ).body).toBe('3 lessons 19 Oct–21 Oct are cancelled.');
+    const oneDay = { startDate: '2026-10-19', endDate: '2026-10-19', lessonCount: 1 };
+    expect(pushText('CANCELLATION_DIGEST', oneDay, 'sv', TZ).body).toBe('En lektion 19 okt är inställd.');
+    expect(pushText('CANCELLATION_DIGEST', oneDay, 'en', TZ).body).toBe('A lesson 19 Oct is cancelled.');
+    expect(pushText('CANCELLATION_DIGEST_REVERSED', META, 'sv', TZ)).toEqual({
+      title: 'Lektioner blir av',
+      body: '3 inställda lektioner 19 okt–21 okt blir av som planerat.',
+    });
+    expect(pushText('CANCELLATION_DIGEST_REVERSED', oneDay, 'en', TZ).body).toBe('A cancelled lesson 19 Oct goes ahead as planned.');
+    // Without a count or the days, the bare words.
+    expect(pushText('CANCELLATION_DIGEST', { startDate: '2026-10-19', endDate: '2026-10-21' }, 'sv', TZ).body).toBe('Lektioner är inställda.');
+    expect(pushText('CANCELLATION_DIGEST', { lessonCount: 2 }, 'sv', TZ).body).toBe('Lektioner är inställda.');
+    expect(pushText('CANCELLATION_DIGEST', { ...META, lessonCount: 1.5 }, 'en', TZ).body).toBe('Lessons are cancelled.');
   });
 
   it('counts several notices of a kind in one push', () => {
@@ -103,6 +128,8 @@ describe('push messages', () => {
     expect(pushKindOf('LESSON_SUBSTITUTE', { cover: true })).toBe('LESSON_SUBSTITUTE_COVER');
     expect(pushKindOf('LESSON_SUBSTITUTE', {})).toBe('LESSON_SUBSTITUTE');
     expect(pushKindOf('TEACHER_ABSENCE_REPORTED', {})).toBeNull();
+    expect(pushKindOf('CANCELLATION_DIGEST', { reversed: true })).toBe('CANCELLATION_DIGEST_REVERSED');
+    expect(pushKindOf('CANCELLATION_DIGEST', { reversed: false })).toBe('CANCELLATION_DIGEST');
     const all: NotificationKind[] = [
       'ABSENCE_UNREPORTED',
       'LEAVE_DECIDED',
@@ -112,6 +139,9 @@ describe('push messages', () => {
       'SCHEDULE_CHANGED',
       'ROOM_BOOKING_DECIDED',
       'LESSON_COVER_WITHDRAWN',
+      'LESSON_REINSTATED',
+      'LESSON_SUPERVISED_STUDY',
+      'CANCELLATION_DIGEST',
     ];
     for (const type of all) expect(KINDS).toContain(pushKindOf(type, {}));
   });

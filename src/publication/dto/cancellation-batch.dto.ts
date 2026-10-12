@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -103,6 +104,15 @@ export class CreateCancellationBatchDto extends CancellationSelectionDto {
   @ValidateNested()
   @Type(() => CancellationCreditDto)
   credit?: CancellationCreditDto;
+
+  /**
+   * One digest per person the batch touches (CANCELLATION_DIGEST), and
+   * another when it is reversed. Absent or false: nobody is told beyond the
+   * note on each lesson, as before.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'notify: true eller false.' })
+  notify?: boolean;
 }
 
 export class CancellationBatchListQueryDto {

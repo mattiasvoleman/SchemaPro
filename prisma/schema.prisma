@@ -54,6 +54,12 @@ enum NotificationType {
   TEACHER_ABSENCE_REPORTED
   /// A booked substitute is no longer needed (20261012120000).
   LESSON_COVER_WITHDRAWN
+  /// A lesson goes ahead as its timetable says after all: reinstated, or a cover decision the class was told about undone (20261018090000).
+  LESSON_REINSTATED
+  /// The cover board decided självstudier under tillsyn (20261018090000).
+  LESSON_SUPERVISED_STUDY
+  /// One notice per person for a bulk avbokning, and one for its reversal (20261018090000).
+  CANCELLATION_DIGEST
 }
 
 enum RoomBookingStatus {
@@ -1075,6 +1081,8 @@ model CancellationBatch {
   reversedByUserId String?           @db.Uuid
   reinstated       Int               @default(0)
   skippedRoomTaken Int               @default(0)
+  /// Told its people (CANCELLATION_DIGEST) when made, so its reversal tells them too (20261018091000).
+  notifies         Boolean           @default(false)
 
   lessons CancellationBatchLesson[]
   credits CancellationBatchCredit[]

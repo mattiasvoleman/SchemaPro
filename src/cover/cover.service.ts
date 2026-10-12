@@ -57,15 +57,28 @@ export const COVER_RANGE = 'COVER_RANGE';
 export const COVER_SUBSTITUTE_REQUIRED = 'COVER_SUBSTITUTE_REQUIRED';
 
 /**
- * What the class, its guardians and the outgoing teachers are told about a
- * lesson the board covered or cancelled: what the old page tells them
- * (LESSON_SUBSTITUTE / LESSON_CANCELLED, subject and start), never a reason.
+ * What the class, its guardians and the teachers concerned are told about a
+ * lesson the board decided on, subject and start, never a reason:
+ *
+ *   * a vikarie: LESSON_SUBSTITUTE, and a cancellation: LESSON_CANCELLED, as
+ *     the old page tells them, to the class and the teachers who left;
+ *   * självstudier: LESSON_SUPERVISED_STUDY, to the class and the teacher
+ *     who left. The class used to read it only in the lesson's note;
+ *   * the co-teacher takes it (CO_TEACHER): nothing. The lesson runs as
+ *     planned with a teacher already on it, and a notice would tell every
+ *     family that a teacher is away and nothing they need to act on;
+ *   * an undo that puts the lesson back as its timetable says, as far as the
+ *     class was told (undoInTransaction): LESSON_REINSTATED, to the class and
+ *     the teachers it puts back.
  */
 export interface ClassNotice {
   lessonId: string;
-  type: 'LESSON_SUBSTITUTE' | 'LESSON_CANCELLED';
+  type: 'LESSON_SUBSTITUTE' | 'LESSON_CANCELLED' | 'LESSON_SUPERVISED_STUDY' | 'LESSON_REINSTATED';
   teacherIds: string[];
 }
+
+/** The decisions a class is told about; CO_TEACHER is not one (see ClassNotice). */
+const TOLD_THE_CLASS: ReadonlySet<CoverDecisionKind> = new Set(['SUBSTITUTE', 'CANCELLED', 'SUPERVISED_STUDY']);
 
 /** What a cover write leaves to do once it has committed. */
 export interface CoverEffects {
@@ -334,6 +347,11 @@ export class CoverService {
           await tx.calendarLessonTeacher.deleteMany({ where: { calendarLessonId: lesson.id, teacherId: absence.userId } });
         }
         await tx.calendarLesson.update({ where: { id: lesson.id }, data: { note: SUPERVISED_STUDY_NOTE } });
+        effects.classNotices.push({
+          lessonId: lesson.id,
+          type: 'LESSON_SUPERVISED_STUDY',
+          teacherIds: removedAbsent.map((row) => row.teacherId),
+        });
         await writeDecision(tx, {
           schoolId,
           absenceId: absence.id,
@@ -360,6 +378,7 @@ export class CoverService {
         if (absentRow) {
           await tx.calendarLessonTeacher.deleteMany({ where: { calendarLessonId: lesson.id, teacherId: absence.userId } });
         }
+        // No class notice: the lesson runs as planned (see ClassNotice).
         await writeDecision(tx, {
           schoolId,
           absenceId: absence.id,
@@ -453,7 +472,9 @@ export class CoverService {
       });
       effects.notices.push({ kind: 'WITHDRAWN', userId: decision.substituteId!, lessonId: lesson.id });
     }
-    if (decision.decision === 'CANCELLED' && lesson.status === 'CANCELLED' && lesson.cancelCause === 'TEACHER_UNAVAILABLE') {
+    const reinstates =
+      decision.decision === 'CANCELLED' && lesson.status === 'CANCELLED' && lesson.cancelCause === 'TEACHER_UNAVAILABLE';
+    if (reinstates) {
       await this.calendarLessons.reinstateInTransaction(tx, lesson);
     }
     if (decision.decision === 'SUPERVISED_STUDY' && lesson.note === SUPERVISED_STUDY_NOTE) {
@@ -470,6 +491,29 @@ export class CoverService {
       });
     }
     await tx.teacherAbsenceCover.delete({ where: { id: decision.id } });
+
+    // The class hears that the lesson goes ahead as planned when this undo
+    // takes back the last thing it was told: a vikarie or självstudier, or
+    // a cancellation this undo reinstates (one an avbokning holds since
+    // stays cancelled, and says so). Another decision on the lesson that the
+    // class was told about still stands, so then nothing is said.
+    const backAsPlanned =
+      TOLD_THE_CLASS.has(decision.decision as CoverDecisionKind) &&
+      (decision.decision !== 'CANCELLED' || reinstates) &&
+      !decisions.some((row) => row.id !== decision.id && TOLD_THE_CLASS.has(row.decision as CoverDecisionKind));
+    if (backAsPlanned) {
+      effects.classNotices.push({
+        lessonId: lesson.id,
+        type: 'LESSON_REINSTATED',
+        teacherIds: [
+          ...new Set([
+            ...restore.map((row) => row.teacherId),
+            // A cancellation removed nobody, and told the lesson's teachers.
+            ...(decision.decision === 'CANCELLED' ? staying.map((t) => t.teacherId) : []),
+          ]),
+        ],
+      });
+    }
     return effects;
   }
 
@@ -483,7 +527,7 @@ export class CoverService {
           const timezone = await schoolTimezone(tx, schoolId);
           await sendNotices(this.notifications, tx, schoolId, timezone, notices);
           for (const notice of settleClassNotices(effects.classNotices)) {
-            await this.calendarLessons.notifyLessonClass(tx, notice.lessonId, notice.type, notice.teacherIds);
+            await this.calendarLessons.notifyLessonClass(tx, notice.lessonId, notice.type, notice.teacherIds, timezone);
           }
           await this.realtime.notifyLessonsChanged(tx, [...new Set(effects.lessonIds)]);
         })

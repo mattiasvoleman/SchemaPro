@@ -77,6 +77,7 @@ describe('PublicationsService (DIRECT)', () => {
   let calendar: { materialise: jest.Mock };
   let coverage: { scheduled: jest.Mock; planned: jest.Mock };
   let load: { load: jest.Mock };
+  let notifications: { recipientsForLessons: jest.Mock; notifyUsers: jest.Mock };
 
   beforeEach(() => {
     jest.useFakeTimers({ now: new Date('2026-10-12T08:00:00Z'), doNotFake: ['nextTick', 'setImmediate'] });
@@ -100,12 +101,13 @@ describe('PublicationsService (DIRECT)', () => {
       planned: jest.fn().mockResolvedValue({ verdicts: [] }),
     };
     load = { load: jest.fn() };
+    notifications = { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() };
     service = new PublicationsService(
       createPrismaMock(tx) as unknown as PrismaService,
       calendar as unknown as CalendarService,
       coverage as unknown as TimplanCoverageService,
       load as unknown as StaffingLoadService,
-      { recipientsForGroups: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+      notifications as unknown as NotificationsService,
       { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
     );
   });
@@ -113,6 +115,24 @@ describe('PublicationsService (DIRECT)', () => {
   afterEach(() => jest.useRealTimers());
 
   const created = () => tx.timetablePublication.create.mock.calls.map(([arg]) => arg.data);
+
+  it('a DRAFT publish tells each changed lesson’s roster once — its classes, groups and named pupils — with the first lesson that reaches them', async () => {
+    notifications.recipientsForLessons
+      .mockResolvedValueOnce(['ada', 'ada-guardian'])
+      .mockResolvedValueOnce(['ada', 'ada-guardian', 'eli']);
+    const first = lesson({ id: 'm1', extraGroups: [{ studentGroupId: 'Ma7' }] });
+    const second = lesson({ id: 'm2', studentGroupId: '8B', participants: [{ studentId: 'eli' }], subject: { name: 'Bild' } });
+    const tell = (service as unknown as { tellClasses: (...args: unknown[]) => Promise<void> }).tellClasses.bind(service);
+    await tell(tx, SCHOOL_ID, [first, second], ['m1', 'm2', 'gone']);
+    expect(notifications.recipientsForLessons.mock.calls.map(([, scopes]) => scopes)).toEqual([
+      [{ groupIds: ['grp', 'Ma7'], participantIds: [] }],
+      [{ groupIds: ['8B'], participantIds: ['eli'] }],
+    ]);
+    expect(notifications.notifyUsers.mock.calls.map(([, options]) => [options.userIds, options.meta.subjectName])).toEqual([
+      [['ada', 'ada-guardian'], 'Matematik'],
+      [['eli'], 'Bild'],
+    ]);
+  });
 
   it('publishes the window the old route would, and logs it with its validity', async () => {
     const outcome = await service.publish({ academicYearId: YEAR_ID }, testUser());
