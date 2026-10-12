@@ -261,6 +261,34 @@ describe('JwtStrategy', () => {
       });
     });
 
+    it('names the school account a school-account session signed in with, and nothing for a password', async () => {
+      tx.user.findUnique.mockResolvedValue(activeProfile({ role: 'SCHOOL_ADMIN' }));
+      const tenant = '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
+
+      await expect(
+        strategy.validate(
+          payload({
+            amr: [{ method: 'oauth', timestamp: 1 }],
+            user_metadata: { iss: `https://login.microsoftonline.com/${tenant}/v2.0`, custom_claims: { tid: tenant } },
+          }),
+        ),
+      ).resolves.toEqual({
+        authId: AUTH_ID,
+        role: 'SCHOOL_ADMIN',
+        userId: USER_ID,
+        schoolId: SCHOOL_ID,
+        schoolAccount: { provider: 'azure', entraTenantId: tenant },
+      });
+
+      const password = await strategy.validate(
+        payload({
+          amr: [{ method: 'password', timestamp: 1 }],
+          user_metadata: { iss: `https://login.microsoftonline.com/${tenant}/v2.0` },
+        }),
+      );
+      expect(password).not.toHaveProperty('schoolAccount');
+    });
+
     it('scopes the lookup to the verified subject', async () => {
       tx.user.findUnique.mockResolvedValue(activeProfile());
 
