@@ -212,6 +212,7 @@ export interface SupabaseAdminMock {
    */
   isConfigured: boolean;
   inviteUser: jest.Mock;
+  changeUserEmail: jest.Mock;
   deleteUser: jest.Mock;
 }
 
@@ -274,6 +275,7 @@ export async function createTestApp(
       authId: '11111111-1111-4111-8111-111111111111',
       emailSent: true,
     })),
+    changeUserEmail: jest.fn(async () => 'unchanged'),
     deleteUser: jest.fn(async () => undefined),
   };
 

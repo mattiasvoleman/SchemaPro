@@ -19,10 +19,14 @@ type FetchInit = {
  * on (422 fallback, 404 tolerance, paging) is exercised for real without a
  * single network call.
  */
-const jsonResponse = (body: unknown, status = 200) => ({
+const jsonResponse = (
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+) => ({
   ok: status >= 200 && status < 300,
   status,
-  headers: { get: (): string | null => null },
+  headers: { get: (name: string): string | null => headers[name.toLowerCase()] ?? null },
   json: (): Promise<unknown> => Promise.resolve(body),
   text: (): Promise<string> => Promise.resolve(JSON.stringify(body)),
 });
@@ -274,6 +278,84 @@ describe('SupabaseAdminService', () => {
       await expect(makeService().inviteUser(EMAIL)).rejects.toThrow(
         'Supabase invite failed: invalid email address',
       );
+    });
+  });
+
+  describe('changeUserEmail', () => {
+    /** How GoTrue answers a client that sends X-Supabase-Api-Version, as supabase-js does. */
+    const refusal = (code: string, message: string, status: number) =>
+      jsonResponse({ code, message }, status, { 'x-supabase-api-version': '2024-01-01' });
+
+    it('reads the user, then PUTs the new address with the service-role credentials', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
+        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('changed');
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(call(0).init.method).toBe('GET');
+      expect(call(0).url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
+      const { url, init } = call(1);
+      expect(init.method).toBe('PUT');
+      expect(url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
+      expect(JSON.parse(init.body ?? '')).toEqual({ email: EMAIL });
+      expect(header(init, 'authorization')).toBe(`Bearer ${SERVICE_KEY}`);
+    });
+
+    it('writes nothing when the user already has the address, in any case', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'Invitee@School.SE' }));
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('unchanged');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('says the address is taken when another user holds it', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
+        .mockResolvedValueOnce(
+          refusal('email_exists', 'A user with this email address has already been registered', 422),
+        );
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('taken');
+    });
+
+    it('says the user is missing when GoTrue has no such user', async () => {
+      fetchMock.mockResolvedValueOnce(refusal('user_not_found', 'User not found', 404));
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('missing');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates any other refusal of the change', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
+        .mockResolvedValueOnce(
+          refusal('validation_failed', 'Unable to validate email address: invalid format', 400),
+        );
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).rejects.toThrow(
+        'Supabase e-mail change failed: Unable to validate email address: invalid format',
+      );
+    });
+
+    it('propagates a failed lookup without writing', async () => {
+      fetchMock.mockResolvedValueOnce(refusal('not_admin', 'User not allowed', 403));
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).rejects.toThrow(
+        'Supabase user lookup failed: User not allowed',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses instead of calling out when unconfigured', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(makeService({}).changeUserEmail(AUTH_ID, EMAIL)).rejects.toThrow(
+        'Supabase admin client is not configured.',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 

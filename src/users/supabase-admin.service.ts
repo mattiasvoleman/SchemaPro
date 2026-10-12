@@ -7,9 +7,9 @@ import type { AppConfig, SupabaseAdminConfig } from '../config/configuration';
  * Thin wrapper around the Supabase Admin (GoTrue) API.
  *
  * Uses the service-role key, which bypasses RLS — therefore this service is
- * ONLY used for identity lifecycle (invite / delete auth users) and never for
- * reading or writing tenant data. All tenant data access goes through
- * `PrismaService.withRls`.
+ * ONLY used for identity lifecycle (invite, re-address and delete auth
+ * users) and never for reading or writing tenant data. All tenant data access
+ * goes through `PrismaService.withRls`.
  *
  * When `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are not configured
  * (e.g. local development against plain PostgreSQL), the service degrades
@@ -72,6 +72,41 @@ export class SupabaseAdminService {
       throw new Error(`Supabase invite failed: ${error?.message ?? 'unknown error'}`);
     }
     return { authId: data.user.id, emailSent: true };
+  }
+
+  /**
+   * Gives an existing auth user another address, keeping its password and
+   * the identities linked to it. The admin API applies the change directly:
+   * no confirmation mail goes to either address.
+   *
+   * - `unchanged`: the user already has the address (in any case), so
+   *   nothing is written;
+   * - `changed`: the user now has the address;
+   * - `taken`: another auth user holds the address, and GoTrue refuses
+   *   (email_exists);
+   * - `missing`: there is no such user (404).
+   *
+   * Anything else throws.
+   */
+  async changeUserEmail(
+    authId: string,
+    email: string,
+  ): Promise<'unchanged' | 'changed' | 'taken' | 'missing'> {
+    if (!this.client) {
+      throw new Error('Supabase admin client is not configured.');
+    }
+    const found = await this.client.auth.admin.getUserById(authId);
+    if (found.error) {
+      if (found.error.status === 404) return 'missing';
+      throw new Error(`Supabase user lookup failed: ${found.error.message}`);
+    }
+    if (found.data.user.email?.toLowerCase() === email.toLowerCase()) return 'unchanged';
+
+    const { error } = await this.client.auth.admin.updateUserById(authId, { email });
+    if (!error) return 'changed';
+    if (error.code === 'email_exists') return 'taken';
+    if (error.status === 404) return 'missing';
+    throw new Error(`Supabase e-mail change failed: ${error.message}`);
   }
 
   /** Deletes a Supabase Auth user. Missing users are treated as success. */
