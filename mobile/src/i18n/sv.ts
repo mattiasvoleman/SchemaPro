@@ -49,6 +49,8 @@ export const sv = {
     SSO_REQUIRED: 'Din skola kräver att personal loggar in med skolkonto. Välj Logga in med skolkonto.',
     SSO_NEEDS_EMAIL: 'Skriv din e-postadress först, så hittar vi din skolas inloggning.',
     SSO_NOT_FOUND: 'Ingen skola loggar in med skolkonto på den adressens domän. Logga in med lösenord, eller kontrollera adressen.',
+    SSO_BUSY: 'Många loggar in just nu. Vänta en minut och försök igen.',
+    SSO_APP_UPDATE_NEEDED: 'Den här versionen av appen kan inte logga in med skolkonto. Uppdatera appen.',
     SSO_NO_ACCOUNT: 'Ditt skolkonto har en e-postadress som ingen har bjudit in till SchemaPro. Be skolans administratör bjuda in dig med samma adress som ditt skolkonto har.',
     SSO_UNVERIFIED: 'Ditt skolkonto skickade ingen bekräftad e-postadress, så det gick inte att koppla till ditt konto. Kontakta skolans IT-ansvariga.',
     SSO_OTHER_ORGANISATION: 'Kontot du loggade in med hör inte till din skolas organisation. Logga in med ditt skolkonto, eller kontakta skolans administratör.',

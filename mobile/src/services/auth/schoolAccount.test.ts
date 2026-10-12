@@ -1,9 +1,21 @@
-import { apiRequest } from '../api';
-import { callbackParams, emailDomain, lookupProvider, providerHints, providerScopes, refusalFor } from './schoolAccount';
+import { ApiError, apiRequest } from '../api';
+import {
+  callbackParams,
+  emailDomain,
+  forgetLookups,
+  isBusy,
+  lookupProvider,
+  providerHints,
+  providerScopes,
+  refusalFor,
+  schoolAccountsOffered,
+} from './schoolAccount';
 import { en } from '../../i18n/en';
 import { sv } from '../../i18n/sv';
 
-jest.mock('../api', () => ({ apiRequest: jest.fn() }));
+jest.mock('../api', () => ({ ...jest.requireActual('../api'), apiRequest: jest.fn() }));
+
+beforeEach(() => forgetLookups());
 
 /**
  * "Logga in med skolkonto" in the app: the address's domain, the gateway's
@@ -32,9 +44,41 @@ describe('lookupProvider', () => {
 
   it('answers null for no provider and anything it does not know', async () => {
     for (const body of [{ provider: null }, { provider: 'github' }, {}, undefined]) {
+      forgetLookups();
       (apiRequest as jest.Mock).mockResolvedValue(body);
       await expect(lookupProvider('skola.example')).resolves.toBeNull();
     }
+  });
+
+  it('remembers a domain\'s answer for the app\'s run, and not a refusal', async () => {
+    (apiRequest as jest.Mock).mockRejectedValueOnce(new ApiError(429, 'Too Many Requests'));
+    await expect(lookupProvider('skola.example')).rejects.toMatchObject({ status: 429 });
+    (apiRequest as jest.Mock).mockResolvedValue({ provider: 'azure' });
+    await expect(lookupProvider('skola.example')).resolves.toBe('azure');
+    await expect(lookupProvider('skola.example')).resolves.toBe('azure');
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('isBusy', () => {
+  it('is a 429 from the gateway and nothing else', () => {
+    expect(isBusy(new ApiError(429, 'Too Many Requests'))).toBe(true);
+    expect(isBusy(new ApiError(500, 'boom'))).toBe(false);
+    expect(isBusy(new Error('429'))).toBe(false);
+  });
+});
+
+describe('schoolAccountsOffered', () => {
+  afterEach(() => {
+    delete process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'];
+  });
+
+  it('offers the button only in a build made with EXPO_PUBLIC_SCHOOL_ACCOUNTS=on', () => {
+    expect(schoolAccountsOffered()).toBe(false);
+    process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] = 'yes';
+    expect(schoolAccountsOffered()).toBe(false);
+    process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] = 'on';
+    expect(schoolAccountsOffered()).toBe(true);
   });
 });
 

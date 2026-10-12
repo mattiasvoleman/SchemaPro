@@ -1,13 +1,15 @@
-import * as WebBrowser from 'expo-web-browser';
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import { SecureTokenStore } from './secureTokenStore';
+import { ApiError } from '../api';
 import { AuthError, AuthService } from './authService';
 import { lookupProvider } from './schoolAccount';
+import { loadWebBrowser } from './webBrowser';
 
 jest.mock('../supabase', () => ({ getSupabase: jest.fn() }));
-jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
+const openAuthSessionAsync = jest.fn();
+jest.mock('./webBrowser', () => ({ loadWebBrowser: jest.fn() }));
 jest.mock('expo-linking', () => ({ createURL: jest.fn((path: string) => `schemapro://${path}`) }));
 jest.mock('./schoolAccount', () => ({
   ...jest.requireActual('./schoolAccount'),
@@ -158,12 +160,13 @@ describe('AuthService.restoreSession', () => {
 });
 
 describe('AuthService.loginWithSchoolAccount', () => {
-  const browser = WebBrowser.openAuthSessionAsync as jest.Mock;
+  const browser = openAuthSessionAsync;
   const lookup = lookupProvider as jest.Mock;
 
   beforeEach(() => {
     browser.mockReset();
     lookup.mockReset();
+    (loadWebBrowser as jest.Mock).mockReturnValue({ openAuthSessionAsync });
   });
 
   it('asks about the domain, opens the provider with hints, exchanges the code and caches the profile', async () => {
@@ -201,12 +204,23 @@ describe('AuthService.loginWithSchoolAccount', () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it('says when no school signs in with a school account on the domain, or the lookup fails', async () => {
+  it('says when no school signs in with a school account on the domain, the lookup is busy, or it fails', async () => {
     lookup.mockResolvedValue(null);
     await expect(AuthService.loginWithSchoolAccount('anna@gmail.example')).rejects.toMatchObject({ code: 'SSO_NOT_FOUND' });
+    lookup.mockRejectedValue(new ApiError(429, 'Too Many Requests'));
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'SSO_BUSY' });
     lookup.mockRejectedValue(new Error('offline'));
     await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'LOGIN_FAILED' });
     expect(browser).not.toHaveBeenCalled();
+  });
+
+  it('asks for an app update when the build has no system sign-in window', async () => {
+    lookup.mockResolvedValue('azure');
+    supabase({ oauth: { data: { url: 'https://auth.example/authorize' }, error: null } });
+    (loadWebBrowser as jest.Mock).mockImplementation(() => {
+      throw new Error("Cannot find native module 'ExpoWebBrowser'");
+    });
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'SSO_APP_UPDATE_NEEDED' });
   });
 
   it('says a closed browser as SSO_CANCELLED, and Auth\'s refusals by their codes', async () => {
