@@ -152,16 +152,14 @@ describe("/admin/integrations — Inloggning", () => {
     await user.type(within(card).getByLabelText("Workspace-domän"), "hotmail.se");
 
     expect(within(card).getByLabelText("E-postdomäner")).toHaveAttribute("aria-invalid", "true");
-    expect(
-      within(card).getByText("Privata e-postdomäner kan inte logga in med skolkonto: gmail.com. Personal med en sådan adress behöver en adress i organisationen."),
-    ).toBeInTheDocument();
+    expect(within(card).getByText(sv.integrations.signIn.domainsPersonal.replace("{domains}", "gmail.com"))).toBeInTheDocument();
     expect(within(card).getByLabelText("Workspace-domän")).toHaveAttribute("aria-invalid", "true");
     expect(within(card).getByText(sv.integrations.signIn.hostedDomainPersonal)).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Spara inloggningen" })).toBeDisabled();
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("says which staff domains the school account would leave out, and that a personal address needs a school one", async () => {
+  it("says which staff domains the school account would leave out, and that a new address does not move the login", async () => {
     settings = {
       available: true,
       method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
@@ -174,7 +172,7 @@ describe("/admin/integrations — Inloggning", () => {
     await userEvent.setup().click(within(card).getByRole("switch", { name: "Kräv skolkonto för personal" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Personal med adresser på kommun.example (12), gmail.com (1) skulle inte kunna logga in med skolkonto. Är domänen organisationens, lägg till den här. Är det en privat adress, som gmail.com, behöver personen en adress i organisationen innan du kräver skolkonto för personalen.",
+        sv.integrations.errors.SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT.replace("{domains}", "kommun.example (12), gmail.com (1)"),
       ),
     );
   });
