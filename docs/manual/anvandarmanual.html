@@ -62,6 +62,7 @@
       <li><span>7.2 Hämta från elevregistret (SS12000)</span><span class="dots"></span><span class="pg" data-pg="s72"></span></li>
       <li><span>7.3 API-nycklar, omfång och prenumerationer</span><span class="dots"></span><span class="pg" data-pg="s73"></span></li>
       <li><span>7.4 Dataskydd och gallring</span><span class="dots"></span><span class="pg" data-pg="s74"></span></li>
+      <li><span>7.5 Logga in med skolkonto</span><span class="dots"></span><span class="pg" data-pg="s75"></span></li>
     </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
@@ -3048,6 +3049,8 @@
     en API-nyckel (7.3). Båda finns under
     <span class="path">Integrationer</span>, på flikarna
     <span class="ui">Elevregister</span> och <span class="ui">API-nycklar</span>.
+    På fliken <span class="ui">Inloggning</span> väljer du om personalen ska
+    kunna logga in med sitt skolkonto (7.5).
   </p>
   <p>
     Under <span class="path">Integrationer › API-nycklar</span> skapar du en
@@ -3473,6 +3476,55 @@
       har börjat gälla. Under <span class="ui">Senaste gallringar</span> står
       natten med antal per slag, och vid slaget står
       <span class="ui">Gallrat före</span> med gränsdagen.
+    </p>
+  </div>
+
+  <h3 id="s75"><span class="num">7.5</span>Logga in med skolkonto</h3>
+  <p>
+    Personalen kan logga in med kontot de redan har i skolans
+    <strong>Microsoft Entra ID</strong> eller <strong>Google Workspace</strong>,
+    på webben och i appen. På inloggningssidan skriver de sin e-postadress och
+    väljer <span class="ui">Logga in med skolkonto</span>. SchemaPro hittar
+    skolans inloggning från adressens domän och skickar dem till Microsofts
+    eller Googles inloggning. Inbjudan är fortfarande vägen in: bara den som
+    skolan har bjudit in kommer in, och skolkontot kopplas till personen genom
+    e-postadressen. Bjud därför in personalen med samma adress som deras
+    skolkonto har.
+  </p>
+  <p>
+    Under <span class="path">Integrationer › Inloggning</span> väljer du
+    inloggningen (Entra ID eller Google Workspace), de e-postdomäner som ska få
+    knappen, en per rad, och organisationen: Entras <em>klient-id</em> (tenant
+    id, under Översikt i Microsoft Entra administrationscenter) eller
+    Workspace-domänen. Bara konton från just den organisationen släpps in,
+    vad domänerna än säger. Organisationens IT-administratör behöver först
+    godkänna SchemaPro i Entra ID eller tillåta det i Google Workspace.
+  </p>
+  <h4>Kräv skolkonto för personal</h4>
+  <p>
+    Ett eget val, avslaget från början. När det är på kan lärare och
+    administratörer inte logga in med lösenord, och den som redan är inloggad
+    med lösenord loggas ut inom en timme. Elever och vårdnadshavare påverkas
+    inte. Du kan bara slå på det när du själv är inloggad med ett skolkonto
+    från den sparade organisationen. Då vet du att inloggningen fungerar innan
+    någon är beroende av den. Avstängt kan det alltid bli.
+  </p>
+  <div class="warn">
+    <span class="label">Stänga av skolkonton</span>
+    <p>
+      <span class="ui">Stäng av skolkonton</span> tar tillbaka lösenorden för
+      alla. Den som är inloggad med skolkonto loggas ut inom en timme, och den
+      som aldrig har valt något lösenord väljer
+      <span class="ui">Glömt lösenordet?</span> på inloggningssidan.
+    </p>
+  </div>
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Logga ut, skriv din adress och välj
+      <span class="ui">Logga in med skolkonto</span>. Du ska komma till din
+      startsida, och på fliken <span class="ui">Inloggning</span> ska det stå
+      att du är inloggad med ett skolkonto.
     </p>
   </div>
 </section>
