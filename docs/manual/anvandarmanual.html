@@ -525,7 +525,7 @@
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
-      <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
+      <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; fran; till; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. <em>fran</em> och <em>till</em> är uppdragets datum (åååå-mm-dd, inom läsåret); tomt betyder läsårets egen gräns. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
     </tbody>
   </table>
   <p>
@@ -1464,13 +1464,29 @@
     segment först i stapeln, utanför målet.
   </p>
   <p>
-    Med <span class="ui">Blockera tid i schemat</span> anger du dag, från och
-    till (på schemats femminutersrutnät). Läraren blir då otillgänglig den
-    tiden varje vecka, så att genereringen lämnar den fri — rastvakten på
-    tisdagar 12.00–12.20, till exempel. Tiden tas bort tillsammans med
-    uppdraget, och läraren kan inte själv flytta eller ta bort den. Uppdrag
-    kan även importeras från <em>uppdrag.csv</em> (3.6), men utan blockerad
-    tid.
+    Ett uppdrag gäller hela läsåret om du inte anger något annat. Under
+    <span class="ui">Gäller</span> kan du ge det ett
+    <span class="ui">Från</span> och ett <span class="ui">Till och med</span>
+    inom läsåret; ett tomt fält betyder läsårets första eller sista dag. Ett
+    mentorsbyte vid jul är två uppdrag: Anna är mentor för 7B till och med
+    sista dagen före jullovet, Bertil från första dagen efter. Belastningen
+    räknar bara veckorna uppdraget gäller — standardveckan som en andel av
+    läsårets undervisningsveckor, årsarbetstiden över just de veckorna — och
+    vikarietavlan (6.3) ser läraren som upptagen av uppdraget bara på dess
+    datum.
+  </p>
+  <p>
+    Med <span class="ui">Blockera tid i schemat</span> anger du en eller flera
+    tider: dag, från och till (på schemats femminutersrutnät).
+    <span class="ui">Lägg till en tid</span> lägger nästa veckodag med samma
+    klockslag, så att rastvakten måndag, onsdag och fredag 10.00–10.20 är ett
+    uppdrag med tre tider. Läraren blir otillgänglig de tiderna varje vecka, så
+    att genereringen lämnar dem fria. Grundschemat är en vecka, så ett
+    uppdrag med datum håller sina tider fria hela läsåret i genereringen;
+    genereringssidan säger det när läsåret har sådana uppdrag. Tiderna tas
+    bort tillsammans med uppdraget, och läraren kan inte själv flytta eller ta
+    bort dem. Uppdrag kan även importeras från <em>uppdrag.csv</em> (3.6), med
+    datum men utan blockerade tider.
   </p>
 
   <h4>Inställningar: varna eller vägra</h4>
@@ -1632,7 +1648,7 @@
     En lärare ser sin egen tjänst under <span class="path">Min tjänst</span>:
     anställning, mål och räknade minuter, samma stapel som du ser,
     undervisningen per ämne med minuter och andel av tjänsten, och sina
-    uppdrag med tiden de blockerar. Har läsåret rullats från ett annat står
+    uppdrag med datumen de gäller och tiderna de blockerar. Har läsåret rullats från ett annat står
     också förra läsårets tjänst och räknade minuter. Läraren ser också sin
     <span class="ui">Årsarbetstid</span> och kan skriva ut sin egen
     uppdragsbeskrivning. Läraren ser bara sig
@@ -3432,13 +3448,18 @@
     läsåret: tjänst i procent, nedsättning, avtal, eget riktmärke, signatur och
     anteckning, och sina uppdrag med minuter och om de räknas som undervisning.
     Ett uppdrag som hör till en grupp följer gruppen: <em>Mentor 7B</em> blir
-    mentorskap för 8B och byter namn till <em>Mentor 8B</em>. Ett spärrat pass
-    blir ett nytt pass i det nya läsåret; det gamla stannar i det gamla.
+    mentorskap för 8B och byter namn till <em>Mentor 8B</em>. Varje spärrat
+    pass blir ett nytt pass i det nya läsåret; det gamla stannar i det gamla.
   </p>
   <ul>
     <li>Ett mentorskap för en klass som går ut, inte rullas vidare eller saknar
       efterföljare följer <strong>inte</strong> med; granska-steget namnger
       dem. Andra uppdrag för en sådan grupp följer med utan grupp.</li>
+    <li>Ett uppdrag vars <em>Till och med</em> ligger före läsårets sista dag
+      har slutat och följer <strong>inte</strong> med — mentorskapet som
+      lämnades över vid jul, till exempel. Granska-steget namnger det. Ett
+      uppdrag som följer med gäller hela det nya läsåret; började det under
+      läsåret namnges det, så att du kan ge det ett nytt datum.</li>
     <li>Inaktiva personer, och personer som inte är lärare eller skolledare,
       får ingen tjänst i det nya läsåret.</li>
     <li>En nedsättning och ett eget riktmärke följer med, men gäller ofta bara
