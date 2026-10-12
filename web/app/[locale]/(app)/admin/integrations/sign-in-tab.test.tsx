@@ -159,7 +159,7 @@ describe("/admin/integrations — Inloggning", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("says which staff domains the school account would leave out, and that a new address does not move the login", async () => {
+  it("says which staff domains the school account would leave out, and that a new address moves the login only with a new invitation", async () => {
     settings = {
       available: true,
       method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },

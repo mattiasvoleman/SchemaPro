@@ -434,9 +434,10 @@ every save that turns it on or keeps it on:
 has no login to lose and is not counted. The check reads the address
 SchemaPro holds for each person (`"Users".email`), not their login's own, and
 runs when the row is saved. So it misses staff invited or reactivated after
-the save, and anyone whose address changed in SchemaPro without their login
-following, which is what an SS12000 e-mail change does, before the save as
-much as after it. Those are cases for 11.7.
+the save, and anyone whose address changed in SchemaPro while their login
+kept the old one, which is what an SS12000 e-mail change does until the
+person is invited again, before the save as much as after it. Those are
+cases for 11.7.
 
 A school may add a domain only if at least one of those staff has an address
 on it (`SIGN_IN_DOMAIN_UNUSED`). A domain already on the row with the same
@@ -604,12 +605,18 @@ For each kommun (or school) that wants it:
    addresses the school invited them with. A person whose Entra address
    differs is told at `/login` that their school account's address was never
    invited. Either the Entra administrator corrects `mail` to the invited
-   address, or, for a person who should keep their Entra address, an
-   operator moves their address in SchemaPro and their login as 11.7
-   describes: a school admin cannot edit an invited person's address, and
-   inviting again only reaches the old one. Removing the person and adding
-   them again is only for someone with no schedule history, since it drops
-   them from their lessons.
+   address, or, for a person who should keep their Entra address, SchemaPro
+   gets that address (from the school's SS12000 source, or from an operator
+   as 11.7 describes, since a school admin cannot edit an invited person's
+   address) and the school invites the person again. The invitation moves
+   their existing login to the new address instead of creating a second one:
+   its password and linked school accounts go with it, and the school account
+   links to it at the next sign-in. If another login already has the new
+   address, the person is given that one and the login at the old address is
+   deleted. Either way no login is left at the old address. Where the school
+   cannot send the invitation, 11.7 has an operator's manual way. Removing
+   the person and adding them again is only for someone with no schedule
+   history, since it drops them from their lessons.
 3. The school's admin saves the tenant id (Entra admin center → Overview) on
    /admin/integrations → Inloggning.
 
@@ -674,25 +681,34 @@ fails at Auth, before any provider.
   - someone the SS12000 sync reactivates after the save;
   - an SS12000 e-mail change the admin applied to an invited person
     (`PERSON_EMAIL_CHANGE_INVITED`), before the save or after it. SchemaPro
-    then shows the new address, but the login keeps the one the person was
-    invited with, and that is the address they type at `/login` and the one
-    the school account links by. The check counts the new address, so the
+    then shows the new address, but until the school invites the person
+    again the login keeps the one they were invited with, and that is the
+    address they type at `/login` and the one the school account links by. The check counts the new address, so the
     switch goes on, and the person is refused from their next refresh.
 
   That person finds no school-account sign-in, or one that does not link,
   and has their password refused. If the domain is the organisation's, the
   school's admin adds it on Inloggning (the save is checked again). A
   personal address such as gmail.com can never be listed: the person needs
-  an address in the organisation, and their login has to move to it. A
-  school admin can do neither for an invited person, so an operator does:
-  as the owner in the SQL editor, set the person's `email` in `"Users"` to
-  the new address unless SS12000 already has, then move the login itself to
-  it (Auth's admin API, `updateUserById`, with the new e-mail confirmed).
-  Inviting them again instead would leave the old login behind. After an
-  SS12000 e-mail change the person can sign in with the old address only
-  while the old domain is listed, which a personal domain never is. If no
-  admin can sign in, an operator turns the switch off as in "locked out"
-  below.
+  an address in the organisation, and their login has to move to it. The
+  address comes from the school's SS12000 source; a school admin cannot edit
+  an invited person's address, so at a school without one an operator, as
+  the owner in the SQL editor, sets the person's `email` in `"Users"`. Then
+  the school's admin sends the invitation again (the envelope on the
+  person's row), before requiring the school account. That moves the login
+  to the address SchemaPro holds, with its password and linked school
+  accounts: a person who never used the first invitation gets it again at
+  the new address, and one who did gets no e-mail and signs in with the new
+  address. If another login already has that address, the person is given
+  that one and the login at the old address is deleted, so none is left
+  behind. Where the school's admin cannot send it, for example because no
+  admin can sign in, the operator moves the login by hand instead, after
+  setting the address in `"Users"` as above: Auth's admin API,
+  `updateUserById`, with the new e-mail confirmed. After an SS12000 e-mail
+  change the person can sign in with the old address only while the old
+  domain is listed and they have not been invited again, and a personal
+  domain is never listed. If no admin can sign in, an operator turns the
+  switch off as in "locked out" below.
 - **A school is told "En annan skola loggar in med en annan inloggning på
   …" (`SIGN_IN_DOMAIN_TAKEN`).** Another school names that domain with the
   other provider. If the domain is really the asking school's, the other
