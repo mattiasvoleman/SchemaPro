@@ -133,9 +133,11 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
     // One uppdrag per row, for the läsår the dialog names. Typ is a word
     // ("mentorskap", "apt", "rastvakt"), benämning is what the uppdrag is
     // called and — with the teacher and the typ — how a re-upload finds it
-    // again. The last four columns are optional and written only when the
-    // file has them. No blocked time: a slot is set on the uppdrag in the app,
-    // where it can be seen against the teacher's week.
+    // again. The last six columns are optional and written only when the
+    // file has them; fran and till are the uppdrag's Från and Till, empty for
+    // the läsår's own bounds (a mentor change at jul is two rows). No blocked
+    // time: the times are set on the uppdrag in the app, where they can be
+    // seen against the teacher's week.
     headers: [
       "larare_epost",
       "typ",
@@ -144,12 +146,14 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       "raknas_som_undervisning",
       "amne",
       "grupp",
+      "fran",
+      "till",
       "anteckning",
     ],
     exampleRows: [
-      ["karin.ek@example.com", "mentorskap", "Mentor 7B", "90", "nej", "", "7B", ""],
-      ["karin.ek@example.com", "apt", "APT", "120", "nej", "", "", ""],
-      ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", ""],
+      ["karin.ek@example.com", "mentorskap", "Mentor 7B", "90", "nej", "", "7B", "", "", ""],
+      ["karin.ek@example.com", "apt", "APT", "120", "nej", "", "", "", "", ""],
+      ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", "", "", ""],
     ],
   },
   students: {

@@ -31,6 +31,9 @@ const state = vi.hoisted(() => ({
   people: [] as unknown[],
   /** StaffingPolicy as GET /staffing-policy answers; undefined = not answered yet. */
   policy: undefined as unknown,
+  /** The year's uppdrag, as GET /teacher-duties answers; and the year it was asked for. */
+  duties: [] as unknown[],
+  dutiesFor: [] as unknown[],
   // undefined with neither flag below is a read never made; with one, the
   // years on their way or failed.
   years: [] as unknown[] | undefined,
@@ -100,6 +103,10 @@ vi.mock("@/lib/queries", () => ({
 
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingPolicy: () => ({ data: state.policy }),
+  useTeacherDuties: (yearId: unknown) => {
+    state.dutiesFor.push(yearId);
+    return { data: state.duties };
+  },
 }));
 
 vi.mock("@/i18n/navigation", () => ({
@@ -155,6 +162,8 @@ beforeEach(() => {
   state.historyFor = [];
   state.job = undefined;
   state.policy = undefined;
+  state.duties = [];
+  state.dutiesFor = [];
   state.untranslated = [];
   state.groups = [
     { id: "g-41", academicYearId: "y-1", name: "4.1", kind: "CLASS", gradeLevel: 4 },
@@ -165,6 +174,34 @@ beforeEach(() => {
   // 4ma1 has a member whose home class is year four; 4sl1 has nobody.
   state.memberships = [{ studentId: "p-1", studentGroupId: "g-ma1" }];
   state.requirements = [requirement("g-sl1"), requirement("g-ma1"), requirement("g-41")];
+});
+
+describe("uppdrag with dates and fixed times (20261017090000)", () => {
+  const duty = (overrides: Record<string, unknown>) => ({
+    id: "d-1", userId: "t-1", academicYearId: "y-1", kind: "RASTVAKT", label: "Rastvakt", minutesPerWeek: 40,
+    countsAsTeaching: false, subjectId: null, studentGroupId: null, validFrom: null, validTo: null,
+    slots: [{ dayOfWeek: 1, startTime: "10:00", endTime: "10:20" }], note: null, ...overrides,
+  });
+
+  it("says before the run that a dated uppdrag's times are held every week of the master", () => {
+    state.duties = [
+      duty({ validFrom: "2027-01-07" }),
+      duty({ id: "d-2", validTo: "2026-12-18" }),
+      // Undated, or dated without a time: the master holds nothing it would not anyway.
+      duty({ id: "d-3" }),
+      duty({ id: "d-4", validTo: "2026-12-18", slots: [] }),
+    ];
+    render(<GeneratePage />);
+    expect(state.dutiesFor).toContain("y-1");
+    expect(screen.getByText("generate.datedDutyTimesTitle(2)")).toBeInTheDocument();
+    expect(screen.getByText("generate.datedDutyTimesBody")).toBeInTheDocument();
+  });
+
+  it("says nothing when no uppdrag is both dated and timed", () => {
+    state.duties = [duty({}), duty({ id: "d-2", validTo: "2026-12-18", slots: [] })];
+    render(<GeneratePage />);
+    expect(screen.queryByText(/generate\.datedDutyTimes/)).toBeNull();
+  });
 });
 
 describe("groups the timplan names but whose year cannot be derived", () => {

@@ -113,8 +113,12 @@ const duty = (overrides: Record<string, unknown> = {}) => ({
   countsAsTeaching: false,
   subjectId: null,
   studentGroupId: "g-7b",
-  blockedConstraintId: "c-1",
-  blockedSlot: { dayOfWeek: 2, startTime: "08:00:00", endTime: "08:30:00" },
+  validFrom: null,
+  validTo: "2026-12-18",
+  slots: [
+    { dayOfWeek: 4, startTime: "08:00:00", endTime: "08:30:00" },
+    { dayOfWeek: 2, startTime: "08:00:00", endTime: "08:30:00" },
+  ],
   note: null,
   ...overrides,
 });
@@ -238,13 +242,16 @@ describe("Min tjänst", () => {
     expect(screen.queryByText("0 %")).toBeNull();
   });
 
-  it("lists the teacher's duties with the time each one blocks", () => {
+  it("lists the teacher's duties with the times each one blocks, Monday first, and the dates it runs", () => {
     render(<MyStaffingPage />);
 
     expect(screen.getByText("Mentor 7B")).toBeInTheDocument();
     expect(screen.getByText("staffing.dutyKindMENTORSKAP")).toBeInTheDocument();
     expect(screen.getByText("staffing.dutyMinutes(60) · 7B")).toBeInTheDocument();
-    expect(screen.getByText("staffing.dutyBlocks(days.2|08:00|08:30)")).toBeInTheDocument();
+    expect(
+      screen.getByText("staffing.dutyBlocksList(staffing.dutySlotTime(days.2|08:00|08:30), staffing.dutySlotTime(days.4|08:00|08:30))"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("staffing.dutyRunsTo(2026-12-18)")).toBeInTheDocument();
   });
 
   it("shows only the viewer's own row and duties when the report holds the whole school", () => {

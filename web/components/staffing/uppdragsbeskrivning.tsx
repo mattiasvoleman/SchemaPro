@@ -5,6 +5,7 @@ import { Printer } from "lucide-react";
 import { formatPercent } from "@/lib/staffing-view";
 import { formatStamp, type VersionStamp } from "@/lib/employment-history-view";
 import { periodOf, tickedBoxes, UPPDRAG_BOXES, type AssignmentPeriod } from "@/lib/uppdrag-view";
+import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import type { LoadModel, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherDuty } from "@/lib/types";
 import { AnnualCard } from "@/components/staffing/annual-card";
@@ -75,6 +76,7 @@ export function Uppdragsbeskrivning({
 }: UppdragsbeskrivningProps) {
   const t = useTranslations("uppdrag");
   const tStaffing = useTranslations("staffing");
+  const tDays = useTranslations("days");
   const locale = useLocale();
   const employment = load.employment;
   const assignments = load.assignments ?? [];
@@ -275,6 +277,14 @@ export function Uppdragsbeskrivning({
                   <span>
                     <span className="font-medium">{duty.label}</span> · {tStaffing(`dutyKind${duty.kind}`)}
                     {about.length > 0 ? ` · ${about.join(" · ")}` : ""}
+                    {/* The dates and times a protokoll has to state: a
+                        mentorskap until the jullov is not the year's. */}
+                    {dutyPeriodLine(tStaffing, duty) ? (
+                      <span className="block text-muted-foreground">{dutyPeriodLine(tStaffing, duty)}</span>
+                    ) : null}
+                    {dutySlotsLine(tStaffing, tDays, duty.slots) ? (
+                      <span className="block text-muted-foreground">{dutySlotsLine(tStaffing, tDays, duty.slots)}</span>
+                    ) : null}
                   </span>
                   <span className="tabular-nums">
                     {duty.countsAsTeaching

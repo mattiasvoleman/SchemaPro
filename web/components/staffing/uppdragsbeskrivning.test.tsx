@@ -23,8 +23,9 @@ const mentor: TeacherDuty = {
   countsAsTeaching: false,
   subjectId: null,
   studentGroupId: "g-7a",
-  blockedConstraintId: null,
-  blockedSlot: null,
+  validFrom: null,
+  validTo: null,
+  slots: [],
   note: null,
 };
 
@@ -73,6 +74,31 @@ describe("Uppdragsbeskrivning", () => {
     expect(screen.getByRole("checkbox", { name: "uppdrag.box.MENTOR" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "uppdrag.box.VFU" })).not.toBeChecked();
     expect(screen.getByText("Mentor 7A")).toBeInTheDocument();
+  });
+
+  it("states an uppdrag's dates and times, and nothing for an undated uppdrag without times", () => {
+    const rastvakt: TeacherDuty = {
+      ...mentor,
+      id: "d2",
+      kind: "RASTVAKT",
+      label: "Rastvakt",
+      studentGroupId: null,
+      validFrom: "2027-01-07",
+      validTo: "2027-06-11",
+      slots: [
+        { dayOfWeek: 3, startTime: "10:00:00", endTime: "10:20:00" },
+        { dayOfWeek: 1, startTime: "10:00:00", endTime: "10:20:00" },
+      ],
+    };
+    renderPage({ duties: [mentor, rastvakt] });
+    const row = screen.getByText("Rastvakt").closest("li")!;
+    expect(row).toHaveTextContent("staffing.dutyRunsFromTo(2027-01-07|2027-06-11)");
+    expect(row).toHaveTextContent(
+      "staffing.dutyBlocksList(staffing.dutySlotTime(days.1|10:00|10:20), staffing.dutySlotTime(days.3|10:00|10:20))",
+    );
+    const mentorRow = screen.getByText("Mentor 7A").closest("li")!;
+    expect(mentorRow).not.toHaveTextContent("dutyRuns");
+    expect(mentorRow).not.toHaveTextContent("dutyBlocksList");
   });
 
   it("cites the tjänst's newest version in the school's time, or says there is none", () => {

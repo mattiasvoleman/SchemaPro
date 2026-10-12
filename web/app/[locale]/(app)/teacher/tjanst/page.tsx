@@ -40,11 +40,12 @@
 
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { CalendarClock, Printer, Scale } from "lucide-react";
+import { CalendarClock, CalendarRange, Printer, Scale } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { useProfile } from "@/components/profile-context";
 import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
+import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import { useLastYearTjanst } from "./use-last-year-tjanst";
 import { formatPercent } from "@/lib/staffing-view";
 import { LoadBar } from "@/components/staffing/load-bar";
@@ -156,7 +157,6 @@ export default function MyStaffingPage() {
   }
 
   const employment = row?.employment ?? null;
-  const clock = (value: string) => value.slice(0, 5);
 
   return (
     <Page width="narrow">
@@ -289,17 +289,19 @@ export default function MyStaffingPage() {
                       : tStaffing("dutyMinutes", { minutes: duty.minutesPerWeek })}
                     {about.length > 0 ? ` · ${about.join(" · ")}` : ""}
                   </p>
-                  {duty.blockedSlot ? (
+                  {dutyPeriodLine(tStaffing, duty) ? (
                     <p className="flex items-center gap-1">
+                      <CalendarRange className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                      {dutyPeriodLine(tStaffing, duty)}
+                    </p>
+                  ) : null}
+                  {dutySlotsLine(tStaffing, tDays, duty.slots) ? (
+                    <p className="flex items-start gap-1">
                       <CalendarClock
-                        className="size-3.5 text-muted-foreground"
+                        className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
                         aria-hidden="true"
                       />
-                      {tStaffing("dutyBlocks", {
-                        day: tDays(String(duty.blockedSlot.dayOfWeek)),
-                        start: clock(duty.blockedSlot.startTime),
-                        end: clock(duty.blockedSlot.endTime),
-                      })}
+                      {dutySlotsLine(tStaffing, tDays, duty.slots)}
                     </p>
                   ) : null}
                   {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}

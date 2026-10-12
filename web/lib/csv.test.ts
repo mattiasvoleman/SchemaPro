@@ -413,6 +413,8 @@ describe("templateCsvContent", () => {
         countsAsTeaching: false,
         subject: null,
         groupName: "7B",
+        validFrom: null,
+        validTo: null,
         note: null,
       },
       {
@@ -423,6 +425,8 @@ describe("templateCsvContent", () => {
         countsAsTeaching: false,
         subject: null,
         groupName: null,
+        validFrom: null,
+        validTo: null,
         note: null,
       },
       {
@@ -433,6 +437,8 @@ describe("templateCsvContent", () => {
         countsAsTeaching: true,
         subject: "SLTX",
         groupName: null,
+        validFrom: null,
+        validTo: null,
         note: null,
       },
     ]);
@@ -2522,6 +2528,31 @@ describe("mapTeacherDutyRows", () => {
     expect(errors[3]?.message).toContain("rad 4");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ countsAsTeaching: true, minutesPerWeek: 120 });
+  });
+
+  it("reads Från and Till as real dates, empty as the läsår's own bound, and refuses one that ends before it starts", () => {
+    const { rows, errors, columns } = mapTeacherDutyRows(
+      parseCsv(
+        [
+          "larare_epost;typ;benamning;minuter_per_vecka;grupp;Fr.o.m.;T.o.m.",
+          "anna@s.se;mentor;Mentor 7B;90;7B;;2026-12-18",
+          "bertil@s.se;mentor;Mentor 7B;90;7B;2027-01-07;",
+          "c@s.se;rastvakt;Rastvakt;40;;2027-02-30;",
+          "d@s.se;rastvakt;Rastvakt;40;;2027-03-01;2027-02-01",
+          "e@s.se;apt;APT;120;;18/12/2026;",
+        ].join("\n"),
+      ),
+    );
+    expect(columns).toEqual(["teacherEmail", "kind", "label", "minutesPerWeek", "groupName", "validFrom", "validTo"]);
+    expect(rows).toStrictEqual([
+      { teacherEmail: "anna@s.se", kind: "MENTORSKAP", label: "Mentor 7B", minutesPerWeek: 90, groupName: "7B", validFrom: null, validTo: "2026-12-18" },
+      { teacherEmail: "bertil@s.se", kind: "MENTORSKAP", label: "Mentor 7B", minutesPerWeek: 90, groupName: "7B", validFrom: "2027-01-07", validTo: null },
+    ]);
+    expect(errors.map((error) => [error.row, error.message])).toEqual([
+      [3, expect.stringContaining('fran "2027-02-30" är inte ett datum som finns')],
+      [4, expect.stringContaining('fran "2027-03-01" ligger efter till "2027-02-01"')],
+      [5, expect.stringContaining('fran "18/12/2026"')],
+    ]);
   });
 
   it("names the missing required columns", () => {

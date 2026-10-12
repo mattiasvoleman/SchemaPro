@@ -21,6 +21,8 @@ export const DUTY_MINUTES_MAX = 2400;
 export const DUTY_NOTE_MAX = 500;
 /** The schema's grid; a blocked slot off it is a 400 on the gateway. */
 export const SLOT_GRID_MINUTES = 5;
+/** DUTY_SLOTS_MAX on the gateway: three rasts a day, five days. */
+export const DUTY_SLOTS_MAX = 15;
 
 /** In the order the Göteborg uppdragsbeskrivning lists them, ANNAT last. */
 export const DUTY_KINDS: TeacherDutyKind[] = [
@@ -35,6 +37,17 @@ export const DUTY_KINDS: TeacherDutyKind[] = [
   "ANNAT",
 ];
 
+/** One fixed time as the form holds it. */
+export interface SlotDraft {
+  /** "1".."7", Monday first, as AvailabilityConstraints count. */
+  dayOfWeek: string;
+  /** HH:MM, as `<input type="time">` writes it. */
+  startTime: string;
+  endTime: string;
+}
+
+export const EMPTY_SLOT_DRAFT: SlotDraft = { dayOfWeek: "1", startTime: "", endTime: "" };
+
 export interface DutyDraft {
   kind: TeacherDutyKind;
   label: string;
@@ -43,13 +56,13 @@ export interface DutyDraft {
   /** "" for none. */
   subjectId: string;
   studentGroupId: string;
-  /** "Blockera tid i schemat": the three fields below are read only when on. */
+  /** Från and Till as `<input type="date">` writes them; "" for the läsår's own bound. */
+  validFrom: string;
+  validTo: string;
+  /** "Blockera tid i schemat": the times below are read only when on. */
   blocks: boolean;
-  /** "1".."7", Monday first, as AvailabilityConstraints count. */
-  dayOfWeek: string;
-  /** HH:MM, as `<input type="time">` writes it. */
-  startTime: string;
-  endTime: string;
+  /** The fixed weekly times (migration 20261017090000: an uppdrag holds several). */
+  slots: SlotDraft[];
   note: string;
 }
 
@@ -60,10 +73,10 @@ export const EMPTY_DUTY_DRAFT: DutyDraft = {
   countsAsTeaching: false,
   subjectId: "",
   studentGroupId: "",
+  validFrom: "",
+  validTo: "",
   blocks: false,
-  dayOfWeek: "1",
-  startTime: "",
-  endTime: "",
+  slots: [EMPTY_SLOT_DRAFT],
   note: "",
 };
 
@@ -75,8 +88,10 @@ export interface DutyBody {
   countsAsTeaching: boolean;
   subjectId: string | null;
   studentGroupId: string | null;
-  /** Null removes the slot and its constraint; an object writes or moves it. */
-  blockedSlot: { dayOfWeek: number; startTime: string; endTime: string } | null;
+  validFrom: string | null;
+  validTo: string | null;
+  /** The whole list: [] removes every time and its constraint; a PATCH replaces them. */
+  slots: { dayOfWeek: number; startTime: string; endTime: string }[];
   note: string | null;
 }
 
@@ -85,9 +100,13 @@ export type DutyProblem =
   | { reason: "dutyLabelTooLong"; max: number }
   | { reason: "dutyMinutesOutOfRange"; max: number }
   | { reason: "dutyNoteTooLong"; max: number }
-  | { reason: "slotTimeRequired" }
-  | { reason: "slotOffGrid"; time: string; grid: number }
-  | { reason: "slotReversed"; start: string; end: string };
+  | { reason: "dutyDatesReversed"; from: string; to: string }
+  | { reason: "dutyDateOutsideYear"; date: string; start: string; end: string }
+  | { reason: "slotTimeRequired"; index: number }
+  | { reason: "slotOffGrid"; index: number; time: string; grid: number }
+  | { reason: "slotReversed"; index: number; start: string; end: string }
+  | { reason: "slotsOverlap"; index: number; other: number }
+  | { reason: "slotsTooMany"; max: number };
 
 /** Characters as the gateway's MaxCodePoints counts them: an emoji is one. */
 const codePoints = (value: string) => [...value].length;
@@ -103,11 +122,17 @@ const minutesOfClock = (value: string) => {
  *
  * The label is checked as the DTO and the CHECK check it — at least one
  * non-blank character (the /\S/ rule P1 settled on), at most 80 code points
- * — and the slot as assertDutySlot does: both times on the five-minute grid,
- * start before end. A slot is only read while "Blockera tid" is on, so
- * switching it off with half-typed times does not hold the save hostage.
+ * — Till not before Från (the CHECK) and both inside the läsår when its
+ * bounds are known (the gateway reads them FOR SHARE and says the same), and
+ * every time as assertDutySlots does: on the five-minute grid, start before
+ * end, no two sharing a minute on one weekday. Times are only read while
+ * "Blockera tid" is on, so switching it off with half-typed times does not
+ * hold the save hostage. A slot problem names its row, counted from 1.
  */
-export function validateDutyDraft(draft: DutyDraft): DutyProblem | null {
+export function validateDutyDraft(
+  draft: DutyDraft,
+  year?: { startDate: string; endDate: string } | null,
+): DutyProblem | null {
   if (!/\S/.test(draft.label)) return { reason: "dutyLabelRequired" };
   if (codePoints(draft.label.trim()) > DUTY_LABEL_MAX) {
     return { reason: "dutyLabelTooLong", max: DUTY_LABEL_MAX };
@@ -116,19 +141,37 @@ export function validateDutyDraft(draft: DutyDraft): DutyProblem | null {
   if (minutes === null || minutes < 1 || minutes > DUTY_MINUTES_MAX) {
     return { reason: "dutyMinutesOutOfRange", max: DUTY_MINUTES_MAX };
   }
-  if (draft.blocks) {
-    const start = minutesOfClock(draft.startTime);
-    const end = minutesOfClock(draft.endTime);
-    if (start === null || end === null) return { reason: "slotTimeRequired" };
-    for (const [value, time] of [
-      [start, draft.startTime],
-      [end, draft.endTime],
-    ] as const) {
-      if (value % SLOT_GRID_MINUTES !== 0) {
-        return { reason: "slotOffGrid", time, grid: SLOT_GRID_MINUTES };
+  if (draft.validFrom !== "" && draft.validTo !== "" && draft.validTo < draft.validFrom) {
+    return { reason: "dutyDatesReversed", from: draft.validFrom, to: draft.validTo };
+  }
+  if (year) {
+    for (const date of [draft.validFrom, draft.validTo]) {
+      if (date !== "" && (date < year.startDate || date > year.endDate)) {
+        return { reason: "dutyDateOutsideYear", date, start: year.startDate, end: year.endDate };
       }
     }
-    if (start >= end) return { reason: "slotReversed", start: draft.startTime, end: draft.endTime };
+  }
+  if (draft.blocks) {
+    if (draft.slots.length > DUTY_SLOTS_MAX) return { reason: "slotsTooMany", max: DUTY_SLOTS_MAX };
+    const read: { day: string; start: number; end: number }[] = [];
+    for (const [position, slot] of draft.slots.entries()) {
+      const index = position + 1;
+      const start = minutesOfClock(slot.startTime);
+      const end = minutesOfClock(slot.endTime);
+      if (start === null || end === null) return { reason: "slotTimeRequired", index };
+      for (const [value, time] of [
+        [start, slot.startTime],
+        [end, slot.endTime],
+      ] as const) {
+        if (value % SLOT_GRID_MINUTES !== 0) {
+          return { reason: "slotOffGrid", index, time, grid: SLOT_GRID_MINUTES };
+        }
+      }
+      if (start >= end) return { reason: "slotReversed", index, start: slot.startTime, end: slot.endTime };
+      const other = read.findIndex((held) => held.day === slot.dayOfWeek && held.start < end && start < held.end);
+      if (other >= 0) return { reason: "slotsOverlap", index, other: other + 1 };
+      read.push({ day: slot.dayOfWeek, start, end });
+    }
   }
   if (codePoints(draft.note.trim()) > DUTY_NOTE_MAX) {
     return { reason: "dutyNoteTooLong", max: DUTY_NOTE_MAX };
@@ -138,8 +181,9 @@ export function validateDutyDraft(draft: DutyDraft): DutyProblem | null {
 
 /**
  * The draft as POST and PATCH take it. Every key is present on both: a PATCH
- * that left blockedSlot out would keep a slot the admin just switched off,
- * and one that left the note out would keep a note they just cleared.
+ * that left the times out would keep times the admin just switched off, one
+ * that left Till out would keep a date they just cleared, and one that left
+ * the note out would keep a note they just cleared.
  */
 export function dutyDraftToBody(draft: DutyDraft): DutyBody {
   const note = draft.note.trim();
@@ -150,19 +194,26 @@ export function dutyDraftToBody(draft: DutyDraft): DutyBody {
     countsAsTeaching: draft.countsAsTeaching,
     subjectId: draft.subjectId === "" ? null : draft.subjectId,
     studentGroupId: draft.studentGroupId === "" ? null : draft.studentGroupId,
-    blockedSlot: draft.blocks
-      ? {
-          dayOfWeek: Number(draft.dayOfWeek),
-          startTime: draft.startTime,
-          endTime: draft.endTime,
-        }
-      : null,
+    validFrom: draft.validFrom === "" ? null : draft.validFrom,
+    validTo: draft.validTo === "" ? null : draft.validTo,
+    slots: draft.blocks
+      ? draft.slots.map((slot) => ({
+          dayOfWeek: Number(slot.dayOfWeek),
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+        }))
+      : [],
     note: note === "" ? null : note,
   };
 }
 
-/** A stored uppdrag as the form holds it. Seconds are cut off the slot's clocks. */
+/** A stored uppdrag as the form holds it. Seconds are cut off the times' clocks. */
 export function dutyToDraft(duty: TeacherDuty): DutyDraft {
+  const slots = (duty.slots ?? []).map((slot) => ({
+    dayOfWeek: String(slot.dayOfWeek),
+    startTime: slot.startTime.slice(0, 5),
+    endTime: slot.endTime.slice(0, 5),
+  }));
   return {
     kind: duty.kind,
     label: duty.label,
@@ -170,10 +221,10 @@ export function dutyToDraft(duty: TeacherDuty): DutyDraft {
     countsAsTeaching: duty.countsAsTeaching,
     subjectId: duty.subjectId ?? "",
     studentGroupId: duty.studentGroupId ?? "",
-    blocks: duty.blockedSlot !== null,
-    dayOfWeek: String(duty.blockedSlot?.dayOfWeek ?? 1),
-    startTime: duty.blockedSlot?.startTime.slice(0, 5) ?? "",
-    endTime: duty.blockedSlot?.endTime.slice(0, 5) ?? "",
+    validFrom: duty.validFrom ?? "",
+    validTo: duty.validTo ?? "",
+    blocks: slots.length > 0,
+    slots: slots.length > 0 ? slots : [EMPTY_SLOT_DRAFT],
     note: duty.note ?? "",
   };
 }

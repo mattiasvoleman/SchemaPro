@@ -433,7 +433,7 @@ describe("RolloverWizard", () => {
     await user.click(screen.getByRole("button", { name: /Granska/ }));
     const section = (await screen.findByRole("heading", { name: "Tjänster och uppdrag" })).closest("section")!;
     expect(section).toHaveTextContent(
-      "2 tjänster och 3 uppdrag följer med. 1 har ett spärrat pass, som blir ett nytt. 1 följer sin grupp till nästa läsår.",
+      "2 tjänster och 3 uppdrag följer med. 1 spärrat pass följer med och blir ett nytt. 1 följer sin grupp till nästa läsår.",
     );
     const listUnder = (title: string) => within(section).getByText(title).nextElementSibling as HTMLElement;
     expect(within(listUnder("Nedsättningen följer med — gäller den även nästa läsår?")).getByText("Bo Alm")).toBeInTheDocument();

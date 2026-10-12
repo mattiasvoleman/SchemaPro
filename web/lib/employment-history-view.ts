@@ -31,8 +31,12 @@ export interface HistoryLabels {
   empty: string;
   /** A subject or group id nobody can name any more. */
   removed: string;
-  /** blockedConstraintId set. */
+  /** blockedConstraintId set (versions written before 20261017090000). */
   blocked: string;
+  /** An uppdrag's number of fixed times: "3 tider" (slotCount, 20261017090000). */
+  times: (count: number) => string;
+  /** An empty Från or Till: the läsår's own bound, not nothing. */
+  yearBound: string;
   /** A decimal in the reader's own mark: 66,667 in Swedish, 66.667 in English. */
   decimal: (value: number) => string;
   /**
@@ -48,6 +52,11 @@ export function formatHistoryValue(
   value: unknown,
   labels: HistoryLabels,
 ): string {
+  // An empty Från or Till is the läsår's own bound, which a reader of
+  // "Till och med: 2026-12-18 → —" could not tell from a removed date.
+  if ((value === null || value === undefined || value === "") && entity === "DUTY" && (field === "validFrom" || field === "validTo")) {
+    return labels.yearBound;
+  }
   if (value === null || value === undefined || value === "") return labels.empty;
   switch (field) {
     case "employmentPercent":
@@ -70,6 +79,12 @@ export function formatHistoryValue(
       return labels.group(String(value)) ?? labels.removed;
     case "blockedConstraintId":
       return labels.blocked;
+    case "slotCount":
+      return typeof value === "number" ? labels.times(value) : String(value);
+    case "validFrom":
+    case "validTo":
+      // A day as the database wrote it: yyyy-mm-dd, never a moment.
+      return typeof value === "string" ? value.slice(0, 10) : String(value);
     default:
       return typeof value === "object" ? JSON.stringify(value) : String(value);
   }
