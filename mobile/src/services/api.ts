@@ -30,6 +30,12 @@ export interface ApiRequestOptions {
   readonly signal?: AbortSignal;
   /** A bearer the caller already holds (the sync worker reads it once per cycle). */
   readonly token?: string;
+  /**
+   * A public route that takes no bearer (/public/v1/…): the sign-in screen's
+   * school-account lookup, before anyone is signed in. Nothing is sent but
+   * the request itself.
+   */
+  readonly anonymous?: true;
 }
 
 function baseUrl(): string {
@@ -41,10 +47,12 @@ function baseUrl(): string {
 /** JSON in, JSON out; 204 resolves to undefined. Throws ApiError on anything else. */
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const url = `${baseUrl()}${path}`;
-  const token = options.token ?? (await getAccessToken());
-  if (!token) throw new ApiError(401, 'Not authenticated.', 'NOT_AUTHENTICATED');
-
-  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  const headers: Record<string, string> = {};
+  if (!options.anonymous) {
+    const token = options.token ?? (await getAccessToken());
+    if (!token) throw new ApiError(401, 'Not authenticated.', 'NOT_AUTHENTICATED');
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
 
   const response = await fetch(url, {

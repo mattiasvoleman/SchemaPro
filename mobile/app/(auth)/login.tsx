@@ -16,12 +16,22 @@ import { useI18n } from '../../src/context/LocaleContext';
 const BRAND_MARK = 'SP';
 
 export default function LoginScreen(): React.JSX.Element {
-  const { login, isLoading, error } = useAuth();
+  const { login, loginWithSchoolAccount, isLoading, error } = useAuth();
   const { t, locale, setLocale } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && !isLoading;
+
+  // "Logga in med skolkonto" needs only the address: the gateway finds the
+  // school's provider from its domain, and an address without one is said
+  // as SSO_NEEDS_EMAIL rather than greyed out, so the button tells the
+  // reader what it wants.
+  const startSchoolAccount = () => {
+    loginWithSchoolAccount(email).catch(() => {
+      // The code is in `error`, which the line above the buttons words.
+    });
+  };
 
   return (
     <KeyboardAvoidingView
@@ -65,7 +75,9 @@ export default function LoginScreen(): React.JSX.Element {
           />
 
           {error !== null && (
-            <Text style={styles.errorText}>{t(`authErrors.${error}`)}</Text>
+            <Text style={styles.errorText} accessibilityRole="alert" accessibilityLiveRegion="polite">
+              {t(`authErrors.${error}`)}
+            </Text>
           )}
 
           <TouchableOpacity
@@ -80,6 +92,23 @@ export default function LoginScreen(): React.JSX.Element {
             ) : (
               <Text style={styles.loginBtnText}>{t('login.submit')}</Text>
             )}
+          </TouchableOpacity>
+
+          <View style={styles.divider} accessible={false} importantForAccessibility="no-hide-descendants">
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>{t('login.or')}</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.schoolAccountBtn, isLoading && styles.loginBtnDisabled]}
+            onPress={startSchoolAccount}
+            disabled={isLoading}
+            accessibilityRole="button"
+            accessibilityLabel={t('login.schoolAccountA11y')}
+            accessibilityState={{ disabled: isLoading }}
+          >
+            <Text style={styles.schoolAccountText}>{t('login.schoolAccount')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -168,6 +197,33 @@ const styles = StyleSheet.create({
   },
   loginBtnText: {
     color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#2d2d4a',
+  },
+  dividerText: {
+    fontSize: 13,
+    color: '#94a3b8',
+  },
+  schoolAccountBtn: {
+    borderWidth: 1,
+    borderColor: '#6366f1',
+    paddingVertical: 15,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  schoolAccountText: {
+    color: '#e2e8f0',
     fontSize: 16,
     fontWeight: '700',
   },

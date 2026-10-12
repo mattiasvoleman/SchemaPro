@@ -24,6 +24,7 @@
     "expo-secure-store": "~13.0.1",
     "expo-sqlite": "~56.0.6",
     "expo-status-bar": "~1.12.1",
+    "expo-web-browser": "~56.0.6",
     "react": "18.2.0",
     "react-native": "^0.86.0",
     "react-native-safe-area-context": "~5.7.0",

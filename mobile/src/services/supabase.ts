@@ -90,6 +90,10 @@ export function getSupabase(): SupabaseClient {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // "Logga in med skolkonto" comes back with a code, exchanged with the
+      // verifier this client keeps in the secure storage above
+      // (AuthService.loginWithSchoolAccount). Passwords are unaffected.
+      flowType: 'pkce',
     },
   });
   return _client;

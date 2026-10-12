@@ -8,6 +8,7 @@ interface AuthContextValue {
   readonly isLoading: boolean;
   readonly error: AuthErrorCode | null;
   readonly login: (email: string, password: string) => Promise<void>;
+  readonly loginWithSchoolAccount: (email: string) => Promise<void>;
   readonly logout: () => Promise<void>;
 }
 
@@ -19,14 +20,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
  * so the teacher is not forced to log in after every app restart.
  */
 export function AuthProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
-  const { authState, isLoading, error, login, logout, restoreSession } = useSecureAuth();
+  const { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession } = useSecureAuth();
 
   useEffect(() => {
     void restoreSession();
   }, [restoreSession]);
 
   return (
-    <AuthContext.Provider value={{ authState, isLoading, error, login, logout }}>
+    <AuthContext.Provider value={{ authState, isLoading, error, login, loginWithSchoolAccount, logout }}>
       {children}
     </AuthContext.Provider>
   );

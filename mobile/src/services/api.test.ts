@@ -68,6 +68,17 @@ describe('apiRequest', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('asks a public route with no bearer at all, signed in or not', async () => {
+    fetchMock.mockResolvedValue(answer(200, { provider: 'azure' }));
+    (getAccessToken as jest.Mock).mockResolvedValue(null);
+    await expect(apiRequest('/public/v1/sign-in-methods/skola.example', { anonymous: true })).resolves.toEqual({ provider: 'azure' });
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/public/v1/sign-in-methods/skola.example', {
+      method: 'GET',
+      headers: {},
+    });
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
   it('passes an abort signal through', async () => {
     fetchMock.mockResolvedValue(answer(204));
     const controller = new AbortController();

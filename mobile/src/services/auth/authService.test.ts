@@ -1,10 +1,18 @@
+import * as WebBrowser from 'expo-web-browser';
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import { SecureTokenStore } from './secureTokenStore';
 import { AuthError, AuthService } from './authService';
+import { lookupProvider } from './schoolAccount';
 
 jest.mock('../supabase', () => ({ getSupabase: jest.fn() }));
+jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
+jest.mock('expo-linking', () => ({ createURL: jest.fn((path: string) => `schemapro://${path}`) }));
+jest.mock('./schoolAccount', () => ({
+  ...jest.requireActual('./schoolAccount'),
+  lookupProvider: jest.fn(),
+}));
 jest.mock('../database/localDatabase', () => ({ clearCachedSchoolData: jest.fn(async () => undefined) }));
 jest.mock('../pushRegistration', () => ({
   unregisterOnLogout: jest.fn(async () => undefined),
@@ -31,6 +39,8 @@ function supabase(options: {
   profile?: { id: string; role: string } | null;
   session?: { user: { id: string } } | null;
   getSessionThrows?: boolean;
+  oauth?: { data: { url: string | null } | null; error: { message: string } | null };
+  exchange?: { data: { user: { id: string } | null } | null; error: { message: string; status?: number } | null };
 }) {
   const signOut = jest.fn(async () => {
     order.push('signOut');
@@ -38,9 +48,13 @@ function supabase(options: {
   const builder: Record<string, unknown> = {};
   for (const method of ['select', 'eq']) builder[method] = () => builder;
   builder['maybeSingle'] = async () => ({ data: options.profile ?? null, error: null });
+  const signInWithOAuth = jest.fn(async () => options.oauth);
+  const exchangeCodeForSession = jest.fn(async () => options.exchange);
   (getSupabase as jest.Mock).mockReturnValue({
     auth: {
       signInWithPassword: jest.fn(async () => options.signIn),
+      signInWithOAuth,
+      exchangeCodeForSession,
       signOut,
       getSession: jest.fn(async () => {
         if (options.getSessionThrows) throw new Error('storage unreadable');
@@ -49,7 +63,7 @@ function supabase(options: {
     },
     from: () => builder,
   });
-  return { signOut };
+  return { signOut, signInWithOAuth, exchangeCodeForSession };
 }
 
 beforeEach(() => {
@@ -79,6 +93,12 @@ describe('AuthService.login', () => {
     const { signOut } = supabase({ signIn: { data: { user: { id: 'auth-1' } }, error: null }, profile: null });
     await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).rejects.toMatchObject({ code: 'NO_PROFILE' });
     expect(signOut).toHaveBeenCalled();
+  });
+
+  it('says the school\'s school-account requirement as SSO_REQUIRED, not as a wrong password', async () => {
+    // Auth's answer when the access-token hook refuses (GoTrue v2.197.0).
+    supabase({ signIn: { data: { user: null }, error: { message: 'sso_required', status: 403, code: 'unknown' } } });
+    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).rejects.toMatchObject({ code: 'SSO_REQUIRED' });
   });
 
   it('signs in and caches the profile', async () => {
@@ -134,5 +154,93 @@ describe('AuthService.restoreSession', () => {
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER' });
     await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER' });
     expect(releaseOnSignedOut).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthService.loginWithSchoolAccount', () => {
+  const browser = WebBrowser.openAuthSessionAsync as jest.Mock;
+  const lookup = lookupProvider as jest.Mock;
+
+  beforeEach(() => {
+    browser.mockReset();
+    lookup.mockReset();
+  });
+
+  it('asks about the domain, opens the provider with hints, exchanges the code and caches the profile', async () => {
+    lookup.mockResolvedValue('azure');
+    const { signInWithOAuth, exchangeCodeForSession } = supabase({
+      oauth: { data: { url: 'https://auth.example/authorize?provider=azure' }, error: null },
+      exchange: { data: { user: { id: 'auth-9' } }, error: null },
+      profile: { id: 'u-9', role: 'TEACHER' },
+    });
+    browser.mockResolvedValue({ type: 'success', url: 'schemapro://auth/callback?code=the-code' });
+
+    await expect(AuthService.loginWithSchoolAccount(' Anna@Skola.Example ')).resolves.toEqual({
+      isAuthenticated: true,
+      teacherId: 'u-9',
+      role: 'TEACHER',
+    });
+    expect(lookup).toHaveBeenCalledWith('skola.example');
+    expect(signInWithOAuth).toHaveBeenCalledWith({
+      provider: 'azure',
+      options: {
+        redirectTo: 'schemapro://auth/callback',
+        skipBrowserRedirect: true,
+        queryParams: { login_hint: 'Anna@Skola.Example', domain_hint: 'skola.example' },
+      },
+    });
+    expect(browser).toHaveBeenCalledWith('https://auth.example/authorize?provider=azure', 'schemapro://auth/callback');
+    expect(exchangeCodeForSession).toHaveBeenCalledWith('the-code');
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-9', 'TEACHER');
+  });
+
+  it('wants an address with a domain, and asks nobody without one', async () => {
+    await expect(AuthService.loginWithSchoolAccount('anna')).rejects.toMatchObject({ code: 'SSO_NEEDS_EMAIL' });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('says when no school signs in with a school account on the domain, or the lookup fails', async () => {
+    lookup.mockResolvedValue(null);
+    await expect(AuthService.loginWithSchoolAccount('anna@gmail.example')).rejects.toMatchObject({ code: 'SSO_NOT_FOUND' });
+    lookup.mockRejectedValue(new Error('offline'));
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'LOGIN_FAILED' });
+    expect(browser).not.toHaveBeenCalled();
+  });
+
+  it('says a closed browser as SSO_CANCELLED, and Auth\'s refusals by their codes', async () => {
+    lookup.mockResolvedValue('google');
+    supabase({ oauth: { data: { url: 'https://auth.example/authorize' }, error: null } });
+    browser.mockResolvedValue({ type: 'cancel' });
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'SSO_CANCELLED' });
+
+    browser.mockResolvedValue({ type: 'success', url: 'schemapro://auth/callback?error=access_denied&error_code=signup_disabled' });
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'SSO_NO_ACCOUNT' });
+  });
+
+  it('says the access-token hook\'s refusal of the exchange, and a session with no profile', async () => {
+    lookup.mockResolvedValue('azure');
+    browser.mockResolvedValue({ type: 'success', url: 'schemapro://auth/callback?code=c' });
+    supabase({
+      oauth: { data: { url: 'https://auth.example/authorize' }, error: null },
+      exchange: { data: null, error: { message: 'sso_identity_not_allowed', status: 403 } },
+    });
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'SSO_OTHER_ORGANISATION' });
+
+    const { signOut } = supabase({
+      oauth: { data: { url: 'https://auth.example/authorize' }, error: null },
+      exchange: { data: { user: { id: 'auth-1' } }, error: null },
+      profile: null,
+    });
+    await expect(AuthService.loginWithSchoolAccount('anna@skola.example')).rejects.toMatchObject({ code: 'NO_PROFILE' });
+    expect(signOut).toHaveBeenCalled();
+  });
+
+  it('says LOGIN_FAILED when Auth gives no sign-in URL', async () => {
+    lookup.mockResolvedValue('azure');
+    supabase({ oauth: { data: null, error: { message: 'Unsupported provider' } } });
+    const error = await AuthService.loginWithSchoolAccount('anna@skola.example').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error).toMatchObject({ code: 'LOGIN_FAILED' });
+    expect(browser).not.toHaveBeenCalled();
   });
 });
