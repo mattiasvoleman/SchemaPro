@@ -12,12 +12,13 @@ import { expect, test, type Page } from "@playwright/test";
  * and review the resulting image diff in the PR like any other change.
  */
 
+// /no-profile is not here: without a session it is /login, so a baseline of
+// it would only pin /login again. Its text is tested in its page test.
 const ROUTES = [
   { path: "/sv/login", name: "login-sv" },
   { path: "/en/login", name: "login-en" },
   { path: "/sv/forgot-password", name: "forgot-password-sv" },
   { path: "/sv/update-password", name: "update-password-sv" },
-  { path: "/sv/no-profile", name: "no-profile-sv" },
 ];
 
 /**

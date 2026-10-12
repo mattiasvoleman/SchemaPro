@@ -11,14 +11,17 @@ import { expect, test, type Page } from "@playwright/test";
  * which is what CI can honestly enforce.
  */
 
-/** Public routes; everything under (app) requires a Supabase session. */
+/**
+ * Public routes; everything under (app) requires a Supabase session. So does
+ * /no-profile: without one the proxy sends it to /login, so its own text is
+ * tested in app/[locale]/(auth)/no-profile/page.test.tsx instead.
+ */
 const ROUTES = [
   { path: "/sv/login", name: "login (sv)" },
   { path: "/en/login", name: "login (en)" },
   { path: "/sv/forgot-password", name: "forgot password (sv)" },
   { path: "/en/forgot-password", name: "forgot password (en)" },
   { path: "/sv/update-password", name: "update password (sv)" },
-  { path: "/sv/no-profile", name: "no profile (sv)" },
   // A school-account sign-in that came back refused (/auth/callback): the
   // reason sits above the form.
   { path: "/sv/login?sso=no-account", name: "login with a school-account refusal (sv)" },
