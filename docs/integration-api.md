@@ -718,9 +718,16 @@ neither create a row in another school nor move one there. There is no INSERT
 on `Users` (unknown emails come back in `needsProvisioning`) and no DELETE
 policy on any table. The `Users` policy scopes rows, not columns; the import
 writes `firstName`, `lastName` and `studentGroupId`, and Prisma adds
-`updatedAt` to every such UPDATE. A guardian link also has composite foreign
-keys to `Users (id, schoolId)` on both sides, so its guardian and its student
-belong to the link's school whoever writes it.
+`updatedAt` to every such UPDATE. The table itself refuses a class on anyone
+but a pupil: the CHECK `Users_only_a_student_has_a_class`
+(`"studentGroupId" IS NULL OR "role" = 'STUDENT'`, migration
+`20260914120000_bara_en_elev_har_en_klass`) binds every writer, the service
+principal included. The import sets the class in the same `UPDATE` that
+requires `role = 'STUDENT'`, so a person whose role changes mid-sync gets
+their names and no class instead of failing the batch on the CHECK. A
+guardian link also has composite foreign keys to `Users (id, schoolId)` on
+both sides, so its guardian and its student belong to the link's school
+whoever writes it.
 
 No other table has a service-principal policy. Every such table but one reads
 as empty to the principal rather than refusing it, since `authenticated` holds
@@ -762,10 +769,12 @@ filed under the second school but attached to the first school's lesson, which
 the first school's principal must not see. The runner refuses to start when any
 of them is missing. Section 4: neither
 setting survives COMMIT. Sections 5 and 6: it sees no `RoomTypes` and no
-`LunchSettings`. Section 14: `_prisma_migrations` refuses this role a read and
-a DELETE with no principal, as the service principal and as the key lookup,
-and no API role holds any privilege on it. The write policies' `WITH CHECK`
-clauses are not asserted there.
+`LunchSettings`. Section 13 exercises `Users_only_a_student_has_a_class`, as
+an admin rather than as the service principal. Section 14:
+`_prisma_migrations` refuses this role a read and a DELETE with no principal,
+as the service principal and as the key lookup, and no API role holds any
+privilege on it. The write policies' `WITH CHECK` clauses are not asserted
+there.
 
 Section 4b runs both principals on a connection where an earlier transaction
 set user claims, as a pooled connection has after any user request. PostgreSQL
