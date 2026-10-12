@@ -12,7 +12,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
-import { SupabaseAdminService } from './supabase-admin.service';
+import { SupabaseAdminService, type EmailChange } from './supabase-admin.service';
 import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
@@ -53,6 +53,12 @@ export interface InvitationResult {
    * mail in that case, and saying otherwise would be a lie to the admin.
    */
   emailSent: boolean;
+  /**
+   * True when this invitation gave the person's login the address their row
+   * now has. With `emailSent` false nobody told the person: their old
+   * address no longer signs in, and the admin is the one to say so.
+   */
+  loginMoved: boolean;
 }
 
 /** Outcome of a bulk invitation run. */
@@ -174,9 +180,17 @@ export class UsersService {
    * password set on it, held by no row. Gallring and remove() delete only
    * the login a row holds, so it would outlive the school's decision. The
    * login therefore moves to the new address first, keeping its password
-   * and linked school accounts, and the invitation resolves to that same
-   * login. Where the row ends up on another login all the same (another
-   * login already had the address), the one it left is deleted.
+   * and linked school accounts. Where the row ends up on another login all
+   * the same (another login already had the address), the one it left is
+   * deleted.
+   *
+   * Once the login has the row's address, moved or already there, the
+   * invitation is for that login and is not resolved by address again:
+   * inviteUser() reads any refusal as "already registered" and would find
+   * this same login, so a send that failed would be reported as a person who
+   * needs none. A login that has confirmed an address gets no invitation
+   * from GoTrue anyway, and only `invitedAt` is restamped; one that has not
+   * gets it again, and a failed send is the same 503 as any other.
    */
   async invite(id: string, user: AuthenticatedUser): Promise<InvitationResult> {
     if (!this.supabaseAdmin.isConfigured) {
@@ -203,7 +217,14 @@ export class UsersService {
     // Somebody never invited holds a placeholder that is nobody's login.
     const login = target.invitedAt === null ? null : target.authId;
     if (login) {
-      await this.moveLogin(login, target.email);
+      const change = await this.moveLogin(login, target.email);
+      if (change.outcome === 'unchanged' || change.outcome === 'changed') {
+        if (!change.confirmed) {
+          await this.resendInvitation(target.email);
+        }
+        await this.adoptIdentity(id, login, user);
+        return { id, emailSent: !change.confirmed, loginMoved: change.outcome === 'changed' };
+      }
     }
 
     const invite = await this.mintIdentity(target.email);
@@ -213,7 +234,7 @@ export class UsersService {
       await this.deleteLeftLogin(id, login);
     }
 
-    return { id, emailSent: invite.emailSent };
+    return { id, emailSent: invite.emailSent, loginMoved: false };
   }
 
   /**
@@ -430,11 +451,23 @@ export class UsersService {
    * and invite() deletes the one the row leaves. A login that is gone
    * (`missing`) has nothing to move.
    */
-  private async moveLogin(authId: string, email: string): Promise<void> {
+  private async moveLogin(authId: string, email: string): Promise<EmailChange> {
     try {
-      await this.supabaseAdmin.changeUserEmail(authId, email);
+      return await this.supabaseAdmin.changeUserEmail(authId, email);
     } catch {
       this.logger.error('Supabase e-mail change failed.'); // no PII in logs
+      throw new ServiceUnavailableException(
+        'Could not send the invitation email. Please try again.',
+      );
+    }
+  }
+
+  /** Sends the invitation again to a login that has not accepted it. */
+  private async resendInvitation(email: string): Promise<void> {
+    try {
+      await this.supabaseAdmin.resendInvitation(email);
+    } catch {
+      this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
         'Could not send the invitation email. Please try again.',
       );
