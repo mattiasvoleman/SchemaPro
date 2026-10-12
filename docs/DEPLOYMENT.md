@@ -377,7 +377,7 @@ person by verified e-mail address. Public signups stay off (§1, step 4), so
 an address nobody invited gets no account: the invitation is still the gate.
 
 Who may sign in is decided in the database, by the access-token hook
-`app.custom_access_token_hook` (migration `20261020090000`). Before Auth
+`sign_in.custom_access_token_hook` (migration `20261020090000`). Before Auth
 issues any token, at sign-in and at every refresh, the hook:
 
 - refuses a school-account session for a person whose school has not chosen
@@ -392,6 +392,10 @@ issues any token, at sign-in and at every refresh, the hook:
   (`sso_required`). A password session that was open when the school turned
   this on ends at its next refresh, within the JWT lifetime (1 hour by
   default);
+- refuses a session that signed in some way it does not pin: SAML
+  (`sso/saml`, which the Skolfederation phase will pin), a passkey, web3, an
+  anonymous sign-in or a method Auth adds later
+  (`sign_in_method_not_allowed`);
 - refuses the refresh of a school-account session whose sign-in at the
   provider is more than **24 hours** old (`sso_reauth_required`). Auth never
   asks Entra or Google again at a refresh, so without this a person the
@@ -403,13 +407,28 @@ issues any token, at sign-in and at every refresh, the hook:
 Each school sets this up itself on **/admin/integrations → Inloggning**: the
 provider, the e-mail domains `/login` offers it for, the organisation (Entra
 tenant id or Google Workspace domain), and, separately and off by default,
-*Kräv skolkonto för personal*. The gateway lets an admin turn that switch on
-only from a session signed in with a school account of the saved
-organisation, so nobody can lock their school out with a typo. A school may
-name a domain another school already names only with the same provider
-(a kommun's schools often share one); anything else is refused
-(`SIGN_IN_DOMAIN_TAKEN`), because it would leave the other school's domain
-with no answer at `/login`, and an SSO-only school's staff with no way in.
+*Kräv skolkonto för personal*. The gateway guards that switch three ways:
+
+- it turns on, or stays on through a change of provider or organisation,
+  only from a session signed in with a school account of the saved
+  organisation, so the provider, the pin and the admin's own account are
+  known to work together;
+- it is refused (`SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT`, naming the domains and
+  how many staff are on each) while any active teacher or admin of the
+  school has an address on a domain `/login` would not answer with this
+  provider, so a missing or mistyped domain cannot leave staff with no way
+  in;
+- the domains are checked on every save, so editing them later is held to
+  the same rule.
+
+A school may only name domains its own active people use
+(`SIGN_IN_DOMAIN_UNUSED`), and may name a domain another school already
+names only with the same provider (a kommun's schools often share one);
+anything else is refused (`SIGN_IN_DOMAIN_TAKEN`, and the gateway logs the
+collision for the operator), because it would leave the other school's
+domain with no answer at `/login`, and an SSO-only school's staff with no
+way in. A staff member added later on a domain the school has not listed
+is a case for 11.7.
 
 **Decision: one multi-tenant Entra app for every kommun.** SchemaPro has one
 Entra app registration that accepts any organisation's accounts; each
@@ -418,7 +437,8 @@ to its own tenant id. The alternative, an app registration per kommun pinned
 to that kommun's tenant, needs one Azure provider per tenant, and a Supabase
 project has one: it would mean a Supabase project per kommun, or Supabase's
 SAML SSO per kommun (a paid add-on, and the route the Skolfederation phase
-will take; the hook refuses SAML identities until that phase extends it).
+will take; until that phase pins it, the hook refuses a session that signed
+in by SAML).
 
 ### 11.1 Deploy order and the switches
 
@@ -442,15 +462,18 @@ person sees changes before the operator turns them on.
    redirect URLs (11.5). With the providers on and the hook off, anyone
    invited could sign in with any matching school account and nothing would
    be pinned: **never enable a provider without the hook.**
-4. Turn `SCHOOL_ACCOUNTS` and `NEXT_PUBLIC_SCHOOL_ACCOUNTS` on, and
-   redeploy the web (the flag is read at build time).
-5. Make a new native build of the app with `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on`
-   (`expo-web-browser` is a native module) and publish it. **No school may
-   turn on *Kräv skolkonto för personal* until its staff have this build:**
-   an older app has no school-account button and cannot sign staff in at
-   all once their password is refused. The switch's help text says so too.
-   The older app itself still starts: the new JavaScript loads the module
-   only when the button is used, and asks for an update if it is missing.
+4. Make a new native build of the app with `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on`
+   (`expo-web-browser` is a native module; the variable is in
+   `mobile/.env.example`), publish it and wait until staff have updated.
+   **Only then** go on: once the next step lets schools save, an admin can
+   turn on *Kräv skolkonto för personal*, and an older app has no
+   school-account button and cannot sign staff in at all once their
+   password is refused. The switch's help text says so too. The older app
+   itself still starts: the new JavaScript loads the module only when the
+   button is used, and asks for an update if it is missing.
+5. Turn `SCHOOL_ACCOUNTS` on (API) and `NEXT_PUBLIC_SCHOOL_ACCOUNTS` on
+   (`web/.env.example`), and redeploy the web (the flag is read at build
+   time).
 
 Turning `SCHOOL_ACCOUNTS` off again later only stops changes; the rows that
 exist keep working, and the lookup keeps answering them.
@@ -458,13 +481,19 @@ exist keep working, and the lookup keeps answering them.
 ### 11.2 The access-token hook (Supabase dashboard)
 
 1. Authentication → Hooks → *Customize Access Token (JWT) Claims* → type
-   *Postgres*, schema `app`, function `custom_access_token_hook` → enable.
-   The migration already grants `supabase_auth_admin` USAGE on `app` and
-   EXECUTE on the hook and the two functions it calls, and no API role may
-   execute them; if the dashboard offers to apply grants, they are harmless.
-2. Check it at once: sign in with a password as any user. A token must still
-   come back. The check that the hook refuses staff passwords comes later,
-   in 11.6, once a provider and a school row exist.
+   *Postgres*, schema `sign_in`, function `custom_access_token_hook` →
+   enable. The migration already grants `supabase_auth_admin` USAGE on
+   `sign_in` (and on nothing else of SchemaPro's) and EXECUTE on the hook and
+   the two functions it calls, and no API role may execute them; if the
+   dashboard offers to apply grants, they are harmless.
+2. Check it at once, as a person who has a SchemaPro profile (a teacher or a
+   school admin, not a bootstrap login without one: for such a login the
+   hook stops before the code everyone else goes through). Sign in with a
+   password and get a token, then refresh once: reload a signed-in page
+   after the access token has expired, or call `refreshSession()`. Watch
+   Auth's logs for hook errors for a minute before going on. The check that
+   the hook refuses staff passwords comes later, in 11.6, once a provider
+   and a school row exist.
 3. **If that sign-in fails, or Auth's logs show a hook error**, disable the
    hook immediately and turn the Azure and Google providers off in the same
    step. The hook runs before every token Auth issues, so a failing hook
@@ -584,6 +613,14 @@ fails at Auth, before any provider.
   Then every member of staff signs in once with the new tenant (a new
   identity is linked by address) and their old-tenant identity is removed as
   above; until it is, the hook refuses them.
+- **A member of staff on a domain the school has not listed, while *Kräv
+  skolkonto för personal* is on** (for example someone added later with a
+  kommun address). The gateway checks the domains when the row is saved,
+  not when a person is added. That person finds no school-account sign-in
+  and has their password refused. The school's admin adds the domain on
+  Inloggning (the save is checked again), or gives the person an address on
+  a listed domain. If no admin can sign in, an operator turns the switch
+  off as in "locked out" below.
 - **A school is told "En annan skola loggar in med en annan inloggning på
   …" (`SIGN_IN_DOMAIN_TAKEN`).** Another school names that domain with the
   other provider. If the domain is really the asking school's, the other
@@ -607,6 +644,14 @@ fails at Auth, before any provider.
   domain's answer, so a school or a kommun behind one address is not
   throttled the morning it starts requiring the school account. If it ever
   is, people are told to wait a minute, not that sign-in failed.
+
+**Accepted risk: the lookup tells which domains use school accounts.** Anyone
+can ask `/public/v1/sign-in-methods/<domain>` and learn whether that domain
+signs in with a school account, and with which provider, as with any
+home-realm discovery. It names no school, tenant or setting, and the 600 a
+minute per address is set for a school signing in at once. The alternative,
+a Microsoft and a Google button and no lookup, would put both in front of
+every guardian who signs in with a password.
 
 **Accepted risk: the app's custom scheme.** The app comes back from the
 provider on `schemapro://auth/callback`, and any app on the phone can
