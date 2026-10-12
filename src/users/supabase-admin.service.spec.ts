@@ -281,6 +281,45 @@ describe('SupabaseAdminService', () => {
     });
   });
 
+  describe('resendInvitation', () => {
+    it('POSTs the invite to the address with the redirect, and resolves', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
+
+      await expect(makeService().resendInvitation(EMAIL)).resolves.toBeUndefined();
+
+      const { url, init } = call(0);
+      expect(url.pathname).toBe('/auth/v1/invite');
+      expect(url.searchParams.get('redirect_to')).toBe('https://app.schemapro.test/update-password');
+      expect(JSON.parse(init.body ?? '')).toEqual({ email: EMAIL });
+    });
+
+    it('throws on a refusal instead of looking the address up', async () => {
+      // A 429 for the project's e-mail limit: inviteUser() would page the user
+      // list, find the login and call it already registered.
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          { code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' },
+          429,
+          { 'x-supabase-api-version': '2024-01-01' },
+        ),
+      );
+
+      await expect(makeService().resendInvitation(EMAIL)).rejects.toThrow(
+        'Supabase invite failed: email rate limit exceeded',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses instead of calling out when unconfigured', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(makeService({}).resendInvitation(EMAIL)).rejects.toThrow(
+        'Supabase admin client is not configured.',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('changeUserEmail', () => {
     /** How GoTrue answers a client that sends X-Supabase-Api-Version, as supabase-js does. */
     const refusal = (code: string, message: string, status: number) =>
@@ -291,7 +330,10 @@ describe('SupabaseAdminService', () => {
         .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
         .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('changed');
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({
+        outcome: 'changed',
+        confirmed: false,
+      });
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(call(0).init.method).toBe('GET');
@@ -306,9 +348,27 @@ describe('SupabaseAdminService', () => {
     it('writes nothing when the user already has the address, in any case', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'Invitee@School.SE' }));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('unchanged');
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({
+        outcome: 'unchanged',
+        confirmed: false,
+      });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('says whether the user has confirmed an address, which GoTrue sends no invitation', async () => {
+      fetchMock
+        .mockResolvedValueOnce(
+          jsonResponse({ id: AUTH_ID, email: 'old@school.se', email_confirmed_at: '2026-09-02T07:30:00Z' }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ id: AUTH_ID, email: EMAIL, email_confirmed_at: '2026-09-02T07:30:00Z' }),
+        );
+
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({
+        outcome: 'changed',
+        confirmed: true,
+      });
     });
 
     it('says the address is taken when another user holds it', async () => {
@@ -318,13 +378,13 @@ describe('SupabaseAdminService', () => {
           refusal('email_exists', 'A user with this email address has already been registered', 422),
         );
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('taken');
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({ outcome: 'taken' });
     });
 
     it('says the user is missing when GoTrue has no such user', async () => {
       fetchMock.mockResolvedValueOnce(refusal('user_not_found', 'User not found', 404));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toBe('missing');
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({ outcome: 'missing' });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 

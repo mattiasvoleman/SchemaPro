@@ -297,7 +297,7 @@ describe('Portal and platform surfaces (e2e)', () => {
         .set('x-test-user', admin())
         .expect(200);
 
-      expect(response.body).toEqual({ id: STUDENT_ID, emailSent: true });
+      expect(response.body).toEqual({ id: STUDENT_ID, emailSent: true, loginMoved: false });
       expect(harness.supabase.inviteUser).toHaveBeenCalledWith(
         'karin.ek@example.com',
       );

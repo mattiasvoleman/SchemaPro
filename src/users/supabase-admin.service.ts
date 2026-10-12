@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppConfig, SupabaseAdminConfig } from '../config/configuration';
 
+/** What SupabaseAdminService.changeUserEmail did with a login. */
+export type EmailChange =
+  | { outcome: 'unchanged' | 'changed'; confirmed: boolean }
+  | { outcome: 'taken' | 'missing' };
+
 /**
  * Thin wrapper around the Supabase Admin (GoTrue) API.
  *
@@ -75,9 +80,32 @@ export class SupabaseAdminService {
   }
 
   /**
+   * Sends the invitation again to a user who has not accepted it.
+   *
+   * Unlike inviteUser() this resolves nothing: the caller already knows the
+   * user the address belongs to, so any refusal is a failure to send. GoTrue
+   * sends an unconfirmed user the invitation again, and a 429 (the project's
+   * e-mail limit) or a mail server error rolls the send back. inviteUser()
+   * would read either as "already registered" and find the same user.
+   */
+  async resendInvitation(email: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('Supabase admin client is not configured.');
+    }
+    const { error } = await this.client.auth.admin.inviteUserByEmail(
+      email,
+      this.inviteRedirectUrl ? { redirectTo: this.inviteRedirectUrl } : {},
+    );
+    if (error) {
+      throw new Error(`Supabase invite failed: ${error.message}`);
+    }
+  }
+
+  /**
    * Gives an existing auth user another address, keeping its password and
    * the identities linked to it. The admin API applies the change directly:
-   * no confirmation mail goes to either address.
+   * no confirmation mail goes to either address, and a confirmed address
+   * stays confirmed.
    *
    * - `unchanged`: the user already has the address (in any case), so
    *   nothing is written;
@@ -86,26 +114,28 @@ export class SupabaseAdminService {
    *   (email_exists);
    * - `missing`: there is no such user (404).
    *
-   * Anything else throws.
+   * For the first two, `confirmed` says whether the user has confirmed an
+   * address (accepted an invitation, or signed in with a linked school
+   * account): GoTrue sends such a user no invitation. Anything else throws.
    */
-  async changeUserEmail(
-    authId: string,
-    email: string,
-  ): Promise<'unchanged' | 'changed' | 'taken' | 'missing'> {
+  async changeUserEmail(authId: string, email: string): Promise<EmailChange> {
     if (!this.client) {
       throw new Error('Supabase admin client is not configured.');
     }
     const found = await this.client.auth.admin.getUserById(authId);
     if (found.error) {
-      if (found.error.status === 404) return 'missing';
+      if (found.error.status === 404) return { outcome: 'missing' };
       throw new Error(`Supabase user lookup failed: ${found.error.message}`);
     }
-    if (found.data.user.email?.toLowerCase() === email.toLowerCase()) return 'unchanged';
+    const confirmed = Boolean(found.data.user.email_confirmed_at);
+    if (found.data.user.email?.toLowerCase() === email.toLowerCase()) {
+      return { outcome: 'unchanged', confirmed };
+    }
 
     const { error } = await this.client.auth.admin.updateUserById(authId, { email });
-    if (!error) return 'changed';
-    if (error.code === 'email_exists') return 'taken';
-    if (error.status === 404) return 'missing';
+    if (!error) return { outcome: 'changed', confirmed };
+    if (error.code === 'email_exists') return { outcome: 'taken' };
+    if (error.status === 404) return { outcome: 'missing' };
     throw new Error(`Supabase e-mail change failed: ${error.message}`);
   }
 
