@@ -84,7 +84,7 @@ function school() {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 27 statements (26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 28 statements (27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -126,6 +126,10 @@ describe('the active year’s statement budget', () => {
       'masterLesson.update › extraGroups',
       'masterLesson.update › participants',
       'calendarLesson.findMany',
+      // Ämnesfördelning: the timplanspost, its subject's default and both
+      // names, joined in ONE statement — asked because the lesson moved to
+      // another day. The school has no rule, so its week is never read.
+      '$queryRaw.$queryRaw',
       'scheduleChangeLog.create',
     ]);
   });
