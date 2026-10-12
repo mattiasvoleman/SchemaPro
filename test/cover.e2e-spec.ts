@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { todayInZone } from '../src/common/utils/time';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -23,7 +24,11 @@ const ABSENCE = '55555555-5555-4555-8555-555555555555';
 const REASON = '88888888-8888-4888-8888-888888888888';
 
 const DAY = 86_400_000;
-const isoDay = (offset: number) => new Date(Date.now() + offset * DAY).toISOString().slice(0, 10);
+// Days counted from the school's today (the mocked school is in Stockholm), as
+// the service counts them: from 00:00 to 02:00 there the UTC date is still
+// yesterday.
+const isoDay = (offset: number) =>
+  new Date(todayInZone('Europe/Stockholm').getTime() + offset * DAY).toISOString().slice(0, 10);
 const FUTURE = isoDay(3);
 const at = (date: string, hour: number) => new Date(`${date}T${String(hour).padStart(2, '0')}:00:00.000Z`);
 
