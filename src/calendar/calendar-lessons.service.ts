@@ -9,10 +9,7 @@ import type { LessonCancelCause, PrismaClient, TeacherAssignmentRole, TeacherQua
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
-import {
-  NotificationsService,
-  type NotificationKind,
-} from '../notifications/notifications.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { attendanceSpan, lessonQualificationFindings } from '../staffing/staffing-enforcement';
 import type { RosterViewer } from '../year-rollover/projected-rosters';
 import { settleFindings, type StaffingWarning } from '../staffing/staffing-checks';
@@ -34,6 +31,8 @@ import {
 import { readPersonDays, schoolTimezone } from '../cover/cover-context';
 import { hardFindings, softWarnings, type CoverWarningCode } from '../cover/cover-rules';
 import { coverEmail, coverMeta, withdrawnEmail, withdrawnMeta, type NoticeLesson } from '../cover/cover-notices';
+import { scopeOf } from './lesson-roster';
+import { lessonEmail, type LessonNoticeType } from './lesson-notices';
 import type {
   AssignSubstituteDto,
   CancelLessonDto,
@@ -196,12 +195,7 @@ export class CalendarLessonsService {
       await this.notifyLessonAudience(tx, lesson, {
         type: 'LESSON_CANCELLED',
         teacherIds: lesson.teachers.map((t) => t.teacherId),
-        email: {
-          subject: `Lesson cancelled: ${lesson.subject.name}`,
-          body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} has been cancelled.${
-            dto.reason ? ` Reason: ${dto.reason}` : ''
-          }`,
-        },
+        reason: dto.reason,
       });
       this.logger.log(`Lesson cancelled [lesson=${id}]`);
       return { updated, board: boardOf(lesson) };
@@ -285,6 +279,12 @@ export class CalendarLessonsService {
       const updated = await this.reinstateInTransaction(tx, lesson);
 
       await this.realtime.notifyLessonChanged(tx, id);
+      // Told it was cancelled, so told it is not: the class, its guardians
+      // and the lesson's teachers, as the cancellation told them.
+      await this.notifyLessonAudience(tx, lesson, {
+        type: 'LESSON_REINSTATED',
+        teacherIds: lesson.teachers.map((t) => t.teacherId),
+      });
       this.logger.log(`Lesson reinstated [lesson=${id}]`);
       return { updated, board: boardOf(lesson) };
     });
@@ -355,10 +355,7 @@ export class CalendarLessonsService {
         teacherIds: outcome.removed
           .map((row) => row.teacherId)
           .filter((teacherId) => !withdrawn.has(teacherId) && teacherId !== dto.teacherId),
-        email: {
-          subject: `Substitute assigned: ${lesson.subject.name}`,
-          body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} will be covered by a substitute teacher.`,
-        },
+        timezone: outcome.timezone,
       });
       await this.notifyInTransaction(tx, outcome);
       // Ids only in logs — never teacher names.
@@ -745,10 +742,6 @@ export class CalendarLessonsService {
       await this.notifyLessonAudience(tx, lesson, {
         type: 'LESSON_ROOM_CHANGED',
         teacherIds: lesson.teachers.map((t) => t.teacherId),
-        email: {
-          subject: `Room changed: ${lesson.subject.name}`,
-          body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} has moved to a different room.`,
-        },
       });
       this.logger.log(`Lesson room changed [lesson=${id}]`);
       return { updated, board: boardOf(lesson) };
@@ -997,55 +990,43 @@ export class CalendarLessonsService {
   }
 
   /**
-   * The class's notice for a lesson the cover board covered or cancelled,
+   * The class's notice for a lesson the cover board decided on or undid,
    * sent by the board after its commit: the same type, meta and e-mail the
-   * old PATCHes send, without a reason (the board takes none).
+   * day operations send, without a reason (the board takes none).
    */
   async notifyLessonClass(
     tx: PrismaClient,
     lessonId: string,
-    type: 'LESSON_SUBSTITUTE' | 'LESSON_CANCELLED',
+    type: 'LESSON_SUBSTITUTE' | 'LESSON_CANCELLED' | 'LESSON_SUPERVISED_STUDY' | 'LESSON_REINSTATED',
     teacherIds: string[],
+    timezone?: string,
   ): Promise<void> {
     const lesson = await this.requireLesson(tx, lessonId);
-    await this.notifyLessonAudience(tx, lesson, {
-      type,
-      teacherIds,
-      email:
-        type === 'LESSON_CANCELLED'
-          ? {
-              subject: `Lesson cancelled: ${lesson.subject.name}`,
-              body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} has been cancelled.`,
-            }
-          : {
-              subject: `Substitute assigned: ${lesson.subject.name}`,
-              body: `${lesson.subject.name} on ${lesson.startsAt.toISOString()} will be covered by a substitute teacher.`,
-            },
-    });
+    await this.notifyLessonAudience(tx, lesson, { type, teacherIds, timezone });
   }
 
   /**
-   * In-app (and optionally email) notice about a lesson change. Fans out to the
-   * lesson's class (students + guardians) and to the teachers involved.
+   * In-app (and e-mail) notice about a lesson change. Fans out to everybody
+   * on the lesson's roster (lesson-roster.ts: its classes, their teaching
+   * groups and the pupils named on it), their guardians, and the teachers
+   * involved. The e-mail is Swedish on the school's clock (lesson-notices.ts).
    */
   private async notifyLessonAudience(
     tx: PrismaClient,
-    lesson: {
-      schoolId: string;
-      studentGroupId: string;
-      startsAt: Date;
-      subject: { name: string };
-    },
+    lesson: Pick<LessonForAction, 'schoolId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants'>,
     options: {
-      type: NotificationKind;
+      type: LessonNoticeType;
       teacherIds: string[];
-      email?: { subject: string; body: string };
+      /** A cancellation's reason, as the lesson's note says it. */
+      reason?: string | null;
+      /** The school's clock, when the caller has read it. */
+      timezone?: string;
     },
   ): Promise<void> {
-    const groupRecipients = await this.notifications.recipientsForGroups(tx, [
-      lesson.studentGroupId,
-    ]);
-    const recipients = [...new Set([...groupRecipients, ...options.teacherIds])];
+    const pupilsAndGuardians = await this.notifications.recipientsForLessons(tx, [scopeOf(lesson)]);
+    const recipients = [...new Set([...pupilsAndGuardians, ...options.teacherIds])];
+    if (recipients.length === 0) return;
+    const timezone = options.timezone ?? (await schoolTimezone(tx, lesson.schoolId));
     await this.notifications.notifyUsers(tx, {
       schoolId: lesson.schoolId,
       userIds: recipients,
@@ -1054,7 +1035,7 @@ export class CalendarLessonsService {
         subjectName: lesson.subject.name,
         startsAt: lesson.startsAt.toISOString(),
       },
-      ...(options.email ? { email: options.email } : {}),
+      email: lessonEmail(options.type, { subjectName: lesson.subject.name, startsAt: lesson.startsAt }, timezone, options.reason),
     });
   }
 }

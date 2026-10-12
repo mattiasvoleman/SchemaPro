@@ -29,7 +29,10 @@ describe('NotificationPreferencesService', () => {
     const { types } = await service.get(as('GUARDIAN'));
     expect(types).toEqual([
       { type: 'LESSON_CANCELLED', enabled: true, required: false },
+      { type: 'CANCELLATION_DIGEST', enabled: true, required: false },
+      { type: 'LESSON_REINSTATED', enabled: true, required: false },
       { type: 'LESSON_SUBSTITUTE', enabled: true, required: false },
+      { type: 'LESSON_SUPERVISED_STUDY', enabled: true, required: false },
       { type: 'LESSON_ROOM_CHANGED', enabled: true, required: false },
       { type: 'SCHEDULE_CHANGED', enabled: false, required: false },
       { type: 'LEAVE_DECIDED', enabled: true, required: false },

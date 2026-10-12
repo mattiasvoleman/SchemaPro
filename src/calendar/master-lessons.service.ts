@@ -515,13 +515,14 @@ export class MasterLessonsService {
       // hear about just as much.
       if (propagatedLessons > 0 || removedCalendarLessons > 0) {
         // The notice describes the lesson as it is after this update, so it
-        // goes to the classes attending it after this update. Read off the
+        // goes to the roster attending it after this update. Read off the
         // stored row, a class the same patch attached never heard about the
         // lessons it now has, and a class it detached was told about a slot
-        // that is no longer theirs.
-        const recipients = await this.notifications.recipientsForGroups(tx, [
-          lesson.studentGroupId,
-          ...after.extraGroupIds,
+        // that is no longer theirs. The roster is the one reader's
+        // (lesson-roster.ts): the classes, their teaching groups and the
+        // pupils named on the lesson, as they are now.
+        const recipients = await this.notifications.recipientsForLessons(tx, [
+          { groupIds: [lesson.studentGroupId, ...after.extraGroupIds], participantIds: after.studentIds },
         ]);
         const subject = await tx.subject.findUnique({
           where: { id: lesson.subjectId },

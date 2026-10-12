@@ -119,7 +119,7 @@ describe('CalendarLessonsService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let realtime: { notifyLessonChanged: jest.Mock };
-  let notifications: { notifyUsers: jest.Mock; recipientsForGroups: jest.Mock };
+  let notifications: { notifyUsers: jest.Mock; recipientsForLessons: jest.Mock };
 
   beforeEach(() => {
     tx = createTxMock();
@@ -127,7 +127,7 @@ describe('CalendarLessonsService', () => {
     realtime = { notifyLessonChanged: jest.fn().mockResolvedValue(undefined) };
     notifications = {
       notifyUsers: jest.fn().mockResolvedValue(2),
-      recipientsForGroups: jest.fn().mockResolvedValue([STUDENT_ID, GUARDIAN_ID]),
+      recipientsForLessons: jest.fn().mockResolvedValue([STUDENT_ID, GUARDIAN_ID]),
     };
     service = new CalendarLessonsService(
       prisma as unknown as PrismaService,
@@ -240,13 +240,13 @@ describe('CalendarLessonsService', () => {
           data: { status: 'CANCELLED', note: 'Bring calculators', cancelCause: 'MANUAL' },
         }),
       );
-      // And the email says no more than it was told: no reason, no "Reason:".
+      // And the email says no more than it was told: no reason, no "Anledning:".
       expect(notifications.notifyUsers).toHaveBeenCalledWith(
         tx,
         expect.objectContaining({
           email: {
-            subject: 'Lesson cancelled: Mathematics',
-            body: 'Mathematics on 2026-08-10T08:00:00.000Z has been cancelled.',
+            subject: 'Inställd lektion: Mathematics mån 10 aug 10:00',
+            body: 'Mathematics mån 10 aug 10:00 är inställd.\n\nSe schemat i SchemaPro.',
           },
         }),
       );
@@ -258,7 +258,8 @@ describe('CalendarLessonsService', () => {
       await service.cancel(LESSON_ID, { reason: 'Fire drill' }, testUser());
 
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
-      expect(notifications.recipientsForGroups).toHaveBeenCalledWith(tx, [GROUP_ID]);
+      // The one roster reader's scope: the class, no joined group, nobody named.
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [{ groupIds: [GROUP_ID], participantIds: [] }]);
       expect(notifications.notifyUsers).toHaveBeenCalledWith(
         tx,
         expect.objectContaining({
@@ -269,9 +270,10 @@ describe('CalendarLessonsService', () => {
             subjectName: 'Mathematics',
             startsAt: '2026-08-10T08:00:00.000Z',
           },
+          // Swedish, on the school's clock (10:00 in Stockholm, not 08:00 UTC).
           email: {
-            subject: 'Lesson cancelled: Mathematics',
-            body: expect.stringContaining('Reason: Fire drill'),
+            subject: 'Inställd lektion: Mathematics mån 10 aug 10:00',
+            body: 'Mathematics mån 10 aug 10:00 är inställd. Anledning: Fire drill\n\nSe schemat i SchemaPro.',
           },
         }),
       );
@@ -279,7 +281,7 @@ describe('CalendarLessonsService', () => {
 
     it('deduplicates a teacher who is also a group recipient', async () => {
       arrangeCancel();
-      notifications.recipientsForGroups.mockResolvedValue([STUDENT_ID, TEACHER_ID]);
+      notifications.recipientsForLessons.mockResolvedValue([STUDENT_ID, TEACHER_ID]);
 
       await service.cancel(LESSON_ID, {}, testUser());
 
@@ -312,7 +314,7 @@ describe('CalendarLessonsService', () => {
   });
 
   describe('reinstate', () => {
-    it('re-schedules a cancelled lesson and broadcasts, without notifying', async () => {
+    it('re-schedules a cancelled lesson, broadcasts, and tells the class and its teachers it goes ahead', async () => {
       storeLesson({ status: 'CANCELLED' });
       tx.calendarLesson.update.mockImplementation(
         answerUpdate(baseLesson({ status: 'CANCELLED' })),
@@ -334,7 +336,18 @@ describe('CalendarLessonsService', () => {
         }),
       );
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
-      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      // Told it was cancelled, so told it is not (it used to say nothing).
+      expect(notifications.recipientsForLessons).toHaveBeenCalledWith(tx, [{ groupIds: [GROUP_ID], participantIds: [] }]);
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
+        schoolId: SCHOOL_ID,
+        userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID],
+        type: 'LESSON_REINSTATED',
+        meta: { subjectName: 'Mathematics', startsAt: '2026-08-10T08:00:00.000Z' },
+        email: {
+          subject: 'Lektionen blir av: Mathematics mån 10 aug 10:00',
+          body: 'Mathematics mån 10 aug 10:00 blir av som planerat.\n\nSe schemat i SchemaPro.',
+        },
+      });
     });
 
     it.each(['SCHEDULED', 'COMPLETED', 'RESCHEDULED'])(
@@ -549,8 +562,8 @@ describe('CalendarLessonsService', () => {
           userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID],
           type: 'LESSON_SUBSTITUTE',
           email: {
-            subject: 'Substitute assigned: Mathematics',
-            body: 'Mathematics on 2026-08-10T08:00:00.000Z will be covered by a substitute teacher.',
+            subject: 'Vikarie: Mathematics mån 10 aug 10:00',
+            body: 'Mathematics mån 10 aug 10:00 har en vikarie.\n\nSe schemat i SchemaPro.',
           },
         }),
       );
@@ -872,8 +885,8 @@ describe('CalendarLessonsService', () => {
         type: 'LESSON_ROOM_CHANGED',
         meta: { subjectName: 'Mathematics', startsAt: '2026-08-10T08:00:00.000Z' },
         email: {
-          subject: 'Room changed: Mathematics',
-          body: 'Mathematics on 2026-08-10T08:00:00.000Z has moved to a different room.',
+          subject: 'Ny sal: Mathematics mån 10 aug 10:00',
+          body: 'Mathematics mån 10 aug 10:00 har flyttat till en annan sal.\n\nSe schemat i SchemaPro.',
         },
       });
     });

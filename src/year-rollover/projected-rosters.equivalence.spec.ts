@@ -377,7 +377,7 @@ describe('förberäknade klasslistor — every reader reads the same before and 
         const service = new MasterLessonsService(
           world.prisma,
           { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
-          { recipientsForGroups: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+          { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
         );
         const drag = async (dayOfWeek: number): Promise<string> => {
           try {

@@ -89,7 +89,7 @@ describe('the active year’s statement budget', () => {
     const service = new MasterLessonsService(
       prisma,
       { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
-      { recipientsForGroups: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+      { recipientsForLessons: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
     );
     await service.update('f5000000-0000-4000-8000-000000000001', { dayOfWeek: 2, teacherId: IDS.anna }, admin);
     expect(statementsOf(world.calls)).toEqual([

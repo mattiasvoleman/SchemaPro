@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { rostersOf, type RosterScope } from '../calendar/lesson-roster';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationDeliveryService } from './notification-delivery.service';
-import type { OutboxEntry } from './notification-outbox';
+import { RECIPIENT_CHUNK, type OutboxEntry } from './notification-outbox';
 
 export type NotificationKind =
   | 'ABSENCE_UNREPORTED'
@@ -14,9 +15,11 @@ export type NotificationKind =
   | 'SCHEDULE_CHANGED'
   | 'ROOM_BOOKING_DECIDED'
   | 'TEACHER_ABSENCE_REPORTED'
-  | 'LESSON_COVER_WITHDRAWN';
+  | 'LESSON_COVER_WITHDRAWN'
+  | 'LESSON_REINSTATED'
+  | 'LESSON_SUPERVISED_STUDY'
+  | 'CANCELLATION_DIGEST';
 
-const MAX_RECIPIENTS = 500;
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */
 const OUTBOX = {};
@@ -48,7 +51,9 @@ export class NotificationsService {
    * Writes one notification per recipient. When the notice has somewhere to
    * go beyond the inbox, e-mail addresses are resolved inside the
    * transaction (as (userId, address) pairs) and the notice is delivered
-   * after the commit — never blocking or failing the mutation.
+   * after the commit — never blocking or failing the mutation. Recipients
+   * are taken RECIPIENT_CHUNK at a time, each chunk its own statement and
+   * its own outbox entry; every recipient is written.
    */
   async notifyUsers(
     tx: PrismaClient,
@@ -60,77 +65,67 @@ export class NotificationsService {
       email?: { subject: string; body: string };
     },
   ): Promise<number> {
-    const userIds = [...new Set(options.userIds)].slice(0, MAX_RECIPIENTS);
+    const userIds = [...new Set(options.userIds)];
     if (userIds.length === 0) return 0;
+    const external = this.delivery.wants({ type: options.type, email: options.email });
+    const mails = Boolean(options.email) && this.delivery.emailConfigured();
 
-    const rows = userIds.map((userId) => ({
-      id: randomUUID(),
-      schoolId: options.schoolId,
-      userId,
-      type: options.type,
-      meta: options.meta as Prisma.InputJsonValue,
-    }));
-    await tx.notification.createMany({ data: rows });
+    for (let at = 0; at < userIds.length; at += RECIPIENT_CHUNK) {
+      const chunk = userIds.slice(at, at + RECIPIENT_CHUNK);
+      const rows = chunk.map((userId) => ({
+        id: randomUUID(),
+        schoolId: options.schoolId,
+        userId,
+        type: options.type,
+        meta: options.meta as Prisma.InputJsonValue,
+      }));
+      await tx.notification.createMany({ data: rows });
+      if (!external) continue;
 
-    if (!this.delivery.wants({ type: options.type, email: options.email })) return userIds.length;
-
-    const emailRecipients =
-      options.email && this.delivery.emailConfigured()
+      const emailRecipients = mails
         ? (
             await tx.user.findMany({
-              where: { id: { in: userIds }, isActive: true },
+              where: { id: { in: chunk }, isActive: true },
               select: { id: true, email: true },
             })
           ).map((r) => ({ userId: r.id, email: r.email }))
         : [];
 
-    const outbox = this.prisma.commitLocal<OutboxEntry[]>(tx, OUTBOX, () => {
-      const entries: OutboxEntry[] = [];
-      this.prisma.onCommit(tx, async () => this.delivery.enqueue(entries));
-      return entries;
-    });
-    if (!outbox) {
-      // Not a withRls transaction: there is no commit to wait for, and
-      // delivering now could tell somebody about a write that never lands.
-      this.logger.warn(`Notice not delivered: no transaction to wait for [type=${options.type}]`);
-      return userIds.length;
+      const outbox = this.prisma.commitLocal<OutboxEntry[]>(tx, OUTBOX, () => {
+        const entries: OutboxEntry[] = [];
+        this.prisma.onCommit(tx, async () => this.delivery.enqueue(entries));
+        return entries;
+      });
+      if (!outbox) {
+        // Not a withRls transaction: there is no commit to wait for, and
+        // delivering now could tell somebody about a write that never lands.
+        // The inbox rows are still written, every chunk of them.
+        if (at === 0) this.logger.warn(`Notice not delivered: no transaction to wait for [type=${options.type}]`);
+        continue;
+      }
+      outbox.push({
+        schoolId: options.schoolId,
+        type: options.type,
+        meta: options.meta,
+        recipients: rows.map((row) => ({ userId: row.userId, notificationId: row.id })),
+        ...(options.email
+          ? { email: { subject: options.email.subject, body: options.email.body, recipients: emailRecipients } }
+          : {}),
+      });
     }
-    outbox.push({
-      schoolId: options.schoolId,
-      type: options.type,
-      meta: options.meta,
-      recipients: rows.map((row) => ({ userId: row.userId, notificationId: row.id })),
-      ...(options.email
-        ? { email: { subject: options.email.subject, body: options.email.body, recipients: emailRecipients } }
-        : {}),
-    });
 
     return userIds.length;
   }
 
   /**
-   * Recipients for group-wide notices: active students of the class(es) plus
-   * all their guardians.
+   * Everybody a notice about these lessons reaches: the active pupils on
+   * their rosters (calendar/lesson-roster.ts: home classes, teaching groups
+   * and pupils named on the lesson) and all their guardians.
    */
-  async recipientsForGroups(
-    tx: PrismaClient,
-    studentGroupIds: string[],
-  ): Promise<string[]> {
-    if (studentGroupIds.length === 0) return [];
-    const students = await tx.user.findMany({
-      where: {
-        role: 'STUDENT',
-        isActive: true,
-        studentGroupId: { in: studentGroupIds },
-      },
-      select: { id: true },
-    });
-    const studentIds = students.map((s) => s.id);
-    const guardians = await tx.guardianStudent.findMany({
-      where: { studentId: { in: studentIds } },
-      select: { guardianId: true },
-    });
-    return [...studentIds, ...guardians.map((g) => g.guardianId)];
+  async recipientsForLessons(tx: PrismaClient, scopes: readonly RosterScope[]): Promise<string[]> {
+    const rosters = await rostersOf(tx, scopes, { pupils: 'ACTIVE' });
+    const pupils = [...new Set(rosters.flatMap((roster) => [...roster]))];
+    return [...pupils, ...(await this.guardiansOf(tx, pupils))];
   }
 
   /** Guardians of the given students. */

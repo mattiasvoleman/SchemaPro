@@ -202,7 +202,7 @@ describe('AttendanceService', () => {
   }) => {
     tx.user.findMany.mockImplementation((query: Query) =>
       query.where?.studentGroupId
-        ? answerRows((options.homeClass ?? []).map((id) => ({ id })))(query)
+        ? answerRows((options.homeClass ?? []).map((id) => ({ id, studentGroupId: PRIMARY_GROUP })))(query)
         : answerRows(options.named ?? [])(query),
     );
   };
@@ -360,23 +360,24 @@ describe('AttendanceService', () => {
         teacher(),
       );
 
+      // Membership as recorded: no role or isActive filter (see the service).
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: {
-          id: { in: [STUDENT_A] },
           studentGroupId: { in: [PRIMARY_GROUP, EXTRA_GROUP] },
+          id: { in: [STUDENT_A] },
         },
-        select: { id: true },
+        select: { id: true, studentGroupId: true },
       });
       expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
         where: {
-          studentId: { in: [STUDENT_A] },
           studentGroupId: { in: [PRIMARY_GROUP, EXTRA_GROUP] },
+          studentId: { in: [STUDENT_A] },
         },
-        select: { studentId: true },
+        select: { studentId: true, studentGroupId: true },
       });
       expect(tx.calendarLessonStudent.findMany).toHaveBeenCalledWith({
-        where: { calendarLessonId: LESSON_ID, studentId: { in: [STUDENT_A] } },
-        select: { studentId: true },
+        where: { calendarLessonId: { in: [LESSON_ID] }, studentId: { in: [STUDENT_A] } },
+        select: { calendarLessonId: true, studentId: true },
       });
     });
 
@@ -396,7 +397,7 @@ describe('AttendanceService', () => {
       // the only place its roster exists.
       arrangeUsers({ homeClass: [] });
       tx.studentGroupMember.findMany.mockResolvedValue([
-        { studentId: STUDENT_A },
+        { studentId: STUDENT_A, studentGroupId: PRIMARY_GROUP },
       ]);
 
       await expect(
@@ -410,7 +411,7 @@ describe('AttendanceService', () => {
     it('accepts a student named individually on the lesson', async () => {
       arrangeUsers({ homeClass: [] });
       tx.calendarLessonStudent.findMany.mockResolvedValue([
-        { studentId: STUDENT_A },
+        { studentId: STUDENT_A, calendarLessonId: LESSON_ID },
       ]);
 
       await expect(
@@ -831,17 +832,17 @@ describe('AttendanceService', () => {
       expectDayAskedOfTheFunction('2026-09-02');
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: {
-          id: { in: [STUDENT_B, STUDENT_A, STRANGER] },
           studentGroupId: { in: [PRIMARY_GROUP] },
+          id: { in: [STUDENT_B, STUDENT_A, STRANGER] },
         },
-        select: { id: true },
+        select: { id: true, studentGroupId: true },
       });
     });
 
     it('finds a pupil through a teaching group or the participant list too', async () => {
       arrangeUsers({ homeClass: [] });
-      tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: STUDENT_A }]);
-      tx.calendarLessonStudent.findMany.mockResolvedValue([{ studentId: STUDENT_B }]);
+      tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: STUDENT_A, studentGroupId: PRIMARY_GROUP }]);
+      tx.calendarLessonStudent.findMany.mockResolvedValue([{ studentId: STUDENT_B, calendarLessonId: LESSON_ID }]);
       tx.$queryRaw.mockResolvedValue([
         { studentId: STUDENT_A, startTime: null, endTime: null },
         { studentId: STUDENT_B, startTime: null, endTime: null },

@@ -15,6 +15,7 @@ import { isoWeekday, timeToString } from '../calendar/publish-days';
 import { effectiveSegments } from './publication-validity';
 import { snapshotRanges } from './published-grundschema';
 import { RealtimeService } from '../realtime/realtime.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { checkScope, createCreditInTransaction } from '../timplan/timplan-credits.service';
 import { enterGrundschemaWrite, publishModeOf } from './publish-mode';
 import {
@@ -24,6 +25,7 @@ import {
   type SelectionRule,
 } from './cancellation-selection';
 import type { CancellationSelectionDto, CreateCancellationBatchDto } from './dto/cancellation-batch.dto';
+import { digestAudience, sendDigest, type DigestLesson } from './cancellation-digest';
 
 export const CANCELLATION_STALE = 'CANCELLATION_STALE';
 export const CANCELLATION_REVERSED = 'CANCELLATION_REVERSED';
@@ -56,6 +58,8 @@ export interface CancellationPreview {
   /** Dates a credit would be written for (whole-day batches ahead of today only). */
   creditDates: string[];
   digest: string;
+  /** Who the optional digest would reach (cancellation-digest.ts): the preview's tickbox says it. */
+  audience: { pupils: number; guardians: number; teachers: number };
 }
 
 export interface CancellationBatchView {
@@ -79,10 +83,14 @@ export interface CancellationBatchView {
   credits: number;
   /** Unreversed, ahead: lessons in its range and scope written since it was made (S7). */
   addedSince: number;
+  /** It told its people (CANCELLATION_DIGEST), so its reversal tells them too. */
+  notifies: boolean;
 }
 
 export interface ReversePreview {
   reinstate: number;
+  /** People the reversal's digest reaches; 0 for a batch that told nobody. */
+  notify: number;
   /** Rows whose room was booked while they were cancelled: left cancelled, and named. */
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: 'LESSON' | 'BOOKING' }>;
   /**
@@ -155,10 +163,12 @@ interface StoredSelection {
  * lesson that has begun, been held or carries attendance (the past is not
  * rewritten), and never a teacher's or a room's cause.
  *
- * No notification per lesson: a week of prao is thirty notices per pupil,
- * and a digest needs a notification type the mobile app does not render yet
- * — the note on each cancelled lesson ("Inställd: Prao åk 9") is what the
- * pupil and guardian read, and the teacher app hears every row by realtime.
+ * No notification per lesson: a week of prao is thirty notices per pupil.
+ * The note on each cancelled lesson ("Inställd: Prao åk 9") is what the pupil
+ * and guardian read, and the teacher app hears every row by realtime. The
+ * admin may tick one digest per person instead (`notify`, unticked by
+ * default), and a batch that sent one sends another when it is reversed
+ * (cancellation-digest.ts).
  */
 @Injectable()
 export class CancellationBatchesService {
@@ -167,6 +177,7 @@ export class CancellationBatchesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async preview(dto: CancellationSelectionDto, user: AuthenticatedUser): Promise<CancellationPreview> {
@@ -175,6 +186,7 @@ export class CancellationBatchesService {
     return this.prisma.withRls(user, async (tx) => {
       const { timezone, today } = await this.yearOf(tx, selection.academicYearId, selection);
       const outcome = await this.select(tx, selection, timezone);
+      const audience = await digestAudience(tx, outcome.matched.map(digestLessonOf));
       return {
         matched: outcome.matched.length,
         lessons: outcome.matched.slice(0, 50).map(viewOf),
@@ -182,6 +194,7 @@ export class CancellationBatchesService {
         ungradedGroups: outcome.ungradedGroups,
         creditDates: creditDatesOf(selection, outcome.matched, today),
         digest: selectionDigest(selection, outcome.matched),
+        audience: audience.counts,
       };
     });
   }
@@ -230,10 +243,15 @@ export class CancellationBatchesService {
             maxGradeLevel: selection.maxGradeLevel,
             groupIds: selection.groupIds,
             createdByUserId: user.userId ?? null,
+            notifies: dto.notify === true,
           },
           select: { id: true },
         });
         const cancelled = await cancelInto(tx, schoolId, row.id, selection, outcome.matched);
+        if (dto.notify === true) {
+          const audience = await digestAudience(tx, outcome.matched.map(digestLessonOf));
+          await sendDigest(this.notifications, tx, schoolId, { id: row.id, name: selection.name }, audience, false);
+        }
         let creditCount = 0;
         for (const date of creditDates) {
           for (const target of creditTargetsOf(selection)) {
@@ -322,8 +340,10 @@ export class CancellationBatchesService {
       const row = await this.requireBatch(tx, id);
       if (row.reversedAt !== null) throw reversed();
       const plan = await reversePlan(tx, schoolId, row, await this.timezoneOf(tx, row.academicYearId));
+      const audience = row.notifies ? await digestAudience(tx, await digestLessonsOf(tx, plan.reinstate)) : null;
       return {
         reinstate: plan.reinstate.length,
+        notify: audience?.people.size ?? 0,
         skippedRoomTaken: plan.skipped,
         removedTemplateMoved: plan.templateMoved,
         notReinstatable: plan.notReinstatable,
@@ -385,11 +405,23 @@ export class CancellationBatchesService {
           skippedRoomTaken: plan.skipped.length,
         },
       });
+      // Told when it was made, so told now: about the lessons that come back.
+      const told = row.notifies
+        ? await sendDigest(
+            this.notifications,
+            tx,
+            schoolId,
+            { id: row.id, name: row.name },
+            await digestAudience(tx, await digestLessonsOf(tx, plan.reinstate)),
+            true,
+          )
+        : 0;
       return {
         ids: plan.reinstate.map((lesson) => lesson.id),
         range: { from: asDay(row.fromDate), to: asDay(row.toDate) },
         result: {
           reinstate: plan.reinstate.length,
+          notify: told,
           skippedRoomTaken: plan.skipped,
           removedTemplateMoved: plan.templateMoved,
           notReinstatable: plan.notReinstatable,
@@ -501,6 +533,7 @@ const BATCH_SELECT = {
   reversedAt: true,
   reinstated: true,
   skippedRoomTaken: true,
+  notifies: true,
   _count: { select: { credits: true } },
 } as const satisfies Prisma.CancellationBatchSelect;
 
@@ -527,6 +560,7 @@ function toView(row: BatchRow, addedSince: number): CancellationBatchView {
     skippedRoomTaken: row.skippedRoomTaken,
     credits: row._count.credits,
     addedSince,
+    notifies: row.notifies,
   };
 }
 
@@ -544,6 +578,24 @@ function storedSelection(row: BatchRow): StoredSelection {
     maxGradeLevel: row.maxGradeLevel,
     groupIds: row.groupIds,
   };
+}
+
+/** A selected lesson as the digest reads it. */
+const digestLessonOf = (lesson: SelectionCandidate): DigestLesson => ({
+  id: lesson.id,
+  date: lesson.date,
+  studentGroupId: lesson.studentGroupId,
+  extraGroups: lesson.extraGroups,
+});
+
+/** The lessons a reversal reinstates, as the digest reads them. */
+async function digestLessonsOf(tx: PrismaClient, rows: ReadonlyArray<{ id: string }>): Promise<DigestLesson[]> {
+  if (rows.length === 0) return [];
+  const lessons = await tx.calendarLesson.findMany({
+    where: { id: { in: rows.map((row) => row.id) } },
+    select: { id: true, date: true, studentGroupId: true, extraGroups: { select: { studentGroupId: true } } },
+  });
+  return lessons.map((lesson) => ({ ...lesson, date: asDay(lesson.date) }));
 }
 
 const viewOf = (lesson: SelectionCandidate): BatchLessonView => ({

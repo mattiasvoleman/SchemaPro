@@ -310,16 +310,20 @@ describe('Vikarieplanering (e2e)', () => {
       harness.tx.notification.createMany.mockClear();
       await request(http()).delete(`/api/v1/cover/lessons/${LESSON}/decision?absenceId=${ABSENCE}`).set('x-test-user', admin()).expect(200);
       const written = harness.tx.notification.createMany.mock.calls.map(([arg]) => (arg as { data: { type: string; meta: object }[] }).data[0]!);
+      // The substitute is told they are not needed; the class, and the teacher
+      // the undo puts back, that the lesson goes ahead as planned.
       expect(written.map((row) => [row.type, Object.keys(row.meta).sort()])).toEqual([
         ['LESSON_COVER_WITHDRAWN', ['groupName', 'roomName', 'startsAt', 'subjectName']],
+        ['LESSON_REINSTATED', ['startsAt', 'subjectName']],
       ]);
     });
 
     it('the board tells the class, its guardians and the outgoing teacher what the old page tells them — subject and start, never why', async () => {
       const PUPIL = '99999999-9999-4999-8999-999999999999';
       const PARENT = '98989898-9898-4898-8898-989898989898';
+      // The class's one pupil, as the roster reader asks for the home class.
       harness.tx.user.findMany.mockImplementation((query: { where?: { role?: string } }) =>
-        Promise.resolve(query?.where?.role === 'STUDENT' ? [{ id: PUPIL }] : []),
+        Promise.resolve(query?.where?.role === 'STUDENT' ? [{ id: PUPIL, studentGroupId: 'grp' }] : []),
       );
       harness.tx.guardianStudent.findMany.mockResolvedValue([{ guardianId: PARENT }]);
       const rowsOf = () =>
@@ -347,6 +351,16 @@ describe('Vikarieplanering (e2e)', () => {
         .send({ absenceId: ABSENCE, kind: 'CANCELLED', expected: 'OPEN' })
         .expect(200);
       expect(rowsOf()).toEqual([['LESSON_CANCELLED', [PUPIL, PARENT, TEACHER_ID].sort(), ['startsAt', 'subjectName']]]);
+      expect(JSON.stringify(harness.tx.notification.createMany.mock.calls)).not.toContain(REASON);
+
+      // Självstudier tells them too; the co-teacher taking it tells nobody.
+      harness.tx.notification.createMany.mockClear();
+      await request(http())
+        .post(`/api/v1/cover/lessons/${LESSON}/decision`)
+        .set('x-test-user', admin())
+        .send({ absenceId: ABSENCE, kind: 'SUPERVISED_STUDY', expected: 'OPEN' })
+        .expect(200);
+      expect(rowsOf()).toEqual([['LESSON_SUPERVISED_STUDY', [PUPIL, PARENT, TEACHER_ID].sort(), ['startsAt', 'subjectName']]]);
       expect(JSON.stringify(harness.tx.notification.createMany.mock.calls)).not.toContain(REASON);
     });
 

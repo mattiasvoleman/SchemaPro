@@ -36,6 +36,8 @@ describe('NotificationDeliveryService (e-mail)', () => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     delivery = new NotificationDeliveryService(prisma as unknown as PrismaService);
+    // The provider's pacing is its own test (notifications.service.spec.ts).
+    delivery.emailIntervalMs = 0;
     fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     process.env.RESEND_API_KEY = 'resend-key';
@@ -191,6 +193,24 @@ describe('NotificationDeliveryService (push)', () => {
     expect(delivery.wants({ type: 'LESSON_CANCELLED' })).toBe(true);
     expect(delivery.wants({ type: 'TEACHER_ABSENCE_REPORTED' })).toBe(false);
     expect(new NotificationDeliveryService(prisma as unknown as PrismaService, config as never).pushEnabled()).toBe(false);
+  });
+
+  it('asks for a whole-school digest’s devices 500 people at a time, and pushes each of them once', async () => {
+    const people = Array.from({ length: 1203 }, (_, i) => `p${i}`);
+    targets = people.map((id) => ({ token_id: `t-${id}`, user_id: id, token: `ExponentPushToken[${id}aaaaaaaa]`, locale: 'sv', timezone: 'Europe/Stockholm' }));
+    const chunk = (from: number, to: number) =>
+      lesson({
+        type: 'CANCELLATION_DIGEST',
+        meta: { lessonCount: 2, startDate: '2026-10-19', endDate: '2026-10-20', name: 'Prao åk 9' },
+        recipients: people.slice(from, to).map((userId) => ({ userId, notificationId: `n-${userId}` })),
+      });
+    delivery.enqueue([chunk(0, 500), chunk(500, 1000), chunk(1000, 1203)]);
+    await delivery.idle();
+    expect(targetCalls.map((call) => (call.values[1] as string[]).length)).toEqual([500, 500, 203]);
+    const sent = expo.send.mock.calls.flatMap(([messages]) => messages as Array<{ to: string; body: string }>);
+    expect(sent).toHaveLength(1203);
+    expect(new Set(sent.map((message) => message.to)).size).toBe(1203);
+    expect(sent[0]!.body).toBe('2 lektioner 19 okt–20 okt är inställda.');
   });
 
   it('sends each device its language, with only the notice id and type as data', async () => {

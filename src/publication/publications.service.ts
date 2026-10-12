@@ -13,6 +13,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { todayInZone } from '../common/utils/time';
 import { CalendarService, publishWindow, type PublishResult } from '../calendar/calendar.service';
 import type { PublishScheduleDto } from '../calendar/dto/publish-schedule.dto';
+import { scopeOf } from '../calendar/lesson-roster';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
 import { readCheckPolicy } from '../staffing/staffing-enforcement';
 import { TimplanCoverageService } from '../timplan/timplan-coverage.service';
@@ -545,10 +546,12 @@ export class PublicationsService {
   }
 
   /**
-   * A DRAFT publish tells each class whose published lessons moved or went,
-   * as DIRECT's update() tells it per edit — once per recipient here, with
-   * the first changed lesson that reaches them, since one publish may carry
-   * many edits and a notice per edit would be a pile of them.
+   * A DRAFT publish tells each roster whose published lessons moved or went
+   * (lesson-roster.ts: the classes, their teaching groups and the pupils
+   * named on the lesson), and their guardians, as DIRECT's update() tells it
+   * per edit — once per recipient here, with the first changed lesson that
+   * reaches them, since one publish may carry many edits and a notice per
+   * edit would be a pile of them.
    */
   private async tellClasses(
     tx: PrismaClient,
@@ -561,12 +564,9 @@ export class PublicationsService {
     for (const id of changedMasterIds) {
       const master = byId.get(id);
       if (!master) continue;
-      const recipients = (
-        await this.notifications.recipientsForGroups(tx, [
-          master.studentGroupId,
-          ...master.extraGroups.map((entry) => entry.studentGroupId),
-        ])
-      ).filter((userId) => !told.has(userId));
+      const recipients = (await this.notifications.recipientsForLessons(tx, [scopeOf(master)])).filter(
+        (userId) => !told.has(userId),
+      );
       if (recipients.length === 0) continue;
       for (const userId of recipients) told.add(userId);
       await this.notifications.notifyUsers(tx, {

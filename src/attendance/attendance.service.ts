@@ -10,6 +10,7 @@ import { Role } from '../auth/enums/role.enum';
 import { zonedTimeToUtc } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
 
 export interface AttendanceReportResult {
@@ -20,13 +21,6 @@ export interface AttendanceReportResult {
 /** The pupils of a lesson whose absence was reported before it. */
 export interface ReportedAbsencesResult {
   studentIds: string[];
-}
-
-/** The parts of a lesson that decide who may appear on its attendance list. */
-interface RosterScope {
-  id: string;
-  studentGroupId: string;
-  extraGroups: Array<{ studentGroupId: string }>;
 }
 
 /** The lesson as the register and the absence check read it. */
@@ -362,7 +356,7 @@ export class AttendanceService {
    */
   private async assertStudentsAreOnRoster(
     tx: Prisma.TransactionClient,
-    lesson: RosterScope,
+    lesson: CalendarRosterLesson,
     studentIds: string[],
   ): Promise<void> {
     const roster = await this.rosterAmong(tx, lesson, studentIds);
@@ -381,46 +375,18 @@ export class AttendanceService {
   }
 
   /**
-   * Which of `studentIds` are on the lesson's roster, by the four sources
-   * above. The roster check refuses the rest; reportedAbsences leaves them
-   * out.
+   * Which of `studentIds` are on the lesson's roster, by the sources above,
+   * as the one roster reader answers it (calendar/lesson-roster.ts, which the
+   * lesson notices ask too). Membership as recorded: see above. The roster
+   * check refuses the rest; reportedAbsences leaves them out.
    */
   private async rosterAmong(
     tx: Prisma.TransactionClient,
-    lesson: RosterScope,
+    lesson: CalendarRosterLesson,
     studentIds: string[],
   ): Promise<Set<string>> {
-    const groupIds = [
-      lesson.studentGroupId,
-      ...lesson.extraGroups.map((group) => group.studentGroupId),
-    ];
-
-    // Scoped to the ids asked about rather than fetching the whole roster: a
-    // batch is capped at 200 entries and a day's absences are few, a joint
-    // activity spanning several classes is not.
-    const [homeClass, teachingGroups, participants] = await Promise.all([
-      tx.user.findMany({
-        where: { id: { in: studentIds }, studentGroupId: { in: groupIds } },
-        select: { id: true },
-      }),
-      tx.studentGroupMember.findMany({
-        where: {
-          studentId: { in: studentIds },
-          studentGroupId: { in: groupIds },
-        },
-        select: { studentId: true },
-      }),
-      tx.calendarLessonStudent.findMany({
-        where: { calendarLessonId: lesson.id, studentId: { in: studentIds } },
-        select: { studentId: true },
-      }),
-    ]);
-
-    return new Set<string>([
-      ...homeClass.map((student) => student.id),
-      ...teachingGroups.map((member) => member.studentId),
-      ...participants.map((participant) => participant.studentId),
-    ]);
+    const rosters = await calendarLessonRosters(tx, [lesson], { pupils: 'RECORDED', among: studentIds });
+    return rosters.get(lesson.id) ?? new Set<string>();
   }
 }
 

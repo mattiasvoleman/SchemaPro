@@ -43,7 +43,7 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
   /** Puts `studentIds` on the lesson roster via the home-class membership. */
   const arrangeRoster = (studentIds: string[]) => {
     harness.tx['user']!['findMany']!.mockResolvedValue(
-      studentIds.map((id) => ({ id })),
+      studentIds.map((id) => ({ id, studentGroupId: PRIMARY_GROUP })),
     );
   };
 
@@ -115,7 +115,7 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
       harness.tx['calendarLessonTeacher']!['findUnique']!.mockResolvedValue({ id: '77777777-7777-4777-8777-777777777777' });
       // The roster, the pupil's name and the guardian's address, as each read asks.
       harness.tx['user']!['findMany']!.mockResolvedValue([
-        { id: STUDENT_A, firstName: 'Ella', lastName: 'Ek', email: 'vh@example.invalid' },
+        { id: STUDENT_A, studentGroupId: PRIMARY_GROUP, firstName: 'Ella', lastName: 'Ek', email: 'vh@example.invalid' },
       ]);
       harness.tx['attendanceRecord']!['upsert']!.mockResolvedValue({ createdAt: now, updatedAt: now });
       // Nobody reported: app.reported_absences answers no row.
@@ -233,7 +233,7 @@ describe('GET /api/v1/attendance/lessons/:lessonId/reported-absences (e2e)', () 
         endTime: new Date('1970-01-01T08:00:00.000Z'),
       },
     ]);
-    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: STUDENT_A }]);
+    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: STUDENT_A, studentGroupId: PRIMARY_GROUP }]);
   });
 
   /** The day was asked of the function, never of the table a teacher may not read. */

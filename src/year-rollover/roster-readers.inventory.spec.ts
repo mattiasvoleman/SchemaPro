@@ -62,10 +62,9 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'SOURCE',
     why: 'the rollover reads its own source year; ROLLOVER_SOURCE_NOT_ACTIVATED refuses a source whose pupils have not moved in',
   },
-  'src/attendance/attendance.service.ts': { basis: 'CURRENT', why: 'real people at dated lessons, and it writes rows' },
-  'src/notifications/notifications.service.ts': {
+  'src/calendar/lesson-roster.ts': {
     basis: 'CURRENT',
-    why: 'writes notices and email; nobody is told about next year’s class before the activation',
+    why: 'who attends a lesson, for every caller: the attendance check (real people at dated lessons, it writes rows) and every lesson notice and avbokning digest (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
   'src/integration/ss12000-sync/local-slice.ts': {
@@ -185,7 +184,7 @@ describe('the roster-reader inventory', () => {
 
   it('finds the roster queries it is meant to (the scan itself works)', () => {
     const where = new Set(queries.map((query) => query.path));
-    for (const path of ['src/year-rollover/projected-rosters.ts', 'src/year-rollover/activation-plan.ts', 'src/attendance/attendance.service.ts']) {
+    for (const path of ['src/year-rollover/projected-rosters.ts', 'src/year-rollover/activation-plan.ts', 'src/calendar/lesson-roster.ts']) {
       expect(where).toContain(path);
     }
     // The relation reads too: realtime's members selects, SS12000's, and the

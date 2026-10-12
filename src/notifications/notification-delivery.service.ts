@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import type { PushConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
 import { ExpoPushClient, type ExpoMessage } from './expo-push.client';
-import type { OutboxBatch, OutboxEntry } from './notification-outbox';
+import { RECIPIENT_CHUNK, type OutboxBatch, type OutboxEntry } from './notification-outbox';
 import { NEVER_EXTERNAL, deliveredRegardless } from './notification-types';
 import type { NotificationKind } from './notifications.service';
 import { pushKindOf, pushText, type PushKind, type PushLocale } from './push-messages';
@@ -36,6 +36,17 @@ interface PushNotice {
 export const MAX_PENDING_BATCHES = 1000;
 
 /**
+ * Addresses per mail. Resend documents 50 recipients for `to`, and nothing
+ * larger for a mail as a whole, so a mail holds 50: the sender's own address
+ * as `to` and 49 on BCC. A whole-school digest of some 1,800 people is about
+ * 37 mails, never one.
+ */
+export const EMAIL_BCC_CHUNK = 49;
+
+/** Resend's default rate is two requests a second: one mail at most every 500 ms. */
+export const EMAIL_INTERVAL_MS = 500;
+
+/**
  * Delivers what NotificationsService wrote, after the transaction that wrote
  * it has committed: e-mail through Resend, as before, and push through Expo
  * when PUSH_NOTIFICATIONS=expo.
@@ -53,13 +64,14 @@ export const MAX_PENDING_BATCHES = 1000;
  * ten. Batches go through one process-wide serial queue: the next starts
  * when the last has finished. The queue is bounded (MAX_PENDING_BATCHES).
  *
- * E-mail is one BCC mail per notifyUsers call, with the caller's subject and
+ * E-mail is BCC mail per notifyUsers chunk, with the caller's subject and
  * body, unchanged, minus the recipients who opted out of the type
  * (NotificationOptOuts, read by userId through app.delivery_opt_outs in
  * withDeliveryService) — except for the notices the school must deliver
- * (deliveredRegardless). Configured with `RESEND_API_KEY` + `EMAIL_FROM`;
- * when unset nothing is sent and nothing is queued. TEACHER_ABSENCE_REPORTED
- * never leaves the inbox.
+ * (deliveredRegardless) — split into mails of EMAIL_BCC_CHUNK addresses and
+ * sent at most one every EMAIL_INTERVAL_MS. Configured with
+ * `RESEND_API_KEY` + `EMAIL_FROM`; when unset nothing is sent and nothing is
+ * queued. TEACHER_ABSENCE_REPORTED never leaves the inbox.
  *
  * PUSH, only when configured (PushConfig.enabled; off by default, and then
  * nothing here touches Expo or the push tables):
@@ -83,6 +95,10 @@ export class NotificationDeliveryService {
   private readonly logger = new Logger(NotificationDeliveryService.name);
   private readonly queue: OutboxBatch[] = [];
   private running: Promise<void> | null = null;
+  /** When the last mail went (epoch ms), for the provider's rate. */
+  private lastMailAt = 0;
+  /** The pause between two mails; a spec sets it to 0. */
+  emailIntervalMs = EMAIL_INTERVAL_MS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -176,15 +192,22 @@ export class NotificationDeliveryService {
     const bySchool = new Map<string, Array<{ message: ExpoMessage; tokenId: string }>>();
     for (const group of groups.values()) {
       const { schoolId, type, required } = group[0]!;
-      const targets = await this.prisma.withDeliveryService((tx) =>
-        tx.$queryRaw<PushTarget[]>(
-          Prisma.sql`SELECT token_id::text AS token_id, user_id::text AS user_id, token, locale, timezone
-                       FROM app.push_targets(${schoolId}::uuid, ${[...new Set(group.map((n) => n.userId))]}::uuid[],
-                                             ${type}::"NotificationType", ${required})`,
-        ),
-      );
+      const people = [...new Set(group.map((n) => n.userId))];
+      const targets: PushTarget[] = [];
+      // A whole-school digest is one group of some 1,800 people: asked 500 at a time.
+      for (let at = 0; at < people.length; at += RECIPIENT_CHUNK) {
+        const chunk = people.slice(at, at + RECIPIENT_CHUNK);
+        const rows = await this.prisma.withDeliveryService((tx) =>
+          tx.$queryRaw<PushTarget[]>(
+            Prisma.sql`SELECT token_id::text AS token_id, user_id::text AS user_id, token, locale, timezone
+                         FROM app.push_targets(${schoolId}::uuid, ${chunk}::uuid[],
+                                               ${type}::"NotificationType", ${required})`,
+          ),
+        );
+        targets.push(...(rows ?? []));
+      }
       const out = bySchool.get(schoolId) ?? [];
-      for (const target of targets ?? []) {
+      for (const target of targets) {
         const locale: PushLocale = target.locale === 'en' ? 'en' : 'sv';
         for (const notice of group) {
           if (notice.userId !== target.user_id) continue;
@@ -264,27 +287,32 @@ export class NotificationDeliveryService {
     const from = process.env.EMAIL_FROM ?? 'SchemaPro <noreply@schemapro.app>';
     if (!apiKey || addresses.length === 0) return;
 
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from,
-          // BCC so recipients never see each other's addresses.
-          to: [from.replace(/^.*<|>$/g, '')],
-          bcc: addresses,
-          subject,
-          text: body,
-        }),
-      });
-      if (!response.ok) {
-        this.logger.warn(`Email dispatch failed [status=${response.status}]`);
+    for (let at = 0; at < addresses.length; at += EMAIL_BCC_CHUNK) {
+      const wait = this.lastMailAt + this.emailIntervalMs - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      this.lastMailAt = Date.now();
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from,
+            // BCC so recipients never see each other's addresses.
+            to: [from.replace(/^.*<|>$/g, '')],
+            bcc: addresses.slice(at, at + EMAIL_BCC_CHUNK),
+            subject,
+            text: body,
+          }),
+        });
+        if (!response.ok) {
+          this.logger.warn(`Email dispatch failed [status=${response.status}]`);
+        }
+      } catch {
+        this.logger.warn('Email dispatch failed [network]');
       }
-    } catch {
-      this.logger.warn('Email dispatch failed [network]');
     }
   }
 }
