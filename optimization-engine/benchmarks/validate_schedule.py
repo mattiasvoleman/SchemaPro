@@ -30,6 +30,11 @@ Checks, all derived from the request:
                       window free for the class, which is the school saying
                       the class is not in the building
     max per day       lessons per group per day within the configured cap
+    distribution      a requirement's own rule (ämnesfördelning): at most its
+                      number of lessons on any weekday, and no two weekdays
+                      with its lessons closer than its rule allows — the
+                      lessons the school locked counted from `lockedDays`,
+                      since they come back in no response
 
 Use as a library::
 
@@ -46,7 +51,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -234,6 +239,57 @@ def _lunch_exempt_days(grid, constraints, window_start, window_end) -> set[tuple
     return exempt
 
 
+def _distribution_problems(request, placed_weekdays) -> list[str]:
+    """Each requirement's ämnesfördelning, re-read from the request.
+
+    BY WEEKDAY, the way a school reads its week: a cap is a count per weekday,
+    and "not on consecutive days" compares the weekdays' own numbers, so
+    Friday and Monday are four apart and a week of Monday, Wednesday and
+    Friday has no two days in a row.
+
+    THE LOCKED LESSONS ARE IN THE WEEK, and the reason this check exists in
+    this form. They come back in no response — the engine plans around them
+    and returns only what it placed — and they carry no requirement id on the
+    way in either, so a check over the response alone would pass a Monday the
+    solver added beside a locked Monday under "one a day". `lockedDays` is
+    where the request says they are.
+
+    WHAT THE SCHOOL LOCKED IS NOT JUDGED ON ITS OWN. Two locked lessons on one
+    Monday were a hand edit, warned about when it was made; the engine is held
+    to every lesson it PLACED. So only a weekday the solver placed a lesson on
+    is counted — locked lessons and all, which is the whole point — and a pair
+    of days is too close only when the solver placed a lesson on at least one
+    of them.
+    """
+    problems: list[str] = []
+    for requirement in request.requirements:
+        cap = requirement.max_lessons_per_day
+        apart = requirement.min_days_between
+        if cap is None and apart is None:
+            continue
+        placed = Counter(placed_weekdays.get(requirement.id, []))
+        locked = Counter(requirement.locked_days)
+        if cap is not None:
+            for weekday in sorted(placed):
+                total = placed[weekday] + locked[weekday]
+                if total > cap:
+                    problems.append(
+                        f"requirement {requirement.id}: {total} lessons on weekday "
+                        f"{weekday} ({locked[weekday]} locked), its rule allows {cap} a day")
+        if apart is not None:
+            weekdays = sorted(set(placed) | set(locked))
+            for index, first in enumerate(weekdays):
+                for second in weekdays[index + 1:]:
+                    if second - first >= apart:
+                        continue
+                    if first not in placed and second not in placed:
+                        continue
+                    problems.append(
+                        f"requirement {requirement.id}: lessons on weekdays {first} and "
+                        f"{second}, its rule wants lesson days at least {apart} apart")
+    return problems
+
+
 def validate(grid, request, lessons) -> list[str]:
     """Return a list of rule violations; empty means the timetable is valid."""
     problems: list[str] = []
@@ -250,6 +306,7 @@ def validate(grid, request, lessons) -> list[str]:
     per_group_day: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
     placed_by_requirement: dict = defaultdict(int)
     placed_lengths: dict = defaultdict(list)
+    placed_weekdays: dict = defaultdict(list)
 
     for lesson in lessons:
         requirement = req_by_id.get(lesson.requirement_id)
@@ -257,6 +314,7 @@ def validate(grid, request, lessons) -> list[str]:
             problems.append(f"lesson names unknown requirement {lesson.requirement_id}")
             continue
         placed_by_requirement[requirement.id] += 1
+        placed_weekdays[requirement.id].append(lesson.day_of_week)
 
         try:
             duration = _lesson_slots(grid, requirement, lesson)
@@ -377,6 +435,8 @@ def validate(grid, request, lessons) -> list[str]:
                         f"{constraint.start_time}-{constraint.end_time} for "
                         f"{constraint.resource_kind} "
                         f"{constraint.resource_id or _grade_span(constraint)}")
+
+    problems.extend(_distribution_problems(request, placed_weekdays))
 
     rules = request.rules
     if rules is not None:

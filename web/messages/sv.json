@@ -2181,7 +2181,8 @@
     "ROOM_CAPACITY": "Salskapacitet",
     "ROOM_OVERLAP": "Krock i sal",
     "TEACHER_OVERLAP": "Krock för lärare",
-    "TIMEOUT_PROBE": "Regel som inte får plats (mätt, inte bevisat)"
+    "TIMEOUT_PROBE": "Regel som inte får plats (mätt, inte bevisat)",
+    "SUBJECT_DISTRIBUTION": "Ämnesfördelning"
   },
   "gaps": {
     "title": "Luckor och håltimmar",
@@ -3158,6 +3159,7 @@
     "PROBE_ONE_RULE_HELPED": "Inget schema hittades inom {budget} s, men veckan gick att lösa när en enda regel lättades. {rules, plural, one {Regeln står nedan} other {De # reglerna står nedan}} — en mätning, inte ett bevis.",
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": "Med marginalen mellan lektioner satt till 0 hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": "Med elevernas extra tid före och efter lektionerna satt till 0 hittades ett schema på {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_DISTRIBUTION": "Utan ämnenas fördelningsregler — högst ett antal lektioner per dag, inte dagar i följd — hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_TEACHER_LUNCH": "Med lärarnas egen garanterade lunch avstängd hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_TEACHER_REST": "Med lärarnas minsta dygnsvila mellan två undervisningsdagar avstängd hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST": "Med kravet på en lektion före rasten borttaget hittades ett schema på {seconds} s. Rasterna själva låg kvar.",
@@ -3194,6 +3196,11 @@
     "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT": "{subject} behöver {demandedMinutes} min/v i {count, plural, one {# timplanspost} other {# timplansposter}}, och lärarna som får ta dem har högst {availableMinutes} min/v kvar under sina gränser, så minst {shortMinutes} min/v förblir obemannade. Höj ett riktmärke eller toleransen, registrera fler behörigheter eller minska ämnets tid.",
     "STAFF_TEACHER_CAPACITY_ZERO": "Har redan {fixedMinutes} min/v mot gränsen {limitMinutes} min/v, så ingen fler timplanspost ryms.",
     "STAFF_MODEL_TOO_LARGE": "Det finns för många möjliga lärartilldelningar att väga på en gång: omkring {variables} modellvariabler mot gränsen {limit}. Behåll de poster som är klara som de är, eller registrera behörigheter så att färre lärare är kandidater för varje post, och försök igen.",
+    "SUBJECT_DISTRIBUTION_WEEK_TOO_SHORT": "{requirement}: {lessons, plural, one {# lektion} other {# lektioner}} ryms inte på {days, plural, one {den enda dag} other {de # dagar}} den kan undervisas, med högst {maxPerDay} per dag{minDaysBetween, select, 0 {} 2 { och inte dagar i följd} other { och lektionsdagarna minst {minDaysBetween} dagar isär}}{locked, select, 0 {} other { ({locked} av dem låsta)}}. Tillåt fler per dag eller tätare dagar, eller minska lektionerna per vecka.",
+    "SUBJECT_DISTRIBUTION_PER_DAY": "{requirement} får ha högst {maxPerDay, plural, one {# lektion} other {# lektioner}} per dag, och den regeln är en av reglerna som inte kan gälla samtidigt. Tillåt fler per dag, eller frigör en dag den kan undervisas.",
+    "SUBJECT_DISTRIBUTION_DAYS_APART": "{requirement} får inte ha lektioner {minDaysBetween, select, 2 {dagar i följd} other {på dagar närmare än {minDaysBetween} dagar isär}}, och den regeln är en av reglerna som inte kan gälla samtidigt. Tillåt tätare dagar, eller frigör dagar den kan undervisas.",
+    "DISTRIBUTION_TOO_MANY_ON_DAY": "{requirement} har nu {count} lektioner på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}, och fördelningsregeln tillåter högst {maxPerDay} per dag.",
+    "DISTRIBUTION_DAYS_TOO_CLOSE": "{requirement} har nu lektioner på {firstDay, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {firstDay}}} och {secondDay, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {secondDay}}}, och fördelningsregeln {minDaysBetween, select, 2 {tillåter inte dagar i följd} other {vill ha lektionsdagarna minst {minDaysBetween} dagar isär}}.",
     "TEACHER_LUNCH_WINDOW_TOO_NARROW": "Arbetstidsregeln {rule} lovar läraren en lunch på {minutes} minuter inom {windowStart}–{windowEnd}, och det fönstret rymmer {remaining, plural, one {# minut} other {# minuter}} av skoldagen. Vidga fönstret, korta lunchen, eller flytta det innanför de timmar skolan undervisar.",
     "TEACHER_LUNCH_LEAVES_NO_START": "{causes, select, locked {Låsta lektioner} closed {Begränsningar på läraren} locked_closed {Låsta lektioner och begränsningar på läraren} other {De här reglerna}} lämnar arbetstidsregeln {rule} ingen lunch på {minutes} minuter inom {windowStart}–{windowEnd} på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}. Flytta en låst lektion, korta begränsningen, eller vidga fönstret.",
     "TEACHER_REST_LONGER_THAN_THE_NIGHT": "Arbetstidsregeln {rule} begär {restMinutes} minuters dygnsvila mellan dagens sista lektion och nästa dags första, och den längsta natt veckan kan ge är {nightMinutes} minuter: lärarens {lessons, plural, one {# lektion} other {# lektioner}} går inte att lägga bara på dagar som inte ligger intill varandra. Korta vilan, förläng skoldagen, eller ge den här läraren färre lektioner.",

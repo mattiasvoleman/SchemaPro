@@ -4,7 +4,7 @@ import logging
 import math
 
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -283,6 +283,28 @@ def _holds(ranges: list[tuple[int, int]], measure: int) -> int:
     return sum(((end - start) // measure) * measure for start, end in ranges)
 
 
+def _spaced_capacity(caps: list[tuple[int, int]], apart: int | None) -> int:
+    """The most lessons (weekday, cap) pairs hold when lesson days lie `apart` apart.
+
+    Without a spacing every day gives its cap. With one it is the best choice
+    of days no two of which are closer than `apart` weekdays — weighted
+    interval scheduling on a line, so a pass in weekday order: each day either
+    joins the best answer among the days far enough before it, or does not.
+    Five days at one a day and "not on consecutive days" is 3 (Monday,
+    Wednesday, Friday); four days with Wednesday gone is 2.
+    """
+    if apart is None:
+        return sum(cap for _weekday, cap in caps)
+    days = sorted(caps)
+    best = [0] * (len(days) + 1)
+    for index, (weekday, cap) in enumerate(days, start=1):
+        earlier = index - 1
+        while earlier > 0 and days[earlier - 1][0] > weekday - apart:
+            earlier -= 1
+        best[index] = max(best[index - 1], best[earlier] + cap)
+    return best[-1]
+
+
 @dataclass(frozen=True)
 class _LunchStarts:
     """One class's lunch starts on one day, as the model's four sentences.
@@ -495,6 +517,10 @@ class SchedulerSolver:
             teacher_days,
             step=step,
         )
+        # Ämnesfördelning. On the day variables alone, so its place among the
+        # rule builders says nothing; it reads `day_vars` as the spread
+        # objective does and builds the same one per lesson where both run.
+        self._add_distribution_constraints(model, registry, decisions, day_vars)
         if include_objective:
             weights = self._resolve_weights(request)
             objective_terms = [
@@ -1932,6 +1958,12 @@ class SchedulerSolver:
                                                builder's own skip of any teacher
                                                above 600 pairs
             2P              disruption         per previous lesson
+            (D + 1)L_r      distribution       per requirement with a rule: a
+            + D + 2                            day literal per lesson and day, the
+                                               lesson's own day variable where the
+                                               spread did not build it, a `used`
+                                               flag per day and the two rule
+                                               literals. Zero without a rule
             RD(2L + G) + G  rast ordering      an `inside` and a `late` flag per
                                                lesson, and a `still_here`
                                                literal per class, for every day
@@ -2151,6 +2183,18 @@ class SchedulerSolver:
             + (len(request.groups) if asking_rasts else 0)
         )
 
+        # _add_distribution_constraints, charged per requirement that carries
+        # either half of a rule, whether or not the rule can bind: the builder
+        # skips a cap no day can reach, and an upper bound may count it anyway.
+        # The day variable is charged again although the spread usually built
+        # it, for the reason the idle term above gives for its own overlap.
+        distribution_vars = sum(
+            (day_count + 1) * requirement.lessons_per_week + day_count + 2
+            for requirement in request.requirements
+            if requirement.max_lessons_per_day is not None
+            or requirement.min_days_between is not None
+        )
+
         return (
             4 * total_lessons
             + room_class_vars
@@ -2167,6 +2211,7 @@ class SchedulerSolver:
             + idle_vars
             + teacher_work_vars
             + rast_order_vars
+            + distribution_vars
             + 2 * len(request.previous_lessons)
         )
 
@@ -2398,6 +2443,13 @@ class SchedulerSolver:
                     raise InvalidScheduleInputError.of("ROOM_LOCK_LEAVES_NO_ROOM", {
                         "requirement": str(requirement.id), "grades": grades,
                     })
+
+        # ÄMNESFÖRDELNING, per requirement and after the per-requirement checks
+        # above, which name the more basic cause: a lesson with no window at all
+        # is not a distribution problem. Before the week-wide verdicts below,
+        # because "four lessons do not fit on five days without consecutive
+        # days" is a contradiction inside ONE row, fixed on that row.
+        self._verify_subject_distribution(request)
 
         # THE BREAKS THAT ASK FOR A LESSON, before any of the counting below:
         # a demand no stretch can hold is a contradiction between two of the
@@ -2734,6 +2786,142 @@ class SchedulerSolver:
                     "windowEnd": rules.lunch_end_time[:5],
                     "day": day_of_week,
                 })
+
+    def _verify_subject_distribution(self, request: OptimizeScheduleRequest) -> None:
+        """Refuse a requirement whose lessons cannot be spread as its rule asks.
+
+        COUNTING, NOT SEARCH. A rule of at most N a day over D days holds at
+        most N x D lessons; "not on consecutive days" holds at most the best
+        choice of days no two of which are neighbours. Both are arithmetic on
+        constants, and a week that breaks them is refused here, in
+        microseconds, with the requirement, its lessons and its days named —
+        "Idrott för 7A: 4 lektioner ryms inte på de 5 dagar ..." — where the
+        model would have spent its budget finding the same thing out and
+        reported it as one cause among a core.
+
+        WITHOUT A CAP THERE IS NOTHING TO COUNT. "Not on consecutive days" on
+        its own is kept by putting every lesson on one day, so a rule with no
+        maximum a day never refuses here; whether one day can HOLD them all is
+        a question about hours, and the model answers it under the rule's own
+        literal.
+
+        AN UPPER BOUND, SO IT NEVER REFUSES A WEEK THAT WOULD HAVE WORKED. The
+        days counted are the ones the requirement could start a lesson on at
+        all — the builder's own arithmetic for frames and margins, see
+        _distribution_days — and every other rule only takes more away. What
+        is locked counts as the builder counts it: a day's cap less what the
+        school placed there, and no day next to a locked one under the
+        days-apart rule.
+        """
+        weekdays = self._grid.schedule_days
+        for requirement in request.requirements:
+            per_day = requirement.max_lessons_per_day
+            if per_day is None:
+                continue
+            apart = requirement.min_days_between
+            locked = Counter(requirement.locked_days)
+            open_days = self._distribution_days(request, requirement)
+            caps: list[tuple[int, int]] = []
+            for day_index in open_days:
+                weekday = weekdays[day_index]
+                if apart is not None and any(
+                    0 < abs(weekday - other) < apart for other in locked
+                ):
+                    continue
+                caps.append((weekday, max(0, per_day - locked[weekday])))
+            if _spaced_capacity(caps, apart) >= requirement.lessons_per_week:
+                continue
+            raise InvalidScheduleInputError.of("SUBJECT_DISTRIBUTION_WEEK_TOO_SHORT", {
+                "requirement": str(requirement.id),
+                # The week's lessons as the school counts them: what the
+                # solver places and what is locked, since a school reads "4"
+                # off the timplan and not off the payload.
+                "lessons": requirement.lessons_per_week + len(requirement.locked_days),
+                "days": len(open_days),
+                "maxPerDay": per_day,
+                "minDaysBetween": apart or 0,
+                "locked": len(requirement.locked_days),
+            })
+
+    def _distribution_days(
+        self, request: OptimizeScheduleRequest, requirement: AnonymousRequirement,
+    ) -> list[int]:
+        """Day indices on which the requirement could start a lesson at all.
+
+        The builder's arithmetic, down to the rounding: a day is open when the
+        stage's frame leaves a window, and that window still holds the SHORTEST
+        lesson once the pupils' margins and the corridor have taken theirs —
+        _create_lesson_decisions drops exactly the other days. And a day a
+        recurring closure takes whole is shut too: a teacher who does not work
+        Fridays, a class that is not taught on Tuesdays, a stage held free. A
+        school with a part-time idrottslärare is the ordinary case of a rule
+        that does not fit, and "5 days" in that sentence would be a number the
+        reader cannot find in their week.
+
+        THE RASTS ARE NOT SUBTRACTED, and neither are rooms or locked lessons.
+        Each can only make a day harder to use, so counting the day anyway
+        keeps this an upper bound: the pre-flight then lets a week through
+        that the model refuses under the rule's literal, and never the other
+        way round.
+        """
+        slot = self._grid.slot_minutes
+        slots_per_day = self._grid.slots_per_day
+        span = span_of(requirement)
+        changeover = changeover_slots(request.frame_times, span, self._grid)
+        lead = -(-requirement.minutes_before // slot)
+        trail = -(-requirement.minutes_after // slot)
+        shortest = self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
+
+        # Closed ranges per day, in day-relative slots, from every recurring
+        # UNAVAILABLE row that reaches every lesson of the requirement. A ROOM
+        # row reaches a lesson only through the room it is given, so it never
+        # closes a day for the requirement.
+        closed: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        teachers = _teachers_of(requirement)
+        for constraint in request.constraints:
+            if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
+                continue
+            if constraint.resource_kind == "TEACHER":
+                reaches = constraint.resource_id in teachers
+            elif constraint.resource_kind == "STUDENT_GROUP":
+                reaches = constraint.resource_id == requirement.student_group_id
+            elif constraint.resource_kind == "GRADE_LEVEL":
+                reaches = _grade_span_overlaps(constraint, requirement)
+            else:
+                reaches = False
+            if not reaches:
+                continue
+            try:
+                ranges = self._grid.window_to_absolute_range(
+                    constraint.day_of_week, constraint.start_time, constraint.end_time,
+                )
+            except ValueError:
+                # Unreadable here is refused by name when the model is built;
+                # counting the day as open keeps this an upper bound meanwhile.
+                continue
+            for low, high in ranges:
+                day_index = low // slots_per_day
+                base = day_index * slots_per_day
+                closed[day_index].append((low - base, high - base))
+
+        days: list[int] = []
+        for day_index, (open_slot, close_slot) in sorted(
+            day_windows(request.frame_times, span, self._grid).items(),
+        ):
+            first = max(open_slot, lead)
+            last = min(close_slot, slots_per_day - changeover - trail) - shortest
+            if last < first:
+                continue
+            # Every start from `first` to `last` overlaps a merged closure that
+            # runs from at or before the first start to at or after the last
+            # end: then no lesson of the requirement can be taught that day.
+            if any(
+                low <= first and high >= last + shortest
+                for low, high in _merge_ranges(closed.get(day_index, []))
+            ):
+                continue
+            days.append(day_index)
+        return days
 
     def _verify_teacher_work_rules(self, request: OptimizeScheduleRequest) -> None:
         """The three refusals a teacher's own lunch and rest can be arithmetic.
@@ -3734,6 +3922,33 @@ class SchedulerSolver:
                     ],
                 }),
             ))
+        if any(
+            requirement.max_lessons_per_day is not None
+            or requirement.min_days_between is not None
+            for requirement in request.requirements
+        ):
+            # ONE PROBE FOR BOTH HALVES OF THE RULE, unlike the teachers' two
+            # below, and the difference is where the fix lives. A teacher's
+            # lunch and rest are two numbers a rektor weighs separately; a
+            # subject's "at most N a day" and "not on consecutive days" sit
+            # side by side in one dialog, and "with the subjects' distribution
+            # rules dropped" sends the school to exactly that dialog, where it
+            # can see which of the two a crowded week can spare. Every
+            # requirement at once, because a timeout is a fact about the week
+            # and a probe per subject would split a short budget into slices
+            # too thin to find anything. The locked days stay: they say where
+            # the school's own lessons are, which no relaxation changes.
+            out.append((
+                "PROBE_SOLVED_WITHOUT_DISTRIBUTION",
+                request.model_copy(update={
+                    "requirements": [
+                        requirement.model_copy(
+                            update={"max_lessons_per_day": None, "min_days_between": None},
+                        )
+                        for requirement in request.requirements
+                    ],
+                }),
+            ))
         # THE TEACHERS' OWN TIME IS TWO PROBES AND NEVER ONE, for the reason the
         # lunch below is three: "with the teachers' working time switched off, a
         # timetable was found" is true and useless, because a school cannot
@@ -3881,6 +4096,15 @@ class SchedulerSolver:
             if rule.min_daily_rest_minutes is not None
             and rule.teacher_id in with_lessons
         )
+        # Requirements carrying an ämnesfördelning, either half. Off the
+        # requirements themselves, which are exactly what the model built from:
+        # a requirement in the payload has lessons left to place.
+        distribution_rules = sum(
+            1
+            for requirement in request.requirements
+            if requirement.max_lessons_per_day is not None
+            or requirement.min_days_between is not None
+        )
         # One sentence per thing worth trying at zero, in the order the
         # measurements rank them, and none at all for a week that carries
         # neither — the line already says what was in force, and advice about a
@@ -3905,6 +4129,7 @@ class SchedulerSolver:
             f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
             f"fixedLessons={len(request.fixed_lessons)}, "
             f"teacherLunches={teacher_lunches}, teacherRests={teacher_rests}, "
+            f"distributionRules={distribution_rules}, "
             f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
             + " ".join(hints)
@@ -4885,6 +5110,152 @@ class SchedulerSolver:
                     penalties.append(same * weights.spread)
 
         return penalties
+
+    def _add_distribution_constraints(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        decisions: list[LessonDecision],
+        day_vars: dict[str, cp_model.IntVar],
+    ) -> None:
+        """Ämnesfördelning: at most N lessons a day, no two lesson days too close.
+
+        The HARD twin of _add_spread_objective just above, which only prices a
+        same-day pair and sells it for any placement worth more. A school that
+        writes "idrott inte två gånger samma dag, inte dagar i följd" is not
+        stating a taste, and a week with Monday and Tuesday idrott is one it
+        will send back.
+
+        ON THE DAY VARIABLES THE SPREAD ALREADY READS. Each lesson gets one
+        literal per weekday, exactly one of them true and their weighted sum
+        equal to its `day_` variable — the channelling the per-group cap below
+        builds by reification, said once per lesson instead of twice per day.
+        The rules are then sums and clauses over those literals: a day's lessons
+        at most its cap, and for two days closer than the rule allows, not both.
+        A pairwise `day_i != day_j` would cover "one a day" with no literal at
+        all, but nothing else: N = 2, a day next to a locked lesson and the
+        refusal's own counting all want the per-day view.
+
+        ONE ASSUMPTION LITERAL PER REQUIREMENT AND RULE. The per-day cap and
+        the days apart are two sentences a school fixes in two different places
+        on one row — "allow two a day" against "allow consecutive days" — so a
+        core that named them as one would send the reader to guess. Per
+        requirement rather than per day because the requirement is what the
+        school opens; the day is in the pre-flight's sentence, where arithmetic
+        can name it.
+
+        THE LOCKED LESSONS COUNT AS FACTS. They are no decision here — the
+        gateway subtracts them from lessons_per_week and they arrive as fixed
+        lessons with no requirement id — so `locked_days` says where they are.
+        A day's cap is N less what is locked on it, and a weekday next to a
+        locked one is closed to the rule's lessons. Two lessons the SCHOOL
+        locked onto one Monday are never refused here: that was a hand edit,
+        warned about when it was made, and a refusal of the whole week for it
+        would turn the warning into a block.
+
+        NOTHING AT ALL FOR A REQUIREMENT WITHOUT A RULE, and nothing for a rule
+        that cannot bind — a cap no day can reach, or days apart for a single
+        lesson with nothing locked. A school that has written no rule gets the
+        model it had, variable for variable.
+        """
+        by_requirement: dict[UUID, list[LessonDecision]] = {}
+        for decision in decisions:
+            requirement = decision.lesson.requirement
+            if (
+                requirement.max_lessons_per_day is None
+                and requirement.min_days_between is None
+            ):
+                continue
+            by_requirement.setdefault(requirement.id, []).append(decision)
+
+        weekdays = self._grid.schedule_days
+        for requirement_id, group in by_requirement.items():
+            requirement = group[0].lesson.requirement
+            locked = Counter(requirement.locked_days)
+            per_day = requirement.max_lessons_per_day
+            apart = requirement.min_days_between
+
+            # day index -> what the rule's own lessons may still take there,
+            # kept only where that is less than all of them.
+            caps: dict[int, int] = {}
+            if per_day is not None:
+                for day_index, weekday in enumerate(weekdays):
+                    cap = max(0, per_day - locked[weekday])
+                    if cap < len(group):
+                        caps[day_index] = cap
+            near: list[tuple[int, int]] = []
+            shut: list[int] = []
+            if apart is not None:
+                if len(group) > 1:
+                    near = [
+                        (first, second)
+                        for first in range(len(weekdays))
+                        for second in range(first + 1, len(weekdays))
+                        if abs(weekdays[second] - weekdays[first]) < apart
+                    ]
+                # In ISO weekdays and not in positions, as the field says: a
+                # lock on a Saturday this grid does not teach still closes its
+                # Friday under "not on consecutive days".
+                shut = [
+                    day_index
+                    for day_index, weekday in enumerate(weekdays)
+                    if any(0 < abs(weekday - other) < apart for other in locked)
+                ]
+            if not caps and not near and not shut:
+                continue
+
+            on_day: list[list[cp_model.IntVar]] = []
+            for decision in group:
+                day = self._day_var(model, decision, day_vars)
+                literals = [
+                    model.NewBoolVar(f"distday_{decision.lesson.key()}_{day_index}")
+                    for day_index in range(len(weekdays))
+                ]
+                model.AddExactlyOne(literals)
+                model.Add(
+                    day == sum(day_index * literal for day_index, literal in enumerate(literals)),
+                )
+                on_day.append(literals)
+
+            if caps:
+                per_day_literal = registry.register(
+                    model,
+                    name=f"distperday_{requirement_id}",
+                    category="SUBJECT_DISTRIBUTION",
+                    code="SUBJECT_DISTRIBUTION_PER_DAY",
+                    params={"requirement": str(requirement_id), "maxPerDay": per_day},
+                    requirement_ids=[requirement_id],
+                )
+                for day_index, cap in caps.items():
+                    model.Add(
+                        sum(literals[day_index] for literals in on_day) <= cap,
+                    ).OnlyEnforceIf(per_day_literal)
+
+            if near or shut:
+                apart_literal = registry.register(
+                    model,
+                    name=f"distapart_{requirement_id}",
+                    category="SUBJECT_DISTRIBUTION",
+                    code="SUBJECT_DISTRIBUTION_DAYS_APART",
+                    params={"requirement": str(requirement_id), "minDaysBetween": apart},
+                    requirement_ids=[requirement_id],
+                )
+                # Whether the rule's lessons use a day at all: implied by each
+                # lesson's literal and free otherwise, so a pair of days is one
+                # clause rather than one per pair of lessons.
+                used = {
+                    day_index: model.NewBoolVar(f"distused_{requirement_id}_{day_index}")
+                    for day_index in sorted({d for pair in near for d in pair} | set(shut))
+                }
+                for literals in on_day:
+                    for day_index, flag in used.items():
+                        model.AddImplication(literals[day_index], flag)
+                for first, second in near:
+                    model.AddBoolOr(
+                        [used[first].Not(), used[second].Not()],
+                    ).OnlyEnforceIf(apart_literal)
+                for day_index in shut:
+                    model.AddBoolAnd([used[day_index].Not()]).OnlyEnforceIf(apart_literal)
 
     def _add_idle_time_objective(
         self,
