@@ -176,6 +176,7 @@ model School {
   leaveRequests           LeaveRequest[]
   notifications           Notification[]
   integrationApiKeys      IntegrationApiKey[]
+  signInMethod            SchoolSignInMethod?
   roomBookings            RoomBooking[]
   roomPreferences         RoomPreference[]
   teacherWorkRules        TeacherWorkRule[]
@@ -1991,6 +1992,45 @@ model IntegrationKeyWebhookSecret {
 
   @@index([schoolId])
   @@map("IntegrationKeyWebhookSecrets")
+}
+
+// -----------------------------------------------------------------------------
+// Logga in med skolkonto (20261020090000)
+// -----------------------------------------------------------------------------
+
+/// The school-account providers SchemaPro's Supabase project signs in with.
+/// The value is Supabase Auth's own provider name.
+enum SignInProvider {
+  azure
+  google
+}
+
+/// How a school's people may sign in with their school account (Entra ID or
+/// Google Workspace), at most one row per school. No row: passwords only, and
+/// the access-token hook (app.custom_access_token_hook) refuses a token to any
+/// session that signed in with a school account.
+///
+/// `domains` is what /login looks a typed address up by
+/// (app.sign_in_provider_for_domain); `entraTenantId` and `googleHostedDomain`
+/// are what the hook pins every school-account identity of the school's people
+/// to. CHECKs in the migration hold the shape: lower-case domains, one pin and
+/// only the one that belongs to the provider.
+model SchoolSignInMethod {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId           String         @unique @db.Uuid
+  provider           SignInProvider
+  domains            String[]
+  entraTenantId      String?        @db.Uuid
+  googleHostedDomain String?
+  /// Staff (SCHOOL_ADMIN, TEACHER) may then sign in with the school account
+  /// only. Off by default (PRODUCT.md, principle 6).
+  ssoOnlyForStaff    Boolean        @default(false)
+  createdAt          DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("SchoolSignInMethods")
 }
 
 // -----------------------------------------------------------------------------
