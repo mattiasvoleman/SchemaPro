@@ -21,6 +21,7 @@ import {
   MAX_DOMAINS,
   domainsOf,
   isHostname,
+  isPersonalDomain,
   isTenantId,
   sessionFits,
   type SignInMethodInput,
@@ -113,11 +114,15 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
     setForm((current) => ({ ...current, [key]: value }));
 
   const domains = domainsOf(form.domains);
-  const domainsProblem =
+  const domainsInvalid =
     form.domains.trim() !== "" && (domains.length > MAX_DOMAINS || !domains.every(isHostname));
+  const personalDomains = domains.filter(isPersonalDomain);
+  const domainsProblem = domainsInvalid || personalDomains.length > 0;
   const tenantProblem = form.provider === "azure" && form.tenant.trim() !== "" && !isTenantId(form.tenant);
-  const hostedProblem =
-    form.provider === "google" && form.hostedDomain.trim() !== "" && !isHostname(form.hostedDomain.trim().toLowerCase());
+  const hostedDomain = form.hostedDomain.trim().toLowerCase();
+  const hostedInvalid = form.provider === "google" && hostedDomain !== "" && !isHostname(hostedDomain);
+  const hostedPersonal = form.provider === "google" && isPersonalDomain(hostedDomain);
+  const hostedProblem = hostedInvalid || hostedPersonal;
   const complete =
     domains.length > 0 &&
     (form.provider === "azure" ? form.tenant.trim() !== "" : form.hostedDomain.trim() !== "");
@@ -179,7 +184,13 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
             id="sign-in-domains"
             label={t("domains")}
             hint={domainsProblem ? undefined : t("domainsHint")}
-            error={domainsProblem ? t("domainsInvalid") : undefined}
+            error={
+              domainsInvalid
+                ? t("domainsInvalid")
+                : personalDomains.length > 0
+                  ? t("domainsPersonal", { domains: personalDomains.join(", ") })
+                  : undefined
+            }
           >
             <Textarea
               rows={3}
@@ -209,7 +220,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               id="sign-in-hd"
               label={t("hostedDomain")}
               hint={hostedProblem ? undefined : t("hostedDomainHint")}
-              error={hostedProblem ? t("hostedDomainInvalid") : undefined}
+              error={hostedInvalid ? t("hostedDomainInvalid") : hostedPersonal ? t("hostedDomainPersonal") : undefined}
             >
               <Input
                 autoComplete="off"
