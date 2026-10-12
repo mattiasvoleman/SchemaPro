@@ -134,7 +134,7 @@ export async function readLoadInput(
   // their row needs.
   const duties = await tx.teacherDuty.findMany({
     where: { academicYearId },
-    select: { userId: true, minutesPerWeek: true, countsAsTeaching: true },
+    select: { userId: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
   });
   const yearGroups = await tx.studentGroup.findMany({
     where: { academicYearId },
@@ -240,6 +240,9 @@ export async function readLoadInput(
       userId: row.userId,
       minutesPerWeek: row.minutesPerWeek,
       countsAsTeaching: row.countsAsTeaching,
+      // Only when dated: an undated duty's input is the object it always was.
+      ...(row.validFrom ? { validFrom: asDay(row.validFrom) } : {}),
+      ...(row.validTo ? { validTo: asDay(row.validTo) } : {}),
     })),
     inactiveUserIds: (inactive ?? []).map((row) => row.id),
   };

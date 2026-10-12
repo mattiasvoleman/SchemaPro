@@ -1,5 +1,5 @@
 import { SLOT_MINUTES, carriesSeconds, minutesOf } from '../common/solver-grid';
-import { parseTimeString } from '../common/utils/time';
+import { parseTimeString, toWallClock } from '../common/utils/time';
 
 /**
  * An uppdrag's fixed weekly time, and the one shape of the constraint that
@@ -14,6 +14,13 @@ import { parseTimeString } from '../common/utils/time';
  * next year as a NEW row (staffing Fas 5). Both take the row's data from
  * dutySlotConstraintData, so a column added to the shape is added for both,
  * and the rollover registry's audit holds the rollover's writes to it.
+ *
+ * SEVERAL TIMES, ONE LINK EACH (migration 20261017090000). An uppdrag holds
+ * any number of times, each a TeacherDutySlots row naming one such
+ * constraint; the rastvakt on Monday, Wednesday and Friday is one uppdrag
+ * with three. The old one-slot column, blockedConstraintId, is read by the
+ * previous API release only, and a trigger makes every write of it a link
+ * row, so this code reads and writes the link table and nothing else.
  */
 
 /** The weekly time an uppdrag blocks, as the client writes it and reads it back. */
@@ -22,6 +29,67 @@ export interface DutySlot {
   startTime: string;
   endTime: string;
 }
+
+/**
+ * How many fixed times one uppdrag may hold (migration 20261017090000 gave it
+ * several): three rasts a day, five days a week. A rastvakt on Monday,
+ * Wednesday and Friday is three; a list longer than fifteen is a typo or an
+ * import gone wrong, and every one of them is a weekly row the engine reads.
+ */
+export const DUTY_SLOTS_MAX = 15;
+
+/** Two weekly times that share a minute on the same weekday. */
+export function slotsOverlap(
+  a: { dayOfWeek: number; startTime: string; endTime: string },
+  b: { dayOfWeek: number; startTime: string; endTime: string },
+): boolean {
+  return (
+    a.dayOfWeek === b.dayOfWeek &&
+    minutesOf(a.startTime) < minutesOf(b.endTime) &&
+    minutesOf(b.startTime) < minutesOf(a.endTime)
+  );
+}
+
+/** Monday first, then by start: the order every reader lists an uppdrag's times in. */
+export function sortSlots<T extends DutySlot>(slots: readonly T[]): T[] {
+  return [...slots].sort(
+    (a, b) =>
+      a.dayOfWeek - b.dayOfWeek ||
+      minutesOf(a.startTime) - minutesOf(b.startTime) ||
+      minutesOf(a.endTime) - minutesOf(b.endTime),
+  );
+}
+
+/**
+ * An uppdrag's times as the client reads them, from its link rows: each
+ * constraint's weekday and clocks, sorted. A link whose constraint has no
+ * weekday (the guards refuse one; RLS could hide one) is no time rather than
+ * half of one.
+ */
+export function slotsOfLinks(
+  links: readonly { availabilityConstraint: { dayOfWeek: number | null; startTime: Date; endTime: Date } | null }[],
+): DutySlot[] {
+  const slots: DutySlot[] = [];
+  for (const link of links) {
+    const constraint = link.availabilityConstraint;
+    if (!constraint || constraint.dayOfWeek === null) continue;
+    slots.push({
+      dayOfWeek: constraint.dayOfWeek,
+      startTime: toWallClock(constraint.startTime),
+      endTime: toWallClock(constraint.endTime),
+    });
+  }
+  return sortSlots(slots);
+}
+
+/** What every read of an uppdrag includes to answer slotsOfLinks. */
+export const WITH_SLOT_TIMES = {
+  slots: {
+    select: {
+      availabilityConstraint: { select: { dayOfWeek: true, startTime: true, endTime: true } },
+    },
+  },
+} as const;
 
 /**
  * The reason a linked constraint carries: the word, never the uppdrag's label

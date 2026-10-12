@@ -725,6 +725,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   if (options.carryStaffing) {
     const carry = planStaffingCarry({
       staffing: source.staffing!,
+      sourceYearEndDate: source.year.endDate,
       // The successor the groups step writes, keyed by the source group as
       // every other step maps a group; an INTAKE twin continues nothing.
       successorOf: (sourceGroupId) => {
@@ -756,6 +757,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     LunchSitting: source.skipped.lunchSittings,
     TeacherEmployment: source.skipped.employments,
     TeacherDuty: source.skipped.duties,
+    TeacherDutySlot: source.skipped.dutyBlockedSlots,
   };
   const skipped = skippedModels({ carryStaffing: options.carryStaffing }).map((entry) => ({
     model: entry.model,

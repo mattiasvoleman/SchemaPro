@@ -400,7 +400,12 @@ export class Model {
           share: policy.share,
           fullTimeAnnualHours: policy.fullTimeAnnualHours,
           employment: post,
-          mentorships: own.map((duty) => ({ studentGroupId: duty.studentGroupId!, updatedAt: duty.updatedAt })),
+          mentorships: own.map((duty) => ({
+            studentGroupId: duty.studentGroupId!,
+            updatedAt: duty.updatedAt,
+            validFrom: duty.validFrom ? dayOf(duty.validFrom) : null,
+            validTo: duty.validTo ? dayOf(duty.validTo) : null,
+          })),
         });
         out.push({ duty: this.translateDuty(raw, post, versions.get(post.id)), post });
       }

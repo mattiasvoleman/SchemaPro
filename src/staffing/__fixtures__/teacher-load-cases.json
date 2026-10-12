@@ -91,6 +91,7 @@
             "assignedMinutesPerWeek": 900,
             "peakMinutesPerWeek": 900,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 900,
             "balanceMinutesPerWeek": -35,
@@ -257,6 +258,7 @@
             "assignedMinutesPerWeek": 120,
             "peakMinutesPerWeek": 120,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 120,
             "balanceMinutesPerWeek": 960,
@@ -322,6 +324,7 @@
             "assignedMinutesPerWeek": 120,
             "peakMinutesPerWeek": 120,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 120,
             "balanceMinutesPerWeek": 960,
@@ -473,6 +476,7 @@
             "assignedMinutesPerWeek": 120,
             "peakMinutesPerWeek": 120,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 120,
             "balanceMinutesPerWeek": 960,
@@ -656,6 +660,7 @@
             "assignedMinutesPerWeek": 216,
             "peakMinutesPerWeek": 360,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 216,
             "balanceMinutesPerWeek": 864,
@@ -854,6 +859,7 @@
             "assignedMinutesPerWeek": 812,
             "peakMinutesPerWeek": 840,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 812,
             "balanceMinutesPerWeek": 268,
@@ -1115,6 +1121,7 @@
             "assignedMinutesPerWeek": 1800,
             "peakMinutesPerWeek": 1800,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 1800,
             "balanceMinutesPerWeek": -720,
@@ -1180,6 +1187,7 @@
             "assignedMinutesPerWeek": 60,
             "peakMinutesPerWeek": 60,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 60,
             "balanceMinutesPerWeek": 1020,
@@ -1245,6 +1253,7 @@
             "assignedMinutesPerWeek": 1080,
             "peakMinutesPerWeek": 1080,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 1080,
             "balanceMinutesPerWeek": 0,
@@ -1303,6 +1312,7 @@
             "assignedMinutesPerWeek": 60,
             "peakMinutesPerWeek": 60,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 60,
             "balanceMinutesPerWeek": null,
@@ -1482,6 +1492,7 @@
             "assignedMinutesPerWeek": 1203,
             "peakMinutesPerWeek": 1203,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 1203,
             "balanceMinutesPerWeek": -123,
@@ -1574,6 +1585,7 @@
             "assignedMinutesPerWeek": 1188,
             "peakMinutesPerWeek": 1188,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 1188,
             "balanceMinutesPerWeek": -108,
@@ -1705,6 +1717,7 @@
             "assignedMinutesPerWeek": 2400,
             "peakMinutesPerWeek": 2400,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 2400,
             "balanceMinutesPerWeek": null,
@@ -1830,6 +1843,7 @@
             "assignedMinutesPerWeek": 180,
             "peakMinutesPerWeek": 180,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 180,
             "balanceMinutesPerWeek": null,
@@ -1977,6 +1991,7 @@
             "assignedMinutesPerWeek": 600,
             "peakMinutesPerWeek": 600,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 600,
             "balanceMinutesPerWeek": 300,
@@ -2042,6 +2057,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": 0,
@@ -2078,6 +2094,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": null,
@@ -2184,6 +2201,7 @@
             "assignedMinutesPerWeek": 180,
             "peakMinutesPerWeek": 180,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 180,
             "balanceMinutesPerWeek": null,
@@ -2444,6 +2462,7 @@
             "assignedMinutesPerWeek": 360,
             "peakMinutesPerWeek": 360,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 360,
             "balanceMinutesPerWeek": 720,
@@ -2533,6 +2552,7 @@
             "assignedMinutesPerWeek": 540,
             "peakMinutesPerWeek": 540,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 540,
             "balanceMinutesPerWeek": 540,
@@ -2746,6 +2766,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": 1080,
@@ -2775,6 +2796,7 @@
             "assignedMinutesPerWeek": 180,
             "peakMinutesPerWeek": 180,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 180,
             "balanceMinutesPerWeek": null,
@@ -2941,6 +2963,7 @@
             "assignedMinutesPerWeek": 93,
             "peakMinutesPerWeek": 180,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 93,
             "balanceMinutesPerWeek": 987,
@@ -3006,6 +3029,7 @@
             "assignedMinutesPerWeek": 92,
             "peakMinutesPerWeek": 180,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 92,
             "balanceMinutesPerWeek": 988,
@@ -3193,6 +3217,7 @@
             "assignedMinutesPerWeek": 420,
             "peakMinutesPerWeek": 420,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 420,
             "balanceMinutesPerWeek": 660,
@@ -3285,6 +3310,7 @@
             "assignedMinutesPerWeek": 120,
             "peakMinutesPerWeek": 120,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 120,
             "balanceMinutesPerWeek": 960,
@@ -3350,6 +3376,7 @@
             "assignedMinutesPerWeek": 220,
             "peakMinutesPerWeek": 220,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 220,
             "balanceMinutesPerWeek": 320,
@@ -3556,6 +3583,7 @@
             "assignedMinutesPerWeek": 100,
             "peakMinutesPerWeek": 120,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 100,
             "balanceMinutesPerWeek": 980,
@@ -3640,6 +3668,7 @@
             "assignedMinutesPerWeek": 194,
             "peakMinutesPerWeek": 384,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 194,
             "balanceMinutesPerWeek": 886,
@@ -3852,6 +3881,7 @@
             "assignedMinutesPerWeek": 600,
             "peakMinutesPerWeek": 600,
             "dutyMinutesPerWeek": 400,
+            "dutyPeakMinutesPerWeek": 400,
             "countedDutyMinutesPerWeek": 100,
             "countedMinutesPerWeek": 700,
             "balanceMinutesPerWeek": -100,
@@ -3917,6 +3947,7 @@
             "assignedMinutesPerWeek": 900,
             "peakMinutesPerWeek": 900,
             "dutyMinutesPerWeek": 180,
+            "dutyPeakMinutesPerWeek": 180,
             "countedDutyMinutesPerWeek": 120,
             "countedMinutesPerWeek": 1020,
             "balanceMinutesPerWeek": 60,
@@ -3975,6 +4006,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 40,
+            "dutyPeakMinutesPerWeek": 40,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": null,
@@ -4274,6 +4306,7 @@
             "assignedMinutesPerWeek": 600,
             "peakMinutesPerWeek": 600,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 600,
             "balanceMinutesPerWeek": -60,
@@ -4339,6 +4372,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": 1080,
@@ -4375,6 +4409,7 @@
             "assignedMinutesPerWeek": 1020,
             "peakMinutesPerWeek": 1020,
             "dutyMinutesPerWeek": 60,
+            "dutyPeakMinutesPerWeek": 60,
             "countedDutyMinutesPerWeek": 60,
             "countedMinutesPerWeek": 1080,
             "balanceMinutesPerWeek": 0,
@@ -4650,6 +4685,7 @@
             "assignedMinutesPerWeek": 180,
             "peakMinutesPerWeek": 180,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 180,
             "balanceMinutesPerWeek": 900,
@@ -4845,6 +4881,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": 900,
@@ -4881,6 +4918,7 @@
             "assignedMinutesPerWeek": 120,
             "peakMinutesPerWeek": 120,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 120,
             "balanceMinutesPerWeek": 180,
@@ -5143,6 +5181,7 @@
             "assignedMinutesPerWeek": 500,
             "peakMinutesPerWeek": 580,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 500,
             "balanceMinutesPerWeek": 580,
@@ -5273,6 +5312,7 @@
             "assignedMinutesPerWeek": 60,
             "peakMinutesPerWeek": 60,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 60,
             "balanceMinutesPerWeek": 1020,
@@ -5542,6 +5582,7 @@
             "assignedMinutesPerWeek": 400,
             "peakMinutesPerWeek": 400,
             "dutyMinutesPerWeek": 60,
+            "dutyPeakMinutesPerWeek": 60,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 400,
             "balanceMinutesPerWeek": 680,
@@ -5634,6 +5675,7 @@
             "assignedMinutesPerWeek": 273,
             "peakMinutesPerWeek": 320,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 273,
             "balanceMinutesPerWeek": 377,
@@ -6013,6 +6055,7 @@
             "assignedMinutesPerWeek": 400,
             "peakMinutesPerWeek": 400,
             "dutyMinutesPerWeek": 60,
+            "dutyPeakMinutesPerWeek": 60,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 400,
             "balanceMinutesPerWeek": 680,
@@ -6105,6 +6148,7 @@
             "assignedMinutesPerWeek": 313,
             "peakMinutesPerWeek": 380,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 313,
             "balanceMinutesPerWeek": 337,
@@ -6467,6 +6511,7 @@
             "assignedMinutesPerWeek": 390,
             "peakMinutesPerWeek": 480,
             "dutyMinutesPerWeek": 90,
+            "dutyPeakMinutesPerWeek": 90,
             "countedDutyMinutesPerWeek": 90,
             "countedMinutesPerWeek": 480,
             "balanceMinutesPerWeek": 275,
@@ -6559,6 +6604,7 @@
             "assignedMinutesPerWeek": 240,
             "peakMinutesPerWeek": 240,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 240,
             "balanceMinutesPerWeek": 840,
@@ -6643,6 +6689,7 @@
             "assignedMinutesPerWeek": 0,
             "peakMinutesPerWeek": 0,
             "dutyMinutesPerWeek": 30,
+            "dutyPeakMinutesPerWeek": 30,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 0,
             "balanceMinutesPerWeek": 0,
@@ -6672,6 +6719,7 @@
             "assignedMinutesPerWeek": 45,
             "peakMinutesPerWeek": 90,
             "dutyMinutesPerWeek": 0,
+            "dutyPeakMinutesPerWeek": 0,
             "countedDutyMinutesPerWeek": 0,
             "countedMinutesPerWeek": 45,
             "balanceMinutesPerWeek": null,
@@ -6733,6 +6781,646 @@
           "teacherMinutesPerWeek": 675,
           "lessonMinutesPerWeek": 630,
           "dutyMinutesPerWeek": 120
+        }
+      }
+    },
+    {
+      "name": "Daterade uppdrag: a mentor change at jul — Anna until the jullov, Bertil from January, each counted only in the weeks it runs; an undated rastvakt beside them reads as before",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN"
+        },
+        "employments": [
+          {
+            "userId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "ANN"
+          },
+          {
+            "userId": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "BER"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "req-anna",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "teacherId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+            "coTeacherId": null,
+            "lessonsPerWeek": 16,
+            "minutesPerLesson": 60,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "req-bertil",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "teacherId": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+            "coTeacherId": null,
+            "lessonsPerWeek": 16,
+            "minutesPerLesson": 60,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          }
+        ],
+        "qualifications": [],
+        "closures": [
+          {
+            "startDate": "2026-12-21",
+            "endDate": "2027-01-06",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          },
+          {
+            "startDate": "2027-02-22",
+            "endDate": "2027-02-26",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          },
+          {
+            "startDate": "2026-10-05",
+            "endDate": "2026-10-05",
+            "minGradeLevel": 1,
+            "maxGradeLevel": 3
+          }
+        ],
+        "duties": [
+          {
+            "userId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+            "minutesPerWeek": 90,
+            "countsAsTeaching": false,
+            "validTo": "2026-12-18"
+          },
+          {
+            "userId": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+            "minutesPerWeek": 90,
+            "countsAsTeaching": false,
+            "validFrom": "2027-01-07"
+          },
+          {
+            "userId": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+            "minutesPerWeek": 60,
+            "countsAsTeaching": false
+          }
+        ]
+      },
+      "report": {
+        "loadModel": "MINUTES",
+        "teachers": [
+          {
+            "userId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+            "employment": {
+              "userId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "ANN"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 960,
+            "peakMinutesPerWeek": 960,
+            "dutyMinutesPerWeek": 41,
+            "dutyPeakMinutesPerWeek": 90,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 960,
+            "balanceMinutesPerWeek": 120,
+            "percentOfTarget": 88.9,
+            "status": "UNDER",
+            "requirementCount": 1,
+            "dutyCount": 1,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 960,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 88.9
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "req-anna",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 960,
+                "timeMinutesPerWeek": 960,
+                "minutesPerWeek": 960,
+                "hoursPerYear": 630.4
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 630.4,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 27,
+              "teachingWeeksPerYear": 39.4,
+              "percentOfRegulated": 46.4
+            }
+          },
+          {
+            "userId": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+            "employment": {
+              "userId": "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "BER"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 960,
+            "peakMinutesPerWeek": 960,
+            "dutyMinutesPerWeek": 110,
+            "dutyPeakMinutesPerWeek": 150,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 960,
+            "balanceMinutesPerWeek": 120,
+            "percentOfTarget": 88.9,
+            "status": "UNDER",
+            "requirementCount": 1,
+            "dutyCount": 2,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 960,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 88.9
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "req-bertil",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 960,
+                "timeMinutesPerWeek": 960,
+                "minutesPerWeek": 960,
+                "hoursPerYear": 630.4
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 630.4,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 72.4,
+              "teachingWeeksPerYear": 39.4,
+              "percentOfRegulated": 46.4
+            }
+          }
+        ],
+        "unstaffedRequirements": [],
+        "unqualifiedAssignments": [],
+        "qualificationsRecorded": false,
+        "subjectBottlenecks": [],
+        "bottlenecksComputed": false,
+        "totals": {
+          "teacherMinutesPerWeek": 1920,
+          "lessonMinutesPerWeek": 1920,
+          "dutyMinutesPerWeek": 151
+        }
+      }
+    },
+    {
+      "name": "Daterade uppdrag: a counted uppdrag meets the target only in its weeks — a term-long resurstid moves status, saldo and the toppvecka of the uppdrag, not the teaching peak",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN"
+        },
+        "employments": [
+          {
+            "userId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "CEC"
+          },
+          {
+            "userId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "DAV"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "req-cecilia",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "teacherId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+            "coTeacherId": null,
+            "lessonsPerWeek": 17,
+            "minutesPerLesson": 60,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "req-david",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "teacherId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            "coTeacherId": null,
+            "lessonsPerWeek": 17,
+            "minutesPerLesson": 60,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          }
+        ],
+        "qualifications": [],
+        "closures": [
+          {
+            "startDate": "2026-12-21",
+            "endDate": "2027-01-06",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          }
+        ],
+        "duties": [
+          {
+            "userId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+            "minutesPerWeek": 120,
+            "countsAsTeaching": true,
+            "validFrom": "2026-08-17",
+            "validTo": "2026-12-18"
+          },
+          {
+            "userId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            "minutesPerWeek": 120,
+            "countsAsTeaching": true
+          },
+          {
+            "userId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+            "minutesPerWeek": 40,
+            "countsAsTeaching": false,
+            "validFrom": "2027-03-01",
+            "validTo": "2027-03-31"
+          },
+          {
+            "userId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+            "minutesPerWeek": 30,
+            "countsAsTeaching": false,
+            "validFrom": "2027-05-03",
+            "validTo": "2027-06-11"
+          }
+        ]
+      },
+      "report": {
+        "loadModel": "MINUTES",
+        "teachers": [
+          {
+            "userId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+            "employment": {
+              "userId": "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "CEC"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 1020,
+            "peakMinutesPerWeek": 1020,
+            "dutyMinutesPerWeek": 63,
+            "dutyPeakMinutesPerWeek": 120,
+            "countedDutyMinutesPerWeek": 53,
+            "countedMinutesPerWeek": 1073,
+            "balanceMinutesPerWeek": 7,
+            "percentOfTarget": 99.4,
+            "status": "OK",
+            "requirementCount": 1,
+            "dutyCount": 3,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 1020,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 94.4
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "req-cecilia",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 1020,
+                "timeMinutesPerWeek": 1020,
+                "minutesPerWeek": 1020,
+                "hoursPerYear": 686.8
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 686.8,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 42.3,
+              "teachingWeeksPerYear": 40.4,
+              "percentOfRegulated": 50.5
+            }
+          },
+          {
+            "userId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            "employment": {
+              "userId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "DAV"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 1020,
+            "peakMinutesPerWeek": 1020,
+            "dutyMinutesPerWeek": 120,
+            "dutyPeakMinutesPerWeek": 120,
+            "countedDutyMinutesPerWeek": 120,
+            "countedMinutesPerWeek": 1140,
+            "balanceMinutesPerWeek": -60,
+            "percentOfTarget": 105.6,
+            "status": "OK",
+            "requirementCount": 1,
+            "dutyCount": 1,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 1020,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 94.4
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "req-david",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 1020,
+                "timeMinutesPerWeek": 1020,
+                "minutesPerWeek": 1020,
+                "hoursPerYear": 686.8
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 686.8,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 80.8,
+              "teachingWeeksPerYear": 40.4,
+              "percentOfRegulated": 50.5
+            }
+          }
+        ],
+        "unstaffedRequirements": [],
+        "unqualifiedAssignments": [],
+        "qualificationsRecorded": false,
+        "subjectBottlenecks": [],
+        "bottlenecksComputed": false,
+        "totals": {
+          "teacherMinutesPerWeek": 2040,
+          "lessonMinutesPerWeek": 2040,
+          "dutyMinutesPerWeek": 183
+        }
+      }
+    },
+    {
+      "name": "Daterade uppdrag: a duty-only teacher with one dated uppdrag, a one-day uppdrag inside a lov week, and the totals",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN"
+        },
+        "employments": [],
+        "requirements": [],
+        "qualifications": [],
+        "closures": [
+          {
+            "startDate": "2027-02-22",
+            "endDate": "2027-02-26",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          }
+        ],
+        "duties": [
+          {
+            "userId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            "minutesPerWeek": 60,
+            "countsAsTeaching": false,
+            "validFrom": "2027-04-01"
+          },
+          {
+            "userId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+            "minutesPerWeek": 45,
+            "countsAsTeaching": true,
+            "validFrom": "2027-02-23",
+            "validTo": "2027-02-23"
+          }
+        ]
+      },
+      "report": {
+        "loadModel": "MINUTES",
+        "teachers": [
+          {
+            "userId": "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+            "employment": null,
+            "targetMinutesPerWeek": null,
+            "assignedMinutesPerWeek": 0,
+            "peakMinutesPerWeek": 0,
+            "dutyMinutesPerWeek": 1,
+            "dutyPeakMinutesPerWeek": 45,
+            "countedDutyMinutesPerWeek": 1,
+            "countedMinutesPerWeek": 1,
+            "balanceMinutesPerWeek": null,
+            "percentOfTarget": null,
+            "status": "NO_TARGET",
+            "requirementCount": 0,
+            "dutyCount": 1,
+            "subjects": [],
+            "assignments": [],
+            "annual": {
+              "assignedHoursPerYear": 0,
+              "regulatedHoursPerYear": null,
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0.6,
+              "teachingWeeksPerYear": 42,
+              "percentOfRegulated": null
+            }
+          },
+          {
+            "userId": "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            "employment": null,
+            "targetMinutesPerWeek": null,
+            "assignedMinutesPerWeek": 0,
+            "peakMinutesPerWeek": 0,
+            "dutyMinutesPerWeek": 16,
+            "dutyPeakMinutesPerWeek": 60,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 0,
+            "balanceMinutesPerWeek": null,
+            "percentOfTarget": null,
+            "status": "NO_TARGET",
+            "requirementCount": 0,
+            "dutyCount": 1,
+            "subjects": [],
+            "assignments": [],
+            "annual": {
+              "assignedHoursPerYear": 0,
+              "regulatedHoursPerYear": null,
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 11,
+              "teachingWeeksPerYear": 42,
+              "percentOfRegulated": null
+            }
+          }
+        ],
+        "unstaffedRequirements": [],
+        "unqualifiedAssignments": [],
+        "qualificationsRecorded": false,
+        "subjectBottlenecks": [],
+        "bottlenecksComputed": false,
+        "totals": {
+          "teacherMinutesPerWeek": 0,
+          "lessonMinutesPerWeek": 0,
+          "dutyMinutesPerWeek": 17
         }
       }
     }

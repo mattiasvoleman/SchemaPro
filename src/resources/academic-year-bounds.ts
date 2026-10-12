@@ -6,7 +6,8 @@ export type YearBounds = Pick<AcademicYear, 'startDate' | 'endDate'>;
 /**
  * The academic year's bounds, read so that the year cannot move until the
  * transaction that read them ends. For every writer of a dated period:
- * SchoolBreaksService, TeachingRequirementsService and the timplan import.
+ * SchoolBreaksService, TeachingRequirementsService, the timplan import,
+ * TeacherDutiesService and the uppdrag import (an uppdrag's Från and Till).
  *
  * WHY A LOCK. A period has to lie inside its year, and the rule is checked
  * from both ends: a period writer measures its dates against the bounds it

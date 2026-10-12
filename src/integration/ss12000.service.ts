@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
+import { dayOf } from '../staffing/duty-dates';
 import { dutyEmploymentSelect, toSs12000Duty, type Ss12000Duty } from './ss12000-duties';
 
 /**
@@ -217,7 +218,7 @@ export class Ss12000Service {
                 userId: { in: posts.map((post) => post.userId) },
                 studentGroup: { academicYearId: year.id },
               },
-              select: { userId: true, studentGroupId: true, updatedAt: true },
+              select: { userId: true, studentGroupId: true, updatedAt: true, validFrom: true, validTo: true },
               orderBy: [{ userId: 'asc' }, { studentGroupId: 'asc' }],
             });
       const bounds = {
@@ -245,7 +246,12 @@ export class Ss12000Service {
             },
             mentorships: mentorships
               .filter((duty) => duty.userId === post.userId && duty.studentGroupId !== null)
-              .map((duty) => ({ studentGroupId: duty.studentGroupId!, updatedAt: duty.updatedAt })),
+              .map((duty) => ({
+                studentGroupId: duty.studentGroupId!,
+                updatedAt: duty.updatedAt,
+                validFrom: dayOf(duty.validFrom ?? null),
+                validTo: dayOf(duty.validTo ?? null),
+              })),
           }),
         ),
       };

@@ -1,6 +1,7 @@
 import type { PrismaClient, TeacherQualificationKind } from '@prisma/client';
 import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
 import { isFullDay, isoWeekday, timeToString } from '../calendar/publish-days';
+import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
 import type { LoadEmployment } from '../staffing/teacher-load';
 import type { LessonStatusValue, PersonClosure, PersonDay, PersonLesson, Span } from './cover-rules';
 
@@ -154,15 +155,22 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
       select: { id: true, userId: true, startTime: true, endTime: true, type: true },
     })) ?? [];
   const slotIds = constraints.filter((row) => row?.type === 'UNAVAILABLE').map((row) => row.id);
-  const duties =
+  // The uppdrag each time belongs to, through its link (TeacherDutySlots,
+  // migration 20261017090000), with the dates it runs.
+  const links =
     slotIds.length > 0
-      ? ((await tx.teacherDuty.findMany({
-          where: { blockedConstraintId: { in: slotIds } },
-          // Never `note`.
-          select: { blockedConstraintId: true, label: true, academicYearId: true },
+      ? ((await tx.teacherDutySlot.findMany({
+          where: { availabilityConstraintId: { in: slotIds } },
+          // Never the duty's `note`.
+          select: {
+            availabilityConstraintId: true,
+            teacherDuty: { select: { label: true, academicYearId: true, validFrom: true, validTo: true } },
+          },
         })) ?? [])
       : [];
-  const dutyOf = new Map(duties.filter((duty) => duty?.blockedConstraintId).map((duty) => [duty.blockedConstraintId!, duty]));
+  const dutyOf = new Map(
+    links.filter((link) => link?.teacherDuty).map((link) => [link.availabilityConstraintId, link.teacherDuty]),
+  );
   for (const row of constraints) {
     const day = row?.userId ? days.get(row.userId) : undefined;
     if (!day || !row.startTime || !row.endTime) continue;
@@ -175,6 +183,9 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
     // An uppdrag's slot blocks its own läsår only (Fas 2): a duty of another
     // year leaves this day free.
     if (duty && options.academicYearId !== null && duty.academicYearId !== options.academicYearId) continue;
+    // And only on the days the uppdrag runs: Anna's mentor hour ends at the
+    // jullov, and in March the same weekly row keeps nobody busy.
+    if (duty && !dutyRunsOn({ validFrom: dayOf(duty.validFrom ?? null), validTo: dayOf(duty.validTo ?? null) }, date)) continue;
     const closure: PersonClosure = duty
       ? { span, kind: 'DUTY', label: duty.label }
       : { span, kind: 'UNAVAILABLE', label: null };

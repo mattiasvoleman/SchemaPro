@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { TeacherContractKind, TeacherDutyKind, UserRole } from '@prisma/client';
 import { normalizeDutyLabel } from '../staffing/duty-identity';
-import { isOnSolverGrid, type DutySlot } from '../staffing/duty-slot';
-import { minutesOf } from '../common/solver-grid';
+import { isOnSolverGrid, slotsOverlap, sortSlots, type DutySlot } from '../staffing/duty-slot';
 
 /**
  * Tjänster and uppdrag carried into the next läsår (staffing Fas 5): which
@@ -45,6 +44,17 @@ import { minutesOf } from '../common/solver-grid';
  * label or the promoted one. A target duty absorbs one source duty at most,
  * so two "Rastvakt" against one carry one.
  *
+ * DATES. An uppdrag whose Till falls before the source year's last day has
+ * ended — the mentor who handed 7B over at jul — and is NOT carried: the
+ * preview names it (ENDS_BEFORE_YEAR). Every other uppdrag is carried
+ * UNDATED, the whole new year: one held at the year's end is held next year
+ * from the start, and a Från inside the old year means nothing in the new
+ * one. A carried uppdrag that had a Från is listed (fromCleared), since the
+ * admin may want it to start later again.
+ *
+ * TIMES. Every time of a carried uppdrag on the solver's grid becomes a new
+ * time of the new year; one off the grid is dropped and named (slotDropped).
+ *
  * KNOWN, AND WHY IT STAYS. For a teacher with uppdrag but no post, a carried
  * uppdrag the admin deleted is carried again by a later run, and one renamed
  * beyond its label is carried beside it (flagged when the slots overlap):
@@ -80,8 +90,11 @@ export interface SourceDuty {
   subjectId: string | null;
   studentGroupId: string | null;
   note: string | null;
-  /** The linked slot in its guarded shape (weekly TEACHER UNAVAILABLE of the duty's teacher), or null. */
-  slot: DutySlot | null;
+  /** Från and Till as yyyy-mm-dd; null for the year's own bounds. */
+  validFrom: string | null;
+  validTo: string | null;
+  /** The linked times in their guarded shape (weekly TEACHER UNAVAILABLE of the duty's teacher), sorted. */
+  slots: DutySlot[];
 }
 
 export interface StaffingSource {
@@ -103,12 +116,14 @@ export interface ExistingStaffing {
     label: string;
     /** The target group's predecessor (its GroupKey), or `target:<id>` for a group with none, or null. */
     groupKey: string | null;
-    slot: DutySlot | null;
+    slots: DutySlot[];
   }[];
 }
 
 export interface StaffingCarryInput {
   staffing: StaffingSource;
+  /** The source year's last day, yyyy-mm-dd: an uppdrag whose Till is before it has ended. */
+  sourceYearEndDate: string;
   /** The source group's successor in the target, by GroupKey; null when it has none. */
   successorOf(sourceGroupId: string): { key: string; name: string } | null;
   /** The source group's name, for the flags; null for a group outside the source year. */
@@ -137,12 +152,18 @@ export interface StaffingWrites {
     subjectId: string | null;
     groupKey: string | null;
     note: string | null;
-    slot: DutySlot | null;
+    /** The new year's times; a carried uppdrag is undated there (see DATES above). */
+    slots: DutySlot[];
   }[];
 }
 
 export type EmploymentNotCarried = 'INACTIVE' | 'NOT_STAFF' | 'ALREADY_PRESENT';
-export type DutyNotCarried = 'GROUP_LEAVES' | 'TEACHER_NOT_CARRIED' | 'TEACHER_ALREADY_SET_UP' | 'ALREADY_PRESENT';
+export type DutyNotCarried =
+  | 'GROUP_LEAVES'
+  | 'TEACHER_NOT_CARRIED'
+  | 'TEACHER_ALREADY_SET_UP'
+  | 'ALREADY_PRESENT'
+  | 'ENDS_BEFORE_YEAR';
 
 interface DutyRef {
   sourceDutyId: string;
@@ -163,11 +184,15 @@ export interface StaffingCarryPreview {
   };
   duties: {
     carried: number;
+    /** The new year's times, every carried uppdrag's together. */
     slots: number;
     followedGroup: number;
     relabelled: { sourceDutyId: string; userId: string; from: string; to: string }[];
     groupDropped: (DutyRef & { groupName: string | null })[];
+    /** One entry per time left behind, so a rastvakt that lost one of three times says which uppdrag. */
     slotDropped: (DutyRef & { reason: 'OFF_GRID' })[];
+    /** A carried uppdrag that started during the source year: it runs the whole new year. */
+    fromCleared: (DutyRef & { validFrom: string })[];
     /** A carried slot that overlaps a slot the teacher already has in the target. */
     overlapsTargetDuty: (DutyRef & { targetDutyId: string })[];
     /** A carried mentorskap whose class already has one in the target, held by anyone. */
@@ -191,7 +216,9 @@ export type StaffingProblemCode =
   | 'STAFFING_PER_YEAR_TERMS_CARRIED'
   | 'STAFFING_SIGNATURE_TAKEN'
   | 'STAFFING_ALREADY_PRESENT'
-  | 'STAFFING_SLOTS_OVER_LESSONS';
+  | 'STAFFING_SLOTS_OVER_LESSONS'
+  | 'STAFFING_DUTY_ENDED'
+  | 'STAFFING_DUTY_FROM_CLEARED';
 
 /** Every staffing problem is advice: none blocks. Params hold counts and group names, never a teacher's id. */
 export interface StaffingProblem {
@@ -226,11 +253,6 @@ export function promoteLabel(label: string, from: string, to: string): string {
   return [...promoted].length > LABEL_MAX ? label : promoted;
 }
 
-const overlaps = (a: DutySlot, b: { dayOfWeek: number; startTime: string; endTime: string }) =>
-  a.dayOfWeek === b.dayOfWeek &&
-  minutesOf(a.startTime) < minutesOf(b.endTime) &&
-  minutesOf(b.startTime) < minutesOf(a.endTime);
-
 const clockOf = (time: string) => time.slice(0, 5);
 
 export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan {
@@ -244,6 +266,7 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       relabelled: [],
       groupDropped: [],
       slotDropped: [],
+      fromCleared: [],
       overlapsTargetDuty: [],
       successorHasMentor: [],
       notCarried: [],
@@ -313,6 +336,12 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       notCarriedPeople.add(duty.userId);
       continue;
     }
+    // Ended before the year did: whoever holds it, and whatever its class does,
+    // it is not part of anybody's next year.
+    if (duty.validTo !== null && duty.validTo < input.sourceYearEndDate) {
+      preview.duties.notCarried.push({ ...ref, groupName: sourceGroupName, reason: 'ENDS_BEFORE_YEAR' });
+      continue;
+    }
     // A mentorskap whose class leaves is named as left behind before asking
     // whether its teacher is set up: it would not be carried either way, and
     // "already set up" would hide the one hole the admin has to fill.
@@ -364,19 +393,24 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
         preview.duties.relabelled.push({ sourceDutyId: duty.id, userId: duty.userId, from: duty.label, to: label });
       }
     }
-    let slot: DutySlot | null = null;
-    if (duty.slot) {
-      if (isOnSolverGrid(duty.slot)) {
-        slot = { dayOfWeek: duty.slot.dayOfWeek, startTime: clockOf(duty.slot.startTime), endTime: clockOf(duty.slot.endTime) };
+    const slots: DutySlot[] = [];
+    for (const slot of sortSlots(duty.slots)) {
+      if (isOnSolverGrid(slot)) {
+        slots.push({ dayOfWeek: slot.dayOfWeek, startTime: clockOf(slot.startTime), endTime: clockOf(slot.endTime) });
         preview.duties.slots++;
       } else {
         preview.duties.slotDropped.push({ ...ref, reason: 'OFF_GRID' });
       }
     }
-    if (existing && slot) {
-      const near = existing.duties.find((candidate) => candidate.userId === duty.userId && candidate.slot && overlaps(slot!, candidate.slot));
+    if (existing && slots.length > 0) {
+      const near = existing.duties.find(
+        (candidate) =>
+          candidate.userId === duty.userId &&
+          candidate.slots.some((held) => slots.some((slot) => slotsOverlap(slot, held))),
+      );
       if (near) preview.duties.overlapsTargetDuty.push({ ...ref, targetDutyId: near.id });
     }
+    if (duty.validFrom !== null) preview.duties.fromCleared.push({ ...ref, validFrom: duty.validFrom });
     if (existing && successor && duty.kind === 'MENTORSKAP' && mentoredGroups.has(successor.key)) {
       preview.duties.successorHasMentor.push({ ...ref, groupName: successor.name });
     }
@@ -390,7 +424,7 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       subjectId: duty.subjectId,
       groupKey: successor?.key ?? null,
       note: duty.note,
-      slot,
+      slots,
     });
     preview.duties.carried++;
     const sum = carriedPerTeacher.get(duty.userId) ?? { duties: 0, minutes: 0 };
@@ -417,7 +451,12 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
     add('STAFFING_DUTY_GROUP_DROPPED', { duties: preview.duties.groupDropped.length, groups: [...leaving.dropped].sort() });
   }
   if (notCarriedPeople.size > 0) add('STAFFING_TEACHERS_NOT_CARRIED', { teachers: notCarriedPeople.size });
-  if (preview.duties.slotDropped.length > 0) add('STAFFING_SLOT_OFF_GRID', { duties: preview.duties.slotDropped.length });
+  if (preview.duties.slotDropped.length > 0) {
+    add('STAFFING_SLOT_OFF_GRID', { duties: new Set(preview.duties.slotDropped.map((row) => row.sourceDutyId)).size });
+  }
+  const ended = preview.duties.notCarried.filter((row) => row.reason === 'ENDS_BEFORE_YEAR').length;
+  if (ended > 0) add('STAFFING_DUTY_ENDED', { duties: ended });
+  if (preview.duties.fromCleared.length > 0) add('STAFFING_DUTY_FROM_CLEARED', { duties: preview.duties.fromCleared.length });
   if (preview.employments.withReduction.length > 0 || preview.employments.withTargetOverride.length > 0) {
     add('STAFFING_PER_YEAR_TERMS_CARRIED', {
       reductions: preview.employments.withReduction.length,
@@ -456,10 +495,13 @@ export function slotsOverLessons(writes: StaffingWrites, lessons: readonly Targe
   let duties = 0;
   const hit = new Set<number>();
   for (const duty of writes.duties) {
-    if (!duty.slot) continue;
+    if (duty.slots.length === 0) continue;
     let any = false;
     lessons.forEach((lesson, index) => {
-      if ((lesson.teacherId === duty.userId || lesson.coTeacherId === duty.userId) && overlaps(duty.slot!, lesson)) {
+      if (
+        (lesson.teacherId === duty.userId || lesson.coTeacherId === duty.userId) &&
+        duty.slots.some((slot) => slotsOverlap(slot, lesson))
+      ) {
         hit.add(index);
         any = true;
       }
@@ -471,8 +513,8 @@ export function slotsOverLessons(writes: StaffingWrites, lessons: readonly Targe
 
 /**
  * The writes in a fixed order, for a hash: posts by teacher, uppdrag by
- * their source row, slot times as HH:MM. The order the rows were read in
- * never changes the hash.
+ * their source row, times sorted and as HH:MM. The order the rows were read
+ * in never changes the hash.
  */
 export function stableStaffing(writes: StaffingWrites): StaffingWrites {
   return {
@@ -481,9 +523,11 @@ export function stableStaffing(writes: StaffingWrites): StaffingWrites {
       .sort((a, b) => (a.sourceDutyId < b.sourceDutyId ? -1 : a.sourceDutyId > b.sourceDutyId ? 1 : 0))
       .map((duty) => ({
         ...duty,
-        slot: duty.slot
-          ? { dayOfWeek: duty.slot.dayOfWeek, startTime: clockOf(duty.slot.startTime), endTime: clockOf(duty.slot.endTime) }
-          : null,
+        slots: sortSlots(duty.slots).map((slot) => ({
+          dayOfWeek: slot.dayOfWeek,
+          startTime: clockOf(slot.startTime),
+          endTime: clockOf(slot.endTime),
+        })),
       })),
   };
 }

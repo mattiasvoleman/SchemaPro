@@ -8,6 +8,7 @@ import type {
   StudentGroupKind,
 } from '@prisma/client';
 import type { FrameWindow } from '../common/year-rollover';
+import { sortSlots, type DutySlot } from '../staffing/duty-slot';
 import type { LoadQualification } from '../staffing/teacher-load';
 import { readDecidedTimplans, type DecidedTimplan } from '../timplan/year-timplans';
 import { pendingMoves, planActivation, readActivationSource } from './activation-plan';
@@ -353,13 +354,15 @@ export async function readRolloverSource(
     staffing = await readSourceStaffing(tx, sourceYearId);
     employments = staffing.employments.length;
     duties = staffing.duties.length;
-    dutyBlockedSlots = staffing.duties.filter((duty) => duty.slot !== null).length;
+    dutyBlockedSlots = staffing.duties.reduce((sum, duty) => sum + duty.slots.length, 0);
     mentorskap = staffing.duties.filter((duty) => duty.kind === 'MENTORSKAP').length;
   } else {
     employments = await tx.teacherEmployment.count({ where: { academicYearId: sourceYearId } });
     duties = await tx.teacherDuty.count({ where: { academicYearId: sourceYearId } });
-    dutyBlockedSlots = await tx.teacherDuty.count({
-      where: { academicYearId: sourceYearId, blockedConstraintId: { not: null } },
+    // Every time an uppdrag of the year holds: one link row each
+    // (TeacherDutySlots, migration 20261017090000).
+    dutyBlockedSlots = await tx.teacherDutySlot.count({
+      where: { teacherDuty: { is: { academicYearId: sourceYearId } } },
     });
     mentorskap = await tx.teacherDuty.count({
       where: { academicYearId: sourceYearId, kind: 'MENTORSKAP' },
@@ -480,10 +483,11 @@ const slotClock = (value: Date): string =>
  * the role and active flag of every person they name.
  *
  * Shared by the rollover and by the carry into an already rolled year, and
- * read in the caller's transaction after its locks. A slot is read only in
+ * read in the caller's transaction after its locks. A time is read only in
  * the shape the Fas 2 triggers guard — a weekly UNAVAILABLE TEACHER row of
- * the duty's own teacher; anything else reads as no slot, so a carry never
- * copies a shape the triggers would refuse. The people read is by id, not a
+ * the duty's own teacher; anything else reads as no time, so a carry never
+ * copies a shape the triggers would refuse. The times come through the link
+ * table, every one of them (migration 20261017090000). The people read is by id, not a
  * roster: whose rows these are, not who sits in which class.
  */
 export async function readSourceStaffing(tx: PrismaClient, yearId: string): Promise<StaffingSource> {
@@ -513,8 +517,14 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       subjectId: true,
       studentGroupId: true,
       note: true,
-      blockedConstraint: {
-        select: { resourceType: true, type: true, userId: true, dayOfWeek: true, date: true, startTime: true, endTime: true },
+      validFrom: true,
+      validTo: true,
+      slots: {
+        select: {
+          availabilityConstraint: {
+            select: { resourceType: true, type: true, userId: true, dayOfWeek: true, date: true, startTime: true, endTime: true },
+          },
+        },
       },
     },
     orderBy: { id: 'asc' },
@@ -537,15 +547,21 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       note: row.note,
     })),
     duties: (dutyRows ?? []).map((row): SourceDuty => {
-      const slot = row.blockedConstraint;
-      const guarded =
-        slot !== null &&
-        slot !== undefined &&
-        slot.resourceType === 'TEACHER' &&
-        slot.type === 'UNAVAILABLE' &&
-        slot.userId === row.userId &&
-        slot.dayOfWeek !== null &&
-        slot.date === null;
+      const slots: DutySlot[] = [];
+      for (const link of row.slots ?? []) {
+        const slot = link?.availabilityConstraint;
+        const guarded =
+          slot !== null &&
+          slot !== undefined &&
+          slot.resourceType === 'TEACHER' &&
+          slot.type === 'UNAVAILABLE' &&
+          slot.userId === row.userId &&
+          slot.dayOfWeek !== null &&
+          slot.date === null;
+        if (guarded) {
+          slots.push({ dayOfWeek: slot.dayOfWeek as number, startTime: slotClock(slot.startTime), endTime: slotClock(slot.endTime) });
+        }
+      }
       return {
         id: row.id,
         userId: row.userId,
@@ -556,9 +572,9 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
         subjectId: row.subjectId,
         studentGroupId: row.studentGroupId,
         note: row.note,
-        slot: guarded
-          ? { dayOfWeek: slot.dayOfWeek as number, startTime: slotClock(slot.startTime), endTime: slotClock(slot.endTime) }
-          : null,
+        validFrom: row.validFrom ? asDay(row.validFrom) : null,
+        validTo: row.validTo ? asDay(row.validTo) : null,
+        slots: sortSlots(slots),
       };
     }),
     staff: new Map((people ?? []).map((person) => [person.id, { role: person.role, isActive: person.isActive }])),

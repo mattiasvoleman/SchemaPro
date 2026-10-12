@@ -239,7 +239,7 @@ describe('StaffingLoadService', () => {
 
     expect(tx.teacherDuty.findMany).toHaveBeenCalledWith({
       where: { academicYearId: YEAR_ID },
-      select: { userId: true, minutesPerWeek: true, countsAsTeaching: true },
+      select: { userId: true, minutesPerWeek: true, countsAsTeaching: true, validFrom: true, validTo: true },
     });
     expect(report.teachers.find((row) => row.userId === ME)).toMatchObject({
       assignedMinutesPerWeek: 600,
@@ -254,6 +254,25 @@ describe('StaffingLoadService', () => {
       lessonMinutesPerWeek: 600,
       dutyMinutesPerWeek: 180,
     });
+  });
+
+  it('reads an uppdrag’s Från and Till into the report as days, so a dated one counts the weeks it runs and an undated one all of them', async () => {
+    tx.teachingRequirement.findMany.mockResolvedValue([]);
+    tx.teacherDuty.findMany.mockResolvedValue([
+      // Until the jullov: a share of the year.
+      { userId: ME, minutesPerWeek: 90, countsAsTeaching: false, validFrom: null, validTo: new Date('2026-12-18T00:00:00.000Z') },
+      { userId: COLLEAGUE, minutesPerWeek: 90, countsAsTeaching: false, validFrom: null, validTo: null },
+    ]);
+
+    const report = await service.load(YEAR_ID, 'planned', testUser());
+
+    const mine = report.teachers.find((row) => row.userId === ME)!;
+    const theirs = report.teachers.find((row) => row.userId === COLLEAGUE)!;
+    expect(theirs).toMatchObject({ dutyMinutesPerWeek: 90, dutyPeakMinutesPerWeek: 90 });
+    expect(mine.dutyPeakMinutesPerWeek).toBe(90);
+    expect(mine.dutyMinutesPerWeek).toBeGreaterThan(0);
+    expect(mine.dutyMinutesPerWeek).toBeLessThan(90);
+    expect(mine.annual.dutyHoursPerYear).toBeLessThan(theirs.annual.dutyHoursPerYear);
   });
 
   it('under MINUTES reads no factor at all and charges the minutes', async () => {

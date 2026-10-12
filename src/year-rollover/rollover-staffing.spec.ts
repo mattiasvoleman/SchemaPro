@@ -41,7 +41,9 @@ const duty = (userId: string, kind: TeacherDutyKind, label: string, extra: Parti
   subjectId: null,
   studentGroupId: null,
   note: null,
-  slot: null,
+  validFrom: null,
+  validTo: null,
+  slots: [],
   ...extra,
 });
 
@@ -64,6 +66,7 @@ function input(
         [PUPIL, { role: 'STUDENT', isActive: true }],
       ]),
     },
+    sourceYearEndDate: '2027-06-11',
     successorOf: (id) => SUCCESSORS[id] ?? null,
     groupName: (id) => NAMES[id] ?? null,
     existing,
@@ -112,7 +115,7 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
             countsAsTeaching: true,
             subjectId: 'ma',
             note: 'note',
-            slot: { dayOfWeek: 3, startTime: '13:00', endTime: '13:45' },
+            slots: [{ dayOfWeek: 3, startTime: '13:00', endTime: '13:45' }],
           }),
         ],
       ),
@@ -122,7 +125,7 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
       { sourceEmploymentId: `e-${T2}`, userId: T2, employmentPercent: '100.000', reductionPercent: '0.000', contractKind: 'FERIE', teachingTargetMinutesPerWeek: 700, signature: null, note: null },
     ]);
     expect(plan.writes.duties).toEqual([
-      expect.objectContaining({ userId: T1, kind: 'AMNESANSVAR', label: 'Ämnesansvar Ma', minutesPerWeek: 40, countsAsTeaching: true, subjectId: 'ma', note: 'note', groupKey: null, slot: { dayOfWeek: 3, startTime: '13:00', endTime: '13:45' } }),
+      expect.objectContaining({ userId: T1, kind: 'AMNESANSVAR', label: 'Ämnesansvar Ma', minutesPerWeek: 40, countsAsTeaching: true, subjectId: 'ma', note: 'note', groupKey: null, slots: [{ dayOfWeek: 3, startTime: '13:00', endTime: '13:45' }] }),
     ]);
     expect(plan.preview.employments).toMatchObject({ carried: 2, withReduction: [T1], withTargetOverride: [T2] });
     expect(plan.problems).toEqual([{ code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1 } }]);
@@ -176,16 +179,80 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
       input(
         [],
         [
-          duty(T1, 'RASTVAKT', 'Rast', { slot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' } }),
-          duty(T1, 'APT_KONFERENS', 'APT', { slot: { dayOfWeek: 2, startTime: '15:02', endTime: '16:00' } }),
-          duty(T1, 'ANNAT', 'Sekund', { slot: { dayOfWeek: 4, startTime: '08:00:30', endTime: '09:00' } }),
+          duty(T1, 'RASTVAKT', 'Rast', { slots: [{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }] }),
+          duty(T1, 'APT_KONFERENS', 'APT', { slots: [{ dayOfWeek: 2, startTime: '15:02', endTime: '16:00' }] }),
+          duty(T1, 'ANNAT', 'Sekund', { slots: [{ dayOfWeek: 4, startTime: '08:00:30', endTime: '09:00' }] }),
         ],
       ),
     );
-    expect(plan.writes.duties.map((row) => row.slot)).toEqual([{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }, null, null]);
+    expect(plan.writes.duties.map((row) => row.slots)).toEqual([[{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }], [], []]);
     expect(plan.preview.duties).toMatchObject({ carried: 3, slots: 1 });
     expect(plan.preview.duties.slotDropped.map((row) => row.label)).toEqual(['APT', 'Sekund']);
     expect(plan.problems).toEqual([{ code: 'STAFFING_SLOT_OFF_GRID', blocking: false, params: { duties: 2 } }]);
+  });
+
+  it('carries every time of a rastvakt on Monday, Wednesday and Friday, Monday first, and names the one time off the grid once per uppdrag', () => {
+    const plan = planStaffingCarry(
+      input(
+        [],
+        [
+          duty(T1, 'RASTVAKT', 'Rastvakt', {
+            slots: [
+              { dayOfWeek: 5, startTime: '10:00', endTime: '10:20' },
+              { dayOfWeek: 1, startTime: '10:00', endTime: '10:20' },
+              { dayOfWeek: 3, startTime: '10:00:30', endTime: '10:20' },
+              { dayOfWeek: 3, startTime: '12:00', endTime: '12:20' },
+            ],
+          }),
+        ],
+      ),
+    );
+    expect(plan.writes.duties.map((row) => row.slots)).toEqual([
+      [
+        { dayOfWeek: 1, startTime: '10:00', endTime: '10:20' },
+        { dayOfWeek: 3, startTime: '12:00', endTime: '12:20' },
+        { dayOfWeek: 5, startTime: '10:00', endTime: '10:20' },
+      ],
+    ]);
+    expect(plan.preview.duties).toMatchObject({ carried: 1, slots: 3 });
+    expect(plan.preview.duties.slotDropped.map((row) => row.label)).toEqual(['Rastvakt']);
+    // One uppdrag lost a time: the count is of uppdrag, as the sentence says.
+    expect(plan.problems).toEqual([{ code: 'STAFFING_SLOT_OFF_GRID', blocking: false, params: { duties: 1 } }]);
+  });
+
+  it('leaves behind an uppdrag whose Till ended before the year did, and names it, whatever its class does', () => {
+    // Anna handed 7B over at jul; Bertil holds it to the end of the year.
+    const plan = planStaffingCarry(
+      input(
+        [post(T1), post(T2)],
+        [
+          duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B, validTo: '2026-12-18' }),
+          duty(T2, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B, validFrom: '2027-01-07' }),
+          // Till on the year's last day has not ended.
+          duty(T2, 'RASTVAKT', 'Rastvakt VT', { validFrom: '2027-01-07', validTo: '2027-06-11' }),
+          // Ended, on a class that leaves: the ending is the reason given.
+          duty(T1, 'MENTORSKAP', 'Mentor 9A', { studentGroupId: G9A, validTo: '2027-03-01' }),
+        ],
+      ),
+    );
+    expect(plan.preview.duties.notCarried.map((row) => [row.label, row.userId, row.reason])).toEqual([
+      ['Mentor 7B', T1, 'ENDS_BEFORE_YEAR'],
+      ['Mentor 9A', T1, 'ENDS_BEFORE_YEAR'],
+    ]);
+    expect(plan.writes.duties.map((row) => [row.userId, row.label, row.groupKey])).toEqual([
+      [T2, 'Mentor 8B', G7B],
+      [T2, 'Rastvakt VT', null],
+    ]);
+    // Carried undated: the writes hold no dates at all.
+    expect(plan.writes.duties.every((row) => !('validFrom' in row) && !('validTo' in row))).toBe(true);
+    expect(plan.preview.duties.fromCleared.map((row) => [row.label, row.validFrom])).toEqual([
+      ['Mentor 7B', '2027-01-07'],
+      ['Rastvakt VT', '2027-01-07'],
+    ]);
+    expect(plan.problems.map((problem) => [problem.code, problem.params])).toEqual([
+      ['STAFFING_DUTY_ENDED', { duties: 2 }],
+      ['STAFFING_DUTY_FROM_CLEARED', { duties: 2 }],
+    ]);
   });
 
   it('sums each teacher’s carried uppdrag, sorted by teacher', () => {
@@ -217,17 +284,17 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
   });
 
   it('matches uppdrag one to one: two source "Rastvakt" against one in the target carry one', () => {
-    const existing = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'RASTVAKT' as const, label: ' rastvakt', groupKey: null, slot: null }] };
+    const existing = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'RASTVAKT' as const, label: ' rastvakt', groupKey: null, slots: [] }] };
     const plan = planStaffingCarry(input([], [duty(T1, 'RASTVAKT', 'Rastvakt'), duty(T1, 'RASTVAKT', 'Rastvakt')], existing));
     expect(plan.writes.duties).toHaveLength(1);
     expect(plan.preview.duties.notCarried.map((row) => row.reason)).toEqual(['ALREADY_PRESENT']);
   });
 
   it('finds a mentorskap on the successor group after the class was renamed, and does not take another class’s bare "Mentor" for it', () => {
-    const renamed = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor 8B (bytt namn)', groupKey: G7B, slot: null }] };
+    const renamed = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor 8B (bytt namn)', groupKey: G7B, slots: [] }] };
     expect(planStaffingCarry(input([], [duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B })], renamed)).writes.duties).toEqual([]);
 
-    const otherClass = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor', groupKey: 'target:8c', slot: null }] };
+    const otherClass = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor', groupKey: 'target:8c', slots: [] }] };
     const plan = planStaffingCarry(input([], [duty(T1, 'MENTORSKAP', 'Mentor', { studentGroupId: G7B })], otherClass));
     expect(plan.writes.duties).toEqual([expect.objectContaining({ label: 'Mentor', groupKey: G7B })]);
   });
@@ -235,7 +302,7 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
   it('takes a target uppdrag on the successor group for another kind’s source only when the label matches too: a mentorskap is its class, an "Elevrådsansvar" is not a "Klassresa"', () => {
     const existing = {
       ...none(),
-      duties: [{ id: 't-resa', userId: T1, kind: 'ANNAT' as const, label: 'Klassresa 8B', groupKey: G7B, slot: null }],
+      duties: [{ id: 't-resa', userId: T1, kind: 'ANNAT' as const, label: 'Klassresa 8B', groupKey: G7B, slots: [] }],
     };
     const plan = planStaffingCarry(
       input([], [duty(T1, 'ANNAT', 'Elevrådsansvar 7B', { studentGroupId: G7B }), duty(T1, 'ANNAT', 'Klassresa 7B', { studentGroupId: G7B })], existing),
@@ -265,7 +332,7 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
     expect(first.writes.duties).toHaveLength(2);
     const keptRastvakt: ExistingStaffing = {
       ...none(),
-      duties: [{ id: 't1', userId: T1, kind: 'RASTVAKT', label: 'Rastvakt', groupKey: null, slot: null }],
+      duties: [{ id: 't1', userId: T1, kind: 'RASTVAKT', label: 'Rastvakt', groupKey: null, slots: [] }],
     };
     expect(planStaffingCarry({ ...source, existing: keptRastvakt }).writes.duties).toEqual([
       expect.objectContaining({ label: 'APT' }),
@@ -273,7 +340,7 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
   });
 
   it('matches a promoted label too: "Mentor 7B" against a groupless "Mentor 8B"', () => {
-    const existing = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor 8B', groupKey: null, slot: null }] };
+    const existing = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor 8B', groupKey: null, slots: [] }] };
     expect(planStaffingCarry(input([], [duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B })], existing)).writes.duties).toEqual([]);
   });
 
@@ -281,15 +348,15 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
     const existing = {
       ...none(),
       duties: [
-        { id: 't-apt', userId: T1, kind: 'APT_KONFERENS' as const, label: 'Konferens', groupKey: null, slot: { dayOfWeek: 2, startTime: '15:00', endTime: '17:00' } },
-        { id: 't-mentor', userId: T2, kind: 'MENTORSKAP' as const, label: 'Mentor 8B', groupKey: G7B, slot: null },
+        { id: 't-apt', userId: T1, kind: 'APT_KONFERENS' as const, label: 'Konferens', groupKey: null, slots: [{ dayOfWeek: 2, startTime: '15:00', endTime: '17:00' }] },
+        { id: 't-mentor', userId: T2, kind: 'MENTORSKAP' as const, label: 'Mentor 8B', groupKey: G7B, slots: [] },
       ],
     };
     const plan = planStaffingCarry(
       input(
         [],
         [
-          duty(T1, 'APT_KONFERENS', 'APT', { slot: { dayOfWeek: 2, startTime: '16:00', endTime: '17:00' } }),
+          duty(T1, 'APT_KONFERENS', 'APT', { slots: [{ dayOfWeek: 2, startTime: '16:00', endTime: '17:00' }] }),
           duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B }),
         ],
         existing,
@@ -304,8 +371,8 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
     const writes: StaffingWrites = {
       employments: [],
       duties: [
-        { sourceDutyId: 'a', userId: T1, kind: 'RASTVAKT', label: 'R', minutesPerWeek: 20, countsAsTeaching: false, subjectId: null, groupKey: null, note: null, slot: { dayOfWeek: 1, startTime: '10:00', endTime: '10:30' } },
-        { sourceDutyId: 'b', userId: T2, kind: 'RASTVAKT', label: 'R', minutesPerWeek: 20, countsAsTeaching: false, subjectId: null, groupKey: null, note: null, slot: { dayOfWeek: 1, startTime: '12:00', endTime: '12:30' } },
+        { sourceDutyId: 'a', userId: T1, kind: 'RASTVAKT', label: 'R', minutesPerWeek: 20, countsAsTeaching: false, subjectId: null, groupKey: null, note: null, slots: [{ dayOfWeek: 1, startTime: '10:00', endTime: '10:30' }] },
+        { sourceDutyId: 'b', userId: T2, kind: 'RASTVAKT', label: 'R', minutesPerWeek: 20, countsAsTeaching: false, subjectId: null, groupKey: null, note: null, slots: [{ dayOfWeek: 1, startTime: '12:00', endTime: '12:30' }] },
       ],
     };
     const lessons = [
@@ -321,14 +388,14 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
   it('plans nothing over its own result (idempotent)', () => {
     const source = input(
       [post(T1, { signature: 'AB' })],
-      [duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B, slot: { dayOfWeek: 1, startTime: '08:00', endTime: '08:30' } }), duty(T2, 'RASTVAKT', 'Rast')],
+      [duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B, slots: [{ dayOfWeek: 1, startTime: '08:00', endTime: '08:30' }] }), duty(T2, 'RASTVAKT', 'Rast')],
       none(),
     );
     const first = planStaffingCarry(source);
     const after: ExistingStaffing = {
       employmentUserIds: new Set(first.writes.employments.map((row) => row.userId)),
       signatures: new Map(first.writes.employments.filter((row) => row.signature).map((row) => [row.signature!, row.userId])),
-      duties: first.writes.duties.map((row, index) => ({ id: `t${index}`, userId: row.userId, kind: row.kind, label: row.label, groupKey: row.groupKey, slot: row.slot })),
+      duties: first.writes.duties.map((row, index) => ({ id: `t${index}`, userId: row.userId, kind: row.kind, label: row.label, groupKey: row.groupKey, slots: row.slots })),
     };
     const second = planStaffingCarry({ ...source, existing: after });
     expect(second.writes).toEqual({ employments: [], duties: [] });

@@ -155,6 +155,29 @@ describe('CoverSuggestionsService', () => {
     expect(away.reasons.map((r) => r.code)).not.toContain('RELEASED');
   });
 
+  it('candidates: the class’s mentor is the one holding the mentorskap on the lesson’s day, not one whose Till has passed', async () => {
+    // 2026-10-14: S was 7A's mentor until 2026-09-30, a mentorship that names
+    // nobody that day; from 2026-10-01 it is S again under a new uppdrag.
+    const mentorship = (validFrom: string | null, validTo: string | null) => ({
+      userId: S,
+      studentGroupId: '7a',
+      validFrom: validFrom ? new Date(`${validFrom}T00:00:00Z`) : null,
+      validTo: validTo ? new Date(`${validTo}T00:00:00Z`) : null,
+    });
+    const reasonsOfS = async () =>
+      (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!.reasons.map((r) => r.code);
+
+    tx.teacherDuty.findMany.mockResolvedValue([mentorship(null, '2026-09-30')]);
+    expect(await reasonsOfS()).not.toContain('MENTOR');
+    tx.teacherDuty.findMany.mockResolvedValue([mentorship('2026-10-14', null)]);
+    expect(await reasonsOfS()).toContain('MENTOR');
+    tx.teacherDuty.findMany.mockResolvedValue([mentorship(null, null)]);
+    expect(await reasonsOfS()).toContain('MENTOR');
+    expect(tx.teacherDuty.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ select: { userId: true, studentGroupId: true, validFrom: true, validTo: true } }),
+    );
+  });
+
   it('candidates under LAST_RESORT: the pool after every colleague, whatever the points', async () => {
     const answer = await service.candidates(LESSON, testUser());
     expect(answer.candidates.map((c) => c.kind)).toEqual(['STAFF', 'POOL']);

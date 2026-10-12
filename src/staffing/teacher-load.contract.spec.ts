@@ -61,6 +61,22 @@ describe('the load report agrees with the shared fixture', () => {
     ).toBe(true);
   });
 
+  it('reaches every dated-uppdrag branch (20261017090000): Från only, Till only, both, counted and not, and an uppdrag’s peak above its standardvecka', () => {
+    const duties = cases.flatMap((c) => c.input.duties);
+    expect(duties.some((d) => d.validFrom && !d.validTo)).toBe(true);
+    expect(duties.some((d) => !d.validFrom && d.validTo)).toBe(true);
+    expect(duties.some((d) => d.validFrom && d.validTo)).toBe(true);
+    expect(duties.some((d) => (d.validFrom || d.validTo) && d.countsAsTeaching)).toBe(true);
+    expect(duties.some((d) => (d.validFrom || d.validTo) && !d.countsAsTeaching)).toBe(true);
+    const teachers = cases.flatMap((c) => c.report.teachers);
+    expect(teachers.some((t) => t.dutyPeakMinutesPerWeek > t.dutyMinutesPerWeek)).toBe(true);
+    // Undated only: the peak IS the standardvecka, as every Fas 2 case shows.
+    for (const c of cases) {
+      if (c.input.duties.some((d) => d.validFrom || d.validTo)) continue;
+      for (const t of c.report.teachers) expect(t.dutyPeakMinutesPerWeek).toBe(t.dutyMinutesPerWeek);
+    }
+  });
+
   it('reaches a split row, every week, odd weeks, co-taught and unstaffed', () => {
     const split = cases.flatMap((c) => c.input.requirements).filter((r) => isMixed(r));
     expect(split.some((r) => r.recurrence === 'ALL_WEEKS' && r.teacherId !== null)).toBe(true);

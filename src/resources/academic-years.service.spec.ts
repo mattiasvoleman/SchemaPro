@@ -290,6 +290,8 @@ describe('AcademicYearsService', () => {
         Promise.resolve(lockingRead(YEARS, years, call)),
       );
       Object.assign(tx, { $queryRaw: queryRaw });
+      // No dated uppdrag unless a test says so (givenDuties).
+      tx.teacherDuty.count.mockResolvedValue(0);
     });
 
     /** The year row as stored, found by its own id and by nothing else. */
@@ -524,6 +526,59 @@ describe('AcademicYearsService', () => {
       expect(tx.academicYear.update).not.toHaveBeenCalled();
     });
 
+    it('counts an uppdrag whose Från or Till the new bounds leave outside, and only this year’s', async () => {
+      // Its dates are measured against the same year (20261017090000); one
+      // left outside counts weeks of no year and cannot be saved back as it is.
+      givenYear();
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
+      const duties = [
+        // Stranded: Till before the new start.
+        { academicYearId: YEAR_ID, validFrom: null, validTo: '2026-09-01' },
+        // Inside the narrowed year, and an undated one that follows the year.
+        { academicYearId: YEAR_ID, validFrom: '2027-01-07', validTo: null },
+        { academicYearId: YEAR_ID, validFrom: null, validTo: null },
+        // Another year's.
+        { academicYearId: OTHER_YEAR_ID, validFrom: null, validTo: '2026-06-01' },
+      ];
+      tx.teacherDuty.count.mockImplementation(
+        (args: { where: { academicYearId: string; OR: Record<string, Record<string, Date>>[] } }) =>
+          Promise.resolve(
+            duties.filter(
+              (row) =>
+                row.academicYearId === args.where.academicYearId &&
+                args.where.OR.some((branch) =>
+                  Object.entries(branch).every(([column, condition]) => {
+                    const value = row[column as 'validFrom' | 'validTo'];
+                    if (value === null) return false;
+                    return Object.entries(condition).every(([operator, bound]) =>
+                      operator === 'lt' ? date(value) < bound : date(value) > bound,
+                    );
+                  }),
+                ),
+            ).length,
+          ),
+      );
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(stranding('1 uppdrag', '2026-09-14', '2027-06-11'));
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('names all three, comma-separated, when requirements, lov and uppdrag would all be stranded', async () => {
+      givenYear();
+      tx.teachingRequirement.count.mockResolvedValue(2);
+      tx.schoolBreak.count.mockResolvedValue(1);
+      tx.teacherDuty.count.mockResolvedValue(4);
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(
+        stranding('2 teaching requirements, 1 break, 4 uppdrag', '2026-09-14', '2027-06-11'),
+      );
+    });
+
     it('names both when a year move would strand periods and lov together', async () => {
       // Two counts rather than one total: "4 rader" tells nobody where to look,
       // and the two live on different pages.
@@ -736,6 +791,7 @@ describe('AcademicYearsService', () => {
       });
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);
+      tx.teacherDuty.count.mockResolvedValue(0);
 
       await expect(service.update(YEAR_ID, { startDate: '2027-06-11' }, testUser())).rejects.toThrow(
         new BadRequestException('startDate: läsåret fortsätter 2026/27 och måste börja efter att det slutar (2027-06-11).'),

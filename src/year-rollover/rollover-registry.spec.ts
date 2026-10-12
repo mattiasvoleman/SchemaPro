@@ -218,7 +218,8 @@ describe('the rollover registry', () => {
     const optional = Object.entries(ROLLOVER_REGISTRY).filter(
       ([, disposition]) => isCarried(disposition) && (disposition as { option?: string }).option !== undefined,
     );
-    expect(optional.map(([model]) => model).sort()).toEqual(['TeacherDuty', 'TeacherEmployment']);
+    // An uppdrag's times (TeacherDutySlot, 20261017090000) go with it.
+    expect(optional.map(([model]) => model).sort()).toEqual(['TeacherDuty', 'TeacherDutySlot', 'TeacherEmployment']);
     for (const [model, disposition] of optional) {
       const whenOff = (disposition as { whenOff?: { reason: string; previewCount: true } }).whenOff;
       expect({ model, enough: (whenOff?.reason.replace(/\s/g, '').length ?? 0) >= 20, counted: whenOff?.previewCount }).toEqual({
@@ -235,10 +236,12 @@ describe('the rollover registry', () => {
     // TeacherEmploymentLog (staffing Fas 3) are the tables added since, and
     // are asserted beside it — skipped, not counted — so fa4a3d6's own list
     // stays pinned byte for byte. The statement tables (timplan P4) likewise,
-    // the publication log and its snapshots (Publicering), and the SS12000
-    // duty links (20261014100000).
+    // the publication log and its snapshots (Publicering), the SS12000
+    // duty links (20261014100000), and an uppdrag's times (20261017090000,
+    // left behind with the uppdrag and counted, beside it in the list).
     const skipped = skippedModels();
     const added = [
+      'TeacherDutySlot',
       'TimplanCredit',
       'TeacherEmploymentLog',
       'TimplanStatementPublication',
@@ -283,11 +286,16 @@ describe('the rollover registry', () => {
       'AvailabilityConstraint',
       'AcademicYearTimplan',
     ]);
-    // With it on: the two staffing tables carried, by their own steps, last.
-    expect(carriedModels({ carryStaffing: true }).slice(-2)).toEqual([
+    // With it on: the staffing tables carried, by their own steps, last —
+    // an uppdrag's times by the uppdrag's.
+    expect(carriedModels({ carryStaffing: true }).slice(-3)).toEqual([
       { model: 'TeacherEmployment', step: 'employments' },
       { model: 'TeacherDuty', step: 'duties' },
+      { model: 'TeacherDutySlot', step: 'duties' },
     ]);
+    expect(skipped.find((entry) => entry.model === 'TeacherDutySlot')).toEqual(
+      expect.objectContaining({ counted: true }),
+    );
     expect(skippedModels({ carryStaffing: true }).map((entry) => entry.model)).not.toContain('TeacherDuty');
     expect(ROLLOVER_STEP_ORDER.slice(-2)).toEqual(['employments', 'duties']);
   });

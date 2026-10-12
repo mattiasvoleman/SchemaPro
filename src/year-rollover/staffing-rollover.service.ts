@@ -5,6 +5,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { toWallClock } from '../common/utils/time';
+import { WITH_SLOT_TIMES, slotsOfLinks } from '../staffing/duty-slot';
 import { applyStaffingWrites, type StaffingCounts } from './rollover-apply';
 import { readSourceStaffing } from './rollover-source';
 import {
@@ -173,7 +174,10 @@ async function readCarry(
   target: { id: string; name: string },
   sourceYearId: string,
 ): Promise<CarryRead> {
-  const sourceYear = await tx.academicYear.findUnique({ where: { id: sourceYearId }, select: { id: true, name: true } });
+  const sourceYear = await tx.academicYear.findUnique({
+    where: { id: sourceYearId },
+    select: { id: true, name: true, endDate: true },
+  });
   if (!sourceYear) throw noPredecessor(target.name);
   const staffing = await readSourceStaffing(tx, sourceYearId);
   const sourceGroups = await tx.studentGroup.findMany({
@@ -196,7 +200,7 @@ async function readCarry(
       kind: true,
       label: true,
       studentGroupId: true,
-      blockedConstraint: { select: { dayOfWeek: true, startTime: true, endTime: true } },
+      ...WITH_SLOT_TIMES,
     },
   });
 
@@ -218,18 +222,12 @@ async function readCarry(
       kind: duty.kind,
       label: duty.label,
       groupKey: duty.studentGroupId ? (keyOf.get(duty.studentGroupId) ?? `target:${duty.studentGroupId}`) : null,
-      slot:
-        duty.blockedConstraint && duty.blockedConstraint.dayOfWeek !== null
-          ? {
-              dayOfWeek: duty.blockedConstraint.dayOfWeek,
-              startTime: toWallClock(duty.blockedConstraint.startTime),
-              endTime: toWallClock(duty.blockedConstraint.endTime),
-            }
-          : null,
+      slots: slotsOfLinks(duty.slots ?? []),
     })),
   };
   const plan = planStaffingCarry({
     staffing,
+    sourceYearEndDate: sourceYear.endDate.toISOString().slice(0, 10),
     successorOf: (sourceGroupId) => {
       const successor = successorBy.get(sourceGroupId);
       return successor ? { key: sourceGroupId, name: successor.name } : null;
@@ -248,7 +246,7 @@ async function readCarry(
 
 /** The target's placed lessons of the teachers whose slots the carry writes; none read when it writes none. */
 async function lessonsOf(tx: PrismaClient, targetYearId: string, plan: StaffingCarryPlan) {
-  const teachers = [...new Set(plan.writes.duties.filter((duty) => duty.slot !== null).map((duty) => duty.userId))].sort();
+  const teachers = [...new Set(plan.writes.duties.filter((duty) => duty.slots.length > 0).map((duty) => duty.userId))].sort();
   if (teachers.length === 0) return [];
   const lessons = await tx.masterLesson.findMany({
     where: {

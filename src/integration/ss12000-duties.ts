@@ -26,7 +26,10 @@
  * value) is an uppdrag inside the post here, not a Duty of its own.
  *
  *   assignmentRole  one "Mentor" item per MENTORSKAP uppdrag of the year whose
- *                   class belongs to the year, dated with the year. The other
+ *                   class belongs to the year, dated with the uppdrag's own
+ *                   Från and Till, the year's bounds where it has none — a
+ *                   mentor until the jullov is no mentor in March, and a
+ *                   consumer reading the year would say so. The other
  *                   uppdrag kinds have no AssignmentRoleType value and are left
  *                   out; the standard says teaching is no assignment ("Lärares
  *                   undervisning ska inte uttryckas som en arbetsuppgift").
@@ -124,8 +127,11 @@ export interface DutyInput {
     updatedAt: Date;
     contractKind?: 'FERIE' | 'SEMESTER';
   };
-  /** The post's MENTORSKAP uppdrag of the year, on classes of the year. */
-  mentorships: { studentGroupId: string; updatedAt: Date }[];
+  /**
+   * The post's MENTORSKAP uppdrag of the year, on classes of the year, with
+   * their own Från and Till (yyyy-mm-dd; null or absent: the year's bound).
+   */
+  mentorships: { studentGroupId: string; updatedAt: Date; validFrom?: string | null; validTo?: string | null }[];
 }
 
 export function toSs12000Duty(input: DutyInput): Ss12000Duty {
@@ -133,18 +139,32 @@ export function toSs12000Duty(input: DutyInput): Ss12000Duty {
   const modified = [employment.updatedAt, ...input.mentorships.map((m) => m.updatedAt)].reduce((a, b) =>
     b.getTime() > a.getTime() ? b : a,
   );
-  const groups = [...new Set(input.mentorships.map((m) => m.studentGroupId))].sort();
+  // One item per class and period: two uppdrag on one class with the same
+  // dates are one assignment, and two periods are two.
+  const roles = new Map<string, { group: string; startDate: string; endDate: string }>();
+  for (const mentorship of input.mentorships) {
+    const startDate = mentorship.validFrom ?? year.startDate;
+    const endDate = mentorship.validTo ?? year.endDate;
+    roles.set(`${mentorship.studentGroupId}|${startDate}|${endDate}`, {
+      group: mentorship.studentGroupId,
+      startDate,
+      endDate,
+    });
+  }
+  const assignments = [...roles.values()].sort((a, b) =>
+    a.group < b.group ? -1 : a.group > b.group ? 1 : a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0,
+  );
   return {
     id: employment.id,
     meta: { created: employment.createdAt.toISOString(), modified: modified.toISOString() },
     person: { id: employment.userId },
-    ...(groups.length > 0
+    ...(assignments.length > 0
       ? {
-          assignmentRole: groups.map((id) => ({
-            group: { id },
+          assignmentRole: assignments.map((role) => ({
+            group: { id: role.group },
             assignmentRoleType: 'Mentor' as const,
-            startDate: year.startDate,
-            endDate: year.endDate,
+            startDate: role.startDate,
+            endDate: role.endDate,
           })),
         }
       : {}),

@@ -631,6 +631,19 @@ export class ImportTeacherDutyRowDto {
   @MaxLength(60)
   groupName?: string | null;
 
+  /**
+   * Från and Till, YYYY-MM-DD, inclusive (migration 20261017090000); an empty
+   * cell is the läsår's own bound. Whether they fit inside the läsår is the
+   * service's, one row at a time, as for a requirement's period.
+   */
+  @IsOptional()
+  @IsCalendarDate({ message: 'validFrom: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validFrom?: string | null;
+
+  @IsOptional()
+  @IsCalendarDate({ message: 'validTo: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validTo?: string | null;
+
   @IsOptional()
   @IsString({ message: 'note: anges som text.' })
   @MaxCodePoints(500, { message: 'note: högst 500 tecken.' })
@@ -646,6 +659,8 @@ export const TEACHER_DUTY_FILE_COLUMNS = [
   'countsAsTeaching',
   'subject',
   'groupName',
+  'validFrom',
+  'validTo',
   'note',
 ] as const;
 

@@ -48,6 +48,23 @@ describe('diffLogEntry', () => {
     ]);
   });
 
+  it('lists a dated uppdrag’s Från and Till in the form’s place, and a version of its times as their count (20261017090000)', () => {
+    const duty = {
+      id: 'd1', userId: 'u1', academicYearId: 'y1', kind: 'MENTORSKAP', label: 'Mentor 7B', minutesPerWeek: 90,
+      countsAsTeaching: false, subjectId: null, studentGroupId: 'g7b', validFrom: null, validTo: '2026-12-18',
+    };
+    expect(diffLogEntry('DUTY', null, duty).map((change) => change.field)).toEqual([
+      'kind', 'label', 'minutesPerWeek', 'countsAsTeaching', 'validFrom', 'validTo', 'subjectId', 'studentGroupId',
+    ]);
+    expect(diffLogEntry('DUTY', duty, { ...duty, validTo: '2027-06-11' })).toEqual([
+      { field: 'validTo', before: '2026-12-18', after: '2027-06-11' },
+    ]);
+    // The link table's trigger writes the times' version on its own.
+    expect(diffLogEntry('DUTY', { slotCount: 1 }, { slotCount: 3 })).toEqual([
+      { field: 'slotCount', before: 1, after: 3 },
+    ]);
+  });
+
   it('says a note was written, never what it said, in the note’s place in the form', () => {
     const changes = diffLogEntry('EMPLOYMENT', post, { ...post, signature: 'ANS', noteChanged: true });
     expect(changes).toEqual([

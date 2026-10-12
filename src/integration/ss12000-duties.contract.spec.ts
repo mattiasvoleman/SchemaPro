@@ -66,6 +66,50 @@ const variants = [false, true].flatMap((share) =>
   ),
 );
 
+describe('a mentorship is dated with its own Från and Till (20261017090000)', () => {
+  const duty = (mentorships: Parameters<typeof toSs12000Duty>[0]['mentorships']) =>
+    toSs12000Duty({
+      schoolId: 'school',
+      year: { startDate: '2026-08-17', endDate: '2027-06-11' },
+      share: false,
+      fullTimeAnnualHours: null,
+      employment: {
+        id: 'emp',
+        userId: 'user',
+        employmentPercent: 100,
+        signature: null,
+        createdAt: new Date('2026-08-01T00:00:00Z'),
+        updatedAt: new Date('2026-09-01T00:00:00Z'),
+      },
+      mentorships,
+    });
+  const updatedAt = new Date('2026-09-15T00:00:00Z');
+
+  it('the year’s bounds where it has none, its own where it has them', () => {
+    expect(duty([{ studentGroupId: 'g-7b', updatedAt }]).assignmentRole).toEqual([
+      { group: { id: 'g-7b' }, assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2027-06-11' },
+    ]);
+    expect(duty([{ studentGroupId: 'g-7b', updatedAt, validFrom: '2027-01-07', validTo: null }]).assignmentRole).toEqual([
+      { group: { id: 'g-7b' }, assignmentRoleType: 'Mentor', startDate: '2027-01-07', endDate: '2027-06-11' },
+    ]);
+  });
+
+  it('two periods of one class are two items, by class then start; the same period twice is one', () => {
+    expect(
+      duty([
+        { studentGroupId: 'g-8a', updatedAt },
+        { studentGroupId: 'g-7b', updatedAt, validFrom: '2027-01-07', validTo: null },
+        { studentGroupId: 'g-7b', updatedAt, validFrom: null, validTo: '2026-10-30' },
+        { studentGroupId: 'g-8a', updatedAt, validFrom: null, validTo: null },
+      ]).assignmentRole!.map((role) => [role.group.id, role.startDate, role.endDate]),
+    ).toEqual([
+      ['g-7b', '2026-08-17', '2026-10-30'],
+      ['g-7b', '2027-01-07', '2027-06-11'],
+      ['g-8a', '2026-08-17', '2027-06-11'],
+    ]);
+  });
+});
+
 describe('the /duties feed emits only what SS12000 2.1.0 defines', () => {
   it('has variants covering every optional field, present and absent', () => {
     expect(variants).toHaveLength(16);

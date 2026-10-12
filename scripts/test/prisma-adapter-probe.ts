@@ -159,6 +159,8 @@ interface Fixture {
   roomId: string;
   constraintId: string;
   activeYearId: string;
+  /** The active year's last day, yyyy-mm-dd: an uppdrag's Till may be it. */
+  activeYearEnd: string;
   pupilId: string;
   foreignYearId: string;
   grundskolaVersionId: string;
@@ -1009,11 +1011,32 @@ async function runChecks(
       blockedConstraintId,
     });
 
-    // The link the service will write: accepted, and read back in the model's types.
+    // The previous release's link, as the old API and PostgREST still write
+    // it: accepted, read back in the model's types, and made a TeacherDutySlots
+    // row by the trigger (20261017090000), so the new readers see it.
     const duty = await api.withRls(admin, (tx) => tx.teacherDuty.create({ data: dutyOf(slot.id) }));
     assert.equal(duty.blockedConstraintId, slot.id);
     assert.equal(duty.countsAsTeaching, false);
     assert.equal(duty.kind, 'APT_KONFERENS');
+    const linkOf = async (constraintId: string) =>
+      (await owner.query<{ teacherDutyId: string }>('SELECT "teacherDutyId" FROM "TeacherDutySlots" WHERE "availabilityConstraintId" = $1', [constraintId])).rows;
+    assert.deepEqual(await linkOf(slot.id), [{ teacherDutyId: duty.id }], 'the old column’s write made no link row');
+
+    // A link row of its own to a colleague's constraint: TD409 from the link's trigger, 409.
+    await assert.rejects(
+      direct(admin, 'TD409', (tx) =>
+        tx.teacherDutySlot.create({ data: { schoolId: fixture.schoolId, teacherDutyId: duty.id, availabilityConstraintId: theirs.id } }),
+      ),
+      isCode(ConflictException, 'TEACHER_DUTY_BLOCK_MISMATCH'),
+    );
+    // And a link is never updated: the API role holds no UPDATE on it at all
+    // (42501 before any trigger; the trigger is for a role past the grants).
+    await assert.rejects(
+      direct(admin, '42501', (tx) =>
+        tx.teacherDutySlot.updateMany({ where: { teacherDutyId: duty.id }, data: { availabilityConstraintId: theirs.id } }),
+      ),
+      (error: unknown) => !(error instanceof assert.AssertionError),
+    );
 
     // A colleague's constraint as the slot: TD409 from the duty trigger, 409.
     await assert.rejects(
@@ -1075,6 +1098,8 @@ async function runChecks(
       )
     ).rows;
     assert.deepEqual(after, { blockedConstraintId: null, schoolId: fixture.schoolId, minutesPerWeek: 120 });
+    // And its link went with it, the duty staying.
+    assert.deepEqual(await linkOf(slot.id), []);
   });
 
   await check('(p) the duties service keeps an uppdrag and its slot together through the real adapter, and a person goes with theirs', async () => {
@@ -1095,20 +1120,23 @@ async function runChecks(
       schoolId: fixture.schoolId,
       role: Role.TEACHER,
     };
-    const slotOf = async (dutyId: string) =>
+    /** A duty's times as the database holds them: each link with its constraint, Monday first. */
+    const slotsOf = async (dutyId: string) =>
       (
-        await owner.query<{ constraintId: string | null; userId: string | null; resourceType: string | null; type: string | null; dayOfWeek: number | null; date: string | null; startTime: string | null; endTime: string | null; reason: string | null }>(
-          `SELECT d."blockedConstraintId" AS "constraintId", c."userId", c."resourceType"::text, c.type::text,
-                  c."dayOfWeek", c.date::text, c."startTime"::text, c."endTime"::text, c.reason
-             FROM "TeacherDuties" d LEFT JOIN "AvailabilityConstraints" c ON c.id = d."blockedConstraintId"
-            WHERE d.id = $1`,
+        await owner.query<{ constraintId: string; userId: string | null; resourceType: string; type: string; dayOfWeek: number | null; date: string | null; startTime: string; endTime: string; reason: string | null }>(
+          `SELECT s."availabilityConstraintId" AS "constraintId", c."userId", c."resourceType"::text AS "resourceType",
+                  c.type::text AS type, c."dayOfWeek", c.date::text AS date, c."startTime"::text AS "startTime",
+                  c."endTime"::text AS "endTime", c.reason
+             FROM "TeacherDutySlots" s JOIN "AvailabilityConstraints" c ON c.id = s."availabilityConstraintId"
+            WHERE s."teacherDutyId" = $1
+            ORDER BY c."dayOfWeek", c."startTime"`,
           [dutyId],
         )
-      ).rows[0];
+      ).rows;
     const constraintExists = async (id: string) =>
       (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [id])).rowCount === 1;
 
-    // Create with a slot: one TEACHER UNAVAILABLE weekly row, linked, in one go.
+    // Create with a time: one TEACHER UNAVAILABLE weekly row, linked, in one go.
     const created = await duties.create(
       {
         userId: mine.id,
@@ -1116,12 +1144,15 @@ async function runChecks(
         kind: 'RASTVAKT',
         label: `${MARKER} rastvakt`,
         minutesPerWeek: 20,
-        blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
+        slots: [{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }],
       },
       admin,
     );
+    assert.deepEqual(created.slots, [{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }]);
     assert.deepEqual(created.blockedSlot, { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' });
-    const first = await slotOf(created.id);
+    // The new API never writes the old one-time column.
+    assert.equal(created.blockedConstraintId, null);
+    const [first] = await slotsOf(created.id);
     assert.deepEqual(
       { ...first, constraintId: undefined },
       {
@@ -1137,9 +1168,9 @@ async function runChecks(
         reason: 'Uppdrag',
       },
     );
-    const firstConstraint = first.constraintId!;
-    // As the colleague, through the real adapter: the slot is visible (it
-    // blocks a timetable everybody reads), the uppdrag it stands for is not.
+    const firstConstraint = first.constraintId;
+    // As the colleague, through the real adapter: the time is visible (it
+    // blocks a timetable everybody reads), the uppdrag and its link are not.
     const colleagueUser: AuthenticatedUser = {
       authId: colleague.authId,
       userId: colleague.id,
@@ -1154,29 +1185,74 @@ async function runChecks(
       !(seenByColleague[0].reason ?? '').includes(MARKER),
       `a colleague read the uppdrag’s label through its slot: ${seenByColleague[0].reason}`,
     );
+    assert.deepEqual(
+      await api.withRls(colleagueUser, (tx) => tx.teacherDutySlot.findMany({ where: { teacherDutyId: created.id } })),
+      [],
+      'a colleague read which of a teacher’s times is an uppdrag',
+    );
+    const ownLinks = await api.withRls(teacher, (tx) => tx.teacherDutySlot.findMany({ where: { teacherDutyId: created.id } }));
+    assert.equal(ownLinks.length, 1, 'a teacher does not read the links of their own uppdrag');
 
     // Move it: the same constraint row, retimed — the BEFORE UPDATE trigger agrees.
     const moved = await duties.update(
       created.id,
-      { blockedSlot: { dayOfWeek: 3, startTime: '12:05', endTime: '12:30' } },
+      { slots: [{ dayOfWeek: 3, startTime: '12:05', endTime: '12:30' }] },
       admin,
     );
-    assert.deepEqual(moved.blockedSlot, { dayOfWeek: 3, startTime: '12:05', endTime: '12:30' });
-    assert.equal((await slotOf(created.id)).constraintId, firstConstraint);
+    assert.deepEqual(moved.slots, [{ dayOfWeek: 3, startTime: '12:05', endTime: '12:30' }]);
+    assert.deepEqual((await slotsOf(created.id)).map((row) => row.constraintId), [firstConstraint]);
 
-    // Take it away: unlinked, and the constraint is gone.
-    const unblocked = await duties.update(created.id, { blockedSlot: null }, admin);
+    // Monday, Wednesday and Friday: the Wednesday kept, two added, one
+    // statement of links and so ONE version of the times, "1 → 3".
+    const threeTimes = await duties.update(
+      created.id,
+      {
+        slots: [
+          { dayOfWeek: 1, startTime: '12:05', endTime: '12:30' },
+          { dayOfWeek: 3, startTime: '12:05', endTime: '12:30' },
+          { dayOfWeek: 5, startTime: '12:05', endTime: '12:30' },
+        ],
+      },
+      admin,
+    );
+    assert.deepEqual(threeTimes.slots.map((slot) => slot.dayOfWeek), [1, 3, 5]);
+    assert.ok((await slotsOf(created.id)).some((row) => row.constraintId === firstConstraint), 'the kept time lost its constraint');
+    const slotVersions = (
+      await owner.query<{ before: unknown; after: unknown }>(
+        `SELECT before, after FROM "TeacherEmploymentLogs" WHERE "entityId" = $1 AND after ? 'slotCount' ORDER BY version`,
+        [created.id],
+      )
+    ).rows;
+    assert.deepEqual(slotVersions, [
+      { before: { slotCount: 0 }, after: { slotCount: 1 } },
+      { before: { slotCount: 1 }, after: { slotCount: 3 } },
+    ]);
+
+    // Take them away: unlinked, and every constraint is gone.
+    const heldBefore = (await slotsOf(created.id)).map((row) => row.constraintId);
+    const unblocked = await duties.update(created.id, { slots: [] }, admin);
+    assert.deepEqual(unblocked.slots, []);
     assert.equal(unblocked.blockedSlot, null);
-    assert.equal(unblocked.blockedConstraintId, null);
-    assert.equal(await constraintExists(firstConstraint), false, 'the dropped slot was left behind');
+    for (const id of heldBefore) assert.equal(await constraintExists(id), false, 'a dropped time was left behind');
 
-    // Give it one again: a new constraint, linked.
+    // Give it one again, by the previous web's single field: a new constraint, linked.
     const reblocked = await duties.update(
       created.id,
       { blockedSlot: { dayOfWeek: 4, startTime: '08:00', endTime: '08:15' } },
       admin,
     );
-    assert.ok(reblocked.blockedConstraintId && reblocked.blockedConstraintId !== firstConstraint);
+    const [again] = await slotsOf(created.id);
+    assert.ok(again && again.constraintId !== firstConstraint);
+    assert.deepEqual(reblocked.slots, [{ dayOfWeek: 4, startTime: '08:00', endTime: '08:15' }]);
+
+    // Från and Till: inside the year, stored as days; outside, a 400 naming the field.
+    const dated = await duties.update(created.id, { validTo: fixture.activeYearEnd }, admin);
+    assert.equal(dated.validTo, fixture.activeYearEnd);
+    await assert.rejects(duties.update(created.id, { validFrom: '1999-01-01' }, admin), (error: unknown) => {
+      assert.ok(error instanceof BadRequestException, summarise(error));
+      assert.ok(error.message.startsWith('validFrom: 1999-01-01 ligger utanför läsåret'), error.message);
+      return true;
+    });
 
     // A teacher reads their own through the service, and RLS alone hides the colleague's.
     const theirs = await duties.create(
@@ -1186,18 +1262,16 @@ async function runChecks(
     const ownList = await duties.list(fixture.activeYearId, undefined, teacher);
     assert.ok(ownList.some((row) => row.id === created.id));
     assert.ok(ownList.every((row) => row.userId === mine.id));
-    assert.deepEqual(ownList.find((row) => row.id === created.id)?.blockedSlot, {
-      dayOfWeek: 4,
-      startTime: '08:00',
-      endTime: '08:15',
-    });
+    assert.deepEqual(ownList.find((row) => row.id === created.id)?.slots, [
+      { dayOfWeek: 4, startTime: '08:00', endTime: '08:15' },
+    ]);
     const unfiltered = await api.withRls(teacher, (tx) => tx.teacherDuty.findMany({ where: { id: theirs.id } }));
     assert.deepEqual(unfiltered, [], 'RLS handed a teacher a colleague’s uppdrag');
     await assert.rejects(duties.list(fixture.activeYearId, colleague.id, teacher), ForbiddenException);
 
     // Delete: the uppdrag and the time it blocked, both.
     await duties.remove(created.id, admin);
-    assert.equal(await constraintExists(reblocked.blockedConstraintId!), false, 'the deleted duty left its slot');
+    assert.equal(await constraintExists(again.constraintId), false, 'the deleted duty left its slot');
     await assert.rejects(duties.remove(created.id, admin), NotFoundException);
 
     // A pupil holds no uppdrag: the Users lock answers 400 before a slot exists.
@@ -1231,10 +1305,11 @@ async function runChecks(
         kind: 'APT_KONFERENS',
         label: `${MARKER} apt`,
         minutesPerWeek: 90,
-        blockedSlot: { dayOfWeek: 3, startTime: '15:00', endTime: '16:30' },
+        slots: [{ dayOfWeek: 3, startTime: '15:00', endTime: '16:30' }],
       },
       admin,
     );
+    const [heldTime] = await slotsOf(held.id);
     await assert.rejects(
       users.update(person.id, { role: 'STUDENT' } as never, admin),
       (error: unknown) => {
@@ -1250,7 +1325,7 @@ async function runChecks(
       'the person’s uppdrag outlived them',
     );
     assert.equal(
-      await constraintExists(held.blockedConstraintId!),
+      await constraintExists(heldTime.constraintId),
       false,
       'the person’s blocked time outlived them',
     );
@@ -1487,6 +1562,24 @@ async function runChecks(
       { userId: teacherRow.id, academicYearId: fixture.activeYearId, kind: 'APT_KONFERENS', label: `${MARKER} apt i år`, minutesPerWeek: 120, blockedSlot: { dayOfWeek: 4, ...slot } },
       admin,
     );
+    // A dated uppdrag of this year (20261017090000): its time still blocks the
+    // weekly master — the master is one week, held all year.
+    const datedThisYear = await duties.create(
+      {
+        userId: teacherRow.id,
+        academicYearId: fixture.activeYearId,
+        kind: 'RASTVAKT',
+        label: `${MARKER} rastvakt vt`,
+        minutesPerWeek: 40,
+        validTo: fixture.activeYearEnd,
+        slots: [{ dayOfWeek: 1, ...slot }],
+      },
+      admin,
+    );
+    const constraintOf = async (dutyId: string) =>
+      (await owner.query<{ id: string }>('SELECT "availabilityConstraintId" AS id FROM "TeacherDutySlots" WHERE "teacherDutyId" = $1', [dutyId])).rows[0]!.id;
+    const nextYearsSlot = await constraintOf(nextYears.id);
+    const thisYearsSlot = await constraintOf(thisYears.id);
     let payload: { constraints: { resourceKind: string; dayOfWeek: number | null; startTime: string }[] } | undefined;
     const proxy = new OptimizationProxyService(
       api,
@@ -1524,21 +1617,23 @@ async function runChecks(
       ).length;
     assert.equal(blockedOn(4), 1, 'this year’s uppdrag slot is missing from this year’s payload');
     assert.equal(blockedOn(2), 0, 'next year’s uppdrag slot blocks this year’s generation');
+    assert.equal(blockedOn(1), 1, 'a dated uppdrag’s time is missing from its own year’s weekly master');
 
     // The year deleted as the gateway deletes it: its duty cascades, and the
     // duty's slot goes with it instead of blocking every later year.
     await years.remove(next.id, admin);
     assert.equal(
-      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [nextYears.blockedConstraintId])).rowCount,
+      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [nextYearsSlot])).rowCount,
       0,
       'a deleted year’s uppdrag left its slot behind',
     );
     assert.equal(
-      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [thisYears.blockedConstraintId])).rowCount,
+      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [thisYearsSlot])).rowCount,
       1,
       'deleting another year took this year’s slot',
     );
     await duties.remove(thisYears.id, admin);
+    await duties.remove(datedThisYear.id, admin);
   });
 
   // ---- (t) a plan a läsår follows, refused by its key, answers 4xx through the adapter
@@ -2814,7 +2909,8 @@ async function runChecks(
                 c.reason, c."roomId" AS room, c."studentGroupId" AS "slotGroup", c.date
            FROM "TeacherDuties" d
            LEFT JOIN "StudentGroups" g ON g.id = d."studentGroupId"
-           LEFT JOIN "AvailabilityConstraints" c ON c.id = d."blockedConstraintId"
+           LEFT JOIN "TeacherDutySlots" s ON s."teacherDutyId" = d.id
+           LEFT JOIN "AvailabilityConstraints" c ON c.id = s."availabilityConstraintId"
           WHERE d."academicYearId" = $1 ORDER BY d.kind, d.label`,
         [yearId],
       )
@@ -2915,10 +3011,10 @@ async function runChecks(
     }
     assert.equal(await leftBehind(), 0, 'a rollover that failed in its uppdrag step left rows behind');
 
-    // The Fas 2 guard, met by the carry: a slot that is no longer the duty
-    // teacher's own when the duty lands (re-pointed after its insert, so the
-    // RETURNING the carry pairs on is the row it wrote) is TD409, a 409, and
-    // the whole rollover goes.
+    // The Fas 2 guard, met by the carry: a time that is no longer the duty
+    // teacher's own when its link lands (re-pointed after its insert) is
+    // TD409 from TeacherDutySlots_are_the_teachers, a 409, and the whole
+    // rollover goes.
     await owner.query(`
       CREATE FUNCTION public.probe_tj_repoint() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
       BEGIN
@@ -4272,7 +4368,10 @@ async function sourceChecksum(owner: Client, yearId: string): Promise<string> {
        UNION ALL SELECT to_jsonb(e)::text FROM "TeacherEmployments" e WHERE e."academicYearId" = $1
        UNION ALL SELECT to_jsonb(d)::text FROM "TeacherDuties" d WHERE d."academicYearId" = $1
        UNION ALL SELECT to_jsonb(c)::text FROM "AvailabilityConstraints" c
-         WHERE c.id IN (SELECT "blockedConstraintId" FROM "TeacherDuties" WHERE "academicYearId" = $1)
+         WHERE c.id IN (SELECT s."availabilityConstraintId" FROM "TeacherDutySlots" s
+                          JOIN "TeacherDuties" d ON d.id = s."teacherDutyId" WHERE d."academicYearId" = $1)
+       UNION ALL SELECT to_jsonb(s)::text FROM "TeacherDutySlots" s
+         WHERE s."teacherDutyId" IN (SELECT id FROM "TeacherDuties" WHERE "academicYearId" = $1)
        UNION ALL SELECT to_jsonb(u)::text FROM "Users" u
          WHERE u."schoolId" = (SELECT "schoolId" FROM "AcademicYears" WHERE id = $1)
      ) rows`,
@@ -4315,9 +4414,9 @@ async function findFixture(owner: Client): Promise<Fixture> {
     [school.id],
     'an availability constraint of the demo school',
   );
-  const activeYear = await onlyRow<{ id: string }>(
+  const activeYear = await onlyRow<{ id: string; endDate: string }>(
     owner,
-    `SELECT id FROM "AcademicYears" WHERE "schoolId" = $1 AND "isActive"`,
+    `SELECT id, "endDate"::text AS "endDate" FROM "AcademicYears" WHERE "schoolId" = $1 AND "isActive"`,
     [school.id],
     'the demo school’s active academic year',
   );
@@ -4356,6 +4455,7 @@ async function findFixture(owner: Client): Promise<Fixture> {
     roomId: room.id,
     constraintId: constraint.id,
     activeYearId: activeYear.id,
+    activeYearEnd: activeYear.endDate,
     pupilId: pupil.id,
     foreignYearId: foreignYear.id,
   };
