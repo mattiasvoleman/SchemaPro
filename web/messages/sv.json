@@ -423,6 +423,7 @@
     "createdAndInvited": "Personen är tillagd och inbjudan skickad.",
     "invitationSent": "Inbjudan skickad till {name}.",
     "invitationAlreadyRegistered": "{name} har redan ett konto — inget nytt e-postmeddelande skickades.",
+    "invitationLoginMoved": "{name} loggar nu in med den nya adressen. Inget e-postmeddelande skickades, så berätta det för {name}.",
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
     "inviteAll": "Bjud in {count} ej inbjudna",
