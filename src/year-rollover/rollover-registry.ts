@@ -244,6 +244,12 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       lessonLengths: 'COPY_UNLESS_DEFAULT',
       minutesBefore: 'COPY',
       minutesAfter: 'COPY',
+      // Ämnesfördelning: a row with its own rule keeps it; a row following its
+      // subject (false, with no numbers — every row of every school until one
+      // writes a rule) writes what it always wrote, and its planHash with it.
+      ownDistribution: 'COPY_UNLESS_DEFAULT',
+      maxLessonsPerDay: 'COPY_UNLESS_DEFAULT',
+      minDaysBetween: 'COPY_UNLESS_DEFAULT',
       teacherLoadPercent: 'COPY',
       coTeacherLoadPercent: 'COPY',
       recurrence: 'COPY',

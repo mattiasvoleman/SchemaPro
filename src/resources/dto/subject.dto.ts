@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsHexColor,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -11,6 +12,12 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import {
+  MAX_LESSONS_PER_DAY_MAX,
+  MAX_LESSONS_PER_DAY_MIN,
+  MIN_DAYS_BETWEEN_MAX,
+  MIN_DAYS_BETWEEN_MIN,
+} from '../../common/subject-distribution';
 
 /**
  * The two timplan fields, shared by create and update.
@@ -42,6 +49,19 @@ const COUNTS_MESSAGE =
  */
 export const LOAD_FACTOR_MESSAGE =
   'loadFactor: faktorn är ett tal mellan 0,5 och 3 med högst tre decimaler.';
+
+/**
+ * Ämnesfördelning, the subject's default for every timplanspost that does not
+ * carry its own. Null or absent is no rule — rules are off until a school sets
+ * them — and on a PATCH null clears the rule while absent leaves it. The
+ * bounds are subject-distribution.ts's, which the CHECKs of 20261019090000 and
+ * the engine's own model share: 1 a day at the least, and lesson days 2..6
+ * weekdays apart, 2 being "inte dagar i följd".
+ */
+export const MAX_LESSONS_PER_DAY_MESSAGE =
+  `maxLessonsPerDay: högst antal lektioner per dag anges som ett heltal ${MAX_LESSONS_PER_DAY_MIN}–${MAX_LESSONS_PER_DAY_MAX}, eller null för ingen gräns.`;
+export const MIN_DAYS_BETWEEN_MESSAGE =
+  `minDaysBetween: dagar mellan lektionsdagarna anges som ett heltal ${MIN_DAYS_BETWEEN_MIN}–${MIN_DAYS_BETWEEN_MAX} (2 betyder inte dagar i följd), eller null för ingen regel.`;
 
 export class CreateSubjectDto {
   @IsString()
@@ -83,6 +103,20 @@ export class CreateSubjectDto {
   @Min(0.5, { message: LOAD_FACTOR_MESSAGE })
   @Max(3, { message: LOAD_FACTOR_MESSAGE })
   loadFactor?: number;
+
+  /** At most this many lessons a weekday. Absent or null: no rule. */
+  @IsOptional()
+  @IsInt({ message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Min(MAX_LESSONS_PER_DAY_MIN, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Max(MAX_LESSONS_PER_DAY_MAX, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  maxLessonsPerDay?: number | null;
+
+  /** Lesson days at least this many weekdays apart. Absent or null: no rule. */
+  @IsOptional()
+  @IsInt({ message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Min(MIN_DAYS_BETWEEN_MIN, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Max(MIN_DAYS_BETWEEN_MAX, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  minDaysBetween?: number | null;
 }
 
 export class UpdateSubjectDto {
@@ -121,4 +155,18 @@ export class UpdateSubjectDto {
   @Min(0.5, { message: LOAD_FACTOR_MESSAGE })
   @Max(3, { message: LOAD_FACTOR_MESSAGE })
   loadFactor?: number;
+
+  /** Null clears the rule; absent leaves it as it is. */
+  @IsOptional()
+  @IsInt({ message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Min(MAX_LESSONS_PER_DAY_MIN, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Max(MAX_LESSONS_PER_DAY_MAX, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  maxLessonsPerDay?: number | null;
+
+  /** Null clears the rule; absent leaves it as it is. */
+  @IsOptional()
+  @IsInt({ message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Min(MIN_DAYS_BETWEEN_MIN, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Max(MIN_DAYS_BETWEEN_MAX, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  minDaysBetween?: number | null;
 }

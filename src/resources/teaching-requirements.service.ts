@@ -186,6 +186,8 @@ export class TeachingRequirementsService {
             // request. Zero is the school that has not asked for ombyte.
             minutesBefore: dto.minutesBefore ?? 0,
             minutesAfter: dto.minutesAfter ?? 0,
+            // Ämnesfördelning: the subject's unless the row says otherwise.
+            ...this.distributionWrite(dto, false),
             recurrence: charged.recurrence,
             startDate,
             endDate,
@@ -317,6 +319,22 @@ export class TeachingRequirementsService {
           }
         }
 
+        // Ämnesfördelning. The row's own flag decides whether numbers may be
+        // written at all, so a PATCH that sends numbers without the flag reads
+        // it first; the dialog always sends the three together.
+        let storedOwn: boolean | null = null;
+        if (
+          dto.ownDistribution === undefined &&
+          (dto.maxLessonsPerDay != null || dto.minDaysBetween != null)
+        ) {
+          const stored = await tx.teachingRequirement.findUnique({
+            where: { id },
+            select: { ownDistribution: true },
+          });
+          storedOwn = stored?.ownDistribution ?? null;
+        }
+        const distribution = this.distributionWrite(dto, storedOwn);
+
         const updated = await tx.teachingRequirement.update({
           where: { id },
           data: {
@@ -341,6 +359,7 @@ export class TeachingRequirementsService {
             ...(dto.minutesAfter !== undefined
               ? { minutesAfter: dto.minutesAfter }
               : {}),
+            ...distribution,
             ...(dto.recurrence !== undefined
               ? { recurrence: dto.recurrence }
               : {}),
@@ -363,6 +382,39 @@ export class TeachingRequirementsService {
     } catch (error) {
       rethrowPrismaError(error);
     }
+  }
+
+  /**
+   * The ämnesfördelning columns a write leaves on the row.
+   *
+   * `storedOwn` is the row's flag as it stands: false on a create, the stored
+   * value when a PATCH sends numbers without the flag, null when it does not
+   * matter. A row that follows its subject carries no numbers (the CHECK
+   * _distribution_is_own_or_absent), so switching the flag off clears both,
+   * and a number sent to such a row is answered here, naming the fields,
+   * rather than by the CHECK as a bare 400 about a constraint.
+   */
+  private distributionWrite(
+    dto: CreateTeachingRequirementDto | UpdateTeachingRequirementDto,
+    storedOwn: boolean | null,
+  ): Record<string, unknown> {
+    const own = dto.ownDistribution ?? storedOwn;
+    if (own === false && (dto.maxLessonsPerDay != null || dto.minDaysBetween != null)) {
+      throw new BadRequestException(
+        'maxLessonsPerDay och minDaysBetween hör till en timplanspost med egen fördelning: ' +
+          'skicka ownDistribution: true med dem, eller ändra ämnets regel.',
+      );
+    }
+    if (own === false) {
+      // A create states the whole row, as it does every other figure; a
+      // PATCH switching back to the subject clears what the row carried.
+      return { ownDistribution: false, maxLessonsPerDay: null, minDaysBetween: null };
+    }
+    return {
+      ...(dto.ownDistribution !== undefined ? { ownDistribution: dto.ownDistribution } : {}),
+      ...(dto.maxLessonsPerDay !== undefined ? { maxLessonsPerDay: dto.maxLessonsPerDay } : {}),
+      ...(dto.minDaysBetween !== undefined ? { minDaysBetween: dto.minDaysBetween } : {}),
+    };
   }
 
   /**

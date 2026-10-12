@@ -85,4 +85,31 @@ describe.each([
       }
     });
   });
+
+  describe('ämnesfördelning', () => {
+    it('accepts the bounds, null and an absence — null is no rule, as on the column', async () => {
+      for (const body of [
+        { maxLessonsPerDay: 1, minDaysBetween: 2 },
+        { maxLessonsPerDay: 20, minDaysBetween: 6 },
+        { maxLessonsPerDay: null, minDaysBetween: null },
+        {},
+      ]) {
+        await expect(failing(cls, { ...base, ...body })).resolves.toEqual([]);
+      }
+    });
+
+    it('refuses what the CHECKs refuse, a fraction and a string, naming the field in Swedish', async () => {
+      for (const maxLessonsPerDay of [0, 21, 1.5, '1']) {
+        const errors = await validate(plainToInstance(cls, { ...base, maxLessonsPerDay }));
+        expect(errors.map((error) => error.property)).toEqual(['maxLessonsPerDay']);
+        expect(Object.values(errors[0]!.constraints ?? {})[0]).toMatch(/^maxLessonsPerDay: /);
+      }
+      // 1 is "different days", which every two lesson days already are.
+      for (const minDaysBetween of [1, 7, 2.5, 'två']) {
+        const errors = await validate(plainToInstance(cls, { ...base, minDaysBetween }));
+        expect(errors.map((error) => error.property)).toEqual(['minDaysBetween']);
+        expect(Object.values(errors[0]!.constraints ?? {})[0]).toMatch(/^minDaysBetween: /);
+      }
+    });
+  });
 });

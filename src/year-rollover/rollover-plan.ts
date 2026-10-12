@@ -121,6 +121,15 @@ export interface RolloverWrites {
     lessonLengths?: number[];
     minutesBefore: number;
     minutesAfter: number;
+    /**
+     * Only on a row with its own ämnesfördelning, carried as it is — an own
+     * rule of "no limit" is the flag alone, its numbers left to the columns'
+     * null. Absent on a row that follows its subject, so its write and the
+     * planHash are what they were before the columns existed.
+     */
+    ownDistribution?: true;
+    maxLessonsPerDay?: number;
+    minDaysBetween?: number;
     teacherLoadPercent: number;
     coTeacherLoadPercent: number;
     recurrence: LessonRecurrence;
@@ -492,6 +501,14 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       ...(isMixed(requirement) ? { lessonLengths: [...requirement.lessonLengths] } : {}),
       minutesBefore: requirement.minutesBefore,
       minutesAfter: requirement.minutesAfter,
+      // Each column only where it is not its default (COPY_UNLESS_DEFAULT).
+      ...(requirement.ownDistribution ? { ownDistribution: true as const } : {}),
+      ...(requirement.ownDistribution && requirement.maxLessonsPerDay !== null
+        ? { maxLessonsPerDay: requirement.maxLessonsPerDay }
+        : {}),
+      ...(requirement.ownDistribution && requirement.minDaysBetween !== null
+        ? { minDaysBetween: requirement.minDaysBetween }
+        : {}),
       teacherLoadPercent: requirement.teacherLoadPercent,
       coTeacherLoadPercent: requirement.coTeacherLoadPercent,
       recurrence: requirement.recurrence,

@@ -119,6 +119,12 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
         ...(row.lessonLengths ? { lessonLengths: row.lessonLengths } : {}),
         minutesBefore: row.minutesBefore,
         minutesAfter: row.minutesAfter,
+        // Only a row with its own ämnesfördelning names them, each where it
+        // is not the column's default; one that follows its subject writes
+        // what it always wrote.
+        ...(row.ownDistribution ? { ownDistribution: true } : {}),
+        ...(row.maxLessonsPerDay !== undefined ? { maxLessonsPerDay: row.maxLessonsPerDay } : {}),
+        ...(row.minDaysBetween !== undefined ? { minDaysBetween: row.minDaysBetween } : {}),
         teacherLoadPercent: row.teacherLoadPercent,
         coTeacherLoadPercent: row.coTeacherLoadPercent,
         recurrence: row.recurrence,

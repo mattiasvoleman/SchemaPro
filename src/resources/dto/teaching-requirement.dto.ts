@@ -2,6 +2,7 @@ import { LessonRecurrence } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -11,6 +12,24 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
+import {
+  MAX_LESSONS_PER_DAY_MAX,
+  MAX_LESSONS_PER_DAY_MIN,
+  MIN_DAYS_BETWEEN_MAX,
+  MIN_DAYS_BETWEEN_MIN,
+} from '../../common/subject-distribution';
+import { MAX_LESSONS_PER_DAY_MESSAGE, MIN_DAYS_BETWEEN_MESSAGE } from './subject.dto';
+
+/**
+ * Ämnesfördelning on the timplanspost: `ownDistribution` true makes the two
+ * numbers this row's whole rule, null in either meaning no rule; false (the
+ * default) follows the subject and carries no numbers — the CHECK of
+ * 20261019090000 holds that, and the service answers the shape before the
+ * table has to. Null is refused for the flag for countsTowardTimplan's reason:
+ * a NOT NULL column with a default has no "cleared" state for null to mean.
+ */
+const OWN_DISTRIBUTION_MESSAGE =
+  'ownDistribution: om timplansposten har en egen fördelning anges med true eller false.';
 
 /**
  * For the NOT NULL figures: omitted is allowed (the column's default, or the
@@ -128,6 +147,22 @@ export class CreateTeachingRequirementDto {
   @Max(60)
   minutesAfter?: number;
 
+  @ValidateIf(presentOrNull)
+  @IsBoolean({ message: OWN_DISTRIBUTION_MESSAGE })
+  ownDistribution?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Min(MAX_LESSONS_PER_DAY_MIN, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Max(MAX_LESSONS_PER_DAY_MAX, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  maxLessonsPerDay?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Min(MIN_DAYS_BETWEEN_MIN, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Max(MIN_DAYS_BETWEEN_MAX, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  minDaysBetween?: number | null;
+
   /**
    * Which weeks the subject is read over. Said once here and inherited by
    * every lesson generated from the requirement, instead of once per lesson in
@@ -215,6 +250,22 @@ export class UpdateTeachingRequirementDto {
   @Min(0)
   @Max(60)
   minutesAfter?: number;
+
+  @ValidateIf(presentOrNull)
+  @IsBoolean({ message: OWN_DISTRIBUTION_MESSAGE })
+  ownDistribution?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Min(MAX_LESSONS_PER_DAY_MIN, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  @Max(MAX_LESSONS_PER_DAY_MAX, { message: MAX_LESSONS_PER_DAY_MESSAGE })
+  maxLessonsPerDay?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Min(MIN_DAYS_BETWEEN_MIN, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  @Max(MIN_DAYS_BETWEEN_MAX, { message: MIN_DAYS_BETWEEN_MESSAGE })
+  minDaysBetween?: number | null;
 
   @ValidateIf(presentOrNull)
   @IsEnum(LessonRecurrence)

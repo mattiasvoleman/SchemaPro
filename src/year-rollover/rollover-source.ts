@@ -61,6 +61,10 @@ export interface SourceRequirement {
   lessonLengths: number[];
   minutesBefore: number;
   minutesAfter: number;
+  /** Ämnesfördelning of the row's own; false with nulls follows the subject. */
+  ownDistribution: boolean;
+  maxLessonsPerDay: number | null;
+  minDaysBetween: number | null;
   teacherLoadPercent: number;
   coTeacherLoadPercent: number;
   recurrence: LessonRecurrence;
@@ -215,6 +219,9 @@ export async function readRolloverSource(
       lessonLengths: true,
       minutesBefore: true,
       minutesAfter: true,
+      ownDistribution: true,
+      maxLessonsPerDay: true,
+      minDaysBetween: true,
       teacherLoadPercent: true,
       coTeacherLoadPercent: true,
       recurrence: true,
@@ -397,6 +404,11 @@ export async function readRolloverSource(
       lessonLengths: row.lessonLengths ?? [],
       minutesBefore: row.minutesBefore,
       minutesAfter: row.minutesAfter,
+      // A row read without the columns (a source older than them) follows its
+      // subject, which is what such a row did.
+      ownDistribution: row.ownDistribution ?? false,
+      maxLessonsPerDay: row.maxLessonsPerDay ?? null,
+      minDaysBetween: row.minDaysBetween ?? null,
       teacherLoadPercent: row.teacherLoadPercent,
       coTeacherLoadPercent: row.coTeacherLoadPercent,
       recurrence: row.recurrence,
