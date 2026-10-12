@@ -13372,27 +13372,32 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 72: kroken körs bara av Supabase Auth, och uppslaget bara av API:t
--- (the four functions of 20261020090000).
+-- (the five functions of 20261020090000, and the schema "sign_in").
 --
--- app.custom_access_token_hook decides whether a token is issued, and
--- app.sign_in_rules hands out any person's role and their school's pins by
--- Auth id. Either one callable through PostgREST would let a signed-in user
--- read another school's tenant or probe who exists. So:
+-- sign_in.custom_access_token_hook decides whether a token is issued, and
+-- sign_in.rules hands out any person's role and their school's pins by Auth
+-- id. Either one callable through PostgREST would let a signed-in user read
+-- another school's tenant or probe who exists. So:
 --
 --   * the hook runs with its caller's rights (Supabase's advice): no
 --     SECURITY DEFINER, and an empty search_path;
---   * sign_in_rules, sign_in_provider_for_domain and the domain trigger's
---     sign_in_domain_keeps_its_provider are SECURITY DEFINER with an empty
---     search_path, and nobody executes the trigger function;
---   * sign_in_verdict is IMMUTABLE, invoker-rights, and reads nothing;
---   * EXECUTE: the hook and sign_in_rules for supabase_auth_admin only (when
---     the role exists, as on Supabase); the lookup for app_authenticated only;
---     the verdict for those two. Never PUBLIC, anon, authenticated or
---     service_role. Counted with has_function_privilege, so a grant to a role
---     they inherit from counts too.
+--   * sign_in.rules, app.sign_in_provider_for_domain and the domain
+--     trigger's app.sign_in_domain_keeps_its_provider are SECURITY DEFINER
+--     with an empty search_path, and nobody executes the trigger function;
+--   * sign_in.verdict is IMMUTABLE, invoker-rights, and reads nothing;
+--   * EXECUTE: the hook and sign_in.rules for supabase_auth_admin only; the
+--     lookup for app_authenticated only; the verdict for those two. Never
+--     PUBLIC, anon, authenticated or service_role. Counted with
+--     has_function_privilege, so a grant to a role they inherit from counts
+--     too. CI's database has a stand-in supabase_auth_admin
+--     (scripts/db-init), so its grants are counted there too;
+--   * USAGE on "sign_in" for supabase_auth_admin and app_authenticated only,
+--     the schema holds the three functions and nothing else, and
+--     supabase_auth_admin has no USAGE on "app", whose PUBLIC-executable
+--     helpers include SECURITY DEFINER readers of any school's settings.
 --
 -- Then the refusals are run: as app_authenticated and as authenticated the
--- hook and sign_in_rules answer 42501, and as authenticated so does the
+-- hook and sign_in.rules answer 42501, and as authenticated so does the
 -- lookup.
 -- ---------------------------------------------------------------------------
 
@@ -13404,9 +13409,9 @@ DECLARE
   expected boolean;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
-      ('app.custom_access_token_hook(jsonb)', false, 's', ARRAY['supabase_auth_admin']),
-      ('app.sign_in_rules(uuid)', true, 's', ARRAY['supabase_auth_admin']),
-      ('app.sign_in_verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb,interval)', false, 'i', ARRAY['supabase_auth_admin', 'app_authenticated']),
+      ('sign_in.custom_access_token_hook(jsonb)', false, 's', ARRAY['supabase_auth_admin']),
+      ('sign_in.rules(uuid)', true, 's', ARRAY['supabase_auth_admin']),
+      ('sign_in.verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb,interval)', false, 'i', ARRAY['supabase_auth_admin', 'app_authenticated']),
       ('app.sign_in_provider_for_domain(text)', true, 's', ARRAY['app_authenticated']),
       ('app.sign_in_domain_keeps_its_provider()', true, 'v', '{}'::text[])
     ) AS t(fn, definer, volatility, callers)
@@ -13433,6 +13438,30 @@ BEGIN
       END IF;
     END LOOP;
   END LOOP;
+
+  -- The schema: USAGE for the two callers only, the three functions only.
+  FOREACH who IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated', 'supabase_auth_admin'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = who);
+    allowed := has_schema_privilege(who, 'sign_in', 'USAGE');
+    expected := who IN ('app_authenticated', 'supabase_auth_admin');
+    IF allowed IS DISTINCT FROM expected THEN
+      RAISE EXCEPTION 'sign-in functions: % % use schema sign_in', who, CASE WHEN allowed THEN 'may' ELSE 'may not' END;
+    END IF;
+    IF has_schema_privilege(who, 'sign_in', 'CREATE') THEN
+      RAISE EXCEPTION 'sign-in functions: % may create in schema sign_in', who;
+    END IF;
+  END LOOP;
+  IF has_schema_privilege('supabase_auth_admin', 'app', 'USAGE') THEN
+    RAISE EXCEPTION 'sign-in functions: supabase_auth_admin may use schema app and run its PUBLIC helpers';
+  END IF;
+  IF (SELECT string_agg(p.oid::regprocedure::text, ', ' ORDER BY p.oid::regprocedure::text) FROM pg_proc p
+       WHERE p.pronamespace = 'sign_in'::regnamespace)
+     IS DISTINCT FROM 'sign_in.custom_access_token_hook(jsonb), sign_in.rules(uuid), sign_in.verdict("UserRole","SignInProvider",uuid,text,boolean,text[],jsonb,interval)' THEN
+    RAISE EXCEPTION 'sign-in functions: schema sign_in holds something besides the hook and its two callees';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class c WHERE c.relnamespace = 'sign_in'::regnamespace) THEN
+    RAISE EXCEPTION 'sign-in functions: schema sign_in holds a relation';
+  END IF;
 END $$;
 
 BEGIN;
@@ -13445,12 +13474,12 @@ BEGIN
     EXECUTE format('SET LOCAL ROLE %I', via);
     IF current_user <> via THEN RAISE EXCEPTION 'sign-in functions: running as %, not %', current_user, via; END IF;
     BEGIN
-      ignored := app.custom_access_token_hook(jsonb_build_object('user_id', gen_random_uuid(), 'claims', '{}'::jsonb, 'authentication_method', 'password'));
+      ignored := sign_in.custom_access_token_hook(jsonb_build_object('user_id', gen_random_uuid(), 'claims', '{}'::jsonb, 'authentication_method', 'password'));
       RAISE EXCEPTION 'sign-in functions: % ran the access-token hook', via;
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
     BEGIN
-      PERFORM * FROM app.sign_in_rules(gen_random_uuid());
+      PERFORM * FROM sign_in.rules(gen_random_uuid());
       RAISE EXCEPTION 'sign-in functions: % read a person''s sign-in rules', via;
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
@@ -13469,7 +13498,7 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 73: kroken släpper igenom skolans skolkonton och personalens
 -- lösenord bara när skolan vill, och ett skolkonto högst ett dygn i taget
--- (app.sign_in_verdict, 20261020090000).
+-- (sign_in.verdict, 20261020090000).
 --
 -- The verdict is the whole decision of the access-token hook; the hook only
 -- gathers its inputs (the person's role and school row by Auth id, the
@@ -13578,10 +13607,20 @@ BEGIN
       ('Google, a pupil, 25 hours after signing in',        'STUDENT',      'google', NULL, 'skola.rls73.example', false, ARRAY['oauth', 'token_refresh'], 'G', 'sso_reauth_required', interval '25 hours'),
       ('another tenant, long ago: the tenant is the answer', 'TEACHER',     'azure', 'T', NULL, false, ARRAY['oauth'], 'O', 'sso_identity_not_allowed', interval '30 days'),
       ('a password with no sign-in time, optional',         'TEACHER',      'azure', 'T', NULL, false, ARRAY['password', 'token_refresh'], '', NULL, NULL),
-      ('a password a month old, no school row',             'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['password', 'token_refresh'], '', NULL, interval '30 days')
+      ('a password a month old, no school row',             'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['password', 'token_refresh'], '', NULL, interval '30 days'),
+      -- Ways of signing in the hook does not pin are refused until they are.
+      ('SAML, no school row',                                'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['sso/saml'], '', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('SAML at a school with school accounts',              'STUDENT',      'azure', 'T', NULL, false, ARRAY['sso/saml', 'token_refresh'], 'ES', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('a passkey',                                          'TEACHER',      'azure', 'T', NULL, false, ARRAY['passkey'], '', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('web3',                                               'GUARDIAN',     NULL, NULL, NULL, NULL, ARRAY['web3'], '', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('an anonymous sign-in',                               'STUDENT',      NULL, NULL, NULL, NULL, ARRAY['anonymous'], '', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('a method Auth adds later',                           'TEACHER',      NULL, NULL, NULL, NULL, ARRAY['something/new'], '', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('Entra and SAML mixed',                               'TEACHER',      'azure', 'T', NULL, false, ARRAY['oauth', 'sso/saml'], 'E', 'sign_in_method_not_allowed', interval '1 hour'),
+      ('a sign-up link, optional',                           'GUARDIAN',     'azure', 'T', NULL, false, ARRAY['email/signup'], '', NULL, interval '1 hour'),
+      ('an e-mail change, SSO-only',                         'TEACHER',      'azure', 'T', NULL, true, ARRAY['email_change'], '', 'sso_required', interval '1 hour')
     ) AS t(label, role, provider, tenant, hd, sso_only, methods, ids, expect, age)
   LOOP
-    got := app.sign_in_verdict(
+    got := sign_in.verdict(
       r.role::"UserRole",
       r.provider::"SignInProvider",
       CASE WHEN r.tenant = 'T' THEN tid::uuid END,
@@ -13602,7 +13641,7 @@ BEGIN
     END IF;
     cases := cases + 1;
   END LOOP;
-  IF cases < 50 THEN RAISE EXCEPTION 'sign-in verdict: only % case(s) ran', cases; END IF;
+  IF cases < 59 THEN RAISE EXCEPTION 'sign-in verdict: only % case(s) ran', cases; END IF;
 END $$;
 
 
@@ -13765,6 +13804,168 @@ BEGIN
   END IF;
 END $$;
 
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 76: kroken själv, anropad som Supabase Auth anropar den
+-- (sign_in.custom_access_token_hook, 20261020090000).
+--
+-- The hook runs before every access token Auth issues, for every person of
+-- every school. A fault in it, in sign_in.rules or in their grants refuses
+-- every sign-in and every refresh in the project the moment the hook is on,
+-- so the hook itself is called here, as supabase_auth_admin, with events of
+-- the shape Auth sends (user_id, claims with amr entries {method,
+-- timestamp}, authentication_method). CI's database gets that role and a
+-- stand-in auth.identities from scripts/db-init, and app_authenticated may
+-- SET ROLE to it there (without inheriting its rights).
+--
+--   76a  everyone the hook must leave alone gets exactly the claims Auth
+--        signed, wrapped as {"claims": …}: a stranger without a Users row
+--        (by password and by school account), school A's guardian, pupil,
+--        teacher and admin and its deactivated admin (school A has no
+--        school-account row), a recovery link and a refresh, and school B's
+--        pupil, whose school requires the school account of staff only;
+--   76b  the refusals come back as Auth reads them, {"error": {"http_code":
+--        403, "message": <code>}}: school B's teacher and admin by password
+--        and invitation link (sso_required), a school-account session with no
+--        identity, with the right tenant beside another and with SAML, a
+--        sign-in more than a day old, school A's teacher by school account
+--        (sso_not_enabled), and a school-account issuance whose amr has not
+--        caught up (the issuance's own method counts);
+--   76c  school B's teacher with an Entra identity of B's tenant gets the
+--        claims;
+--   76d  as supabase_auth_admin, Users cannot be read directly and nothing in
+--        "app" can be executed: the hook reaches SchemaPro's data only
+--        through sign_in.rules.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  PERFORM set_config('app.test_rls76_admin_auth', (SELECT "authId"::text FROM "Users" WHERE id = app.current_user_id()), true);
+  PERFORM set_config('app.test_rls76_teacher_sub', coalesce((SELECT "authId"::text FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), ''), true);
+  PERFORM set_config('app.test_rls76_pupil_sub', coalesce((SELECT "authId"::text FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), ''), true);
+  IF current_setting('app.test_rls76_teacher_sub') = '' OR current_setting('app.test_rls76_pupil_sub') = '' THEN
+    RAISE EXCEPTION 'hook: school A has no active teacher or pupil to ask about';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  now_s bigint := extract(epoch FROM now())::bigint;
+  b_tenant text := '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5b';
+  r record;
+  claims jsonb;
+  got jsonb;
+  expected jsonb;
+  cases int := 0;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+    RAISE EXCEPTION 'hook: the role supabase_auth_admin does not exist (scripts/db-init/02-auth-hook-stand-in.sql), so the hook is never called';
+  END IF;
+  SET LOCAL ROLE supabase_auth_admin;
+  IF current_user <> 'supabase_auth_admin' THEN RAISE EXCEPTION 'hook: running as %, not supabase_auth_admin', current_user; END IF;
+
+  FOR r IN SELECT * FROM (VALUES
+      -- 76a: left alone.
+      ('a stranger by password',                  gen_random_uuid()::text, 'password', ARRAY['password'], NULL::bigint, NULL::text),
+      ('a stranger by school account',            gen_random_uuid()::text, 'oauth', ARRAY['oauth'], 0, NULL),
+      ('school A''s guardian by password',        '00000000-0000-4000-8000-000000000004', 'password', ARRAY['password'], NULL, NULL),
+      ('school A''s pupil by password',           current_setting('app.test_rls76_pupil_sub'), 'password', ARRAY['password'], NULL, NULL),
+      ('school A''s teacher by password',         current_setting('app.test_rls76_teacher_sub'), 'password', ARRAY['password'], NULL, NULL),
+      ('school A''s admin by password',           current_setting('app.test_rls76_admin_auth'), 'password', ARRAY['password'], NULL, NULL),
+      ('school A''s deactivated admin',           '00000000-0000-4000-8000-000000000003', 'password', ARRAY['password'], NULL, NULL),
+      ('school A''s teacher by recovery link',    current_setting('app.test_rls76_teacher_sub'), 'recovery', ARRAY['recovery'], NULL, NULL),
+      ('school A''s teacher refreshed',           current_setting('app.test_rls76_teacher_sub'), 'token_refresh', ARRAY['password'], NULL, NULL),
+      ('school B''s pupil by password',           '00000000-0000-4000-8000-000000000007', 'password', ARRAY['password'], NULL, NULL),
+      -- 76b: refused.
+      ('school B''s teacher by password',         '00000000-0000-4000-8000-000000000001', 'password', ARRAY['password'], NULL, 'sso_required'),
+      ('school B''s admin by invitation link',    '00000000-0000-4000-8000-000000000006', 'invite', ARRAY['invite'], NULL, 'sso_required'),
+      ('school B''s teacher refreshing a password', '00000000-0000-4000-8000-000000000001', 'token_refresh', ARRAY['password'], NULL, 'sso_required'),
+      ('school B''s teacher, school account, no identity', '00000000-0000-4000-8000-000000000001', 'oauth', ARRAY['oauth'], 0, 'sso_identity_not_allowed'),
+      ('school B''s teacher by SAML',             '00000000-0000-4000-8000-000000000001', 'sso/saml', ARRAY['sso/saml'], NULL, 'sign_in_method_not_allowed'),
+      ('school A''s teacher by school account',   current_setting('app.test_rls76_teacher_sub'), 'oauth', ARRAY['oauth'], 0, 'sso_not_enabled')
+    ) AS t(label, sub, method, amr, age_s, expect)
+  LOOP
+    claims := jsonb_build_object(
+      'aud', 'authenticated', 'sub', r.sub, 'role', 'authenticated', 'email', 'rls76@example.invalid',
+      'session_id', gen_random_uuid(), 'aal', 'aal1', 'is_anonymous', false,
+      'app_metadata', jsonb_build_object('provider', 'email'), 'user_metadata', '{}'::jsonb,
+      'amr', (SELECT jsonb_agg(jsonb_build_object('method', m, 'timestamp', now_s - coalesce(r.age_s, 60))) FROM unnest(r.amr) m));
+    got := sign_in.custom_access_token_hook(jsonb_build_object('user_id', r.sub, 'claims', claims, 'authentication_method', r.method));
+    expected := CASE WHEN r.expect IS NULL THEN jsonb_build_object('claims', claims)
+                     ELSE jsonb_build_object('error', jsonb_build_object('http_code', 403, 'message', r.expect)) END;
+    IF got IS DISTINCT FROM expected THEN
+      RAISE EXCEPTION 'hook: % gave %, expected %', r.label, got, expected;
+    END IF;
+    cases := cases + 1;
+  END LOOP;
+
+  -- 76c: school B's teacher with an Entra identity of B's tenant.
+  INSERT INTO auth.identities (provider_id, user_id, identity_data, provider)
+  VALUES ('rls76-entra', '00000000-0000-4000-8000-000000000001',
+          jsonb_build_object('iss', 'https://login.microsoftonline.com/' || b_tenant || '/v2.0', 'sub', 'rls76-entra',
+                             'custom_claims', jsonb_build_object('tid', b_tenant)),
+          'azure');
+  FOR r IN SELECT * FROM (VALUES
+      ('B''s tenant, signed in a minute ago',        'oauth', '[{"method":"oauth","timestamp":0}]'::jsonb, 60, NULL::text),
+      ('B''s tenant, refreshed after 23 hours',      'token_refresh', '[{"method":"oauth","timestamp":0}]', 23 * 3600, NULL),
+      ('B''s tenant, refreshed after 25 hours',      'token_refresh', '[{"method":"oauth","timestamp":0}]', 25 * 3600, 'sso_reauth_required'),
+      ('B''s tenant, with a second factor',          'totp', '[{"method":"oauth","timestamp":0},{"method":"totp","timestamp":0}]', 60, NULL),
+      ('an issuance whose amr has not caught up',    'oauth', '[]', 60, 'sso_reauth_required'),
+      ('B''s tenant, amr entries as plain strings',  'token_refresh', '["oauth"]', 60, 'sso_reauth_required')
+    ) AS t(label, method, amr, age_s, expect)
+  LOOP
+    claims := jsonb_build_object(
+      'aud', 'authenticated', 'sub', '00000000-0000-4000-8000-000000000001', 'role', 'authenticated',
+      'session_id', gen_random_uuid(), 'aal', 'aal1', 'is_anonymous', false,
+      'amr', (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(e) = 'object'
+                                             THEN e || jsonb_build_object('timestamp', now_s - r.age_s) ELSE e END), '[]'::jsonb)
+                FROM jsonb_array_elements(r.amr) e));
+    got := sign_in.custom_access_token_hook(jsonb_build_object(
+      'user_id', '00000000-0000-4000-8000-000000000001', 'claims', claims, 'authentication_method', r.method));
+    expected := CASE WHEN r.expect IS NULL THEN jsonb_build_object('claims', claims)
+                     ELSE jsonb_build_object('error', jsonb_build_object('http_code', 403, 'message', r.expect)) END;
+    IF got IS DISTINCT FROM expected THEN
+      RAISE EXCEPTION 'hook: % gave %, expected %', r.label, got, expected;
+    END IF;
+    cases := cases + 1;
+  END LOOP;
+
+  -- The right tenant beside another one is refused.
+  INSERT INTO auth.identities (provider_id, user_id, identity_data, provider)
+  VALUES ('rls76-other', '00000000-0000-4000-8000-000000000001',
+          jsonb_build_object('iss', 'https://login.microsoftonline.com/5e4d3c2b-1a09-4877-8665-544332211000/v2.0', 'sub', 'rls76-other'),
+          'azure');
+  claims := jsonb_build_object('sub', '00000000-0000-4000-8000-000000000001', 'role', 'authenticated',
+                               'amr', jsonb_build_array(jsonb_build_object('method', 'oauth', 'timestamp', now_s - 60)));
+  got := sign_in.custom_access_token_hook(jsonb_build_object(
+    'user_id', '00000000-0000-4000-8000-000000000001', 'claims', claims, 'authentication_method', 'oauth'));
+  IF got IS DISTINCT FROM '{"error": {"http_code": 403, "message": "sso_identity_not_allowed"}}'::jsonb THEN
+    RAISE EXCEPTION 'hook: the right tenant beside another gave %', got;
+  END IF;
+  cases := cases + 1;
+
+  -- 76d: nothing of SchemaPro's but through sign_in.rules.
+  BEGIN
+    PERFORM 1 FROM public."Users" LIMIT 1;
+    RAISE EXCEPTION 'hook: supabase_auth_admin read Users directly';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.current_school_id();
+    RAISE EXCEPTION 'hook: supabase_auth_admin ran a helper in app';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  IF cases < 23 THEN RAISE EXCEPTION 'hook: only % case(s) ran', cases; END IF;
+  SET LOCAL ROLE app_authenticated;
+END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------

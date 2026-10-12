@@ -47,7 +47,7 @@
 --
 -- ## The access-token hook
 --
--- Supabase Auth calls app.custom_access_token_hook(event) before it issues
+-- Supabase Auth calls sign_in.custom_access_token_hook(event) before it issues
 -- any access token: at sign-in, at every refresh and after an invitation or
 -- recovery link. It runs as supabase_auth_admin, inside Auth's own
 -- transaction, with two seconds to answer. The dashboard step that turns it
@@ -73,6 +73,12 @@
 --                               the refresh of a session started before the
 --                               school turned it on, so a password session
 --                               ends within the token's lifetime;
+--   * sign_in_method_not_allowed  a session that signed in some other way than
+--                               a password, an e-mail link or a school account
+--                               the hook pins: SAML (sso/saml, which the
+--                               Skolfederation phase will pin), a passkey,
+--                               web3, an anonymous sign-in, or a method this
+--                               hook does not know. Refused until pinned;
 --   * sso_reauth_required       a school-account session whose sign-in at the
 --                               provider is more than 24 hours old (the amr
 --                               entry's timestamp), or has no timestamp.
@@ -85,7 +91,8 @@
 --                               goes through the provider, which refuses them.
 --
 -- Everything else gets its claims back unchanged, including a person with no
--- Users row (the web's /no-profile handles them).
+-- Users row (the web's /no-profile handles them). RLS section 76 calls the
+-- hook as supabase_auth_admin and asserts both.
 --
 -- Why EVERY school-account identity, rather than the one this session used:
 -- the hook cannot tell which. The claims carry the session's methods ("oauth")
@@ -110,18 +117,28 @@
 --
 -- ## The functions
 --
---   * app.custom_access_token_hook(jsonb)  SECURITY INVOKER, as Supabase
+-- The hook and the two functions it calls live in a schema of their own,
+-- "sign_in", which PostgREST does not serve. supabase_auth_admin gets USAGE
+-- on it and on nothing of SchemaPro's besides: USAGE on "app" would also let
+-- that role run the helpers there that PUBLIC may execute, some of them
+-- SECURITY DEFINER readers of any school's settings.
+--
+--   * sign_in.custom_access_token_hook(jsonb)  SECURITY INVOKER, as Supabase
 --     recommends: it runs as supabase_auth_admin, which owns auth.identities
 --     and reads it with its own privileges. EXECUTE for supabase_auth_admin
 --     only.
---   * app.sign_in_rules(uuid)  SECURITY DEFINER: the person's role and their
+--   * sign_in.rules(uuid)  SECURITY DEFINER: the person's role and their
 --     school's row, for the hook, so supabase_auth_admin needs no grant on
 --     Users or SchoolSignInMethods and neither table gets a policy for it.
---     EXECUTE for supabase_auth_admin only.
---   * app.sign_in_verdict(...)  IMMUTABLE and reads nothing: the decision,
---     from the role, the school's row, the session's methods and the
---     identities. EXECUTE for supabase_auth_admin and for app_authenticated,
---     which the RLS suite runs as (section 73 walks its cases).
+--     Its body is SQL-standard (BEGIN ATOMIC), so Postgres records what it
+--     reads and refuses to drop or retype a column of it: a later migration
+--     cannot break every sign-in at runtime with CI green. EXECUTE for
+--     supabase_auth_admin only.
+--   * sign_in.verdict(...)  IMMUTABLE and reads nothing: the decision, from
+--     the role, the school's row, the session's methods and the identities.
+--     EXECUTE for supabase_auth_admin and for app_authenticated, which the
+--     RLS suite runs as (section 73 walks its cases); app_authenticated has
+--     USAGE on "sign_in" for that and executes nothing else there.
 --   * app.sign_in_provider_for_domain(text)  SECURITY DEFINER: /login's
 --     lookup, the provider and nothing else. The gateway calls it without a
 --     principal (PrismaService.withPublicViewer). EXECUTE for
@@ -131,16 +148,14 @@
 --     RLS hides, and answers only which of the admin's own domains are taken.
 --     Nobody executes it but the trigger.
 --
--- All five live in "app", which PostgREST does not serve. supabase_auth_admin
--- gets USAGE on "app" for the first two; the helpers there that PUBLIC may
--- execute only read transaction-local settings.
+-- Additive: a new type, a new table, a new schema and five new functions.
+-- Nothing that exists changes, and nothing calls the hook until the
+-- dashboard does.
 --
--- Additive: a new type, a new table and four new functions. Nothing that
--- exists changes, and nothing calls the hook until the dashboard does.
---
--- RLS sections 70 to 75 assert the table's arms and CHECKs, the functions'
--- privileges and settings, the verdict's cases, the lookup and the domain
--- rule.
+-- RLS sections 70 to 76 assert the table's arms and CHECKs, the functions'
+-- privileges and settings, the verdict's cases, the lookup, the domain rule
+-- and the hook itself, called as supabase_auth_admin (scripts/db-init gives
+-- CI's database a stand-in of that role and of auth.identities).
 
 CREATE TYPE "SignInProvider" AS ENUM ('azure', 'google');
 
@@ -249,7 +264,10 @@ CREATE POLICY "sign_in_methods_admin_delete" ON "SchoolSignInMethods"
 -- The decision. Reads nothing; every input is an argument.
 -- ---------------------------------------------------------------------------
 
-CREATE FUNCTION app.sign_in_verdict(
+CREATE SCHEMA "sign_in";
+REVOKE ALL ON SCHEMA "sign_in" FROM PUBLIC;
+
+CREATE FUNCTION sign_in.verdict(
     p_role                 "UserRole",
     p_provider             "SignInProvider",
     p_entra_tenant_id      uuid,
@@ -277,6 +295,15 @@ DECLARE
   matched boolean;
   seen int := 0;
 BEGIN
+  -- A way of signing in this hook does not pin is refused until it is:
+  -- SAML (sso/saml) until the Skolfederation phase, passkeys, web3,
+  -- anonymous sign-ins and anything Auth adds later.
+  IF EXISTS (SELECT 1 FROM unnest(first_factors) m
+              WHERE m NOT IN ('oauth', 'password', 'otp', 'magiclink', 'recovery', 'invite',
+                              'email/signup', 'email_change')) THEN
+    RETURN 'sign_in_method_not_allowed';
+  END IF;
+
   school_account := cardinality(first_factors) > 0 AND first_factors <@ ARRAY['oauth'];
 
   IF NOT school_account THEN
@@ -331,14 +358,14 @@ BEGIN
 END
 $$;
 
-COMMENT ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) IS
-  'Logga in med skolkonto (20261020090000): NULL when a token may be issued, else sso_not_enabled, sso_identity_not_allowed, sso_required or sso_reauth_required.';
+COMMENT ON FUNCTION sign_in.verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) IS
+  'Logga in med skolkonto (20261020090000): NULL when a token may be issued, else sign_in_method_not_allowed, sso_not_enabled, sso_identity_not_allowed, sso_required or sso_reauth_required.';
 
 -- ---------------------------------------------------------------------------
 -- The person's role and their school's row, for the hook.
 -- ---------------------------------------------------------------------------
 
-CREATE FUNCTION app.sign_in_rules(p_auth_id uuid)
+CREATE FUNCTION sign_in.rules(p_auth_id uuid)
 RETURNS TABLE (
     "role"                 "UserRole",
     "provider"             "SignInProvider",
@@ -346,21 +373,22 @@ RETURNS TABLE (
     "googleHostedDomain"   text,
     "ssoOnlyForStaff"      boolean
 )
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+BEGIN ATOMIC
   SELECT u."role", m."provider", m."entraTenantId", m."googleHostedDomain", m."ssoOnlyForStaff"
     FROM public."Users" u
     LEFT JOIN public."SchoolSignInMethods" m ON m."schoolId" = u."schoolId"
-   WHERE u."authId" = p_auth_id
-$$;
+   WHERE u."authId" = p_auth_id;
+END;
 
-COMMENT ON FUNCTION app.sign_in_rules(uuid) IS
+COMMENT ON FUNCTION sign_in.rules(uuid) IS
   'Logga in med skolkonto (20261020090000): the role and the school''s sign-in row of the person with this Auth id; no row when there is no such person. For the access-token hook only.';
 
 -- ---------------------------------------------------------------------------
 -- The hook Supabase Auth calls before it issues an access token.
 -- ---------------------------------------------------------------------------
 
-CREATE FUNCTION app.custom_access_token_hook(event jsonb)
+CREATE FUNCTION sign_in.custom_access_token_hook(event jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path = '' AS $$
 DECLARE
@@ -380,7 +408,7 @@ BEGIN
         CASE WHEN jsonb_typeof(event->'claims'->'amr') = 'array' THEN event->'claims'->'amr' ELSE '[]'::jsonb END) a
   ) || (event->>'authentication_method');
 
-  SELECT * INTO rules FROM app.sign_in_rules(auth_id);
+  SELECT * INTO rules FROM sign_in.rules(auth_id);
   IF NOT FOUND THEN
     RETURN jsonb_build_object('claims', event->'claims');
   END IF;
@@ -401,9 +429,9 @@ BEGIN
        AND jsonb_typeof(a->'timestamp') = 'number';
   END IF;
 
-  verdict := app.sign_in_verdict(rules."role", rules."provider", rules."entraTenantId",
-                                 rules."googleHostedDomain", rules."ssoOnlyForStaff", methods, identities,
-                                 school_account_age);
+  verdict := sign_in.verdict(rules."role", rules."provider", rules."entraTenantId",
+                             rules."googleHostedDomain", rules."ssoOnlyForStaff", methods, identities,
+                             school_account_age);
   IF verdict IS NULL THEN
     RETURN jsonb_build_object('claims', event->'claims');
   END IF;
@@ -411,8 +439,8 @@ BEGIN
 END
 $$;
 
-COMMENT ON FUNCTION app.custom_access_token_hook(jsonb) IS
-  'Logga in med skolkonto (20261020090000): Supabase Auth''s custom access token hook. Returns the claims unchanged, or a 403 whose message is sso_not_enabled, sso_identity_not_allowed, sso_required or sso_reauth_required.';
+COMMENT ON FUNCTION sign_in.custom_access_token_hook(jsonb) IS
+  'Logga in med skolkonto (20261020090000): Supabase Auth''s custom access token hook. Returns the claims unchanged, or a 403 whose message is sign_in_method_not_allowed, sso_not_enabled, sso_identity_not_allowed, sso_required or sso_reauth_required.';
 
 -- ---------------------------------------------------------------------------
 -- /login's lookup: the provider for an e-mail domain, and nothing else.
@@ -453,9 +481,9 @@ BEGIN
   END IF;
 
   FOREACH fn IN ARRAY ARRAY[
-    'app.custom_access_token_hook(jsonb)',
-    'app.sign_in_rules(uuid)',
-    'app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval)',
+    'sign_in.custom_access_token_hook(jsonb)',
+    'sign_in.rules(uuid)',
+    'sign_in.verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval)',
     'app.sign_in_provider_for_domain(text)',
     'app.sign_in_domain_keeps_its_provider()'
   ] LOOP
@@ -467,18 +495,19 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- Supabase Auth's role: the hook and what it calls.
+  -- Supabase Auth's role: the hook and what it calls, in "sign_in" only.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
-    GRANT USAGE ON SCHEMA app TO "supabase_auth_admin";
-    GRANT EXECUTE ON FUNCTION app.custom_access_token_hook(jsonb) TO "supabase_auth_admin";
-    GRANT EXECUTE ON FUNCTION app.sign_in_rules(uuid) TO "supabase_auth_admin";
-    GRANT EXECUTE ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) TO "supabase_auth_admin";
+    GRANT USAGE ON SCHEMA "sign_in" TO "supabase_auth_admin";
+    GRANT EXECUTE ON FUNCTION sign_in.custom_access_token_hook(jsonb) TO "supabase_auth_admin";
+    GRANT EXECUTE ON FUNCTION sign_in.rules(uuid) TO "supabase_auth_admin";
+    GRANT EXECUTE ON FUNCTION sign_in.verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) TO "supabase_auth_admin";
   END IF;
 
   -- The gateway: the lookup; and the verdict, for the RLS suite.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
     GRANT EXECUTE ON FUNCTION app.sign_in_provider_for_domain(text) TO "app_authenticated";
-    GRANT EXECUTE ON FUNCTION app.sign_in_verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) TO "app_authenticated";
+    GRANT USAGE ON SCHEMA "sign_in" TO "app_authenticated";
+    GRANT EXECUTE ON FUNCTION sign_in.verdict("UserRole", "SignInProvider", uuid, text, boolean, text[], jsonb, interval) TO "app_authenticated";
   END IF;
 END
 $$;
