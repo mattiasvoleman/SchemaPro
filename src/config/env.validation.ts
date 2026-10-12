@@ -210,6 +210,14 @@ export class EnvironmentVariables {
   SS12000_BACKGROUND: string = 'on';
 
   /**
+   * The nightly gallring (src/gallring/gallring.job.ts). `on` unless set to
+   * `off`; the test setup turns it off. A school loses nothing until its
+   * admin has recorded a retention period on /admin/dataskydd.
+   */
+  @IsIn(['on', 'off'])
+  GALLRING_BACKGROUND: string = 'on';
+
+  /**
    * Lets the SS12000 client connect to a loopback address (the tests' TLS
    * mock provider). Refused unless NODE_ENV=test; https is never relaxed.
    */

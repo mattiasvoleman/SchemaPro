@@ -41,5 +41,8 @@ process.env['PUBLIC_VIEWER_PROXY_KEY'] = 'test-viewer-proxy-key-of-at-least-32-c
 // production key), and loopback allowed for the TLS mock provider, which
 // env.validation refuses outside NODE_ENV=test.
 process.env['SS12000_BACKGROUND'] = 'off';
+// The nightly gallring (src/gallring): no background tick in tests either; a
+// spec drives GallringJob.tick itself.
+process.env['GALLRING_BACKGROUND'] = 'off';
 process.env['SS12000_ALLOW_INSECURE_LOCAL'] = '1';
 process.env['INTEGRATION_SECRETS_KEY'] = Buffer.alloc(32, 7).toString('base64');

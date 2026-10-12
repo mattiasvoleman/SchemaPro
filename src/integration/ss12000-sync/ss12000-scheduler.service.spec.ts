@@ -1,6 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
 import type { PrismaService } from '../../database/prisma.service';
+import { JobRunner } from '../../jobs/job-runner';
 import { Ss12000SchedulerService } from './ss12000-scheduler.service';
 import type { Ss12000SyncService } from './ss12000-sync.service';
 
@@ -13,7 +14,7 @@ describe('Ss12000SchedulerService', () => {
     const off = new Ss12000SchedulerService(prisma, sync, config(false));
     off.onModuleInit();
     expect(off.scheduled).toBe(false);
-    const on = new Ss12000SchedulerService(prisma, sync, config(true));
+    const on = new Ss12000SchedulerService(prisma, sync, config(true), new JobRunner());
     on.onModuleInit();
     expect(on.scheduled).toBe(true);
     on.onModuleDestroy();

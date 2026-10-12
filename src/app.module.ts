@@ -16,6 +16,7 @@ import { AppConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
+import { JobsModule } from './jobs/jobs.module';
 import { FamilyModule } from './family/family.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ImportModule } from './import/import.module';
@@ -36,6 +37,7 @@ import { TimplanModule } from './timplan/timplan.module';
 import { PublicationModule } from './publication/publication.module';
 import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
+import { GallringModule } from './gallring/gallring.module';
 import type { ThrottleConfig } from './config/configuration';
 
 /**
@@ -47,6 +49,7 @@ import type { ThrottleConfig } from './config/configuration';
  * |--------------------------|----------------------------------------------|--------|
  * | Config & env validation  | `AppConfigModule` (global, via ConfigModule)  | Global |
  * | Database + RLS           | `DatabaseModule` (global PrismaService)       | Global |
+ * | Background jobs          | `JobsModule` (global JobRunner)               | Global |
  * | JWT authentication       | `AuthModule` (JwtStrategy + PassportModule)   | Global |
  * | Authentication guard     | `JwtAuthGuard` via APP_GUARD                  | Global |
  * | RBAC guard               | `RolesGuard` via APP_GUARD                    | Global |
@@ -73,6 +76,7 @@ import type { ThrottleConfig } from './config/configuration';
   imports: [
     AppConfigModule,
     DatabaseModule,
+    JobsModule,
     AuthModule,
     HealthModule,
     FamilyModule,
@@ -123,6 +127,7 @@ import type { ThrottleConfig } from './config/configuration';
     YearRolloverModule,
     PublicationModule,
     CoverModule,
+    GallringModule,
   ],
 
   providers: [

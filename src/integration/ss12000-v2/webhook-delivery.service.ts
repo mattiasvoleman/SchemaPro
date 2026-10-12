@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { Ss12000Config } from '../../config/configuration';
 import { PrismaService } from '../../database/prisma.service';
+import { errorName, JobRunner, type JobCounts } from '../../jobs/job-runner';
 import { sourceErrorCode } from '../ss12000-sync/errors';
 import { SecretBoxError } from '../ss12000-sync/secret-box';
 import { sendOutbound } from '../ss12000-sync/outbound';
@@ -11,6 +12,8 @@ import { Ss12000Outbound, Ss12000Secrets } from '../ss12000-sync/ss12000-sync.pr
 import { signatureHeader, webhookSecretAad } from './signing';
 import { vetTarget } from './subscriptions.service';
 
+/** The job's name in the runner and in JobRuns. */
+export const WEBHOOK_JOB = 'ss12000-webhooks';
 /** The tick: at most one notice per subscription a minute, as S1 permits ("kan välja att skicka en notis för multipla förändringar"). */
 export const WEBHOOK_INTERVAL_MS = 60_000;
 /** The purge of old tombstones and delivery rows, and the release of stale claims. */
@@ -64,9 +67,10 @@ interface SealedRow {
  * /deletedEntities, as S1 intends. A DRAFT edit never makes a version
  * (20261014130000), so it never makes a notice.
  *
- * On the scheduler's pattern: an unref'd one-minute interval off when
- * SS12000_BACKGROUND=off, a tick that never overlaps itself, and SECURITY
- * DEFINER functions in a transaction with no principal:
+ * A job of the JobRunner (src/jobs), like the scheduler: an unref'd
+ * one-minute interval off when SS12000_BACKGROUND=off, a tick that never
+ * overlaps itself, each pass counted in JobRuns, and SECURITY DEFINER
+ * functions in a transaction with no principal:
  *   1. hourly, app.ss12000_provider_housekeeping(): tombstones after 400
  *      days, delivery rows after 30, stale claims released;
  *   2. app.ss12000_due_notifications(50): live, unexpired, unsuspended
@@ -88,7 +92,6 @@ interface SealedRow {
 @Injectable()
 export class Ss12000WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(Ss12000WebhookDeliveryService.name);
-  private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
   private lastHousekeeping = 0;
 
@@ -97,35 +100,39 @@ export class Ss12000WebhookDeliveryService implements OnModuleInit, OnModuleDest
     private readonly outbound: Ss12000Outbound,
     private readonly secrets: Ss12000Secrets,
     @Optional() private readonly config?: ConfigService,
+    @Optional() private readonly jobs?: JobRunner,
   ) {}
 
   onModuleInit(): void {
-    if (this.config?.get<Ss12000Config>('ss12000')?.background !== true) return;
-    this.timer = setInterval(() => void this.tick(), WEBHOOK_INTERVAL_MS);
-    this.timer.unref();
+    if (this.config?.get<Ss12000Config>('ss12000')?.background !== true || !this.jobs) return;
+    this.jobs.register({ name: WEBHOOK_JOB, intervalMs: WEBHOOK_INTERVAL_MS, tick: () => this.tick() });
   }
 
   onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.jobs?.unregister(WEBHOOK_JOB);
   }
 
   get scheduled(): boolean {
-    return this.timer !== null;
+    return this.jobs?.isScheduled(WEBHOOK_JOB) ?? false;
   }
 
   /** One pass; a tick while the last one runs waits for it instead. Never throws. */
   async tick(): Promise<void> {
     if (this.running) return this.running;
+    const started = new Date();
     this.running = this.pass()
-      .catch((error: unknown) => this.logger.warn(`SS12000 webhook tick failed [${error instanceof Error ? error.name : 'unknown'}]`))
+      .then((counts) => this.jobs?.settled(WEBHOOK_JOB, started, { ok: true, counts }))
+      .catch((error: unknown) => {
+        this.logger.warn(`SS12000 webhook tick failed [${errorName(error)}]`);
+        this.jobs?.settled(WEBHOOK_JOB, started, { ok: false, error: errorName(error) });
+      })
       .finally(() => {
         this.running = null;
       });
     return this.running;
   }
 
-  private async pass(): Promise<void> {
+  private async pass(): Promise<JobCounts> {
     // Hourly, not every minute: the purge reads the tombstones by age across
     // schools, and an hour more or less of a 400-day retention is nothing.
     if (Date.now() - this.lastHousekeeping >= HOUSEKEEPING_INTERVAL_MS) {
@@ -141,10 +148,14 @@ export class Ss12000WebhookDeliveryService implements OnModuleInit, OnModuleDest
       ),
     );
     const queue = [...(due ?? [])];
+    let delivered = 0;
     const workers = Array.from({ length: Math.min(WEBHOOK_CONCURRENCY, queue.length) }, async () => {
-      for (let next = queue.shift(); next; next = queue.shift()) await this.deliver(next);
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        if ((await this.deliver(next)) === 'DELIVERED') delivered += 1;
+      }
     });
     await Promise.all(workers);
+    return { due: (due ?? []).length, delivered, undelivered: (due ?? []).length - delivered };
   }
 
   private async secretsFor(due: Due): Promise<string[] | null> {

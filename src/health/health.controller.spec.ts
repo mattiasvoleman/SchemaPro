@@ -1,5 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import type { PrismaService } from '../database/prisma.service';
+import type { JobRunner } from '../jobs/job-runner';
 import { HealthController } from './health.controller';
 
 describe('HealthController', () => {
@@ -55,6 +56,27 @@ describe('HealthController', () => {
         'Database is unreachable.',
       );
       await expect(controller.readiness()).rejects.not.toThrow(/hunter2/);
+    });
+
+    it('adds the background jobs as three counts, and nothing when the ledger cannot be read', async () => {
+      const jobs = { readiness: jest.fn().mockResolvedValue({ scheduled: 4, failing: 1, overdue: 0 }) };
+      const withJobs = new HealthController(prisma as unknown as PrismaService, jobs as unknown as JobRunner);
+      await expect(withJobs.readiness()).resolves.toEqual({
+        status: 'ready',
+        database: 'up',
+        jobs: { scheduled: 4, failing: 1, overdue: 0 },
+      });
+      // A failing job is not a reason to drain the instance.
+      jobs.readiness.mockResolvedValueOnce(null);
+      await expect(withJobs.readiness()).resolves.toEqual({ status: 'ready', database: 'up' });
+    });
+
+    it('asks the database before the jobs, so an outage is still a 503', async () => {
+      const jobs = { readiness: jest.fn() };
+      prisma.$queryRaw.mockRejectedValue(new Error('ECONNREFUSED'));
+      const withJobs = new HealthController(prisma as unknown as PrismaService, jobs as unknown as JobRunner);
+      await expect(withJobs.readiness()).rejects.toThrow(ServiceUnavailableException);
+      expect(jobs.readiness).not.toHaveBeenCalled();
     });
   });
 });

@@ -58,6 +58,11 @@ export interface Ss12000Config {
   allowInsecureLocal: boolean;
 }
 
+export interface GallringConfig {
+  /** The nightly gallring tick (GALLRING_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export const DEFAULT_EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push';
 
 export interface Configuration {
@@ -70,6 +75,7 @@ export interface Configuration {
   publicViewer: PublicViewerConfig;
   push: PushConfig;
   ss12000: Ss12000Config;
+  gallring: GallringConfig;
 }
 
 /**
@@ -125,6 +131,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
       secretsKeyPrevious: env.INTEGRATION_SECRETS_KEY_PREVIOUS ? Buffer.from(env.INTEGRATION_SECRETS_KEY_PREVIOUS, 'base64') : undefined,
       background: env.SS12000_BACKGROUND !== 'off',
       allowInsecureLocal: env.SS12000_ALLOW_INSECURE_LOCAL === '1' && env.NODE_ENV === NodeEnv.Test,
+    },
+    gallring: {
+      background: env.GALLRING_BACKGROUND !== 'off',
     },
   };
 }

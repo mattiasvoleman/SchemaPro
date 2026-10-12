@@ -15,6 +15,9 @@ import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SupabaseAdminService } from './supabase-admin.service';
 import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
+/** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
+export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
+
 /**
  * Whose post or behörighet may exist: the same two roles staff-lock.ts admits,
  * because a teaching rektor carries SCHOOL_ADMIN and is named on requirements.
@@ -273,14 +276,25 @@ export class UsersService {
         // app.current_user_group_id() reads studentGroupId without looking at
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
-        const [current] = await tx.$queryRaw<Pick<User, 'role' | 'studentGroupId'>[]>`
-          SELECT "role", "studentGroupId"
+        const [current] = await tx.$queryRaw<Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt'>[]>`
+          SELECT "role", "studentGroupId", "pseudonymisedAt"
           FROM "Users"
           WHERE "id" = ${id}::uuid
           FOR NO KEY UPDATE
         `;
         if (!current) {
           throw new NotFoundException('The requested record does not exist.');
+        }
+        // Gallring replaced the person's name, e-mail and login with a
+        // pseudonym (20261021110000), and the row stays inactive
+        // (Users_a_pseudonym_stays_inactive). Said here, with the way out,
+        // rather than as the constraint.
+        if (current.pseudonymisedAt && dto.isActive === true) {
+          throw new ConflictException({
+            message:
+              'Personen är pseudonymiserad efter skolans gallringsbeslut och kan inte aktiveras igen. Lägg till personen på nytt.',
+            code: USER_IS_PSEUDONYMISED,
+          });
         }
         const role = dto.role ?? current.role;
         const studentGroupId =
