@@ -258,6 +258,8 @@ export interface CancellationSelection {
 export interface CancellationInput extends CancellationSelection {
   expectedDigest?: string;
   credit?: { minutes: number; subjectId?: string };
+  /** One digest per person the batch touches, and another when it is taken back. Sent only when ticked. */
+  notify?: true;
 }
 
 export interface BatchLesson {
@@ -279,6 +281,8 @@ export interface CancellationPreview {
   /** Dates a credit would be written for (whole days ahead of today only). */
   creditDates: string[];
   digest: string;
+  /** Who the optional digest would reach; absent from a gateway that predates it. */
+  audience?: { pupils: number; guardians: number; teachers: number };
 }
 
 export interface CancellationBatch {
@@ -302,10 +306,14 @@ export interface CancellationBatch {
   credits: number;
   /** Unreversed and ahead: lessons in its range and scope written since. */
   addedSince: number;
+  /** It sent a digest, so its reversal sends one too. */
+  notifies?: boolean;
 }
 
 export interface ReversePreview {
   reinstate: number;
+  /** People the reversal's digest reaches: 0 for a batch that sent none. */
+  notify?: number;
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: "LESSON" | "BOOKING" }>;
   /** Rows whose lesson the grundschema has moved since: deleted, the week has it where it runs now. */
   removedTemplateMoved: Array<{ lessonId: string; date: string }>;
