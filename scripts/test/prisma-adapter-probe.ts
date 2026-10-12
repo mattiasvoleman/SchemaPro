@@ -85,6 +85,7 @@ import {
   teacherDutyBlockRefusal,
   timplanCreditKeyField,
 } from '../../src/common/utils/prisma-errors';
+import { todayInZone } from '../../src/common/utils/time';
 import { UsersService } from '../../src/users/users.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
@@ -5349,7 +5350,10 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
 
     await check('(æ11) self-report on: a teacher registers today’s absence, cannot change its reason (TA403), withdraws it within the hour, and the admins are told without a reason', async () => {
       await settings.putSettings({ poolPreference: 'NEUTRAL', teacherSelfReport: true }, school.admin);
-      const today = new Date().toISOString().slice(0, 10);
+      // The school's today, as the service reads it: from 00:00 to 02:00 in
+      // Stockholm the UTC date is still yesterday, and a teacher cannot report
+      // from yesterday.
+      const today = todayInZone('Europe/Stockholm').toISOString().slice(0, 10);
       const own = await absences.create({ userId: school.b.id, from: today, to: today, reasonId }, school.teacher(school.b));
       await assert.rejects(
         api.withRls(school.teacher(school.b), (tx) => tx.teacherAbsence.update({ where: { id: own.id }, data: { reasonId: null } })),
