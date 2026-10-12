@@ -372,6 +372,9 @@ describe('FamilyService', () => {
     });
 
     it('forbids roles outside guardian/student/admin', async () => {
+      // The database says the same since 20261015140000:
+      // absence_reports_student_insert asks for a STUDENT, so a teacher
+      // writing through PostgREST cannot report about themselves either.
       await expect(
         service.createAbsenceReport(
           reportDto() as any,
@@ -534,6 +537,8 @@ describe('FamilyService', () => {
     });
 
     it('persists the request with the student’s school and the requester', async () => {
+      // No status or decision column: leave_requests_guardian_insert
+      // (20261015140000) admits only an undecided request, the default PENDING.
       arrangeStudent();
       tx.guardianStudent.findFirst.mockResolvedValue({ id: LINK_ID });
       const user = guardianUser();
