@@ -13,11 +13,29 @@ import { toast } from "sonner";
 import type { MessageLookup } from "@/lib/engine-message";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { Person } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useSetTeacherHidden } from "./use-public-links";
 
-export function HiddenTeachersCard({ teachers, hidden }: { teachers: readonly Person[]; hidden: ReadonlySet<string> }) {
+export function HiddenTeachersCard({
+  teachers,
+  hidden,
+  loading = false,
+  failed = false,
+}: {
+  teachers: readonly Person[];
+  hidden: ReadonlySet<string>;
+  /** The teachers or the hidden list still on their way. */
+  loading?: boolean;
+  /**
+   * Either list failed. Then every switch would read "shown" whatever the
+   * school decided, and one press could expose a protected teacher — so the
+   * switches are not drawn at all.
+   */
+  failed?: boolean;
+}) {
   const t = useTranslations("publishing");
   const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
@@ -32,33 +50,38 @@ export function HiddenTeachersCard({ teachers, hidden }: { teachers: readonly Pe
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("hiddenTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <p>{t("hiddenBody")}</p>
-        {teachers.length === 0 ? (
-          <p>{t("hiddenNoTeachers")}</p>
-        ) : (
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {teachers.map((teacher) => (
-              <li key={teacher.id} className="flex items-center gap-3">
-                <Switch
-                  id={`hidden-${teacher.id}`}
-                  checked={hidden.has(teacher.id)}
-                  disabled={setHidden.isPending}
-                  onCheckedChange={(checked) => void toggle(teacher.id, checked)}
-                  aria-label={t("hiddenToggle", { name: `${teacher.firstName} ${teacher.lastName}` })}
-                />
-                <label htmlFor={`hidden-${teacher.id}`}>
-                  {teacher.firstName} {teacher.lastName}
-                </label>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+    <SectionCard
+      id="publish-hidden"
+      title={t("hiddenTitle")}
+      description={t("hiddenBody")}
+      descriptionClassName="max-w-prose"
+    >
+      {loading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : failed ? (
+        <LoadError variant="inline" title={t("hiddenLoadFailed")} hint={t("hiddenLoadFailedHint")} />
+      ) : teachers.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("hiddenNoTeachers")}</p>
+      ) : (
+        <ul className="grid gap-2 text-sm sm:grid-cols-2">
+          {teachers.map((teacher) => (
+            <li key={teacher.id} className="flex items-center gap-3">
+              <Switch
+                id={`hidden-${teacher.id}`}
+                checked={hidden.has(teacher.id)}
+                disabled={setHidden.isPending}
+                onCheckedChange={(checked) => void toggle(teacher.id, checked)}
+                aria-label={t("hiddenToggle", { name: `${teacher.firstName} ${teacher.lastName}` })}
+              />
+              <label htmlFor={`hidden-${teacher.id}`}>
+                {teacher.firstName} {teacher.lastName}
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
   );
 }

@@ -21,6 +21,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -28,9 +36,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-const NATIVE_SELECT =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 const PREFERENCES: PoolPreference[] = ["PREFER", "NEUTRAL", "LAST_RESORT"];
 
@@ -43,6 +48,7 @@ function useErrorToast() {
 /** Whether teachers report their own absence, and where the pool ranks. */
 function PolicySection() {
   const t = useTranslations("coverSettings");
+  const tCommon = useTranslations("common");
   const fail = useErrorToast();
   const { data: settings } = useCoverSettings();
   const save = useUpdateCoverSettings();
@@ -59,35 +65,41 @@ function PolicySection() {
     settings !== undefined && (selfReport !== settings.teacherSelfReport || preference !== settings.poolPreference);
 
   return (
-    <section className="space-y-3">
-      <h3 className="font-semibold">{t("policyTitle")}</h3>
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="mt-1"
+    <section className="space-y-3" aria-labelledby="cover-policy-title">
+      <h3 id="cover-policy-title" className="text-sm font-semibold">
+        {t("policyTitle")}
+      </h3>
+      <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+        <div className="space-y-1">
+          <Label htmlFor="cover-self-report">{t("selfReport")}</Label>
+          <p id="cover-self-report-hint" className="text-xs text-muted-foreground">
+            {t("selfReportHint")}
+          </p>
+        </div>
+        <Switch
+          id="cover-self-report"
           checked={selfReport}
-          onChange={(event) => setSelfReport(event.target.checked)}
+          onCheckedChange={setSelfReport}
+          aria-describedby="cover-self-report-hint"
         />
-        <span>
-          {t("selfReport")}
-          <span className="block text-xs text-muted-foreground">{t("selfReportHint")}</span>
-        </span>
-      </label>
-      <div className="max-w-sm space-y-1">
+      </div>
+      <div className="max-w-sm space-y-1.5">
         <Label htmlFor="pool-preference">{t("poolPreference")}</Label>
-        <select
-          id="pool-preference"
-          className={NATIVE_SELECT}
-          value={preference}
-          onChange={(event) => setPreference(event.target.value as PoolPreference)}
-        >
-          {PREFERENCES.map((value) => (
-            <option key={value} value={value}>
-              {t(`poolPreferences.${value}`)}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-muted-foreground">{t("poolPreferenceHint")}</p>
+        <Select value={preference} onValueChange={(value) => setPreference(value as PoolPreference)}>
+          <SelectTrigger id="pool-preference" aria-describedby="pool-preference-hint">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PREFERENCES.map((value) => (
+              <SelectItem key={value} value={value}>
+                {t(`poolPreferences.${value}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p id="pool-preference-hint" className="text-xs text-muted-foreground">
+          {t("poolPreferenceHint")}
+        </p>
       </div>
       <Button
         size="sm"
@@ -100,7 +112,7 @@ function PolicySection() {
         }
       >
         {save.isPending ? <Loader2 className="animate-spin" /> : null}
-        {t("savePolicy")}
+        {save.isPending ? tCommon("saving") : t("savePolicy")}
       </Button>
     </section>
   );
@@ -175,8 +187,10 @@ function ReasonsSection() {
   const sorted = [...(reasons ?? [])].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
 
   return (
-    <section className="space-y-2">
-      <h3 className="font-semibold">{t("reasonsTitle")}</h3>
+    <section className="space-y-2" aria-labelledby="cover-reasons-title">
+      <h3 id="cover-reasons-title" className="text-sm font-semibold">
+        {t("reasonsTitle")}
+      </h3>
       <p className="text-sm text-muted-foreground">{t("reasonsBody")}</p>
       <ul className="divide-y rounded-md border">
         {sorted.map((reason) => (
@@ -196,7 +210,7 @@ function ReasonsSection() {
           });
         }}
       >
-        <div className="flex-1 space-y-1">
+        <div className="flex-1 space-y-1.5">
           <Label htmlFor="new-reason">{t("newReason")}</Label>
           <Input
             id="new-reason"
@@ -235,11 +249,13 @@ function PoolSection({ teachers }: { teachers: { id: string; name: string }[] })
   const nameOf = (id: string) => teachers.find((teacher) => teacher.id === id)?.name ?? "—";
 
   return (
-    <section className="space-y-3">
-      <h3 className="font-semibold">{tPool("members")}</h3>
+    <section className="space-y-3" aria-labelledby="cover-pool-title">
+      <h3 id="cover-pool-title" className="text-sm font-semibold">
+        {tPool("members")}
+      </h3>
       <p className="text-sm text-muted-foreground">{tPool("membersBody")}</p>
       {(pool ?? []).length === 0 ? (
-        <p className="text-sm italic text-muted-foreground">{tPool("noMembers")}</p>
+        <p className="text-sm text-muted-foreground">{tPool("noMembers")}</p>
       ) : (
         <ul className="divide-y rounded-md border">
           {(pool ?? []).map((member) => {
@@ -285,23 +301,22 @@ function PoolSection({ teachers }: { teachers: { id: string; name: string }[] })
         </ul>
       )}
       <div className="flex max-w-md items-end gap-2">
-        <div className="flex-1 space-y-1">
+        <div className="flex-1 space-y-1.5">
           <Label htmlFor="pool-candidate">{tPool("addMember")}</Label>
-          <select
-            id="pool-candidate"
-            className={NATIVE_SELECT}
-            value={candidate}
-            onChange={(event) => setCandidate(event.target.value)}
-          >
-            <option value="">{tPool("memberPlaceholder")}</option>
-            {teachers
-              .filter((teacher) => !members.has(teacher.id))
-              .map((teacher) => (
-                <option key={teacher.id} value={teacher.id}>
-                  {teacher.name}
-                </option>
-              ))}
-          </select>
+          <Select value={candidate} onValueChange={setCandidate}>
+            <SelectTrigger id="pool-candidate" aria-describedby="pool-candidate-hint">
+              <SelectValue placeholder={tPool("memberPlaceholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              {teachers
+                .filter((teacher) => !members.has(teacher.id))
+                .map((teacher) => (
+                  <SelectItem key={teacher.id} value={teacher.id}>
+                    {teacher.name}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
         </div>
         <Button
           size="sm"
@@ -322,7 +337,9 @@ function PoolSection({ teachers }: { teachers: { id: string; name: string }[] })
           {tPool("add")}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">{tPool("membersHint")}</p>
+      <p id="pool-candidate-hint" className="text-xs text-muted-foreground">
+        {tPool("membersHint")}
+      </p>
       {windowsOf ? (
         <div className="space-y-2 rounded-md border p-3">
           <h4 className="text-sm font-semibold">{tPool("availabilityOf", { name: nameOf(windowsOf) })}</h4>
@@ -350,7 +367,7 @@ export function CoverSettingsDialog({
   const t = useTranslations("coverSettings");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>{t("body")}</DialogDescription>

@@ -47,7 +47,10 @@ import type { AvailabilityConstraint, LessonRecurrence, MasterLesson } from "@/l
  */
 
 const state = vi.hoisted(() => ({
-  lessons: [] as unknown[],
+  // undefined models a week never read: the first request failed.
+  lessons: [] as unknown[] | undefined,
+  /** The last read of the lessons failed (a first read, or a refetch over a week in hand). */
+  lessonsFailed: false,
   people: [] as unknown[],
   isLoading: false,
   constraints: [] as unknown[],
@@ -69,9 +72,39 @@ const state = vi.hoisted(() => ({
   requirements: [] as unknown[] | undefined,
 }));
 
+/**
+ * The year asked about is the timetable's choice (lib/planning-year.ts). By
+ * default this year's, with no next year to plan, so the choice itself draws
+ * nothing; the ladder tests below take the year away or hold the years back.
+ */
+const THIS_YEAR = { id: "y-1", name: "2026/27", isActive: true, predecessorId: null };
+const years = vi.hoisted(() => ({
+  year: null as unknown,
+  active: null as unknown,
+  rostersFailed: false,
+  isLoading: false,
+  isError: false,
+}));
+
+vi.mock("@/lib/planning-year", () => ({
+  usePlanningYear: () => ({
+    year: years.year,
+    active: years.active,
+    successor: null,
+    choose: () => {},
+    rosters: null,
+    rostersFailed: years.rostersFailed,
+  }),
+}));
+
 vi.mock("@/lib/queries", () => ({
-  useActiveYear: () => ({ activeYear: { id: "y-1" } }),
-  useMasterLessons: () => ({ data: state.lessons, isLoading: state.isLoading }),
+  // Read by the page's state ladder only; the year comes from usePlanningYear.
+  useAcademicYears: () => ({ isLoading: years.isLoading, isError: years.isError }),
+  useMasterLessons: () => ({
+    data: state.lessons,
+    isLoading: state.isLoading,
+    isError: state.lessonsFailed,
+  }),
   useConstraints: () => ({ data: state.constraints }),
   useGroups: () => ({ data: state.groups ?? GROUPS }),
   usePeople: () => ({ data: state.people }),
@@ -80,6 +113,12 @@ vi.mock("@/lib/queries", () => ({
   useFrameTimes: () => ({ data: state.frameTimes }),
   useLunchSettings: () => ({ data: state.lunch }),
   useRequirements: () => ({ data: state.requirements }),
+}));
+
+// The empty state's way out and the "Nästa steg" link are next-intl's Link,
+// which pulls in the Next router; a plain anchor answers every question here.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
 
 // Namespace-aware key echo. The namespace is part of the assertion on purpose:
@@ -277,6 +316,7 @@ const unavailable = (
 
 beforeEach(() => {
   state.lessons = WEEK;
+  state.lessonsFailed = false;
   state.people = PEOPLE;
   state.isLoading = false;
   state.constraints = [];
@@ -285,6 +325,11 @@ beforeEach(() => {
   state.groups = null;
   state.lunch = LUNCH;
   state.requirements = [];
+  years.year = THIS_YEAR;
+  years.active = THIS_YEAR;
+  years.rostersFailed = false;
+  years.isLoading = false;
+  years.isError = false;
 });
 
 // ---------------------------------------------------------------------------
@@ -1067,6 +1112,69 @@ describe("Gaps page — structure and operation", () => {
 
     expect(screen.getByText("gaps.empty")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "gaps.freeTitle" })).toBeNull();
+  });
+
+  /*
+   * The state ladder above the empty state. With no year the lessons query is
+   * never asked, so it reads as loaded and empty — and the page used to tell a
+   * school whose years had not arrived yet, or that had none active, that no
+   * schedule was laid.
+   */
+  it("waits for the years rather than calling the week empty", () => {
+    years.isLoading = true;
+    years.year = null;
+    years.active = null;
+    state.lessons = [];
+    const { container } = render(<GapsPage />);
+
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.queryByText("gaps.empty")).toBeNull();
+    expect(screen.queryByText("gaps.noYearTitle")).toBeNull();
+  });
+
+  it("sends a school with no active year to the Läsår page", () => {
+    years.year = null;
+    years.active = null;
+    state.lessons = [];
+    render(<GapsPage />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "gaps.noYearTitle" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "gaps.noYearAction" }).getAttribute("href")).toBe(
+      "/admin/years",
+    );
+    expect(screen.queryByText("gaps.empty")).toBeNull();
+  });
+
+  it("answers nothing when next year's class lists did not come", () => {
+    // Its håltimmar would otherwise be counted on this year's classes.
+    years.rostersFailed = true;
+    render(<GapsPage />);
+
+    expect(screen.getByText("gaps.loadFailed")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "gaps.idleTitle" })).toBeNull();
+  });
+
+  it("answers nothing when the week was never read", () => {
+    state.lessons = undefined;
+    state.lessonsFailed = true;
+    render(<GapsPage />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "gaps.loadFailed" })).toBeTruthy();
+    expect(screen.queryByText("gaps.empty")).toBeNull();
+    expect(screen.queryByRole("region", { name: "gaps.freeTitle" })).toBeNull();
+  });
+
+  it("keeps answering from the week it has read when a refetch fails, and says so above it", () => {
+    // Every query here is invalidated by edits elsewhere; a background read
+    // that fails must not take away a page that has the whole school in hand.
+    state.lessonsFailed = true;
+    render(<GapsPage />);
+
+    const notice = screen.getByRole("alert");
+    expect(within(notice).getByText("gaps.loadFailed")).toBeTruthy();
+    expect(within(notice).getByText("common.refetchFailedHint")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "gaps.freeTitle" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2, name: "gaps.loadFailed" })).toBeNull();
   });
 
   it("labels every control with a label, not a placeholder", () => {

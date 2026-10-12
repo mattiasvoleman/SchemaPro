@@ -188,7 +188,7 @@ export function TimplanGrid({
                 highlighted && "outline outline-2 -outline-offset-2 outline-primary",
               )}
             >
-              <span className="block font-medium">{hours === 0 && tone === "none" ? "–" : formatH(hours)}</span>
+              <span className="block font-medium">{hours === 0 && tone === "none" ? "—" : formatH(hours)}</span>
               {child ? (
                 <span className="block text-[11px] text-foreground/80">
                   {t("stageCellChild", { minimum: formatH(child.minimumHours) })}

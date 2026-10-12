@@ -19,54 +19,83 @@
 // carry no school form, and specialskolan has eleven grades, sameskolan
 // seven.
 //
-// A <details>, closed: it is a reference the admin opens when a class's
-// version is in question, not a warning.
+// Closed by default: it is a reference the admin opens when a class's
+// version is in question, not a warning. A disclosure button, not <details>
+// (as publishing's log): the native marker is a glyph no other control draws,
+// and the summary had no focus ring of the app's own. The panel stays in the
+// DOM, hidden, as the <details> body did.
 
+import { useId, useState } from "react";
 import { useTranslations } from "next-intl";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { CohortNoticeRow } from "@/lib/timplan-cohorts";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /** "SFS2023:945/B1" → "SFS 2023:945 B1": the reference data's code, readable. */
 export const versionText = (code: string) => code.replace(/^SFS(?=\d)/, "SFS ").replace("/", " ");
 
 export function CohortNotice({ rows, className }: { rows: readonly CohortNoticeRow[]; className?: string }) {
   const t = useTranslations("timplanCohorts");
+  const [open, setOpen] = useState(false);
+  const id = useId();
   if (rows.length === 0) return null;
   return (
-    <details className={`rounded-lg border bg-card px-4 py-3 text-sm ${className ?? ""}`}>
-      <summary className="cursor-pointer font-medium">{t("title")}</summary>
-      <p className="mt-2 max-w-prose text-muted-foreground">{t("intro")}</p>
-      <ul className="mt-2 space-y-2">
-        {rows.map((row) => (
-          <li key={`${row.regime}:${row.cohortStartHT}`}>
-            <span className="font-medium">{t("cohort", { regime: row.regime, ht: String(row.cohortStartHT) })}</span>
-            {" · "}
-            {row.classNames.length > 0 ? row.classNames.join(", ") : t("noClasses")}
-            <span className="block text-muted-foreground">
-              {row.stages
-                .map((stage) =>
-                  t("stageVersion", {
-                    stage: stage.stage,
-                    version: stage.versionCode ? versionText(stage.versionCode) : "",
-                    // A reformed cohort's missing version is the 2028 one (specialskolan's
-                    // 8 604 h is unseeded), never an "older" one.
-                    state:
-                      stage.versionCode === null
-                        ? row.regime === "REFORMED_2028"
-                          ? "missingReformed"
-                          : "missing"
-                        : !stage.distributionPublished
-                          ? "unpublished"
-                          : stage.assumed
-                            ? "assumed"
-                            : "published",
-                  }),
-                )
-                .join(" · ")}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-2 max-w-prose text-xs text-muted-foreground">{t("sources")}</p>
-    </details>
+    <div className={cn("rounded-lg border bg-card px-4 py-2 text-sm", className)}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="-ml-2"
+        id={`${id}-toggle`}
+        aria-expanded={open}
+        aria-controls={`${id}-panel`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+        {t("title")}
+      </Button>
+      <div
+        id={`${id}-panel`}
+        role="region"
+        aria-labelledby={`${id}-toggle`}
+        hidden={!open}
+        className="space-y-2 pb-2 pt-1"
+      >
+        <p className="max-w-prose text-muted-foreground">{t("intro")}</p>
+        <ul className="space-y-2">
+          {rows.map((row) => (
+            <li key={`${row.regime}:${row.cohortStartHT}`}>
+              <span className="font-medium">{t("cohort", { regime: row.regime, ht: String(row.cohortStartHT) })}</span>
+              {" · "}
+              {row.classNames.length > 0 ? row.classNames.join(", ") : t("noClasses")}
+              <span className="block text-muted-foreground">
+                {row.stages
+                  .map((stage) =>
+                    t("stageVersion", {
+                      stage: stage.stage,
+                      version: stage.versionCode ? versionText(stage.versionCode) : "",
+                      // A reformed cohort's missing version is the 2028 one (specialskolan's
+                      // 8 604 h is unseeded), never an "older" one.
+                      state:
+                        stage.versionCode === null
+                          ? row.regime === "REFORMED_2028"
+                            ? "missingReformed"
+                            : "missing"
+                          : !stage.distributionPublished
+                            ? "unpublished"
+                            : stage.assumed
+                              ? "assumed"
+                              : "published",
+                    }),
+                  )
+                  .join(" · ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="max-w-prose text-xs text-muted-foreground">{t("sources")}</p>
+      </div>
+    </div>
   );
 }

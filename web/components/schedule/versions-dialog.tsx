@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { GitCompareArrows, Loader2, Trash2 } from "lucide-react";
 import {
@@ -27,6 +27,9 @@ import type { LessonRecurrence, MasterLesson, Person, Room, Subject } from "@/li
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+// Both already on the timetable page itself, so this chunk adds no copy.
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -105,8 +108,19 @@ export function VersionsDialog({
 }: VersionsDialogProps) {
   const t = useTranslations("timetable");
   const tDays = useTranslations("days");
+  const locale = useLocale();
+  /** When a version was saved, in the app's language — not the browser's. */
+  const savedAt = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }),
+    [locale],
+  );
   const [versionName, setVersionName] = useState("");
-  const { data: versions } = useScheduleVersions(open ? academicYearId : null);
+  const versionsQuery = useScheduleVersions(open ? academicYearId : null);
+  const versions = versionsQuery.data;
   const versionActions = useScheduleVersionActions();
   const [comparingId, setComparingId] = useState<string | null>(null);
   // A comparison belongs to the läsår it was picked in. The dialog stays
@@ -268,7 +282,10 @@ export function VersionsDialog({
           <DialogDescription>{t("versionsBody")}</DialogDescription>
         </DialogHeader>
         <div className="flex gap-2">
+          {/* Named for a screen reader: the placeholder is an example, and
+              it is gone as soon as a name is typed. */}
           <Input
+            aria-label={t("versionNameLabel")}
             placeholder={t("versionNamePlaceholder")}
             value={versionName}
             onChange={(e) => setVersionName(e.target.value)}
@@ -284,8 +301,18 @@ export function VersionsDialog({
             )}
           </Button>
         </div>
+        {/* The list's own ladder: "no versions yet" only once the list has
+            answered, and a failed read said as one rather than as none. */}
         <div className="max-h-80 space-y-2 overflow-y-auto">
-          {(versions ?? []).length === 0 ? (
+          {versionsQuery.isLoading ? (
+            <div aria-busy="true">
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : versionsQuery.isError ? (
+            <Notice tone="destructive" title={t("versionsLoadFailed")}>
+              {t("versionsLoadFailedHint")}
+            </Notice>
+          ) : (versions ?? []).length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               {t("versionsEmpty")}
             </p>
@@ -297,11 +324,13 @@ export function VersionsDialog({
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{version.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {new Date(version.createdAt).toLocaleString()} ·{" "}
+                  <div className="text-xs tabular-nums text-muted-foreground">
+                    {savedAt.format(new Date(version.createdAt))} ·{" "}
                     {t("lessonCount", { count: version.lessonCount })}
                   </div>
                 </div>
+                {/* Each button names its version: a list of rows that all
+                    say "Återställ" is one question asked many times. */}
                 <div className="flex shrink-0 gap-1.5">
                   <Button
                     size="sm"
@@ -310,6 +339,8 @@ export function VersionsDialog({
                       setComparingId(comparingId === version.id ? null : version.id)
                     }
                     title={t("versionCompare")}
+                    aria-label={t("versionCompareNamed", { name: version.name })}
+                    aria-pressed={comparingId === version.id}
                   >
                     <GitCompareArrows />
                   </Button>
@@ -318,6 +349,7 @@ export function VersionsDialog({
                     variant="outline"
                     onClick={() => void doRestoreVersion(version.id)}
                     disabled={versionActions.restore.isPending}
+                    aria-label={t("versionRestoreNamed", { name: version.name })}
                   >
                     {t("versionRestore")}
                   </Button>
@@ -326,6 +358,8 @@ export function VersionsDialog({
                     variant="ghost"
                     onClick={() => void versionActions.remove.mutateAsync(version.id)}
                     disabled={versionActions.remove.isPending}
+                    title={t("versionDelete")}
+                    aria-label={t("versionDeleteNamed", { name: version.name })}
                   >
                     <Trash2 />
                   </Button>
@@ -336,18 +370,21 @@ export function VersionsDialog({
         </div>
 
         {comparingId && versionDiff ? (
-          <div className="rounded-md border p-3">
-            <h4 className="mb-2 text-sm font-semibold">
+          <section aria-labelledby="version-diff-title" className="space-y-2 rounded-md border p-3">
+            <h3 id="version-diff-title" className="text-sm font-semibold">
               {t("diffTitle", { name: comparing?.name ?? "" })}
-            </h4>
+            </h3>
             {versionDiff.added.length === 0 && versionDiff.removed.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t("diffIdentical")}</p>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <div className="mb-1 text-xs font-medium text-emerald-700">
+              /* The + and − and the words carry the direction; the labels
+                 stay in the foreground, since the success token as small
+                 text is under 4.5:1 in light. */
+              <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-foreground">
                     {t("diffAdded", { count: versionDiff.added.length })}
-                  </div>
+                  </p>
                   <ul className="space-y-1 text-xs text-muted-foreground">
                     {versionDiff.added.slice(0, 8).map(({ lesson, namePupils }, index) => (
                       <li key={index}>+ {lessonLabel(lesson, namePupils)}</li>
@@ -355,10 +392,10 @@ export function VersionsDialog({
                     {versionDiff.added.length > 8 ? <li>…</li> : null}
                   </ul>
                 </div>
-                <div>
-                  <div className="mb-1 text-xs font-medium text-red-700">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-foreground">
                     {t("diffRemoved", { count: versionDiff.removed.length })}
-                  </div>
+                  </p>
                   <ul className="space-y-1 text-xs text-muted-foreground">
                     {versionDiff.removed.slice(0, 8).map(({ lesson, namePupils }, index) => (
                       <li key={index}>− {lessonLabel(lesson, namePupils)}</li>
@@ -368,7 +405,7 @@ export function VersionsDialog({
                 </div>
               </div>
             )}
-          </div>
+          </section>
         ) : null}
       </DialogContent>
     </Dialog>

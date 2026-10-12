@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, MouseEvent, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,15 +21,19 @@ vi.mock("@/i18n/navigation", () => ({
     onClick,
     className,
     children,
+    ...rest
   }: {
     href: string;
     onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
     className?: string;
     children?: ReactNode;
+    "aria-current"?: "page";
   }) => (
     <a
       href={href}
       className={className}
+      // aria-current passes through: it is the active state's real signal.
+      {...rest}
       onClick={(event) => {
         // jsdom cannot navigate; the shell's onClick (drawer close) still runs.
         event.preventDefault();
@@ -78,6 +82,8 @@ function renderShell(overrides: Partial<ComponentProps<typeof AppShell>> = {}) {
 }
 
 const link = (name: string) => screen.getByRole("link", { name });
+/** The sidebar's own links, without the skip link that precedes it. */
+const navLinks = () => within(screen.getByRole("navigation", { name: "nav.label" })).getAllByRole("link");
 
 beforeEach(() => {
   navState.pathname = "/admin";
@@ -95,6 +101,7 @@ describe("AppShell navigation", () => {
     expect(screen.getByText("Norra Real")).toBeInTheDocument();
     expect(screen.getByText("page body")).toBeInTheDocument();
 
+    expect(screen.getByText("nav.basics")).toBeInTheDocument();
     expect(screen.getByText("nav.planning")).toBeInTheDocument();
     expect(screen.getByText("nav.scheduling")).toBeInTheDocument();
     expect(screen.getByText("nav.operations")).toBeInTheDocument();
@@ -145,7 +152,10 @@ describe("AppShell navigation", () => {
     };
     const sv = (await import("@/messages/sv.json")).default as unknown as Messages;
     const en = (await import("@/messages/en.json")).default as unknown as Messages;
-    expect(sv.requirements.empty).toMatch(/^Inga timplansposter/);
+    // The one empty state became two (2026-10-11), each naming what is
+    // missing, classes or subjects; both still call the rows timplansposter.
+    expect(sv.requirements.noClasses).toMatch(/^En timplanspost/);
+    expect(sv.requirements.noSubjects).toMatch(/^En timplanspost/);
     expect(sv.requirements.tableCaption).toMatch(/^Timplansposter per grupp/);
     expect(sv.engineMessages.INPUT_NO_REQUIREMENTS).toContain("timplansposter");
     // The pages that speak of the posts' hours, their rows or their file
@@ -169,7 +179,8 @@ describe("AppShell navigation", () => {
       expect(svAll[namespace]![key]).toMatch(/[Tt]implansposte/);
       expect(svAll[namespace]![key]).not.toMatch(/[Tt]implanen|[Tt]implanens/);
     }
-    expect(en.requirements.empty).toMatch(/^No curriculum entries/);
+    expect(en.requirements.noClasses).toMatch(/^A curriculum entry/);
+    expect(en.requirements.noSubjects).toMatch(/^A curriculum entry/);
     expect(en.requirements.tableCaption).toMatch(/^Curriculum entries by group/);
     // The English is the engine's own sentence (i18n/engine-messages.test.ts
     // holds the two identical), so it changes in optimization-engine, not here.
@@ -193,7 +204,8 @@ describe("AppShell navigation", () => {
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "nav.coverBoard" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("link")).toHaveLength(5);
+    // Counted inside the nav: the skip link is a link too, and not an entry.
+    expect(navLinks()).toHaveLength(5);
 
   });
 
@@ -203,7 +215,7 @@ describe("AppShell navigation", () => {
 
     expect(link("nav.mySchedule")).toHaveAttribute("href", "/student");
     expect(link("nav.myAttendance")).toHaveAttribute("href", "/student/attendance");
-    expect(screen.getAllByRole("link")).toHaveLength(2);
+    expect(navLinks()).toHaveLength(2);
   });
 
   it("guardian gets a single my-children link", () => {
@@ -211,7 +223,66 @@ describe("AppShell navigation", () => {
     renderShell({ role: "GUARDIAN" });
 
     expect(link("nav.myChildren")).toHaveAttribute("href", "/guardian");
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(navLinks()).toHaveLength(1);
+  });
+
+  it("groups the admin menu by the manual's four phases, Integrationer last and unlabelled", () => {
+    renderShell();
+
+    // Each labelled group is a list named by its label; the order inside is
+    // the order a school works through the phase (regrouped 2026-10-11).
+    const group = (labelKey: string) =>
+      within(screen.getByRole("list", { name: labelKey }))
+        .getAllByRole("link")
+        .map((entry) => entry.textContent);
+    expect(group("nav.basics")).toEqual([
+      "nav.setup",
+      "nav.years",
+      "nav.subjects",
+      "nav.rooms",
+      "nav.groups",
+      "nav.people",
+    ]);
+    expect(group("nav.planning")).toEqual([
+      "nav.timplan",
+      "nav.requirements",
+      "nav.staffing",
+      "nav.constraints",
+      "nav.breaks",
+      "nav.frameTimes",
+      "nav.rasts",
+      "nav.lunchServings",
+    ]);
+    expect(group("nav.scheduling")).toEqual([
+      "nav.generate",
+      "nav.timetable",
+      "nav.gaps",
+      "nav.publishing",
+    ]);
+    expect(group("nav.operations")).toEqual([
+      "nav.dayPlanner",
+      "nav.teacherAbsence",
+      "nav.coverBoard",
+      "nav.cancellations",
+      "nav.leaveRequests",
+      "nav.roomBookings",
+      "nav.reports",
+    ]);
+
+    // Översikt first and Integrationer last, each in a group without a label.
+    const all = navLinks();
+    expect(all[0]).toHaveTextContent("nav.dashboard");
+    expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
+    expect(all).toHaveLength(27);
+  });
+
+  it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
+    const sv = (await import("@/messages/sv.json")).default as { nav: Record<string, string> };
+    expect(sv.nav.basics).toBe("Grunddata");
+    expect(sv.nav.breaks).toBe("Lov och studiedagar");
+    expect(sv.nav.gaps).toBe("Luckor och håltimmar");
+    expect(sv.nav.myCover).toBe("Vikariepass och frånvaro");
+    expect(Object.values(sv.nav).filter((label) => label.includes("&"))).toEqual([]);
   });
 
   it("forwards identity to the user menu and mounts the header widgets", () => {
@@ -227,8 +298,8 @@ describe("AppShell navigation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Active-item highlighting. There is no aria-current, so the computed class is
-// the only observable signal of the active state.
+// Active-item highlighting: aria-current="page" says it to assistive tech,
+// and the bg-sidebar-accent class draws it.
 // ---------------------------------------------------------------------------
 
 describe("AppShell active item", () => {
@@ -237,7 +308,9 @@ describe("AppShell active item", () => {
     renderShell();
 
     expect(link("nav.dashboard")).toHaveClass("bg-sidebar-accent");
+    expect(link("nav.dashboard")).toHaveAttribute("aria-current", "page");
     expect(link("nav.subjects")).not.toHaveClass("bg-sidebar-accent");
+    expect(link("nav.subjects")).not.toHaveAttribute("aria-current");
   });
 
   it("keeps the dashboard inactive on sibling routes (no prefix match for the root)", () => {
@@ -253,7 +326,27 @@ describe("AppShell active item", () => {
     renderShell();
 
     expect(link("nav.subjects")).toHaveClass("bg-sidebar-accent");
+    expect(link("nav.subjects")).toHaveAttribute("aria-current", "page");
     expect(link("nav.dashboard")).not.toHaveClass("bg-sidebar-accent");
+    expect(link("nav.dashboard")).not.toHaveAttribute("aria-current");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Skip link
+// ---------------------------------------------------------------------------
+
+describe("AppShell skip link", () => {
+  it("is the first link and targets a focusable main", () => {
+    const { container } = renderShell();
+
+    const skip = screen.getAllByRole("link")[0];
+    expect(skip).toHaveTextContent("common.skipToContent");
+    expect(skip).toHaveAttribute("href", "#main");
+
+    const main = container.querySelector("main");
+    expect(main).toHaveAttribute("id", "main");
+    expect(main).toHaveAttribute("tabindex", "-1");
   });
 });
 
@@ -262,6 +355,48 @@ describe("AppShell active item", () => {
 // ---------------------------------------------------------------------------
 
 describe("AppShell mobile drawer", () => {
+  it("is a modal dialog: named, focus moved in on open and back on Escape", async () => {
+    const user = userEvent.setup();
+    renderShell();
+
+    const hamburger = screen.getByRole("button", { name: "common.openMenu" });
+    expect(hamburger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(hamburger);
+
+    const drawer = screen.getByRole("dialog", { name: "nav.label" });
+    expect(drawer).toHaveAttribute("aria-modal", "true");
+    expect(hamburger).toHaveAttribute("aria-expanded", "true");
+    expect(hamburger).toHaveAttribute("aria-controls", drawer.id);
+    expect(screen.getByRole("button", { name: "common.close" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(hamburger).toHaveFocus();
+    expect(hamburger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps Tab inside the drawer, wrapping at both ends", async () => {
+    const user = userEvent.setup();
+    navState.pathname = "/guardian";
+    renderShell({ role: "GUARDIAN" });
+
+    await user.click(screen.getByRole("button", { name: "common.openMenu" }));
+    const drawer = screen.getByRole("dialog");
+    const close = within(drawer).getByRole("button", { name: "common.close" });
+    const only = within(drawer).getByRole("link", { name: "nav.myChildren" });
+    expect(close).toHaveFocus();
+
+    await user.tab();
+    expect(only).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(only).toHaveFocus();
+  });
+
   it("opens a second sidebar and closes via the close button", async () => {
     const user = userEvent.setup();
     renderShell();

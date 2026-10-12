@@ -23,6 +23,9 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -164,29 +167,25 @@ export function DutiesCard({
   const idFor = (field: string) => `duty-${teacher.id}-${field}`;
 
   return (
-    <section className="rounded-lg border bg-card p-4" aria-labelledby={idFor("title")}>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <ClipboardList className="size-4 text-muted-foreground" />
-          <h3 id={idFor("title")} className="font-semibold">
-            {t("dutiesTitle")}
-          </h3>
-        </div>
-        {editing === null ? (
+    <SectionCard
+      id={idFor("card")}
+      headingLevel={3}
+      icon={ClipboardList}
+      title={t("dutiesTitle")}
+      description={t("dutiesHint", { year: academicYearName })}
+      action={
+        editing === null ? (
           <Button variant="outline" size="sm" onClick={openNew}>
             <Plus />
             {t("addDuty")}
           </Button>
-        ) : null}
-      </div>
-      <p className="mb-3 text-xs text-muted-foreground">
-        {t("dutiesHint", { year: academicYearName })}
-      </p>
-
+        ) : null
+      }
+    >
       {isLoading ? (
-        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-16 w-full" aria-busy="true" />
       ) : isError ? (
-        <p className="text-sm text-destructive">{t("dutiesLoadFailed")}</p>
+        <LoadError variant="inline" title={t("dutiesLoadFailed")} hint={t("dutiesLoadFailedHint")} />
       ) : editing === null ? (
         (duties ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("noDuties")}</p>
@@ -237,14 +236,14 @@ export function DutiesCard({
                         onClick={() => setRemoving(duty)}
                         aria-label={t("removeDuty", { label: duty.label })}
                       >
-                        <Trash2 className="text-destructive" />
+                        <Trash2 aria-hidden="true" />
                       </Button>
                     </span>
                   </li>
                 );
               })}
             </ul>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {t("dutiesTotal", { minutes: total, count: (duties ?? []).length })}
             </p>
           </>
@@ -253,12 +252,12 @@ export function DutiesCard({
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>{t("dutyKind")}</Label>
+              <Label htmlFor={idFor("kind")}>{t("dutyKind")}</Label>
               <Select
                 value={draft.kind}
                 onValueChange={(value) => patch({ kind: value as TeacherDutyKind })}
               >
-                <SelectTrigger aria-label={t("dutyKind")}>
+                <SelectTrigger id={idFor("kind")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -301,7 +300,7 @@ export function DutiesCard({
               <Label htmlFor={idFor("counts")}>{t("dutyCountsAsTeaching")}</Label>
             </div>
             <div className="space-y-1.5">
-              <Label>
+              <Label htmlFor={idFor("subject")}>
                 {t("dutySubject")}{" "}
                 <span className="text-muted-foreground">({tCommon("optional")})</span>
               </Label>
@@ -309,7 +308,7 @@ export function DutiesCard({
                 value={draft.subjectId === "" ? NONE : draft.subjectId}
                 onValueChange={(value) => patch({ subjectId: value === NONE ? "" : value })}
               >
-                <SelectTrigger aria-label={t("dutySubject")}>
+                <SelectTrigger id={idFor("subject")} aria-label={t("dutySubject")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -323,7 +322,7 @@ export function DutiesCard({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>
+              <Label htmlFor={idFor("group")}>
                 {t("dutyGroup")}{" "}
                 <span className="text-muted-foreground">({tCommon("optional")})</span>
               </Label>
@@ -331,7 +330,7 @@ export function DutiesCard({
                 value={draft.studentGroupId === "" ? NONE : draft.studentGroupId}
                 onValueChange={(value) => patch({ studentGroupId: value === NONE ? "" : value })}
               >
-                <SelectTrigger aria-label={t("dutyGroup")}>
+                <SelectTrigger id={idFor("group")} aria-label={t("dutyGroup")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -359,9 +358,9 @@ export function DutiesCard({
             {draft.blocks ? (
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="space-y-1.5">
-                  <Label>{t("dutyDay")}</Label>
+                  <Label htmlFor={idFor("day")}>{t("dutyDay")}</Label>
                   <Select value={draft.dayOfWeek} onValueChange={(value) => patch({ dayOfWeek: value })}>
-                    <SelectTrigger aria-label={t("dutyDay")}>
+                    <SelectTrigger id={idFor("day")}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -410,11 +409,7 @@ export function DutiesCard({
             />
           </div>
 
-          {shownProblem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {problemText(shownProblem)}
-            </p>
-          ) : null}
+          {shownProblem ? <Notice tone="destructive">{problemText(shownProblem)}</Notice> : null}
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setEditing(null)}>
@@ -436,6 +431,6 @@ export function DutiesCard({
         loading={actions.remove.isPending}
         onConfirm={() => void remove()}
       />
-    </section>
+    </SectionCard>
   );
 }

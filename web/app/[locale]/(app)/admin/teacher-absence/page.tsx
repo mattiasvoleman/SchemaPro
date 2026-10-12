@@ -1,19 +1,18 @@
 "use client";
 
 import { Suspense, lazy, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
 import { chainLookup } from "@/lib/cover-view";
+import { cn, toDateString } from "@/lib/utils";
 import {
   CalendarPlus,
   CalendarX2,
   Loader2,
   MapPin,
-  Sparkles,
   UserPlus,
-  UserX,
 } from "lucide-react";
 import {
   useGroups,
@@ -25,24 +24,18 @@ import {
   useTeacherAbsenceLessons,
   type DayLessonRow,
 } from "@/lib/queries";
+import type { LessonActionTarget } from "@/components/schedule/lesson-action-dialogs";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { AbsenceRegister } from "./absence-register";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { EmptyState } from "@/components/ui/empty-state";
+import { FilterBar, FilterField } from "@/components/ui/filter-bar";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -64,24 +57,29 @@ const AbsenceDialog = lazy(() =>
   import("@/components/cover/absence-dialog").then((module) => ({ default: module.AbsenceDialog })),
 );
 
-// Sentinel for "no room" — Radix Select forbids an empty-string item value.
-const NO_ROOM = "__none__";
+/*
+ * Ställ in, Tilldela vikarie and Byt sal, the same dialogs as Dagsplanering
+ * (components/schedule/lesson-action-dialogs.tsx), fetched on the first
+ * click. A chunk that does not arrive is said in a toast and fetched afresh
+ * on the next click, as on Dagsplanering.
+ */
+const lazyLessonActionDialogs = () =>
+  lazy(() =>
+    import("@/components/schedule/lesson-action-dialogs").then((module) => ({
+      default: module.LessonActionDialogs,
+    })),
+  );
+let LessonActionDialogs = lazyLessonActionDialogs();
 
-function toDateInput(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function formatDate(iso: string): string {
-  return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString([], {
-    weekday: "short",
-    day: "2-digit",
-    month: "2-digit",
-  });
-}
+/*
+ * The lessons sit inside their SectionCard, as the register's absences do,
+ * so the table takes the same inner recipe (absence-register.tsx). Below sm
+ * the subject keeps its column with the day and time under it, beside the
+ * class and the actions; the room waits for a wider screen.
+ */
+const INNER_TH = "h-auto py-1.5 pr-3 text-xs";
+const INNER_TD = "py-1.5 pr-3";
+const WIDE = "hidden sm:table-cell";
 
 export default function TeacherAbsencePage() {
   const t = useTranslations("teacherAbsence");
@@ -90,116 +88,129 @@ export default function TeacherAbsencePage() {
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   // The vikarie's warnings mix the engine's STAFF_* with the cover's COVER_*.
   const tWarnings = chainLookup(useTranslations("coverErrors") as unknown as MessageLookup, tEngine);
+  const locale = useLocale();
 
-  const today = toDateInput(new Date());
+  // The school's own day, not UTC's: late in the evening toISOString() had
+  // already moved on to tomorrow.
+  const today = toDateString(new Date());
   const [teacherId, setTeacherId] = useState("");
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
 
-  const { data: people } = usePeople();
-  const { data: subjects } = useSubjects();
-  const { data: groups } = useGroups();
-  const { data: rooms } = useRooms();
+  const peopleQuery = usePeople();
+  const subjectsQuery = useSubjects();
+  const groupsQuery = useGroups();
+  const roomsQuery = useRooms();
   const { cancel, substitute, changeRoom } = useLessonActions();
+  const lookupsFailed =
+    subjectsQuery.isError || groupsQuery.isError || roomsQuery.isError || peopleQuery.isError;
 
-  const { data: lessons, isLoading } = useTeacherAbsenceLessons(
-    teacherId || null,
-    from,
-    to,
-  );
+  const lessonsQuery = useTeacherAbsenceLessons(teacherId || null, from, to);
+  const lessons = lessonsQuery.data;
 
-  const [cancelTarget, setCancelTarget] = useState<DayLessonRow | null>(null);
-  const [cancelReason, setCancelReason] = useState("");
-  const [subTarget, setSubTarget] = useState<DayLessonRow | null>(null);
-  const [subTeacher, setSubTeacher] = useState("");
-  const [subNote, setSubNote] = useState("");
-  const [roomTarget, setRoomTarget] = useState<DayLessonRow | null>(null);
-  const [roomValue, setRoomValue] = useState("");
+  const [target, setTarget] = useState<LessonActionTarget | null>(null);
+  const [dialogsMounted, setDialogsMounted] = useState(false);
+  const [dialogLoad, setDialogLoad] = useState(0);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [registerOpened, setRegisterOpened] = useState(false);
 
-  const { data: suggestions, isLoading: suggestionsLoading } =
-    useSubstituteSuggestions(subTarget?.id ?? null);
+  const substituteFor = target?.action === "substitute" ? target.lesson.id : null;
+  const suggestionsQuery = useSubstituteSuggestions(substituteFor);
 
   const teachers = useMemo(
-    () => (people ?? []).filter((p) => p.role === "TEACHER" && p.isActive),
-    [people],
+    () => (peopleQuery.data ?? []).filter((p) => p.role === "TEACHER" && p.isActive),
+    [peopleQuery.data],
   );
   const teacherOptions = useMemo(
     () => teachers.map((teacher) => ({ id: teacher.id, name: `${teacher.firstName} ${teacher.lastName}` })),
     [teachers],
   );
-  const teacherById = useMemo(
-    () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
-    [teachers],
-  );
   const subjectById = useMemo(
-    () => new Map((subjects ?? []).map((s) => [s.id, s.name])),
-    [subjects],
+    () => new Map((subjectsQuery.data ?? []).map((s) => [s.id, s.name])),
+    [subjectsQuery.data],
   );
   const groupById = useMemo(
-    () => new Map((groups ?? []).map((g) => [g.id, g.name])),
-    [groups],
+    () => new Map((groupsQuery.data ?? []).map((g) => [g.id, g.name])),
+    [groupsQuery.data],
   );
   const roomById = useMemo(
-    () => new Map((rooms ?? []).map((r) => [r.id, r.name])),
-    [rooms],
+    () => new Map((roomsQuery.data ?? []).map((r) => [r.id, r.name])),
+    [roomsQuery.data],
   );
 
-  const teacherName = (id: string) => {
-    const teacher = teacherById.get(id);
-    return teacher ? `${teacher.firstName} ${teacher.lastName}` : "—";
+  const clock = useMemo(
+    () => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
+    [locale],
+  );
+  // A lesson's date is a calendar day (yyyy-mm-dd), read at UTC midnight so
+  // no time zone moves it to the day before.
+  const day = useMemo(
+    () => new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }),
+    [locale],
+  );
+  const timeText = (lesson: DayLessonRow) =>
+    `${clock.format(new Date(lesson.startsAt))}–${clock.format(new Date(lesson.endsAt))}`;
+  const dateText = (date: string) => day.format(new Date(`${date}T00:00:00.000Z`));
+
+  /** The row's name in its buttons' labels: "Ställ in lektion mån 12 okt. 08:00–09:00 Matematik 7A". */
+  const named = (action: string, lesson: DayLessonRow) =>
+    tCommon("actionNamed", {
+      action,
+      name: [
+        dateText(lesson.date),
+        timeText(lesson),
+        subjectById.get(lesson.subjectId),
+        groupById.get(lesson.studentGroupId),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    });
+
+  const open = (action: LessonActionTarget["action"], lesson: DayLessonRow) => {
+    setDialogsMounted(true);
+    setTarget({ action, lesson });
   };
 
-  const doCancel = async () => {
-    if (!cancelTarget) return;
+  const doCancel = async (lesson: DayLessonRow, reason: string) => {
     try {
       // TEACHER_UNAVAILABLE: this page is where a teacher's absence after
       // publishing is handled, and Täckning splits lost time by cause — the
       // cause Skolinspektionen asks about most. The reason stays free text.
       await cancel.mutateAsync({
-        id: cancelTarget.id,
+        id: lesson.id,
         cause: "TEACHER_UNAVAILABLE",
-        ...(cancelReason ? { reason: cancelReason } : {}),
+        ...(reason ? { reason } : {}),
       });
       toast.success(tDay("cancelledToast"));
-      setCancelTarget(null);
-      setCancelReason("");
+      setTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
 
-  const doSubstitute = async () => {
-    if (!subTarget || !subTeacher) return;
+  const doSubstitute = async (lesson: DayLessonRow, teacher: string, note: string) => {
     try {
       const result = await substitute.mutateAsync({
-        id: subTarget.id,
-        teacherId: subTeacher,
-        ...(subNote ? { note: subNote } : {}),
+        id: lesson.id,
+        teacherId: teacher,
+        ...(note ? { note } : {}),
       });
       // A vikarie is never refused, only warned: the warning is the rektor's
       // one signal that the cover lacks behörighet, so it is said here.
       savedToast(tWarnings, tDay("substitutedToast"), result.warnings);
-      setSubTarget(null);
-      setSubTeacher("");
-      setSubNote("");
+      setTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
 
-  const doChangeRoom = async () => {
-    if (!roomTarget) return;
+  const doChangeRoom = async (lesson: DayLessonRow, roomId: string | null) => {
     try {
-      await changeRoom.mutateAsync({
-        id: roomTarget.id,
-        roomId: roomValue === NO_ROOM ? null : roomValue,
-      });
+      await changeRoom.mutateAsync({ id: lesson.id, roomId });
       toast.success(tDay("roomChangedToast"));
-      setRoomTarget(null);
-      setRoomValue("");
+      setTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
@@ -217,6 +228,7 @@ export default function TeacherAbsencePage() {
       }
     }
     setBulkBusy(false);
+    setConfirmingAll(false);
     if (failed === 0) {
       toast.success(t("cancelAllDone", { count: lessons.length }));
     } else {
@@ -224,9 +236,29 @@ export default function TeacherAbsencePage() {
     }
   };
 
+  const shown = teacherId && lessons ? lessons.length : 0;
+
   return (
-    <div>
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+    <Page>
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          <Button
+            onClick={() => {
+              setRegisterOpened(true);
+              setRegistering(true);
+            }}
+          >
+            <CalendarPlus />
+            {t("register")}
+          </Button>
+        }
+      />
+
+      {lookupsFailed ? (
+        <LoadError variant="inline" title={tDay("lookupsFailed")} hint={tDay("lookupsFailedHint")} />
+      ) : null}
 
       {/*
        * The register: absences as entities, whose lessons land on the cover
@@ -236,149 +268,154 @@ export default function TeacherAbsencePage() {
        */}
       <AbsenceRegister teachers={teacherOptions} />
 
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="space-y-1.5">
-          <Label>{t("selectTeacher")}</Label>
-          <Select value={teacherId} onValueChange={setTeacherId}>
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder={t("selectTeacherPlaceholder")} />
-            </SelectTrigger>
-            <SelectContent>
-              {teachers.map((teacher) => (
-                <SelectItem key={teacher.id} value={teacher.id}>
-                  {teacher.firstName} {teacher.lastName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="from-date">{t("from")}</Label>
-          <DateField
-            label={t("from")}
-            id="from-date"
-            className="w-40"
-            value={from}
-            onChange={(value) => value && setFrom(value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="to-date">{t("to")}</Label>
-          <DateField
-            label={t("to")}
-            id="to-date"
-            className="w-40"
-            value={to}
-            onChange={(value) => value && setTo(value)}
-          />
-        </div>
-        <Button
-          onClick={() => {
-            setRegisterOpened(true);
-            setRegistering(true);
-          }}
-        >
-          <CalendarPlus />
-          {t("register")}
-        </Button>
-        {teacherId && lessons && lessons.length > 0 ? (
-          <Button
-            variant="outline"
-            className="text-destructive"
-            onClick={cancelAll}
-            disabled={bulkBusy || cancel.isPending}
-          >
-            {bulkBusy ? <Loader2 className="animate-spin" /> : <CalendarX2 />}
-            {t("cancelAll")}
-          </Button>
-        ) : null}
-      </div>
-
-      {!teacherId ? (
-        <EmptyState icon={UserX} title={t("chooseTitle")} description={t("chooseBody")} />
-      ) : isLoading ? (
-        <Skeleton className="h-72 w-full" />
-      ) : !lessons || lessons.length === 0 ? (
-        <EmptyState icon={CalendarX2} title={tCommon("noResults")} description={t("empty")} />
-      ) : (
-        <>
-          <p className="mb-2 text-sm text-muted-foreground">
-            {t("affectedCount", { count: lessons.length })}
-          </p>
-          <div className="rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("date")}</TableHead>
-                  <TableHead>{tCommon("time")}</TableHead>
-                  <TableHead>{tCommon("subject")}</TableHead>
-                  <TableHead>{tCommon("group")}</TableHead>
-                  <TableHead>{tCommon("room")}</TableHead>
-                  <TableHead className="text-right">{tCommon("actions")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lessons.map((lesson) => (
-                  <TableRow key={lesson.id}>
-                    <TableCell className="whitespace-nowrap">
-                      {formatDate(lesson.date)}
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      {formatTime(lesson.startsAt)}–{formatTime(lesson.endsAt)}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {subjectById.get(lesson.subjectId) ?? "—"}
-                    </TableCell>
-                    <TableCell>{groupById.get(lesson.studentGroupId) ?? "—"}</TableCell>
-                    <TableCell>
-                      {lesson.roomId ? (roomById.get(lesson.roomId) ?? "—") : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSubTarget(lesson);
-                            setSubTeacher("");
-                            setSubNote("");
-                          }}
-                        >
-                          <UserPlus />
-                          {tDay("substituteAction")}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setRoomTarget(lesson);
-                            setRoomValue(lesson.roomId ?? NO_ROOM);
-                          }}
-                        >
-                          <MapPin />
-                          {tDay("roomChangeAction")}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-destructive"
-                          onClick={() => {
-                            setCancelTarget(lesson);
-                            setCancelReason("");
-                          }}
-                        >
-                          <CalendarX2 />
-                          {tDay("cancelAction")}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+      <SectionCard id="absence-lessons" title={t("previewTitle")} description={t("previewBody")}>
+        <FilterBar>
+          {/* Its own id: the register dialog's teacher field is "absence-teacher". */}
+          <FilterField id="absence-preview-teacher" label={t("selectTeacher")}>
+            <Select value={teacherId} onValueChange={setTeacherId}>
+              <SelectTrigger id="absence-preview-teacher" className="w-64">
+                <SelectValue placeholder={t("selectTeacherPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                {teacherOptions.map((teacher) => (
+                  <SelectItem key={teacher.id} value={teacher.id}>
+                    {teacher.name}
+                  </SelectItem>
                 ))}
-              </TableBody>
-            </Table>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField id="from-date" label={t("from")}>
+            <DateField
+              label={t("from")}
+              id="from-date"
+              className="w-40"
+              value={from}
+              onChange={(value) => value && setFrom(value)}
+            />
+          </FilterField>
+          <FilterField id="to-date" label={t("to")}>
+            <DateField
+              label={t("to")}
+              id="to-date"
+              className="w-40"
+              value={to}
+              onChange={(value) => value && setTo(value)}
+            />
+          </FilterField>
+          {shown > 0 ? (
+            // Neutral: the confirmation it opens names the count and carries the red.
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto"
+              onClick={() => setConfirmingAll(true)}
+              disabled={bulkBusy || cancel.isPending}
+            >
+              {bulkBusy ? <Loader2 className="animate-spin" /> : <CalendarX2 />}
+              {t("cancelAll")}
+            </Button>
+          ) : null}
+        </FilterBar>
+
+        {!teacherId ? (
+          <p className="text-sm text-muted-foreground">{t("chooseBody")}</p>
+        ) : lessonsQuery.isLoading ? (
+          <div aria-busy="true">
+            <Skeleton className="h-24 w-full" />
           </div>
-        </>
-      )}
+        ) : lessonsQuery.isError ? (
+          <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+        ) : !lessons || lessons.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("empty")}</p>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {t("affectedCount", { count: lessons.length })}
+            </p>
+            <div className="overflow-x-auto">
+              <Table>
+                <caption className="sr-only">{t("tableCaption")}</caption>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead scope="col" className={cn(INNER_TH, WIDE, "pl-0")}>
+                      {t("date")}
+                    </TableHead>
+                    <TableHead scope="col" className={cn(INNER_TH, WIDE)}>
+                      {tCommon("time")}
+                    </TableHead>
+                    <TableHead scope="col" className={cn(INNER_TH, "pl-0 sm:pl-3")}>
+                      {tCommon("subject")}
+                    </TableHead>
+                    <TableHead scope="col" className={INNER_TH}>
+                      {tCommon("group")}
+                    </TableHead>
+                    <TableHead scope="col" className={cn(INNER_TH, WIDE)}>
+                      {tCommon("room")}
+                    </TableHead>
+                    <TableHead scope="col" className={cn(INNER_TH, "pr-0 text-right")}>
+                      {tCommon("actions")}
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lessons.map((lesson) => (
+                    <TableRow key={lesson.id}>
+                      <TableCell className={cn(INNER_TD, WIDE, "whitespace-nowrap pl-0 tabular-nums")}>
+                        {dateText(lesson.date)}
+                      </TableCell>
+                      <TableCell className={cn(INNER_TD, WIDE, "whitespace-nowrap tabular-nums")}>
+                        {timeText(lesson)}
+                      </TableCell>
+                      <TableCell className={cn(INNER_TD, "pl-0 font-medium sm:pl-3")}>
+                        {subjectById.get(lesson.subjectId) ?? "—"}
+                        <span className="block whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground sm:hidden">
+                          {`${dateText(lesson.date)} · ${timeText(lesson)}`}
+                        </span>
+                      </TableCell>
+                      <TableCell className={INNER_TD}>{groupById.get(lesson.studentGroupId) ?? "—"}</TableCell>
+                      <TableCell className={cn(INNER_TD, WIDE)}>
+                        {lesson.roomId ? (roomById.get(lesson.roomId) ?? "—") : "—"}
+                      </TableCell>
+                      <TableCell className={cn(INNER_TD, "pr-0 text-right")}>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={named(tDay("substituteAction"), lesson)}
+                            onClick={() => open("substitute", lesson)}
+                          >
+                            <UserPlus />
+                            {tDay("substituteAction")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={named(tDay("roomChangeAction"), lesson)}
+                            onClick={() => open("room", lesson)}
+                          >
+                            <MapPin />
+                            {tDay("roomChangeAction")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={named(tDay("cancelAction"), lesson)}
+                            onClick={() => open("cancel", lesson)}
+                          >
+                            <CalendarX2 />
+                            {tDay("cancelAction")}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </SectionCard>
 
       {registerOpened ? (
         <Suspense fallback={null}>
@@ -392,160 +429,51 @@ export default function TeacherAbsencePage() {
         </Suspense>
       ) : null}
 
-      {/* Cancel dialog */}
-      <Dialog
-        open={cancelTarget !== null}
-        onOpenChange={(open) => !open && setCancelTarget(null)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{tDay("cancelTitle")}</DialogTitle>
-            <DialogDescription>{tDay("cancelBody")}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="cancel-reason">{tDay("reason")}</Label>
-            <Textarea
-              id="cancel-reason"
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              placeholder={tDay("reasonPlaceholder")}
-              rows={2}
+      {/* Every lesson in the list is cancelled and every class told: asked
+          first, with the count, as the cover board asks before a bulk cancel. */}
+      <ConfirmDialog
+        open={confirmingAll}
+        onOpenChange={(next) => !bulkBusy && setConfirmingAll(next)}
+        title={t("cancelAllTitle", { count: shown })}
+        description={t("cancelAllBody")}
+        confirmLabel={t("cancelAllConfirm", { count: shown })}
+        loading={bulkBusy}
+        onConfirm={() => void cancelAll()}
+      />
+
+      {dialogsMounted ? (
+        <DialogLoadBoundary
+          key={dialogLoad}
+          onError={() => {
+            toast.error(tDay("dialogLoadFailed"));
+            LessonActionDialogs = lazyLessonActionDialogs();
+            setTarget(null);
+            setDialogsMounted(false);
+            setDialogLoad((attempt) => attempt + 1);
+          }}
+        >
+          <Suspense fallback={null}>
+            <LessonActionDialogs
+              target={target}
+              onClose={() => setTarget(null)}
+              teachers={teacherOptions}
+              rooms={roomsQuery.data ?? []}
+              pending={{
+                cancel: cancel.isPending,
+                substitute: substitute.isPending,
+                room: changeRoom.isPending,
+              }}
+              onCancel={(lesson, reason) => void doCancel(lesson, reason)}
+              onSubstitute={(lesson, teacher, note) => void doSubstitute(lesson, teacher, note)}
+              onChangeRoom={(lesson, roomId) => void doChangeRoom(lesson, roomId)}
+              suggestions={{
+                loading: suggestionsQuery.isLoading,
+                items: suggestionsQuery.data ?? [],
+              }}
             />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelTarget(null)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button variant="destructive" onClick={doCancel} disabled={cancel.isPending}>
-              {cancel.isPending ? <Loader2 className="animate-spin" /> : null}
-              {tDay("cancelAction")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Substitute dialog with suggestions */}
-      <Dialog open={subTarget !== null} onOpenChange={(open) => !open && setSubTarget(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{tDay("substituteTitle")}</DialogTitle>
-            <DialogDescription>{tDay("substituteBody")}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5" />
-                {tDay("suggestions")}
-              </Label>
-              {suggestionsLoading ? (
-                <Skeleton className="h-8 w-full" />
-              ) : (suggestions ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  {tDay("suggestionsEmpty")}
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {(suggestions ?? []).map((suggestion) => (
-                    <Button
-                      key={suggestion.teacherId}
-                      type="button"
-                      variant={
-                        subTeacher === suggestion.teacherId ? "default" : "outline"
-                      }
-                      size="sm"
-                      onClick={() => setSubTeacher(suggestion.teacherId)}
-                    >
-                      {teacherName(suggestion.teacherId)}
-                      {suggestion.isPrimary ? (
-                        <Badge variant="secondary" className="ml-1.5">
-                          {tDay("suggestionsPrimary")}
-                        </Badge>
-                      ) : null}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>{tDay("substituteSelect")}</Label>
-              <Select value={subTeacher} onValueChange={setSubTeacher}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {teachers
-                    .filter(
-                      (teacher) =>
-                        !subTarget?.teachers.some(
-                          (assignment) => assignment.teacherId === teacher.id,
-                        ),
-                    )
-                    .map((teacher) => (
-                      <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.firstName} {teacher.lastName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sub-note">
-                {tDay("substituteNote")}{" "}
-                <span className="text-muted-foreground">({tCommon("optional")})</span>
-              </Label>
-              <Input
-                id="sub-note"
-                value={subNote}
-                onChange={(e) => setSubNote(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSubTarget(null)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button onClick={doSubstitute} disabled={!subTeacher || substitute.isPending}>
-              {substitute.isPending ? <Loader2 className="animate-spin" /> : null}
-              {tDay("substituteAction")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Room-change dialog */}
-      <Dialog open={roomTarget !== null} onOpenChange={(open) => !open && setRoomTarget(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{tDay("roomChangeTitle")}</DialogTitle>
-            <DialogDescription>{tDay("roomChangeBody")}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label>{tDay("roomSelect")}</Label>
-            <Select value={roomValue} onValueChange={setRoomValue}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_ROOM}>{tDay("roomNone")}</SelectItem>
-                {(rooms ?? []).map((room) => (
-                  <SelectItem key={room.id} value={room.id}>
-                    {room.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRoomTarget(null)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button onClick={doChangeRoom} disabled={changeRoom.isPending}>
-              {changeRoom.isPending ? <Loader2 className="animate-spin" /> : null}
-              {tDay("roomChangeAction")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
+    </Page>
   );
 }

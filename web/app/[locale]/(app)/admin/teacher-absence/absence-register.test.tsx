@@ -101,7 +101,8 @@ describe("the absence register", () => {
     const user = userEvent.setup();
     wrap(<AbsenceRegister teachers={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
-    await user.click(within(row).getByRole("button", { name: "Avsluta i förtid" }));
+    // Each row's buttons are named after their absence ("Avsluta i förtid Anna Lind …").
+    await user.click(within(row).getByRole("button", { name: /^Avsluta i förtid Anna Lind/ }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Dag"), { target: { value: "2030-10-02" } });
     fireEvent.change(within(dialog).getByLabelText("Klockan"), { target: { value: "12:00" } });
@@ -129,7 +130,7 @@ describe("the absence register", () => {
     const user = userEvent.setup();
     wrap(<AbsenceRegister teachers={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
-    await user.click(within(row).getByRole("button", { name: "Återkalla" }));
+    await user.click(within(row).getByRole("button", { name: /^Återkalla Anna Lind/ }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Återkalla" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/teacher-absences/a-1/withdraw", {}));
     await user.click(await screen.findByRole("button", { name: "Ångra och återkalla" }));
@@ -145,7 +146,7 @@ describe("the absence register", () => {
     const user = userEvent.setup();
     wrap(<AbsenceRegister teachers={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
-    await user.click(within(row).getByRole("button", { name: "Återkalla" }));
+    await user.click(within(row).getByRole("button", { name: /^Återkalla Anna Lind/ }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Återkalla" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(

@@ -7,6 +7,7 @@ const save = vi.hoisted(() => vi.fn());
 const settings = vi.hoisted(() => ({
   data: null as unknown,
   isSuccess: true,
+  isError: false,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -29,6 +30,7 @@ describe("LunchSettingsCard", () => {
     vi.clearAllMocks();
     settings.data = null;
     settings.isSuccess = true;
+    settings.isError = false;
     window.localStorage.clear();
   });
 
@@ -175,6 +177,64 @@ describe("LunchSettingsCard", () => {
     await user.click(screen.getByRole("button", { name: "save" }));
 
     expect(save.mock.calls[0]?.[0]).toMatchObject({ diningSeats: 180 });
+  });
+
+  describe("before the school's own rules have arrived", () => {
+    /*
+     * The card used to draw its defaults while the request was in flight, with
+     * Save enabled — so a press in that second PUT lunch switched off, no seat
+     * limit and no daily cap over whatever the school had set.
+     */
+    it("draws no fields to type into, and a Save that cannot be pressed", () => {
+      settings.isSuccess = false;
+      render(<LunchSettingsCard />);
+
+      expect(screen.queryByLabelText("windowStart")).toBeNull();
+      expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    });
+
+    it("says the rules could not be read rather than offering the defaults", () => {
+      settings.isSuccess = false;
+      settings.isError = true;
+      render(<LunchSettingsCard />);
+
+      expect(screen.getByRole("alert")).toHaveTextContent("loadFailed");
+      expect(screen.queryByLabelText("windowStart")).toBeNull();
+      expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    });
+  });
+
+  it("is the section the other pages link to", () => {
+    // Generera schema and Lunchsittningar send the admin to #skolregler.
+    render(<LunchSettingsCard />);
+
+    expect(screen.getByRole("region", { name: "rulesTitle" }).id).toBe("skolregler");
+  });
+
+  it("waits for a change before it offers to save the school's own rules", async () => {
+    saved();
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("windowStart").value).toBe("11:00"));
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+
+    fireEvent.change(field("seats"), { target: { value: "200" } });
+    expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+  });
+
+  it("says beside the form that a save failed, and what still applies", async () => {
+    // A toast scrolls away while the fields still hold what did not save.
+    save.mockRejectedValueOnce(new Error("lunchStartTime måste vara en kvart"));
+    const user = userEvent.setup();
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("windowStart").value).toBe("11:00"));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("saveFailed");
+    expect(alert).toHaveTextContent("lunchStartTime måste vara en kvart");
+    expect(alert).toHaveTextContent("saveFailedHint");
   });
 
   describe("the rules left behind in one browser's localStorage", () => {

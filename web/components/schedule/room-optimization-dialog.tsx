@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Info, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
 import {
@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Notice } from "@/components/ui/notice";
 
 /** The gateway's code for "the schedule moved since the proposal was read". */
 const STALE = "ROOM_PROPOSAL_STALE";
@@ -79,13 +80,19 @@ function mostImproved(walkers: RoomProposal["walkers"]): RoomProposal["walkers"]
     .slice(0, MOST_IMPROVED);
 }
 
+/**
+ * "12 → 7". The two numbers say which way it went; the weight says that it
+ * moved, and a walk that grew longer is also the destructive colour (4.8 /
+ * 4.59 against the dialog). A shorter one is not tinted success: that token
+ * as small text is 3.9:1 in light, under AA.
+ */
 function BeforeAfter({ before, after }: { before: number; after: number }) {
   return (
     <span
       className={cn(
         "tabular-nums",
-        after < before && "font-medium text-emerald-700",
-        after > before && "font-medium text-red-700",
+        after < before && "font-semibold text-foreground",
+        after > before && "font-semibold text-destructive",
       )}
     >
       {before} → {after}
@@ -246,15 +253,16 @@ export function RoomOptimizationDialog({
 
   const floorHint = (missing: number, total: number) =>
     missing > 0 && total > 0 ? (
-      <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-        <Info className="mt-0.5 size-4 shrink-0 text-amber-600" />
+      // A warning, not a gate: the proposal is computed either way, on fewer
+      // floors than the school has.
+      <Notice tone="warning">
         <div className="space-y-1">
           <p>{t("floorsMissing", { missing, total })}</p>
           <Link href="/admin/rooms" className="font-medium underline underline-offset-4">
             {t("floorsMissingLink")}
           </Link>
         </div>
-      </div>
+      </Notice>
     ) : null;
 
   const improved = proposal ? mostImproved(proposal.walkers) : [];
@@ -373,7 +381,7 @@ export function RoomOptimizationDialog({
 
             {improved.length > 0 ? (
               <div className="space-y-1">
-                <h4 className="text-sm font-medium">{t("mostImproved")}</h4>
+                <h3 className="text-sm font-semibold">{t("mostImproved")}</h3>
                 <ul className="space-y-1 text-sm" aria-label={t("mostImproved")}>
                   {improved.map((walker) => (
                     <li key={`${walker.kind}:${walker.id}`} className="flex flex-wrap gap-x-3">

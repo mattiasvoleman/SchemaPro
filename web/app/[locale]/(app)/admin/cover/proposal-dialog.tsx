@@ -9,6 +9,7 @@ import { useApplyProposal, useDayProposal } from "@/lib/cover-queries";
 import type { DayProposal } from "@/lib/cover-types";
 import { coverErrorText, errorCode, pairKey, reasonText } from "@/lib/cover-view";
 import { Button } from "@/components/ui/button";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -106,14 +107,20 @@ export function ProposalDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("title", { date: dateText })}</DialogTitle>
           <DialogDescription>{t("body")}</DialogDescription>
         </DialogHeader>
 
-        {propose.isPending || !proposal ? (
-          propose.isError ? null : <Skeleton className="h-40 w-full" />
+        {/* A failed proposal says so in the dialog too, not only in the toast
+            that names its cause: an empty body read as "nothing to do". */}
+        {propose.isError ? (
+          <LoadError variant="inline" title={t("failed")} hint={t("failedHint")} />
+        ) : propose.isPending || !proposal ? (
+          <div aria-busy="true">
+            <Skeleton className="h-40 w-full" />
+          </div>
         ) : proposal.items.length === 0 && proposal.unassigned.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("empty")}</p>
         ) : (

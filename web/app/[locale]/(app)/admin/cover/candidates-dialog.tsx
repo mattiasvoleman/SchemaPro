@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -74,7 +75,7 @@ export function CandidatesDialog({
   const t = useTranslations("coverCandidates");
   const tReasons = useTranslations("coverReasons") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
-  const { data, isLoading } = useCoverCandidates(item?.lessonId ?? null);
+  const { data, isLoading, isError } = useCoverCandidates(item?.lessonId ?? null);
   const [chosen, setChosen] = useState("");
   const [other, setOther] = useState("");
 
@@ -88,14 +89,19 @@ export function CandidatesDialog({
 
   return (
     <Dialog open={item !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>{t("body", { lesson: lessonText })}</DialogDescription>
         </DialogHeader>
 
+        {/* A list that could not be read is said as such, never as "nobody is free". */}
         {isLoading ? (
-          <Skeleton className="h-40 w-full" />
+          <div aria-busy="true">
+            <Skeleton className="h-40 w-full" />
+          </div>
+        ) : isError ? (
+          <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
         ) : (data?.candidates ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("empty")}</p>
         ) : (
@@ -186,10 +192,11 @@ export function CandidatesDialog({
           </details>
         ) : null}
 
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <Label htmlFor="cover-other">{t("other")}</Label>
           <select
             id="cover-other"
+            aria-describedby="cover-other-hint"
             className={NATIVE_SELECT}
             value={other}
             onChange={(event) => {
@@ -204,7 +211,9 @@ export function CandidatesDialog({
               </option>
             ))}
           </select>
-          <p className="text-xs text-muted-foreground">{t("otherHint")}</p>
+          <p id="cover-other-hint" className="text-xs text-muted-foreground">
+            {t("otherHint")}
+          </p>
         </div>
 
         <DialogFooter>

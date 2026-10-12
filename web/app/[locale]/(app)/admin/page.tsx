@@ -1,28 +1,21 @@
 import { cookies } from "next/headers";
-import { getTranslations } from "next-intl/server";
-import {
-  BookOpen,
-  CalendarDays,
-  ClipboardCheck,
-  Grid3x3,
-  MapPin,
-  Sparkles,
-  Users,
-  UserCheck,
-  GraduationCap,
-  ArrowRight,
-} from "lucide-react";
+import { getLocale, getTranslations } from "next-intl/server";
+import { ArrowRight, CalendarDays, GraduationCap, Sparkles, Target } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { getSession } from "@/lib/auth";
 import { toDateString } from "@/lib/utils";
 import { Link } from "@/i18n/navigation";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
+import { KpiStrip, KpiTile } from "@/components/ui/kpi";
+import { LoadError } from "@/components/ui/load-error";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
   const t = await getTranslations("dashboard");
+  const locale = await getLocale();
   const session = await getSession();
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
@@ -32,13 +25,13 @@ export default async function AdminDashboardPage() {
 
   const head = { count: "exact" as const, head: true };
   const [
-    { count: students },
-    { count: teachers },
-    { count: groups },
-    { count: rooms },
-    { count: lessonsToday },
-    { count: masterLessons },
-    { count: requirements },
+    students,
+    teachers,
+    groups,
+    rooms,
+    lessonsToday,
+    masterLessons,
+    requirements,
     attendance,
   ] = await Promise.all([
     supabase.from("Users").select("id", head).eq("role", "STUDENT"),
@@ -55,28 +48,47 @@ export default async function AdminDashboardPage() {
       .limit(5000),
   ]);
 
+  // A count that failed is no figure at all, never a 0: "0 elever" on a
+  // school of 400 reads as data that is gone, and the admin acts on it. The
+  // tile then shows "—" and the notice above the strip says why.
+  const number = new Intl.NumberFormat(locale);
+  const countOf = (result: { count: number | null; error: unknown }) =>
+    result.error || result.count === null ? null : number.format(result.count);
+
   const attendanceRows = (attendance.data ?? []) as Array<{ status: string }>;
   const present = attendanceRows.filter(
     (row) => row.status === "PRESENT" || row.status === "LATE",
   ).length;
   const attendanceRate =
-    attendanceRows.length > 0 ? Math.round((present / attendanceRows.length) * 100) : null;
+    !attendance.error && attendanceRows.length > 0
+      ? new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(
+          present / attendanceRows.length,
+        )
+      : null;
 
   const kpis = [
-    { label: t("students"), value: students ?? 0, icon: Users },
-    { label: t("teachers"), value: teachers ?? 0, icon: UserCheck },
-    { label: t("groups"), value: groups ?? 0, icon: GraduationCap },
-    { label: t("rooms"), value: rooms ?? 0, icon: MapPin },
-    { label: t("lessonsToday"), value: lessonsToday ?? 0, icon: CalendarDays },
-    {
-      label: t("attendanceRate"),
-      value: attendanceRate !== null ? `${attendanceRate}%` : "—",
-      icon: ClipboardCheck,
-    },
-    { label: t("requirements"), value: requirements ?? 0, icon: Grid3x3 },
-    { label: t("masterLessons"), value: masterLessons ?? 0, icon: BookOpen },
+    { label: t("students"), value: countOf(students) },
+    { label: t("teachers"), value: countOf(teachers) },
+    { label: t("groups"), value: countOf(groups) },
+    { label: t("rooms"), value: countOf(rooms) },
+    { label: t("lessonsToday"), value: countOf(lessonsToday) },
+    { label: t("attendanceRate"), value: attendanceRate },
+    { label: t("requirements"), value: countOf(requirements) },
+    { label: t("masterLessons"), value: countOf(masterLessons) },
   ];
+  const anyFailed = [
+    students,
+    teachers,
+    groups,
+    rooms,
+    lessonsToday,
+    masterLessons,
+    requirements,
+    attendance,
+  ].some((result) => result.error);
 
+  // The manual's chain in the nav's order: Kom igång, the timplan, the
+  // generator, and the review that publishes.
   const actions = [
     {
       title: t("actionSetup"),
@@ -85,10 +97,10 @@ export default async function AdminDashboardPage() {
       icon: GraduationCap,
     },
     {
-      title: t("actionRequirements"),
-      hint: t("actionRequirementsHint"),
-      href: "/admin/requirements",
-      icon: Grid3x3,
+      title: t("actionTimplan"),
+      hint: t("actionTimplanHint"),
+      href: "/admin/timplan",
+      icon: Target,
     },
     {
       title: t("actionGenerate"),
@@ -105,54 +117,65 @@ export default async function AdminDashboardPage() {
   ];
 
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle", { school: session?.school?.name ?? "" })}
       />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {kpis.map((kpi) => (
-          <Card key={kpi.label}>
-            <CardContent className="flex items-center gap-3 p-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <kpi.icon className="h-5 w-5 text-primary" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-xs text-muted-foreground">{kpi.label}</div>
-                <div className="text-xl font-semibold tabular-nums">{kpi.value}</div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {anyFailed ? (
+        <LoadError variant="inline" title={t("loadFailed")} hint={t("loadFailedHint")} />
+      ) : null}
 
-      <h2 className="mb-3 mt-8 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-        {t("quickActions")}
-      </h2>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {actions.map((action, index) => (
-          <Link key={action.href} href={action.href} className="group">
-            <Card className="h-full transition-colors group-hover:border-primary/50">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                    <action.icon className="h-5 w-5 text-primary" />
-                  </div>
-                  <span className="text-xs font-semibold text-muted-foreground">
-                    {index + 1}
-                  </span>
-                </div>
-                <div className="mt-3 flex items-center gap-1.5 font-medium">
-                  {action.title}
-                  <ArrowRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">{action.hint}</p>
-              </CardContent>
-            </Card>
-          </Link>
+      <KpiStrip>
+        {kpis.map((kpi) => (
+          <KpiTile key={kpi.label} label={kpi.label} value={kpi.value} />
         ))}
-      </div>
-    </div>
+      </KpiStrip>
+
+      <section aria-labelledby="dashboard-quick-actions" className="space-y-3">
+        <h2 id="dashboard-quick-actions" className="text-base font-semibold">
+          {t("quickActions")}
+        </h2>
+        {/* An ordered list: the four are the steps of one chain, and a screen
+            reader hears the position the tile's number draws. */}
+        <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {actions.map((action, index) => (
+            <li key={action.href}>
+              <Link
+                href={action.href}
+                className="group block h-full rounded-lg ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                {/* Link tiles are the one place the Card family stays (the brief's
+                    card dialect): the whole tile is the link, not a section. */}
+                <Card className="h-full transition-colors group-hover:border-primary/50">
+                  <CardContent className="p-5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10">
+                        <action.icon className="size-5 text-primary" aria-hidden="true" />
+                      </div>
+                      <span
+                        className="text-xs font-semibold tabular-nums text-muted-foreground"
+                        aria-hidden="true"
+                      >
+                        {index + 1}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-1.5 font-medium">
+                      {action.title}
+                      <ArrowRight
+                        className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">{action.hint}</p>
+                  </CardContent>
+                </Card>
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </Page>
   );
 }

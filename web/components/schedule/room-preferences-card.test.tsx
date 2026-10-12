@@ -5,7 +5,7 @@ import { RoomPreferencesCard } from "./room-preferences-card";
 
 const create = vi.hoisted(() => vi.fn());
 const remove = vi.hoisted(() => vi.fn());
-const preferences = vi.hoisted(() => ({ data: [] as unknown[] }));
+const preferences = vi.hoisted(() => ({ data: [] as unknown[], isError: false }));
 
 vi.mock("@/lib/queries", () => ({
   useRoomPreferences: () => preferences,
@@ -55,6 +55,7 @@ describe("RoomPreferencesCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     preferences.data = [];
+    preferences.isError = false;
   });
 
   it("says plainly when a school has stated no wishes", () => {
@@ -127,17 +128,68 @@ describe("RoomPreferencesCard", () => {
     expect(screen.getByText("preferenceWeightBadge(12)")).toBeInTheDocument();
   });
 
-  it("deletes the wish the button belongs to", async () => {
+  it("deletes the wish the button belongs to, once the confirm is answered", async () => {
+    // The button carries the rule's own sentence, and the click only asks: a
+    // slip of the pointer used to remove the rule outright.
     preferences.data = [
       { id: "p1", subjectId: "s-no", kind: "WISH" as const, minGradeLevel: null, maxGradeLevel: null, roomTypeId: "rt-lab", weight: 5, rooms: [] },
     ];
     const user = userEvent.setup();
     render(<RoomPreferencesCard />);
 
-    await user.click(within(screen.getByRole("list")).getByRole("button", { name: "delete" }));
+    await user.click(
+      within(screen.getByRole("list")).getByRole("button", {
+        name: "actionNamed(delete|preferenceSummary(NO|Laborationssal))",
+      }),
+    );
+    expect(remove).not.toHaveBeenCalled();
+
+    const confirm = await screen.findByRole("dialog");
+    expect(within(confirm).getByText("deletePreferenceBody(preferenceSummary(NO|Laborationssal))")).toBeInTheDocument();
+    await user.click(within(confirm).getByRole("button", { name: "delete" }));
 
     expect(remove).toHaveBeenCalledWith("p1");
   });
+
+  it("says a refused delete rather than leaving the row standing in silence", async () => {
+    const { toast } = await import("sonner");
+    remove.mockRejectedValueOnce(new Error("Regeln kunde inte tas bort."));
+    preferences.data = [
+      { id: "p1", subjectId: "s-no", kind: "WISH" as const, minGradeLevel: null, maxGradeLevel: null, roomTypeId: "rt-lab", weight: 5, rooms: [] },
+    ];
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard />);
+
+    await user.click(within(screen.getByRole("list")).getByRole("button", { name: /^actionNamed\(delete/ }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "delete" }));
+
+    expect(toast.error).toHaveBeenCalledWith("Regeln kunde inte tas bort.");
+  });
+
+  it("says the rules could not be read instead of claiming there are none", () => {
+    // `data ?? []` made a failed request read as "no wishes", a claim a
+    // school acts on.
+    preferences.isError = true;
+    preferences.data = undefined as unknown as unknown[];
+    render(<RoomPreferencesCard />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("roomRulesLoadFailed");
+    expect(screen.queryByText("preferencesEmpty")).toBeNull();
+  });
+
+  it("keeps the rules it has read when a refetch fails, and says so above them", () => {
+    preferences.data = [
+      { id: "p1", subjectId: "s-no", kind: "WISH" as const, minGradeLevel: null, maxGradeLevel: null, roomTypeId: null, weight: 12, rooms: [{ roomId: "r-a12" }] },
+    ];
+    preferences.isError = true;
+    render(<RoomPreferencesCard />);
+
+    const notice = screen.getByRole("alert");
+    expect(notice).toHaveTextContent("roomRulesLoadFailed");
+    expect(notice).toHaveTextContent("refetchFailedHint");
+    expect(screen.getByText(/preferenceSummary\(NO\|A12\)/)).toBeInTheDocument();
+  });
+
   it("offers the strength as a slider, not a number to type", async () => {
     const user = userEvent.setup();
     render(<RoomPreferencesCard />);

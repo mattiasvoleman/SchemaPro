@@ -50,6 +50,7 @@ import { DateField } from "@/components/ui/date-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -181,8 +182,8 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
           <DialogDescription className="text-foreground">{t("dialogIntro")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <div className="space-y-1.5">
               <Label htmlFor="credit-name">{tCommon("name")}</Label>
               <Input
                 id="credit-name"
@@ -194,7 +195,7 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
               />
               {fieldError("name")}
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="credit-date">{tCommon("date")}</Label>
               <DateField
                 label={tCommon("date")}
@@ -209,8 +210,8 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <div className="space-y-1.5">
               <Label htmlFor="credit-minutes">{t("minutes")}</Label>
               <Input
                 id="credit-minutes"
@@ -225,13 +226,13 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
               </p>
               {fieldError("minutes")}
             </div>
-            <div className="space-y-2">
-              <Label>{t("subject")}</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="credit-subject">{t("subject")}</Label>
               <Select
                 value={form.subjectId === "" ? NO_SUBJECT : form.subjectId}
                 onValueChange={(value) => set({ subjectId: value === NO_SUBJECT ? "" : value })}
               >
-                <SelectTrigger aria-label={t("subject")}>
+                <SelectTrigger id="credit-subject">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -248,10 +249,10 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>{t("scope")}</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="credit-scope">{t("scope")}</Label>
             <Select value={form.scope} onValueChange={(value) => set({ scope: value as CreditScope })}>
-              <SelectTrigger aria-label={t("scope")}>
+              <SelectTrigger id="credit-scope">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -262,7 +263,7 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
             </Select>
           </div>
           {form.scope === "grades" ? (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <GradeSpanField
                 label={tBreaks("gradeSpan")}
                 fromLabel={tBreaks("gradeFromLabel")}
@@ -276,10 +277,10 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
               {fieldError("grades")}
             </div>
           ) : form.scope === "group" ? (
-            <div className="space-y-2">
-              <Label>{t("group")}</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="credit-group">{t("group")}</Label>
               <Select value={form.studentGroupId || undefined} onValueChange={(value) => set({ studentGroupId: value })}>
-                <SelectTrigger aria-label={t("group")} aria-invalid={invalid("group")} aria-describedby={describedBy("group")}>
+                <SelectTrigger id="credit-group" aria-invalid={invalid("group")} aria-describedby={describedBy("group")}>
                   <SelectValue placeholder={t("groupPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -294,7 +295,7 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
             </div>
           ) : null}
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <Label htmlFor="credit-note">{t("note")}</Label>
             <Textarea
               id="credit-note"
@@ -309,13 +310,15 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
           </div>
 
           {form.date !== "" && !breaksCoverCredit(form, breaks, groups) ? (
-            <p className="rounded-md bg-muted px-3 py-2 text-xs leading-relaxed text-foreground">
+            // Said before the save, with the fields: part of the form, not news.
+            <Notice tone="warning" role={null}>
               {t("overlapHint")}
-            </p>
+            </Notice>
           ) : null}
-          <p role="alert" className="text-sm text-foreground">
-            {refusal}
-          </p>
+          {/* Always mounted, so the server's refusal is announced when it arrives. */}
+          <div role="alert" className="empty:hidden">
+            {refusal ? <Notice tone="destructive" role={null}>{refusal}</Notice> : null}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

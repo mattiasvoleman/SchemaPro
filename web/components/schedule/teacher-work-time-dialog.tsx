@@ -235,7 +235,7 @@ export function TeacherWorkTimeDialog({
             is typing the number that would do it.
           */}
           <DialogDescription className="flex items-start gap-2">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
             <span>{t("hardRuleHint")}</span>
           </DialogDescription>
         </DialogHeader>

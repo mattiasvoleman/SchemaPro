@@ -26,8 +26,11 @@ import {
 import { formatPercent } from "@/lib/staffing-view";
 import type { StaffingPolicy, TeacherContractKind, TeacherEmployment } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -119,6 +122,8 @@ export function EmploymentCard({
   const tCommon = useTranslations("common");
   const actions = useTeacherEmploymentActions();
   const [editing, setEditing] = useState(false);
+  /** Ta bort tjänsten asks first: the post's figures are gone once it is deleted. */
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [draft, setDraft] = useState<EmploymentDraft>(EMPTY_EMPLOYMENT_DRAFT);
   const loadPolicy = loadPolicyOf(policy);
 
@@ -155,8 +160,11 @@ export function EmploymentCard({
     try {
       await actions.remove.mutateAsync({ userId: teacher.id, academicYearId });
       toast.success(t("employmentRemoved"));
+      setConfirmRemove(false);
       setEditing(false);
     } catch (error) {
+      // The confirmation closes and the form stays as it was.
+      setConfirmRemove(false);
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
@@ -177,24 +185,20 @@ export function EmploymentCard({
     : null;
 
   return (
-    <section className="rounded-lg border bg-card p-4" aria-labelledby={`employment-${teacher.id}`}>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Briefcase className="size-4 text-muted-foreground" />
-          <h3 id={`employment-${teacher.id}`} className="font-semibold">
-            {t("employmentTitle")}
-          </h3>
-        </div>
-        {!editing ? (
+    <SectionCard
+      id={`employment-${teacher.id}`}
+      headingLevel={3}
+      icon={Briefcase}
+      title={t("employmentTitle")}
+      description={t("employmentHint", { year: academicYearName })}
+      action={
+        !editing ? (
           <Button variant="outline" size="sm" onClick={open}>
             {stored ? t("editEmployment") : tCommon("add")}
           </Button>
-        ) : null}
-      </div>
-      <p className="mb-3 text-xs text-muted-foreground">
-        {t("employmentHint", { year: academicYearName })}
-      </p>
-
+        ) : null
+      }
+    >
       {!editing ? (
         stored ? (
           <ul className="space-y-0.5 text-sm">
@@ -261,12 +265,12 @@ export function EmploymentCard({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>{t("contractKind")}</Label>
+              <Label htmlFor={`emp-contract-${teacher.id}`}>{t("contractKind")}</Label>
               <Select
                 value={draft.contractKind}
                 onValueChange={(value) => patch({ contractKind: value as TeacherContractKind })}
               >
-                <SelectTrigger aria-label={t("contractKind")}>
+                <SelectTrigger id={`emp-contract-${teacher.id}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -334,18 +338,15 @@ export function EmploymentCard({
               })}
             </p>
           ) : null}
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {problemText(problem)}
-            </p>
-          ) : null}
+          {problem ? <Notice tone="destructive">{problemText(problem)}</Notice> : null}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             {stored ? (
+              // A neutral trigger: the confirmation it opens carries the red.
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
-                onClick={() => void remove()}
+                onClick={() => setConfirmRemove(true)}
                 disabled={actions.remove.isPending}
               >
                 {t("removeEmployment")}
@@ -368,6 +369,19 @@ export function EmploymentCard({
           </div>
         </div>
       )}
-    </section>
+
+      <ConfirmDialog
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        title={t("removeEmploymentTitle", {
+          name: `${teacher.firstName} ${teacher.lastName}`,
+          year: academicYearName,
+        })}
+        description={t("removeEmploymentBody")}
+        confirmLabel={t("removeEmployment")}
+        loading={actions.remove.isPending}
+        onConfirm={() => void remove()}
+      />
+    </SectionCard>
   );
 }

@@ -11,7 +11,8 @@ describe("Badge", () => {
 
   it("applies the requested variant", () => {
     render(<Badge variant="success">Feasible</Badge>);
-    expect(screen.getByText("Feasible")).toHaveClass("bg-success/15", "text-success");
+    // Ink in the strong shade: plain --success on its own tint is 3.3:1, under AA.
+    expect(screen.getByText("Feasible")).toHaveClass("bg-success/15", "text-success-strong");
   });
 
   it("merges a custom className", () => {

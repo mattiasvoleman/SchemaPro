@@ -1,0 +1,642 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-11T20:47:41+00:00",
+  "title": "Design System: SchemaPro",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Indigo Ledger",
+        "canonical": "hsl(243 75% 59%)",
+        "dark": "hsl(243 85% 70%)",
+        "tonalRamp": [
+          "hsl(243 75% 15%)",
+          "hsl(243 75% 25%)",
+          "hsl(243 75% 35%)",
+          "hsl(243 75% 45%)",
+          "hsl(243 75% 55%)",
+          "hsl(243 75% 65%)",
+          "hsl(243 75% 80%)",
+          "hsl(243 75% 95%)"
+        ],
+        "note": "Also --ring (dark ring 243 85% 68%). Dark lightness 70% keeps text-primary at 4.83:1 on card."
+      },
+      "primary-foreground": {
+        "role": "primary",
+        "displayName": "Indigo Ledger Ink",
+        "canonical": "hsl(0 0% 100%)",
+        "dark": "hsl(240 10% 5%)",
+        "tonalRamp": [
+          "hsl(240 10% 15%)",
+          "hsl(240 10% 25%)",
+          "hsl(240 10% 35%)",
+          "hsl(240 10% 45%)",
+          "hsl(240 10% 55%)",
+          "hsl(240 10% 65%)",
+          "hsl(240 10% 80%)",
+          "hsl(240 10% 95%)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Indigo Wash",
+        "canonical": "hsl(243 75% 96%)",
+        "dark": "hsl(243 40% 20%)",
+        "tonalRamp": [
+          "hsl(243 75% 15%)",
+          "hsl(243 75% 25%)",
+          "hsl(243 75% 35%)",
+          "hsl(243 75% 45%)",
+          "hsl(243 75% 55%)",
+          "hsl(243 75% 65%)",
+          "hsl(243 75% 80%)",
+          "hsl(243 75% 95%)"
+        ]
+      },
+      "accent-foreground": {
+        "role": "primary",
+        "displayName": "Indigo Wash Ink",
+        "canonical": "hsl(243 75% 40%)",
+        "dark": "hsl(243 85% 82%)",
+        "tonalRamp": [
+          "hsl(243 75% 15%)",
+          "hsl(243 75% 25%)",
+          "hsl(243 75% 35%)",
+          "hsl(243 75% 45%)",
+          "hsl(243 75% 55%)",
+          "hsl(243 75% 65%)",
+          "hsl(243 75% 80%)",
+          "hsl(243 75% 95%)"
+        ]
+      },
+      "destructive": {
+        "role": "secondary",
+        "displayName": "Signal Red",
+        "canonical": "hsl(0 72% 51%)",
+        "dark": "hsl(0 72% 58%)",
+        "tonalRamp": [
+          "hsl(0 72% 15%)",
+          "hsl(0 72% 25%)",
+          "hsl(0 72% 35%)",
+          "hsl(0 72% 45%)",
+          "hsl(0 72% 55%)",
+          "hsl(0 72% 65%)",
+          "hsl(0 72% 80%)",
+          "hsl(0 72% 95%)"
+        ]
+      },
+      "destructive-foreground": {
+        "role": "secondary",
+        "displayName": "Signal Red Ink",
+        "canonical": "hsl(0 0% 100%)",
+        "dark": "hsl(0 0% 100%)",
+        "tonalRamp": [
+          "hsl(0 0% 15%)",
+          "hsl(0 0% 25%)",
+          "hsl(0 0% 35%)",
+          "hsl(0 0% 45%)",
+          "hsl(0 0% 55%)",
+          "hsl(0 0% 65%)",
+          "hsl(0 0% 80%)",
+          "hsl(0 0% 95%)"
+        ]
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "Ledger Green",
+        "canonical": "hsl(152 60% 36%)",
+        "dark": "hsl(152 55% 45%)",
+        "tonalRamp": [
+          "hsl(152 60% 15%)",
+          "hsl(152 60% 25%)",
+          "hsl(152 60% 35%)",
+          "hsl(152 60% 45%)",
+          "hsl(152 60% 55%)",
+          "hsl(152 60% 65%)",
+          "hsl(152 60% 80%)",
+          "hsl(152 60% 95%)"
+        ],
+        "note": "Dark --success-foreground 152 80% 8%; light 0 0% 100%."
+      },
+      "success-strong": {
+        "role": "secondary",
+        "displayName": "Ledger Green Strong",
+        "canonical": "hsl(152 65% 24%)",
+        "dark": "hsl(152 55% 45%)",
+        "tonalRamp": [
+          "hsl(152 65% 15%)",
+          "hsl(152 65% 25%)",
+          "hsl(152 65% 35%)",
+          "hsl(152 65% 45%)",
+          "hsl(152 65% 55%)",
+          "hsl(152 65% 65%)",
+          "hsl(152 65% 80%)",
+          "hsl(152 65% 95%)"
+        ],
+        "note": "Ink and icons on light grounds, 5.7:1."
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Amber Signal",
+        "canonical": "hsl(38 92% 50%)",
+        "dark": "hsl(38 92% 55%)",
+        "tonalRamp": [
+          "hsl(38 92% 15%)",
+          "hsl(38 92% 25%)",
+          "hsl(38 92% 35%)",
+          "hsl(38 92% 45%)",
+          "hsl(38 92% 55%)",
+          "hsl(38 92% 65%)",
+          "hsl(38 92% 80%)",
+          "hsl(38 92% 95%)"
+        ]
+      },
+      "warning-foreground": {
+        "role": "secondary",
+        "displayName": "Amber Signal Ink",
+        "canonical": "hsl(32 81% 15%)",
+        "dark": "hsl(32 81% 10%)",
+        "tonalRamp": [
+          "hsl(32 81% 15%)",
+          "hsl(32 81% 25%)",
+          "hsl(32 81% 35%)",
+          "hsl(32 81% 45%)",
+          "hsl(32 81% 55%)",
+          "hsl(32 81% 65%)",
+          "hsl(32 81% 80%)",
+          "hsl(32 81% 95%)"
+        ]
+      },
+      "warning-strong": {
+        "role": "secondary",
+        "displayName": "Amber Signal Strong",
+        "canonical": "hsl(38 92% 33%)",
+        "dark": "hsl(38 92% 55%)",
+        "tonalRamp": [
+          "hsl(38 92% 15%)",
+          "hsl(38 92% 25%)",
+          "hsl(38 92% 35%)",
+          "hsl(38 92% 45%)",
+          "hsl(38 92% 55%)",
+          "hsl(38 92% 65%)",
+          "hsl(38 92% 80%)",
+          "hsl(38 92% 95%)"
+        ],
+        "note": "Warning icon on light grounds, 4.2:1."
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "hsl(0 0% 100%)",
+        "dark": "hsl(240 10% 5%)",
+        "tonalRamp": [
+          "hsl(240 10% 15%)",
+          "hsl(240 10% 25%)",
+          "hsl(240 10% 35%)",
+          "hsl(240 10% 45%)",
+          "hsl(240 10% 55%)",
+          "hsl(240 10% 65%)",
+          "hsl(240 10% 80%)",
+          "hsl(240 10% 95%)"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Paper Card",
+        "canonical": "hsl(0 0% 100%)",
+        "dark": "hsl(240 8% 8%)",
+        "tonalRamp": [
+          "hsl(240 8% 15%)",
+          "hsl(240 8% 25%)",
+          "hsl(240 8% 35%)",
+          "hsl(240 8% 45%)",
+          "hsl(240 8% 55%)",
+          "hsl(240 8% 65%)",
+          "hsl(240 8% 80%)",
+          "hsl(240 8% 95%)"
+        ],
+        "note": "Also --popover."
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "hsl(240 10% 8%)",
+        "dark": "hsl(240 5% 92%)",
+        "tonalRamp": [
+          "hsl(240 10% 15%)",
+          "hsl(240 10% 25%)",
+          "hsl(240 10% 35%)",
+          "hsl(240 10% 45%)",
+          "hsl(240 10% 55%)",
+          "hsl(240 10% 65%)",
+          "hsl(240 10% 80%)",
+          "hsl(240 10% 95%)"
+        ],
+        "note": "Also card/popover foreground."
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Fog",
+        "canonical": "hsl(240 5% 96%)",
+        "dark": "hsl(240 6% 14%)",
+        "tonalRamp": [
+          "hsl(240 5% 15%)",
+          "hsl(240 5% 25%)",
+          "hsl(240 5% 35%)",
+          "hsl(240 5% 45%)",
+          "hsl(240 5% 55%)",
+          "hsl(240 5% 65%)",
+          "hsl(240 5% 80%)",
+          "hsl(240 5% 95%)"
+        ],
+        "note": "Same value as --secondary; --secondary-foreground 240 6% 10% / 240 5% 92%."
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Slate Text",
+        "canonical": "hsl(240 4% 46%)",
+        "dark": "hsl(240 5% 60%)",
+        "tonalRamp": [
+          "hsl(240 4% 15%)",
+          "hsl(240 4% 25%)",
+          "hsl(240 4% 35%)",
+          "hsl(240 4% 45%)",
+          "hsl(240 4% 55%)",
+          "hsl(240 4% 65%)",
+          "hsl(240 4% 80%)",
+          "hsl(240 4% 95%)"
+        ],
+        "note": "4.83:1 light: AA, not AAA."
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "hsl(240 6% 90%)",
+        "dark": "hsl(240 6% 16%)",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 25%)",
+          "hsl(240 6% 35%)",
+          "hsl(240 6% 45%)",
+          "hsl(240 6% 55%)",
+          "hsl(240 6% 65%)",
+          "hsl(240 6% 80%)",
+          "hsl(240 6% 95%)"
+        ],
+        "note": "--input 240 6% 90% / 240 6% 18%."
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Sidebar Mist",
+        "canonical": "hsl(240 6% 98%)",
+        "dark": "hsl(240 8% 7%)",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 25%)",
+          "hsl(240 6% 35%)",
+          "hsl(240 6% 45%)",
+          "hsl(240 6% 55%)",
+          "hsl(240 6% 65%)",
+          "hsl(240 6% 80%)",
+          "hsl(240 6% 95%)"
+        ]
+      },
+      "sidebar-foreground": {
+        "role": "neutral",
+        "displayName": "Sidebar Ink",
+        "canonical": "hsl(240 6% 26%)",
+        "dark": "hsl(240 5% 70%)",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 25%)",
+          "hsl(240 6% 35%)",
+          "hsl(240 6% 45%)",
+          "hsl(240 6% 55%)",
+          "hsl(240 6% 65%)",
+          "hsl(240 6% 80%)",
+          "hsl(240 6% 95%)"
+        ]
+      },
+      "sidebar-accent": {
+        "role": "primary",
+        "displayName": "Sidebar Indigo",
+        "canonical": "hsl(243 75% 94%)",
+        "dark": "hsl(243 40% 18%)",
+        "tonalRamp": [
+          "hsl(243 75% 15%)",
+          "hsl(243 75% 25%)",
+          "hsl(243 75% 35%)",
+          "hsl(243 75% 45%)",
+          "hsl(243 75% 55%)",
+          "hsl(243 75% 65%)",
+          "hsl(243 75% 80%)",
+          "hsl(243 75% 95%)"
+        ]
+      },
+      "sidebar-accent-foreground": {
+        "role": "primary",
+        "displayName": "Sidebar Indigo Ink",
+        "canonical": "hsl(243 75% 40%)",
+        "dark": "hsl(243 85% 82%)",
+        "tonalRamp": [
+          "hsl(243 75% 15%)",
+          "hsl(243 75% 25%)",
+          "hsl(243 75% 35%)",
+          "hsl(243 75% 45%)",
+          "hsl(243 75% 55%)",
+          "hsl(243 75% 65%)",
+          "hsl(243 75% 80%)",
+          "hsl(243 75% 95%)"
+        ]
+      },
+      "sidebar-border": {
+        "role": "neutral",
+        "displayName": "Sidebar Hairline",
+        "canonical": "hsl(240 6% 91%)",
+        "dark": "hsl(240 6% 13%)",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 25%)",
+          "hsl(240 6% 35%)",
+          "hsl(240 6% 45%)",
+          "hsl(240 6% 55%)",
+          "hsl(240 6% 65%)",
+          "hsl(240 6% 80%)",
+          "hsl(240 6% 95%)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Page title",
+        "purpose": "The h1 in PageHeader, one per route."
+      },
+      "kpi-figure": {
+        "displayName": "KPI figure",
+        "purpose": "KpiTile value; 1.25rem below sm."
+      },
+      "dialog-title": {
+        "displayName": "Dialog title",
+        "purpose": "DialogTitle only."
+      },
+      "title": {
+        "displayName": "Section title",
+        "purpose": "SectionCard h2."
+      },
+      "title-sm": {
+        "displayName": "Sub-section title",
+        "purpose": "h3: nested sections, EmptyState titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "All running text, table cells, notices."
+      },
+      "label": {
+        "displayName": "Form label",
+        "purpose": "Label component."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "Hints, errors, secondary cell lines, badges."
+      },
+      "label-caps": {
+        "displayName": "Caps label",
+        "purpose": "KPI dt and table/list group rows only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "control",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+        "purpose": "Primary Button (shadow), active Tab."
+      },
+      {
+        "name": "control-sm",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Outline, secondary and destructive Buttons; Input and NativeSelect."
+      },
+      {
+        "name": "overlay",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Dialog (shadow-lg) over bg-black/60."
+      },
+      {
+        "name": "drawer",
+        "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+        "purpose": "Mobile nav drawer (shadow-xl) over bg-black/50."
+      }
+    ],
+    "motion": [
+      {
+        "name": "dialog",
+        "value": "200ms fade + zoom 95%",
+        "purpose": "Dialog open/close (tailwindcss-animate)."
+      },
+      {
+        "name": "colors",
+        "value": "transition-colors 150ms",
+        "purpose": "Hover fills on buttons, nav, rows."
+      },
+      {
+        "name": "accordion",
+        "value": "0.2s ease-out",
+        "purpose": "accordion-down/up keyframes."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "@media (prefers-reduced-motion: reduce): animation/transition-duration 0.01ms !important, iteration 1, scroll-behavior auto; .animate-spin exempt",
+        "purpose": "App-wide; events still fire so Radix Presence unmounts."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      },
+      {
+        "name": "2xl",
+        "value": "1536px"
+      },
+      {
+        "name": "container-2xl",
+        "value": "1440px"
+      }
+    ],
+    "pageWidths": [
+      {
+        "name": "full",
+        "value": "none"
+      },
+      {
+        "name": "wide",
+        "value": "max-w-5xl (64rem)"
+      },
+      {
+        "name": "narrow",
+        "value": "max-w-3xl (48rem)"
+      }
+    ],
+    "dialogSizes": [
+      {
+        "name": "confirm",
+        "value": "max-w-md (28rem)"
+      },
+      {
+        "name": "form",
+        "value": "max-w-lg (32rem, default)"
+      },
+      {
+        "name": "side-sheet",
+        "value": "max-w-xl (36rem), right, full height"
+      },
+      {
+        "name": "review",
+        "value": "max-w-2xl (42rem)"
+      },
+      {
+        "name": "wide",
+        "value": "max-w-4xl (56rem)"
+      }
+    ],
+    "print": {
+      "page": "A4, 15mm margins",
+      "theme": "light tokens forced, color-scheme light, muted-foreground 240 4% 30%, border 240 6% 80%"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The page's one primary action; default Button.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"M5 12h14M12 5v14\"/></svg>Lägg till klass</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:8px;height:36px;padding:8px 16px;border:0;border-radius:calc(var(--radius) - 2px);background:hsl(var(--primary));color:hsl(var(--primary-foreground));font:500 14px/20px var(--font-sans);box-shadow:0 1px 3px rgb(0 0 0/.1),0 1px 2px -1px rgb(0 0 0/.1);transition:background-color .15s}.ds-btn-primary:hover{background:hsl(var(--primary)/.9)}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary actions in headers, section actions (size sm), Avbryt.",
+      "html": "<button class=\"ds-btn-outline\">Exportera</button>",
+      "css": ".ds-btn-outline{display:inline-flex;align-items:center;gap:8px;height:36px;padding:8px 16px;border:1px solid hsl(var(--input));border-radius:calc(var(--radius) - 2px);background:hsl(var(--background));color:hsl(var(--foreground));font:500 14px/20px var(--font-sans);box-shadow:0 1px 2px rgb(0 0 0/.05);transition:background-color .15s,color .15s}.ds-btn-outline:hover{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}.ds-btn-outline:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "FormField: label, control, hint.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-label\" for=\"ds-i\">Namn <span class=\"ds-opt\">(valfritt)</span></label><input id=\"ds-i\" class=\"ds-input\" aria-describedby=\"ds-h\"><p id=\"ds-h\" class=\"ds-hint\">Visas i schemat.</p></div>",
+      "css": ".ds-field{display:grid;gap:6px;max-width:320px}.ds-label{font:500 14px/1 var(--font-sans);color:hsl(var(--foreground))}.ds-opt{font-weight:400;color:hsl(var(--muted-foreground))}.ds-input{height:36px;padding:4px 12px;border:1px solid hsl(var(--input));border-radius:calc(var(--radius) - 2px);background:transparent;color:hsl(var(--foreground));font:400 14px/20px var(--font-sans);box-shadow:0 1px 2px rgb(0 0 0/.05)}.ds-input:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--ring))}.ds-hint{margin:0;font:400 12px/16px var(--font-sans);color:hsl(var(--muted-foreground))}"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-warning",
+      "description": "Status chip; variant from status-variants.ts.",
+      "html": "<span class=\"ds-badge ds-badge-success\">Beslutad</span> <span class=\"ds-badge ds-badge-warning\">Utkast</span> <span class=\"ds-badge ds-badge-outline\">Återkallad</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;padding:2px 8px;border:1px solid transparent;border-radius:calc(var(--radius) - 2px);font:500 12px/16px var(--font-sans)}.ds-badge-success{background:hsl(var(--success)/.15);color:hsl(var(--success-strong))}.ds-badge-warning{background:hsl(var(--warning)/.15);color:hsl(var(--warning-foreground))}.ds-badge-outline{border-color:hsl(var(--border));color:hsl(var(--foreground))}"
+    },
+    {
+      "name": "Section Card",
+      "kind": "card",
+      "refersTo": "section-card",
+      "description": "A titled section of a page, named by its h2.",
+      "html": "<section class=\"ds-section\" aria-labelledby=\"ds-s-t\"><h2 id=\"ds-s-t\" class=\"ds-section-title\">Uppdrag</h2><p class=\"ds-section-desc\">Mentorskap och rastvakt räknas mot tjänsten.</p><p class=\"ds-section-empty\">Inga uppdrag ännu.</p></section>",
+      "css": ".ds-section{display:grid;gap:12px;padding:16px;border:1px solid hsl(var(--border));border-radius:var(--radius);background:hsl(var(--card));color:hsl(var(--card-foreground))}.ds-section-title{margin:0;font:600 16px/24px var(--font-sans)}.ds-section-desc,.ds-section-empty{margin:0;font:400 14px/20px var(--font-sans);color:hsl(var(--muted-foreground))}"
+    },
+    {
+      "name": "KPI Tile",
+      "kind": "custom",
+      "refersTo": "kpi-tile",
+      "description": "One figure of a KpiStrip.",
+      "html": "<dl class=\"ds-kpi\"><div class=\"ds-tile\"><dt>Lärare</dt><dd>42</dd></div><div class=\"ds-tile\"><dt>Under mål</dt><dd>3</dd></div></dl>",
+      "css": ".ds-kpi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}.ds-tile{min-width:0;padding:16px;border:1px solid hsl(var(--border));border-radius:var(--radius);background:hsl(var(--card))}.ds-tile dt{font:500 12px/16px var(--font-sans);text-transform:uppercase;letter-spacing:.025em;color:hsl(var(--muted-foreground))}.ds-tile dd{margin:4px 0 0;font:600 24px/32px var(--font-sans);font-variant-numeric:tabular-nums;color:hsl(var(--foreground))}"
+    },
+    {
+      "name": "Warning Notice",
+      "kind": "custom",
+      "refersTo": "notice-warning",
+      "description": "The one callout; tone in tint, edge and icon, text in foreground.",
+      "html": "<div class=\"ds-notice\" role=\"status\"><svg class=\"ds-notice-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4M12 17h.01\"/></svg><div><p class=\"ds-notice-title\">Tre lärare ligger under mål</p><p class=\"ds-notice-body\">Ingenting har ändrats i tjänsterna.</p></div></div>",
+      "css": ".ds-notice{display:flex;gap:8px;align-items:flex-start;padding:12px 16px;border:1px solid hsl(var(--warning)/.5);border-radius:calc(var(--radius) - 2px);background:hsl(var(--warning)/.1);color:hsl(var(--foreground));font:400 14px/20px var(--font-sans)}.ds-notice-icon{flex-shrink:0;margin-top:2px;color:hsl(var(--warning-strong))}.ds-notice-title{margin:0;font-weight:500}.ds-notice-body{margin:4px 0 0}"
+    },
+    {
+      "name": "Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Sidebar entry; active uses sidebar-accent and aria-current=page.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Meny\"><div class=\"ds-nav-group\">Planering</div><a class=\"ds-nav-item\" href=\"#\" aria-current=\"page\">Tjänstefördelning</a><a class=\"ds-nav-item\" href=\"#\">Tillgänglighet</a></nav>",
+      "css": ".ds-nav{width:232px;padding:16px 12px;background:hsl(var(--sidebar))}.ds-nav-group{margin-bottom:6px;padding:0 8px;font:600 12px/16px var(--font-sans);text-transform:uppercase;letter-spacing:.05em;color:hsl(var(--muted-foreground))}.ds-nav-item{display:flex;padding:8px 10px;border-radius:calc(var(--radius) - 2px);font:500 14px/20px var(--font-sans);color:hsl(var(--sidebar-foreground));text-decoration:none;transition:background-color .15s}.ds-nav-item:hover{background:hsl(var(--sidebar-accent)/.5);color:hsl(var(--sidebar-accent-foreground))}.ds-nav-item[aria-current=page]{background:hsl(var(--sidebar-accent));color:hsl(var(--sidebar-accent-foreground))}.ds-nav-item:focus-visible{outline:2px solid hsl(var(--ring))}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Planning Ledger",
+    "overview": "Every signed-in page is a working ledger for the schemaläggare: a title that names the page, the figures that summarise it, then the rows and sections where the work happens. The pattern was lifted from Tjänstefördelning and Timplan and applied to every page under `web/app/[locale]/(app)` (commit 5cf0a5b). Density is high and calm: one sans-serif at 14px body, white or near-black card surfaces with hairline borders, one indigo accent, and colour reserved for status. Nothing on the page floats; the only shadows belong to controls and overlays.\n\nThe system is built from a small set of shared, server-safe primitives (`Page`, `PageHeader`, `SectionCard`, `KpiStrip`, `TableCard`, `Notice`, `LoadError`, `EmptyState`, `FilterBar`, `FormField`, `RowActions`, `Stepper`) and one status map (`web/lib/status-variants.ts`). A new page is assembled from them; a page that hand-rolls a callout, a chip or a table frame is off-system. Accessibility rules are written into the components themselves (named buttons, labelled sections, live roles, measured contrast), so following the components is following the rules.\n\nTwo surfaces keep their own look, by owner decision: the sign-in pages under `(auth)` (a centred `max-w-sm` card on `bg-muted/40` with the brand mark), and the public viewer Schemavisaren at `web/app/v` (its own root layout with no theme, no providers and no session; `max-w-6xl`, server-printed week, a phone list below `md`). The print document (uppdragsbeskrivning, A4, 15 mm margins, always light) is the third sanctioned variant.",
+    "keyCharacteristics": [
+      "One page anatomy: Page → PageHeader → (Tabs) → (FilterBar) → (KpiStrip) → SectionCards and TableCards, spaced only by the parent's 16px rhythm.",
+      "One accent (indigo primary) for the primary action, focus ring, links and the active nav item; status colour only through Badge variants and Notice tones.",
+      "Flat page surfaces: `rounded-lg border bg-card`, no shadows on page content.",
+      "Every query-backed region runs the same state ladder, and a failed load never reads as empty or 0.",
+      "Light and dark themes from the same HSL tokens; reduced motion honoured app-wide."
+    ],
+    "rules": [
+      {
+        "name": "The Ink Stays Foreground Rule",
+        "body": "Tinted surfaces (Notice, done Stepper step) keep their text in `foreground`; the tone is carried by the tint, the hairline edge and the icon. Red on its 5% tint measures 4.45:1 and green on its tint 3.45:1, both under AA, so neither is ever the ink. Icons and Badge text use the `-strong` shades.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Meaning Per Colour Rule",
+        "body": "Status colour comes only from `web/lib/status-variants.ts`: success = done, ok, approved, covered, active, applied; warning = needs action (open, draft, under, pending, ongoing); destructive = failed, over, passed, rejected, blocked; secondary = neutral information, handled, upcoming, kinds; outline = inactive or finished (historic, revoked, withdrawn, ended). A draft needs a decision, so it is warning; revoked is finished, so it is outline. Raw palette classes (`amber-*`, `red-*`, …) do not appear in signed-in pages.",
+        "section": "colors"
+      },
+      {
+        "name": "The No Skipped Level Rule",
+        "body": "h1 → h2 → h3, never an h3 directly under the h1. SectionCard takes `headingLevel` 2 or 3; EmptyState and LoadError take 2 when they stand directly under the h1.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Numbers, dates and times are `tabular-nums`; numeric columns and their heads are right-aligned; an empty value is an em dash \"—\" in muted text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Page Rule",
+        "body": "No `shadow-*` on SectionCard, TableCard, KpiTile, Notice or list rows. A surface is distinguished by `border bg-card`, a tint, or `bg-muted/40`.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** start every signed-in page with `<Page width>` and one `PageHeader`, and render every state branch inside the same width.",
+      "**Do** run the state ladder (loading → error → no scope → empty → content) on every query-backed region, and give every error a hint saying what did not change.",
+      "**Do** name every icon button after its object (\"Ta bort 7A\"), and make every section a `<section>` named by its heading.",
+      "**Do** take Badge variants from `status-variants.ts`, and add a new domain map there rather than a local one.",
+      "**Do** write icons as lucide components at `size-4`, `aria-hidden` when decorative (Button already sizes child SVGs to 16px).",
+      "**Do** keep the AAA policy on the pages that claim it (`/admin/breaks`, `/admin/gaps`, and the summary lines on timplansposter). There, all text is `foreground`: `intro` instead of `subtitle`, `descriptionClassName`/`hintClassName=\"text-foreground\"` on EmptyState, LoadError, SectionCard and FormField, table heads overridden to foreground, prose at `max-w-prose leading-relaxed`, boxed controls `h-11 border-muted-foreground`. Each such page keeps its measured contrast table in its header comment, including what it does not meet.",
+      "**Do** honour reduced motion through the global block in `globals.css` (every animation and transition finishes in 0.01ms, `.animate-spin` exempt). A script that asks for smooth scrolling must check the media query itself.",
+      "**Do** format dates and times with Intl and the active locale, and use \" · \" as separator and \"–\" for ranges."
+    ],
+    "donts": [
+      "**Don't** add `mb-*`/`mt-*` or negative margins to page blocks, or bake margins into shared components; spacing comes from Page's `space-y-4`.",
+      "**Don't** put red or green text on its own tint; carry the tone in the surface, edge and `-strong` icon.",
+      "**Don't** paint a destructive trigger red; red belongs only on the ConfirmDialog's confirm.",
+      "**Don't** put summary figures in header actions or filter rows, or render a failed figure as 0.",
+      "**Don't** hand-roll chips, callouts or table frames, or use raw palette classes (`amber-*`, `red-*`) in signed-in pages.",
+      "**Don't** add `max-h-[90vh] overflow-y-auto` to a dialog; DialogContent already caps and scrolls.",
+      "**Don't** use the generic \"Tillbaka\" or \"Bekräfta\" when the destination or the verb can be named.",
+      "**Don't** add a new icon import to the app shell for a nav entry when an existing one can be shared."
+    ]
+  }
+}

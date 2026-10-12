@@ -18,59 +18,69 @@
 // leaves out and why. A reversal reinstates only lessons still cancelled by
 // the batch and ahead, and leaves a lesson whose room was taken meanwhile.
 
-import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { useAcademicYears, useGroups, useRooms, useSubjects } from "@/lib/queries";
+import { CalendarRange } from "lucide-react";
+import { Link } from "@/i18n/navigation";
+import { useGroups, useRooms, useSubjects } from "@/lib/queries";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { YearSelect, useYearScope } from "@/components/schedule/year-select";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BatchesCard } from "./batches-card";
 import { CancellationFormCard } from "./cancellation-form-card";
 
 export default function CancellationsPage() {
   const t = useTranslations("cancellations");
-  const { data: years } = useAcademicYears();
-  const { data: groups } = useGroups();
-  const { data: rooms } = useRooms();
-  const { data: subjects } = useSubjects();
-  const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
-  const yearId = selectedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
-  const year = useMemo(() => years?.find((entry) => entry.id === yearId) ?? null, [years, yearId]);
+  const { year, yearId, setYearId, isLoading, isError } = useYearScope();
+  const groupsQuery = useGroups();
+  const roomsQuery = useRooms();
+  const subjectsQuery = useSubjects();
+  const lookupsFailed = groupsQuery.isError || roomsQuery.isError || subjectsQuery.isError;
 
   return (
-    <div className="space-y-4">
+    <Page>
       <PageHeader
         title={t("title")}
-        actions={
-          years && years.length > 0 ? (
-            <Select value={yearId ?? undefined} onValueChange={setSelectedYearId}>
-              <SelectTrigger className="w-44" aria-label={t("yearLabel")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null
-        }
+        subtitle={t("subtitle")}
+        intro={t("intro")}
+        actions={<YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />}
       />
-      <p className="text-sm">{t("intro")}</p>
-      {year ? (
+      {isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : !year ? (
+        <EmptyState
+          icon={CalendarRange}
+          title={t("noYearTitle")}
+          description={t("noYearBody")}
+          headingLevel={2}
+          action={
+            <Button asChild>
+              <Link href="/admin/years">{t("goToYears")}</Link>
+            </Button>
+          }
+        />
+      ) : (
         <>
+          {lookupsFailed ? (
+            <LoadError variant="inline" title={t("lookupsFailed")} hint={t("lookupsFailedHint")} />
+          ) : null}
           {/* Keyed by the year: a form filled for one läsår is not the next one's. */}
-          <CancellationFormCard key={year.id} year={year} groups={groups ?? []} subjects={subjects ?? []} />
-          <BatchesCard year={year} groups={groups ?? []} rooms={rooms ?? []} />
+          <CancellationFormCard
+            key={year.id}
+            year={year}
+            groups={groupsQuery.data ?? []}
+            subjects={subjectsQuery.data ?? []}
+          />
+          <BatchesCard year={year} groups={groupsQuery.data ?? []} rooms={roomsQuery.data ?? []} />
         </>
-      ) : null}
-    </div>
+      )}
+    </Page>
   );
 }

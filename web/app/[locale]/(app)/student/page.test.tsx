@@ -14,6 +14,7 @@ import StudentSchedulePage from "./page";
 
 const state = vi.hoisted(() => ({
   lessons: [] as unknown[],
+  lessonsFailed: false,
   lunches: [] as unknown[],
   rasts: [] as unknown[],
   groupId: "g-41" as string | null,
@@ -21,7 +22,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/queries", () => ({
-  useCalendarLessons: () => ({ data: state.lessons, isLoading: false }),
+  useCalendarLessons: () =>
+    state.lessonsFailed
+      ? { data: undefined, isLoading: false, isError: true }
+      : { data: state.lessons, isLoading: false, isError: false },
   useCalendarLunches: () => ({ data: state.lunches }),
   useCalendarRasts: () => ({ data: state.rasts }),
   useGroups: () => ({ data: GROUPS }),
@@ -83,6 +87,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date(`${MONDAY}T09:00:00.000Z`));
   state.groupId = "g-41";
   state.role = "STUDENT";
+  state.lessonsFailed = false;
   state.lessons = [
     {
       id: "l-1",
@@ -161,6 +166,22 @@ describe("a week that holds only a meal", () => {
     state.rasts = [];
     render(<StudentSchedulePage />);
     expect(screen.getByText("schedule.noLessons")).toBeInTheDocument();
+  });
+});
+
+describe("a week that could not be read", () => {
+  it("says so, and keeps the arrows to another week", () => {
+    // A failed read drawn as "inga lektioner" is a free week that is not one.
+    // The meal still arrives, and must not make the failure look like a week
+    // with lunch in it either.
+    state.lessonsFailed = true;
+    render(<StudentSchedulePage />);
+    expect(screen.getByRole("heading", { level: 2, name: "schedule.loadFailed" })).toBeInTheDocument();
+    expect(screen.getByText("schedule.loadFailedHint")).toBeInTheDocument();
+    expect(screen.queryByText("schedule.noLessons")).toBeNull();
+    expect(bandsOnScreen()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "schedule.previousWeek" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "schedule.nextWeek" })).toBeEnabled();
   });
 });
 

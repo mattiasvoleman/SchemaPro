@@ -50,12 +50,15 @@
 // low vision is shut out.
 //
 // `muted-foreground` (4.83 / 6.54 — AA, not AAA) is kept off this page as
-// text: PageHeader's subtitle slot and EmptyState's description slot are left
-// empty and the same sentences are written as our own paragraphs, and the
-// results table's headers, which TableHead paints muted by default, are
-// overridden back to `foreground`. It does appear twice as non-text, where the
-// bar is 3:1 and it clears — the empty-state icon (4.40 / 5.28), and the
-// border this page draws on its own boxed controls (see CONTROL below). That
+// text: PageHeader's subtitle slot is left empty and the standfirst goes in
+// its `intro` slot, which is foreground; EmptyState and LoadError are given
+// `text-foreground` for their description; and the results table's headers,
+// which TableHead paints muted by default, are overridden back to
+// `foreground`. It does appear as non-text, where the bar is 3:1 and it
+// clears — the empty-state icon (4.40 / 5.28), the three section icons that
+// SectionCard draws before each h2 (4.83 / 6.17 on card; decorative, hidden
+// from assistive tech), and the border this page draws on its own boxed
+// controls (see CONTROL below). That
 // border is ours because the shared `border-input` measures 1.27 / 1.40
 // against the page, under SC 1.4.11's 3:1, which is a control with no visible
 // edge. Product-wide, and older than this page.
@@ -67,9 +70,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { CalendarSearch, Hourglass, UserSearch } from "lucide-react";
+import { CalendarRange, CalendarSearch, Hourglass, UserSearch } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import {
-  useActiveYear,
+  useAcademicYears,
   useConstraints,
   useGroupMemberships,
   useGroups,
@@ -92,13 +96,24 @@ import {
   type IdleGap,
   type ScheduleData,
 } from "@/lib/gaps";
+import { usePlanningYear } from "@/lib/planning-year";
+import { isProjectable, withProjectedHomes } from "@/lib/projected-rosters";
 import type { LessonRecurrence } from "@/lib/types";
-import { timeToMinutes } from "@/lib/utils";
+import { cn, timeToMinutes } from "@/lib/utils";
+import { NextStep } from "@/components/layout/next-step";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import {
+  PlanningYearPicker,
+  ProjectedRostersBanner,
+} from "@/components/schedule/planning-year";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FilterBar, FilterField } from "@/components/ui/filter-bar";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -138,6 +153,22 @@ const WEEK_OPTIONS: LessonRecurrence[] = ["ALL_WEEKS", "ODD_WEEKS", "EVEN_WEEKS"
  * those three are the form controls of the entire product.
  */
 const CONTROL = "h-11 border-muted-foreground";
+
+/**
+ * Every explanatory paragraph on the page: foreground, a 65-character measure,
+ * and the 1.5 line spacing AAA asks for (text-sm's own leading is 1.43). The
+ * three section descriptions take it too, over SectionCard's muted default.
+ */
+const PROSE = "max-w-prose leading-relaxed text-foreground";
+
+/*
+ * The free-time table sits inside its section, so it takes the inner-table
+ * cells rather than a frame of its own: compact rows, the outer columns flush
+ * with the card's padding. The heads stay text-foreground, not the recipe's
+ * muted (see the docblock above).
+ */
+const TH = "h-auto py-1.5 pr-3 text-xs text-foreground";
+const TD = "py-1.5 pr-3 text-foreground";
 
 /** How many reports section 2 shows before the reader has to ask for the rest. */
 const IDLE_PAGE_SIZE = 10;
@@ -226,12 +257,17 @@ function BodyPicker({
   onToggle: (id: string) => void;
 }) {
   return (
-    <fieldset className="rounded-md border p-3">
-      <legend className="px-1 text-sm font-semibold text-foreground">{legend}</legend>
+    <fieldset className="min-w-0 rounded-md border p-3">
+      {/*
+        Floated, so the legend sits inside the box as a sub-block's heading
+        does, rather than notched into its top border. It still names the
+        group: a floated <legend> is the fieldset's legend all the same.
+      */}
+      <legend className="float-left mb-1 w-full px-1 text-sm font-semibold text-foreground">{legend}</legend>
       {options.length === 0 ? (
-        <p className="px-1 py-2 text-sm text-foreground">{emptyLabel}</p>
+        <p className="clear-both px-1 py-2 text-sm text-foreground">{emptyLabel}</p>
       ) : (
-        <ul className="max-h-56 space-y-0.5 overflow-y-auto">
+        <ul className="clear-both max-h-56 space-y-0.5 overflow-y-auto">
           {options.map((option) => (
             <li key={option.id}>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-2 text-sm text-foreground hover:bg-muted">
@@ -255,7 +291,13 @@ function BodyPicker({
   );
 }
 
-/** A word-carrying badge. Both palettes below measure ≥7:1 in both themes. */
+/**
+ * A word-carrying badge: the shared Badge in its secondary (neutral
+ * information) variant, 16.12 / 13.19. A week pattern other than every week
+ * is lifted onto the accent tint (9.74 / 7.33) — still AAA in both themes —
+ * because a lucka that holds only on odd weeks is the row a reader must not
+ * take for an every-week one.
+ */
 function Tag({
   children,
   emphasis,
@@ -264,15 +306,12 @@ function Tag({
   emphasis?: boolean;
 }) {
   return (
-    <span
-      className={
-        emphasis
-          ? "inline-flex items-center rounded-md bg-accent px-2 py-0.5 text-xs font-semibold text-accent-foreground"
-          : "inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
-      }
+    <Badge
+      variant="secondary"
+      className={emphasis ? "bg-accent font-semibold text-accent-foreground" : undefined}
     >
       {children}
-    </span>
+    </Badge>
   );
 }
 
@@ -282,20 +321,64 @@ export default function GapsPage() {
   // The three parity values are the same three the lesson editor names, so
   // they are read from the same place rather than translated twice.
   const tTimetable = useTranslations("timetable");
+  const tNav = useTranslations("nav");
+  const tCommon = useTranslations("common");
 
-  const { activeYear } = useActiveYear();
-  const { data: lessons, isLoading } = useMasterLessons(activeYear?.id ?? null);
-  const { data: constraints } = useConstraints();
-  const { data: groups } = useGroups();
-  const { data: people } = usePeople();
-  const { data: rooms } = useRooms();
-  const { data: memberships } = useGroupMemberships();
-  const { data: frameTimes } = useFrameTimes();
-  const { data: lunchSettings } = useLunchSettings();
+  /*
+   * The grundschema asked about: this year's, or next year's before its
+   * activation — the same choice, and the same year, as /admin/timetable
+   * (lib/planning-year.ts). Next year's classes have no home pupils until
+   * then, so the people are read with the class the activation will give
+   * each pupil it moves, exactly as the timetable reads them; otherwise next
+   * year's håltimmar would be counted on this year's classes.
+   */
+  const planning = usePlanningYear();
+  const year = planning.year;
+  // For the state ladder only: usePlanningYear reads the same cached query.
+  const years = useAcademicYears();
+  const { data: lessons, isLoading, isError: lessonsFailed } = useMasterLessons(year?.id ?? null);
+  const { data: constraints, isError: constraintsFailed } = useConstraints();
+  const { data: groups, isError: groupsFailed } = useGroups();
+  const { data: storedPeople, isError: peopleFailed } = usePeople();
+  const people = useMemo(
+    () => withProjectedHomes(storedPeople, planning.rosters),
+    [storedPeople, planning.rosters],
+  );
+  const { data: rooms, isError: roomsFailed } = useRooms();
+  const { data: memberships, isError: membershipsFailed } = useGroupMemberships();
+  const { data: frameTimes, isError: frameTimesFailed } = useFrameTimes();
+  const { data: lunchSettings, isError: lunchFailed } = useLunchSettings();
   // The timplan, for one thing only: the minutes the pupils are occupied
   // outside a lesson. The same query the timetable page reads its buffers from,
   // so the two pages cannot disagree about which minutes are taken.
-  const { data: requirements } = useRequirements(activeYear?.id ?? null);
+  const { data: requirements, isError: requirementsFailed } = useRequirements(year?.id ?? null);
+  /*
+   * Every answer on the page is computed from all of these at once: a week
+   * searched without its availability rules offers time a rule has closed, one
+   * without the roster reports nobody idle. So any one that was never read
+   * stops the page rather than letting it answer from part of the school — an
+   * answer that looks like a result and is not one. Next year's class lists
+   * count among them: without them its håltimmar would be this year's classes'.
+   *
+   * A refetch that fails over a read already in hand is a different fact: the
+   * page still has the whole school, as last read, so it keeps answering and
+   * says above the answers that they may be out of date (refetchFailed).
+   */
+  const reads: ReadonlyArray<readonly [boolean, unknown]> = [
+    [years.isError, years.data],
+    [planning.rostersFailed, planning.rosters ?? undefined],
+    [lessonsFailed, lessons],
+    [constraintsFailed, constraints],
+    [groupsFailed, groups],
+    [peopleFailed, storedPeople],
+    [roomsFailed, rooms],
+    [membershipsFailed, memberships],
+    [frameTimesFailed, frameTimes],
+    [lunchFailed, lunchSettings],
+    [requirementsFailed, requirements],
+  ];
+  const anyFailed = reads.some(([failed, data]) => failed && data === undefined);
+  const refetchFailed = reads.some(([failed, data]) => failed && data !== undefined);
 
   // -------------------------------------------------------------------
   // The bodies, and the schedule they are asked about
@@ -403,10 +486,10 @@ export default function GapsPage() {
     ],
   );
 
-  /** The active year's groups: the schedule searched is the active year's (see the timetable). */
+  /** The shown year's groups: the schedule searched is that year's (see the timetable). */
   const yearGroups = useMemo(
-    () => (groups ?? []).filter((group) => group.academicYearId === activeYear?.id),
-    [groups, activeYear?.id],
+    () => (groups ?? []).filter((group) => group.academicYearId === year?.id),
+    [groups, year?.id],
   );
   const groupOptions: Option[] = useMemo(
     () => yearGroups.map((group) => ({ id: group.id, label: group.name })),
@@ -636,7 +719,13 @@ export default function GapsPage() {
   // Render
   // -------------------------------------------------------------------
 
-  const gapLine = (gap: IdleGap, report: GapReport): string => {
+  /**
+   * One håltimme as words: the sentence (day, time, length, who, lunch), then
+   * the week pattern when it is not every week, then the length band. The
+   * last two are drawn as badges, but read as the same " · "-joined line the
+   * row always was: the separators before them are sr-only, not dropped.
+   */
+  const gapParts = (gap: IdleGap, report: GapReport) => {
     const severity = severityOf(gap.idleMinutes);
     const parts = [
       `${tDays(String(gap.dayOfWeek))} ${clock(gap.startMinutes)}–${clock(gap.endMinutes)}`,
@@ -655,71 +744,177 @@ export default function GapsPage() {
     if (gap.lunchMinutes > 0) {
       parts.push(t("idleLunch", { minutes: duration(t, gap.lunchMinutes) }));
     }
-    if (gap.weeks !== "ALL_WEEKS") {
-      parts.push(tTimetable(RECURRENCE_KEY[gap.weeks]));
-    }
-    parts.push(t(SEVERITY_KEY[severity]));
-    return parts.join(" · ");
+    return {
+      sentence: parts.join(" · "),
+      weeks: gap.weeks !== "ALL_WEEKS" ? tTimetable(RECURRENCE_KEY[gap.weeks]) : null,
+      length: t(SEVERITY_KEY[severity]),
+    };
   };
 
   const reportName = (report: GapReport): string =>
     labelOf.get(report.subjectId) ?? report.subjectId;
 
-  if (isLoading) {
+  /**
+   * Another year's grundschema: every question asked so far was about this
+   * one's, and its classes are not the other year's — a ticked 8A would be a
+   * group the other week does not hold. The teachers and rooms stay ticked;
+   * they are the school's, not a year's.
+   */
+  const chooseYear = (yearId: string) => {
+    setPickedGroups(new Set());
+    setFreeQuery(null);
+    setWhoQuery(null);
+    setWhoInvalid(false);
+    setGapLimit(IDLE_PAGE_SIZE);
+    setRevealedFrom(null);
+    planning.choose(yearId);
+  };
+
+  /*
+   * One header for every state, so the page does not change shape when the
+   * schedule arrives. No subtitle: that slot is muted-foreground. The
+   * standfirst goes in `intro`, which is foreground; max-w-prose caps the
+   * measure at 65 characters and leading-relaxed gives the 1.5 line spacing
+   * AAA asks for (the app's default text-sm leading is 1.43).
+   *
+   * The year choice is the timetable's own, and draws nothing until there
+   * is a next year to plan. Its buttons are lifted to the 44px and the
+   * visible edge every other control here has (see CONTROL).
+   */
+  const header = (
+    <PageHeader
+      title={t("title")}
+      intro={<p className="leading-relaxed">{t("intro")}</p>}
+      actions={
+        <PlanningYearPicker
+          {...planning}
+          onChoose={chooseYear}
+          className="[&>button]:h-11 [&>button]:border-muted-foreground"
+        />
+      }
+    />
+  );
+
+  /*
+   * Still on its way: the years, the one render usePlanningYear holds the
+   * year back for, the week itself, or next year's class lists — without
+   * which its håltimmar would be counted on this year's classes for as long
+   * as the request takes.
+   */
+  const rostersPending =
+    isProjectable(year, planning.active) && planning.rosters === null && !planning.rostersFailed;
+  const pending =
+    isLoading || years.isLoading || (planning.active !== null && year === null) || rostersPending;
+
+  // Above whatever the page answers with, when a refetch failed under it.
+  const refetchNotice = refetchFailed ? (
+    <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
+  ) : null;
+
+  if (pending) {
     return (
-      <div>
-        <PageHeader title={t("title")} />
-        <div className="space-y-3">
-          <Skeleton className="h-40 w-full" />
-          <Skeleton className="h-40 w-full" />
+      <Page>
+        {header}
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
-      </div>
+      </Page>
+    );
+  }
+
+  if (anyFailed) {
+    return (
+      <Page>
+        {header}
+        <LoadError
+          title={t("loadFailed")}
+          hint={t("loadFailedHint")}
+          hintClassName="text-foreground"
+          headingLevel={2}
+        />
+      </Page>
+    );
+  }
+
+  if (!year) {
+    // No active year: there is no grundschema to ask, and the way to one is
+    // the Läsår page. Foreground hint, for the reason given below.
+    return (
+      <Page>
+        {header}
+        {refetchNotice}
+        <EmptyState
+          icon={CalendarRange}
+          title={t("noYearTitle")}
+          description={t("noYearHint")}
+          descriptionClassName="text-foreground"
+          headingLevel={2}
+          action={
+            <Button asChild variant="outline" className={CONTROL}>
+              <Link href="/admin/years">{t("noYearAction")}</Link>
+            </Button>
+          }
+        />
+      </Page>
     );
   }
 
   if (placements.length === 0) {
     return (
-      <div>
-        <PageHeader title={t("title")} />
+      <Page>
+        {header}
+        {refetchNotice}
         {/*
-          Title only. EmptyState's `description` slot renders in
-          muted-foreground, which measures 4.83:1 light and 6.54:1 dark — AA,
-          but short of the 7:1 this page holds itself to — so the hint is
-          written out here instead. Its icon is muted-foreground too (4.40 /
-          5.28 on the muted circle), which is fine: a decorative graphic is
-          held to SC 1.4.11's 3:1, not to 7:1.
+          The hint in foreground, not EmptyState's muted default, which
+          measures 4.83:1 light and 6.54:1 dark — AA, but short of the 7:1 this
+          page holds itself to. Its icon is muted-foreground too (4.40 / 5.28
+          on the muted circle), which is fine: a decorative graphic is held to
+          SC 1.4.11's 3:1, not to 7:1.
         */}
-        <EmptyState icon={CalendarSearch} title={t("empty")} />
-        <p className="mx-auto mt-3 max-w-prose text-center text-sm leading-relaxed text-foreground">
-          {t("emptyHint")}
-        </p>
-      </div>
+        <EmptyState
+          icon={CalendarSearch}
+          title={t("empty")}
+          description={t("emptyHint")}
+          descriptionClassName="text-foreground"
+          headingLevel={2}
+          action={
+            <Button asChild className="h-11">
+              <Link href={year.isActive ? "/admin/generate" : `/admin/generate?year=${year.id}`}>
+                {tNav("generate")}
+              </Link>
+            </Button>
+          }
+        />
+      </Page>
     );
   }
 
   return (
-    <div className="space-y-10">
-      <PageHeader title={t("title")} />
+    <Page>
+      {header}
+      {refetchNotice}
+      {/* Next year's grid: whose class lists the answers are counted on. */}
+      <ProjectedRostersBanner
+        year={year}
+        active={planning.active}
+        rosters={planning.rosters}
+        failed={planning.rostersFailed}
+      />
+
       {/*
-        PageHeader's own subtitle slot is muted-foreground for the same reason,
-        so the standfirst is a paragraph of ours. max-w-prose caps the measure
-        at 65 characters and leading-relaxed gives the 1.5 line spacing AAA
-        asks for; the app's default text-sm leading is 1.43.
+        The three questions, each a section of its own with its h2 — the
+        region a screen reader lists and a test finds by name. The card edges
+        say they are three tasks; the page's own space-y-4 is enough between.
       */}
-      <p className="-mt-4 max-w-prose text-base leading-relaxed text-foreground">
-        {t("intro")}
-      </p>
-
-      {/* ---------------- 1. Ledig tid ---------------- */}
-      <section aria-labelledby="free-heading" className="space-y-4">
-        <h2 id="free-heading" className="flex items-center gap-2 text-xl font-semibold">
-          <CalendarSearch className="h-5 w-5 shrink-0" aria-hidden="true" />
-          {t("freeTitle")}
-        </h2>
-        <p className="max-w-prose text-sm leading-relaxed text-foreground">{t("freeHint")}</p>
-
-        <form onSubmit={submitFree} className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
+      <SectionCard
+        id="gaps-free"
+        title={t("freeTitle")}
+        icon={CalendarSearch}
+        description={t("freeHint")}
+        descriptionClassName={PROSE}
+      >
+        <form onSubmit={submitFree} className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-3">
             <BodyPicker
               legend={t("freeGroups")}
               emptyLabel={t("noneAvailable")}
@@ -743,11 +938,11 @@ export default function GapsPage() {
             />
           </div>
 
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="w-48 space-y-2">
-              <Label htmlFor="free-length">{t("freeLength")}</Label>
+          {/* One filled button in the section, the search; Rensa is outline beside it. */}
+          <FilterBar>
+            <FilterField id="free-length" label={t("freeLength")} className="w-48">
               <Select value={freeLength} onValueChange={setFreeLength}>
-                <SelectTrigger id="free-length" className={CONTROL} aria-label={t("freeLength")}>
+                <SelectTrigger id="free-length" className={CONTROL}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -762,15 +957,18 @@ export default function GapsPage() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </FilterField>
             <Button type="submit" className="h-11">
               {t("freeSearch")}
             </Button>
             <Button type="button" variant="outline" className={CONTROL} onClick={clearFree}>
               {t("freeClear")}
             </Button>
-            <p className="text-sm text-foreground">{t("freeSelected", { count: pickedCount })}</p>
-          </div>
+            {/* As tall as the controls, so the count sits level with their middle. */}
+            <p className="flex h-11 items-center text-sm text-foreground">
+              {t("freeSelected", { count: pickedCount })}
+            </p>
+          </FilterBar>
         </form>
 
         {/*
@@ -792,91 +990,93 @@ export default function GapsPage() {
         </p>
 
         {freeWindows !== null && freeWindows.length > 0 ? (
-          <Table>
-            <caption className="sr-only">{t("freeCaption", { who: freeWho })}</caption>
-            <TableHeader>
-              {/*
-                text-foreground on all four: TableHead's own base class is
-                text-muted-foreground, which is 4.83:1 light and 6.54:1 dark —
-                AA, and short of the 7:1 the rest of this page holds to. The
-                override is here rather than in table.tsx because that
-                component is painted by every page in the product.
-              */}
-              <TableRow>
-                <TableHead scope="col" className="text-foreground">
-                  {t("colDay")}
-                </TableHead>
-                <TableHead scope="col" className="text-foreground">
-                  {t("colTime")}
-                </TableHead>
-                <TableHead scope="col" className="text-foreground">
-                  {t("colLength")}
-                </TableHead>
-                <TableHead scope="col" className="text-foreground">
-                  {t("colWeeks")}
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {freeWindows.map((window) => (
-                <TableRow
-                  key={`${window.dayOfWeek}-${window.startMinutes}-${window.endMinutes}-${window.weeks}`}
-                >
-                  <TableCell className="text-foreground">
-                    {tDays(String(window.dayOfWeek))}
-                  </TableCell>
-                  <TableCell className="text-foreground">
-                    {clock(window.startMinutes)}–{clock(window.endMinutes)}
-                  </TableCell>
-                  <TableCell className="text-foreground">
-                    {duration(t, window.endMinutes - window.startMinutes)}
-                  </TableCell>
-                  <TableCell>
-                    <Tag emphasis={window.weeks !== "ALL_WEEKS"}>
-                      {tTimetable(RECURRENCE_KEY[window.weeks])}
-                    </Tag>
-                  </TableCell>
+          /*
+            text-foreground on all four heads: TableHead's own base class is
+            text-muted-foreground, which is 4.83:1 light and 6.54:1 dark — AA,
+            and short of the 7:1 the rest of this page holds to. The override
+            is here rather than in table.tsx because that component is painted
+            by every page in the product. On a phone the length gives way: the
+            time beside it already says it.
+          */
+          <div className="overflow-x-auto">
+            <Table>
+              <caption className="sr-only">{t("freeCaption", { who: freeWho })}</caption>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead scope="col" className={cn(TH, "pl-0")}>
+                    {t("colDay")}
+                  </TableHead>
+                  <TableHead scope="col" className={TH}>
+                    {t("colTime")}
+                  </TableHead>
+                  <TableHead scope="col" className={cn(TH, "hidden sm:table-cell")}>
+                    {t("colLength")}
+                  </TableHead>
+                  <TableHead scope="col" className={cn(TH, "pr-0")}>
+                    {t("colWeeks")}
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {freeWindows.map((window) => (
+                  <TableRow
+                    key={`${window.dayOfWeek}-${window.startMinutes}-${window.endMinutes}-${window.weeks}`}
+                  >
+                    <TableCell className={cn(TD, "pl-0 font-medium")}>
+                      {tDays(String(window.dayOfWeek))}
+                    </TableCell>
+                    <TableCell className={cn(TD, "whitespace-nowrap tabular-nums")}>
+                      {clock(window.startMinutes)}–{clock(window.endMinutes)}
+                    </TableCell>
+                    <TableCell className={cn(TD, "hidden whitespace-nowrap tabular-nums sm:table-cell")}>
+                      {duration(t, window.endMinutes - window.startMinutes)}
+                    </TableCell>
+                    <TableCell className={cn(TD, "pr-0")}>
+                      <Tag emphasis={window.weeks !== "ALL_WEEKS"}>
+                        {tTimetable(RECURRENCE_KEY[window.weeks])}
+                      </Tag>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         ) : null}
-      </section>
+      </SectionCard>
 
-      {/* ---------------- 2. Håltimmar ---------------- */}
-      <section aria-labelledby="idle-heading" className="space-y-4">
-        <h2 id="idle-heading" className="flex items-center gap-2 text-xl font-semibold">
-          <Hourglass className="h-5 w-5 shrink-0" aria-hidden="true" />
-          {t("idleTitle")}
-        </h2>
-        <p className="max-w-prose text-sm leading-relaxed text-foreground">{t("idleHint")}</p>
-        <p className="max-w-prose text-sm leading-relaxed text-foreground">
-          {lunchWindow
-            ? t("idleLunchWindow", {
-                start: clock(lunchWindow.startMinutes),
-                end: clock(lunchWindow.endMinutes),
-                minutes: duration(t, lunchWindow.minutes),
-              })
-            : t("idleLunchOff")}
-        </p>
-        {/*
-          Only when the school has actually written ombyte or dusch on a
-          timplanspost. The map holds the rows carrying a number and nothing
-          else, so it is empty at nearly every school — and a sentence about a
-          rule nobody has set would be one more line to read past on a page that
-          already asks three questions. When the rule DOES exist it has to be
-          said: the report is then quietly not reporting holes an administrator
-          can see on the grid, and silence about that reads as a missing row.
-        */}
-        {pupilBuffers !== undefined && pupilBuffers.size > 0 && (
-          <p className="max-w-prose text-sm leading-relaxed text-foreground">
-            {t("idlePupilTime")}
+      <SectionCard
+        id="gaps-idle"
+        title={t("idleTitle")}
+        icon={Hourglass}
+        description={t("idleHint")}
+        descriptionClassName={PROSE}
+      >
+        {/* What the counting assumes, read before the counts. */}
+        <div className={cn("space-y-2 text-sm", PROSE)}>
+          <p>
+            {lunchWindow
+              ? t("idleLunchWindow", {
+                  start: clock(lunchWindow.startMinutes),
+                  end: clock(lunchWindow.endMinutes),
+                  minutes: duration(t, lunchWindow.minutes),
+                })
+              : t("idleLunchOff")}
           </p>
-        )}
+          {/*
+            Only when the school has actually written ombyte or dusch on a
+            timplanspost. The map holds the rows carrying a number and nothing
+            else, so it is empty at nearly every school — and a sentence about a
+            rule nobody has set would be one more line to read past on a page that
+            already asks three questions. When the rule DOES exist it has to be
+            said: the report is then quietly not reporting holes an administrator
+            can see on the grid, and silence about that reads as a missing row.
+          */}
+          {pupilBuffers !== undefined && pupilBuffers.size > 0 && <p>{t("idlePupilTime")}</p>}
+          <p>{t("lengthLegend")}</p>
+        </div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-48 space-y-2">
-            <Label htmlFor="idle-minimum">{t("idleMinimum")}</Label>
+        <FilterBar>
+          <FilterField id="idle-minimum" label={t("idleMinimum")} className="w-48">
             <Select
               value={gapMinimum}
               onValueChange={(next) => {
@@ -885,7 +1085,7 @@ export default function GapsPage() {
                 setRevealedFrom(null);
               }}
             >
-              <SelectTrigger id="idle-minimum" className={CONTROL} aria-label={t("idleMinimum")}>
+              <SelectTrigger id="idle-minimum" className={CONTROL}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -896,9 +1096,8 @@ export default function GapsPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="w-56 space-y-2">
-            <Label htmlFor="idle-scope">{t("idleScope")}</Label>
+          </FilterField>
+          <FilterField id="idle-scope" label={t("idleScope")} className="w-56">
             <Select
               value={gapScope}
               onValueChange={(next) => {
@@ -907,7 +1106,7 @@ export default function GapsPage() {
                 setRevealedFrom(null);
               }}
             >
-              <SelectTrigger id="idle-scope" className={CONTROL} aria-label={t("idleScope")}>
+              <SelectTrigger id="idle-scope" className={CONTROL}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -922,8 +1121,8 @@ export default function GapsPage() {
                 </SelectItem>
               </SelectContent>
             </Select>
-          </div>
-        </div>
+          </FilterField>
+        </FilterBar>
 
         {/*
           The second sentence is what makes expanding the list audible: the
@@ -943,49 +1142,76 @@ export default function GapsPage() {
                 }`
               : t("idleCount", { count: visibleReports.length })}
         </p>
-        <p className="max-w-prose text-sm leading-relaxed text-foreground">{t("lengthLegend")}</p>
 
-        {shownReports.map((report, index) => (
-          <article
-            key={`${report.kind}-${report.subjectId}`}
-            className="rounded-lg border bg-card p-4"
-          >
-            <h3
-              // The landing place for focus after "Visa alla": the first report
-              // that was not there a moment ago. tabIndex -1 keeps it out of
-              // the tab order — this is a destination, not a stop — and the
-              // ring is on :focus rather than :focus-visible because the focus
-              // arrives programmatically and must still be seen.
-              ref={index === revealedFrom ? revealedRef : null}
-              tabIndex={index === revealedFrom ? -1 : undefined}
-              className="flex flex-wrap items-center gap-2 text-base font-semibold text-card-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-            >
-              {reportName(report)}
-              <Tag>{t(report.kind === "TEACHER" ? "kindTeacher" : "kindGroup")}</Tag>
-            </h3>
-            <p className="mt-1 text-sm text-card-foreground">
-              {t("idleSummary", {
-                total: duration(t, report.totalMinutes),
-                worst: duration(t, report.worstMinutes),
-              })}
-            </p>
-            <ul className="mt-3 space-y-1.5">
-              {report.gaps.map((gap) => (
-                <li
-                  // Mirrors the row key findIdleGaps builds, lunch credit
-                  // included. Two rows can share a day and an interval and
-                  // differ only in how much of it lunch explains — dropping
-                  // that from the key makes React treat them as one and one of
-                  // the two silently disappears from the list.
-                  key={`${gap.dayOfWeek}-${gap.startMinutes}-${gap.endMinutes}-${gap.weeks}-${gap.lunchMinutes}`}
-                  className="text-sm text-card-foreground"
-                >
-                  {gapLine(gap, report)}
-                </li>
-              ))}
-            </ul>
-          </article>
-        ))}
+        {shownReports.length > 0 ? (
+          <div className="space-y-4">
+            {shownReports.map((report, index) => (
+              /*
+                An <article> per class or teacher: each report stands on its
+                own, and its h3 is the landing place for focus below. No card
+                of its own — it already sits in one; the bordered list is the
+                one box inside the section.
+              */
+              <article key={`${report.kind}-${report.subjectId}`} className="space-y-2">
+                <div className="space-y-1">
+                  <h3
+                    // The landing place for focus after "Visa alla": the first report
+                    // that was not there a moment ago. tabIndex -1 keeps it out of
+                    // the tab order — this is a destination, not a stop — and the
+                    // ring is on :focus rather than :focus-visible because the focus
+                    // arrives programmatically and must still be seen.
+                    ref={index === revealedFrom ? revealedRef : null}
+                    tabIndex={index === revealedFrom ? -1 : undefined}
+                    className="flex flex-wrap items-center gap-2 rounded-sm text-sm font-semibold text-card-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  >
+                    {reportName(report)}
+                    <Tag>{t(report.kind === "TEACHER" ? "kindTeacher" : "kindGroup")}</Tag>
+                  </h3>
+                  <p className="text-sm text-card-foreground">
+                    {t("idleSummary", {
+                      total: duration(t, report.totalMinutes),
+                      worst: duration(t, report.worstMinutes),
+                    })}
+                  </p>
+                </div>
+                <ul className="divide-y rounded-md border">
+                  {report.gaps.map((gap) => {
+                    const line = gapParts(gap, report);
+                    return (
+                      <li
+                        // Mirrors the row key findIdleGaps builds, lunch credit
+                        // included. Two rows can share a day and an interval and
+                        // differ only in how much of it lunch explains — dropping
+                        // that from the key makes React treat them as one and one of
+                        // the two silently disappears from the list.
+                        key={`${gap.dayOfWeek}-${gap.startMinutes}-${gap.endMinutes}-${gap.weeks}-${gap.lunchMinutes}`}
+                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2 text-sm tabular-nums text-card-foreground"
+                      >
+                        <span className="min-w-0">{line.sentence}</span>
+                        {/*
+                          The week pattern and the length band, as badges at the
+                          row's end where the eye can run down them. The " · "
+                          before each is kept for the ear: a screen reader hears
+                          the line it always heard.
+                        */}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {line.weeks ? (
+                            <>
+                              <span className="sr-only"> · </span>
+                              <Tag emphasis>{line.weeks}</Tag>
+                            </>
+                          ) : null}
+                          <span className="sr-only"> · </span>
+                          <Tag>{line.length}</Tag>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </article>
+            ))}
+          </div>
+        ) : null}
 
         {idleTruncated ? (
           <Button
@@ -1000,21 +1226,19 @@ export default function GapsPage() {
             {t("idleShowAll", { count: visibleReports.length })}
           </Button>
         ) : null}
-      </section>
+      </SectionCard>
 
-      {/* ---------------- 3. Vem är ledig då? ---------------- */}
-      <section aria-labelledby="who-heading" className="space-y-4">
-        <h2 id="who-heading" className="flex items-center gap-2 text-xl font-semibold">
-          <UserSearch className="h-5 w-5 shrink-0" aria-hidden="true" />
-          {t("whoTitle")}
-        </h2>
-        <p className="max-w-prose text-sm leading-relaxed text-foreground">{t("whoHint")}</p>
-
+      <SectionCard
+        id="gaps-who"
+        title={t("whoTitle")}
+        icon={UserSearch}
+        description={t("whoHint")}
+        descriptionClassName={PROSE}
+      >
         <form onSubmit={submitWho} className="flex flex-wrap items-end gap-3">
-          <div className="w-44 space-y-2">
-            <Label htmlFor="who-day">{t("whoDay")}</Label>
+          <FilterField id="who-day" label={t("whoDay")} className="w-44">
             <Select value={whoDay} onValueChange={setWhoDay}>
-              <SelectTrigger id="who-day" className={CONTROL} aria-label={t("whoDay")}>
+              <SelectTrigger id="who-day" className={CONTROL}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1025,34 +1249,31 @@ export default function GapsPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="w-36 space-y-2">
-            <Label htmlFor="who-start">{t("whoStart")}</Label>
+          </FilterField>
+          <FilterField id="who-start" label={t("whoStart")} className="w-36">
             <Input
               id="who-start"
               type="time"
-              className={CONTROL}
+              className={`${CONTROL} tabular-nums`}
               value={whoStart}
               onChange={(event) => setWhoStart(event.target.value)}
             />
-          </div>
-          <div className="w-36 space-y-2">
-            <Label htmlFor="who-end">{t("whoEnd")}</Label>
+          </FilterField>
+          <FilterField id="who-end" label={t("whoEnd")} className="w-36">
             <Input
               id="who-end"
               type="time"
-              className={CONTROL}
+              className={`${CONTROL} tabular-nums`}
               value={whoEnd}
               onChange={(event) => setWhoEnd(event.target.value)}
             />
-          </div>
-          <div className="w-48 space-y-2">
-            <Label htmlFor="who-weeks">{t("whoWeeks")}</Label>
+          </FilterField>
+          <FilterField id="who-weeks" label={t("whoWeeks")} className="w-48">
             <Select
               value={whoWeeks}
               onValueChange={(next) => setWhoWeeks(next as LessonRecurrence)}
             >
-              <SelectTrigger id="who-weeks" className={CONTROL} aria-label={t("whoWeeks")}>
+              <SelectTrigger id="who-weeks" className={CONTROL}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1063,7 +1284,7 @@ export default function GapsPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </FilterField>
           <Button type="submit" className="h-11">
             {t("whoSearch")}
           </Button>
@@ -1085,7 +1306,7 @@ export default function GapsPage() {
         </p>
 
         {whoResult !== null ? (
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-3">
             {(
               [
                 { key: "whoGroups", ids: whoResult.studentGroupIds },
@@ -1093,14 +1314,15 @@ export default function GapsPage() {
                 { key: "whoRooms", ids: whoResult.roomIds },
               ] as const
             ).map((column) => (
-              <div key={column.key} className="rounded-lg border bg-card p-4">
-                <h3 className="text-base font-semibold text-card-foreground">
+              // A sub-block of the section, not a card in a card.
+              <div key={column.key} className="space-y-2 rounded-md border p-3">
+                <h3 className="text-sm font-semibold text-card-foreground">
                   {t(column.key, { count: column.ids.length })}
                 </h3>
                 {column.ids.length === 0 ? (
-                  <p className="mt-2 text-sm text-card-foreground">{t("whoNoneOfKind")}</p>
+                  <p className="text-sm text-card-foreground">{t("whoNoneOfKind")}</p>
                 ) : (
-                  <ul className="mt-2 space-y-1">
+                  <ul className="space-y-1">
                     {column.ids.map((id) => (
                       <li key={id} className="text-sm text-card-foreground">
                         {labelOf.get(id) ?? id}
@@ -1112,7 +1334,12 @@ export default function GapsPage() {
             ))}
           </div>
         ) : null}
-      </section>
-    </div>
+      </SectionCard>
+
+      {/* The manual's next step after the luckor. 44px like every control here. */}
+      <div className="flex justify-end">
+        <NextStep href="/admin/publishing" name={tNav("publishing")} className="h-11" />
+      </div>
+    </Page>
   );
 }

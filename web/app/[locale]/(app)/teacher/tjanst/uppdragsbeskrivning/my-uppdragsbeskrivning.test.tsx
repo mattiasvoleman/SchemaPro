@@ -46,6 +46,14 @@ vi.mock("@/components/profile-context", () => ({
     school: { name: "Norra skolan", timezone: "Europe/Stockholm" },
   }),
 }));
+// The back link is next-intl's Link, which needs the app's provider; a plain anchor here.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
@@ -69,6 +77,15 @@ describe("the teacher's own uppdragsbeskrivning", () => {
     // The history has not answered: the paper does not claim there is no version.
     expect(screen.getByText(/uppdrag\.stampLoading/)).toBeInTheDocument();
     expect(screen.queryByText(/uppdrag\.stampNoVersion/)).toBeNull();
+  });
+
+  it("links back to Min tjänst above the paper, and never prints the link", () => {
+    render(<MyUppdragsbeskrivning yearId="y0" />);
+    const link = screen.getByRole("link", { name: "uppdrag.backTeacher" });
+    expect(link).toHaveAttribute("href", "/teacher/tjanst");
+    expect(link.closest(".print\\:hidden")).not.toBeNull();
+    // The paper's own h1 is the page's only one.
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("falls back on the active year for an unknown one, never on a person", () => {

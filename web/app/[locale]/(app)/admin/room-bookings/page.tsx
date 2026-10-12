@@ -1,143 +1,136 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Check, MapPin, Loader2, X } from "lucide-react";
+import { MapPin } from "lucide-react";
 import {
   useRoomBookingActions,
   useRoomBookingRequests,
   useRooms,
   usePeople,
 } from "@/lib/queries";
+import { BOOKING_STATUS_VARIANT } from "@/lib/status-variants";
 import type { RoomBookingStatus } from "@/lib/types";
+import { DecisionList, type Decision, type DecisionRequest } from "@/components/admin/decision-list";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Card, CardContent } from "@/components/ui/card";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Filter = Extract<RoomBookingStatus, "PENDING" | "APPROVED" | "REJECTED">;
-
-function formatWhen(iso: string): string {
-  return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-}
 
 export default function RoomBookingsPage() {
   const t = useTranslations("adminRoomBookings");
   const tStatus = useTranslations("roomBooking");
   const tCommon = useTranslations("common");
+  const locale = useLocale();
   const [filter, setFilter] = useState<Filter>("PENDING");
-  const { data: bookings, isLoading } = useRoomBookingRequests(filter);
-  const { data: rooms } = useRooms();
-  const { data: people } = usePeople();
+  const { data: bookings, isLoading, isError } = useRoomBookingRequests(filter);
+  const roomsQuery = useRooms();
+  const peopleQuery = usePeople();
   const actions = useRoomBookingActions();
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const namesFailed = roomsQuery.isError || peopleQuery.isError;
 
   const roomName = useMemo(() => {
-    const byId = new Map((rooms ?? []).map((room) => [room.id, room.name]));
+    const byId = new Map((roomsQuery.data ?? []).map((room) => [room.id, room.name]));
     return (id: string) => byId.get(id) ?? "—";
-  }, [rooms]);
+  }, [roomsQuery.data]);
 
   const personName = useMemo(() => {
-    const byId = new Map((people ?? []).map((person) => [person.id, person]));
+    const byId = new Map((peopleQuery.data ?? []).map((person) => [person.id, person]));
     return (id: string) => {
       const person = byId.get(id);
       return person ? `${person.firstName} ${person.lastName}` : "—";
     };
-  }, [people]);
+  }, [peopleQuery.data]);
 
-  const decide = async (id: string, status: "APPROVED" | "REJECTED") => {
+  const when = useMemo(() => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }), [locale]);
+  const day = useMemo(() => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }), [locale]);
+
+  const decide = async (id: string, status: Decision, note: string | undefined) => {
     try {
-      await actions.decide.mutateAsync({
-        id,
-        status,
-        note: notes[id]?.trim() || undefined,
-      });
+      await actions.decide.mutateAsync({ id, status, note });
       toast.success(status === "APPROVED" ? t("approved") : t("rejected"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
 
+  const requests: DecisionRequest[] = (bookings ?? []).map((booking) => {
+    const room = roomName(booking.roomId);
+    const period = when.formatRange(new Date(booking.startsAt), new Date(booking.endsAt));
+    return {
+      id: booking.id,
+      title: (
+        <>
+          {room}
+          <span className="ml-2 font-normal text-muted-foreground">{booking.title}</span>
+        </>
+      ),
+      name: `${room}, ${period}`,
+      details: [
+        <span key="when" className="tabular-nums">
+          {period}
+        </span>,
+        <span key="who" className="text-xs">
+          {t("requestedBy", { name: personName(booking.bookedById) })} · {day.format(new Date(booking.createdAt))}
+        </span>,
+      ],
+      open: booking.status === "PENDING",
+      status: { label: tStatus(`status${booking.status}`), variant: BOOKING_STATUS_VARIANT[booking.status] },
+    };
+  });
+
   return (
-    <div>
+    <Page>
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
-      <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)} className="mb-4">
-        <TabsList>
-          <TabsTrigger value="PENDING">{tStatus("statusPENDING")}</TabsTrigger>
-          <TabsTrigger value="APPROVED">{tStatus("statusAPPROVED")}</TabsTrigger>
-          <TabsTrigger value="REJECTED">{tStatus("statusREJECTED")}</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <FilterBar>
+        <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
+          <TabsList aria-label={t("filterLabel")}>
+            <TabsTrigger value="PENDING">{tStatus("statusPENDING")}</TabsTrigger>
+            <TabsTrigger value="APPROVED">{tStatus("statusAPPROVED")}</TabsTrigger>
+            <TabsTrigger value="REJECTED">{tStatus("statusREJECTED")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </FilterBar>
 
-      {isLoading ? null : (bookings ?? []).length === 0 ? (
-        <EmptyState icon={MapPin} title={tCommon("noResults")} description={t("empty")} />
-      ) : (
-        <div className="space-y-3">
-          {(bookings ?? []).map((booking) => (
-            <Card key={booking.id}>
-              <CardContent className="pt-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">
-                      {roomName(booking.roomId)}
-                      <span className="ml-2 text-sm text-muted-foreground">{booking.title}</span>
-                    </div>
-                    <p className="mt-1 text-sm tabular-nums text-muted-foreground">
-                      {formatWhen(booking.startsAt)} – {formatWhen(booking.endsAt)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t("requestedBy", { name: personName(booking.bookedById) })} ·{" "}
-                      {new Date(booking.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  {booking.status === "PENDING" ? (
-                    <div className="flex flex-col items-end gap-2">
-                      <Input
-                        placeholder={t("notePlaceholder")}
-                        className="h-8 w-64"
-                        value={notes[booking.id] ?? ""}
-                        onChange={(e) => setNotes({ ...notes, [booking.id]: e.target.value })}
-                      />
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => void decide(booking.id, "APPROVED")}
-                          disabled={actions.decide.isPending}
-                        >
-                          {actions.decide.isPending ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <Check />
-                          )}
-                          {t("approve")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => void decide(booking.id, "REJECTED")}
-                          disabled={actions.decide.isPending}
-                        >
-                          <X />
-                          {t("reject")}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Badge variant={booking.status === "APPROVED" ? "success" : "destructive"}>
-                      {tStatus(`status${booking.status}`)}
-                    </Badge>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+      {namesFailed ? <LoadError variant="inline" title={t("namesFailed")} hint={t("namesFailedHint")} /> : null}
+
+      {isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : requests.length === 0 ? (
+        <EmptyState
+          icon={MapPin}
+          title={t("emptyTitle", { status: filter })}
+          description={t("emptyHint")}
+          headingLevel={2}
+        />
+      ) : (
+        <DecisionList
+          id="room-booking-requests"
+          title={t("listTitle", { status: filter })}
+          requests={requests}
+          labels={{ approve: t("approve"), reject: t("reject"), note: t("noteLabel") }}
+          rejectCopy={(request) => {
+            const booking = bookings?.find((candidate) => candidate.id === request.id);
+            return {
+              title: t("rejectTitle", { room: booking ? roomName(booking.roomId) : "—" }),
+              body: t("rejectBody"),
+            };
+          }}
+          deciding={actions.decide.isPending ? (actions.decide.variables?.id ?? null) : null}
+          onDecide={decide}
+        />
       )}
-    </div>
+    </Page>
   );
 }

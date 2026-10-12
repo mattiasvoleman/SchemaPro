@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { render as renderBare, screen } from "@testing-library/react";
+import { render as renderBare, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import {
@@ -180,5 +180,89 @@ describe("Dialog", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Controlled" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * A dialog opened from state, the way the app opens nearly all of them: a
+ * row's Ta bort or a menu item sets `open`, and there is no DialogTrigger for
+ * Radix to hand focus back to.
+ */
+function StateDialog(props: { moveFocusOnClose?: boolean; removeOpener?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [openerShown, setOpenerShown] = useState(true);
+  const [closedOnce, setClosedOnce] = useState(false);
+  const elsewhere = useRef<HTMLButtonElement>(null);
+  // A page that sends focus somewhere on purpose once the dialog has closed.
+  useEffect(() => {
+    if (closedOnce && props.moveFocusOnClose) elsewhere.current?.focus();
+  }, [closedOnce, props.moveFocusOnClose]);
+  return (
+    <>
+      {openerShown ? <button onClick={() => setOpen(true)}>Ta bort 7A</button> : null}
+      <button ref={elsewhere}>Elsewhere</button>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next && props.removeOpener) setOpenerShown(false);
+          if (!next) setClosedOnce(true);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Ta bort 7A?</DialogTitle>
+          <DialogDescription>Body</DialogDescription>
+          <DialogClose>Avbryt</DialogClose>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+describe("Dialog focus return", () => {
+  it("hands focus back to the button that opened it, with no DialogTrigger", async () => {
+    // Radix returns focus only to a DialogTrigger; without this a keyboard
+    // user who cancels lands on <body>, at the top of the page.
+    const user = userEvent.setup();
+    render(<StateDialog />);
+
+    await user.click(screen.getByRole("button", { name: "Ta bort 7A" }));
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "Avbryt" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ta bort 7A" })).toHaveFocus());
+  });
+
+  it("leaves focus where the page moved it on close", async () => {
+    const user = userEvent.setup();
+    render(<StateDialog moveFocusOnClose />);
+
+    await user.click(screen.getByRole("button", { name: "Ta bort 7A" }));
+    await user.click(screen.getByRole("button", { name: "Avbryt" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+  });
+
+  it("does not reach for an opener that is gone (the row just deleted)", async () => {
+    const user = userEvent.setup();
+    render(<StateDialog removeOpener />);
+
+    await user.click(screen.getByRole("button", { name: "Ta bort 7A" }));
+    await user.click(screen.getByRole("button", { name: "Avbryt" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.queryByRole("button", { name: "Ta bort 7A" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("still returns focus to its DialogTrigger when it has one", async () => {
+    const user = userEvent.setup();
+    render(<ExampleDialog />);
+
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open settings" })).toHaveFocus());
   });
 });

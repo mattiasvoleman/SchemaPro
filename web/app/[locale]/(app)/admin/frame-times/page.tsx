@@ -3,23 +3,36 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarRange, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarRange, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCrudMutations, useFrameTimes } from "@/lib/queries";
 import type { FrameTime } from "@/lib/types";
+import { clock } from "@/lib/clock";
 import { frameWindow } from "@/lib/frame-times";
 import { formatTime } from "@/lib/utils";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import {
+  StageWeekMatrix,
+  WEEKDAYS,
+  stagesOf,
+  useSpanLabel,
+} from "@/components/schedule/stage-week-matrix";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FormField } from "@/components/ui/form-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { RowActions } from "@/components/ui/row-actions";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCard } from "@/components/ui/table-card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -32,18 +45,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
-/** Monday-Friday. A ramtid for a Saturday school is expressible but not
- *  offered here: the row accepts 1-7 and the week below would grow two mostly
- *  empty columns for a case no Swedish grundskola has. */
-const WEEKDAYS = [1, 2, 3, 4, 5] as const;
 
 /** The select's stand-in for `dayOfWeek: null`, which a Select cannot hold. */
 const EVERY_DAY = "all";
@@ -70,8 +77,7 @@ export default function FrameTimesPage() {
   const t = useTranslations("frameTimes");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
-  const tGrades = useTranslations("grades");
-  const { data: frames, isLoading } = useFrameTimes();
+  const { data: frames, isLoading, isError } = useFrameTimes();
 
   const mutations = useCrudMutations<{
     minGradeLevel: number;
@@ -87,30 +93,20 @@ export default function FrameTimesPage() {
   const [deleting, setDeleting] = useState<FrameTime | null>(null);
   const [form, setForm] = useState<FrameForm>(EMPTY_FORM);
 
-  /** "Åk 4–6" or "Åk 5" — a single year is the common case and reads worse as a range. */
-  const spanLabel = (min: number, max: number): string =>
-    min === max
-      ? tGrades("grade", { grade: min })
-      : `${tGrades("grade", { grade: min })}–${tGrades("grade", { grade: max })}`;
+  const spanLabel = useSpanLabel();
+
+  /** The stages the school has written about, in year order (see stagesOf). */
+  const spans = useMemo(() => stagesOf(frames), [frames]);
 
   /**
-   * The distinct stages the school has written about, in year order.
-   *
-   * Derived from the rows rather than from a list of stages, because the school
-   * decides what a stage is: F–3/4–6/7–9 in most places, but a school that
-   * writes one row per year is saying something equally valid and the week
-   * below has to show it back.
+   * "Åk 4–6, Alla dagar 08:00–15:00": the row as its buttons and its confirm
+   * name it. A comma rather than " · ", which some screen readers read out as
+   * "middle dot".
    */
-  const spans = useMemo(() => {
-    const seen = new Map<string, { min: number; max: number }>();
-    for (const frame of frames ?? []) {
-      seen.set(`${frame.minGradeLevel}-${frame.maxGradeLevel}`, {
-        min: frame.minGradeLevel,
-        max: frame.maxGradeLevel,
-      });
-    }
-    return [...seen.values()].sort((a, b) => a.min - b.min || a.max - b.max);
-  }, [frames]);
+  const rowName = (frame: FrameTime): string =>
+    `${spanLabel(frame.minGradeLevel, frame.maxGradeLevel)}, ${
+      frame.dayOfWeek === null ? t("everyDay") : tDays(String(frame.dayOfWeek))
+    } ${formatTime(frame.startTime)}–${formatTime(frame.endTime)}`;
 
   const openCreate = () => {
     setEditing(null);
@@ -201,97 +197,106 @@ export default function FrameTimesPage() {
 
   const formValid = form.startTime < form.endTime && duplicateOf === undefined;
 
+  const saving = mutations.create.isPending || mutations.update.isPending;
+
   return (
-    <div>
+    <Page>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
+        intro={t("hint")}
         actions={
           <Button onClick={openCreate}>
-            <Plus />
+            <Plus aria-hidden="true" />
             {t("add")}
           </Button>
         }
       />
 
-      <p className="mb-4 max-w-prose text-sm text-muted-foreground">{t("hint")}</p>
+      {isError && frames !== undefined ? (
+        // A failed refetch keeps the frames as last read, with this above them.
+        <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
+      ) : null}
 
       {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
         </div>
+      ) : isError && frames === undefined ? (
+        /*
+          Not the empty state: "no frame times" means the whole day is open to
+          every stage, and a failed request is not evidence of that.
+        */
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !frames || frames.length === 0 ? (
         <EmptyState
           icon={CalendarRange}
-          title={tCommon("noResults")}
+          title={t("emptyTitle")}
           description={t("empty")}
+          headingLevel={2}
           /*
-            A school with no ramtid cannot write a changeover at all, because
-            the number lives on a frame. Rather than a fourth table for one
-            integer, the offer is here: one click makes the whole-school frame
-            the deployment grid already assumes, and the corridor is then one
-            field away from where the admin is standing.
+            The header's own primary first, as on Ämnen and Salar: the empty
+            state offers the same act the header does, so the two filled
+            buttons on the page say one thing rather than two. Beside it, the
+            shortcut: a school with no ramtid cannot write a changeover at all,
+            because the number lives on a frame. Rather than a fourth table for
+            one integer, one click makes the whole-school frame the deployment
+            grid already assumes, and the corridor is then one field away.
           */
           action={
-            <Button variant="outline" onClick={offerWholeSchoolFrame}>
-              {t("offerWholeSchool")}
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button onClick={openCreate}>
+                <Plus aria-hidden="true" />
+                {t("add")}
+              </Button>
+              <Button variant="outline" onClick={offerWholeSchoolFrame}>
+                {t("offerWholeSchool")}
+              </Button>
+            </div>
           }
         />
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-foreground">{t("gradeSpan")}</TableHead>
-                  <TableHead className="text-foreground">{t("day")}</TableHead>
-                  <TableHead className="text-foreground">{tCommon("time")}</TableHead>
-                  <TableHead className="w-24 text-right text-foreground">
-                    {tCommon("actions")}
-                  </TableHead>
+          <TableCard caption={t("tableCaption")}>
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col" className="text-foreground">{t("gradeSpan")}</TableHead>
+                <TableHead scope="col" className="text-foreground">{t("day")}</TableHead>
+                <TableHead scope="col" className="text-foreground">{tCommon("time")}</TableHead>
+                <TableHead scope="col" className="w-24 text-right text-foreground">
+                  {tCommon("actions")}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {frames.map((frame) => (
+                <TableRow key={frame.id}>
+                  <TableCell className="font-medium">
+                    {spanLabel(frame.minGradeLevel, frame.maxGradeLevel)}
+                  </TableCell>
+                  <TableCell>
+                    {frame.dayOfWeek === null ? (
+                      <Badge variant="secondary">{t("everyDay")}</Badge>
+                    ) : (
+                      tDays(String(frame.dayOfWeek))
+                    )}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    {formatTime(frame.startTime)}–{formatTime(frame.endTime)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <RowActions
+                      name={rowName(frame)}
+                      actions={[
+                        { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(frame) },
+                        { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(frame) },
+                      ]}
+                    />
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {frames.map((frame) => (
-                  <TableRow key={frame.id}>
-                    <TableCell className="font-medium">
-                      {spanLabel(frame.minGradeLevel, frame.maxGradeLevel)}
-                    </TableCell>
-                    <TableCell>
-                      {frame.dayOfWeek === null ? (
-                        <Badge variant="secondary">{t("everyDay")}</Badge>
-                      ) : (
-                        tDays(String(frame.dayOfWeek))
-                      )}
-                    </TableCell>
-                    <TableCell className="tabular-nums">
-                      {formatTime(frame.startTime)}–{formatTime(frame.endTime)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEdit(frame)}
-                        aria-label={tCommon("edit")}
-                      >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeleting(frame)}
-                        aria-label={tCommon("delete")}
-                      >
-                        <Trash2 className="text-destructive" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+              ))}
+            </TableBody>
+          </TableCard>
 
           {/*
             The rows above are what the school typed; this is what they mean.
@@ -300,53 +305,29 @@ export default function FrameTimesPage() {
             from a list. Reading the result back is what turns the rule from
             something to remember into something to look at.
           */}
-          <section aria-labelledby="ramtider-vecka" className="mt-8">
-            <h2 id="ramtider-vecka" className="text-lg font-semibold">
-              {t("effectiveTitle")}
-            </h2>
-            <p className="mb-3 text-sm text-muted-foreground">{t("effectiveHint")}</p>
-            <p className="mb-3 max-w-prose text-sm text-muted-foreground">{t("overlapHint")}</p>
-            <div className="overflow-x-auto rounded-lg border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-foreground">{t("gradeSpan")}</TableHead>
-                    {WEEKDAYS.map((day) => (
-                      <TableHead key={day} className="text-foreground">
-                        {tDays(String(day))}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {spans.map((span) => (
-                    <TableRow key={`${span.min}-${span.max}`}>
-                      <TableCell className="font-medium">
-                        {spanLabel(span.min, span.max)}
-                      </TableCell>
-                      {WEEKDAYS.map((day) => {
-                        // The same function conflicts.ts and gaps.ts read, so
-                        // what this cell says is what the app will do — not a
-                        // second implementation that can disagree with it.
-                        const window = frameWindow(frames, span, day);
-                        return (
-                          <TableCell key={day} className="tabular-nums">
-                            {window === null ? (
-                              <Badge variant="destructive">{t("closed")}</Badge>
-                            ) : window.startMinutes === 0 && window.endMinutes === 24 * 60 ? (
-                              <span className="text-muted-foreground">{t("wholeDay")}</span>
-                            ) : (
-                              `${clock(window.startMinutes)}–${clock(window.endMinutes)}`
-                            )}
-                          </TableCell>
-                        );
-                      })}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+          <StageWeekMatrix
+            id="ramtider-vecka"
+            title={t("effectiveTitle")}
+            description={
+              <>
+                <p>{t("effectiveHint")}</p>
+                <p>{t("overlapHint")}</p>
+              </>
+            }
+            stageLabel={t("gradeSpan")}
+            spans={spans}
+            renderCell={(span, day) => {
+              // The same function conflicts.ts and gaps.ts read, so what this
+              // cell says is what the app will do — not a second
+              // implementation that can disagree with it.
+              const window = frameWindow(frames, span, day);
+              if (window === null) return <Badge variant="destructive">{t("closed")}</Badge>;
+              if (window.startMinutes === 0 && window.endMinutes === 24 * 60) {
+                return <span className="text-muted-foreground">{t("wholeDay")}</span>;
+              }
+              return `${clock(window.startMinutes)}–${clock(window.endMinutes)}`;
+            }}
+          />
         </>
       )}
 
@@ -354,13 +335,15 @@ export default function FrameTimesPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? t("edit") : t("add")}</DialogTitle>
+            <DialogDescription>{t("dialogDescription")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             {/* No "every year" here: a ramtid without a stage is a window the
                 solver cannot place anybody in, and the API refuses one. */}
             <GradeSpanField
               label={t("gradeSpan")}
-              toLabel={`${t("gradeSpan")} – ${tCommon("to")}`}
+              fromLabel={t("gradeFromLabel")}
+              toLabel={t("gradeToLabel")}
               min={form.minGradeLevel}
               max={form.maxGradeLevel}
               onChange={({ min, max }) =>
@@ -368,53 +351,48 @@ export default function FrameTimesPage() {
               }
             />
 
-            <div className="space-y-2">
-              <Label>{t("day")}</Label>
-              <Select
-                value={form.dayOfWeek}
-                onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
-              >
-                <SelectTrigger aria-label={t("day")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* First, because it is the row a school writes first: the
-                      week as a whole, then the days that differ from it. */}
-                  <SelectItem value={EVERY_DAY}>{t("everyDay")}</SelectItem>
-                  {WEEKDAYS.map((day) => (
-                    <SelectItem key={day} value={String(day)}>
-                      {tDays(String(day))}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <FormField id="ramtid-dag" label={t("day")}>
+              {(control) => (
+                <Select
+                  value={form.dayOfWeek}
+                  onValueChange={(value) => setForm({ ...form, dayOfWeek: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* First, because it is the row a school writes first: the
+                        week as a whole, then the days that differ from it. */}
+                    <SelectItem value={EVERY_DAY}>{t("everyDay")}</SelectItem>
+                    {WEEKDAYS.map((day) => (
+                      <SelectItem key={day} value={String(day)}>
+                        {tDays(String(day))}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="ramtid-start">{t("startTime")}</Label>
+            <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+              <FormField id="ramtid-start" label={t("startTime")}>
                 <Input
-                  id="ramtid-start"
                   type="time"
                   value={form.startTime}
                   onChange={(event) => setForm({ ...form, startTime: event.target.value })}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ramtid-slut">{t("endTime")}</Label>
+              </FormField>
+              <FormField id="ramtid-slut" label={t("endTime")}>
                 <Input
-                  id="ramtid-slut"
                   type="time"
                   value={form.endTime}
                   onChange={(event) => setForm({ ...form, endTime: event.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="ramtid-kortege">{t("changeover")}</Label>
+            <FormField id="ramtid-kortege" label={t("changeover")} hint={t("changeoverHint")}>
               <Input
-                id="ramtid-kortege"
                 type="number"
                 min={0}
                 max={60}
@@ -423,21 +401,32 @@ export default function FrameTimesPage() {
                   setForm({ ...form, changeoverMinutes: event.target.value })
                 }
               />
-              <p className="text-sm text-muted-foreground">{t("changeoverHint")}</p>
-            </div>
+            </FormField>
 
+            {/*
+              role=status rather than alert: it appears and disappears as the
+              admin moves the day and the years, and an assertive interruption
+              on every pick would be louder than the problem.
+            */}
             {duplicateOf ? (
-              <p role="status" className="text-sm text-destructive">
+              <Notice tone="destructive" role="status">
                 {t("duplicate")}
-              </p>
+              </Notice>
             ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={submit} disabled={!formValid}>
-              {tCommon("save")}
+            <Button onClick={submit} disabled={!formValid || saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden="true" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -446,22 +435,12 @@ export default function FrameTimesPage() {
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title={tCommon("delete")}
-        description={
-          deleting
-            ? `${spanLabel(deleting.minGradeLevel, deleting.maxGradeLevel)} · ${
-                deleting.dayOfWeek === null ? t("everyDay") : tDays(String(deleting.dayOfWeek))
-              } ${formatTime(deleting.startTime)}–${formatTime(deleting.endTime)}`
-            : ""
-        }
+        title={t("deleteTitle")}
+        description={deleting ? t("deleteBody", { row: rowName(deleting) }) : undefined}
+        confirmLabel={tCommon("delete")}
+        loading={mutations.remove.isPending}
         onConfirm={confirmDelete}
       />
-    </div>
+    </Page>
   );
-}
-
-/** Minutes since midnight as HH:MM, for the computed week. */
-function clock(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }

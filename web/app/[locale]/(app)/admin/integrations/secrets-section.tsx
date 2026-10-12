@@ -45,9 +45,9 @@ export function SecretsSection({ source }: { source: SourceView }) {
   const kinds = secretKindsFor(source.authKind, source.tokenUrl !== null);
   const unused = (Object.keys(source.secrets) as SecretKind[]).filter((kind) => !kinds.includes(kind) && source.secrets[kind]);
   return (
-    <section className="space-y-3" aria-labelledby="ss-secrets-title">
+    <section className="space-y-3 border-t pt-4" aria-labelledby="ss-secrets-title">
       <h3 id="ss-secrets-title" className="flex items-center gap-2 text-sm font-semibold">
-        <KeyRound className="h-4 w-4" aria-hidden />
+        <KeyRound className="size-4 text-muted-foreground" aria-hidden="true" />
         {t("title")}
       </h3>
       <p className="text-sm text-muted-foreground">{t("body")}</p>
@@ -128,7 +128,7 @@ function SecretRow({ kind, setAt, optional, unused = false }: { kind: SecretKind
         <div className="flex gap-2">
           {unused ? null : (
             <Button type="submit" size="sm" disabled={value.trim() === "" || setSecret.isPending}>
-              {setSecret.isPending ? <Loader2 className="animate-spin" /> : null}
+              {setSecret.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {setAt ? t("replace") : t("save")}
             </Button>
           )}

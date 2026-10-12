@@ -209,7 +209,7 @@ export function LessonEditDialog({
           />
           <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
             <div className="flex items-center gap-2">
-              <Lock className="h-4 w-4 text-muted-foreground" />
+              <Lock className="size-4 text-muted-foreground" />
               <div>
                 <label htmlFor="edit-lock" className="block text-sm font-medium">
                   {t("lockLabel")}

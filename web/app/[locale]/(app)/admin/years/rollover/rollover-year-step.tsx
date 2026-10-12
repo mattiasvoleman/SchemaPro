@@ -4,8 +4,8 @@ import { useTranslations } from "next-intl";
 import type { RolloverPreview } from "@/lib/types";
 import type { RolloverFormState } from "@/lib/year-rollover-form";
 import { DateField } from "@/components/ui/date-field";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -53,42 +53,33 @@ export function RolloverYearStep({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="space-y-2">
-          <Label htmlFor="rollover-name">{t("yearName")}</Label>
+      <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+        <FormField
+          id="rollover-name"
+          label={t("yearName")}
+          error={form.name.trim() === "" ? t("yearNameRequired") : undefined}
+        >
           <Input
-            id="rollover-name"
             value={form.name}
             maxLength={60}
             placeholder={t("yearNamePlaceholder")}
-            aria-invalid={form.name.trim() === "" ? true : undefined}
-            aria-describedby={form.name.trim() === "" ? "rollover-name-error" : undefined}
             onChange={(event) => update({ name: event.target.value })}
           />
-          {form.name.trim() === "" ? (
-            <p id="rollover-name-error" className="text-xs text-destructive">
-              {t("yearNameRequired")}
-            </p>
-          ) : null}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="rollover-start">{t("startDate")}</Label>
+        </FormField>
+        <FormField id="rollover-start" label={t("startDate")}>
           <DateField
-            id="rollover-start"
             label={t("startDate")}
             value={form.startDate}
             onChange={(value) => update({ startDate: value })}
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="rollover-end">{t("endDate")}</Label>
+        </FormField>
+        <FormField id="rollover-end" label={t("endDate")}>
           <DateField
-            id="rollover-end"
             label={t("endDate")}
             value={form.endDate}
             onChange={(value) => update({ endDate: value })}
           />
-        </div>
+        </FormField>
       </div>
       {plan ? (
         <p className="text-sm text-muted-foreground">
@@ -97,27 +88,30 @@ export function RolloverYearStep({
         </p>
       ) : null}
 
-      <div className="max-w-sm space-y-2">
-        <Label htmlFor="rollover-grade">{t("graduatingGrade")}</Label>
-        <Select
-          value={graduatingGrade === null ? "" : String(graduatingGrade)}
-          onValueChange={(value) => update({ graduatingGradeLevel: Number(value) })}
-        >
-          <SelectTrigger id="rollover-grade" aria-describedby="rollover-grade-hint">
-            <SelectValue placeholder={t("graduatingGradePlaceholder")} />
-          </SelectTrigger>
-          <SelectContent>
-            {GRADES.map((grade) => (
-              <SelectItem key={grade} value={String(grade)}>
-                {t("gradeOption", { grade })}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p id="rollover-grade-hint" className="text-xs text-muted-foreground">
-          {gradeHint}
-        </p>
-      </div>
+      <FormField
+        id="rollover-grade"
+        label={t("graduatingGrade")}
+        hint={gradeHint || undefined}
+        className="max-w-sm"
+      >
+        {(control) => (
+          <Select
+            value={graduatingGrade === null ? "" : String(graduatingGrade)}
+            onValueChange={(value) => update({ graduatingGradeLevel: Number(value) })}
+          >
+            <SelectTrigger {...control}>
+              <SelectValue placeholder={t("graduatingGradePlaceholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              {GRADES.map((grade) => (
+                <SelectItem key={grade} value={String(grade)}>
+                  {t("gradeOption", { grade })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </FormField>
     </div>
   );
 }

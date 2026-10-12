@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { StaffingCarrySummary, isEmptyCarry } from "@/components/staffing/staffing-carry-summary";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -94,7 +95,7 @@ export function StaffingCarryDialog({
 
   return (
     <Dialog open={year !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("title", { year: year?.name ?? "" })}</DialogTitle>
           <DialogDescription>
@@ -102,32 +103,29 @@ export function StaffingCarryDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {refusal ? (
-          <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-            {refusal}
-          </p>
-        ) : null}
+        {refusal ? <Notice tone="destructive">{refusal}</Notice> : null}
 
         {preview.isError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {errorText(preview.error)}
-          </p>
+          <Notice tone="destructive">{errorText(preview.error)}</Notice>
         ) : !plan ? (
-          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" aria-busy="true" />
         ) : isEmptyCarry(plan) ? (
-          <p className="text-sm">{t("empty", { source: plan.source.name })}</p>
+          <p className="text-sm text-muted-foreground">{t("empty", { source: plan.source.name })}</p>
         ) : (
           <div className="space-y-3">
             <StaffingCarrySummary preview={plan} teacherName={teacherName} />
             {plan.problems.length > 0 ? (
               <ul className="space-y-1 text-sm" aria-label={t("problemsLabel")}>
                 {plan.problems.map((problem, index) => (
-                  <li key={`${problem.code}-${index}`} className="rounded-md border border-warning/40 bg-warning/5 p-2">
-                    {engineMessage(tProblems, {
-                      code: problem.code,
-                      message: problem.code,
-                      params: values(problem.params),
-                    })}
+                  <li key={`${problem.code}-${index}`}>
+                    {/* Part of the preview drawn with it, not news: no live role. */}
+                    <Notice tone="warning" role={null}>
+                      {engineMessage(tProblems, {
+                        code: problem.code,
+                        message: problem.code,
+                        params: values(problem.params),
+                      })}
+                    </Notice>
                   </li>
                 ))}
               </ul>

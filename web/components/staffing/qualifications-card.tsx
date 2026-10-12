@@ -23,6 +23,8 @@ import { DateField } from "@/components/ui/date-field";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import {
   Select,
   SelectContent,
@@ -114,25 +116,20 @@ export function QualificationsCard({
   const stored = qualifications ?? [];
 
   return (
-    <section
-      className="rounded-lg border bg-card p-4"
-      aria-labelledby={`qualifications-${teacher.id}`}
-    >
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Award className="size-4 text-muted-foreground" />
-          <h3 id={`qualifications-${teacher.id}`} className="font-semibold">
-            {t("qualificationsTitle")}
-          </h3>
-        </div>
-        {!editing ? (
+    <SectionCard
+      id={`qualifications-${teacher.id}`}
+      headingLevel={3}
+      icon={Award}
+      title={t("qualificationsTitle")}
+      description={t("qualificationsHint")}
+      action={
+        !editing ? (
           <Button variant="outline" size="sm" onClick={open}>
             {stored.length > 0 ? t("editQualifications") : tCommon("add")}
           </Button>
-        ) : null}
-      </div>
-      <p className="mb-3 text-xs text-muted-foreground">{t("qualificationsHint")}</p>
-
+        ) : null
+      }
+    >
       {!editing ? (
         stored.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("noQualifications")}</p>
@@ -175,12 +172,16 @@ export function QualificationsCard({
             <div key={row.key} className="space-y-2 rounded-md border p-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label>{t("qualificationSubject")}</Label>
+                  {/* The trigger keeps its numbered name, which tells the rows apart. */}
+                  <Label htmlFor={`qual-subject-${row.key}`}>{t("qualificationSubject")}</Label>
                   <Select
                     value={row.subjectId || undefined}
                     onValueChange={(value) => patchRow(row.key, { subjectId: value })}
                   >
-                    <SelectTrigger aria-label={`${t("qualificationSubject")} ${index + 1}`}>
+                    <SelectTrigger
+                      id={`qual-subject-${row.key}`}
+                      aria-label={`${t("qualificationSubject")} ${index + 1}`}
+                    >
                       <SelectValue placeholder={t("selectSubject")} />
                     </SelectTrigger>
                     <SelectContent>
@@ -193,14 +194,17 @@ export function QualificationsCard({
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>{t("qualificationKind")}</Label>
+                  <Label htmlFor={`qual-kind-${row.key}`}>{t("qualificationKind")}</Label>
                   <Select
                     value={row.kind}
                     onValueChange={(value) =>
                       patchRow(row.key, { kind: value as TeacherQualificationKind })
                     }
                   >
-                    <SelectTrigger aria-label={`${t("qualificationKind")} ${index + 1}`}>
+                    <SelectTrigger
+                      id={`qual-kind-${row.key}`}
+                      aria-label={`${t("qualificationKind")} ${index + 1}`}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -269,7 +273,7 @@ export function QualificationsCard({
                   onClick={() => removeRow(row.key)}
                   aria-label={t("removeQualification", { row: index + 1 })}
                 >
-                  <Trash2 className="text-destructive" />
+                  <Trash2 aria-hidden="true" />
                 </Button>
               </div>
             </div>
@@ -284,11 +288,7 @@ export function QualificationsCard({
             {t("addQualification")}
           </Button>
 
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {problemText(problem)}
-            </p>
-          ) : null}
+          {problem ? <Notice tone="destructive">{problemText(problem)}</Notice> : null}
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
@@ -304,6 +304,6 @@ export function QualificationsCard({
           </div>
         </div>
       )}
-    </section>
+    </SectionCard>
   );
 }

@@ -24,6 +24,7 @@
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import {
   useDiscardDraft,
@@ -34,24 +35,32 @@ import {
 import { publicationErrorText, warningCodes } from "@/lib/publication-messages";
 import type { PublishMode } from "@/lib/publication-types";
 import { formatInstant, pendingCount, segmentViews, tallyGates } from "@/lib/publication-view";
+import { VALIDITY_VARIANT } from "@/lib/status-variants";
 import type { AcademicYear } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
+import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
+import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-const WHEN_VARIANT = { past: "outline", current: "success", ahead: "secondary" } as const;
+/** The empty glyph of every table: an em dash, muted. */
+const NONE = <span className="text-muted-foreground">—</span>;
+
+/*
+ * Both tables sit inside this card, so they take no frame of their own: the
+ * card is the frame, the rows are compact and the outer columns line up with
+ * the card's padding. On a phone the secondary columns step aside (hidden
+ * below sm on head and cell alike).
+ */
+const TH = "h-auto py-1.5 pr-3 text-xs";
+const TD = "py-1.5 pr-3";
+const PHONE_HIDDEN = "hidden sm:table-cell";
 
 export function ValidityCard({
   year,
@@ -76,6 +85,7 @@ export function ValidityCard({
   const [refillWarnings, setRefillWarnings] = useState<string[]>([]);
   const refillNeedsAck = refillWarnings.length > 0;
   const [problem, setProblem] = useState<string | null>(null);
+  const [logOpen, setLogOpen] = useState(false);
 
   const today = timeline.data?.today ?? "";
   const refillFrom = refillRange.from ?? (today > year.startDate ? today : year.startDate);
@@ -115,178 +125,229 @@ export function ValidityCard({
   const log = timeline.data ? [...timeline.data.publications].reverse() : [];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("validityTitle", { year: year.name })}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm">
-        <p>{t("validityBody")}</p>
-        {timeline.isLoading ? <Skeleton className="h-16 w-full" /> : null}
-        {timeline.isError ? (
-          <p role="alert">{publicationErrorText(tErrors, timeline.error, tCommon("error"))}</p>
-        ) : null}
-        {timeline.data && segments.length === 0 ? <p>{t("validityNone")}</p> : null}
-        {segments.length > 0 ? (
-          <div className="overflow-x-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-foreground">{t("validFrom")}</TableHead>
-                  <TableHead className="text-foreground">{t("validTo")}</TableHead>
-                  <TableHead className="text-foreground">{t("logKind")}</TableHead>
-                  <TableHead className="text-foreground">{t("logPublishedAt")}</TableHead>
-                  <TableHead className="text-foreground">{t("validityStatus")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {segments.map((segment) => (
-                  <TableRow key={`${segment.publicationId}-${segment.from}`}>
-                    <TableCell className="tabular-nums">{segment.from}</TableCell>
-                    <TableCell className="tabular-nums">{segment.to}</TableCell>
-                    <TableCell>{segment.publication ? t(`kind.${segment.publication.kind}`) : "–"}</TableCell>
-                    <TableCell className="tabular-nums">
-                      {segment.publication ? formatInstant(segment.publication.publishedAt, locale) : "–"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={WHEN_VARIANT[segment.when]}>{t(`when.${segment.when}`)}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onReview}>{t(mode === "DRAFT" ? "reviewDraft" : "reviewDirect")}</Button>
-          {mode === "DRAFT" ? (
-            <Button
-              variant="outline"
-              onClick={() => setDiscarding(true)}
-              disabled={!draft.data || pendingCount(draft.data) === 0}
-            >
-              {t("discard")}
-            </Button>
-          ) : null}
+    <SectionCard
+      id="publish-validity"
+      title={t("validityTitle", { year: year.name })}
+      description={t("validityBody")}
+      descriptionClassName="max-w-prose"
+    >
+      {timeline.isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-16 w-full" />
         </div>
+      ) : timeline.isError ? (
+        <LoadError variant="inline" title={t("validityLoadFailed")} hint={t("validityLoadFailedHint")} />
+      ) : timeline.data && segments.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("validityNone")}</p>
+      ) : null}
+      {segments.length > 0 ? (
+        // The range and its status are what a row says; the kind and the
+        // publish date are the history behind it, and give way on a phone.
+        <div className="overflow-x-auto">
+          <Table>
+            <caption className="sr-only">{t("validityTitle", { year: year.name })}</caption>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead scope="col" className={cn(TH, "pl-0")}>
+                  {t("validFrom")}
+                </TableHead>
+                <TableHead scope="col" className={TH}>
+                  {t("validTo")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, PHONE_HIDDEN)}>
+                  {t("logKind")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, PHONE_HIDDEN)}>
+                  {t("logPublishedAt")}
+                </TableHead>
+                <TableHead scope="col" className={cn(TH, "pr-0")}>
+                  {t("validityStatus")}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {segments.map((segment) => (
+                <TableRow key={`${segment.publicationId}-${segment.from}`}>
+                  <TableCell className={cn(TD, "whitespace-nowrap pl-0 font-medium tabular-nums")}>
+                    {segment.from}
+                  </TableCell>
+                  <TableCell className={cn(TD, "whitespace-nowrap tabular-nums")}>{segment.to}</TableCell>
+                  <TableCell className={cn(TD, PHONE_HIDDEN)}>
+                    {segment.publication ? t(`kind.${segment.publication.kind}`) : NONE}
+                  </TableCell>
+                  <TableCell className={cn(TD, PHONE_HIDDEN, "whitespace-nowrap tabular-nums")}>
+                    {segment.publication ? formatInstant(segment.publication.publishedAt, locale) : NONE}
+                  </TableCell>
+                  <TableCell className={cn(TD, "pr-0")}>
+                    <Badge variant={VALIDITY_VARIANT[segment.when]}>{t(`when.${segment.when}`)}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : null}
 
-        {mode === "DRAFT" && draft.data ? (
-          <p>
-            {pendingCount(draft.data) === 0
-              ? t("draftClean")
-              : t("draftPending", { count: pendingCount(draft.data) })}
-          </p>
-        ) : null}
-
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={onReview}>{t(mode === "DRAFT" ? "reviewDraft" : "reviewDirect")}</Button>
         {mode === "DRAFT" ? (
-          <section aria-labelledby="refill-title" className="space-y-2 rounded-md border p-3">
-            <h3 id="refill-title" className="font-semibold">
+          <Button
+            variant="outline"
+            onClick={() => setDiscarding(true)}
+            disabled={!draft.data || pendingCount(draft.data) === 0}
+          >
+            {t("discard")}
+          </Button>
+        ) : null}
+      </div>
+
+      {mode === "DRAFT" && draft.data ? (
+        <p className="text-sm">
+          {pendingCount(draft.data) === 0
+            ? t("draftClean")
+            : t("draftPending", { count: pendingCount(draft.data) })}
+        </p>
+      ) : null}
+
+      {mode === "DRAFT" ? (
+        <section aria-labelledby="refill-title" className="space-y-3 rounded-md border p-3">
+          <div className="space-y-1">
+            <h3 id="refill-title" className="text-sm font-semibold">
               {t("refillTitle")}
             </h3>
-            <p>{t("refillBody")}</p>
-            <div className="grid max-w-md grid-cols-2 gap-3 [&>*]:min-w-0">
-              <div className="space-y-1">
-                <Label htmlFor="refill-from">{t("validFrom")}</Label>
-                <DateField
-                  id="refill-from"
-                  label={t("validFrom")}
-                  value={refillFrom}
-                  min={today > year.startDate ? today : year.startDate}
-                  max={year.endDate}
-                  onChange={(value) => {
-                    setRefillWarnings([]);
-                    setRefillRange((previous) => ({ ...previous, from: value }));
-                  }}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="refill-to">{t("validTo")}</Label>
-                <DateField
-                  id="refill-to"
-                  label={t("validTo")}
-                  value={refillTo}
-                  min={year.startDate}
-                  max={year.endDate}
-                  onChange={(value) => {
-                    setRefillWarnings([]);
-                    setRefillRange((previous) => ({ ...previous, to: value }));
-                  }}
-                />
-              </div>
+            <p className="max-w-prose text-sm text-muted-foreground">{t("refillBody")}</p>
+          </div>
+          <div className="grid max-w-md gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <div className="space-y-1.5">
+              <Label htmlFor="refill-from">{t("validFrom")}</Label>
+              <DateField
+                id="refill-from"
+                label={t("validFrom")}
+                value={refillFrom}
+                min={today > year.startDate ? today : year.startDate}
+                max={year.endDate}
+                onChange={(value) => {
+                  setRefillWarnings([]);
+                  setRefillRange((previous) => ({ ...previous, from: value }));
+                }}
+              />
             </div>
-            {refillNeedsAck ? (
-              <div role="status" className="space-y-1">
-                <p className="font-medium">{t("refillWarnings")}</p>
-                <ul className="list-disc pl-5">
-                  {refillWarnings.map((code) => (
-                    <li key={code}>{t.has(`policy.${code}`) ? t(`policy.${code}`) : code}</li>
-                  ))}
-                </ul>
+            <div className="space-y-1.5">
+              <Label htmlFor="refill-to">{t("validTo")}</Label>
+              <DateField
+                id="refill-to"
+                label={t("validTo")}
+                value={refillTo}
+                min={year.startDate}
+                max={year.endDate}
+                onChange={(value) => {
+                  setRefillWarnings([]);
+                  setRefillRange((previous) => ({ ...previous, to: value }));
+                }}
+              />
+            </div>
+          </div>
+          {refillNeedsAck ? (
+            <Notice tone="warning" title={t("refillWarnings")}>
+              <ul className="list-disc pl-5">
+                {refillWarnings.map((code) => (
+                  <li key={code}>{t.has(`policy.${code}`) ? t(`policy.${code}`) : code}</li>
+                ))}
+              </ul>
+            </Notice>
+          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => void doRefill(refillNeedsAck)}
+            disabled={refill.isPending || !refillFrom || !refillTo || refillFrom > refillTo}
+          >
+            {t(refillNeedsAck ? "refillAnyway" : "refill")}
+          </Button>
+        </section>
+      ) : null}
+
+      {problem ? <Notice tone="destructive">{problem}</Notice> : null}
+
+      {log.length > 0 ? (
+        /*
+          A disclosure button, not <details>: the native marker (▶) is a glyph
+          no other control on the page draws, and its summary had no focus
+          ring of the app's own. The log mounts on opening — it is history,
+          read seldom, and can run long.
+        */
+        <div className="space-y-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            aria-expanded={logOpen}
+            aria-controls="publish-log"
+            onClick={() => setLogOpen((open) => !open)}
+          >
+            {logOpen ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+            {t("logTitle", { count: log.length })}
+          </Button>
+          <div id="publish-log" hidden={!logOpen}>
+            {logOpen ? (
+              <div className="overflow-x-auto">
+                <Table>
+                  <caption className="sr-only">{t("logTitle", { count: log.length })}</caption>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead scope="col" className={cn(TH, "pl-0")}>
+                        {t("logPublishedAt")}
+                      </TableHead>
+                      <TableHead scope="col" className={TH}>
+                        {t("logKind")}
+                      </TableHead>
+                      <TableHead scope="col" className={cn(TH, PHONE_HIDDEN)}>
+                        {t("logRange")}
+                      </TableHead>
+                      <TableHead scope="col" className={cn(TH, PHONE_HIDDEN)}>
+                        {t("logWritten")}
+                      </TableHead>
+                      <TableHead scope="col" className={cn(TH, PHONE_HIDDEN, "pr-0")}>
+                        {t("logGates")}
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {log.map((row) => {
+                      const tally = tallyGates(row.gates);
+                      return (
+                        <TableRow key={row.id}>
+                          <TableCell className={cn(TD, "whitespace-nowrap pl-0 font-medium tabular-nums")}>
+                            {formatInstant(row.publishedAt, locale, { withTime: true })}
+                          </TableCell>
+                          <TableCell className={TD}>
+                            {t(`kind.${row.kind}`)}
+                            {row.outcome === "REFUSED" ? ` · ${t("outcomeRefused")}` : ""}
+                          </TableCell>
+                          <TableCell className={cn(TD, PHONE_HIDDEN, "whitespace-nowrap tabular-nums")}>
+                            {row.validFrom}–{row.validTo}
+                          </TableCell>
+                          <TableCell className={cn(TD, PHONE_HIDDEN, "tabular-nums")}>
+                            {t("logCounts", {
+                              created: row.created,
+                              cancelled: row.cancelled,
+                              removed: row.removed,
+                            })}
+                          </TableCell>
+                          <TableCell className={cn(TD, PHONE_HIDDEN, "pr-0 tabular-nums")}>
+                            {t("logGateTally", { refuse: tally.refuse, warn: tally.warn })}
+                            {row.acknowledgedWarnings ? ` · ${t("logAcknowledged")}` : ""}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
             ) : null}
-            <Button
-              variant="outline"
-              onClick={() => void doRefill(refillNeedsAck)}
-              disabled={refill.isPending || !refillFrom || !refillTo || refillFrom > refillTo}
-            >
-              {t(refillNeedsAck ? "refillAnyway" : "refill")}
-            </Button>
-          </section>
-        ) : null}
-
-        {problem ? (
-          <p role="alert" className="font-medium">
-            {problem}
-          </p>
-        ) : null}
-
-        {log.length > 0 ? (
-          <details>
-            <summary className="cursor-pointer font-medium">{t("logTitle", { count: log.length })}</summary>
-            <div className="mt-2 overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-foreground">{t("logPublishedAt")}</TableHead>
-                    <TableHead className="text-foreground">{t("logKind")}</TableHead>
-                    <TableHead className="text-foreground">{t("logRange")}</TableHead>
-                    <TableHead className="text-foreground">{t("logWritten")}</TableHead>
-                    <TableHead className="text-foreground">{t("logGates")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {log.map((row) => {
-                    const tally = tallyGates(row.gates);
-                    return (
-                      <TableRow key={row.id}>
-                        <TableCell className="tabular-nums">{formatInstant(row.publishedAt, locale, { withTime: true })}</TableCell>
-                        <TableCell>
-                          {t(`kind.${row.kind}`)}
-                          {row.outcome === "REFUSED" ? ` · ${t("outcomeRefused")}` : ""}
-                        </TableCell>
-                        <TableCell className="tabular-nums">
-                          {row.validFrom}–{row.validTo}
-                        </TableCell>
-                        <TableCell>
-                          {t("logCounts", {
-                            created: row.created,
-                            cancelled: row.cancelled,
-                            removed: row.removed,
-                          })}
-                        </TableCell>
-                        <TableCell>
-                          {t("logGateTally", { refuse: tally.refuse, warn: tally.warn })}
-                          {row.acknowledgedWarnings ? ` · ${t("logAcknowledged")}` : ""}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </details>
-        ) : null}
-      </CardContent>
+          </div>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={discarding}
         onOpenChange={setDiscarding}
@@ -297,6 +358,6 @@ export function ValidityCard({
         loading={discard.isPending}
         onConfirm={doDiscard}
       />
-    </Card>
+    </SectionCard>
   );
 }

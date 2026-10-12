@@ -2,11 +2,14 @@
 
 import { Suspense, lazy, useState } from "react";
 import { useTranslations } from "next-intl";
+import { Page } from "@/components/layout/page";
+import { PageHeader } from "@/components/layout/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { reportTabOf, type ReportTab } from "@/lib/report-tabs";
 import { AttendanceReport } from "./attendance-report";
 
-export type ReportTab = "attendance" | "staffing" | "cover";
+export type { ReportTab };
 
 /**
  * The Tjänstefördelning tab: React.lazy, as the staffing drawer is (not
@@ -27,15 +30,24 @@ const CoverHoursReport = lazy(() =>
   import("./cover-hours-report").then((module) => ({ default: module.CoverHoursReport })),
 );
 
-/** A `?tab=` value as a tab; anything unknown is Närvaro. */
-export function reportTabOf(value: string | null | undefined): ReportTab {
-  return value === "staffing" || value === "cover" ? value : "attendance";
-}
+/** What a lazy tab shows while its chunk arrives: the page-level skeleton. */
+const tabLoading = (
+  <div aria-busy="true">
+    <Skeleton className="h-64 w-full" />
+  </div>
+);
 
 /**
- * The two reports under one page. The tab is remembered in the URL
+ * The three reports under one page. The tab is remembered in the URL
  * (`?tab=staffing`), written with history.replaceState so switching neither
  * navigates nor adds a history entry; page.tsx reads it back on a reload.
+ *
+ * ONE HEADER ABOVE THE TABS. Each tab used to draw its own PageHeader below
+ * the tab list (and Vikarietimmar none), so the h1 sat under the controls
+ * that switch it and changed with them. Now the page says once what it is,
+ * the tabs sit under it, and each tab opens with its own sentence. The tab
+ * bodies are radix tabpanels, named by their tab; only the chosen one is
+ * mounted, so the lazy tabs still load on their first choice.
  */
 export function ReportsTabs({ initialTab }: { initialTab: ReportTab }) {
   const t = useTranslations("reports.tabs");
@@ -51,21 +63,28 @@ export function ReportsTabs({ initialTab }: { initialTab: ReportTab }) {
   };
 
   return (
-    <div className="space-y-4">
-      <Tabs value={tab} onValueChange={choose}>
+    <Page>
+      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+      <Tabs value={tab} onValueChange={choose} className="space-y-4">
         <TabsList aria-label={t("label")}>
           <TabsTrigger value="attendance">{t("attendance")}</TabsTrigger>
           <TabsTrigger value="staffing">{t("staffing")}</TabsTrigger>
           <TabsTrigger value="cover">{t("cover")}</TabsTrigger>
         </TabsList>
+        <TabsContent value="attendance" className="mt-0">
+          <AttendanceReport />
+        </TabsContent>
+        <TabsContent value="staffing" className="mt-0">
+          <Suspense fallback={tabLoading}>
+            <StaffingReport />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="cover" className="mt-0">
+          <Suspense fallback={tabLoading}>
+            <CoverHoursReport />
+          </Suspense>
+        </TabsContent>
       </Tabs>
-      {tab === "attendance" ? (
-        <AttendanceReport />
-      ) : (
-        <Suspense fallback={<Skeleton className="h-72 w-full" />}>
-          {tab === "staffing" ? <StaffingReport /> : <CoverHoursReport />}
-        </Suspense>
-      )}
-    </div>
+    </Page>
   );
 }

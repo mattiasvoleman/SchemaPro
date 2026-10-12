@@ -130,7 +130,8 @@ describe("/admin/cancellations", () => {
     expect(await screen.findByText("62 lektioner ställs in")).toBeInTheDocument();
     expect(screen.getByText("Lämnas orörda: 0 har börjat, 2 är redan inställda eller hållna, 1 har närvaro.")).toBeInTheDocument();
     expect(screen.getByText("Grupper utan egen årskurs, som inte räknas in: Sva9.")).toBeInTheDocument();
-    expect(screen.getByText("2 dagar räknas som undervisningstid: 2026-11-02, 2026-11-03.")).toBeInTheDocument();
+    // Days are written with the reader's locale (Intl), not as raw ISO.
+    expect(screen.getByText("2 dagar räknas som undervisningstid: 2 nov. 2026, 3 nov. 2026.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Ställ in 62 lektioner" }));
     await waitFor(() =>
@@ -203,15 +204,16 @@ describe("/admin/cancellations", () => {
     expect(row).toHaveTextContent("4 lektioner har tillkommit sedan avbokningen.");
     expect(row).toHaveTextContent("1 tillgodoräknad dag");
 
-    await user.click(within(row).getByRole("button", { name: "Tillämpa igen" }));
+    // Each row's buttons are named after their avbokning.
+    await user.click(within(row).getByRole("button", { name: "Tillämpa igen Friluftsdag" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cancellation-batches/b-1/reapply"));
 
-    await user.click(within(row).getByRole("button", { name: "Ta tillbaka" }));
+    await user.click(within(row).getByRole("button", { name: "Ta tillbaka Friluftsdag" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("330 lektioner återställs.")).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("2026-10-20 · Sal 12 · en lokalbokning");
+    expect(dialog).toHaveTextContent("20 okt. 2026 · Sal 12 · en lokalbokning");
     expect(dialog).toHaveTextContent("1 lektion tas bort, eftersom schemat har flyttat lektionen sedan avbokningen");
-    expect(dialog).toHaveTextContent("2026-10-19");
+    expect(dialog).toHaveTextContent("19 okt. 2026");
     expect(dialog).toHaveTextContent("6 lektioner har börjat eller ändrats sedan");
     expect(dialog).toHaveTextContent("1 tillgodoräknad dag tas bort.");
     await user.click(within(dialog).getByRole("button", { name: "Ta tillbaka" }));

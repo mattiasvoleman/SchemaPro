@@ -22,21 +22,19 @@
 
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { useAcademicYears, useGroups, usePeople, useRooms, useSubjects } from "@/lib/queries";
-import type { MessageLookup } from "@/lib/engine-message";
+import { CalendarRange } from "lucide-react";
+import { Link } from "@/i18n/navigation";
+import { useGroups, usePeople, useRooms, useSubjects } from "@/lib/queries";
 import { usePublicationSettings } from "@/lib/publication-queries";
-import { publicationErrorText } from "@/lib/publication-messages";
+import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { PublishReviewDialog } from "@/components/publication/publish-review-dialog";
+import { YearSelect, useYearScope } from "@/components/schedule/year-select";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { GatePolicyCard } from "./gate-policy-card";
 import { HiddenTeachersCard } from "./hidden-teachers-card";
 import { LinksCard } from "./links-card";
@@ -47,16 +45,15 @@ import { ViewerCard } from "./viewer-card";
 
 export default function PublishingPage() {
   const t = useTranslations("publishing");
-  const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
-  const { data: years } = useAcademicYears();
-  const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
-  const yearId = selectedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
-  const year = years?.find((entry) => entry.id === yearId) ?? null;
+  // The chosen year, else the active one, else the first — as before.
+  const scope = useYearScope();
+  const { year, yearId, setYearId } = scope;
 
   const settings = usePublicationSettings();
   const { data: groups } = useGroups();
-  const { data: people } = usePeople();
+  const peopleQuery = usePeople();
+  const people = peopleQuery.data;
   const { data: rooms } = useRooms();
   const { data: subjects } = useSubjects();
   const hiddenQuery = useHiddenTeachers();
@@ -67,62 +64,89 @@ export default function PublishingPage() {
   );
   const [reviewOpen, setReviewOpen] = useState(false);
 
-  return (
-    <div className="space-y-4">
-      <PageHeader
-        title={t("title")}
-        actions={
-          years && years.length > 0 ? (
-            <Select value={yearId ?? undefined} onValueChange={setSelectedYearId}>
-              <SelectTrigger className="w-44" aria-label={t("yearLabel")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null
+  /*
+   * The two year-bound cards (validity, links) and what stands in their place
+   * while there is no year to show: the years still loading, failed, or none
+   * at all yet. The rest of the page is the school's, not a year's, and works
+   * without one.
+   */
+  const yearBound = (card: (shown: NonNullable<typeof year>) => React.ReactNode) =>
+    year ? (
+      card(year)
+    ) : scope.isLoading ? (
+      <div aria-busy="true">
+        <Skeleton className="h-24 w-full" />
+      </div>
+    ) : scope.isError ? (
+      <LoadError variant="inline" title={t("yearsLoadFailed")} hint={t("yearsLoadFailedHint")} />
+    ) : (
+      <EmptyState
+        icon={CalendarRange}
+        headingLevel={2}
+        title={t("noYear")}
+        description={t("noYearHint")}
+        action={
+          <Button variant="outline" asChild>
+            <Link href="/admin/years">{t("noYearAction")}</Link>
+          </Button>
         }
       />
-      <p className="text-sm">{t("intro")}</p>
+    );
 
-      {settings.isLoading ? <Skeleton className="h-40 w-full" /> : null}
-      {settings.isError ? (
-        <p role="alert" className="text-sm">
-          {publicationErrorText(tErrors, settings.error, tCommon("error"))}
-        </p>
+  return (
+    <Page>
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        intro={t("intro")}
+        actions={<YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />}
+      />
+
+      {/*
+        A failed refetch keeps the settings on screen as last read, with this
+        above them; the page-level error is only for settings never read.
+      */}
+      {settings.isError && settings.data ? (
+        <LoadError variant="inline" title={t("loadFailed")} hint={tCommon("refetchFailedHint")} />
       ) : null}
 
-      {settings.data ? (
-        <Tabs defaultValue="publishing">
-          <TabsList>
+      {settings.isLoading ? (
+        <div aria-busy="true">
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : settings.isError && !settings.data ? (
+        <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
+      ) : settings.data ? (
+        <Tabs defaultValue="publishing" className="space-y-4">
+          <TabsList aria-label={t("tabsLabel")}>
             <TabsTrigger value="publishing">{t("tabPublishing")}</TabsTrigger>
             <TabsTrigger value="viewer">{t("tabViewer")}</TabsTrigger>
           </TabsList>
           <TabsContent value="publishing" className="space-y-4">
             <ModeCard mode={settings.data.publishMode} />
-            {year ? (
-              <ValidityCard year={year} mode={settings.data.publishMode} onReview={() => setReviewOpen(true)} />
-            ) : null}
+            {yearBound((shown) => (
+              <ValidityCard year={shown} mode={settings.data!.publishMode} onReview={() => setReviewOpen(true)} />
+            ))}
             <GatePolicyCard settings={settings.data} />
           </TabsContent>
           <TabsContent value="viewer" className="space-y-4">
             <ViewerCard settings={settings.data} />
-            {year ? (
+            {yearBound((shown) => (
               <LinksCard
-                year={year}
-                settings={settings.data}
+                year={shown}
+                settings={settings.data!}
                 groups={groups ?? []}
                 teachers={teachers}
                 rooms={rooms ?? []}
                 hidden={hidden}
               />
-            ) : null}
-            <HiddenTeachersCard teachers={teachers.filter((teacher) => teacher.isActive)} hidden={hidden} />
+            ))}
+            <HiddenTeachersCard
+              teachers={teachers.filter((teacher) => teacher.isActive)}
+              hidden={hidden}
+              loading={Boolean(hiddenQuery.isLoading || peopleQuery.isLoading)}
+              failed={Boolean(hiddenQuery.isError || peopleQuery.isError)}
+            />
           </TabsContent>
         </Tabs>
       ) : null}
@@ -136,6 +160,6 @@ export default function PublishingPage() {
         teachers={teachers}
         rooms={rooms}
       />
-    </div>
+    </Page>
   );
 }

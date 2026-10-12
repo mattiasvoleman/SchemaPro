@@ -47,7 +47,11 @@ const updateMock = vi.fn();
 const removeMock = vi.fn();
 
 const state = vi.hoisted(() => ({
-  rasts: { data: [] as unknown[], isLoading: false },
+  rasts: { data: [], isLoading: false } as {
+    data: unknown[] | undefined;
+    isLoading: boolean;
+    isError?: boolean;
+  },
 }));
 
 vi.mock("@/lib/queries", async (importOriginal) => ({
@@ -151,5 +155,66 @@ describe("the list", () => {
     const [morning, afternoon] = listRows();
     expect(within(morning).getByText("lessonBeforeShort")).toBeTruthy();
     expect(within(afternoon).queryByText("lessonBeforeShort")).toBeNull();
+  });
+});
+
+describe("the page around the list", () => {
+  it("says the fetch failed instead of claiming the school has no rasts", () => {
+    // "Inga raster" means lessons may run back to back; a failed request is
+    // not evidence of that, and isLoading is false once a query has failed.
+    state.rasts = { data: undefined, isLoading: false, isError: true };
+    render(<RastsPage />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("loadFailed");
+    expect(screen.queryByText("emptyTitle")).toBeNull();
+  });
+
+  it("keeps the rasts it has read when a refetch fails, and says so above them", () => {
+    // Every save invalidates the list; a background read that fails must not
+    // take away the rows the admin is working on.
+    state.rasts = {
+      data: [rast({ id: "r1", name: "Förmiddagsrast" })],
+      isLoading: false,
+      isError: true,
+    };
+    render(<RastsPage />);
+
+    const notice = screen.getByRole("alert");
+    expect(notice).toHaveTextContent("loadFailed");
+    expect(notice).toHaveTextContent("refetchFailedHint");
+    expect(listRows()).toHaveLength(1);
+    expect(screen.queryByRole("heading", { level: 2, name: "loadFailed" })).toBeNull();
+  });
+
+  it("reads the rows back as a week, one stage per row", () => {
+    state.rasts = {
+      data: [
+        rast({ id: "r1", dayOfWeek: null, startTime: "09:40:00", endTime: "10:00:00" }),
+        rast({ id: "r2", name: "Fredagsrast", dayOfWeek: 5, startTime: "09:30:00", endTime: "09:50:00" }),
+      ],
+      isLoading: false,
+    };
+    render(<RastsPage />);
+
+    const week = screen.getByRole("region", { name: "weekTitle" });
+    const [row] = within(week).getAllByRole("row").slice(1);
+    // The Friday row overlaps the every-day one and replaces it that day.
+    expect([...row!.querySelectorAll("td")].map((cell) => cell.textContent)).toEqual([
+      "grade(4)–grade(6)",
+      "09:40–10:00",
+      "09:40–10:00",
+      "09:40–10:00",
+      "09:40–10:00",
+      "09:30–09:50",
+    ]);
+  });
+
+  it("opens the form at the form size, not the confirmation size", async () => {
+    const user = userEvent.setup();
+    render(<RastsPage />);
+
+    await user.click(screen.getByRole("button", { name: "add" }));
+
+    expect(screen.getByRole("dialog").className).not.toContain("max-w-md");
   });
 });

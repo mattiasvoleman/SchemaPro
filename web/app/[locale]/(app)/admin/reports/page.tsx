@@ -1,4 +1,5 @@
-import { ReportsTabs, reportTabOf } from "./reports-tabs";
+import { reportTabOf } from "@/lib/report-tabs";
+import { ReportsTabs } from "./reports-tabs";
 
 /**
  * /admin/reports?tab=staffing|cover — Närvaro and, since staffing Fas 3,

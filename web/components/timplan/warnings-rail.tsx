@@ -5,6 +5,7 @@ import { CircleCheck, Info, TriangleAlert } from "lucide-react";
 import type { TimplanVerdict } from "@/lib/timplan-coverage";
 import { formatH } from "@/lib/timplan-view";
 import { cn } from "@/lib/utils";
+import { SectionCard } from "@/components/ui/section-card";
 
 export interface WarningsRailProps {
   verdicts: TimplanVerdict[];
@@ -49,19 +50,15 @@ export function WarningsRail({ verdicts, nationalNames, live, selected, onSelect
   };
 
   return (
-    <section aria-labelledby="timplan-warnings" className="rounded-lg border bg-card p-4">
-      <h2 id="timplan-warnings" className="font-semibold">
-        {t("warningsTitle")}
-      </h2>
-      <p className="mb-3 text-xs text-muted-foreground">{t("warningsHint")}</p>
+    <SectionCard id="timplan-warnings" title={t("warningsTitle")} description={t("warningsHint")}>
       {live ? (
-        <p role="status" className="mb-3 rounded-md bg-muted px-2 py-1 text-xs text-foreground">
+        <p role="status" className="rounded-md bg-muted px-2 py-1 text-xs text-foreground">
           {t("warningsLive")}
         </p>
       ) : null}
       {verdicts.length === 0 ? (
         <p className="flex items-center gap-2 text-sm text-foreground">
-          <CircleCheck className="h-4 w-4 text-success" aria-hidden />
+          <CircleCheck className="size-4 text-success-strong" aria-hidden />
           {t("warningsEmpty")}
         </p>
       ) : (
@@ -85,7 +82,7 @@ export function WarningsRail({ verdicts, nationalNames, live, selected, onSelect
                 >
                   <Icon
                     className={cn(
-                      "mt-0.5 h-4 w-4 shrink-0",
+                      "mt-0.5 size-4 shrink-0",
                       verdict.severity === "warning" ? "text-destructive" : "text-warning-foreground dark:text-warning",
                     )}
                     aria-hidden
@@ -102,6 +99,6 @@ export function WarningsRail({ verdicts, nationalNames, live, selected, onSelect
           })}
         </ul>
       )}
-    </section>
+    </SectionCard>
   );
 }

@@ -7,7 +7,10 @@ import { compareYears, type ComparisonRow } from "@/lib/staffing-compare";
 import { useStaffingLoad } from "@/lib/staffing-queries";
 import { formatPercent } from "@/lib/staffing-view";
 import type { TeacherLoad } from "@/lib/teacher-load";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableCard } from "@/components/ui/table-card";
 
 /**
  * "Jämför med förra läsåret" (staffing Fas 5): per teacher, last year's tjänst
@@ -44,13 +47,13 @@ export function YearComparison({
       .sort((a, b) => a.name.localeCompare(b.name, "sv"));
   }, [last.data, thisYear.teachers, teacherName]);
 
-  if (last.isLoading) return <Skeleton className="h-48 w-full" />;
+  if (last.isLoading) return <Skeleton className="h-48 w-full" aria-busy="true" />;
   if (last.isError || !last.data) {
     const notActivated = last.error instanceof ApiError && last.error.code === "ROLLOVER_NOT_ACTIVATED";
     return (
-      <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+      <Notice tone="destructive">
         {notActivated ? t("notActivated", { year: predecessor.name }) : t("failed", { year: predecessor.name })}
-      </p>
+      </Notice>
     );
   }
 
@@ -67,69 +70,70 @@ export function YearComparison({
         <input type="checkbox" checked={changedOnly} onChange={(event) => setChangedOnly(event.target.checked)} />
         {t("changedOnly")}
       </label>
-      <div className="overflow-x-auto rounded-md border">
-        <table className="w-full text-sm">
-          <caption className="sr-only">{t("caption", { last: predecessor.name, current: thisYear.name })}</caption>
-          <thead className="bg-muted/50 text-left">
-            <tr>
-              <th scope="col" className="px-3 py-2 font-medium">
-                {t("teacher")}
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                {t("post", { year: predecessor.name })}
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                {t("post", { year: thisYear.name })}
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                {t("counted", { year: predecessor.name })}
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                {t("counted", { year: thisYear.name })}
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                {t("difference")}
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {shown.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-3 text-muted-foreground">
-                  {t("noChanges")}
-                </td>
-              </tr>
-            ) : (
-              shown.map(({ row, name }) => (
-                <tr key={row.userId} data-teacher={row.userId}>
-                  <th scope="row" className="px-3 py-1.5 text-left font-normal">
-                    {name}
-                    {change(row) ? <span className="ml-2 text-xs text-muted-foreground">{change(row)}</span> : null}
-                  </th>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{percent(row.lastYear?.employmentPercent)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">
-                    {percent(row.thisYear?.employmentPercent)}
-                    {row.employmentDelta ? (
-                      <span className="ml-1 text-xs text-muted-foreground">({delta(row.employmentDelta, " %")})</span>
-                    ) : null}
-                    {row.reductionChanged ? (
-                      <span className="block text-xs text-muted-foreground">
-                        {t("reductionChange", {
-                          from: formatPercent(row.lastYear!.reductionPercent),
-                          to: formatPercent(row.thisYear!.reductionPercent),
-                        })}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{minutes(row.lastYear?.countedMinutesPerWeek)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{minutes(row.thisYear?.countedMinutesPerWeek)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{delta(row.countedDelta, "")}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <TableCard caption={t("caption", { last: predecessor.name, current: thisYear.name })}>
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col">{t("teacher")}</TableHead>
+            <TableHead scope="col" className="text-right">
+              {t("post", { year: predecessor.name })}
+            </TableHead>
+            <TableHead scope="col" className="text-right">
+              {t("post", { year: thisYear.name })}
+            </TableHead>
+            <TableHead scope="col" className="text-right">
+              {t("counted", { year: predecessor.name })}
+            </TableHead>
+            <TableHead scope="col" className="text-right">
+              {t("counted", { year: thisYear.name })}
+            </TableHead>
+            <TableHead scope="col" className="text-right">
+              {t("difference")}
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {shown.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="text-muted-foreground">
+                {t("noChanges")}
+              </TableCell>
+            </TableRow>
+          ) : (
+            shown.map(({ row, name }) => (
+              <TableRow key={row.userId} data-teacher={row.userId}>
+                <th scope="row" className="px-3 py-2.5 text-left align-middle font-medium">
+                  {name}
+                  {change(row) ? (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">{change(row)}</span>
+                  ) : null}
+                </th>
+                <TableCell className="text-right tabular-nums">{percent(row.lastYear?.employmentPercent)}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {percent(row.thisYear?.employmentPercent)}
+                  {row.employmentDelta ? (
+                    <span className="ml-1 text-xs text-muted-foreground">({delta(row.employmentDelta, " %")})</span>
+                  ) : null}
+                  {row.reductionChanged ? (
+                    <span className="block text-xs text-muted-foreground">
+                      {t("reductionChange", {
+                        from: formatPercent(row.lastYear!.reductionPercent),
+                        to: formatPercent(row.thisYear!.reductionPercent),
+                      })}
+                    </span>
+                  ) : null}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {minutes(row.lastYear?.countedMinutesPerWeek)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {minutes(row.thisYear?.countedMinutesPerWeek)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{delta(row.countedDelta, "")}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </TableCard>
       <p className="text-xs text-muted-foreground">{t("footnote")}</p>
     </div>
   );

@@ -131,7 +131,8 @@ describe("the Byggnad and Våning fields", () => {
     state.rooms = [room("r-1", "Sal 1", "Hus A", 2)];
     const user = userEvent.setup();
     render(<RoomsPage />);
-    await user.click(screen.getByRole("button", { name: "edit" }));
+    // Named after the room it edits, as every row action is (2026-10-11).
+    await user.click(screen.getByRole("button", { name: "editNamed(Sal 1)" }));
 
     const building = screen.getByLabelText("building (optional)");
     const floor = screen.getByLabelText("floor (optional)");

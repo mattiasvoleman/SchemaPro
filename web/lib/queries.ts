@@ -1524,7 +1524,7 @@ export function useStudentGuardians(studentId: string | null) {
       const { data, error } = await supabase
         .from("GuardianStudents")
         .select(
-          "id, guardianId, guardian:Users!GuardianStudents_guardianId_fkey(id, firstName, lastName, email)",
+          "id, guardianId, guardian:Users!GuardianStudents_guardianId_schoolId_fkey(id, firstName, lastName, email)",
         )
         .eq("studentId", studentId!);
       if (error) throw new Error(error.message);

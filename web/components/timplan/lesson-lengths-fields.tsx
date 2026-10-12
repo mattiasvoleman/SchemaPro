@@ -83,7 +83,7 @@ export function LessonLengthsFields({
         const minutesId = `${idPrefix}-minutes-${n}`;
         return (
           <div key={index} className={EXTRA_ROW_GRID}>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor={lessonsId}>{t("lengthLessons", { n })}</Label>
               <Input
                 id={lessonsId}
@@ -94,7 +94,7 @@ export function LessonLengthsFields({
                 onChange={(e) => update(index, { lessons: e.target.value })}
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor={minutesId}>{t("lengthMinutes", { n })}</Label>
               <Input
                 id={minutesId}

@@ -19,7 +19,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ArrowRight, TriangleAlert } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useGroups, usePeople } from "@/lib/queries";
 import type { MessageLookup } from "@/lib/engine-message";
 import type { ActivationPreview } from "@/lib/types";
@@ -28,6 +28,7 @@ import {
   useActivationPreview,
 } from "./use-year-activation";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -125,9 +126,7 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
             <Skeleton className="h-16 w-full" />
           </div>
         ) : preview.isError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {yearErrorText(tErrors, preview.error, t("previewFailed"))}
-          </p>
+          <Notice tone="destructive">{yearErrorText(tErrors, preview.error, t("previewFailed"))}</Notice>
         ) : plan ? (
           <ActivationPlanView plan={plan} problemText={(problem) => problemText(tProblems, problem)} />
         ) : null}
@@ -137,7 +136,7 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
             <input
               id="activation-strands"
               type="checkbox"
-              className="mt-0.5 h-4 w-4 accent-primary"
+              className="mt-0.5 size-4 accent-primary"
               checked={understood}
               onChange={(event) => setUnderstood(event.target.checked)}
             />
@@ -189,29 +188,24 @@ export function ActivationPlanView({
     <div className="space-y-4 text-sm">
       {plan.problems.length > 0 ? (
         <ul className="space-y-2">
-          {plan.problems.map((problem) =>
-            problem.blocking ? (
-              <li
-                key={problem.code}
-                role="alert"
-                className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-destructive"
-              >
-                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                <span>{problemText(problem)}</span>
-              </li>
-            ) : (
-              // A notice (MEMBERSHIPS_OUT_OF_DATE): it does not stop the activation.
-              <li key={problem.code} className="flex gap-2 rounded-md border p-3 text-muted-foreground">
-                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                <span>{problemText(problem)}</span>
-              </li>
-            ),
-          )}
+          {plan.problems.map((problem) => (
+            <li key={problem.code}>
+              {problem.blocking ? (
+                <Notice tone="destructive">{problemText(problem)}</Notice>
+              ) : (
+                // A notice (MEMBERSHIPS_OUT_OF_DATE): it does not stop the
+                // activation, so it is not announced as an alert.
+                <Notice tone="warning" role={null}>
+                  {problemText(problem)}
+                </Notice>
+              )}
+            </li>
+          ))}
         </ul>
       ) : null}
 
       <section aria-labelledby="activation-moves">
-        <h3 id="activation-moves" className="mb-1 font-medium">
+        <h3 id="activation-moves" className="mb-1 text-sm font-semibold">
           {t("movesTitle")}
         </h3>
         {plan.moves.length === 0 ? (
@@ -222,7 +216,7 @@ export function ActivationPlanView({
               <li key={`${move.fromGroupId}>${move.toGroupId}`}>
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{move.fromGroupName}</span>
-                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" aria-label={t("becomes")} />
+                  <ArrowRight className="size-3.5 text-muted-foreground" role="img" aria-label={t("becomes")} />
                   <span className="font-medium">{move.toGroupName}</span>
                   <span className="text-muted-foreground">{t("pupils", { count: move.count })}</span>
                 </div>
@@ -241,7 +235,7 @@ export function ActivationPlanView({
 
       {plan.graduates.count > 0 ? (
         <section aria-labelledby="activation-graduates">
-          <h3 id="activation-graduates" className="font-medium">
+          <h3 id="activation-graduates" className="text-sm font-semibold">
             {t("graduatesTitle", { count: plan.graduates.count })}
           </h3>
           <p className="text-muted-foreground">{t("graduatesHint")}</p>
@@ -266,7 +260,7 @@ export function ActivationPlanView({
 
       {plan.unplaced.count > 0 ? (
         <section aria-labelledby="activation-unplaced">
-          <h3 id="activation-unplaced" className="font-medium">
+          <h3 id="activation-unplaced" className="text-sm font-semibold">
             {t("unplacedTitle", { count: plan.unplaced.count })}
           </h3>
           <p className="text-muted-foreground">{t("unplacedHint")}</p>
