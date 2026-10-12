@@ -1,9 +1,9 @@
-import { formatDateTime, formatDayOfInstant } from '../i18n/format';
+import { formatDateTime, formatDayOfInstant, formatShortDate } from '../i18n/format';
 import type { Locale, Translate } from '../i18n';
 import type { NotificationRow } from '../types';
 
 /**
- * One inbox row as a sentence in the reader's language — all nine types the
+ * One inbox row as a sentence in the reader's language — all twelve types the
  * gateway writes, as the web's bell words them. The app used to know five and
  * show "Notification" for the rest, so a teacher's cover booking (which the
  * inbox is the only record of on the phone) read as nothing at all.
@@ -45,6 +45,23 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
       return meta['cover'] === true
         ? t('notifications.text.lessonSubstituteCover', own)
         : t('notifications.text.lessonSubstitute', { subject: own.subject, when: own.when });
+    }
+    case 'LESSON_REINSTATED':
+      return t('notifications.text.lessonReinstated', { subject: str('subjectName'), when: when('startsAt') });
+    case 'LESSON_SUPERVISED_STUDY':
+      return t('notifications.text.lessonSupervisedStudy', { subject: str('subjectName'), when: when('startsAt') });
+    case 'CANCELLATION_DIGEST': {
+      // One per person per avbokning: how many of their lessons and the days
+      // (calendar dates, read as such); the reversal says they go ahead.
+      const day = (key: string): string => (/^\d{4}-\d{2}-\d{2}$/.test(str(key)) ? formatShortDate(str(key), locale) : str(key));
+      const from = day('startDate');
+      const to = day('endDate');
+      const count = Number(meta['lessonCount'] ?? 0);
+      return t(meta['reversed'] === true ? 'notifications.text.cancellationDigestReversed' : 'notifications.text.cancellationDigest', {
+        name: str('name'),
+        count,
+        span: from === to ? from : `${from} – ${to}`,
+      });
     }
     case 'LESSON_ROOM_CHANGED':
       return t('notifications.text.lessonRoomChanged', { subject: str('subjectName'), when: when('startsAt') });

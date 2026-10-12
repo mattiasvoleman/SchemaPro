@@ -134,7 +134,10 @@ export type NotificationType =
   | 'SCHEDULE_CHANGED'
   | 'ROOM_BOOKING_DECIDED'
   | 'TEACHER_ABSENCE_REPORTED'
-  | 'LESSON_COVER_WITHDRAWN';
+  | 'LESSON_COVER_WITHDRAWN'
+  | 'LESSON_REINSTATED'
+  | 'LESSON_SUPERVISED_STUDY'
+  | 'CANCELLATION_DIGEST';
 
 export interface NotificationRow {
   readonly id: string;

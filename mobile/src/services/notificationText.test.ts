@@ -107,6 +107,36 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Anna Lind har anmält frånvaro tis 13 okt. Se Lärarfrånvaro på webben.',
     'Anna Lind has reported absence Tue 13 Oct. See Teacher absence on the web.',
   ],
+  [
+    'LESSON_REINSTATED',
+    row('LESSON_REINSTATED', { subjectName: 'Matematik', startsAt: at }),
+    'Matematik (tis 13 okt 08:00) blir av som planerat.',
+    'Matematik (Tue 13 Oct 08:00) goes ahead as planned.',
+  ],
+  [
+    'LESSON_SUPERVISED_STUDY',
+    row('LESSON_SUPERVISED_STUDY', { subjectName: 'Matematik', startsAt: at }),
+    'Matematik (tis 13 okt 08:00) blir självstudier under tillsyn.',
+    'Matematik (Tue 13 Oct 08:00) becomes supervised self-study.',
+  ],
+  [
+    'CANCELLATION_DIGEST',
+    row('CANCELLATION_DIGEST', { name: 'Prao åk 9', lessonCount: 12, startDate: '2026-10-19', endDate: '2026-10-23', reversed: false }),
+    'Prao åk 9: 12 lektioner är inställda (19 okt – 23 okt).',
+    'Prao åk 9: 12 lessons are cancelled (19 Oct – 23 Oct).',
+  ],
+  [
+    'CANCELLATION_DIGEST one lesson, one day',
+    row('CANCELLATION_DIGEST', { name: 'Friluftsdag', lessonCount: 1, startDate: '2026-10-20', endDate: '2026-10-20', reversed: false }),
+    'Friluftsdag: en lektion är inställd (20 okt).',
+    'Friluftsdag: one lesson is cancelled (20 Oct).',
+  ],
+  [
+    'CANCELLATION_DIGEST reversed',
+    row('CANCELLATION_DIGEST', { name: 'Prao åk 9', lessonCount: 12, startDate: '2026-10-19', endDate: '2026-10-23', reversed: true }),
+    'Prao åk 9 är ångrad: 12 lektioner blir av som planerat (19 okt – 23 okt).',
+    'Prao åk 9 is undone: 12 lessons go ahead as planned (19 Oct – 23 Oct).',
+  ],
 ];
 
 describe('notificationText', () => {
@@ -115,9 +145,9 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all nine types the gateway writes', () => {
+  it('covers all twelve types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(9);
+    expect(types.size).toBe(12);
   });
 
   it('never names whom a substitute replaces, nor a reason, whatever the meta carries', () => {
