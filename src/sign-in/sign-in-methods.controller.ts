@@ -54,10 +54,13 @@ export const LOOKUPS_PER_MINUTE = 600;
  *
  * It answers 200 with { provider } either way, null when no school names the
  * domain or when the schools naming it disagree (which the domain trigger
- * keeps from happening), so a domain that is no customer looks like any
- * other answer in a log and a browser console. It names no
- * school, tenant or setting. Never cached: an admin's change applies to the
- * next click.
+ * keeps from happening). The status is the same for every domain, the body
+ * is not: anyone can learn from it which e-mail domains sign in with a
+ * school account, and with which provider, as with any home-realm
+ * discovery. That is accepted. It names no school, tenant or setting, and
+ * the alternative, a button per provider and no lookup, would put a Google
+ * and a Microsoft button in front of every guardian who signs in with a
+ * password. Never cached: an admin's change applies to the next click.
  */
 @Controller('public/v1/sign-in-methods')
 @Public()

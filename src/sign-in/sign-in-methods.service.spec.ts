@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import { Role } from '../auth/enums/role.enum';
@@ -44,6 +44,19 @@ const domainTaken = (detail?: string) =>
     meta: { driverAdapterError: { cause: { originalCode: 'SI409', originalMessage: 'SIGN_IN_DOMAIN_TAKEN', ...(detail ? { detail } : {}) } } },
   });
 
+/**
+ * The school's people by e-mail domain, and what /login answers for other
+ * domains: the two statements the domain checks send, told apart by text.
+ */
+function people(tx: TxMock, uses: Array<{ domain: string; people: number; staff: number }>, lookups: Record<string, string> = {}) {
+  tx.$queryRaw.mockImplementation(async (query: { strings: string[]; values: unknown[] }) => {
+    const text = query.strings.join('?');
+    if (text.includes('split_part')) return uses.map((use) => ({ ...use, people: BigInt(use.people), staff: BigInt(use.staff) }));
+    if (text.includes('sign_in_provider_for_domain')) return [{ provider: lookups[String(query.values[0])] ?? null }];
+    return [];
+  });
+}
+
 const entra = (overrides: Partial<SignInMethodDto> = {}): SignInMethodDto =>
   ({ provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, ...overrides }) as SignInMethodDto;
 
@@ -56,6 +69,8 @@ describe('SignInMethodsService', () => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     service = new SignInMethodsService(prisma as unknown as PrismaService, config(true));
+    // By default the school's people are all on skola.example.
+    people(tx, [{ domain: 'skola.example', people: 120, staff: 14 }]);
   });
 
   describe('get', () => {
@@ -154,13 +169,99 @@ describe('SignInMethodsService', () => {
       });
     });
 
+    it('refuses a domain none of the school\'s active people use, before writing', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
+      await expect(service.put(admin(), entra({ domains: ['skola.example', 'annan.example'] }))).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'SIGN_IN_DOMAIN_UNUSED', params: { domains: 'annan.example' } },
+      });
+      expect(tx.schoolSignInMethod.create).not.toHaveBeenCalled();
+    });
+
+    it('requires the school account of staff only when every staff domain still gets an answer at /login', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(row());
+      tx.schoolSignInMethod.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      people(
+        tx,
+        [
+          { domain: 'skola.example', people: 120, staff: 14 },
+          { domain: 'kommun.example', people: 12, staff: 12 },
+          { domain: 'gmail.example', people: 300, staff: 0 },
+          { domain: 'delad.example', people: 3, staff: 3 },
+        ],
+        // Another school names delad.example on Entra, so /login answers it; nobody names kommun.example.
+        { 'delad.example': 'azure' },
+      );
+      const account = admin({ provider: 'azure', entraTenantId: TENANT });
+      await expect(service.put(account, entra({ ssoOnlyForStaff: true }))).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'kommun.example (12)' } },
+      });
+      expect(tx.schoolSignInMethod.update).not.toHaveBeenCalled();
+
+      // With kommun.example listed it goes through; guardians' gmail.example never mattered.
+      people(
+        tx,
+        [
+          { domain: 'skola.example', people: 120, staff: 14 },
+          { domain: 'kommun.example', people: 12, staff: 12 },
+          { domain: 'gmail.example', people: 300, staff: 0 },
+          { domain: 'delad.example', people: 3, staff: 3 },
+        ],
+        { 'delad.example': 'azure' },
+      );
+      await expect(
+        service.put(account, entra({ domains: ['skola.example', 'kommun.example'], ssoOnlyForStaff: true })),
+      ).resolves.toMatchObject({ method: { ssoOnlyForStaff: true } });
+    });
+
+    it('does not look at other domains when the school account is not required', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
+      tx.schoolSignInMethod.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      people(tx, [
+        { domain: 'skola.example', people: 120, staff: 14 },
+        { domain: 'kommun.example', people: 12, staff: 12 },
+      ]);
+      await expect(service.put(admin(), entra())).resolves.toMatchObject({ method: { ssoOnlyForStaff: false } });
+      const asked = tx.$queryRaw.mock.calls.map(([query]) => (query as { strings: string[] }).strings.join('?'));
+      expect(asked.some((text) => text.includes('sign_in_provider_for_domain'))).toBe(false);
+    });
+
+    it('counts a staff domain another school names with another provider as left out', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(row());
+      people(
+        tx,
+        [
+          { domain: 'skola.example', people: 120, staff: 14 },
+          { domain: 'google-skola.example', people: 2, staff: 2 },
+        ],
+        // /login offers Google there, so these two would find no Entra sign-in and lose their password.
+        { 'google-skola.example': 'google' },
+      );
+      await expect(
+        service.put(admin({ provider: 'azure', entraTenantId: TENANT }), entra({ ssoOnlyForStaff: true })),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'google-skola.example (2)' } },
+      });
+      expect(tx.schoolSignInMethod.update).not.toHaveBeenCalled();
+    });
+
     it('names the school\'s own domains another school uses with another provider', async () => {
+      people(tx, [
+        { domain: 'skola.example', people: 120, staff: 14 },
+        { domain: 'delad.example', people: 3, staff: 3 },
+      ]);
       tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
       tx.schoolSignInMethod.create.mockRejectedValue(domainTaken('domains=delad.example,skola.example'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       await expect(service.put(admin(), entra({ domains: ['skola.example', 'delad.example'] }))).rejects.toMatchObject({
         status: 409,
         response: { code: 'SIGN_IN_DOMAIN_TAKEN', params: { domains: 'delad.example, skola.example' } },
       });
+      // The operator decides whose domain it is (DEPLOYMENT.md 11.7), so the collision is logged.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[domains=delad.example,skola.example]'));
+      warn.mockRestore();
     });
 
     it('answers a lost race for the one row as a conflict, not a 500', async () => {

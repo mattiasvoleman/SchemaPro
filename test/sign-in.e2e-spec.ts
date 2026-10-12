@@ -14,8 +14,13 @@ const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const TENANT = '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
 const NOW = new Date('2026-10-20T08:00:00Z');
 
-/** One school's table, behind the harness's mock. */
-function plantTable(harness: TestHarness) {
+/** One school's table, behind the harness's mock, and its people's e-mail domains. */
+function plantTable(harness: TestHarness, domains: Record<string, number> = { 'skola.example': 14, 'elev.skola.example': 0 }) {
+  harness.tx.$queryRaw.mockImplementation(async (query: { strings: string[] }) =>
+    query.strings.join('?').includes('split_part')
+      ? Object.entries(domains).map(([domain, staff]) => ({ domain, people: BigInt(staff + 10), staff: BigInt(staff) }))
+      : [{ provider: null }],
+  );
   let row: Record<string, unknown> | null = null;
   const model = harness.tx['schoolSignInMethod']!;
   model['findUnique']!.mockImplementation(async () => row);
@@ -89,6 +94,14 @@ describe('Logga in med skolkonto (e2e)', () => {
         session: { schoolAccount: { provider: 'azure', entraTenantId: TENANT } },
       });
 
+      // A domain nobody at the school uses is refused, naming it.
+      const unused = await request(http())
+        .put('/api/v1/sign-in-method')
+        .set('x-test-user', admin)
+        .send({ provider: 'google', domains: ['skola.example', 'annan.example'], googleHostedDomain: 'skola.example' })
+        .expect(409);
+      expect(unused.body).toMatchObject({ code: 'SIGN_IN_DOMAIN_UNUSED', params: { domains: 'annan.example' } });
+
       const google = await request(http())
         .put('/api/v1/sign-in-method')
         .set('x-test-user', admin)
@@ -127,7 +140,7 @@ describe('Logga in med skolkonto (e2e)', () => {
     });
 
     it('answers a domain another school uses with another provider as 409, naming only the school\'s own domain', async () => {
-      plantTable(harness);
+      plantTable(harness, { 'skola.example': 14, 'delad.example': 2 });
       // What @prisma/adapter-pg hands up for the domain trigger's RAISE.
       harness.tx['schoolSignInMethod']!['create']!.mockRejectedValue(
         Object.assign(new Error('Database error'), {
