@@ -254,6 +254,70 @@ describe('MasterLessonsService', () => {
       answerRows(rows.map((row) => ({ minutesBefore: 0, minutesAfter: 0, ...row }))),
     );
 
+  /**
+   * The timplanspost behind a lesson and the rest of its week, as
+   * distributionWarnings reads them: the post, its subject's default and both
+   * names in ONE joined raw read keyed on the post's own (läsår, class,
+   * subject), and the post's lessons by the same key — told apart from the
+   * clash scan's read of the candidate's DAY, which `sameDay` keeps answering.
+   * Every other raw statement (the publication mode's) answers as the mock's
+   * default does: no row.
+   */
+  /** Whether a $queryRaw call is distributionWarnings' read of the post. A
+   *  tagged template arrives as its strings; publish-mode's Prisma.sql does not. */
+  const isPostRead = (first: unknown): boolean =>
+    Array.isArray(first) && first.join('?').includes('FROM "TeachingRequirements" r');
+
+  const arrangeDistribution = (
+    post: {
+      subject: { maxLessonsPerDay?: number | null; minDaysBetween?: number | null };
+      ownDistribution?: boolean;
+      maxLessonsPerDay?: number | null;
+      minDaysBetween?: number | null;
+    } | null,
+    week: Row[],
+  ) => {
+    const postRaw = jest.fn((strings: unknown, ...values: unknown[]) => {
+      if (!isPostRead(strings)) return Promise.resolve([]);
+      const keyed =
+        values[0] === YEAR_ID && values[1] === GROUP_ID && values[2] === SUBJECT_ID;
+      return Promise.resolve(
+        post === null || !keyed
+          ? []
+          : [
+              {
+                ownDistribution: post.ownDistribution ?? false,
+                maxLessonsPerDay: post.maxLessonsPerDay ?? null,
+                minDaysBetween: post.minDaysBetween ?? null,
+                subjectMaxLessonsPerDay: post.subject.maxLessonsPerDay ?? null,
+                subjectMinDaysBetween: post.subject.minDaysBetween ?? null,
+                subjectName: 'Idrott',
+                groupName: '7A',
+              },
+            ],
+      );
+    });
+    Object.assign(tx, { $queryRaw: postRaw });
+    const clashScan = tx.masterLesson.findMany.getMockImplementation()!;
+    tx.masterLesson.findMany.mockImplementation((query: Query = {}) =>
+      query.where && 'subjectId' in query.where
+        ? answerRows(
+            week.map((lesson) => ({
+              academicYearId: YEAR_ID,
+              studentGroupId: GROUP_ID,
+              subjectId: SUBJECT_ID,
+              isParked: false,
+              recurrence: 'ALL_WEEKS',
+              startDate: null,
+              endDate: null,
+              ...lesson,
+            })),
+          )(query)
+        : clashScan(query),
+    );
+    return postRaw;
+  };
+
   // -------------------------------------------------------------------
   // create
   // -------------------------------------------------------------------
@@ -308,6 +372,8 @@ describe('MasterLessonsService', () => {
         endDate: null,
         extraGroupIds: [EXTRA_GROUP_ID],
         studentIds: [STUDENT_ID],
+        // No timplanspost with an ämnesfördelning, so nothing to warn about.
+        warnings: [],
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -905,6 +971,109 @@ describe('MasterLessonsService', () => {
     // -----------------------------------------------------------------
     // Ombyte före och dusch efter: the pupil buffer
     // -----------------------------------------------------------------
+
+    describe('ämnesfördelning', () => {
+      const MONDAY_AFTERNOON = { id: OTHER_LESSON_ID, dayOfWeek: 1 };
+
+      it('saves a second idrott on a Monday under one a day, and warns', async () => {
+        // A warning, never a 409: the school placing two on one Monday by hand
+        // has decided to, and the generator keeps the rule for what it places.
+        arrangeCreate();
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          MONDAY_AFTERNOON,
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        const created = await service.create(createDto(), testUser());
+
+        expect(tx.masterLesson.create).toHaveBeenCalled();
+        expect(created.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_TOO_MANY_ON_DAY',
+            params: { requirement: 'Idrott för 7A', day: 1, count: 2, maxPerDay: 1 },
+          },
+        ]);
+      });
+
+      it('warns about consecutive days with the two weekdays named', async () => {
+        arrangeCreate();
+        arrangeDistribution({ subject: { minDaysBetween: 2 } }, [
+          { id: OTHER_LESSON_ID, dayOfWeek: 2 },
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        const created = await service.create(createDto(), testUser());
+
+        expect(created.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_DAYS_TOO_CLOSE',
+            params: { requirement: 'Idrott för 7A', firstDay: 1, secondDay: 2, minDaysBetween: 2 },
+          },
+        ]);
+      });
+
+      it('reads the post and the week by the post’s own key, parked lessons left out', async () => {
+        arrangeCreate();
+        const postRead = arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        await service.create(createDto(), testUser());
+
+        const reads = postRead.mock.calls.filter(([strings]) => isPostRead(strings));
+        expect(reads).toHaveLength(1);
+        expect(reads[0]!.slice(1)).toEqual([YEAR_ID, GROUP_ID, SUBJECT_ID]);
+        expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              academicYearId: YEAR_ID,
+              studentGroupId: GROUP_ID,
+              subjectId: SUBJECT_ID,
+              isParked: false,
+            },
+          }),
+        );
+      });
+
+      it('says nothing about a breach the new lesson is no part of', async () => {
+        // Two the school already put on Tuesday; the new one is on Monday. The
+        // Tuesday is the subject dialog's to list, not this save's.
+        arrangeCreate();
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: 'tue-1', dayOfWeek: 2 },
+          { id: 'tue-2', dayOfWeek: 2 },
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+          warnings: [],
+        });
+      });
+
+      it('holds the post to its own rule rather than its subject’s', async () => {
+        arrangeCreate();
+        arrangeDistribution(
+          { subject: { maxLessonsPerDay: 1 }, ownDistribution: true, maxLessonsPerDay: 2 },
+          [MONDAY_AFTERNOON, { id: LESSON_ID, dayOfWeek: 1 }],
+        );
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+          warnings: [],
+        });
+      });
+
+      it('reads no week at all for a post without a rule', async () => {
+        arrangeCreate();
+        arrangeDistribution({ subject: {} }, [MONDAY_AFTERNOON, { id: LESSON_ID, dayOfWeek: 1 }]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+          warnings: [],
+        });
+        expect(tx.masterLesson.findMany).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ subjectId: SUBJECT_ID }) }),
+        );
+      });
+    });
 
     describe('ombyte och dusch kring lektionen', () => {
       /** Idrott 10:00–11:00 for GROUP_ID, with 20 minutes of shower after it. */
@@ -2144,6 +2313,89 @@ describe('MasterLessonsService', () => {
      * only that one: the load report is computed from the timplan, so a lesson
      * has no load to be over — of the lesson's own attendance over the läsår.
      */
+    describe('ämnesfördelning', () => {
+      it('moving a lesson next to another under "not on consecutive days" saves and warns', async () => {
+        arrangeUpdate({}, { dayOfWeek: 2 });
+        arrangeDistribution({ subject: { minDaysBetween: 2 } }, [
+          { id: OTHER_LESSON_ID, dayOfWeek: 3 },
+          { id: LESSON_ID, dayOfWeek: 2 },
+        ]);
+
+        const updated = await service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+
+        expect(tx.masterLesson.update).toHaveBeenCalled();
+        expect(updated.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_DAYS_TOO_CLOSE',
+            params: { requirement: 'Idrott för 7A', firstDay: 2, secondDay: 3, minDaysBetween: 2 },
+          },
+        ]);
+      });
+
+      it('a lesson set aside on the tray breaks nothing, and nothing is read for it', async () => {
+        arrangeUpdate({}, { isParked: true });
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: OTHER_LESSON_ID, dayOfWeek: 1 },
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        await expect(
+          service.update(LESSON_ID, { isParked: true }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        expect(tx.masterLesson.findMany).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ subjectId: SUBJECT_ID }) }),
+        );
+      });
+
+      it('a lesson set aside while moved to another day breaks nothing either', async () => {
+        // The day changed, so the week is asked about — and a lesson on the
+        // tray occupies nothing, so it is no part of any breach.
+        arrangeUpdate({}, { dayOfWeek: 2, isParked: true });
+        const postRead = arrangeDistribution({ subject: { minDaysBetween: 2 } }, [
+          { id: OTHER_LESSON_ID, dayOfWeek: 3 },
+          { id: LESSON_ID, dayOfWeek: 2, isParked: true },
+        ]);
+
+        await expect(
+          service.update(LESSON_ID, { dayOfWeek: 2, isParked: true }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        // Answered before any read: the tray is no place in the week.
+        expect(postRead.mock.calls.filter(([strings]) => isPostRead(strings))).toHaveLength(0);
+      });
+
+      it('a lesson nudged within its own day is not asked about the week', async () => {
+        // Monday stays Monday, so no day can have gained a lesson: the edit
+        // cannot break a rule the week did not already break.
+        arrangeUpdate({}, { startTime: t('13:00'), endTime: t('14:00') });
+        const postRead = arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: OTHER_LESSON_ID, dayOfWeek: 1 },
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        await expect(
+          service.update(LESSON_ID, { startTime: '13:00', endTime: '14:00' }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        expect(postRead.mock.calls.filter(([strings]) => isPostRead(strings))).toHaveLength(0);
+      });
+
+      it('a lesson put back from the tray onto a full Monday warns', async () => {
+        arrangeUpdate({ isParked: true }, { isParked: false });
+        arrangeDistribution({ subject: { maxLessonsPerDay: 1 } }, [
+          { id: OTHER_LESSON_ID, dayOfWeek: 1 },
+          { id: LESSON_ID, dayOfWeek: 1 },
+        ]);
+
+        const updated = await service.update(LESSON_ID, { isParked: false }, testUser());
+
+        expect(updated.warnings).toEqual([
+          {
+            code: 'DISTRIBUTION_TOO_MANY_ON_DAY',
+            params: { requirement: 'Idrott för 7A', day: 1, count: 2, maxPerDay: 1 },
+          },
+        ]);
+      });
+    });
+
     describe('the staffing policy', () => {
       const arrangePolicy = (mode: 'OFF' | 'WARN' | 'REFUSE', held: Record<string, unknown>[]) => {
         tx.staffingPolicy.findUnique.mockResolvedValue({

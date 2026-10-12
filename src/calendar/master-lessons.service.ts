@@ -33,6 +33,14 @@ import {
   SETTLED_CURRENT,
   type RosterBasis,
 } from '../year-rollover/projected-rosters';
+import {
+  distributionBreaches,
+  distributionWarning,
+  effectiveDistribution,
+  hasDistributionRule,
+  type DistributionWarning,
+} from '../common/subject-distribution';
+import { requirementName } from '../optimization/optimization-proxy.service';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -54,6 +62,17 @@ export interface MasterLessonConflict {
 interface PupilBuffer {
   minutesBefore: number;
   minutesAfter: number;
+}
+
+/** The timplanspost behind a lesson, with its subject's default and both names. */
+interface DistributionPost {
+  ownDistribution: boolean;
+  maxLessonsPerDay: number | null;
+  minDaysBetween: number | null;
+  subjectMaxLessonsPerDay: number | null;
+  subjectMinDaysBetween: number | null;
+  subjectName: string;
+  groupName: string | null;
 }
 
 /** What a lesson nobody wrote a number for occupies outside itself: nothing. */
@@ -81,6 +100,19 @@ export interface MasterLessonResult {
   studentIds: string[];
 }
 
+/**
+ * What a hand edit is told beside the saved lesson: the staffing policy's WARN
+ * about a teacher it put on the lesson, and the ämnesfördelning the timplanspost
+ * is held to when the edit breaks it. Both are a code from the engine catalogue
+ * and its params, rendered by the page; neither is a refusal.
+ */
+export type LessonWarning = StaffingWarning | DistributionWarning;
+
+export interface CreateMasterLessonResult extends MasterLessonResult {
+  /** The ämnesfördelning the new lesson breaks; empty when it breaks none. */
+  warnings: LessonWarning[];
+}
+
 export interface UpdateMasterLessonResult extends MasterLessonResult {
   /** Future calendar lessons that were moved along with the template. */
   propagatedLessons: number;
@@ -91,10 +123,11 @@ export interface UpdateMasterLessonResult extends MasterLessonResult {
   removedCalendarLessons: number;
   /**
    * What the staffing policy's WARN mode says about a teacher this PATCH put on
-   * the lesson (STAFF_TEACHER_NOT_QUALIFIED only — see update()). Empty when
-   * nothing was found or nobody new was assigned.
+   * the lesson (STAFF_TEACHER_NOT_QUALIFIED only — see update()), and the
+   * ämnesfördelning the moved lesson breaks (DISTRIBUTION_*). Empty when
+   * nothing was found.
    */
-  warnings: StaffingWarning[];
+  warnings: LessonWarning[];
 }
 
 export interface DeleteMasterLessonResult {
@@ -151,7 +184,7 @@ export class MasterLessonsService {
   async create(
     dto: CreateMasterLessonDto,
     user: AuthenticatedUser,
-  ): Promise<MasterLessonResult> {
+  ): Promise<CreateMasterLessonResult> {
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
       const year = await tx.academicYear.findUnique({
@@ -262,9 +295,13 @@ export class MasterLessonsService {
         after: result,
       });
 
+      // Read after the write, from the week as it now stands: the new lesson
+      // is in it, and a breach it is no part of is not this edit's to report.
+      const warnings = await this.distributionWarnings(tx, created);
+
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
       this.announce(year.schoolId, mode);
-      return result;
+      return { ...result, warnings };
     });
   }
 
@@ -395,7 +432,7 @@ export class MasterLessonsService {
       if (dto.coTeacherId && dto.coTeacherId !== lesson.coTeacherId) {
         assignees.push({ userId: dto.coTeacherId, role: 'CO_TEACHER' });
       }
-      const warnings =
+      const warnings: LessonWarning[] =
         assignees.length > 0
           ? settleFindings(
               await lessonQualificationFindings(tx, {
@@ -493,6 +530,23 @@ export class MasterLessonsService {
               schoolId: lesson.school.id,
             });
 
+      // The ämnesfördelning, asked of the week as the PATCH leaves it. A
+      // warning and never a 409: a school that puts two idrott lessons on one
+      // Monday by hand has decided to, and the generator still keeps the rule
+      // for every lesson it places (see common/subject-distribution.ts).
+      // Asked only of an edit that can change which days the post's lessons
+      // run on — another weekday, other weeks, back from the tray — so a
+      // lesson nudged within its own day costs no statement for it.
+      const movesTheWeek =
+        candidate.dayOfWeek !== lesson.dayOfWeek ||
+        dto.recurrence !== undefined ||
+        dto.startDate !== undefined ||
+        dto.endDate !== undefined ||
+        (lesson.isParked && dto.isParked === false);
+      if (movesTheWeek) {
+        warnings.push(...(await this.distributionWarnings(tx, updated)));
+      }
+
       const before = toResult(lesson);
       const after = toResult(updated);
       await this.writeChangeLog(tx, {
@@ -543,6 +597,80 @@ export class MasterLessonsService {
 
       return { ...after, propagatedLessons, removedCalendarLessons, warnings };
     });
+  }
+
+  /**
+   * The ämnesfördelning breaches this lesson is part of, as warnings.
+   *
+   * The rule is the timplanspost's — its own when it carries one, else its
+   * subject's — found by the post's own key, (läsår, class, subject), which is
+   * how a lesson answers a post everywhere else (the optimiser's subtraction,
+   * coverage). The week it is asked of is that post's lessons as they stand
+   * after the write, every one but a parked one, which occupies nothing; and
+   * a lesson on the tray breaks nothing itself. Only breaches that include THIS
+   * lesson are reported: a Monday the school had already doubled before the
+   * edit is the subject dialog's to list, not this save's to repeat.
+   *
+   * ONE STATEMENT FOR A SCHOOL WITHOUT A RULE, which is every school today:
+   * the post, its subject's default and the two names it would be called by
+   * come back in one joined read, since the same three through Prisma's
+   * relations are three statements on a write path whose statements are
+   * budgeted (projected-rosters.budget.spec.ts). The week is a second
+   * statement, read only when there is a rule to hold it to. Under the
+   * caller's RLS like every other read here: a post the caller cannot see is
+   * no post, and says nothing.
+   */
+  private async distributionWarnings(
+    tx: PrismaClient,
+    lesson: {
+      id: string;
+      academicYearId: string;
+      studentGroupId: string;
+      subjectId: string;
+      isParked: boolean;
+    },
+  ): Promise<DistributionWarning[]> {
+    if (lesson.isParked) return [];
+    const [post] = await tx.$queryRaw<DistributionPost[]>`
+      SELECT r."ownDistribution", r."maxLessonsPerDay", r."minDaysBetween",
+             s."maxLessonsPerDay" AS "subjectMaxLessonsPerDay",
+             s."minDaysBetween" AS "subjectMinDaysBetween",
+             s."name" AS "subjectName", g."name" AS "groupName"
+        FROM "TeachingRequirements" r
+        JOIN "Subjects" s ON s."id" = r."subjectId"
+        JOIN "StudentGroups" g ON g."id" = r."studentGroupId"
+       WHERE r."academicYearId" = ${lesson.academicYearId}::uuid
+         AND r."studentGroupId" = ${lesson.studentGroupId}::uuid
+         AND r."subjectId" = ${lesson.subjectId}::uuid`;
+    if (!post) return [];
+    const rule = effectiveDistribution(post, {
+      maxLessonsPerDay: post.subjectMaxLessonsPerDay,
+      minDaysBetween: post.subjectMinDaysBetween,
+    });
+    if (!hasDistributionRule(rule)) return [];
+
+    const week = await tx.masterLesson.findMany({
+      where: {
+        academicYearId: lesson.academicYearId,
+        studentGroupId: lesson.studentGroupId,
+        subjectId: lesson.subjectId,
+        isParked: false,
+      },
+      select: { id: true, dayOfWeek: true, recurrence: true, startDate: true, endDate: true },
+    });
+    const name = requirementName(post.subjectName, post.groupName);
+    return distributionBreaches(
+      rule,
+      week.map((row) => ({
+        id: row.id,
+        dayOfWeek: row.dayOfWeek,
+        recurrence: row.recurrence,
+        startDate: toDateStringOrNull(row.startDate),
+        endDate: toDateStringOrNull(row.endDate),
+      })),
+    )
+      .filter((breach) => breach.lessonIds.includes(lesson.id))
+      .map((breach) => distributionWarning(breach, name));
   }
 
   // ---------------------------------------------------------------------

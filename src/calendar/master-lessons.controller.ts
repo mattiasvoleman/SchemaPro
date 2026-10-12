@@ -16,8 +16,8 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
   MasterLessonsService,
+  type CreateMasterLessonResult,
   type DeleteMasterLessonResult,
-  type MasterLessonResult,
   type UpdateMasterLessonResult,
 } from './master-lessons.service';
 import { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
@@ -38,7 +38,7 @@ export class MasterLessonsController {
   create(
     @Body() dto: CreateMasterLessonDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<MasterLessonResult> {
+  ): Promise<CreateMasterLessonResult> {
     return this.masterLessons.create(dto, user);
   }
 
