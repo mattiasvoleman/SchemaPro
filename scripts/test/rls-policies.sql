@@ -11744,3 +11744,120 @@ BEGIN
   END LOOP;
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 36: den som inte är inloggad når ingen tabell (anon,
+-- 20261016090000).
+--
+-- anon is the role PostgREST and pg_graphql use for a request that carries no
+-- user token. No path of SchemaPro's uses it: web and mobile read tables once
+-- Supabase Auth has a user, and the public timetable and the SS12000 API go
+-- through the gateway as app_authenticated. On Supabase, though, the default
+-- ACL of the role that runs the migrations gave anon ALL on every table that
+-- role created in "public", and 46 tables kept that until 20261016090000. Row
+-- security held the rows back, but 56 policies are TO public and admit a row
+-- on a GUC alone (app.service_school_id, app.sync_school_id,
+-- app.service_key_lookup), so the table grant is the layer that has to
+-- refuse.
+--
+-- This connection cannot become anon, so the section reads the catalogue, as
+-- section 14 does. It lists anon's whole reach in "public" and "app" and
+-- compares it with what is meant to remain, which is USAGE on schema
+-- "public" and nothing else:
+--
+--   * USAGE and CREATE on either schema;
+--   * every privilege on a table, view or foreign table, and on a sequence,
+--     whether granted to anon or to PUBLIC (has_*_privilege counts both);
+--   * EXECUTE on a function in "public", which PostgREST serves as an RPC.
+--     Extension members are left out: pgcrypto and btree_gist sit in
+--     "public" here and in "extensions" on Supabase, and are not ours;
+--   * a function in either schema whose ACL names anon itself. A function
+--     in "app" that only PUBLIC executes is not listed: anon cannot name it
+--     without USAGE on "app", which the first item covers;
+--   * a default ACL entry, of any role and in any schema or none, that gives
+--     anon (or, for tables and sequences, PUBLIC) anything. That is how the
+--     46 got their grant.
+--
+-- CI's database has no Supabase default ACL, so there anon held none of this
+-- even before 20261016090000, and the section guards against a regression: a
+-- GRANT to anon or to PUBLIC, a function in "public" or a default ACL fails
+-- it. On a database with Supabase's default ACL it fails without the
+-- migration, naming the 46 tables and the three default entries.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  tables   int;
+  reach    text[];
+  expected text[] := ARRAY['schema public: USAGE'];
+  extra    text;
+  extras   int;
+  missing  text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    RAISE EXCEPTION 'anon: the role does not exist, so nothing below says anything';
+  END IF;
+
+  SELECT count(*)::int INTO tables
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relkind = 'r';
+  IF tables < 25 THEN
+    RAISE EXCEPTION 'anon: only % table(s) were examined; the catalog query proved nothing', tables;
+  END IF;
+
+  SELECT coalesce(array_agg(item ORDER BY item), '{}') INTO reach FROM (
+    SELECT 'schema ' || n.nspname || ': ' || string_agg(p, ', ' ORDER BY p) AS item
+      FROM pg_namespace n CROSS JOIN unnest(ARRAY['USAGE', 'CREATE']) p
+     WHERE n.nspname IN ('public', 'app') AND has_schema_privilege('anon', n.oid, p)
+     GROUP BY n.nspname
+    UNION ALL
+    SELECT 'relation ' || c.oid::regclass::text || ': ' || string_agg(p, ', ' ORDER BY p)
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE n.nspname IN ('public', 'app') AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+       AND has_table_privilege('anon', c.oid, p)
+     GROUP BY c.oid
+    UNION ALL
+    SELECT 'sequence ' || c.oid::regclass::text || ': ' || string_agg(p, ', ' ORDER BY p)
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN unnest(ARRAY['USAGE', 'SELECT', 'UPDATE']) p
+     WHERE n.nspname IN ('public', 'app') AND c.relkind = 'S'
+       AND has_sequence_privilege('anon', c.oid, p)
+     GROUP BY c.oid
+    UNION ALL
+    SELECT 'function ' || f.oid::regprocedure::text || ': EXECUTE'
+      FROM pg_proc f JOIN pg_namespace n ON n.oid = f.pronamespace
+     WHERE n.nspname IN ('public', 'app')
+       AND has_function_privilege('anon', f.oid, 'EXECUTE')
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                        WHERE d.classid = 'pg_proc'::regclass AND d.objid = f.oid AND d.deptype = 'e')
+       AND (n.nspname = 'public'
+            OR EXISTS (SELECT 1 FROM aclexplode(f.proacl) a WHERE a.grantee = 'anon'::regrole))
+    UNION ALL
+    SELECT 'default for ' || pg_get_userbyid(d.defaclrole)
+           || coalesce(' in schema ' || n.nspname, ' in every schema')
+           || ', new ' || CASE d.defaclobjtype WHEN 'r' THEN 'tables' WHEN 'S' THEN 'sequences'
+                            WHEN 'f' THEN 'functions' WHEN 'T' THEN 'types' WHEN 'n' THEN 'schemas'
+                            ELSE d.defaclobjtype::text END
+           || ' to ' || CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE 'anon' END
+           || ': ' || string_agg(a.privilege_type, ', ' ORDER BY a.privilege_type)
+      FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+     CROSS JOIN aclexplode(d.defaclacl) a
+     WHERE a.grantee = 'anon'::regrole
+        OR (a.grantee = 0 AND d.defaclobjtype IN ('r', 'S'))
+     GROUP BY d.oid, n.nspname, a.grantee
+  ) r;
+
+  SELECT string_agg(x, '; ' ORDER BY x), count(*) INTO extra, extras
+    FROM unnest(reach) x WHERE x <> ALL (expected);
+  SELECT string_agg(x, '; ' ORDER BY x) INTO missing
+    FROM unnest(expected) x WHERE x <> ALL (reach);
+
+  IF extra IS NOT NULL THEN
+    RAISE EXCEPTION 'anon: % holding(s) beyond USAGE on schema public: %', extras, extra;
+  END IF;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'anon: no longer holds %; the section names what anon holds exactly, so change it on purpose', missing;
+  END IF;
+END $$;
