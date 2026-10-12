@@ -12022,3 +12022,115 @@ BEGIN
   SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 38: den inloggade tömmer ingen tabell, sätter ingen trigger på den
+-- och pekar ingen främmande nyckel mot den (authenticated, 20261016110000).
+--
+-- authenticated is PostgREST's role for a signed-in user, and
+-- app_authenticated, the gateway's role, inherits everything it holds. On
+-- Supabase the default ACL of the role that runs the migrations gave
+-- authenticated ALL on every table that role created in "public", and 46
+-- tables kept TRUNCATE, REFERENCES and TRIGGER until 20261016110000. Neither
+-- role needs any of the three: PostgREST cannot issue them, and the gateway's
+-- SQL is DML. TRUNCATE does not consult row security, so one statement
+-- through either role emptied a table for every school. TRIGGER let either
+-- role attach a function to a table, and every later writer would run it.
+--
+-- 38a reads the catalogue. Neither role holds TRUNCATE, REFERENCES or
+-- TRIGGER on any table, view or foreign table in "public" or "app". That
+-- counts grants to the role itself, to a role it inherits from and to PUBLIC,
+-- and REFERENCES on a single column as well. No default ACL entry, of any
+-- role and in any schema or none, gives new tables any of the three to
+-- either role, to a role they inherit from or to PUBLIC.
+--
+-- 38b runs the statements as each role in turn. It runs TRUNCATE on a table
+-- no foreign key points at, so the grant is the only thing that refuses it,
+-- and CREATE TRIGGER with a built-in function that everyone may execute.
+-- Both must be refused by the grant (42501). REFERENCES would need a table
+-- of the role's own, which neither role can create, so the catalogue alone
+-- covers it.
+--
+-- CI's database has no Supabase default ACL, so there authenticated held none
+-- of this even before 20261016110000, and the section guards against a
+-- regression. On a database with Supabase's default ACL it fails without the
+-- migration, naming the 46 tables. With only the tables revoked, it names the
+-- migration role's default entry.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  tables int;
+  via    text;
+  held   text;
+  n      int;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    RAISE EXCEPTION 'table rights: the role authenticated does not exist, so nothing below says anything';
+  END IF;
+
+  SELECT count(*)::int INTO tables
+    FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+   WHERE ns.nspname = 'public' AND c.relkind = 'r';
+  IF tables < 46 THEN
+    RAISE EXCEPTION 'table rights: only % table(s) were examined; the catalog query proved nothing', tables;
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    SELECT string_agg(item, '; ' ORDER BY item), count(*)::int INTO held, n FROM (
+      SELECT c.oid::regclass::text || ': ' || string_agg(p, ', ' ORDER BY p) AS item
+        FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+       CROSS JOIN unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+       WHERE ns.nspname IN ('public', 'app') AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+         AND CASE p WHEN 'REFERENCES' THEN has_any_column_privilege(via, c.oid, p)
+                    ELSE has_table_privilege(via, c.oid, p) END
+       GROUP BY c.oid
+    ) x;
+    IF held IS NOT NULL THEN
+      RAISE EXCEPTION 'table rights: % holds TRUNCATE, REFERENCES or TRIGGER on % relation(s): %', via, n, held;
+    END IF;
+  END LOOP;
+
+  SELECT string_agg(item, '; ' ORDER BY item) INTO held FROM (
+    SELECT 'default for ' || pg_get_userbyid(d.defaclrole)
+           || coalesce(' in schema ' || ns.nspname, ' in every schema')
+           || ', new tables to ' || CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+           || ': ' || string_agg(a.privilege_type, ', ' ORDER BY a.privilege_type) AS item
+      FROM pg_default_acl d LEFT JOIN pg_namespace ns ON ns.oid = d.defaclnamespace
+     CROSS JOIN aclexplode(d.defaclacl) a
+     WHERE d.defaclobjtype = 'r'
+       AND a.privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER')
+       AND CASE WHEN a.grantee = 0 THEN true
+                ELSE pg_has_role('authenticated', a.grantee, 'USAGE')
+                     OR pg_has_role('app_authenticated', a.grantee, 'USAGE') END
+     GROUP BY d.oid, ns.nspname, a.grantee
+  ) x;
+  IF held IS NOT NULL THEN
+    RAISE EXCEPTION 'table rights: a default ACL gives new tables TRUNCATE, REFERENCES or TRIGGER: %', held;
+  END IF;
+END $$;
+
+BEGIN;
+DO $$
+DECLARE
+  via text;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'table rights: running as %, not %', current_user, via; END IF;
+    BEGIN
+      TRUNCATE "GuardianStudents";
+      RAISE EXCEPTION 'table rights: % emptied GuardianStudents for every school, past row security', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      CREATE TRIGGER rls38_trigger BEFORE UPDATE ON "GuardianStudents"
+        FOR EACH ROW EXECUTE FUNCTION suppress_redundant_updates_trigger();
+      RAISE EXCEPTION 'table rights: % attached a trigger to GuardianStudents', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
