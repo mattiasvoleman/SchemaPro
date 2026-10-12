@@ -101,10 +101,22 @@ const REQUIREMENT_FIELDS = [
  * A requirement whose remaining lessons have two or more lengths
  * (lektionslängder, 1 × 80 + 1 × 40) carries its list besides; a uniform one
  * never does, so REQUIREMENT_FIELDS above stays the uniform pin.
- * optimization-engine/tests/test_optimize.py's `_field_names(AnonymousRequirement)`
- * must equal THIS set: the engine declares the optional field either way.
  */
 const REQUIREMENT_FIELDS_MIXED = [...REQUIREMENT_FIELDS, 'lessonLengths'].sort();
+
+/**
+ * A requirement held to an ämnesfördelning carries its rule and the weekdays
+ * of its locked lessons besides; one without a rule never does, so a school
+ * that has written none sends the payload it always sent.
+ * optimization-engine/tests/test_optimize.py's `_field_names(AnonymousRequirement)`
+ * must equal THIS set: the engine declares every optional field either way.
+ */
+const REQUIREMENT_FIELDS_DISTRIBUTED = [
+  ...REQUIREMENT_FIELDS_MIXED,
+  'lockedDays',
+  'maxLessonsPerDay',
+  'minDaysBetween',
+].sort();
 
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
@@ -162,6 +174,7 @@ describe('AI engine wire contract', () => {
 
   const buildPayload = async (
     requirementOverrides: Record<string, unknown> = {},
+    preservedLessons: Record<string, unknown>[] = [],
   ): Promise<Record<string, unknown>> => {
     const tx = createTxMock();
     lastTx = tx;
@@ -178,6 +191,9 @@ describe('AI engine wire contract', () => {
     ] as const;
     for (const model of empty) {
       tx[model]!['findMany']!.mockResolvedValue([]);
+    }
+    if (preservedLessons.length > 0) {
+      tx['masterLesson']!['findMany']!.mockResolvedValue(preservedLessons);
     }
     tx['lunchSetting']!['findUnique']!.mockResolvedValue({
       lunchEnabled: true,
@@ -459,6 +475,64 @@ describe('AI engine wire contract', () => {
     const requirements = payload['requirements'] as Array<Record<string, unknown>>;
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS_MIXED);
     expect(requirements[0]).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+  });
+
+  it('sends a requirement with an ämnesfördelning its rule and its locked weekdays', async () => {
+    // The subject's rule, and one lesson of the row locked on a Wednesday
+    // every odd week — which cancels no demand (its weeks are not the row's)
+    // and is still on Wednesday in the weeks it runs.
+    const payload = await buildPayload(
+      { subject: { requiredRoomTypeId: null, maxLessonsPerDay: 1, minDaysBetween: 2 } },
+      [
+        {
+          id: 'ml-locked',
+          subjectId: 's1',
+          studentGroupId: 'g1',
+          teacherId: 't1',
+          coTeacherId: null,
+          roomId: null,
+          dayOfWeek: 3,
+          startTime: new Date('1970-01-01T09:00:00.000Z'),
+          endTime: new Date('1970-01-01T10:00:00.000Z'),
+          recurrence: 'ODD_WEEKS',
+          startDate: null,
+          endDate: null,
+          extraGroups: [],
+          participants: [],
+        },
+      ],
+    );
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+    expect(Object.keys(requirements[0]!).sort()).toEqual(
+      REQUIREMENT_FIELDS_DISTRIBUTED.filter((field) => field !== 'lessonLengths'),
+    );
+    expect(requirements[0]).toMatchObject({ maxLessonsPerDay: 1, minDaysBetween: 2, lockedDays: [3] });
+  });
+
+  it('sends a row with its own rule of no limit nothing, although its subject has one', async () => {
+    const payload = await buildPayload({
+      ownDistribution: true,
+      maxLessonsPerDay: null,
+      minDaysBetween: null,
+      subject: { requiredRoomTypeId: null, maxLessonsPerDay: 1, minDaysBetween: 2 },
+    });
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+    expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
+  });
+
+  it('reads both halves of the rule out of the database, the row’s and the subject’s', async () => {
+    // Asserted on the QUERY for the reason the room rules are: the mock hands
+    // its fixture back whole whatever the projection, so a column dropped from
+    // the select would read as no rule and the run would succeed without it.
+    await buildPayload();
+
+    const select = lastTx['teachingRequirement']!['findMany']!.mock.calls[0][0].select;
+    expect(select).toMatchObject({
+      ownDistribution: true,
+      maxLessonsPerDay: true,
+      minDaysBetween: true,
+      subject: { select: { maxLessonsPerDay: true, minDaysBetween: true } },
+    });
   });
 
   it('sends a year-range lock with bounds and without a resource id', async () => {

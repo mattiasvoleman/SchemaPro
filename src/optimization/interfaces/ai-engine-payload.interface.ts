@@ -71,6 +71,28 @@ export interface AnonymousRequirement {
    */
   minutesBefore: number;
   minutesAfter: number;
+  /**
+   * Ämnesfördelning: the rule the requirement is held to — its own when the
+   * timplanspost carries one, else its subject's (common/subject-distribution
+   * .ts, effectiveDistribution). At most this many lessons a weekday, and
+   * lesson days at least this many weekdays apart (2 is "inte dagar i följd").
+   *
+   * Each key is sent ONLY when that half of the rule is set, and `lockedDays`
+   * only beside a rule and only when something is locked, so a school with no
+   * rule sends the payload it always sent — byte for byte, which is what lets
+   * this gateway run for a minute against an engine that predates the keys.
+   */
+  maxLessonsPerDay?: number;
+  minDaysBetween?: number;
+  /**
+   * The weekday of every lesson of this timplanspost the school placed by hand,
+   * once per lesson. A preserved lesson reaches the engine as a fixed lesson
+   * with no requirement id, so without these a rule of one a day would happily
+   * add a generated Monday beside a locked one. Every preserved lesson counts,
+   * not only the ones that cover demand: one locked odd weeks is still on
+   * Monday in the weeks it runs, and the engine, which has no weeks, is told so.
+   */
+  lockedDays?: DayOfWeek[];
   /** Active-student headcount — an aggregate used for room-capacity checks. */
   studentGroupSize: number;
   /** When set, lessons for this requirement may only use rooms of this type. */
@@ -425,7 +447,10 @@ export type ConflictCategory =
   | 'LUNCH_WINDOW'
   // A measurement, not a proof: which rule, switched off, let a timed-out week
   // solve inside a short probe budget.
-  | 'TIMEOUT_PROBE';
+  | 'TIMEOUT_PROBE'
+  // A timplanspost's ämnesfördelning — at most N a day, not on consecutive
+  // days — is one of the rules that cannot all hold.
+  | 'SUBJECT_DISTRIBUTION';
 
 export interface AiEngineConflictDetail {
   category: ConflictCategory;

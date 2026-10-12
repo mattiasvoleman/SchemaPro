@@ -3046,6 +3046,106 @@ describe('OptimizationProxyService', () => {
       expect(result.conflicts?.summary).toBe('No room fits requirement Matematik för 4A.');
     });
 
+    describe('ämnesfördelning', () => {
+      const idrott = (subject: Record<string, unknown>, own: Record<string, unknown> = {}) =>
+        requirement({
+          lessonsPerWeek: 2,
+          subject: { requiredRoomTypeId: null, ...subject },
+          ...own,
+        });
+
+      it('sends no rule and no locked days for a subject without a rule, locks or not', async () => {
+        // A school that has written no rule sends the payload it always sent,
+        // which is what lets this gateway meet an engine that predates the keys.
+        arrange({ requirements: [idrott({})], lockedLessons: [lockedLesson()] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const sent = postedPayload().requirements[0]!;
+        expect(sent).not.toHaveProperty('maxLessonsPerDay');
+        expect(sent).not.toHaveProperty('minDaysBetween');
+        expect(sent).not.toHaveProperty('lockedDays');
+      });
+
+      it('sends the subject’s rule and the weekday of EVERY locked lesson of the row', async () => {
+        // Tuesday every week covers a lesson of demand and is subtracted; the
+        // odd-week Thursday covers none (its weeks are not the row's) and is
+        // still on Thursday in the weeks it runs. Both are where the class
+        // has idrott, and the engine is told so. Another subject's lock, and
+        // another class's lock in the same subject, are no part of the row.
+        arrange({
+          requirements: [idrott({ maxLessonsPerDay: 1, minDaysBetween: 2 })],
+          lockedLessons: [
+            lockedLesson({ id: 'tue', dayOfWeek: 2 }),
+            lockedLesson({ id: 'thu', dayOfWeek: 4, recurrence: 'ODD_WEEKS' }),
+            lockedLesson({ id: 'other-subject', dayOfWeek: 1, subjectId: 'another-subject' }),
+            lockedLesson({ id: 'other-class', dayOfWeek: 3, studentGroupId: EXTRA_GROUP_ID }),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements[0]).toMatchObject({
+          lessonsPerWeek: 1,
+          maxLessonsPerDay: 1,
+          minDaysBetween: 2,
+          lockedDays: [2, 4],
+        });
+      });
+
+      it('sends a rule with nothing locked without a lockedDays key', async () => {
+        arrange({ requirements: [idrott({ minDaysBetween: 2 })] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const sent = postedPayload().requirements[0]!;
+        expect(sent).toMatchObject({ minDaysBetween: 2 });
+        expect(sent).not.toHaveProperty('maxLessonsPerDay');
+        expect(sent).not.toHaveProperty('lockedDays');
+      });
+
+      it('a row with its own rule is held to it and not to its subject’s', async () => {
+        arrange({
+          requirements: [
+            idrott(
+              { maxLessonsPerDay: 1, minDaysBetween: 2 },
+              { ownDistribution: true, maxLessonsPerDay: 2, minDaysBetween: null },
+            ),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const sent = postedPayload().requirements[0]!;
+        expect(sent).toMatchObject({ maxLessonsPerDay: 2 });
+        expect(sent).not.toHaveProperty('minDaysBetween');
+      });
+
+      it('a row whose own rule is none sends none, whatever its subject says', async () => {
+        arrange({
+          requirements: [
+            idrott(
+              { maxLessonsPerDay: 1, minDaysBetween: 2 },
+              { ownDistribution: true, maxLessonsPerDay: null, minDaysBetween: null },
+            ),
+          ],
+          lockedLessons: [lockedLesson()],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const sent = postedPayload().requirements[0]!;
+        expect(sent).not.toHaveProperty('maxLessonsPerDay');
+        expect(sent).not.toHaveProperty('minDaysBetween');
+        expect(sent).not.toHaveProperty('lockedDays');
+      });
+    });
+
     describe('lärarnas arbetstid', () => {
       /*
        * The teacher's own lunch and rest, which nothing in this payload could
