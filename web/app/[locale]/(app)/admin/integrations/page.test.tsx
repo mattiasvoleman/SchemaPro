@@ -445,10 +445,15 @@ describe("/admin/integrations — the register", () => {
     await user.click(within(dialog).getByRole("button", { name: "Välj alla visade utom flaggade" }));
     // 200 rendered, less the two flagged: the five behind "Visa fler" stay out.
     expect(await within(dialog).findByText(/198 av 205 ändringar valda/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("checkbox", { name: "Elev 001" })).not.toBeChecked();
-    expect(within(dialog).getByRole("checkbox", { name: "Elev 002" })).not.toBeChecked();
-    // 205 rows rendered in jsdom: slow beside 190 other files, not a hang.
-  }, 20_000);
+    // A row's checkbox through its label's `control`. getByRole and
+    // getByLabelText ask each of the 200 inputs for its labels, which jsdom
+    // answers by walking the whole document: nine tenths of this test's time,
+    // past 20 s with coverage on CI. Rendering the rows was never the cost.
+    const box = (name: string) => (within(dialog).getByText(name, { selector: "label" }) as HTMLLabelElement).control;
+    expect(box("Elev 001")).not.toBeChecked();
+    expect(box("Elev 002")).not.toBeChecked();
+    expect(box("Elev 199")).toBeChecked();
+  });
 
   it("keeps every run reachable: older runs page by `before`, and a run's errors are named", async () => {
     const user = userEvent.setup();
