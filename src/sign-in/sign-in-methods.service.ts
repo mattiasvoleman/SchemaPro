@@ -1,6 +1,6 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, type SchoolSignInMethod, type SignInProvider } from '@prisma/client';
+import { Prisma, type PrismaClient, type SchoolSignInMethod, type SignInProvider } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { SchoolAccountSession } from '../auth/school-account';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -53,6 +53,17 @@ export function domainTakenRefusal(error: unknown): string[] | null {
   return listed ? listed.split(',').filter((domain) => HOSTNAME.test(domain)) : [];
 }
 
+/** How many active people, and how many of them staff, use one e-mail domain at the school. */
+export interface DomainUse {
+  domain: string;
+  people: number;
+  staff: number;
+}
+
+/** "kommun.se (12), skola.se (1)": domains with how many people they name. */
+const counted = (rows: Array<{ domain: string; count: number }>) =>
+  rows.map((row) => `${row.domain} (${row.count})`).join(', ');
+
 /** Whether a session's school account is one this row would let sign in. */
 export function accountFits(
   account: SchoolAccountSession | undefined,
@@ -92,10 +103,26 @@ export function accountFits(
  *     refuses it (SQLSTATE SI409), answered as 409 SIGN_IN_DOMAIN_TAKEN
  *     naming the saving school's own domains and nothing about the other
  *     school. Otherwise one school could leave another's domain with no
- *     answer at /login.
+ *     answer at /login. The collision is logged for the operator, who
+ *     decides whose domain it is.
+ *
+ * And two from the school's own people, read under the admin's RLS in the
+ * transaction that saves:
+ *   - Every domain must be one the school uses: the address of at least one
+ *     of its active people is on it (409 SIGN_IN_DOMAIN_UNUSED). A school
+ *     cannot claim a domain it has nobody on, first come, ahead of the
+ *     schools that do.
+ *   - With "Kräv skolkonto för personal" on, every active teacher's and
+ *     admin's address must be on a domain /login answers with this
+ *     provider: one of the row's own, or one another school names with the
+ *     same provider (409 SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT, naming the
+ *     domains left out and how many staff are on each). Otherwise staff on
+ *     a missing or mistyped domain would find no school-account sign-in and
+ *     have their password refused, with no way in.
  */
 @Injectable()
 export class SignInMethodsService {
+  private readonly logger = new Logger(SignInMethodsService.name);
   private readonly schoolAccounts: boolean;
 
   constructor(
@@ -156,6 +183,31 @@ export class SignInMethodsService {
 
     try {
       const row = await this.prisma.withRls(user, async (tx) => {
+        const uses = await this.domainUses(tx, schoolId);
+        const used = new Map(uses.map((use) => [use.domain, use]));
+        const unused = config.domains.filter((domain) => !used.has(domain));
+        if (unused.length > 0) {
+          throw new ConflictException({
+            message: 'Ingen aktiv person på skolan har en adress på domänen.',
+            code: 'SIGN_IN_DOMAIN_UNUSED',
+            params: { domains: unused.join(', ') },
+          });
+        }
+        if (config.ssoOnlyForStaff) {
+          const left: Array<{ domain: string; count: number }> = [];
+          for (const use of uses) {
+            if (use.staff === 0 || config.domains.includes(use.domain)) continue;
+            const answered = await this.providerIn(tx, use.domain);
+            if (answered !== config.provider) left.push({ domain: use.domain, count: use.staff });
+          }
+          if (left.length > 0) {
+            throw new ConflictException({
+              message: 'Personal med adresser på andra domäner skulle inte kunna logga in.',
+              code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT',
+              params: { domains: counted(left) },
+            });
+          }
+        }
         const existing = await tx.schoolSignInMethod.findUnique({ where: { schoolId } });
         return existing
           ? tx.schoolSignInMethod.update({ where: { schoolId }, data: config })
@@ -167,8 +219,12 @@ export class SignInMethodsService {
         session: { schoolAccount: user.schoolAccount ?? null },
       };
     } catch (error) {
+      if (error instanceof ConflictException) throw error;
       const taken = domainTakenRefusal(error);
       if (taken) {
+        this.logger.warn(
+          `A school-account domain is named by another school with another provider [school=${schoolId}] [domains=${taken.join(',')}]`,
+        );
         throw new ConflictException({
           message: 'En annan skola använder domänen med en annan inloggning.',
           code: 'SIGN_IN_DOMAIN_TAKEN',
@@ -177,6 +233,31 @@ export class SignInMethodsService {
       }
       rethrowPrismaError(error);
     }
+  }
+
+  /**
+   * The e-mail domains of the school's active people, with how many people
+   * and how many staff (SCHOOL_ADMIN, TEACHER) are on each. Read under the
+   * admin's own RLS, which shows them every person of their school.
+   */
+  private async domainUses(tx: PrismaClient, schoolId: string): Promise<DomainUse[]> {
+    const rows = await tx.$queryRaw<Array<{ domain: string; people: bigint | number; staff: bigint | number }>>(
+      Prisma.sql`SELECT lower(split_part(btrim("email"), '@', 2)) AS "domain",
+                        count(*) AS "people",
+                        count(*) FILTER (WHERE "role" IN ('SCHOOL_ADMIN', 'TEACHER')) AS "staff"
+                   FROM "Users"
+                  WHERE "schoolId" = ${schoolId}::uuid AND "isActive"
+                  GROUP BY 1`,
+    );
+    return (rows ?? []).map((row) => ({ domain: row.domain, people: Number(row.people), staff: Number(row.staff) }));
+  }
+
+  /** What /login answers for a domain, asked inside the saving transaction. */
+  private async providerIn(tx: PrismaClient, domain: string): Promise<SignInProvider | null> {
+    const rows = await tx.$queryRaw<Array<{ provider: SignInProvider | null }>>(
+      Prisma.sql`SELECT app.sign_in_provider_for_domain(${domain})::text AS "provider"`,
+    );
+    return rows?.[0]?.provider ?? null;
   }
 
   /** Turns school accounts off for the school: passwords only from the next refresh. */
