@@ -3393,7 +3393,7 @@
       <tr><td class="k">Notiser</td><td>Notiser i SchemaPro som skapades före gränsdagen.</td><td>—</td></tr>
       <tr><td class="k">Ändringsloggar</td><td>Schemats ändringslogg och historiken över kopplingar till vårdnadshavare före gränsdagen. Tjänsternas versioner för läsår som slutade före gränsdagen, ett helt läsår i taget.</td><td>Tjänsterna och uppdragen. Ett tjänstefördelningsförslag som tillämpades före gränsdagen kan inte längre ångras.</td></tr>
       <tr><td class="k">Frånvaroorsaker</td><td>Orsaken på lärarfrånvaro som slutade före gränsdagen. I listorna står det <span class="ui">Gallrad</span>.</td><td>Frånvaron och vikariebesluten, så att vikarietimmar och lön stämmer.</td></tr>
-      <tr><td class="k">Slutade personer</td><td>Namn, e-post, telefon, inloggning och SS12000-id för den som avaktiverades före gränsdagen. Personen pseudonymiseras: namnet blir <em>Pseudonym</em> och sex tecken.</td><td>Personen som rad, med närvaro, beslut, klasshistorik och tjänster. Kopplingar till vårdnadshavare tas bort.</td></tr>
+      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>
 
@@ -3434,9 +3434,9 @@
     <span class="label">Slutade lärare och SCB</span>
     <p>
       SCB:s Pedagogisk personal räknar vem som var anställd den 15 oktober.
-      En lärare med en tjänst under ett läsår vars 15 oktober ligger mindre än
-      sju veckor bakåt pseudonymiseras inte förrän den 1 december, så att
-      SCB-underlaget kan lämnas med namn (6.9). Sidan och körningen räknar
+      En lärare med en tjänst under ett läsår väntar till och med den
+      30 november det läsåret och pseudonymiseras tidigast den 1 december, så
+      att SCB-underlaget kan lämnas med namn (6.9). Sidan och körningen räknar
       dem som väntande.
     </p>
   </div>
@@ -3444,7 +3444,10 @@
     En pseudonymiserad person kan inte aktiveras igen. Kommer personen
     tillbaka lägger du upp den på nytt. Den som hade fått en inbjudan förlorar
     också sin inloggning. Går den inte att ta bort försöker natten igen, och
-    personen pseudonymiseras först när inloggningen är borta.
+    personen pseudonymiseras först när inloggningen är borta. Natten frågar
+    om varje person en gång till precis innan inloggningen tas bort: den som
+    har aktiverats igen, eller sparats av ett nytt beslut, när natten kommer
+    till den behåller inloggningen och rörs inte.
   </p>
   <p>
     Den första natten efter ett beslut kan ha flera års uppgifter att gallra.

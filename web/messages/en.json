@@ -4452,8 +4452,17 @@
       },
       "DEPARTED_PEOPLE": {
         "name": "People who left",
-        "body": "People deactivated before the cutoff date are pseudonymised. Name, email, phone, login and SS12000 id are replaced. The row stays, so attendance, decisions and the SCB return still hold together. A teacher with a post in a school year whose 15 October is less than seven weeks past waits, so the SCB return can be filed."
+        "body": "People deactivated before the cutoff date are pseudonymised. The row stays, so attendance, decisions and the SCB return still hold together. A teacher with a post in a school year waits up to and including 30 November of that school year, so the SCB return can be filed."
       }
+    },
+    "peopleEffectsTitle": "When a person is pseudonymised:",
+    "peopleEffects": {
+      "names": "Name, email, phone and SS12000 id are replaced.",
+      "login": "Their login is removed.",
+      "notices": "All of their own notices are removed, whatever the decision for Notices. Notices to others that name them follow that decision.",
+      "links": "Links between them and guardians or pupils are removed.",
+      "devices": "Their push devices and their email and push choices are removed.",
+      "posts": "The signature and note are removed from their teaching posts. The posts stay, and earlier versions keep the signature until Change logs purges the school year."
     },
     "undecided": "Not decided",
     "keep": "Kept",
@@ -4465,7 +4474,7 @@
     "reference": "Reference: {reference}",
     "waitsUntil": "Applies from the night before {date}. Until then the earlier decision applies.",
     "tonightRows": "{count, plural, =0 {Nothing is dated before {date}.} one {# record is dated before {date} and is purged at the next run.} other {# records are dated before {date} and are purged at the next run.}}",
-    "tonightPeople": "{count, plural, =0 {Nobody who left was deactivated before {date}.} one {# person was deactivated before {date} and is pseudonymised at the next run.} other {# people were deactivated before {date} and are pseudonymised at the next run.}}",
+    "tonightPeople": "{count, plural, =0 {Nobody who left was deactivated before {date}.} one {# person was deactivated before {date} and is pseudonymised at the next run, as listed.} other {# people were deactivated before {date} and are pseudonymised at the next run, as listed.}}",
     "previewHeld": "{count, plural, one {# teacher waits for the SCB return.} other {# teachers wait for the SCB return.}}",
     "purgedBefore": "Purged before {date}.",
     "change": "Change",
@@ -4482,7 +4491,7 @@
     "previewLoading": "Counting what the period would purge…",
     "previewFailed": "What the period would purge could not be counted. You can still save the decision.",
     "previewRows": "{count, plural, =0 {Nothing is dated before {date} today.} one {Today # record is dated before {date}. It is purged once the period applies.} other {Today # records are dated before {date}. They are purged once the period applies.}}",
-    "previewPeople": "{count, plural, =0 {Nobody who left was deactivated before {date}.} one {# person was deactivated before {date} and is pseudonymised once the period applies.} other {# people were deactivated before {date} and are pseudonymised once the period applies.}}",
+    "previewPeople": "{count, plural, =0 {Nobody who left was deactivated before {date}.} one {# person was deactivated before {date} and is pseudonymised once the period applies, as listed.} other {# people were deactivated before {date} and are pseudonymised once the period applies, as listed.}}",
     "dialogWarningTitle": "What is purged cannot be restored",
     "dialogWarning": "A period that purges more than the one in force applies only after a day. After that, what is counted here is gone, and SchemaPro cannot bring it back.",
     "save": "Save decision",

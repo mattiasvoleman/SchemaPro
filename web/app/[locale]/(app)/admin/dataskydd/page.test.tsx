@@ -136,6 +136,38 @@ describe("/admin/dataskydd", () => {
     expect(within(dialog).getByRole("option", { name: "Pseudonymiseras efter 1 år" })).toBeInTheDocument();
   });
 
+  it("says everything pseudonymising a person does, on the page and beside the count, own notices whatever Notiser says", async () => {
+    const effects = [
+      "Namn, e-post, telefon och SS12000-id ersätts.",
+      "Inloggningen tas bort.",
+      "Alla personens egna notiser tas bort, oavsett beslutet för Notiser. Notiser till andra som nämner personen följer det beslutet.",
+      "Kopplingar mellan personen och vårdnadshavare eller elever tas bort.",
+      "Personens enheter för push och val av e-post och push tas bort.",
+      "Signatur och anteckning tas bort från personens tjänster. Tjänsterna finns kvar, och tidigare versioner behåller signaturen tills Ändringsloggar gallrar läsåret.",
+    ];
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("button", { name: "Ändra gallringsperioden för Slutade personer" });
+    const people = row("Slutade personer");
+    expect(within(people).getByText(/väntar till och med den 30 november det läsåret/)).toBeInTheDocument();
+    const list = within(people).getByRole("list", { name: "När en person pseudonymiseras:" });
+    expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(effects);
+    // Only the people say it: no other kind's row has the list.
+    expect(within(row("Notiser")).queryByRole("list")).not.toBeInTheDocument();
+
+    await user.click(within(people).getByRole("button", { name: "Ändra gallringsperioden för Slutade personer" }));
+    const dialog = await screen.findByRole("dialog");
+    // Bevaras pseudonymises nobody, so says nothing of it.
+    await user.selectOptions(within(dialog).getByLabelText("Beslut"), "KEEP");
+    expect(within(dialog).queryByRole("list")).not.toBeInTheDocument();
+    await user.selectOptions(within(dialog).getByLabelText("Beslut"), "12");
+    expect(
+      await within(dialog).findByText(/1\s234 personer avaktiverades före 21 oktober 2025 och pseudonymiseras när perioden börjar gälla, som listan beskriver\./),
+    ).toBeInTheDocument();
+    const beside = within(dialog).getByRole("list", { name: "När en person pseudonymiseras:" });
+    expect(within(beside).getAllByRole("listitem").map((item) => item.textContent)).toEqual(effects);
+  });
+
   it("lists a night's run as counts, with what waits and what continues", async () => {
     get.mockImplementation(async (path: string) => {
       if (path === "/api/v1/retention")
