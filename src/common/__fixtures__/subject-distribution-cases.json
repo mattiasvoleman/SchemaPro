@@ -1,0 +1,1136 @@
+{
+  "constants": {
+    "MAX_LESSONS_PER_DAY_MIN": 1,
+    "MAX_LESSONS_PER_DAY_MAX": 20,
+    "MIN_DAYS_BETWEEN_MIN": 2,
+    "MIN_DAYS_BETWEEN_MAX": 6
+  },
+  "cases": [
+    {
+      "name": "no rule says nothing about two Mondays",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "one a day refuses two on Monday",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "one a day holds on Monday and Tuesday",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "two a day is a count, three is one too many",
+      "rule": {
+        "maxLessonsPerDay": 2,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 3,
+          "count": 3,
+          "maxLessonsPerDay": 2,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 3,
+            "count": 3,
+            "maxPerDay": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "two a day holds two",
+      "rule": {
+        "maxLessonsPerDay": 2,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "not consecutive days refuses Monday and Tuesday",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 2,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 2,
+            "minDaysBetween": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "not consecutive days holds Monday and Wednesday",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "the same day is one lesson day",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "three apart refuses Monday and Wednesday",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 3
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 3,
+          "minDaysBetween": 3,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 3,
+            "minDaysBetween": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "three apart holds Monday and Thursday",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 3
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 4,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "the week does not wrap from Friday to Monday",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 4,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 5,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 4,
+          "secondDay": 5,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 4,
+            "secondDay": 5,
+            "minDaysBetween": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "Friday and a Saturday lesson are consecutive",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 5,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 6,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 5,
+          "secondDay": 6,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 5,
+            "secondDay": 6,
+            "minDaysBetween": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "three days in a row are two pairs",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 2,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 2,
+          "secondDay": 3,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "b",
+            "c"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 2,
+            "minDaysBetween": 2
+          }
+        },
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 2,
+            "secondDay": 3,
+            "minDaysBetween": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "three days in a row under three apart are three pairs",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 3
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 3,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 2,
+          "minDaysBetween": 3,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 3,
+          "minDaysBetween": 3,
+          "lessonIds": [
+            "a",
+            "c"
+          ]
+        },
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 2,
+          "secondDay": 3,
+          "minDaysBetween": 3,
+          "lessonIds": [
+            "b",
+            "c"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 2,
+            "minDaysBetween": 3
+          }
+        },
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 3,
+            "minDaysBetween": 3
+          }
+        },
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 2,
+            "secondDay": 3,
+            "minDaysBetween": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "both halves at once",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 2,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 2,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        },
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 2,
+            "minDaysBetween": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "odd and even weeks on Monday never meet",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "EVEN_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "odd weeks and every week on Monday meet in the odd ones",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "odd Monday and even Tuesday are never in one week",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "EVEN_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "odd Monday and odd Tuesday are",
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": 2
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "ODD_WEEKS",
+          "startDate": null,
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "DAYS_APART",
+          "firstDay": 1,
+          "secondDay": 2,
+          "minDaysBetween": 2,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_DAYS_TOO_CLOSE",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "firstDay": 1,
+            "secondDay": 2,
+            "minDaysBetween": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "an autumn Monday and a spring Monday never meet",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": "2026-12-20"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2027-01-08",
+          "endDate": null
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "windows that overlap by a day meet",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": "2027-01-08"
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2027-01-08",
+          "endDate": null
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "a year-long lesson meets each term lesson but the terms never meet each other",
+      "rule": {
+        "maxLessonsPerDay": 2,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-20"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2027-01-08",
+          "endDate": "2027-06-10"
+        }
+      ],
+      "breaches": [],
+      "warnings": []
+    },
+    {
+      "name": "the same three under one a day count two",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": null,
+          "endDate": null
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2026-08-17",
+          "endDate": "2026-12-20"
+        },
+        {
+          "id": "c",
+          "dayOfWeek": 1,
+          "recurrence": "ALL_WEEKS",
+          "startDate": "2027-01-08",
+          "endDate": "2027-06-10"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 1,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 1,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "an absent recurrence is every week",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "lessons": [
+        {
+          "id": "a",
+          "dayOfWeek": 2
+        },
+        {
+          "id": "b",
+          "dayOfWeek": 2,
+          "recurrence": "EVEN_WEEKS"
+        }
+      ],
+      "breaches": [
+        {
+          "kind": "PER_DAY",
+          "dayOfWeek": 2,
+          "count": 2,
+          "maxLessonsPerDay": 1,
+          "lessonIds": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DISTRIBUTION_TOO_MANY_ON_DAY",
+          "params": {
+            "requirement": "Idrott för 7A",
+            "day": 2,
+            "count": 2,
+            "maxPerDay": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "an empty week breaks nothing",
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": 2
+      },
+      "lessons": [],
+      "breaches": [],
+      "warnings": []
+    }
+  ],
+  "effective": [
+    {
+      "name": "a row that follows its subject takes the subject rule",
+      "requirement": {
+        "ownDistribution": false,
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      },
+      "subject": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": 2
+      },
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": 2
+      }
+    },
+    {
+      "name": "a row with its own rule takes its own",
+      "requirement": {
+        "ownDistribution": true,
+        "maxLessonsPerDay": 2,
+        "minDaysBetween": null
+      },
+      "subject": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": 2
+      },
+      "rule": {
+        "maxLessonsPerDay": 2,
+        "minDaysBetween": null
+      }
+    },
+    {
+      "name": "own and empty is no rule although the subject has one",
+      "requirement": {
+        "ownDistribution": true,
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      },
+      "subject": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": 2
+      },
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      }
+    },
+    {
+      "name": "a subject without a rule gives none",
+      "requirement": {
+        "ownDistribution": false,
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      },
+      "subject": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      },
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      }
+    },
+    {
+      "name": "an absent flag follows the subject",
+      "requirement": {
+        "maxLessonsPerDay": 3,
+        "minDaysBetween": 3
+      },
+      "subject": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      },
+      "rule": {
+        "maxLessonsPerDay": 1,
+        "minDaysBetween": null
+      }
+    },
+    {
+      "name": "no subject at all gives none",
+      "requirement": {
+        "ownDistribution": false
+      },
+      "subject": null,
+      "rule": {
+        "maxLessonsPerDay": null,
+        "minDaysBetween": null
+      }
+    }
+  ]
+}
