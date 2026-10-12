@@ -11861,3 +11861,164 @@ BEGIN
     RAISE EXCEPTION 'anon: no longer holds %; the section names what anon holds exactly, so change it on purpose', missing;
   END IF;
 END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 37: tjänsteprincipalens och synkens armar gäller bara API:ts roll
+-- (20261016100000).
+--
+-- The service principal's, the sync's and the key lookup's arms admit a row
+-- on a GUC alone: app.service_school_id, app.sync_school_id and
+-- app.service_key_lookup. Only the gateway sets them, as app_authenticated
+-- (PrismaService.withServicePrincipal, withSyncPrincipal and
+-- withServiceKeyLookup). Until 20261016100000 the 56 arms were TO public, so
+-- they also applied to PostgREST's authenticated and to anon. Only
+-- PostgREST's refusal to let a client set the GUC kept a signed-in user from
+-- being the service principal. As authenticated with no user and
+-- app.service_school_id set, all 91 Users rows of the seeded school were read
+-- and updated.
+--
+-- 37a reads the catalogue. No policy in "public" or "app" applies to PUBLIC,
+-- with no exceptions, since none of the arms has to stay that way. Every
+-- policy whose expression calls a principal's function belongs to
+-- app_authenticated alone. That is read from pg_depend, not from the text, so
+-- a reformatted expression cannot hide an arm, and an arm a later migration
+-- writes TO authenticated fails too.
+--
+-- 37b sets each principal's GUC in turn, with no user signed in, and runs the
+-- same statements as both roles. As app_authenticated the principal reads the
+-- school's rows and updates them, and the service principal inserts a class.
+-- As authenticated the GUC adds nothing: nothing is read or updated, and the
+-- insert is refused. This leg also catches an arm that reads the GUC some
+-- other way, through current_setting() or a wrapper function, which pg_depend
+-- does not see.
+--
+-- anon is not run here, since this connection cannot become anon. After
+-- 20261016090000 it holds no table (section 36), and 37a leaves it no
+-- principal's arm either.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  principal_fns oid[] := ARRAY[
+    'app.current_service_school_id()'::regprocedure,
+    'app.current_sync_school_id()'::regprocedure,
+    'app.is_service_key_lookup()'::regprocedure,
+    'app.current_service_key_id()'::regprocedure
+  ]::oid[];
+  arms  int;
+  wrong text;
+BEGIN
+  SELECT string_agg(schemaname || '.' || tablename || '.' || policyname, ', ' ORDER BY schemaname, tablename, policyname)
+    INTO wrong
+    FROM pg_policies
+   WHERE schemaname IN ('public', 'app') AND 'public' = ANY (roles);
+  IF wrong IS NOT NULL THEN
+    RAISE EXCEPTION 'principal arms: these policies apply TO public, and so to PostgREST''s authenticated and to anon: %', wrong;
+  END IF;
+
+  SELECT count(*)::int,
+         string_agg(c.relname || '.' || p.polname || ' TO ' || r.roles, ', ' ORDER BY c.relname, p.polname)
+           FILTER (WHERE r.roles <> 'app_authenticated')
+    INTO arms, wrong
+    FROM pg_policy p
+    JOIN pg_class c ON c.oid = p.polrelid
+   CROSS JOIN LATERAL (
+     SELECT string_agg(CASE x WHEN 0 THEN 'public' ELSE x::regrole::text END, ',' ORDER BY x) AS roles
+       FROM unnest(p.polroles) x
+   ) r
+   WHERE EXISTS (SELECT 1 FROM pg_depend d
+                  WHERE d.classid = 'pg_policy'::regclass AND d.objid = p.oid
+                    AND d.refclassid = 'pg_proc'::regclass AND d.refobjid = ANY (principal_fns));
+  IF arms < 56 THEN
+    RAISE EXCEPTION 'principal arms: only % policies call a principal''s function, where 20261016100000 moved 56; the catalogue query proved nothing', arms;
+  END IF;
+  IF wrong IS NOT NULL THEN
+    RAISE EXCEPTION 'principal arms: an arm that admits on a principal''s GUC is not app_authenticated''s alone: %', wrong;
+  END IF;
+END $$;
+
+BEGIN;
+SELECT set_config('app.test_rls37_school', :'school_a', true);
+SELECT set_config('request.jwt.claims', '', true);
+
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls37_school')::uuid;
+  year uuid;
+  principal text; via text; t record; n bigint;
+BEGIN
+  -- The class insert needs one of the school's years, read as the service
+  -- principal before the loop.
+  PERFORM set_config('app.service_school_id', school::text, true);
+  SELECT id INTO year FROM "AcademicYears" ORDER BY "startDate" LIMIT 1;
+  PERFORM set_config('app.service_school_id', '', true);
+  IF year IS NULL THEN
+    RAISE EXCEPTION 'principal arms: the service principal finds no year in the primary school';
+  END IF;
+
+  FOREACH principal IN ARRAY ARRAY['service principal', 'sync', 'key lookup'] LOOP
+    FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      IF current_user <> via THEN RAISE EXCEPTION 'principal arms: running as %, not %', current_user, via; END IF;
+      PERFORM set_config('app.service_school_id', CASE principal WHEN 'service principal' THEN school::text ELSE '' END, true);
+      PERFORM set_config('app.sync_school_id', CASE principal WHEN 'sync' THEN school::text ELSE '' END, true);
+      PERFORM set_config('app.service_key_lookup', CASE principal WHEN 'key lookup' THEN 'on' ELSE '' END, true);
+      IF app.current_user_id() IS NOT NULL THEN
+        RAISE EXCEPTION 'principal arms: a user is signed in, so the % leg says nothing about the arms', principal;
+      END IF;
+
+      FOR t IN SELECT * FROM (VALUES
+          ('service principal', 'Users'), ('service principal', 'Schools'),
+          ('service principal', 'AcademicYears'), ('service principal', 'StudentGroups'),
+          ('service principal', 'StudentGroupMembers'), ('service principal', 'GuardianStudents'),
+          ('service principal', 'Subjects'), ('service principal', 'Rooms'),
+          ('service principal', 'MasterLessons'), ('service principal', 'CalendarLessons'),
+          ('sync', 'Users'), ('sync', 'Schools'), ('sync', 'AcademicYears'),
+          ('sync', 'StudentGroups'), ('sync', 'StudentGroupMembers'), ('sync', 'GuardianStudents'),
+          ('key lookup', 'IntegrationApiKeys')
+        ) AS v(who, tbl) WHERE v.who = principal
+      LOOP
+        EXECUTE format('SELECT count(*) FROM %I', t.tbl) INTO n;
+        IF via = 'app_authenticated' AND n = 0 THEN
+          RAISE EXCEPTION 'principal arms: as app_authenticated the % reads nothing in %', principal, t.tbl;
+        ELSIF via = 'authenticated' AND n <> 0 THEN
+          RAISE EXCEPTION 'principal arms: through PostgREST''s authenticated the % reads % row(s) of %', principal, n, t.tbl;
+        END IF;
+      END LOOP;
+
+      -- The service principal's update and the key lookup's touch (the
+      -- guard's own write) read no column. A statement that reads one needs
+      -- a SELECT arm as well, so an UPDATE arm that leaks on its own fails
+      -- here only this way. The sync may not touch an admin
+      -- (users_sync_writes_are_narrow), so its update names the pupils.
+      EXECUTE CASE principal
+        WHEN 'service principal' THEN 'UPDATE "Users" SET "updatedAt" = now()'
+        WHEN 'sync' THEN 'UPDATE "Users" SET "updatedAt" = now() WHERE role = ''STUDENT'''
+        ELSE 'UPDATE "IntegrationApiKeys" SET "lastUsedAt" = now()'
+      END;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF via = 'app_authenticated' AND n = 0 THEN
+        RAISE EXCEPTION 'principal arms: as app_authenticated the % updates nothing', principal;
+      ELSIF via = 'authenticated' AND n <> 0 THEN
+        RAISE EXCEPTION 'principal arms: through PostgREST''s authenticated the % updates % row(s)', principal, n;
+      END IF;
+
+      IF principal = 'service principal' THEN
+        BEGIN
+          INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt")
+          VALUES (school, year, 'RLS37 klass genom ' || via, now());
+          IF via = 'authenticated' THEN
+            RAISE EXCEPTION 'principal arms: through PostgREST''s authenticated the service principal created a class';
+          END IF;
+        EXCEPTION WHEN insufficient_privilege THEN
+          IF via = 'app_authenticated' THEN
+            RAISE EXCEPTION 'principal arms: as app_authenticated the service principal could not create a class';
+          END IF;
+        END;
+      END IF;
+    END LOOP;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
