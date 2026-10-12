@@ -145,7 +145,7 @@
     "schoolAccountBusy": "Many people are signing in right now. Wait a minute and try again.",
     "ssoRequired": "Your school requires staff to sign in with their school account. Choose Sign in with school account.",
     "ssoReasons": {
-      "no-account": "Your school account has an email address nobody has invited to SchemaPro. Ask your school's administrator to invite you with the same address your school account has.",
+      "no-account": "Your school account has an email address nobody has invited to SchemaPro. Ask your school's administrator to invite you with the same address your school account has. If you are already in SchemaPro with another address, the administrator sends your invitation again once SchemaPro has the new one, and your login moves there.",
       "unverified": "Your school account sent no verified email address, so it could not be linked to your account. Contact your school's IT staff.",
       "other-organisation": "The account you signed in with does not belong to your school's organisation. Sign in with your school account, or contact your school's administrator.",
       "not-enabled": "Your school has not turned on signing in with a school account. Sign in with your password.",
@@ -153,7 +153,7 @@
       "blocked": "The account is blocked. Contact your school's administrator.",
       "failed": "Signing in with your school account did not finish. Try again, or sign in with your password."
     },
-    "noProfileSchoolAccount": "You signed in with the school account {email}, but nobody at your school has invited that address to SchemaPro. Ask your school's administrator to invite you with exactly that address.",
+    "noProfileSchoolAccount": "You signed in with the school account {email}, but nobody at your school has invited that address to SchemaPro. Ask your school's administrator to invite you with exactly that address. If you are already in SchemaPro with another address, the administrator sends your invitation again once SchemaPro has this one, and your login moves there.",
     "linkNeedsSchoolAccount": "Your school requires staff to sign in with their school account, so this link cannot be used to choose a password. Go to the sign-in page and choose Sign in with school account."
   },
   "nav": {
