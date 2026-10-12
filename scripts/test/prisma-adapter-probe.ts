@@ -3611,8 +3611,12 @@ async function runChecks(
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           'PATCH a new teacher': 34,
-          'PATCH a drag': 21,
-          'PATCH a drag back beside 8A': 24,
+          // +1 each since Ämnesfördelning: a drag to another weekday asks the
+          // lesson's timplanspost for its distribution rule (one indexed
+          // SELECT), and stops there when the post has none, as here. A
+          // lesson nudged within its own day asks nothing.
+          'PATCH a drag': 22,
+          'PATCH a drag back beside 8A': 25,
           'place a meal': 7,
           'give a timplanspost a teacher': 22,
         },
