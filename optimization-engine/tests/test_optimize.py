@@ -4169,7 +4169,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # twenty for a year-9 one. lessonLengths is sent only for a requirement
     # whose remaining lessons have two or more lengths; the gateway pins the
     # uniform set (REQUIREMENT_FIELDS) and this one (REQUIREMENT_FIELDS_MIXED)
-    # in src/optimization/ai-engine-contract.spec.ts.
+    # in src/optimization/ai-engine-contract.spec.ts. The ämnesfördelning's
+    # three are sent only for a requirement that carries a rule, and the
+    # gateway pins that set as REQUIREMENT_FIELDS_DISTRIBUTED.
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -4185,6 +4187,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "minGradeLevel",
         "maxGradeLevel",
         "requiredRoomType",
+        "maxLessonsPerDay",
+        "minDaysBetween",
+        "lockedDays",
     }
     assert _field_names(AnonymousConstraint) == {
         "id",

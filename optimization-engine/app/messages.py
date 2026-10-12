@@ -381,6 +381,44 @@ MESSAGES: dict[str, str] = {
         "once. Shorten the rest, or free the end of that day or the start of the next one."
     ),
 
+    # ---- Ämnesfördelning: how a requirement's lessons spread ------------
+    #
+    # `requirement` is the anonymous id the gateway names "Idrott för 7A", as
+    # every sentence about a timplanspost is named. The rule is the subject's
+    # or the requirement's own, and the sentences say "the rule" because the
+    # engine cannot tell which and the school fixes either in the same dialog.
+    "SUBJECT_DISTRIBUTION_WEEK_TOO_SHORT": (
+        "{requirement}: {lessons, plural, one {# lesson does} other {# lessons do}} not fit on "
+        "the {days, plural, one {# day} other {# days}} it can be taught, with at most "
+        "{maxPerDay} a day{minDaysBetween, select, 0 {} 2 { and none on consecutive days} "
+        "other { and lesson days at least {minDaysBetween} days apart}}{locked, select, 0 {} "
+        "other { ({locked} of them locked)}}. Allow more a day or closer days, or reduce the "
+        "lessons per week."
+    ),
+    "SUBJECT_DISTRIBUTION_PER_DAY": (
+        "{requirement} may have at most {maxPerDay, plural, one {# lesson} other {# lessons}} "
+        "a day, and that rule is one of those that cannot all hold at once. Allow more a day, "
+        "or free a day it can be taught on."
+    ),
+    "SUBJECT_DISTRIBUTION_DAYS_APART": (
+        "{requirement} may not have lessons {minDaysBetween, select, 2 {on consecutive days} "
+        "other {on days less than {minDaysBetween} days apart}}, and that rule is one of those "
+        "that cannot all hold at once. Allow closer days, or free days it can be taught on."
+    ),
+    # Sent by the GATEWAY when a hand edit breaks the rule — a warning beside
+    # the saved lesson, never a refusal (master-lessons.service.ts). Here for
+    # the reason the STAFF_* codes below are: this is the one catalogue the web
+    # renders a school's sentences from. `requirement` is already a name there.
+    "DISTRIBUTION_TOO_MANY_ON_DAY": (
+        "{requirement} now has {count} lessons on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, and its distribution rule allows "
+        "at most {maxPerDay} a day."
+    ),
+    "DISTRIBUTION_DAYS_TOO_CLOSE": (
+        "{requirement} now has lessons on {firstDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {firstDay}}} and {secondDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {secondDay}}}, and its distribution rule "
+        "{minDaysBetween, select, 2 {allows no consecutive days} other {wants lesson days at "
+        "least {minDaysBetween} days apart}}."
+    ),
+
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (
         "No timetable was found within {budget} s, and none of the {rules, plural, "
@@ -415,6 +453,10 @@ MESSAGES: dict[str, str] = {
     ),
     "PROBE_SOLVED_WITHOUT_LUNCH": (
         "With the guaranteed lunch break switched off, a timetable was found in {seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
+        "With the subjects' distribution rules dropped — at most a number of lessons a day, "
+        "no consecutive days — a timetable was found in {seconds} s."
     ),
     # TWO PROBES AND NEVER ONE "teachers' working time", for the reason the
     # lunch above is three: a school cannot switch its teachers' working time

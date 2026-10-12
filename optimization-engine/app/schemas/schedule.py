@@ -44,6 +44,11 @@ ConflictCategory = Literal[
     # Not a proof — a TIMEOUT has none — but a measurement: which single rule,
     # switched off, let the same week solve inside a short probe budget.
     "TIMEOUT_PROBE",
+    # Ämnesfördelning: a requirement's own rule about how its lessons spread
+    # over the week — at most N a day, no two days in a row. A category of its
+    # own rather than REQUIREMENT_DEMAND, because the fix is a different row on
+    # a different screen: the subject's rule, not the lessons per week.
+    "SUBJECT_DISTRIBUTION",
 ]
 
 
@@ -136,6 +141,54 @@ class AnonymousRequirement(CamelModel):
     #: Only the sites that place or measure EACH lesson read lesson_minutes().
     lesson_lengths: list[Annotated[int, Field(ge=15, le=240)]] | None = Field(
         default=None, alias="lessonLengths", min_length=1, max_length=40,
+    )
+    #: Ämnesfördelning: at most this many of the requirement's lessons on any
+    #: one weekday. 1 is "inte två gånger samma dag". None means no rule, which
+    #: is every requirement whose school has not written one — rules are off
+    #: until a school sets them, and the gateway sends the key only when one is
+    #: set, so a payload without rules is byte for byte what it was.
+    #:
+    #: THE WHOLE WEEK COUNTS, not only what the solver places: lockedDays below
+    #: carries the lessons already placed by hand, which reach this engine as
+    #: fixed lessons with no requirement id at all.
+    max_lessons_per_day: int | None = Field(
+        default=None, alias="maxLessonsPerDay", ge=1, le=20,
+    )
+    #: Ämnesfördelning: two weekdays that both hold a lesson of the requirement
+    #: lie at least this many days apart. 2 is "inte dagar i följd" — Monday
+    #: and Wednesday, never Monday and Tuesday. Counted in ISO weekdays and not
+    #: in positions in the school's week, so a school that teaches Monday,
+    #: Wednesday and Friday has no two days in a row; and not across the
+    #: weekend, because the timetable is one week and Friday's lesson does not
+    #: meet next Monday's in it.
+    #:
+    #: SAME-DAY LESSONS ARE NOT ITS BUSINESS. Two lessons on Monday are one day
+    #: with lessons, and whether that is allowed is max_lessons_per_day's
+    #: question. Folding it in here would leave a school no way to say "a
+    #: double lesson is fine, but not Monday and Tuesday".
+    min_days_between: int | None = Field(
+        default=None, alias="minDaysBetween", ge=2, le=6,
+    )
+    #: The weekday of every lesson of this requirement the school placed by
+    #: hand, once per lesson: [1, 1] is two on Monday. A locked lesson reaches
+    #: this engine as a FixedLesson, which names a teacher, a group and a room
+    #: and no requirement — so a rule that read only the lessons it places
+    #: would accept a generated Monday lesson beside a locked one under "at most
+    #: one a day". Sent with a rule and never without one, since nothing else
+    #: reads it.
+    #:
+    #: THE LOCKED LESSONS ARE FACTS, NOT CANDIDATES. Two the school locked onto
+    #: Monday break "at most one a day" on their own, and that is the school's
+    #: hand edit, which already warned it; refusing the week for them would
+    #: turn a warning into a block one screen later. What the rule holds is
+    #: every lesson the solver places: it takes no Monday there, and none on a
+    #: day next to one.
+    #:
+    #: Up to 80, twice the most lessons a week a requirement can have, because
+    #: a school locking alternating weeks holds two lessons where it teaches
+    #: one — the engine has no weeks and counts them both.
+    locked_days: list[DayOfWeek] = Field(
+        default_factory=list, alias="lockedDays", max_length=80,
     )
 
     @model_validator(mode="after")

@@ -2181,7 +2181,8 @@
     "ROOM_CAPACITY": "Room capacity",
     "ROOM_OVERLAP": "Room clash",
     "TEACHER_OVERLAP": "Teacher clash",
-    "TIMEOUT_PROBE": "Rule that does not fit (measured, not proved)"
+    "TIMEOUT_PROBE": "Rule that does not fit (measured, not proved)",
+    "SUBJECT_DISTRIBUTION": "Subject distribution"
   },
   "gaps": {
     "title": "Gaps and idle time",
@@ -3172,6 +3173,7 @@
     "PROBE_ONE_RULE_HELPED": "No timetable was found within {budget} s, but relaxing a single rule made the same week solve. {rules, plural, one {The rule is listed below} other {The # rules are listed below}} — a measurement, not a proof.",
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": "With the margin between lessons set to 0, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": "With the extra time the pupils need before and after their lessons set to 0, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_DISTRIBUTION": "With the subjects' distribution rules dropped — at most a number of lessons a day, no consecutive days — a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_TEACHER_LUNCH": "With the teachers' own guaranteed lunch switched off, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_TEACHER_REST": "With the teachers' own minimum rest between two teaching days switched off, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_DINING_SEATS": "With the dining hall's seat limit removed, a timetable was found in {seconds} s.",
@@ -3194,6 +3196,11 @@
     "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT": "{subject} needs {demandedMinutes, plural, one {# minute} other {# minutes}} a week across {count, plural, one {# curriculum entry} other {# curriculum entries}}, and the teachers who may take them have at most {availableMinutes, plural, one {# minute} other {# minutes}} left below their limits, so at least {shortMinutes, plural, one {# minute} other {# minutes}} will stay unstaffed. Raise a target or the tolerance, record more qualifications, or reduce the subject's time.",
     "STAFF_TEACHER_CAPACITY_ZERO": "Already carries {fixedMinutes, plural, one {# minute} other {# minutes}} a week against a limit of {limitMinutes}, so no further curriculum entry fits.",
     "STAFF_MODEL_TOO_LARGE": "There are too many possible teacher assignments to weigh in one go: about {variables} model variables against a limit of {limit}. Keep the entries that are settled as they are, or record qualifications so that fewer teachers are candidates for each entry, and try again.",
+    "SUBJECT_DISTRIBUTION_WEEK_TOO_SHORT": "{requirement}: {lessons, plural, one {# lesson does} other {# lessons do}} not fit on the {days, plural, one {# day} other {# days}} it can be taught, with at most {maxPerDay} a day{minDaysBetween, select, 0 {} 2 { and none on consecutive days} other { and lesson days at least {minDaysBetween} days apart}}{locked, select, 0 {} other { ({locked} of them locked)}}. Allow more a day or closer days, or reduce the lessons per week.",
+    "SUBJECT_DISTRIBUTION_PER_DAY": "{requirement} may have at most {maxPerDay, plural, one {# lesson} other {# lessons}} a day, and that rule is one of those that cannot all hold at once. Allow more a day, or free a day it can be taught on.",
+    "SUBJECT_DISTRIBUTION_DAYS_APART": "{requirement} may not have lessons {minDaysBetween, select, 2 {on consecutive days} other {on days less than {minDaysBetween} days apart}}, and that rule is one of those that cannot all hold at once. Allow closer days, or free days it can be taught on.",
+    "DISTRIBUTION_TOO_MANY_ON_DAY": "{requirement} now has {count} lessons on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, and its distribution rule allows at most {maxPerDay} a day.",
+    "DISTRIBUTION_DAYS_TOO_CLOSE": "{requirement} now has lessons on {firstDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {firstDay}}} and {secondDay, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {secondDay}}}, and its distribution rule {minDaysBetween, select, 2 {allows no consecutive days} other {wants lesson days at least {minDaysBetween} days apart}}.",
     "TEACHER_LUNCH_WINDOW_TOO_NARROW": "The teacher working-time rule {rule} guarantees a {minutes}-minute lunch inside {windowStart}-{windowEnd}, and that window holds {remaining, plural, one {# minute} other {# minutes}} of the school day. Widen the window, shorten the lunch, or move it inside the hours the school teaches in.",
     "TEACHER_LUNCH_LEAVES_NO_START": "{causes, select, locked {Locked lessons} closed {Reservations on the teacher} locked_closed {Locked lessons and reservations on the teacher} other {These rules}} leave the teacher working-time rule {rule} no {minutes}-minute lunch inside {windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Move a locked lesson, shorten the reservation, or widen the window.",
     "TEACHER_REST_LONGER_THAN_THE_NIGHT": "The teacher working-time rule {rule} asks for {restMinutes} minutes between the last lesson of one day and the first of the next, and the longest night this week can give is {nightMinutes} minutes: the teacher's {lessons, plural, one {# lesson} other {# lessons}} cannot all be placed on days that are not next to each other. Shorten the rest, lengthen the school day, or give this teacher fewer lessons.",
