@@ -64,7 +64,7 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   },
   'src/calendar/lesson-roster.ts': {
     basis: 'CURRENT',
-    why: 'who attends a lesson, for every caller: the attendance check (real people at dated lessons, it writes rows) and every lesson notice and avbokning digest (nobody is told about next year’s class before the activation)',
+    why: 'who attends a lesson, for every caller: the attendance check (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
   'src/integration/ss12000-sync/local-slice.ts': {
@@ -85,10 +85,6 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   'src/timplan/timplan-stage.service.ts': {
     basis: 'CURRENT',
     why: 'stage totals: home classes from the class history (ENROLLED, below); teaching-group memberships as they are — they carry no dates — for the pupils the history names',
-  },
-  'src/realtime/realtime.service.ts': {
-    basis: 'CURRENT',
-    why: 'pushes a dated lesson’s change to the people in its classes and groups as they are now',
   },
   'src/family/family-schedule.service.ts': {
     basis: 'CURRENT',
@@ -187,12 +183,19 @@ describe('the roster-reader inventory', () => {
     for (const path of ['src/year-rollover/projected-rosters.ts', 'src/year-rollover/activation-plan.ts', 'src/calendar/lesson-roster.ts']) {
       expect(where).toContain(path);
     }
-    // The relation reads too: realtime's members selects, SS12000's, and the
-    // share-link list's count of a teaching group's members.
+    // The relation reads too: SS12000's members selects and the share-link
+    // list's count of a teaching group's members. Realtime's broadcast had
+    // its own until it asked lesson-roster.ts.
     const relations = new Set(queries.filter((query) => query.model === 'relation').map((query) => query.path));
-    expect(relations).toEqual(
-      new Set(['src/realtime/realtime.service.ts', 'src/integration/ss12000.service.ts', 'src/publication/public-links.service.ts']),
-    );
+    expect(relations).toEqual(new Set(['src/integration/ss12000.service.ts', 'src/publication/public-links.service.ts']));
+  });
+
+  it('classifies no file that reads no roster', () => {
+    // A reader that moves onto another file's helpers (realtime onto
+    // lesson-roster.ts) leaves the list, or the list names a basis nobody
+    // reads on.
+    const where = new Set(queries.map((query) => query.path));
+    expect(Object.keys(CLASSIFIED).filter((path) => !where.has(path))).toEqual([]);
   });
 
   it('has every roster query in a classified file', () => {
