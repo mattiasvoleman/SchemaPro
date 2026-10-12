@@ -49,7 +49,9 @@ All in the Supabase dashboard:
 2. **Auth settings** (Authentication → URL Configuration):
    - Site URL: your web origin, e.g. `https://app.yourschool.example`
    - Redirect URLs: add `https://app.yourschool.example/**` (the invite and
-     password-reset flows land on `/<locale>/update-password`)
+     password-reset flows land on `/<locale>/update-password`, and "Logga in
+     med skolkonto" on `/<locale>/auth/callback`), and the app's
+     `schemapro://auth/callback` (§11)
 3. **Email templates** (Authentication → Emails): review the *Invite user* and
    *Reset password* templates; the defaults work. For real deliverability,
    configure custom SMTP (Authentication → SMTP) — Supabase's built-in sender
@@ -360,6 +362,184 @@ Walk the full product loop once, in order:
   legacy JWT secret invalidates all sessions and requires updating `JWT_SECRET`
   at the same time, but that key now only covers first-party service tokens.
   Rotate the service-role key freely (only the API uses it).
+
+## 11. School-account sign-in ("Logga in med skolkonto")
+
+Staff sign in with the account they already have in their organisation's
+Microsoft Entra ID or Google Workspace, on the web and in the app. Supabase
+Auth runs the OAuth flow and links the school account to the **invited**
+person by verified e-mail address. Public signups stay off (§1, step 4), so
+an address nobody invited gets no account: the invitation is still the gate.
+
+Who may sign in is decided in the database, by the access-token hook
+`app.custom_access_token_hook` (migration `20261020090000`). Before Auth
+issues any token, at sign-in and at every refresh, the hook:
+
+- refuses a school-account session for a person whose school has not chosen
+  school accounts (`sso_not_enabled`);
+- refuses a school-account session for a person carrying any school-account
+  identity that is not their school's: an Entra identity from another tenant
+  (read from the identity's issuer), a Google identity from another Workspace
+  or with no `hd`, or a provider the school did not choose
+  (`sso_identity_not_allowed`);
+- refuses a password, recovery-link or invitation-link session for staff
+  (SCHOOL_ADMIN, TEACHER) of a school that requires the school account
+  (`sso_required`). A password session that was open when the school turned
+  this on ends at its next refresh, within the JWT lifetime (1 hour by
+  default).
+
+Each school sets this up itself on **/admin/integrations → Inloggning**: the
+provider, the e-mail domains `/login` offers it for, the organisation (Entra
+tenant id or Google Workspace domain), and, separately and off by default,
+*Kräv skolkonto för personal*. The gateway lets an admin turn that switch on
+only from a session signed in with a school account of the saved
+organisation, so nobody can lock their school out with a typo.
+
+**Decision: one multi-tenant Entra app for every kommun.** SchemaPro has one
+Entra app registration that accepts any organisation's accounts; each
+kommun's Entra administrator consents to it, and the hook pins every school
+to its own tenant id. The alternative, an app registration per kommun pinned
+to that kommun's tenant, needs one Azure provider per tenant, and a Supabase
+project has one: it would mean a Supabase project per kommun, or Supabase's
+SAML SSO per kommun (a paid add-on, and the route the Skolfederation phase
+will take; the hook refuses SAML identities until that phase extends it).
+
+### 11.1 Deploy order
+
+1. Run the migration (§2) **before** the code that uses it is deployed: the
+   gateway's `/api/v1/sign-in-method` and `/public/v1/sign-in-methods/:domain`
+   read the new table and functions. The migration is additive and changes no
+   sign-in by itself.
+2. Deploy the API and the web. The web shows the button whenever
+   `NEXT_PUBLIC_API_BASE_URL` is set. Until a school saves a row, the lookup
+   answers that no school uses school accounts on the domain, and nobody is
+   sent anywhere. Do not let a school save one before its provider is on
+   (11.3, 11.4): Auth would answer the click with its own "provider is not
+   enabled" error.
+3. Turn the hook on (11.2), then the providers (11.3, 11.4). With the
+   providers on and the hook off, anyone invited could sign in with any
+   matching school account and nothing would be pinned: **never enable a
+   provider without the hook.**
+4. The app needs a new native build (`expo-web-browser` is a native module).
+
+### 11.2 The access-token hook (Supabase dashboard)
+
+1. Authentication → Hooks → *Customize Access Token (JWT) Claims* → type
+   *Postgres*, schema `app`, function `custom_access_token_hook` → enable.
+   The migration already grants `supabase_auth_admin` USAGE on `app` and
+   EXECUTE on the hook and the two functions it calls, and no API role may
+   execute them; if the dashboard offers to apply grants, they are harmless.
+2. Check it: sign in with a password as any user. A token still comes back.
+   Then, for a test school, save a row with *Kräv skolkonto för personal* on
+   (it needs an admin signed in with a school account, 11.6) and confirm a
+   teacher's password is refused with "Din skola kräver att personal loggar
+   in med skolkonto".
+
+To switch everything off in an incident, turn the **providers** off, not the
+hook: without the hook, school accounts are no longer pinned to schools.
+
+### 11.3 Microsoft Entra ID
+
+In the Microsoft Entra admin center of the tenant that owns SchemaPro's app:
+
+1. App registrations → New registration. Supported account types: *Accounts
+   in any organizational directory (Any Microsoft Entra ID tenant —
+   Multitenant)*, without personal Microsoft accounts. Redirect URI (Web):
+   `https://<project-ref>.supabase.co/auth/v1/callback`.
+2. Certificates & secrets → New client secret. Note its expiry date and put a
+   reminder in the calendar: an expired secret stops every school-account
+   sign-in. The secret goes into the Supabase dashboard and nowhere else (not
+   into this repository or an `.env` file).
+3. Manifest → `optionalClaims`: `email` and `xms_edov` in `idToken`, and
+   `xms_edov` in `accessToken` (keep a copy of the manifest before editing).
+   `xms_edov` tells Supabase whether the address's domain is verified in the
+   user's tenant; without it Supabase may treat an address from a tenant that
+   has not verified that domain as verified. The hook's tenant pin is a
+   second wall, not a replacement.
+4. API permissions: Microsoft Graph, delegated `openid`, `email`, `profile`
+   (and the default `User.Read`). Nothing that needs admin consent by itself.
+5. Publisher verification (Branding & properties) is recommended: many
+   tenants do not let their users consent to an unverified multi-tenant app,
+   and then only their administrator can.
+6. Supabase dashboard → Authentication → Sign In / Providers → Azure: enable,
+   Application (client) ID, the secret's *Value*, and Azure Tenant URL
+   `https://login.microsoftonline.com/organizations` (any organisation, no
+   personal accounts).
+
+For each kommun (or school) that wants it:
+
+1. Its Entra administrator grants admin consent to SchemaPro's app, for
+   example by opening
+   `https://login.microsoftonline.com/<their-tenant-id>/adminconsent?client_id=<SchemaPro's client id>`.
+2. Its staff's addresses in Entra (the `mail` attribute) must be the
+   addresses the school invited them with. A person whose Entra address
+   differs is told at `/login` that their school account's address was never
+   invited; the school invites them again with the right address.
+3. The school's admin saves the tenant id (Entra admin center → Overview) on
+   /admin/integrations → Inloggning.
+
+### 11.4 Google Workspace
+
+1. Google Cloud console → Google Auth Platform → Clients → Create client →
+   *Web application*. Authorized JavaScript origins: the web origin.
+   Authorized redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`.
+2. Audience: *External* (several Workspaces sign in). Scopes: `openid`,
+   `.../auth/userinfo.email`, `.../auth/userinfo.profile`; nothing sensitive,
+   so no security assessment, but brand verification takes a few days.
+3. Supabase dashboard → Authentication → Sign In / Providers → Google:
+   enable, Client ID, Client Secret.
+4. Per school: if its Workspace restricts third-party apps, the Workspace
+   administrator trusts SchemaPro's client ID (Security → Access and data
+   control → API controls). The school's admin saves the Workspace's primary
+   domain (the `hd` Google sends) on Inloggning.
+
+### 11.5 Redirect URLs
+
+Authentication → URL Configuration → Redirect URLs must contain
+`https://<web origin>/**` (or `/sv/auth/callback` and `/en/auth/callback`)
+and `schemapro://auth/callback` for the app. A redirect that is not listed
+fails at Auth, before any provider.
+
+### 11.6 Verify (per school)
+
+1. Invite a test member of staff with their real school address; do not open
+   the invitation e-mail.
+2. On /admin/integrations → Inloggning, save the provider, the domain and the
+   organisation. The status reads *På*.
+3. Sign out. On /login, type the address and choose *Logga in med skolkonto*.
+   The provider's sign-in opens with the address filled in, and you land on
+   the role's start page. Repeat once in the app.
+4. As an admin signed in that way, the card says so; only then can *Kräv
+   skolkonto för personal* be switched on. Confirm a teacher's password is
+   refused afterwards, and that a pupil's still works.
+
+### 11.7 Operations
+
+- **Someone is refused with "Kontot du loggade in med hör inte till din
+  skolas organisation".** The person carries a school-account identity that
+  is not their school's, often a personal Google account or an old tenant's
+  Entra account with the same address. The hook refuses every school-account
+  session of that person until the foreign identity is removed: Authentication
+  → Users → the person → remove that identity, or, as the owner in the SQL
+  editor, delete that person's row of that provider in `auth.identities`.
+  Their password, if they have one, still works unless the school requires
+  the school account.
+- **A kommun moves to a new Entra tenant.** Save the new tenant id first.
+  Then every member of staff signs in once with the new tenant (a new
+  identity is linked by address) and their old-tenant identity is removed as
+  above; until it is, the hook refuses them.
+- **The school's staff are locked out** (for example the provider is down
+  while *Kräv skolkonto för personal* is on). Admins are staff, so none of
+  them can sign in with a password either. An operator turns the switch off
+  in the SQL editor as the owner, setting `"ssoOnlyForStaff"` to false on the
+  school's row in `"SchoolSignInMethods"`; passwords work from the next
+  sign-in. Staff who never chose a password use *Glömt lösenordet?*.
+- **Invitations at a school that requires the school account.** The
+  invitation e-mail still goes out (it creates the account the school account
+  links to). Its set-password link is refused for staff, and
+  `/update-password` says to sign in with the school account instead.
+- **The Entra client secret expires.** Create the next secret before the old
+  one expires, put it in the dashboard, then delete the old one.
 
 ---
 
