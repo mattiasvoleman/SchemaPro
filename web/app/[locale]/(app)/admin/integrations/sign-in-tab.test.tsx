@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import IntegrationsPage from "./page";
-import { domainsOf, sessionFits } from "./sign-in-types";
+import { PERSONAL_MAIL_DOMAINS, domainsOf, isPersonalDomain, sessionFits } from "./sign-in-types";
 import type { SignInSettings } from "./sign-in-types";
 
 // Radix's Switch measures its thumb; jsdom has no ResizeObserver.
@@ -144,6 +144,41 @@ describe("/admin/integrations — Inloggning", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  it("refuses a personal mail domain, listed or as the Workspace domain, at the field, and sends nothing", async () => {
+    const card = await openTab();
+    const user = userEvent.setup();
+    await user.selectOptions(within(card).getByLabelText("Inloggning"), "google");
+    await user.type(within(card).getByLabelText("E-postdomäner"), "skola.example\nGmail.com");
+    await user.type(within(card).getByLabelText("Workspace-domän"), "hotmail.se");
+
+    expect(within(card).getByLabelText("E-postdomäner")).toHaveAttribute("aria-invalid", "true");
+    expect(
+      within(card).getByText("Privata e-postdomäner kan inte logga in med skolkonto: gmail.com. Personal med en sådan adress behöver en adress i organisationen."),
+    ).toBeInTheDocument();
+    expect(within(card).getByLabelText("Workspace-domän")).toHaveAttribute("aria-invalid", "true");
+    expect(within(card).getByText(sv.integrations.signIn.hostedDomainPersonal)).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Spara inloggningen" })).toBeDisabled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("says which staff domains the school account would leave out, and that a personal address needs a school one", async () => {
+    settings = {
+      available: true,
+      method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
+      session: { schoolAccount: { provider: "azure", entraTenantId: TENANT } },
+    };
+    put.mockRejectedValue(
+      new ApiError(409, "conflict", "SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT", { domains: "kommun.example (12), gmail.com (1)" }),
+    );
+    const card = await openTab();
+    await userEvent.setup().click(within(card).getByRole("switch", { name: "Kräv skolkonto för personal" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Personal med adresser på kommun.example (12), gmail.com (1) skulle inte kunna logga in med skolkonto. Är domänen organisationens, lägg till den här. Är det en privat adress, som gmail.com, behöver personen en adress i organisationen innan du kräver skolkonto för personalen.",
+      ),
+    );
+  });
+
   it("keeps SSO-only out of reach from a password session, and says why", async () => {
     settings = {
       available: true,
@@ -263,6 +298,13 @@ describe("sign-in-types", () => {
   it("reads a domain list from lines, commas and spaces", () => {
     expect(domainsOf(" A.example\n\nb.example, a.example ;c.example ")).toEqual(["a.example", "b.example", "c.example"]);
     expect(domainsOf("")).toEqual([]);
+  });
+
+  it("knows the personal mail domains exactly, not their subdomains or look-alikes", () => {
+    for (const domain of PERSONAL_MAIL_DOMAINS) expect(isPersonalDomain(domain)).toBe(true);
+    expect(isPersonalDomain("skola.example")).toBe(false);
+    expect(isPersonalDomain("gmail.com.skola.example")).toBe(false);
+    expect(isPersonalDomain("elev.gmail.company")).toBe(false);
   });
 
   it("fits the session to the row as the gateway does", () => {

@@ -47,7 +47,33 @@ export function domainsOf(text: string): string[] {
   return [...new Set(text.split(/[\s,;]+/).map((entry) => entry.trim().toLowerCase()).filter((entry) => entry !== ""))];
 }
 
+/**
+ * Consumer mail domains, which no school may list or pin: a personal account
+ * belongs to no school's organisation, so the school account could never let
+ * it in. The gateway's DTO (PERSONAL_MAIL_DOMAINS) and the table's CHECK hold
+ * the same list.
+ */
+export const PERSONAL_MAIL_DOMAINS = [
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "outlook.se",
+  "hotmail.com",
+  "hotmail.se",
+  "live.com",
+  "live.se",
+  "msn.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "yahoo.com",
+  "yahoo.se",
+  "protonmail.com",
+  "proton.me",
+] as const;
+
 export const isHostname = (value: string) => HOSTNAME.test(value);
+export const isPersonalDomain = (value: string) => (PERSONAL_MAIL_DOMAINS as readonly string[]).includes(value);
 export const isTenantId = (value: string) => GUID.test(value.trim());
 
 /** Whether the admin's session signed in with a school account this row lets through: the gateway's own check (accountFits). */
