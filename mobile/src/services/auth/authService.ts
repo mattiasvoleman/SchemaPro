@@ -1,11 +1,15 @@
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { SecureTokenStore } from './secureTokenStore';
 import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import type { AuthState } from '../../types';
+import { callbackParams, emailDomain, lookupProvider, providerHints, refusalFor, type SchoolAccountRefusal } from './schoolAccount';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Authentication via Supabase Auth (email + password).
+// Authentication via Supabase Auth: e-mail and password, or "Logga in med
+// skolkonto" (Entra ID or Google Workspace, migration 20261020090000).
 //
 // After sign-in the app profile (Users.id + role) is resolved from the tenant
 // `Users` table under RLS and cached in expo-secure-store so that
@@ -25,7 +29,17 @@ interface ProfileRow {
 
 const SIGNED_OUT: AuthState = { isAuthenticated: false, teacherId: null, role: null };
 
-export type AuthErrorCode = 'INVALID_CREDENTIALS' | 'NO_PROFILE' | 'LOGIN_FAILED';
+export type AuthErrorCode =
+  | 'INVALID_CREDENTIALS'
+  | 'NO_PROFILE'
+  | 'LOGIN_FAILED'
+  /** The school requires its staff to sign in with the school account (the access-token hook's sso_required). */
+  | 'SSO_REQUIRED'
+  /** "Logga in med skolkonto" without an address, or one without a domain. */
+  | 'SSO_NEEDS_EMAIL'
+  /** No school signs in with a school account on that domain. */
+  | 'SSO_NOT_FOUND'
+  | SchoolAccountRefusal;
 
 /**
  * A failed login, as a code the login screen words in the reader's language.
@@ -42,10 +56,37 @@ export class AuthError extends Error {
   }
 }
 
-/** Supabase answers bad credentials with 400 and "invalid_credentials". */
+/**
+ * Supabase answers bad credentials with 400 and "invalid_credentials". The
+ * access-token hook refuses staff of a school that requires the school
+ * account with 403 and its code as the message (measured against GoTrue
+ * v2.197.0: {"code":403,"error_code":"unknown","msg":"sso_required"}).
+ */
 function loginFailure(error: { message?: string; status?: number; code?: string } | null): AuthError {
+  if (error?.status === 403 && error.message === 'sso_required') {
+    return new AuthError('SSO_REQUIRED', error.message);
+  }
   const invalid = error?.code === 'invalid_credentials' || error?.status === 400;
   return new AuthError(invalid ? 'INVALID_CREDENTIALS' : 'LOGIN_FAILED', error?.message ?? 'Login failed.');
+}
+
+/** The profile of a fresh session, cached for offline restore; a session without one is signed out. */
+async function adoptProfile(userId: string): Promise<AuthState> {
+  let profile: ProfileRow | null;
+  try {
+    profile = await fetchProfile(userId);
+  } catch (profileError) {
+    throw new AuthError('LOGIN_FAILED', profileError instanceof Error ? profileError.message : 'Profile read failed.');
+  }
+  if (!profile) {
+    await getSupabase().auth.signOut();
+    throw new AuthError('NO_PROFILE', 'No SchemaPro profile is linked to this account.');
+  }
+
+  // Cache the profile so restoreSession() works with no connectivity.
+  await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
+
+  return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
 }
 
 async function fetchProfile(authId: string): Promise<ProfileRow | null> {
@@ -89,22 +130,54 @@ export const AuthService = {
     if (error || !data.user) {
       throw loginFailure(error);
     }
+    return adoptProfile(data.user.id);
+  },
 
-    let profile: ProfileRow | null;
+  /**
+   * "Logga in med skolkonto": the gateway is asked which provider the
+   * address's domain signs in with (only the domain is sent), Supabase Auth
+   * builds the provider's URL with a PKCE challenge, and the system's
+   * authentication browser (expo-web-browser) opens it and returns on the
+   * app's own scheme, schemapro://auth/callback, which must be in the
+   * project's redirect allow list (docs/DEPLOYMENT.md). The code is then
+   * exchanged for a session with the verifier the client kept in secure
+   * storage.
+   */
+  async loginWithSchoolAccount(email: string): Promise<AuthState> {
+    const domain = emailDomain(email);
+    if (!domain) throw new AuthError('SSO_NEEDS_EMAIL', 'An address with a domain is needed.');
+
+    let provider: Awaited<ReturnType<typeof lookupProvider>>;
     try {
-      profile = await fetchProfile(data.user.id);
-    } catch (profileError) {
-      throw new AuthError('LOGIN_FAILED', profileError instanceof Error ? profileError.message : 'Profile read failed.');
+      provider = await lookupProvider(domain);
+    } catch (lookupError) {
+      throw new AuthError('LOGIN_FAILED', lookupError instanceof Error ? lookupError.message : 'Lookup failed.');
     }
-    if (!profile) {
-      await supabase.auth.signOut();
-      throw new AuthError('NO_PROFILE', 'No SchemaPro profile is linked to this account.');
+    if (!provider) throw new AuthError('SSO_NOT_FOUND', 'No school signs in with a school account on this domain.');
+
+    const supabase = getSupabase();
+    const redirectTo = Linking.createURL('auth/callback');
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo, skipBrowserRedirect: true, queryParams: providerHints(provider, email, domain) },
+    });
+    if (error || !data?.url) throw new AuthError('LOGIN_FAILED', error?.message ?? 'No sign-in URL.');
+
+    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (result.type !== 'success') throw new AuthError('SSO_CANCELLED', `The sign-in browser closed (${result.type}).`);
+
+    const params = callbackParams(result.url);
+    const code = params.get('code');
+    if (!code) {
+      const reason = params.get('error_code') || params.get('error');
+      throw new AuthError(refusalFor(reason), params.get('error_description') ?? reason ?? 'No code.');
     }
-
-    // Cache the profile so restoreSession() works with no connectivity.
-    await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
-
-    return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
+    const exchanged = await supabase.auth.exchangeCodeForSession(code);
+    if (exchanged.error || !exchanged.data?.user) {
+      // The hook's code is the message; any other refusal is prose.
+      throw new AuthError(refusalFor(exchanged.error?.message), exchanged.error?.message ?? 'No session.');
+    }
+    return adoptProfile(exchanged.data.user.id);
   },
 
   /**

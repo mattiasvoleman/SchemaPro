@@ -8,6 +8,8 @@ interface UseSecureAuthReturn {
   /** Why the last login failed, as a code the login screen words. */
   readonly error: AuthErrorCode | null;
   readonly login: (email: string, password: string) => Promise<void>;
+  /** "Logga in med skolkonto" for the typed address. */
+  readonly loginWithSchoolAccount: (email: string) => Promise<void>;
   readonly logout: () => Promise<void>;
   readonly restoreSession: () => Promise<void>;
 }
@@ -41,6 +43,20 @@ export function useSecureAuth(): UseSecureAuthReturn {
     }
   }, []);
 
+  const loginWithSchoolAccount = useCallback(async (email: string): Promise<void> => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const state = await AuthService.loginWithSchoolAccount(email);
+      setAuthState(state);
+    } catch (err) {
+      setError(err instanceof AuthError ? err.code : 'LOGIN_FAILED');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const logout = useCallback(async (): Promise<void> => {
     setIsLoading(true);
     try {
@@ -64,5 +80,5 @@ export function useSecureAuth(): UseSecureAuthReturn {
     }
   }, []);
 
-  return { authState, isLoading, error, login, logout, restoreSession };
+  return { authState, isLoading, error, login, loginWithSchoolAccount, logout, restoreSession };
 }
