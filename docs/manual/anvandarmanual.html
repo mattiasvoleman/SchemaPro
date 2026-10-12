@@ -2387,7 +2387,9 @@
     lektioner. Härifrån kan du <span class="ui">ställa in</span> en lektion med
     angiven anledning, <span class="ui">återinsätta</span> en inställd lektion,
     <span class="ui">tilldela vikarie</span> eller byta sal. En vikarie ersätter
-    ordinarie lärare för just den lektionen och kan registrera närvaro.
+    ordinarie lärare för just den lektionen och kan registrera närvaro. Alla som
+    går på lektionen, deras vårdnadshavare och lektionens lärare får en notis,
+    också när en inställd lektion återinsätts (6.10).
   </p>
   <p>Använd dagsplaneringen för enstaka händelser under dagen.</p>
 
@@ -2511,13 +2513,21 @@
       självstudier.</li>
     <li><span class="ui">Självstudier under tillsyn</span> (under
       <span class="ui">Fler val</span>) tar bort den frånvarande läraren från
-      lektionen och skriver det som anteckning, som klassen ser.</li>
+      lektionen och skriver det som anteckning, som klassen ser. Klassen,
+      vårdnadshavarna och läraren som togs bort får en notis om självstudierna,
+      utan anledning.</li>
     <li><span class="ui">Medläraren håller</span> visas först när en annan
-      lärare finns kvar på lektionen.</li>
+      lärare finns kvar på lektionen. Ingen notis skickas: lektionen blir av som
+      planerat med en lärare som redan finns på den.</li>
     <li><span class="ui">Ångra</span> lägger tillbaka det beslutet ändrade —
       den frånvarande läraren och en medlärare som togs bort — och en vikarie
-      som inte längre behövs får notisen att passet är avbokat. Flera beslut på
-      samma lektion ångras i omvänd ordning. Vill du byta beslut: ångra först.</li>
+      som inte längre behövs får notisen att passet är avbokat. Klassen och
+      lärarna som läggs tillbaka får notisen att lektionen blir av som planerat,
+      när ångrandet tar tillbaka det sista klassen fick höra: en vikarie,
+      självstudier eller en inställning. Står ett annat sådant beslut kvar på
+      lektionen, eller har en avbokning ställt in den sedan, skickas ingen notis.
+      Flera beslut på samma lektion ångras i omvänd ordning. Vill du byta
+      beslut: ångra först.</li>
   </ul>
   <p>
     Bocka i flera rader för att ställa in, ge självstudier eller ångra dem på
@@ -2654,10 +2664,30 @@
     Publiceras schemat igen efter en avbokning, eller fylls det på, skrivs nya
     lektioner i avbokningens dagar som inställda direkt. Har lektioner ändå
     tillkommit visar listan <em>N lektioner har tillkommit sedan
-    avbokningen</em> med <span class="ui">Tillämpa igen</span>. Avbokningar
-    skickar ingen notis. Anteckningen på varje lektion är det elever läser.
+    avbokningen</em> med <span class="ui">Tillämpa igen</span>.
     Vårdnadshavarnas schema visar bara att lektionen är inställd, utan
     anteckningen.
+  </p>
+
+  <h4>Sammanfattning till de berörda</h4>
+  <p>
+    En avbokning skickar ingen notis per lektion: en vecka prao skulle bli
+    trettio notiser per elev, och anteckningen på varje lektion är det elever
+    läser. I förhandsgranskningen kan du i stället slå på
+    <span class="ui">Skicka en sammanfattning till de berörda</span>. Den är
+    avslagen från början. Förhandsgranskningen säger hur många elever,
+    vårdnadshavare och lärare den når. Var och en får en notis med
+    avbokningens namn, hur många av sina lektioner som ställs in och vilka
+    dagar. En elev räknar sina egna lektioner, en vårdnadshavare barnens och
+    en lärare de lektioner hen har.
+  </p>
+  <p>
+    Tar du tillbaka en avbokning som skickade en sammanfattning, får samma
+    personer en till om de lektioner som blir av. Förhandsgranskningen av
+    återställningen säger hur många. En avbokning som inte skickade någon
+    förblir tyst även när den tas tillbaka. <span class="ui">Tillämpa
+    igen</span> och en publicering som lägger till lektioner i avbokningen
+    skickar ingen ny sammanfattning.
   </p>
 
   <h3><span class="num">6.6</span>Närvaro</h3>
@@ -2904,9 +2934,9 @@
   <table>
     <thead><tr><th style="width:30%">Roll</th><th>Kan välja bort</th><th style="width:30%">Skickas alltid</th></tr></thead>
     <tbody>
-      <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, vikarie, bytt sal, ändrat schema, beslut om ledighet</td><td>Oanmäld frånvaro</td></tr>
-      <tr><td class="k">Elev</td><td>Inställd lektion, vikarie, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
-      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, vikarier på mina lektioner, bytt sal, beslut om lokalbokning</td><td>Egna vikariepass och avbokade vikariepass</td></tr>
+      <tr><td class="k">Vårdnadshavare</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>Oanmäld frånvaro</td></tr>
+      <tr><td class="k">Elev</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarie, självstudier, bytt sal, ändrat schema, beslut om ledighet</td><td>—</td></tr>
+      <tr><td class="k">Lärare och administratör</td><td>Inställd lektion, sammanfattning av avbokning, lektion som blir av igen, vikarier på mina lektioner, självstudier, bytt sal, beslut om lokalbokning</td><td>Egna vikariepass och avbokade vikariepass</td></tr>
     </tbody>
   </table>
   <p>
@@ -2937,9 +2967,14 @@
     ändringar som görs på en gång blir en push per person och typ.
   </p>
   <p>
-    Två luckor gäller både notiser, e-post och push: en inställd lektion
-    eller en vikarie i en undervisningsgrupp (inte en klass) når ingen
-    vårdnadshavare, och en avbokning (6.5) skickar ingen notis alls.
+    En notis om en lektion når alla som går på den: lektionens klass och de
+    grupper som är anslutna till den, medlemmarna i en undervisningsgrupp
+    (till exempel en nivågrupp eller ett språkval) och elever som står
+    namngivna på lektionen, och deras vårdnadshavare. Det är samma lista som
+    närvaron räknar med. E-posten är på svenska och säger tiden på skolans
+    klocka, till exempel <em>Matematik tis 14 okt 08:00 är inställd.</em> En
+    notis till många personer, till exempel en sammanfattning för hela
+    skolan, går i e-postbrev om högst 50 adresser.
   </p>
 </section>
 
