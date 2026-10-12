@@ -2748,7 +2748,7 @@ END $$;
 -- policy must carry. That rule needs 26 exemptions here — the service role
 -- crosses tenants by design, and a policy keyed on the caller's own id is
 -- already inside one school — and a rule with 26 exemptions rots into a list
--- nobody maintains. This one has four exemptions, from its no-policy half
+-- nobody maintains. This one has six exemptions, from its no-policy half
 -- only, and all for the same reason: no API role is meant to reach the table
 -- at all. `_prisma_migrations` is Prisma's own history (section 14);
 -- `PushTickets` (20261013110000) holds Expo receipt ids that only the
@@ -2757,8 +2757,10 @@ END $$;
 -- source's sealed credentials that only the app.ss12000_*secret* functions
 -- touch, likewise with no grant (section 30i); `IntegrationKeyWebhookSecrets`
 -- (20261014120000) holds the keys' sealed webhook signing secrets that only
--- the app.*webhook_secret* functions touch, with no grant (section 31f). A
--- new table cannot be added
+-- the app.*webhook_secret* functions touch, with no grant (section 31f);
+-- `JobRuns` and `JobClaims` (20261021090000) hold the job runner's counts and
+-- nightly claims that only the app.job_* functions touch, with no grant
+-- (section 80). A new table cannot be added
 -- without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
@@ -2795,7 +2797,8 @@ BEGIN
   SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO policyless
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
-    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets')
+    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
+                          'JobRuns', 'JobClaims')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -13085,4 +13088,1021 @@ BEGIN
   SET LOCAL ROLE app_authenticated;
 END
 $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 80: ett jobb körs en gång per skola och natt, och varje körning
+-- räknas (JobRuns, JobClaims, 20261021090000).
+--
+-- The gateway's job runner keeps two tables only its SECURITY DEFINER
+-- functions touch. 80a reads the catalogue: no API role holds any privilege
+-- on either table, and the four app.job_* functions are EXECUTE for
+-- app_authenticated alone. 80b claims the gallring school's nightly job at
+-- fixed local times of today: once at noon, not again within two hours, again
+-- once a claim has gone two hours unfinished (its instance died), not at all
+-- once finished, and never before the hour. Two instances asking at once are
+-- the primary key's to settle, so one claim per (job, school, day) is the
+-- property. 80c settles two ticks: runs, failures and counts sum, and a
+-- count that is not a count, or an error that is not a class name, is
+-- refused by the table, so no id, name or message can be written there.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+-- 80a.
+DO $$
+DECLARE
+  bad text;
+  checked int;
+BEGIN
+  SELECT count(*) INTO checked FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relname IN ('JobRuns', 'JobClaims');
+  IF checked <> 2 THEN RAISE EXCEPTION 'job runner: expected JobRuns and JobClaims, found % of them', checked; END IF;
+
+  SELECT string_agg(format('%s on %s', r.rolname, c.relname), ', ') INTO bad
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   CROSS JOIN pg_roles r
+   WHERE n.nspname = 'public' AND c.relname IN ('JobRuns', 'JobClaims')
+     AND r.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+     AND (has_table_privilege(r.oid, c.oid, 'SELECT') OR has_table_privilege(r.oid, c.oid, 'INSERT')
+          OR has_table_privilege(r.oid, c.oid, 'UPDATE') OR has_table_privilege(r.oid, c.oid, 'DELETE')
+          OR has_table_privilege(r.oid, c.oid, 'TRUNCATE'));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'job runner: an API role reaches the runner''s tables directly: %', bad;
+  END IF;
+
+  SELECT string_agg(p.oid::regprocedure::text || ' for ' || r.rolname, ', ') INTO bad
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   CROSS JOIN pg_roles r
+   WHERE n.nspname = 'app' AND p.proname LIKE 'job\_%'
+     AND r.rolname IN ('authenticated', 'anon', 'service_role')
+     AND has_function_privilege(r.oid, p.oid, 'EXECUTE');
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'job runner: a role other than the gateway''s may run %', bad;
+  END IF;
+  SELECT count(*) INTO checked FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND p.proname LIKE 'job\_%'
+     AND p.prosecdef AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE');
+  IF checked <> 4 THEN
+    RAISE EXCEPTION 'job runner: expected the four app.job_* definer functions for the gateway, found %', checked;
+  END IF;
+END $$;
+
+-- 80b. The gallring school's id, read as its admin; the claims run with no
+-- principal, as the runner does.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+SELECT set_config('app.test_rls80_school', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls80_school')::uuid;
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  at_local timestamp;
+  n int;
+  d date;
+BEGIN
+  IF school IS NULL THEN RAISE EXCEPTION 'job claims: the gallring fixture school is missing'; END IF;
+  IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'job claims: expected no principal'; END IF;
+
+  -- Before the hour: nothing.
+  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '02:30') AT TIME ZONE 'Europe/Stockholm');
+  IF n <> 0 THEN RAISE EXCEPTION 'job claims: claimed at 02:30 for a 03:00 job'; END IF;
+
+  SELECT count(*), max(local_day) INTO n, d FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '12:00') AT TIME ZONE 'Europe/Stockholm');
+  IF n <> 1 OR d <> today THEN RAISE EXCEPTION 'job claims: the first claim of the day gave % row(s) for %', n, d; END IF;
+
+  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '13:00') AT TIME ZONE 'Europe/Stockholm');
+  IF n <> 0 THEN RAISE EXCEPTION 'job claims: a second instance claimed the same school and night an hour later'; END IF;
+
+  -- Two hours unfinished: its instance died, and the night is taken again.
+  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '14:30') AT TIME ZONE 'Europe/Stockholm');
+  IF n <> 1 THEN RAISE EXCEPTION 'job claims: a claim unfinished for two and a half hours was not taken again'; END IF;
+
+  PERFORM app.job_claim_finished('rls80', school, today, (today + time '14:40') AT TIME ZONE 'Europe/Stockholm');
+  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80', 3, ARRAY[school], 5, (today + time '23:00') AT TIME ZONE 'Europe/Stockholm');
+  IF n <> 0 THEN RAISE EXCEPTION 'job claims: a finished night was claimed again'; END IF;
+
+  -- Another job's claim is its own.
+  SELECT count(*) INTO n FROM app.job_claim_nightly('rls80-other', 3, ARRAY[school], 5, (today + time '23:00') AT TIME ZONE 'Europe/Stockholm');
+  IF n <> 1 THEN RAISE EXCEPTION 'job claims: one job''s claim blocked another job'; END IF;
+END $$;
+
+-- A school another instance is working on does not use up the limit: with
+-- one of two schools claimed an hour ago, a limit of one claims the other.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_rls80_school_a', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  schools uuid[] := ARRAY[current_setting('app.test_rls80_school')::uuid, current_setting('app.test_rls80_school_a')::uuid];
+  first_ uuid := least(schools[1], schools[2]);
+  other uuid := greatest(schools[1], schools[2]);
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  got uuid[];
+BEGIN
+  PERFORM app.job_claim_nightly('rls80-limit', 3, ARRAY[first_], 1, (today + time '12:00') AT TIME ZONE 'Europe/Stockholm');
+  got := ARRAY(SELECT school_id FROM app.job_claim_nightly('rls80-limit', 3, schools, 1, (today + time '13:00') AT TIME ZONE 'Europe/Stockholm'));
+  IF got IS DISTINCT FROM ARRAY[other] THEN
+    RAISE EXCEPTION 'job claims: with one school taken, a limit of one claimed % instead of the other school', got;
+  END IF;
+END $$;
+
+-- 80c.
+DO $$
+DECLARE
+  latest record;
+BEGIN
+  PERFORM app.job_run_settled('rls80', now() - interval '2 seconds', now() - interval '1 second', true, NULL, '{"claimed": 2, "purged": 5}');
+  PERFORM app.job_run_settled('rls80', now() - interval '1 second', now(), false, 'PrismaClientKnownRequestError', '{"claimed": 1}');
+  SELECT * INTO latest FROM app.job_runs_latest() WHERE job = 'rls80';
+  IF latest.last_failed IS NULL THEN RAISE EXCEPTION 'job runs: the failed tick left no failure'; END IF;
+
+  BEGIN
+    PERFORM app.job_run_settled('rls80', now(), now(), true, NULL, '{"school": "6f1c…"}');
+    RAISE EXCEPTION 'job runs: a text value was written among the counts';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.job_run_settled('rls80', now(), now(), true, NULL, '{"purged": -1}');
+    RAISE EXCEPTION 'job runs: a negative count was written';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.job_run_settled('rls80', now(), now(), true, NULL, '{"user 6f1c": 1}');
+    RAISE EXCEPTION 'job runs: a count under a key that is no name was written';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.job_run_settled('rls80', now(), now(), false, 'connect ECONNREFUSED postgresql://u:p@db/app', '{}');
+    RAISE EXCEPTION 'job runs: an error message, not a class name, was written';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+END $$;
+
+-- The sums, read as the owner would: through the one row the two settles
+-- made. No API role may read the table, so the definer reader is asked for
+-- the day's row by a second settle of zero counts and the latest row.
+DO $$
+DECLARE
+  latest record;
+BEGIN
+  SELECT * INTO latest FROM app.job_runs_latest() WHERE job = 'rls80';
+  IF latest.last_finished IS NULL THEN RAISE EXCEPTION 'job runs: no row for the job'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 81: skolans beslut om gallring och körningarna är administratörens
+-- (RetentionDecisions, GallringRuns, 20261021110000).
+--
+-- A decision is the school administrator's to record and read; nobody else
+-- of the school reads or writes one, and no administrator reaches another
+-- school's. The row is stamped by the database: decidedAt and decidedById are
+-- not the statement's to give (no column grant), and a decision is never
+-- changed or removed (no grant; the trigger refuses even the owner, outside a
+-- cascade). Runs are read by the administrator and written only by the
+-- gallring functions. PostgREST's role reaches neither table. Last, a rule for
+-- later phases: every foreign key into LeaveRequests cascades, so whatever a
+-- later phase hangs off a leave request (a mentor's decision, say) goes with
+-- it when gallring takes the request.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+-- 81a: the gallring school's admin records and reads a decision.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  school uuid := app.current_school_id();
+  row_ record;
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'retention decisions: expected the gallring admin'; END IF;
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference)
+  VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 3, 'rls81');
+  SELECT * INTO row_ FROM "RetentionDecisions" WHERE reference = 'rls81';
+  IF row_."decidedById" IS DISTINCT FROM me THEN RAISE EXCEPTION 'retention decisions: decidedById is %, not the admin', row_."decidedById"; END IF;
+  IF row_."decidedAt" < now() OR row_."decidedAt" > clock_timestamp() THEN
+    RAISE EXCEPTION 'retention decisions: decidedAt % is not the moment of the insert', row_."decidedAt";
+  END IF;
+
+  BEGIN
+    INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, "decidedAt")
+    VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 1, now() - interval '3 days');
+    RAISE EXCEPTION 'retention decisions: the admin back-dated a decision past the 24-hour wait';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, "decidedById")
+    VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 1, NULL);
+    RAISE EXCEPTION 'retention decisions: the admin named who decided';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "RetentionDecisions" SET months = 1 WHERE reference = 'rls81';
+    RAISE EXCEPTION 'retention decisions: a recorded decision was changed';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "RetentionDecisions" WHERE reference = 'rls81';
+    RAISE EXCEPTION 'retention decisions: a recorded decision was removed';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER');
+    RAISE EXCEPTION 'retention decisions: a period without months was recorded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'NOTIFICATIONS', 'KEEP', 12);
+    RAISE EXCEPTION 'retention decisions: KEEP was recorded with months';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 121);
+    RAISE EXCEPTION 'retention decisions: a period over ten years was recorded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  SELECT count(*) INTO n FROM "RetentionDecisions";
+  IF n < 7 THEN RAISE EXCEPTION 'retention decisions: the admin sees % of the school''s decisions', n; END IF;
+  SELECT count(*) INTO n FROM "RetentionDecisions" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'retention decisions: the admin sees % decision(s) of another school', n; END IF;
+  PERFORM set_config('app.test_rls81_school', school::text, true);
+END $$;
+
+-- 81b: school A's admin sees none of the gallring school's decisions and may
+-- not record one for it; a teacher records and reads none, as both roles.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  other uuid := current_setting('app.test_rls81_school')::uuid;
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "RetentionDecisions" WHERE "schoolId" = other;
+  IF n <> 0 THEN RAISE EXCEPTION 'retention decisions: school A''s admin reads % decision(s) of another school', n; END IF;
+  SELECT count(*) INTO n FROM "GallringRuns" WHERE "schoolId" = other;
+  IF n <> 0 THEN RAISE EXCEPTION 'gallring runs: school A''s admin reads another school''s runs'; END IF;
+  BEGIN
+    INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (other, 'ATTENDANCE', 'PURGE_AFTER', 1);
+    RAISE EXCEPTION 'retention decisions: school A''s admin recorded a period for another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000082')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  via text;
+  n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'retention decisions: expected the gallring teacher'; END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'retention decisions: running as %, not %', current_user, via; END IF;
+    BEGIN
+      SELECT count(*) INTO n FROM "RetentionDecisions";
+      IF n <> 0 THEN RAISE EXCEPTION 'retention decisions: a teacher reads % decision(s) through %', n, via; END IF;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF via = 'app_authenticated' THEN RAISE EXCEPTION 'retention decisions: the gateway''s role cannot read the table at all'; END IF;
+    END;
+    BEGIN
+      INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'ATTENDANCE', 'KEEP');
+      RAISE EXCEPTION 'retention decisions: a teacher recorded a decision through %', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      SELECT count(*) INTO n FROM "GallringRuns";
+      IF n <> 0 THEN RAISE EXCEPTION 'gallring runs: a teacher reads % run(s) through %', n, via; END IF;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF via = 'app_authenticated' THEN RAISE EXCEPTION 'gallring runs: the gateway''s role cannot read the table at all'; END IF;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- 81c: the catalogue. PostgREST's role and anon hold nothing on either table;
+-- the gateway's role reads both and inserts decisions without decidedAt or
+-- decidedById, and writes no run; service_role reads at most.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(format('%s %s on %s', r.rolname, p.priv, c.relname), ', ') INTO bad
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   CROSS JOIN pg_roles r
+   CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p(priv)
+   WHERE n.nspname = 'public' AND c.relname IN ('RetentionDecisions', 'GallringRuns')
+     AND (
+          (r.rolname IN ('authenticated', 'anon') AND has_table_privilege(r.oid, c.oid, p.priv))
+       OR (r.rolname = 'service_role' AND p.priv <> 'SELECT' AND has_table_privilege(r.oid, c.oid, p.priv))
+       OR (r.rolname = 'app_authenticated' AND p.priv NOT IN ('SELECT', 'INSERT') AND has_table_privilege(r.oid, c.oid, p.priv))
+       OR (r.rolname = 'app_authenticated' AND c.relname = 'GallringRuns' AND p.priv = 'INSERT' AND has_table_privilege(r.oid, c.oid, p.priv))
+     );
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'retention tables: a role holds more than it needs: %', bad; END IF;
+  IF has_any_column_privilege('app_authenticated', '"GallringRuns"', 'INSERT')
+     OR has_column_privilege('app_authenticated', '"RetentionDecisions"', 'decidedAt', 'INSERT')
+     OR has_column_privilege('app_authenticated', '"RetentionDecisions"', 'decidedById', 'INSERT')
+     OR has_any_column_privilege('app_authenticated', '"RetentionDecisions"', 'UPDATE') THEN
+    RAISE EXCEPTION 'retention tables: the gateway''s role may write a stamp or a run';
+  END IF;
+  IF NOT has_column_privilege('app_authenticated', '"RetentionDecisions"', 'months', 'INSERT') THEN
+    RAISE EXCEPTION 'retention tables: the gateway''s role cannot record a period';
+  END IF;
+
+  -- The functions: the eight the gateway calls are its alone; the helpers
+  -- they share (the predicate, the period in force, the guard's test) are
+  -- the owner's.
+  SELECT string_agg(p.oid::regprocedure::text || ' for ' || r.rolname, ', ') INTO bad
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   CROSS JOIN pg_roles r
+   WHERE n.nspname = 'app' AND (p.proname LIKE 'gallring\_%' OR p.proname LIKE 'retention\_%')
+     AND (r.rolname IN ('authenticated', 'anon', 'service_role')
+          OR (r.rolname = 'app_authenticated' AND p.proname NOT IN (
+                'gallring_schools', 'gallring_begin', 'gallring_purge', 'gallring_departed_due',
+                'gallring_pseudonymise', 'gallring_finish', 'gallring_preview', 'retention_purged_before')))
+     AND has_function_privilege(r.oid, p.oid, 'EXECUTE');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'retention functions: a role may run more than it needs: %', bad; END IF;
+  IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'app' AND p.prosecdef AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')
+         AND p.proname IN ('gallring_schools', 'gallring_begin', 'gallring_purge', 'gallring_departed_due',
+                           'gallring_pseudonymise', 'gallring_finish', 'gallring_preview', 'retention_purged_before')) <> 8 THEN
+    RAISE EXCEPTION 'retention functions: the gateway lacks one of its eight definer functions';
+  END IF;
+END $$;
+
+-- 81d: every foreign key into LeaveRequests cascades.
+DO $$
+DECLARE bad text;
+BEGIN
+  SELECT string_agg(format('%s (%s)', con.conname, con.conrelid::regclass), ', ') INTO bad
+    FROM pg_constraint con
+   WHERE con.contype = 'f' AND con.confrelid = '"LeaveRequests"'::regclass AND con.confdeltype <> 'c';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'leave retention: % would keep a row gallring takes, or refuse the purge; cascade it', bad;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 82: ett beslut som gallrar mer väntar ett dygn, ett som gallrar
+-- mindre gäller direkt (app.retention_months_in_force, 20261021110000).
+--
+-- The gallring school's fixture decisions are two days old: attendance 12
+-- months and no decision on notices. As its admin, new decisions are recorded
+-- in the transaction and a run is opened; the periods it applies are read off
+-- the run. A shorter attendance period (1 month) changes nothing yet; a longer
+-- one (36) applies at once and the longest of the day's wins; KEEP and
+-- UNDECIDED stop it at once. A first period for notices applies nothing for a
+-- day. A school with no decision at all (school A) opens a run with no
+-- period.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  run uuid;
+  p jsonb;
+BEGIN
+  run := app.gallring_begin(school, clock_timestamp());
+  SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
+  IF p <> '{"ATTENDANCE": 12, "ABSENCE_REPORTS": 6, "LEAVE_REQUESTS": 12, "CHANGE_LOGS": 24, "ABSENCE_REASONS": 12, "DEPARTED_PEOPLE": 12}'::jsonb THEN
+    RAISE EXCEPTION 'period in force: the fixture''s decisions gave %', p;
+  END IF;
+
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 1);
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 1);
+  run := app.gallring_begin(school, clock_timestamp());
+  SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
+  IF (p ->> 'ATTENDANCE')::int IS DISTINCT FROM 12 THEN
+    RAISE EXCEPTION 'period in force: a shorter period applied at once (attendance %)', p ->> 'ATTENDANCE';
+  END IF;
+  IF p ? 'NOTIFICATIONS' THEN
+    RAISE EXCEPTION 'period in force: a first period applied at once (notices %)', p ->> 'NOTIFICATIONS';
+  END IF;
+  IF (SELECT count(*) FROM "GallringRuns" WHERE "schoolId" = school AND status = 'INTERRUPTED') <> 1 THEN
+    RAISE EXCEPTION 'period in force: the earlier unfinished run was not marked INTERRUPTED';
+  END IF;
+
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 36);
+  run := app.gallring_begin(school, clock_timestamp());
+  SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
+  IF (p ->> 'ATTENDANCE')::int IS DISTINCT FROM 36 THEN
+    RAISE EXCEPTION 'period in force: a longer period did not apply at once (attendance %)', p ->> 'ATTENDANCE';
+  END IF;
+
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'ABSENCE_REPORTS', 'KEEP');
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'LEAVE_REQUESTS', 'UNDECIDED');
+  run := app.gallring_begin(school, clock_timestamp());
+  SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
+  IF p ? 'ABSENCE_REPORTS' OR p ? 'LEAVE_REQUESTS' THEN
+    RAISE EXCEPTION 'period in force: KEEP or UNDECIDED did not stop the next run (%)', p;
+  END IF;
+
+  BEGIN
+    PERFORM app.gallring_begin(school, now() + interval '25 hours');
+    RAISE EXCEPTION 'period in force: a run was opened a day ahead, past the wait';
+  EXCEPTION WHEN SQLSTATE 'GL400' THEN NULL;
+  END;
+
+  -- A decision recorded while a run is open spares what it spares: the run
+  -- asks again before every batch.
+  run := app.gallring_begin(school, clock_timestamp());
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'ABSENCE_REASONS', 'KEEP');
+  IF app.gallring_purge(run, 'ABSENCE_REASONS', 5000) <> 0 THEN
+    RAISE EXCEPTION 'period in force: an open run purged a kind the school had just decided to keep';
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  run uuid;
+  kind "RetentionDataType";
+  p jsonb;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "RetentionDecisions") THEN
+    RAISE EXCEPTION 'unset period: school A has a decision; this section needs a school with none';
+  END IF;
+  run := app.gallring_begin(school, clock_timestamp());
+  SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
+  IF p <> '{}'::jsonb THEN RAISE EXCEPTION 'unset period: a school with no decision got periods %', p; END IF;
+  FOREACH kind IN ARRAY ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS']::"RetentionDataType"[] LOOP
+    IF app.gallring_purge(run, kind, 5000) <> 0 THEN
+      RAISE EXCEPTION 'unset period: % rows went from school A, which decided nothing', kind;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM app.gallring_departed_due(run, 500)) THEN
+    RAISE EXCEPTION 'unset period: school A has people due for pseudonymisation';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 83: gallringen tar exakt det perioden säger, och inget annat
+-- (app.gallring_*, 20261021110000).
+--
+-- One night in the gallring school, run as the job runs it: no principal.
+-- Before and after, its admin counts each kind on both sides of its cutoff,
+-- and school A's admin counts school A. Everything dated before a cutoff of a
+-- decided kind is gone, everything on or after it is still there, the notice
+-- of the undecided kind is still there, the reason of an old absence is NULL
+-- while its cover stays, and school A has not moved. The run's counts are the
+-- rows that went, and "gallrat före" answers the cutoffs. Run under an admin
+-- principal instead, the purge of the tjänst history is refused (TL403): the
+-- guards let a purge through only with no principal set.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls83_a', (
+    SELECT jsonb_build_object(
+      'att', (SELECT count(*) FROM "AttendanceRecords"), 'abs', (SELECT count(*) FROM "AbsenceReports"),
+      'leave', (SELECT count(*) FROM "LeaveRequests"), 'noti', (SELECT count(*) FROM "Notifications"),
+      'log', (SELECT count(*) FROM "ScheduleChangeLogs"), 'emp', (SELECT count(*) FROM "TeacherEmploymentLogs"),
+      'hist', (SELECT count(*) FROM "GuardianStudentHistory"),
+      'reasons', (SELECT count(*) FROM "TeacherAbsences" WHERE "reasonId" IS NOT NULL),
+      'users', (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u))::text), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'gallring: expected school B''s admin'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "AbsenceReports" WHERE date < DATE '2021-01-01') THEN
+    RAISE EXCEPTION 'gallring: school B has no old rows; a purge that forgot its school would pass';
+  END IF;
+  PERFORM set_config('app.test_rls83_b', (
+    SELECT jsonb_build_object(
+      'att', (SELECT count(*) FROM "AttendanceRecords"), 'abs', (SELECT count(*) FROM "AbsenceReports"),
+      'leave', (SELECT count(*) FROM "LeaveRequests"), 'noti', (SELECT count(*) FROM "Notifications"),
+      'log', (SELECT count(*) FROM "ScheduleChangeLogs"), 'emp', (SELECT count(*) FROM "TeacherEmploymentLogs"),
+      'hist', (SELECT count(*) FROM "GuardianStudentHistory"),
+      'reasons', (SELECT count(*) FROM "TeacherAbsences" WHERE "reasonId" IS NOT NULL),
+      'users', (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u))::text), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  PERFORM set_config('app.test_rls83_school', school::text, true);
+  PERFORM set_config('app.test_rls83_before', jsonb_build_object(
+    'att_old', (SELECT count(*) FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE l.date < today - interval '12 months'),
+    'att_kept', (SELECT count(*) FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE l.date >= today - interval '12 months'),
+    'abs_old', (SELECT count(*) FROM "AbsenceReports" WHERE date < today - interval '6 months'),
+    'abs_kept', (SELECT count(*) FROM "AbsenceReports" WHERE date >= today - interval '6 months'),
+    'leave_old', (SELECT count(*) FROM "LeaveRequests" WHERE "endDate" < today - interval '12 months'),
+    'leave_kept', (SELECT count(*) FROM "LeaveRequests" WHERE "endDate" >= today - interval '12 months'),
+    'noti', (SELECT count(*) FROM "Notifications" WHERE "createdAt" < now() - interval '1 year'),
+    'emp_cur', (SELECT count(*) FROM "TeacherEmploymentLogs" g JOIN "AcademicYears" y ON y.id = g."academicYearId" WHERE y."isActive"),
+    'emp_old', (SELECT count(*) FROM "TeacherEmploymentLogs" g JOIN "AcademicYears" y ON y.id = g."academicYearId" WHERE y."endDate" < today - interval '24 months'),
+    'covers', (SELECT count(*) FROM "TeacherAbsenceCovers"))::text, true);
+  IF (current_setting('app.test_rls83_before')::jsonb ->> 'att_old')::int < 2
+     OR (current_setting('app.test_rls83_before')::jsonb ->> 'att_kept')::int < 2
+     OR (current_setting('app.test_rls83_before')::jsonb ->> 'emp_old')::int < 2
+     OR (current_setting('app.test_rls83_before')::jsonb ->> 'noti')::int < 1 THEN
+    RAISE EXCEPTION 'gallring: the fixture school lacks rows on both sides of its cutoffs: %', current_setting('app.test_rls83_before');
+  END IF;
+END $$;
+
+-- Under the admin's own principal the history's guard holds.
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(app.current_school_id(), clock_timestamp());
+BEGIN
+  BEGIN
+    PERFORM app.gallring_purge(run, 'CHANGE_LOGS', 5000);
+    RAISE EXCEPTION 'gallring: a purge under a person''s principal went past the tjänst history''s guard';
+  EXCEPTION WHEN SQLSTATE 'TL403' THEN NULL;
+  END;
+END $$;
+
+-- The night, with no principal: the people first (so 84 can see that their
+-- tjänst lost its signature without a version), then every kind until done.
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls83_school')::uuid;
+  run uuid;
+  kind "RetentionDataType";
+  n int;
+  people uuid[];
+BEGIN
+  IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'gallring: expected no principal for the night'; END IF;
+  run := app.gallring_begin(school, clock_timestamp());
+  PERFORM set_config('app.test_rls83_run', run::text, true);
+  people := ARRAY(SELECT user_id FROM app.gallring_departed_due(run, 500));
+  PERFORM set_config('app.test_rls83_people', array_to_string(people, ','), true);
+  n := app.gallring_pseudonymise(run, people);
+  IF n <> 2 THEN RAISE EXCEPTION 'gallring: % people pseudonymised, expected the departed pupil and teacher', n; END IF;
+  FOREACH kind IN ARRAY ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS']::"RetentionDataType"[] LOOP
+    LOOP
+      n := app.gallring_purge(run, kind, 1);
+      EXIT WHEN n = 0;
+    END LOOP;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  b jsonb := current_setting('app.test_rls83_before')::jsonb;
+  run record;
+  n bigint;
+  purged record;
+BEGIN
+  SELECT count(*) INTO n FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE l.date < today - interval '12 months';
+  IF n <> 0 THEN RAISE EXCEPTION 'gallring: % attendance row(s) older than 12 months stayed', n; END IF;
+  SELECT count(*) INTO n FROM "AttendanceRecords" a JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE l.date >= today - interval '12 months';
+  IF n <> (b ->> 'att_kept')::bigint THEN RAISE EXCEPTION 'gallring: attendance on or after the cutoff went (% of %)', n, b ->> 'att_kept'; END IF;
+
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE date < today - interval '6 months';
+  IF n <> 0 THEN RAISE EXCEPTION 'gallring: % absence report(s) older than 6 months stayed', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports";
+  IF n <> (b ->> 'abs_kept')::bigint THEN RAISE EXCEPTION 'gallring: a newer absence report went'; END IF;
+
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "endDate" < today - interval '12 months';
+  IF n <> 0 THEN RAISE EXCEPTION 'gallring: % leave request(s) ended before the cutoff stayed', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests";
+  IF n <> (b ->> 'leave_kept')::bigint OR NOT EXISTS (SELECT 1 FROM "LeaveRequests" WHERE reason = 'Gallring: lång') THEN
+    RAISE EXCEPTION 'gallring: a request that ended after the cutoff went (the one begun before it included)';
+  END IF;
+
+  SELECT count(*) INTO n FROM "Notifications" WHERE "createdAt" < now() - interval '1 year';
+  IF n <> (b ->> 'noti')::bigint THEN RAISE EXCEPTION 'gallring: a notice went although the school decided nothing about notices'; END IF;
+
+  SELECT count(*) INTO n FROM "ScheduleChangeLogs" WHERE "createdAt" < now() - interval '24 months';
+  IF n <> 0 THEN RAISE EXCEPTION 'gallring: a schedule log older than 24 months stayed'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "ScheduleChangeLogs" WHERE "createdAt" >= now() - interval '24 months') THEN
+    RAISE EXCEPTION 'gallring: a newer schedule log went';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" g JOIN "AcademicYears" y ON y.id = g."academicYearId" WHERE y."endDate" < today - interval '24 months';
+  IF n <> 0 THEN RAISE EXCEPTION 'gallring: % tjänst history row(s) of a läsår past the period stayed', n; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" g JOIN "AcademicYears" y ON y.id = g."academicYearId" WHERE y."isActive";
+  IF n <> (b ->> 'emp_cur')::bigint THEN RAISE EXCEPTION 'gallring: this läsår''s tjänst history moved (% of %)', n, b ->> 'emp_cur'; END IF;
+  IF EXISTS (SELECT 1 FROM "GuardianStudentHistory" WHERE "unlinkedAt" < now() - interval '24 months') THEN
+    RAISE EXCEPTION 'gallring: a guardian unlink older than 24 months stayed';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "GuardianStudentHistory" WHERE "unlinkedAt" BETWEEN now() - interval '2 months' AND now() - interval '2 weeks') THEN
+    RAISE EXCEPTION 'gallring: a newer guardian unlink went';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM "TeacherAbsences" WHERE "endsAt" < now() - interval '12 months' AND "reasonId" IS NOT NULL) THEN
+    RAISE EXCEPTION 'gallring: an old absence kept its reason';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "TeacherAbsences" WHERE "endsAt" >= now() - interval '12 months' AND "reasonId" IS NOT NULL) THEN
+    RAISE EXCEPTION 'gallring: a newer absence lost its reason';
+  END IF;
+  IF (SELECT count(*) FROM "TeacherAbsences") <> 2 OR (SELECT count(*) FROM "TeacherAbsenceCovers") <> (b ->> 'covers')::bigint THEN
+    RAISE EXCEPTION 'gallring: an absence or its cover went with the reason; payroll needs them';
+  END IF;
+
+  -- The run's evidence: what went, per kind, and that nothing was left.
+  SELECT * INTO run FROM "GallringRuns" WHERE id = current_setting('app.test_rls83_run')::uuid;
+  IF run.status <> 'DONE' OR run."finishedAt" IS NULL THEN RAISE EXCEPTION 'gallring: the run is %, not DONE', run.status; END IF;
+  IF (run.counts ->> 'ATTENDANCE')::bigint <> (b ->> 'att_old')::bigint
+     OR (run.counts ->> 'ABSENCE_REPORTS')::bigint <> (b ->> 'abs_old')::bigint
+     OR (run.counts ->> 'LEAVE_REQUESTS')::bigint <> (b ->> 'leave_old')::bigint
+     OR (run.counts ->> 'NOTIFICATIONS') IS NOT NULL
+     OR (run.counts ->> 'DEPARTED_PEOPLE')::bigint <> 2 THEN
+    RAISE EXCEPTION 'gallring: the run counted % against %', run.counts, b;
+  END IF;
+  IF run.complete <> '{"ATTENDANCE": true, "ABSENCE_REPORTS": true, "LEAVE_REQUESTS": true, "CHANGE_LOGS": true, "ABSENCE_REASONS": true, "DEPARTED_PEOPLE": true}'::jsonb THEN
+    RAISE EXCEPTION 'gallring: the run says % is complete', run.complete;
+  END IF;
+  IF (run.waiting ->> 'DEPARTED_PEOPLE_SCB')::int IS DISTINCT FROM 1 THEN
+    RAISE EXCEPTION 'gallring: the run held % for SCB, expected the teacher with a tjänst this läsår', run.waiting ->> 'DEPARTED_PEOPLE_SCB';
+  END IF;
+
+  FOR purged IN SELECT * FROM app.retention_purged_before() LOOP
+    IF purged.purged_before <> (CASE purged.data_type
+         WHEN 'ATTENDANCE' THEN today - interval '12 months' WHEN 'ABSENCE_REPORTS' THEN today - interval '6 months'
+         WHEN 'LEAVE_REQUESTS' THEN today - interval '12 months' WHEN 'CHANGE_LOGS' THEN today - interval '24 months'
+         WHEN 'ABSENCE_REASONS' THEN today - interval '12 months' END)::date THEN
+      RAISE EXCEPTION 'gallring: % is gallrat före %, not the cutoff', purged.data_type, purged.purged_before;
+    END IF;
+  END LOOP;
+  SELECT count(*) INTO n FROM app.retention_purged_before();
+  IF n <> 5 THEN RAISE EXCEPTION 'gallring: "gallrat före" answers % kinds, expected the five decided row kinds', n; END IF;
+END $$;
+
+-- School A has not moved.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  now_ jsonb;
+BEGIN
+  SELECT jsonb_build_object(
+      'att', (SELECT count(*) FROM "AttendanceRecords"), 'abs', (SELECT count(*) FROM "AbsenceReports"),
+      'leave', (SELECT count(*) FROM "LeaveRequests"), 'noti', (SELECT count(*) FROM "Notifications"),
+      'log', (SELECT count(*) FROM "ScheduleChangeLogs"), 'emp', (SELECT count(*) FROM "TeacherEmploymentLogs"),
+      'hist', (SELECT count(*) FROM "GuardianStudentHistory"),
+      'reasons', (SELECT count(*) FROM "TeacherAbsences" WHERE "reasonId" IS NOT NULL),
+      'users', (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u))
+    INTO now_;
+  IF now_ <> current_setting('app.test_rls83_a')::jsonb THEN
+    RAISE EXCEPTION 'gallring: school A moved: % before, % after', current_setting('app.test_rls83_a'), now_;
+  END IF;
+  IF EXISTS (SELECT 1 FROM app.retention_purged_before()) THEN
+    RAISE EXCEPTION 'gallring: school A reads "gallrat före" of another school';
+  END IF;
+END $$;
+
+-- Nor has school B, whose rows are years old.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE
+  now_ jsonb;
+BEGIN
+  SELECT jsonb_build_object(
+      'att', (SELECT count(*) FROM "AttendanceRecords"), 'abs', (SELECT count(*) FROM "AbsenceReports"),
+      'leave', (SELECT count(*) FROM "LeaveRequests"), 'noti', (SELECT count(*) FROM "Notifications"),
+      'log', (SELECT count(*) FROM "ScheduleChangeLogs"), 'emp', (SELECT count(*) FROM "TeacherEmploymentLogs"),
+      'hist', (SELECT count(*) FROM "GuardianStudentHistory"),
+      'reasons', (SELECT count(*) FROM "TeacherAbsences" WHERE "reasonId" IS NOT NULL),
+      'users', (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u))
+    INTO now_;
+  IF now_ <> current_setting('app.test_rls83_b')::jsonb THEN
+    RAISE EXCEPTION 'gallring: school B moved during another school''s night: % before, % after', current_setting('app.test_rls83_b'), now_;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 84: en slutad person pseudonymiseras på plats (Users,
+-- 20261021100000 and 20261021110000).
+--
+-- The people step alone, with no principal. The pupil deactivated two years
+-- ago and the teacher whose only tjänst was 2019/20 lose name, e-mail, phone
+-- and login and keep their row; the teacher's signature and note go without
+-- a new version of the tjänst; the pupil's guardian link goes and is
+-- recorded as an unlink. The pupil deactivated a month ago, the teacher SCB
+-- holds and every active person are untouched. A pseudonym cannot be made
+-- active again, and an active person cannot be given a deactivation date by
+-- hand.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls84_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls84_before', (
+    SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u
+     WHERE "authId" NOT IN ('00000000-0000-4000-8000-000000000085', '00000000-0000-4000-8000-000000000087')), true);
+  PERFORM set_config('app.test_rls84_versions', (SELECT count(*)::text FROM "TeacherEmploymentLogs"), true);
+  PERFORM set_config('app.test_rls84_unlinks', (SELECT count(*)::text FROM "GuardianStudentHistory"), true);
+  PERFORM set_config('app.test_rls84_others', (SELECT string_agg(id::text, ',') FROM "Users"
+     WHERE "authId" IN ('00000000-0000-4000-8000-000000000083', '00000000-0000-4000-8000-000000000086', '00000000-0000-4000-8000-000000000088')), true);
+  IF (SELECT "deactivatedAt" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000085') > now() - interval '23 months' THEN
+    RAISE EXCEPTION 'pseudonymisation: the fixture pupil was not deactivated two years ago';
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls84_school')::uuid, clock_timestamp());
+  due record;
+  n int;
+BEGIN
+  n := 0;
+  FOR due IN SELECT * FROM app.gallring_departed_due(run, 500) LOOP
+    n := n + 1;
+    IF due.auth_id = '00000000-0000-4000-8000-000000000085' AND NOT due.invited THEN
+      RAISE EXCEPTION 'pseudonymisation: the invited pupil''s login was not named for deletion';
+    END IF;
+    IF due.auth_id NOT IN ('00000000-0000-4000-8000-000000000085', '00000000-0000-4000-8000-000000000087') THEN
+      RAISE EXCEPTION 'pseudonymisation: % is due and should not be', due.auth_id;
+    END IF;
+  END LOOP;
+  IF n <> 2 THEN RAISE EXCEPTION 'pseudonymisation: % due, expected 2', n; END IF;
+  -- Only those named: a person whose login could not be deleted is left out
+  -- by the gateway, and must wait for the next night.
+  n := app.gallring_pseudonymise(run, ARRAY(
+         SELECT user_id FROM app.gallring_departed_due(run, 500) WHERE auth_id = '00000000-0000-4000-8000-000000000085'));
+  IF n <> 1 THEN RAISE EXCEPTION 'pseudonymisation: naming one person pseudonymised %', n; END IF;
+  IF (SELECT count(*) FROM app.gallring_departed_due(run, 500)) <> 1 THEN
+    RAISE EXCEPTION 'pseudonymisation: a person left out of the list was pseudonymised anyway';
+  END IF;
+  -- Somebody not due, named anyway, is not touched.
+  n := app.gallring_pseudonymise(run, ARRAY(
+         SELECT user_id FROM app.gallring_departed_due(run, 500))
+         || string_to_array(current_setting('app.test_rls84_others'), ',')::uuid[]);
+  IF n <> 1 THEN RAISE EXCEPTION 'pseudonymisation: % pseudonymised, expected the teacher alone', n; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  p record;
+  n bigint;
+BEGIN
+  FOR p IN SELECT * FROM "Users" WHERE "pseudonymisedAt" IS NOT NULL LOOP
+    IF p."firstName" <> 'Pseudonym' OR p."lastName" !~ '^[0-9A-F]{6}$'
+       OR p.email <> 'pseudonym-' || p.id || '@pseudonym.invalid'
+       OR p.phone IS NOT NULL OR p."ss12000Id" IS NOT NULL OR p."invitedAt" IS NOT NULL
+       OR p."authId"::text LIKE '00000000-0000-4000-8000-%' OR p."isActive" THEN
+      RAISE EXCEPTION 'pseudonymisation: % still identifies the person or can sign in', row_to_json(p);
+    END IF;
+  END LOOP;
+  SELECT count(*) INTO n FROM "Users" WHERE "pseudonymisedAt" IS NOT NULL;
+  IF n <> 2 THEN RAISE EXCEPTION 'pseudonymisation: % pseudonyms, expected 2', n; END IF;
+
+  IF (SELECT md5(string_agg(u::text, ',' ORDER BY id)) FROM "Users" u WHERE "pseudonymisedAt" IS NULL)
+     IS DISTINCT FROM current_setting('app.test_rls84_before') THEN
+    RAISE EXCEPTION 'pseudonymisation: somebody not due changed (the recent leaver, the teacher SCB holds or an active person)';
+  END IF;
+
+  SELECT count(*) INTO n FROM "TeacherEmployments" e JOIN "Users" u ON u.id = e."userId"
+   WHERE u."pseudonymisedAt" IS NOT NULL AND (e.signature IS NOT NULL OR e.note IS NOT NULL);
+  IF n <> 0 THEN RAISE EXCEPTION 'pseudonymisation: a pseudonym''s tjänst kept its signature or note'; END IF;
+  IF (SELECT count(*) FROM "TeacherEmployments" e JOIN "Users" u ON u.id = e."userId" WHERE u."pseudonymisedAt" IS NOT NULL) <> 1 THEN
+    RAISE EXCEPTION 'pseudonymisation: the departed teacher''s tjänst went; it stays for the history';
+  END IF;
+  IF (SELECT count(*) FROM "TeacherEmploymentLogs")::text <> current_setting('app.test_rls84_versions') THEN
+    RAISE EXCEPTION 'pseudonymisation: clearing the signature wrote a version of the tjänst';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM "GuardianStudents" gs JOIN "Users" u ON u.id IN (gs."guardianId", gs."studentId") WHERE u."pseudonymisedAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'pseudonymisation: a pseudonym kept a guardian link';
+  END IF;
+  IF (SELECT count(*) FROM "GuardianStudentHistory")::int <> current_setting('app.test_rls84_unlinks')::int + 1 THEN
+    RAISE EXCEPTION 'pseudonymisation: the removed guardian link was not recorded as an unlink';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "GuardianStudents" gs JOIN "Users" u ON u.id = gs."studentId" WHERE u."authId" = '00000000-0000-4000-8000-000000000083') THEN
+    RAISE EXCEPTION 'pseudonymisation: the guardian''s link to an active pupil went';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Notifications" n JOIN "Users" u ON u.id = n."userId" WHERE u."pseudonymisedAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'pseudonymisation: a pseudonym kept their own notices';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "AttendanceRecords" a JOIN "Users" u ON u.id = a."studentId" WHERE u."pseudonymisedAt" IS NOT NULL) THEN
+    RAISE EXCEPTION 'pseudonymisation: the pupil''s attendance went with the name; it is a period of its own';
+  END IF;
+
+  BEGIN
+    UPDATE "Users" SET "isActive" = true WHERE "pseudonymisedAt" IS NOT NULL;
+    RAISE EXCEPTION 'pseudonymisation: a pseudonym was made active again';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "Users" SET "deactivatedAt" = now() - interval '5 years'
+   WHERE "authId" = '00000000-0000-4000-8000-000000000086';
+  IF (SELECT "deactivatedAt" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000086') < now() - interval '2 months' THEN
+    RAISE EXCEPTION 'pseudonymisation: the admin back-dated a deactivation past the period';
+  END IF;
+  UPDATE "Users" SET "isActive" = false WHERE "authId" = '00000000-0000-4000-8000-000000000083';
+  IF (SELECT "deactivatedAt" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083') IS DISTINCT FROM now() THEN
+    RAISE EXCEPTION 'pseudonymisation: a deactivation was not dated now';
+  END IF;
+  UPDATE "Users" SET "isActive" = true WHERE "authId" = '00000000-0000-4000-8000-000000000083';
+  IF (SELECT "deactivatedAt" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083') IS NOT NULL THEN
+    RAISE EXCEPTION 'pseudonymisation: a reactivated person kept a deactivation date';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 85: inställningen app.gallring är ingen behörighet
+-- (app.gallring_in_progress, 20261021110000).
+--
+-- Anyone can set a setting. The guards trust app.gallring only with no
+-- principal set, and then neither API role may delete from the two
+-- append-only tables (no grant) or see a row to update (row security). As
+-- the gateway's role and PostgREST's, with the setting naming the school:
+-- deleting the tjänst history or the guardian history is refused; and as the
+-- school's admin with the setting, a change of a tjänst is still versioned.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  before_ bigint;
+BEGIN
+  PERFORM set_config('app.test_rls85_school', school::text, true);
+  PERFORM set_config('app.gallring', school::text, true);
+  SELECT count(*) INTO before_ FROM "TeacherEmploymentLogs";
+  UPDATE "TeacherEmployments" SET note = 'rls85' WHERE "schoolId" = school AND signature = 'GLÄ'
+     AND "academicYearId" = (SELECT id FROM "AcademicYears" WHERE "isActive");
+  IF (SELECT count(*) FROM "TeacherEmploymentLogs") <> before_ + 1 THEN
+    RAISE EXCEPTION 'forged gallring: an admin''s change of a tjänst went unversioned under the setting';
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls85_school')::uuid;
+  via text;
+  n bigint;
+BEGIN
+  PERFORM set_config('app.gallring', school::text, true);
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    BEGIN
+      DELETE FROM "TeacherEmploymentLogs" WHERE "schoolId" = school;
+      RAISE EXCEPTION 'forged gallring: % deleted the tjänst history under the setting', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      DELETE FROM "GuardianStudentHistory" WHERE "schoolId" = school;
+      RAISE EXCEPTION 'forged gallring: % deleted the guardian history under the setting', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      UPDATE "Users" SET "ss12000Id" = NULL WHERE "schoolId" = school;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n <> 0 THEN RAISE EXCEPTION 'forged gallring: % changed % person row(s) with no principal', via, n; END IF;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 86: förhandsvisningen är administratörens och räknar som natten
+-- (app.gallring_preview, 20261021110000).
+--
+-- The page shows what a period would take before it is chosen. Only the
+-- school's SCHOOL_ADMIN may ask (GL403 for a teacher and for no principal),
+-- the count is of the asker's own school, and it is the number the night
+-- then removes: 86 previews, runs the night with no principal, and previews
+-- again. A period outside 1..120 is refused (GL400).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000082')::text, true);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM app.gallring_preview('ATTENDANCE', 12);
+    RAISE EXCEPTION 'preview: a teacher saw what would be gallrat';
+  EXCEPTION WHEN SQLSTATE 'GL403' THEN NULL;
+  END;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM app.gallring_preview('ATTENDANCE', 12);
+    RAISE EXCEPTION 'preview: no principal saw what would be gallrat';
+  EXCEPTION WHEN SQLSTATE 'GL403' THEN NULL;
+  END;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  pv record;
+  kinds jsonb := '{}';
+BEGIN
+  PERFORM set_config('app.test_rls86_school', app.current_school_id()::text, true);
+  FOR pv IN SELECT k.kind, k.months, p.* FROM (VALUES
+      ('ATTENDANCE'::"RetentionDataType", 12), ('ABSENCE_REPORTS', 6), ('LEAVE_REQUESTS', 12),
+      ('NOTIFICATIONS', 12), ('CHANGE_LOGS', 24), ('ABSENCE_REASONS', 12), ('DEPARTED_PEOPLE', 12)) AS k(kind, months)
+    CROSS JOIN LATERAL app.gallring_preview(k.kind, k.months) p LOOP
+    IF pv.cutoff <> (today - make_interval(months => pv.months))::date THEN
+      RAISE EXCEPTION 'preview: % months gives cutoff %', pv.months, pv.cutoff;
+    END IF;
+    kinds := kinds || jsonb_build_object(pv.kind::text, pv.due);
+    IF pv.kind = 'DEPARTED_PEOPLE' AND pv.held <> 1 THEN RAISE EXCEPTION 'preview: % held for SCB, expected 1', pv.held; END IF;
+  END LOOP;
+  IF kinds <> '{"ATTENDANCE": 2, "ABSENCE_REPORTS": 1, "LEAVE_REQUESTS": 1, "NOTIFICATIONS": 1, "CHANGE_LOGS": 4, "ABSENCE_REASONS": 1, "DEPARTED_PEOPLE": 2}'::jsonb THEN
+    RAISE EXCEPTION 'preview: the counts are %', kinds;
+  END IF;
+  PERFORM set_config('app.test_rls86_preview', kinds::text, true);
+  BEGIN
+    PERFORM * FROM app.gallring_preview('ATTENDANCE', 0);
+    RAISE EXCEPTION 'preview: a period of 0 months was previewed';
+  EXCEPTION WHEN SQLSTATE 'GL400' THEN NULL;
+  END;
+END $$;
+
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls86_school')::uuid, clock_timestamp());
+  kind "RetentionDataType";
+  went jsonb := '{}';
+BEGIN
+  FOREACH kind IN ARRAY ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'CHANGE_LOGS', 'ABSENCE_REASONS']::"RetentionDataType"[] LOOP
+    went := went || jsonb_build_object(kind::text, app.gallring_purge(run, kind, 5000));
+  END LOOP;
+  went := went || jsonb_build_object('DEPARTED_PEOPLE', app.gallring_pseudonymise(run, ARRAY(SELECT user_id FROM app.gallring_departed_due(run, 500))));
+  IF went <> (current_setting('app.test_rls86_preview')::jsonb - 'NOTIFICATIONS') THEN
+    RAISE EXCEPTION 'preview: the night took % after the page promised %', went, current_setting('app.test_rls86_preview');
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT due INTO n FROM app.gallring_preview('ATTENDANCE', 12);
+  IF n <> 0 THEN RAISE EXCEPTION 'preview: % attendance rows still due after the night', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 87: "gallrat före" gäller bara det som verkligen är borta
+-- (app.retention_purged_before, 20261021110000).
+--
+-- A run that stopped at its batch cap leaves rows older than its cutoff, and
+-- a report must not say they are gone. One run takes one of the two
+-- attendance rows due and finishes: attendance has no "gallrat före" yet.
+-- The next run takes the other: now it has.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+SELECT set_config('app.test_rls87_school', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls87_school')::uuid, clock_timestamp());
+BEGIN
+  IF app.gallring_purge(run, 'ATTENDANCE', 1) <> 1 THEN RAISE EXCEPTION 'purged before: the capped batch took no row'; END IF;
+  PERFORM app.gallring_finish(run, '{}', clock_timestamp());
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM app.retention_purged_before() WHERE data_type = 'ATTENDANCE') THEN
+    RAISE EXCEPTION 'purged before: attendance reads as gallrat after a run stopped at its cap';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "GallringRuns" WHERE (complete ->> 'ATTENDANCE')::boolean = false) THEN
+    RAISE EXCEPTION 'purged before: the capped run did not record attendance as incomplete';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls87_school')::uuid, clock_timestamp());
+BEGIN
+  IF app.gallring_purge(run, 'ATTENDANCE', 5000) <> 1 THEN RAISE EXCEPTION 'purged before: the second run did not take the row left'; END IF;
+  PERFORM app.gallring_finish(run, '{}', clock_timestamp());
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM app.retention_purged_before() WHERE data_type = 'ATTENDANCE'
+                  AND purged_before = ((now() AT TIME ZONE 'Europe/Stockholm')::date - interval '12 months')::date) THEN
+    RAISE EXCEPTION 'purged before: attendance is not gallrat after the run that finished it';
+  END IF;
+END $$;
 ROLLBACK;

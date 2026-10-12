@@ -230,6 +230,15 @@ model User {
   /// SS403). Unique per school where set: the partial unique index
   /// Users_schoolId_ss12000Id_key, which schema.prisma cannot state.
   ss12000Id String?   @db.Uuid
+  /// When isActive last went from true to false (20261021100000). A trigger
+  /// keeps it, whatever a statement writes: NULL while active, the moment of
+  /// deactivation after. Gallring counts a departed person's period from it.
+  /// The partial index Users_schoolId_deactivatedAt_idx lives in the migration.
+  deactivatedAt   DateTime? @db.Timestamptz(6)
+  /// When gallring pseudonymised the person (20261021110000): name, e-mail,
+  /// phone, source id and login replaced. Such a row is never active again
+  /// (CHECK Users_a_pseudonym_stays_inactive).
+  pseudonymisedAt DateTime? @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -1750,6 +1759,8 @@ model ScheduleChangeLog {
 
   @@index([schoolId, academicYearId, createdAt])
   @@index([masterLessonId])
+  /// Gallring's predicate (20261021110000).
+  @@index([schoolId, createdAt])
   @@map("ScheduleChangeLogs")
 }
 
@@ -1889,6 +1900,8 @@ model LeaveRequest {
 
   @@index([schoolId, status, createdAt])
   @@index([studentId, startDate])
+  /// Gallring's predicate (20261021110000).
+  @@index([schoolId, endDate])
   @@map("LeaveRequests")
 }
 
@@ -2000,6 +2013,8 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([schoolId])
+  /// Gallring's predicate (20261021110000).
+  @@index([schoolId, createdAt])
   @@map("Notifications")
 }
 
@@ -2954,6 +2969,8 @@ model TeacherAbsence {
   @@unique([id, schoolId])
   @@unique([id, userId, schoolId])
   @@index([schoolId, userId, startsAt])
+  // TeacherAbsences_schoolId_endsAt_idx (schoolId, endsAt) WHERE reasonId IS
+  // NOT NULL, gallring's predicate, lives in 20261021110000 alone.
   @@map("TeacherAbsences")
 }
 
@@ -3185,6 +3202,8 @@ model GuardianStudentHistory {
   unlinkedById String?            @db.Uuid
 
   @@index([schoolId, studentId])
+  /// Gallring's predicate (20261021110000).
+  @@index([schoolId, unlinkedAt])
   @@map("GuardianStudentHistory")
 }
 
@@ -3321,4 +3340,112 @@ model Ss12000SubscriptionDelivery {
   @@index([subscriptionId, schoolId, attemptedAt], map: "Ss12000SubscriptionDeliveries_subscription_idx")
   @@index([attemptedAt], map: "Ss12000SubscriptionDeliveries_attemptedAt_idx")
   @@map("Ss12000SubscriptionDeliveries")
+}
+
+// -----------------------------------------------------------------------------
+// Drift: the job runner and gallring (20261021090000, 20261021110000)
+// -----------------------------------------------------------------------------
+
+/// One row per job and UTC day: how many ticks ran and failed, and the passes'
+/// counts summed key by key. Counts only (CHECKs in the migration). Row
+/// security with no arm and no grant: only app.job_run_settled and
+/// app.job_runs_latest touch it.
+model JobRun {
+  job            String
+  day            DateTime  @db.Date
+  runs           Int       @default(0)
+  failures       Int       @default(0)
+  counts         Json      @default("{}")
+  lastStartedAt  DateTime  @db.Timestamptz(6)
+  lastFinishedAt DateTime  @db.Timestamptz(6)
+  lastFailedAt   DateTime? @db.Timestamptz(6)
+  /// An error class name, never a message.
+  lastError      String?
+
+  @@id([job, day])
+  @@map("JobRuns")
+}
+
+/// A school's nightly job, claimed once per local day by one API instance
+/// (app.job_claim_nightly). The key to Schools lives in the migration. No
+/// grant: only the app.job_claim_* functions touch it.
+model JobClaim {
+  job        String
+  schoolId   String    @db.Uuid
+  day        DateTime  @db.Date
+  claimedAt  DateTime  @db.Timestamptz(6)
+  finishedAt DateTime? @db.Timestamptz(6)
+
+  @@id([job, schoolId, day])
+  @@index([schoolId])
+  @@map("JobClaims")
+}
+
+/// The kinds of data a school sets a retention period for (/admin/dataskydd).
+enum RetentionDataType {
+  ATTENDANCE
+  ABSENCE_REPORTS
+  LEAVE_REQUESTS
+  NOTIFICATIONS
+  CHANGE_LOGS
+  ABSENCE_REASONS
+  DEPARTED_PEOPLE
+}
+
+/// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).
+enum RetentionDecisionKind {
+  PURGE_AFTER
+  KEEP
+  UNDECIDED
+}
+
+enum GallringRunStatus {
+  RUNNING
+  DONE
+  INTERRUPTED
+}
+
+/// A school's decision on how long one kind of data is kept. Append-only: a
+/// trigger stamps decidedAt and decidedById and refuses UPDATE and DELETE, so
+/// the rows are the history and the latest per kind is the decision. No row
+/// is "ej beslutat". The keys to Schools and to Users (decidedById, ON DELETE
+/// SET NULL of that column alone) live in the migration. The administrator
+/// reads and inserts (RLS); app.retention_months_in_force says what a run
+/// may apply: a change that gallrar more waits 24 hours.
+model RetentionDecision {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String                @db.Uuid
+  dataType    RetentionDataType
+  decision    RetentionDecisionKind
+  /// 1..120, set exactly when decision is PURGE_AFTER.
+  months      Int?
+  /// The dokumenthanteringsplan's reference, at most 200 characters.
+  reference   String?
+  decidedById String?               @db.Uuid
+  decidedAt   DateTime              @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([schoolId, dataType, decidedAt(sort: Desc)])
+  @@map("RetentionDecisions")
+}
+
+/// One night's gallring of one school: the periods and cutoffs applied and,
+/// per kind, how many rows or people went, whether nothing past the cutoff
+/// was left, and how many were held back. Counts only (CHECK in the
+/// migration). The administrator reads it; only the app.gallring_*
+/// functions write it. The key to Schools lives in the migration.
+model GallringRun {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String            @db.Uuid
+  localDay   DateTime          @db.Date
+  status     GallringRunStatus @default(RUNNING)
+  startedAt  DateTime          @db.Timestamptz(6)
+  finishedAt DateTime?         @db.Timestamptz(6)
+  periods    Json              @default("{}")
+  cutoffs    Json              @default("{}")
+  counts     Json              @default("{}")
+  complete   Json              @default("{}")
+  waiting    Json              @default("{}")
+
+  @@index([schoolId, startedAt(sort: Desc)])
+  @@map("GallringRuns")
 }

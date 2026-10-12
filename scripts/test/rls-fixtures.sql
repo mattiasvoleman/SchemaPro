@@ -528,6 +528,214 @@ SELECT id, 'rls-fixture-revoked',
 FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1
 ON CONFLICT ("keyHash") DO NOTHING;
 
+-- A THIRD school for gallring (sections 80 to 89), planted once. Its own
+-- school, because a purge deletes rows and sections 83 and 84 must count
+-- exactly what goes; nothing of school A or B may move. Every date is
+-- relative to today in Europe/Stockholm, so the cutoffs below hold whenever
+-- the suite runs:
+--
+--   ATTENDANCE       12 months   lessons 13 months ago (go), on the cutoff day
+--                                and 11 months ago (stay)
+--   ABSENCE_REPORTS   6 months   reports 7 months ago (go), 5 months ago (stay)
+--   LEAVE_REQUESTS   12 months   ended 13 months ago (goes); ended 11 months
+--                                ago, and one that began 14 months ago but
+--                                ended 11 months ago (stay)
+--   NOTIFICATIONS    no decision a notice five years old (stays)
+--   CHANGE_LOGS      24 months   schedule logs 25 and 23 months ago; the
+--                                tjänst history of 2019/20 (goes) and of this
+--                                läsår (stays); guardian unlinks 25 months
+--                                and one month ago
+--   ABSENCE_REASONS  12 months   absences ended 13 months ago (reason goes,
+--                                cover stays) and 11 months ago (stays)
+--   DEPARTED_PEOPLE  12 months   a pupil deactivated two years ago (goes),
+--                                one deactivated a month ago (stays), a
+--                                teacher two years ago with a tjänst only in
+--                                2019/20 (goes) and one two years ago with a
+--                                tjänst this läsår (held for SCB)
+--
+-- The decisions are dated two days back, past the 24-hour wait, with the
+-- stamping trigger off for those inserts only; the history dates and the
+-- deactivation dates likewise. Nothing else here goes past a trigger.
+DO $$
+DECLARE
+  g uuid;
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  y_old uuid; y_prev uuid; y_cur uuid;
+  grp uuid; sub uuid; reason uuid;
+  admin uuid; teacher uuid; pupil uuid; guardian uuid;
+  pupil_gone uuid; pupil_recent uuid; teacher_gone uuid; teacher_scb uuid;
+  l_old uuid; l_edge uuid; l_new uuid;
+  a_old uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-gallring-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Gallring School', 'rls-gallring-school', 'Europe/Stockholm', now())
+  RETURNING id INTO g;
+
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (g, 'Gallring 2019/20', '2019-08-01', '2020-06-30', false, now()) RETURNING id INTO y_old;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (g, 'Gallring förra', today - interval '15 months', today - interval '62 days', false, now()) RETURNING id INTO y_prev;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (g, 'Gallring i år', today - 30, today + 300, true, now()) RETURNING id INTO y_cur;
+
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (g, 'Gallringsämne', 'GAL', now()) RETURNING id INTO sub;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES (g, y_prev, 'G7A', now()) RETURNING id INTO grp;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-admin@example.invalid', 'Gallring', 'Admin', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000081', true, now())
+    RETURNING id INTO admin;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-teacher@example.invalid', 'Gallring', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000082', true, now())
+    RETURNING id INTO teacher;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-pupil@example.invalid', 'Gallring', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000083', true, now())
+    RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-guardian@example.invalid', 'Gallring', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000000084', true, now())
+    RETURNING id INTO guardian;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "invitedAt", "phone", "ss12000Id", "updatedAt") VALUES
+    (g, 'gallring-gone@example.invalid', 'Slutad', 'Elevsson', 'STUDENT', '00000000-0000-4000-8000-000000000085', false, now(), '070-0000000', NULL, now())
+    RETURNING id INTO pupil_gone;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-recent@example.invalid', 'Nyss', 'Slutad', 'STUDENT', '00000000-0000-4000-8000-000000000086', false, now())
+    RETURNING id INTO pupil_recent;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-teacher-gone@example.invalid', 'Gammal', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000087', true, now())
+    RETURNING id INTO teacher_gone;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (g, 'gallring-teacher-scb@example.invalid', 'Höstens', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000088', true, now())
+    RETURNING id INTO teacher_scb;
+
+  -- Tjänster: 2019/20 for the teacher and the departed teacher (whose
+  -- signature and note pseudonymisation clears), this läsår for the teacher
+  -- and the one SCB holds. Written while both are active; the log trigger
+  -- versions each.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, note, "updatedAt") VALUES
+    (g, teacher, y_old, 100, 'GLÄ', NULL, now()),
+    (g, teacher_gone, y_old, 80, 'GAL', 'Gallring: anteckning', now()),
+    (g, teacher, y_cur, 100, 'GLÄ', NULL, now()),
+    (g, teacher_scb, y_cur, 50, 'HÖL', NULL, now());
+  UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id IN (teacher_gone, teacher_scb);
+
+  -- An SS12000 id for the departed pupil, written as the school's admin, the
+  -- only writer the guard allows: pseudonymisation must clear it.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+  UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = pupil_gone;
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "deactivatedAt" = now() - interval '2 years' WHERE id IN (pupil_gone, teacher_gone, teacher_scb);
+  UPDATE "Users" SET "deactivatedAt" = now() - interval '1 month' WHERE id = pupil_recent;
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+
+  -- The departed pupil's guardian link, device, opt-out and own notice.
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (g, guardian, pupil_gone), (g, guardian, pupil);
+  INSERT INTO "DevicePushTokens" ("schoolId", "userId", token, platform) VALUES (g, pupil_gone, 'ExponentPushToken[gallringgone01]', 'IOS');
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (pupil_gone, g, 'SCHEDULE_CHANGED');
+  INSERT INTO "Notifications" ("schoolId", "userId", type, "createdAt") VALUES (g, pupil_gone, 'SCHEDULE_CHANGED', now());
+  -- NOTIFICATIONS has no decision: this one is five years old and stays.
+  INSERT INTO "Notifications" ("schoolId", "userId", type, "createdAt") VALUES (g, pupil, 'SCHEDULE_CHANGED', now() - interval '5 years');
+
+  -- Lessons and attendance.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (g, sub, grp, today - interval '13 months', (today - interval '13 months')::date + time '06:10', (today - interval '13 months')::date + time '06:50', now())
+  RETURNING id INTO l_old;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (g, sub, grp, today - interval '12 months', (today - interval '12 months')::date + time '06:10', (today - interval '12 months')::date + time '06:50', now())
+  RETURNING id INTO l_edge;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (g, sub, grp, today - interval '11 months', (today - interval '11 months')::date + time '06:10', (today - interval '11 months')::date + time '06:50', now())
+  RETURNING id INTO l_new;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES
+    (g, l_old, pupil, 'PRESENT', now()), (g, l_old, pupil_gone, 'ABSENT', now()),
+    (g, l_edge, pupil, 'PRESENT', now()), (g, l_new, pupil, 'PRESENT', now());
+
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES
+    (g, pupil, guardian, today - interval '7 months'), (g, pupil, guardian, today - interval '5 months');
+
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason) VALUES
+    (g, pupil, guardian, today - interval '14 months', today - interval '13 months', 'Gallring: gammal'),
+    (g, pupil, guardian, today - interval '14 months', today - interval '11 months', 'Gallring: lång'),
+    (g, pupil, guardian, today - interval '11 months', today - interval '11 months', 'Gallring: ny');
+
+  INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", action, "createdAt") VALUES
+    (g, y_prev, 'UPDATE', now() - interval '25 months'), (g, y_prev, 'UPDATE', now() - interval '23 months');
+
+  ALTER TABLE "GuardianStudentHistory" DISABLE TRIGGER "GuardianStudentHistory_written_by_trigger";
+  INSERT INTO "GuardianStudentHistory" ("schoolId", "guardianId", "studentId", origin, "linkedAt", "unlinkedAt") VALUES
+    (g, guardian, pupil, 'MANUAL', now() - interval '30 months', now() - interval '25 months'),
+    (g, guardian, pupil, 'MANUAL', now() - interval '3 months', now() - interval '1 month');
+  ALTER TABLE "GuardianStudentHistory" ENABLE TRIGGER "GuardianStudentHistory_written_by_trigger";
+
+  INSERT INTO "TeacherAbsenceReasons" ("schoolId", builtin) VALUES (g, 'SICK') RETURNING id INTO reason;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId") VALUES
+    (g, teacher, now() - interval '13 months' - interval '2 days', now() - interval '13 months', reason)
+    RETURNING id INTO a_old;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId") VALUES
+    (g, teacher, now() - interval '11 months' - interval '2 days', now() - interval '11 months', reason);
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision) VALUES
+    (g, a_old, l_old, teacher, 'CANCELLED');
+
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt") VALUES
+    (g, 'ATTENDANCE', 'PURGE_AFTER', 12, 'DHP 1.2', admin, now() - interval '2 days'),
+    (g, 'ABSENCE_REPORTS', 'PURGE_AFTER', 6, NULL, admin, now() - interval '2 days'),
+    (g, 'LEAVE_REQUESTS', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days'),
+    (g, 'CHANGE_LOGS', 'PURGE_AFTER', 24, NULL, admin, now() - interval '2 days'),
+    (g, 'ABSENCE_REASONS', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days'),
+    (g, 'DEPARTED_PEOPLE', 'PURGE_AFTER', 12, NULL, admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+END $$;
+
+-- Old rows of every kind in the SECOND school, which has decided nothing:
+-- sections 83 and 86 run the gallring school's night and assert that none of
+-- these moves. Without them a purge that forgot its school would pass, since
+-- the seeded school has nothing that old. Planted once.
+DO $$
+DECLARE
+  b uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-fixture-school');
+  teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000001');
+  pupil uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000002');
+  y uuid; grp uuid; sub uuid; lesson uuid; reason uuid; gone uuid;
+BEGIN
+  IF b IS NULL OR teacher IS NULL OR pupil IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the second school lacks its teacher or pupil for the old rows';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "AcademicYears" WHERE "schoolId" = b AND name = 'RLS Fixture 2019/20') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (b, 'RLS Fixture 2019/20', '2019-08-01', '2020-06-30', false, now()) RETURNING id INTO y;
+  SELECT id INTO sub FROM "Subjects" WHERE "schoolId" = b ORDER BY code LIMIT 1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES (b, y, 'RLS 2019', now()) RETURNING id INTO grp;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (b, teacher, y, 100, now());
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (b, sub, grp, '2020-01-15', '2020-01-15 07:10+00', '2020-01-15 07:50+00', now()) RETURNING id INTO lesson;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (b, lesson, pupil, 'ABSENT', now());
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES (b, pupil, pupil, '2020-01-15');
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (b, pupil, pupil, '2020-01-10', '2020-01-12', 'RLS fixture: gammal ledighet');
+  INSERT INTO "Notifications" ("schoolId", "userId", type, "createdAt") VALUES (b, pupil, 'SCHEDULE_CHANGED', '2020-01-15');
+  INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", action, "createdAt") VALUES (b, y, 'UPDATE', '2020-01-01');
+  ALTER TABLE "GuardianStudentHistory" DISABLE TRIGGER "GuardianStudentHistory_written_by_trigger";
+  INSERT INTO "GuardianStudentHistory" ("schoolId", "guardianId", "studentId", origin, "linkedAt", "unlinkedAt")
+  VALUES (b, teacher, pupil, 'MANUAL', '2019-09-01', '2020-01-01');
+  ALTER TABLE "GuardianStudentHistory" ENABLE TRIGGER "GuardianStudentHistory_written_by_trigger";
+  INSERT INTO "TeacherAbsenceReasons" ("schoolId", builtin) VALUES (b, 'SICK') RETURNING id INTO reason;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId")
+  VALUES (b, teacher, '2020-01-13 07:00+00', '2020-01-14 16:00+00', reason);
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (b, 'rls-fixture-gone@example.invalid', 'Fixture', 'Gone', 'STUDENT', '00000000-0000-4000-8000-000000000089', false, now())
+  RETURNING id INTO gone;
+  ALTER TABLE "Users" DISABLE TRIGGER "Users_deactivation_is_dated_on_update";
+  UPDATE "Users" SET "deactivatedAt" = '2020-01-01' WHERE id = gone;
+  ALTER TABLE "Users" ENABLE TRIGGER "Users_deactivation_is_dated_on_update";
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
