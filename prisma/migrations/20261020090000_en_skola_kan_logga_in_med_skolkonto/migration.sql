@@ -16,7 +16,8 @@
 --
 --   * provider             'azure' or 'google', Supabase's own names;
 --   * domains              the e-mail domains /login looks a typed address up
---                          by, lower case, 1 to 20 of them;
+--                          by, lower case, 1 to 20 of them, none a consumer
+--                          mail domain such as gmail.com;
 --   * entraTenantId        the school's Entra tenant (tid), for 'azure' only;
 --   * googleHostedDomain   the Workspace domain Google sends as hd, for
 --                          'google' only;
@@ -142,7 +143,9 @@
 --   * app.sign_in_provider_for_domain(text)  SECURITY DEFINER: /login's
 --     lookup, the provider and nothing else. The gateway calls it without a
 --     principal (PrismaService.withPublicViewer). EXECUTE for
---     app_authenticated only.
+--     app_authenticated only. Only /login asks it: it answers from every
+--     school's row, the saving school's old one included, so the gateway's
+--     save checks go by the school's own new row instead.
 --   * app.sign_in_domain_keeps_its_provider()  SECURITY DEFINER trigger
 --     function: it reads the other schools' rows, which the saving admin's
 --     RLS hides, and answers only which of the admin's own domains are taken.
@@ -188,6 +191,18 @@ CREATE TABLE "SchoolSignInMethods" (
             AND "googleHostedDomain" ~
                 '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$'
         )
+    ),
+    -- No consumer mail domain, listed or as the hd: an address there is a
+    -- personal account, which carries no hd and belongs to no tenant, so the
+    -- hook could never let it in, and listing one would send every address
+    -- on it, other schools' guardians included, to this provider at /login.
+    -- The gateway's DTO (PERSONAL_MAIL_DOMAINS) holds the same list.
+    CONSTRAINT "SchoolSignInMethods_no_personal_mail_domains" CHECK (
+        NOT (("domains" || "googleHostedDomain") && ARRAY[
+            'gmail.com', 'googlemail.com', 'outlook.com', 'outlook.se', 'hotmail.com', 'hotmail.se',
+            'live.com', 'live.se', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'yahoo.com',
+            'yahoo.se', 'protonmail.com', 'proton.me'
+        ]::text[])
     ),
     -- One pin, and the one that belongs to the provider.
     CONSTRAINT "SchoolSignInMethods_pin_fits_the_provider" CHECK (

@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsNotIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -25,6 +26,37 @@ import { SignInProvider } from '@prisma/client';
 export const HOSTNAME =
   /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/;
 
+/**
+ * Consumer mail domains, which no school may list or pin: an address there
+ * is a personal account, not one of an organisation. A personal Google
+ * account carries no hd and a personal Microsoft account is no tenant's, so
+ * the hook could never let one in, and listing such a domain would send
+ * every address on it, other schools' guardians included, to that provider
+ * at /login. The table's CHECK SchoolSignInMethods_no_personal_mail_domains
+ * and the admin card (sign-in-types.ts) hold the same list; dto.spec.ts keeps
+ * the three equal.
+ */
+export const PERSONAL_MAIL_DOMAINS = [
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'outlook.se',
+  'hotmail.com',
+  'hotmail.se',
+  'live.com',
+  'live.se',
+  'msn.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'yahoo.com',
+  'yahoo.se',
+  'protonmail.com',
+  'proton.me',
+] as const;
+
+const PERSONAL = { message: 'A personal mail domain cannot sign in with a school account.' };
+
 const lower = (value: unknown): unknown => (typeof value === 'string' ? value.trim().toLowerCase() : value);
 
 export class SignInMethodDto {
@@ -40,6 +72,7 @@ export class SignInMethodDto {
   @IsString({ each: true })
   @MaxLength(253, { each: true })
   @Matches(HOSTNAME, { each: true })
+  @IsNotIn(PERSONAL_MAIL_DOMAINS, { each: true, ...PERSONAL })
   domains!: string[];
 
   /** Entra ID's tenant (tid), for provider "azure". */
@@ -54,6 +87,7 @@ export class SignInMethodDto {
   @IsString()
   @MaxLength(253)
   @Matches(HOSTNAME)
+  @IsNotIn(PERSONAL_MAIL_DOMAINS, PERSONAL)
   googleHostedDomain?: string | null;
 
   /** Staff may then sign in with the school account only. */

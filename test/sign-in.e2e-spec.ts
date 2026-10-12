@@ -14,11 +14,15 @@ const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const TENANT = '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
 const NOW = new Date('2026-10-20T08:00:00Z');
 
-/** One school's table, behind the harness's mock, and its people's e-mail domains. */
-function plantTable(harness: TestHarness, domains: Record<string, number> = { 'skola.example': 14, 'elev.skola.example': 0 }) {
+/**
+ * One school's table, behind the harness's mock, and the e-mail domains of its
+ * staff who can sign in, with how many are on each: what the domain checks'
+ * statement returns, which leaves out a domain with none.
+ */
+function plantTable(harness: TestHarness, domains: Record<string, number> = { 'skola.example': 14, 'kommun.example': 3 }) {
   harness.tx.$queryRaw.mockImplementation(async (query: { strings: string[] }) =>
     query.strings.join('?').includes('split_part')
-      ? Object.entries(domains).map(([domain, staff]) => ({ domain, people: BigInt(staff + 10), staff: BigInt(staff) }))
+      ? Object.entries(domains).map(([domain, staff]) => ({ domain, staff: BigInt(staff) }))
       : [{ provider: null }],
   );
   let row: Record<string, unknown> | null = null;
@@ -63,11 +67,11 @@ describe('Logga in med skolkonto (e2e)', () => {
       const created = await request(http())
         .put('/api/v1/sign-in-method')
         .set('x-test-user', admin)
-        .send({ provider: 'azure', domains: [' Skola.Example ', 'skola.example', 'elev.skola.example'], entraTenantId: TENANT.toUpperCase() })
+        .send({ provider: 'azure', domains: [' Skola.Example ', 'skola.example', 'kommun.example'], entraTenantId: TENANT.toUpperCase() })
         .expect(200);
       expect(created.body.method).toEqual({
         provider: 'azure',
-        domains: ['skola.example', 'elev.skola.example'],
+        domains: ['skola.example', 'kommun.example'],
         entraTenantId: TENANT,
         googleHostedDomain: null,
         ssoOnlyForStaff: false,
@@ -87,14 +91,24 @@ describe('Logga in med skolkonto (e2e)', () => {
       const ssoOnly = await request(http())
         .put('/api/v1/sign-in-method')
         .set('x-test-user', entraAdmin)
-        .send({ provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, ssoOnlyForStaff: true })
+        .send({ provider: 'azure', domains: ['skola.example', 'kommun.example'], entraTenantId: TENANT, ssoOnlyForStaff: true })
         .expect(200);
       expect(ssoOnly.body).toMatchObject({
         method: { ssoOnlyForStaff: true },
         session: { schoolAccount: { provider: 'azure', entraTenantId: TENANT } },
       });
 
-      // A domain nobody at the school uses is refused, naming it.
+      // Dropping a domain three of the staff are on, with the switch still on, is refused,
+      // though the row being replaced still names it.
+      const dropped = await request(http())
+        .put('/api/v1/sign-in-method')
+        .set('x-test-user', entraAdmin)
+        .send({ provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, ssoOnlyForStaff: true })
+        .expect(409);
+      expect(dropped.body).toMatchObject({ code: 'SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT', params: { domains: 'kommun.example (3)' } });
+      expect(stored()).toMatchObject({ domains: ['skola.example', 'kommun.example'], ssoOnlyForStaff: true });
+
+      // A domain no teacher or admin of the school uses is refused, naming it.
       const unused = await request(http())
         .put('/api/v1/sign-in-method')
         .set('x-test-user', admin)
@@ -125,6 +139,8 @@ describe('Logga in med skolkonto (e2e)', () => {
         { provider: 'azure', domains: Array.from({ length: 21 }, (_, i) => `d${i}.skola.example`), entraTenantId: TENANT },
         { provider: 'azure', domains: ['skola.example'], entraTenantId: 'not-a-uuid' },
         { provider: 'google', domains: ['skola.example'], googleHostedDomain: 'skola' },
+        { provider: 'azure', domains: ['skola.example', 'Gmail.com'], entraTenantId: TENANT },
+        { provider: 'google', domains: ['skola.example'], googleHostedDomain: 'hotmail.se' },
         { provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, ssoOnlyForStaff: 'yes' },
         { provider: 'azure', domains: ['skola.example'], entraTenantId: TENANT, schoolId: SCHOOL },
       ]) {

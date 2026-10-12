@@ -53,10 +53,9 @@ export function domainTakenRefusal(error: unknown): string[] | null {
   return listed ? listed.split(',').filter((domain) => HOSTNAME.test(domain)) : [];
 }
 
-/** How many active people, and how many of them staff, use one e-mail domain at the school. */
+/** How many of the school's staff who can sign in have an address on one e-mail domain. */
 export interface DomainUse {
   domain: string;
-  people: number;
   staff: number;
 }
 
@@ -80,7 +79,7 @@ export function accountFits(
  * admin's row, and /login's lookup.
  *
  * Who may sign in is not decided here. The access-token hook
- * (app.custom_access_token_hook) reads the row Supabase Auth asks about at
+ * (sign_in.custom_access_token_hook) reads the row Supabase Auth asks about at
  * every sign-in and refresh; this service only writes it, under the admin's
  * own RLS arms.
  *
@@ -106,19 +105,33 @@ export function accountFits(
  *     answer at /login. The collision is logged for the operator, who
  *     decides whose domain it is.
  *
- * And two from the school's own people, read under the admin's RLS in the
- * transaction that saves:
- *   - Every domain must be one the school uses: the address of at least one
- *     of its active people is on it (409 SIGN_IN_DOMAIN_UNUSED). A school
- *     cannot claim a domain it has nobody on, first come, ahead of the
- *     schools that do.
- *   - With "Kräv skolkonto för personal" on, every active teacher's and
- *     admin's address must be on a domain /login answers with this
- *     provider: one of the row's own, or one another school names with the
- *     same provider (409 SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT, naming the
- *     domains left out and how many staff are on each). Otherwise staff on
- *     a missing or mistyped domain would find no school-account sign-in and
- *     have their password refused, with no way in.
+ * And two from the school's own staff, read under the admin's RLS in the
+ * transaction that saves. Both count the same people: active teachers and
+ * admins who can sign in, which is those SchemaPro has invited ("invitedAt"
+ * set; until then authId matches no login) and the admin saving, who is
+ * signed in. A catalogue entry nobody invited has no login to lose and
+ * proves nothing about a domain, so it neither claims a domain nor holds
+ * the switch off. Pupils and guardians are not counted: the switch does not
+ * apply to them, and a domain only they use is no staff domain to offer.
+ *   - Every domain the save adds must have at least one of them on it
+ *     (409 SIGN_IN_DOMAIN_UNUSED). A school cannot claim a domain its staff
+ *     do not use, first come, ahead of the schools whose staff do. Domains
+ *     already on the row are not asked again, so turning the switch off, or
+ *     any other change, never waits on a domain whose last teacher has left.
+ *   - With "Kräv skolkonto för personal" on, every one of them must have an
+ *     address on one of the row's own domains (409
+ *     SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT, naming the domains left out and how
+ *     many staff are on each). Only the row's own: the saving school's old
+ *     row and other schools' rows are not asked, since the old row is about
+ *     to be replaced and another school may drop, narrow or switch its own
+ *     row at any time with nothing to check this school. Naming a domain
+ *     another school also names, with the same provider, is what the domain
+ *     trigger allows, and from then on no other school can switch it. A
+ *     personal address (gmail.com and the like) can never be listed (the
+ *     DTO and the table's CHECK), so staff on one need a school address
+ *     before the switch goes on. Otherwise staff on a missing, dropped or
+ *     personal domain would find no school-account sign-in and have their
+ *     password refused, with no way in.
  */
 @Injectable()
 export class SignInMethodsService {
@@ -183,23 +196,21 @@ export class SignInMethodsService {
 
     try {
       const row = await this.prisma.withRls(user, async (tx) => {
-        const uses = await this.domainUses(tx, schoolId);
-        const used = new Map(uses.map((use) => [use.domain, use]));
-        const unused = config.domains.filter((domain) => !used.has(domain));
+        const existing = await tx.schoolSignInMethod.findUnique({ where: { schoolId } });
+        const uses = await this.staffDomains(tx, schoolId, user.userId ?? null);
+        const used = new Set(uses.map((use) => use.domain));
+        const unused = config.domains.filter((domain) => !existing?.domains.includes(domain) && !used.has(domain));
         if (unused.length > 0) {
           throw new ConflictException({
-            message: 'Ingen aktiv person på skolan har en adress på domänen.',
+            message: 'Ingen inbjuden lärare eller administratör på skolan har en adress på domänen.',
             code: 'SIGN_IN_DOMAIN_UNUSED',
             params: { domains: unused.join(', ') },
           });
         }
         if (config.ssoOnlyForStaff) {
-          const left: Array<{ domain: string; count: number }> = [];
-          for (const use of uses) {
-            if (use.staff === 0 || config.domains.includes(use.domain)) continue;
-            const answered = await this.providerIn(tx, use.domain);
-            if (answered !== config.provider) left.push({ domain: use.domain, count: use.staff });
-          }
+          const left = uses
+            .filter((use) => !config.domains.includes(use.domain))
+            .map((use) => ({ domain: use.domain, count: use.staff }));
           if (left.length > 0) {
             throw new ConflictException({
               message: 'Personal med adresser på andra domäner skulle inte kunna logga in.',
@@ -208,7 +219,6 @@ export class SignInMethodsService {
             });
           }
         }
-        const existing = await tx.schoolSignInMethod.findUnique({ where: { schoolId } });
         return existing
           ? tx.schoolSignInMethod.update({ where: { schoolId }, data: config })
           : tx.schoolSignInMethod.create({ data: { schoolId, ...config } });
@@ -236,28 +246,21 @@ export class SignInMethodsService {
   }
 
   /**
-   * The e-mail domains of the school's active people, with how many people
-   * and how many staff (SCHOOL_ADMIN, TEACHER) are on each. Read under the
-   * admin's own RLS, which shows them every person of their school.
+   * The e-mail domains of the school's staff who can sign in (active
+   * SCHOOL_ADMIN and TEACHER rows that were invited, and the saving admin),
+   * with how many are on each. Read under the admin's own RLS, which shows
+   * them every person of their school.
    */
-  private async domainUses(tx: PrismaClient, schoolId: string): Promise<DomainUse[]> {
-    const rows = await tx.$queryRaw<Array<{ domain: string; people: bigint | number; staff: bigint | number }>>(
-      Prisma.sql`SELECT lower(split_part(btrim("email"), '@', 2)) AS "domain",
-                        count(*) AS "people",
-                        count(*) FILTER (WHERE "role" IN ('SCHOOL_ADMIN', 'TEACHER')) AS "staff"
+  private async staffDomains(tx: PrismaClient, schoolId: string, savingUserId: string | null): Promise<DomainUse[]> {
+    const rows = await tx.$queryRaw<Array<{ domain: string; staff: bigint | number }>>(
+      Prisma.sql`SELECT lower(split_part(btrim("email"), '@', 2)) AS "domain", count(*) AS "staff"
                    FROM "Users"
                   WHERE "schoolId" = ${schoolId}::uuid AND "isActive"
+                    AND "role" IN ('SCHOOL_ADMIN', 'TEACHER')
+                    AND ("invitedAt" IS NOT NULL OR "id" = ${savingUserId}::uuid)
                   GROUP BY 1`,
     );
-    return (rows ?? []).map((row) => ({ domain: row.domain, people: Number(row.people), staff: Number(row.staff) }));
-  }
-
-  /** What /login answers for a domain, asked inside the saving transaction. */
-  private async providerIn(tx: PrismaClient, domain: string): Promise<SignInProvider | null> {
-    const rows = await tx.$queryRaw<Array<{ provider: SignInProvider | null }>>(
-      Prisma.sql`SELECT app.sign_in_provider_for_domain(${domain})::text AS "provider"`,
-    );
-    return rows?.[0]?.provider ?? null;
+    return (rows ?? []).map((row) => ({ domain: row.domain, staff: Number(row.staff) }));
   }
 
   /** Turns school accounts off for the school: passwords only from the next refresh. */
