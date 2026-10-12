@@ -12400,3 +12400,126 @@ BEGIN
   IF flag IS DISTINCT FROM false THEN RAISE EXCEPTION 'notifies: the batch reads % after the teacher''s write', flag; END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 60: ett ämne fördelar sina lektioner över veckan.
+--
+-- 20261019090000 adds the ämnesfördelning: Subjects."maxLessonsPerDay" and
+-- "minDaysBetween", nullable, and the same two on TeachingRequirements beside
+-- "ownDistribution" NOT NULL DEFAULT false. No policy changes — every arm on
+-- both tables is a row predicate that names no column — so what is held here
+-- is that the CHECKs hold for every writer, the admin's PostgREST role
+-- included, which meets no DTO: the bounds are legal, the values past them
+-- are refused by name, a fresh row reads no rule, and a timplanspost that
+-- follows its subject cannot carry numbers of its own.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE
+  via text;
+  school uuid;
+  year uuid;
+  grp uuid;
+  s uuid;
+  r uuid;
+  perday int;
+  apart int;
+  own boolean;
+  con text;
+  bad record;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'fördelning: running as %, not %', current_user, via;
+    END IF;
+    school := app.current_school_id();
+    SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+    SELECT id INTO grp FROM "StudentGroups" WHERE "academicYearId" = year ORDER BY id LIMIT 1;
+    IF year IS NULL OR grp IS NULL THEN
+      RAISE EXCEPTION 'fördelning (%): the seed has no year or class to hang a timplanspost on', via;
+    END IF;
+
+    INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+    VALUES (school, 'RLS60 idrott ' || via, 'RLS60' || left(via, 3), now())
+    RETURNING id, "maxLessonsPerDay", "minDaysBetween" INTO s, perday, apart;
+    IF perday IS NOT NULL OR apart IS NOT NULL THEN
+      RAISE EXCEPTION 'fördelning (%): a new subject reads a rule (%, %), expected none', via, perday, apart;
+    END IF;
+    UPDATE "Subjects" SET "maxLessonsPerDay" = 1, "minDaysBetween" = 2 WHERE id = s;
+    UPDATE "Subjects" SET "maxLessonsPerDay" = 20, "minDaysBetween" = 6 WHERE id = s;
+    UPDATE "Subjects" SET "maxLessonsPerDay" = NULL, "minDaysBetween" = NULL WHERE id = s;
+    FOR bad IN
+      SELECT * FROM (VALUES
+        (0, NULL::int, 'Subjects_max_lessons_per_day_is_sane'),
+        (21, NULL, 'Subjects_max_lessons_per_day_is_sane'),
+        (NULL, 1, 'Subjects_min_days_between_is_sane'),
+        (NULL, 7, 'Subjects_min_days_between_is_sane')
+      ) AS t(perday, apart, name)
+    LOOP
+      BEGIN
+        UPDATE "Subjects" SET "maxLessonsPerDay" = bad.perday, "minDaysBetween" = bad.apart WHERE id = s;
+        RAISE EXCEPTION 'fördelning (%): the subject stored (%, %)', via, bad.perday, bad.apart;
+      EXCEPTION WHEN check_violation THEN
+        GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+        IF con IS DISTINCT FROM bad.name THEN
+          RAISE EXCEPTION 'fördelning (%): (%, %) on the subject was refused by "%", expected %', via, bad.perday, bad.apart, con, bad.name;
+        END IF;
+      END;
+    END LOOP;
+
+    INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "updatedAt")
+    VALUES (school, year, s, grp, now())
+    RETURNING id, "ownDistribution", "maxLessonsPerDay", "minDaysBetween" INTO r, own, perday, apart;
+    IF own IS DISTINCT FROM false OR perday IS NOT NULL OR apart IS NOT NULL THEN
+      RAISE EXCEPTION 'fördelning (%): a new timplanspost reads (%, %, %), expected (false, null, null)', via, own, perday, apart;
+    END IF;
+    -- Its own rule, its own rule of none, and back to the subject.
+    UPDATE "TeachingRequirements" SET "ownDistribution" = true, "maxLessonsPerDay" = 2, "minDaysBetween" = 3 WHERE id = r;
+    UPDATE "TeachingRequirements" SET "maxLessonsPerDay" = NULL, "minDaysBetween" = NULL WHERE id = r;
+    UPDATE "TeachingRequirements" SET "ownDistribution" = false WHERE id = r;
+    FOR bad IN
+      SELECT * FROM (VALUES
+        (false, 1, NULL::int, 'TeachingRequirements_distribution_is_own_or_absent'),
+        (false, NULL, 2, 'TeachingRequirements_distribution_is_own_or_absent'),
+        (true, 0, NULL, 'TeachingRequirements_max_lessons_per_day_is_sane'),
+        (true, 21, NULL, 'TeachingRequirements_max_lessons_per_day_is_sane'),
+        (true, NULL, 1, 'TeachingRequirements_min_days_between_is_sane'),
+        (true, NULL, 7, 'TeachingRequirements_min_days_between_is_sane')
+      ) AS t(own, perday, apart, name)
+    LOOP
+      BEGIN
+        UPDATE "TeachingRequirements"
+           SET "ownDistribution" = bad.own, "maxLessonsPerDay" = bad.perday, "minDaysBetween" = bad.apart
+         WHERE id = r;
+        RAISE EXCEPTION 'fördelning (%): the timplanspost stored (%, %, %)', via, bad.own, bad.perday, bad.apart;
+      EXCEPTION WHEN check_violation THEN
+        GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+        IF con IS DISTINCT FROM bad.name THEN
+          RAISE EXCEPTION 'fördelning (%): (%, %, %) on the timplanspost was refused by "%", expected %', via, bad.own, bad.perday, bad.apart, con, bad.name;
+        END IF;
+      END;
+    END LOOP;
+    -- Switching back to the subject while numbers remain is the same refusal:
+    -- the row would carry a rule nothing reads.
+    UPDATE "TeachingRequirements" SET "ownDistribution" = true, "maxLessonsPerDay" = 1 WHERE id = r;
+    BEGIN
+      UPDATE "TeachingRequirements" SET "ownDistribution" = false WHERE id = r;
+      RAISE EXCEPTION 'fördelning (%): a timplanspost went back to its subject still carrying its own cap', via;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+      IF con IS DISTINCT FROM 'TeachingRequirements_distribution_is_own_or_absent' THEN
+        RAISE EXCEPTION 'fördelning (%): the switch back was refused by "%"', via, con;
+      END IF;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END
+$$;
+ROLLBACK;

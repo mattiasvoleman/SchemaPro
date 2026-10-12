@@ -161,4 +161,29 @@ describe.each([
     const errors = await validate(plainToInstance(cls, { ...base, teacherLoadPercent: null }));
     expect(Object.values(errors[0]!.constraints ?? {})).toContain('teacherLoadPercent: anges som ett heltal i procent.');
   });
+
+  describe('ämnesfördelning', () => {
+    it.each<[string, object]>([
+      ['its own rule', { ownDistribution: true, maxLessonsPerDay: 1, minDaysBetween: 2 }],
+      ['its own rule of no limit', { ownDistribution: true, maxLessonsPerDay: null, minDaysBetween: null }],
+      ['the bounds', { ownDistribution: true, maxLessonsPerDay: 20, minDaysBetween: 6 }],
+      ['back to the subject', { ownDistribution: false }],
+      ['nothing about it', {}],
+    ])('accepts %s', async (_case, patch) => {
+      await expect(failing(cls, { ...base, ...patch })).resolves.toEqual([]);
+    });
+
+    it.each<[string, object, string]>([
+      ['a null flag, which has no cleared state', { ownDistribution: null }, 'ownDistribution'],
+      ['a flag as a string', { ownDistribution: 'ja' }, 'ownDistribution'],
+      ['no lessons a day', { maxLessonsPerDay: 0 }, 'maxLessonsPerDay'],
+      ['21 a day', { maxLessonsPerDay: 21 }, 'maxLessonsPerDay'],
+      ['days one apart, which every two days are', { minDaysBetween: 1 }, 'minDaysBetween'],
+      ['days seven apart, which no week has', { minDaysBetween: 7 }, 'minDaysBetween'],
+    ])('refuses %s, naming the field', async (_case, patch, field) => {
+      const errors = await validate(plainToInstance(cls, { ...base, ...patch }));
+      expect(errors.map((error) => error.property)).toEqual([field]);
+      expect(Object.values(errors[0]!.constraints ?? {})[0]).toMatch(new RegExp(`^${field}: `));
+    });
+  });
 });

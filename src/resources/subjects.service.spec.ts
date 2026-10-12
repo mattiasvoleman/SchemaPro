@@ -63,6 +63,9 @@ describe('SubjectsService', () => {
           countsTowardTimplan: true,
           // The minutes as they are: what every subject reads under MINUTES.
           loadFactor: 1,
+          // No ämnesfördelning: school rules are off until a school sets them.
+          maxLessonsPerDay: null,
+          minDaysBetween: null,
         },
       });
       // No code given, so the reference table is not consulted at all.
@@ -98,7 +101,19 @@ describe('SubjectsService', () => {
           nationalCode: null,
           countsTowardTimplan: true,
           loadFactor: 1,
+          maxLessonsPerDay: null,
+          minDaysBetween: null,
         },
+      });
+    });
+
+    it('writes the ämnesfördelning it is given', async () => {
+      tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+
+      await service.create({ name: 'Idrott', maxLessonsPerDay: 1, minDaysBetween: 2 }, testUser());
+
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ maxLessonsPerDay: 1, minDaysBetween: 2 }),
       });
     });
 
@@ -226,6 +241,11 @@ describe('SubjectsService', () => {
       ['requiredRoomTypeId', { requiredRoomTypeId: ROOM_TYPE_ID }],
       ['countsTowardTimplan', { countsTowardTimplan: false }],
       ['loadFactor', { loadFactor: 0.7 }],
+      ['maxLessonsPerDay', { maxLessonsPerDay: 1 }],
+      ['minDaysBetween', { minDaysBetween: 2 }],
+      // Null is how the dialog clears a rule, and it must reach the column.
+      ['maxLessonsPerDay as null', { maxLessonsPerDay: null }],
+      ['minDaysBetween as null', { minDaysBetween: null }],
     ])('a PATCH naming only %s writes it', async (_field, patch) => {
       tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
 

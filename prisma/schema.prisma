@@ -413,6 +413,15 @@ model Subject {
   /// default 1.000; never read under MINUTES. Lesson minutes the pupils sit
   /// are never weighted. See migration 20261010100000.
   loadFactor         Decimal  @default(1.000) @db.Decimal(4, 3)
+  /// Ämnesfördelning, the subject's default for every timplanspost that does
+  /// not carry its own (TeachingRequirement.ownDistribution): at most this
+  /// many lessons a weekday (1..20), and lesson days at least this many
+  /// weekdays apart (2..6; 2 is "inte dagar i följd"). Null is no rule, which
+  /// is every subject until a school writes one. The generator holds both as
+  /// hard rules; a hand edit that breaks one is warned about, never refused.
+  /// See migration 20261019090000.
+  maxLessonsPerDay   Int?
+  minDaysBetween     Int?
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
@@ -1372,6 +1381,16 @@ model TeachingRequirement {
   /// See migration 20261007090000.
   teacherLoadPercent   Int @default(100)
   coTeacherLoadPercent Int @default(100)
+
+  /// Ämnesfördelning for this row. False, the default, follows the subject's
+  /// rule (Subject.maxLessonsPerDay, Subject.minDaysBetween) and leaves both
+  /// columns below empty, which a CHECK holds. True makes the two columns this
+  /// row's whole rule, null in either meaning no rule — so "no limit here,
+  /// although the subject has one" needs no sentinel. Same bounds as the
+  /// subject's. See migration 20261019090000.
+  ownDistribution  Boolean @default(false)
+  maxLessonsPerDay Int?
+  minDaysBetween   Int?
 
   /// Which weeks the requirement is read over, inherited by every lesson the
   /// optimizer generates for it. `lessonsPerWeek` counts weeks the requirement

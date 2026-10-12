@@ -61,6 +61,9 @@ export class SubjectsService {
             // call states the whole row and a spec can read the default here.
             countsTowardTimplan: dto.countsTowardTimplan ?? true,
             loadFactor: dto.loadFactor ?? 1,
+            // Ämnesfördelning: no rule unless the school wrote one.
+            maxLessonsPerDay: dto.maxLessonsPerDay ?? null,
+            minDaysBetween: dto.minDaysBetween ?? null,
           },
         });
         return toSubjectResponse(row);
@@ -99,6 +102,12 @@ export class SubjectsService {
               ? { countsTowardTimplan: dto.countsTowardTimplan }
               : {}),
             ...(dto.loadFactor !== undefined ? { loadFactor: dto.loadFactor } : {}),
+            ...(dto.maxLessonsPerDay !== undefined
+              ? { maxLessonsPerDay: dto.maxLessonsPerDay }
+              : {}),
+            ...(dto.minDaysBetween !== undefined
+              ? { minDaysBetween: dto.minDaysBetween }
+              : {}),
           },
         });
         return toSubjectResponse(row);

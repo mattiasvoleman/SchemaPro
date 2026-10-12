@@ -484,6 +484,11 @@ describe('YearRolloverService — rollover execute', () => {
       minutesAfter: 10,
       teacherLoadPercent: 60,
       coTeacherLoadPercent: 40,
+      // Its own ämnesfördelning: two a day and no spacing, so the flag and the
+      // cap are carried and the empty half is left to its column's null.
+      ownDistribution: true,
+      maxLessonsPerDay: 2,
+      minDaysBetween: null,
       recurrence: 'EVEN_WEEKS',
     });
     Object.assign(rows['schoolBreak']![0]!, { kind: 'STAFF_DAY', minGradeLevel: 7, maxGradeLevel: 8 });
@@ -617,7 +622,9 @@ describe('YearRolloverService — rollover execute', () => {
             // Written as the source has it when the source is not the column's
             // default; left to the default (not written at all) when it is.
             const value = from![column];
-            const isDefault = value === undefined || value === null || (Array.isArray(value) && value.length === 0);
+            // false too: a flag's default (TeachingRequirement.ownDistribution).
+            const isDefault =
+              value === undefined || value === null || value === false || (Array.isArray(value) && value.length === 0);
             expect({ ...at, written: column in row, value: column in row ? comparable(row[column]) : null }).toEqual({
               ...at,
               written: !isDefault,
@@ -808,21 +815,33 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     const { world, service } = setup(rolloverRowsAtFa4a3d6());
     const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, ...option }, admin);
     expect(preview.planHash).toBe(PINNED);
-    // The ONE difference from fa4a3d6, named rather than re-recorded: the
+    // The ONLY differences from fa4a3d6, named rather than re-recorded: the
     // source read of the timplansposter selects lessonLengths (lektionslängder,
-    // 20261008090000). Asserted on its own, then taken out of that select, and
-    // every call with every argument is then fa4a3d6's, byte for byte.
+    // 20261008090000) and the row's own ämnesfördelning (20261019090000).
+    // Asserted on their own, then taken out of that select, and every call with
+    // every argument is then fa4a3d6's, byte for byte.
     const requirementReads = world.calls.filter(
       (call) => call.model === 'teachingRequirement' && call.method === 'findMany',
     );
     expect(requirementReads.length).toBeGreaterThan(0);
     for (const call of requirementReads) {
-      expect((call.args as { select: Record<string, unknown> }).select).toMatchObject({ lessonLengths: true });
+      expect((call.args as { select: Record<string, unknown> }).select).toMatchObject({
+        lessonLengths: true,
+        ownDistribution: true,
+        maxLessonsPerDay: true,
+        minDaysBetween: true,
+      });
     }
     const asAtFa4a3d6 = world.calls.map((call) => {
       if (call.model !== 'teachingRequirement' || call.method !== 'findMany') return call;
       const args = call.args as { select: Record<string, unknown> };
-      const { lessonLengths: _added, ...select } = args.select;
+      const {
+        lessonLengths: _lengths,
+        ownDistribution: _own,
+        maxLessonsPerDay: _perDay,
+        minDaysBetween: _apart,
+        ...select
+      } = args.select;
       return { ...call, args: { ...args, select } };
     });
     expect(digest(asAtFa4a3d6)).toBe(FA4A3D6_PREVIEW_CALLS);

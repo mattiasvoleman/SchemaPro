@@ -161,6 +161,10 @@ describe('TeachingRequirementsService', () => {
           // columns existed.
           minutesBefore: 0,
           minutesAfter: 0,
+          // The subject's ämnesfördelning, and no numbers of the row's own.
+          ownDistribution: false,
+          maxLessonsPerDay: null,
+          minDaysBetween: null,
           recurrence: 'ALL_WEEKS',
           startDate: null,
           endDate: null,
@@ -612,6 +616,101 @@ describe('TeachingRequirementsService', () => {
       tx.teachingRequirement.update.mockResolvedValue(UNIFORM_ROW);
       const uniform = await service.update(REQUIREMENT_ID, { teacherId: null }, testUser());
       expect(uniform).not.toHaveProperty('lessonLengths');
+    });
+  });
+
+  describe('ämnesfördelning', () => {
+    it('creates a row with its own rule', async () => {
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.create(
+        dto({ ownDistribution: true, maxLessonsPerDay: 2, minDaysBetween: null }),
+        testUser(),
+      );
+
+      expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          ownDistribution: true,
+          maxLessonsPerDay: 2,
+          minDaysBetween: null,
+        }),
+      });
+    });
+
+    it('refuses numbers on a create that follows its subject, naming the fields', async () => {
+      // The CHECK would refuse the row as well, as a bare 400 about a
+      // constraint; this one says which fields and what to send instead.
+      await expect(
+        service.create(dto({ maxLessonsPerDay: 1 }), testUser()),
+      ).rejects.toThrow(/maxLessonsPerDay och minDaysBetween hör till en timplanspost med egen fördelning/);
+      await expect(
+        service.create(dto({ ownDistribution: false, minDaysBetween: 2 }), testUser()),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('switching back to the subject clears both numbers', async () => {
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(REQUIREMENT_ID, { ownDistribution: false }, testUser());
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { ownDistribution: false, maxLessonsPerDay: null, minDaysBetween: null },
+      });
+      // The flag was named, so nothing is read to learn it.
+      expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('an own rule of "no limit" is the flag with nulls, written as sent', async () => {
+      // The case the switch exists for: the subject says one a day, and this
+      // row — svenska in year 1, eight lessons on five days — says none.
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+      const patch = { ownDistribution: true, maxLessonsPerDay: null, minDaysBetween: null };
+
+      await service.update(REQUIREMENT_ID, patch, testUser());
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: patch,
+      });
+    });
+
+    it('a number without the flag reads the row, and is written to a row with its own rule', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({ ownDistribution: true });
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(REQUIREMENT_ID, { maxLessonsPerDay: 3 }, testUser());
+
+      expect(tx.teachingRequirement.findUnique).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        select: { ownDistribution: true },
+      });
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { maxLessonsPerDay: 3 },
+      });
+    });
+
+    it('a number without the flag on a row that follows its subject is refused, not written', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({ ownDistribution: false });
+
+      await expect(
+        service.update(REQUIREMENT_ID, { minDaysBetween: 2 }, testUser()),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('a PATCH that does not name the rule leaves it alone and reads nothing for it', async () => {
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(REQUIREMENT_ID, { minutesBefore: 5 }, testUser());
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { minutesBefore: 5 },
+      });
+      expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
     });
   });
 
