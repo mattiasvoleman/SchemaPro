@@ -12031,7 +12031,9 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 38: den inloggade tömmer ingen tabell, sätter ingen trigger på den
 -- och pekar ingen främmande nyckel mot den (authenticated, 20261016110000),
--- och bara ägaren underhåller en tabell (MAINTAIN, 20261016120000).
+-- bara ägaren underhåller en tabell (MAINTAIN, 20261016120000), och
+-- tjänstenyckeln läser men skriver ingen tabell (service_role,
+-- 20261016130000).
 --
 -- authenticated is PostgREST's role for a signed-in user, and
 -- app_authenticated, the gateway's role, inherits everything it holds. On
@@ -12051,17 +12053,29 @@ ROLLBACK;
 -- As either API role, VACUUM FULL, CLUSTER and REINDEX ran, each holding
 -- ACCESS EXCLUSIVE.
 --
+-- service_role, which a request with Supabase's service key runs as, has
+-- BYPASSRLS. On the same 46 tables it held INSERT, UPDATE, DELETE, TRUNCATE,
+-- REFERENCES and TRIGGER: the first three from the init migration and
+-- 20260806000000, all six from that default ACL, so a request with the key
+-- could change or remove every school's rows. Nothing writes as
+-- service_role: the gateway uses the key for GoTrue's admin API alone. The
+-- tables created since 20261010090000 already leave it SELECT, and
+-- 20261016130000 does the same for the 46.
+--
 -- 38a reads the catalogue. Neither role holds TRUNCATE, REFERENCES or
 -- TRIGGER on any table, view or foreign table in "public" or "app". That
 -- counts grants to the role itself, to a role it inherits from and to PUBLIC,
--- and REFERENCES on a single column as well. On 17 and later, neither of
--- them nor service_role holds MAINTAIN there either. service_role keeps the
--- other three (20261016120000 says why), and this connection cannot become
--- it, so only its MAINTAIN is asserted, from the catalogue alone. No default
--- ACL entry, of any role and in any schema or none, gives new tables any of
--- the three to either role, to a role they inherit from or to PUBLIC, nor
--- MAINTAIN to any of the three roles. Postgres 16 has no MAINTAIN, and
--- has_table_privilege rejects the name, so on 16 that part is skipped.
+-- and REFERENCES on a single column as well. service_role holds none of the
+-- three there either, nor INSERT, UPDATE or DELETE, and INSERT and UPDATE on
+-- a single column count too. On 17 and later, none of the three roles holds
+-- MAINTAIN there. So service_role holds SELECT or nothing on every relation.
+-- This connection cannot become service_role, so its part is asserted from
+-- the catalogue alone. No default ACL entry, of any role and in any schema or
+-- none, gives new tables any of the three to authenticated or
+-- app_authenticated, to a role they inherit from or to PUBLIC, nor MAINTAIN
+-- to them. None gives service_role or PUBLIC anything but SELECT. Postgres 16
+-- has no MAINTAIN, and has_table_privilege rejects the name, so on 16 that
+-- part is skipped.
 --
 -- 38b runs the statements as each role in turn. It runs TRUNCATE on a table
 -- no foreign key points at, so the grant is the only thing that refuses it.
@@ -12082,7 +12096,11 @@ ROLLBACK;
 -- regression. On a database with Supabase's default ACL it fails without the
 -- migration, naming the 46 tables. With only the tables revoked, it names the
 -- migration role's default entry. On 17 with that default ACL and without
--- 20261016120000, it names MAINTAIN on the 77.
+-- 20261016120000, it names MAINTAIN on the 77. service_role exists on CI too,
+-- since the init migration creates it, and holds INSERT, UPDATE and DELETE
+-- there from the init migration and 20260806000000. So without
+-- 20261016130000 the section fails on CI as well, naming service_role's
+-- writes.
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -12107,15 +12125,15 @@ BEGIN
   END IF;
 
   FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role'] LOOP
-    denied := CASE via WHEN 'service_role' THEN '{}' ELSE ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] END
-              || maintain;
+    denied := CASE via WHEN 'service_role' THEN ARRAY['INSERT', 'UPDATE', 'DELETE'] ELSE '{}' END
+              || ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] || maintain;
     SELECT string_agg(item, '; ' ORDER BY item), count(*)::int INTO held, n FROM (
       SELECT c.oid::regclass::text || ': ' || string_agg(p, ', ' ORDER BY p) AS item
         FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
        CROSS JOIN unnest(denied) p
        WHERE ns.nspname IN ('public', 'app') AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-         AND CASE p WHEN 'REFERENCES' THEN has_any_column_privilege(via, c.oid, p)
-                    ELSE has_table_privilege(via, c.oid, p) END
+         AND CASE WHEN p IN ('INSERT', 'UPDATE', 'REFERENCES') THEN has_any_column_privilege(via, c.oid, p)
+                  ELSE has_table_privilege(via, c.oid, p) END
        GROUP BY c.oid
     ) x;
     IF held IS NOT NULL THEN
@@ -12132,15 +12150,15 @@ BEGIN
       FROM pg_default_acl d LEFT JOIN pg_namespace ns ON ns.oid = d.defaclnamespace
      CROSS JOIN aclexplode(d.defaclacl) a
      WHERE d.defaclobjtype = 'r'
-       AND a.privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN')
-       AND CASE WHEN a.grantee = 0 THEN true
-                ELSE pg_has_role('authenticated', a.grantee, 'USAGE')
-                     OR pg_has_role('app_authenticated', a.grantee, 'USAGE')
-                     OR (a.privilege_type = 'MAINTAIN' AND pg_has_role('service_role', a.grantee, 'USAGE')) END
+       AND CASE WHEN a.grantee = 0 OR pg_has_role('service_role', a.grantee, 'USAGE')
+                  THEN a.privilege_type <> 'SELECT'
+                ELSE a.privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN')
+                     AND (pg_has_role('authenticated', a.grantee, 'USAGE')
+                          OR pg_has_role('app_authenticated', a.grantee, 'USAGE')) END
      GROUP BY d.oid, ns.nspname, a.grantee
   ) x;
   IF held IS NOT NULL THEN
-    RAISE EXCEPTION 'table rights: a default ACL gives new tables TRUNCATE, REFERENCES, TRIGGER or MAINTAIN: %', held;
+    RAISE EXCEPTION 'table rights: a default ACL gives new tables TRUNCATE, REFERENCES, TRIGGER or MAINTAIN, or gives service_role or PUBLIC more than SELECT: %', held;
   END IF;
 END $$;
 

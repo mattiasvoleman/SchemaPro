@@ -42,7 +42,9 @@ All in the Supabase dashboard:
    - Project URL → `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_URL`
    - Publishable (anon) key → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
    - Service role key → `SUPABASE_SERVICE_ROLE_KEY` (**server-only** — used
-     exclusively by the API's user-invite flow)
+     exclusively by the API's user-invite flow. Its role writes no table, so a
+     hand-written data change runs in the SQL editor as the owner, as in
+     step 7)
    - JWT secret (Settings → API → JWT Settings) → `JWT_SECRET`
 2. **Auth settings** (Authentication → URL Configuration):
    - Site URL: your web origin, e.g. `https://app.yourschool.example`
