@@ -11768,7 +11768,9 @@ ROLLBACK;
 --
 --   * USAGE and CREATE on either schema;
 --   * every privilege on a table, view or foreign table, and on a sequence,
---     whether granted to anon or to PUBLIC (has_*_privilege counts both);
+--     whether granted to anon or to PUBLIC (has_*_privilege counts both).
+--     MAINTAIN is counted on Postgres 17 and later, which have it
+--     (20261016120000);
 --   * EXECUTE on a function in "public", which PostgREST serves as an RPC.
 --     Extension members are left out: pgcrypto and btree_gist sit in
 --     "public" here and in "extensions" on Supabase, and are not ours;
@@ -11790,6 +11792,8 @@ DO $$
 DECLARE
   tables   int;
   reach    text[];
+  maintain text[] := CASE WHEN current_setting('server_version_num')::int >= 170000
+                          THEN ARRAY['MAINTAIN'] ELSE '{}' END;
   expected text[] := ARRAY['schema public: USAGE'];
   extra    text;
   extras   int;
@@ -11814,7 +11818,7 @@ BEGIN
     UNION ALL
     SELECT 'relation ' || c.oid::regclass::text || ': ' || string_agg(p, ', ' ORDER BY p)
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] || maintain) p
      WHERE n.nspname IN ('public', 'app') AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
        AND has_table_privilege('anon', c.oid, p)
      GROUP BY c.oid
@@ -12026,7 +12030,8 @@ ROLLBACK;
 
 -- ---------------------------------------------------------------------------
 -- Section 38: den inloggade tömmer ingen tabell, sätter ingen trigger på den
--- och pekar ingen främmande nyckel mot den (authenticated, 20261016110000).
+-- och pekar ingen främmande nyckel mot den (authenticated, 20261016110000),
+-- och bara ägaren underhåller en tabell (MAINTAIN, 20261016120000).
 --
 -- authenticated is PostgREST's role for a signed-in user, and
 -- app_authenticated, the gateway's role, inherits everything it holds. On
@@ -12038,33 +12043,57 @@ ROLLBACK;
 -- through either role emptied a table for every school. TRIGGER let either
 -- role attach a function to a table, and every later writer would run it.
 --
+-- Postgres 17, which production runs, adds MAINTAIN. It allows VACUUM,
+-- ANALYZE, REINDEX, CLUSTER, REFRESH MATERIALIZED VIEW and LOCK TABLE in any
+-- mode on a table the role does not own, and ALL includes it. The same
+-- default ACL gave it to authenticated and to service_role on 77 tables: the
+-- 46, and every table created since, whose REVOKE lists were written for 16.
+-- As either API role, VACUUM FULL, CLUSTER and REINDEX ran, each holding
+-- ACCESS EXCLUSIVE.
+--
 -- 38a reads the catalogue. Neither role holds TRUNCATE, REFERENCES or
 -- TRIGGER on any table, view or foreign table in "public" or "app". That
 -- counts grants to the role itself, to a role it inherits from and to PUBLIC,
--- and REFERENCES on a single column as well. No default ACL entry, of any
--- role and in any schema or none, gives new tables any of the three to
--- either role, to a role they inherit from or to PUBLIC.
+-- and REFERENCES on a single column as well. On 17 and later, neither of
+-- them nor service_role holds MAINTAIN there either. service_role keeps the
+-- other three (20261016120000 says why), and this connection cannot become
+-- it, so only its MAINTAIN is asserted, from the catalogue alone. No default
+-- ACL entry, of any role and in any schema or none, gives new tables any of
+-- the three to either role, to a role they inherit from or to PUBLIC, nor
+-- MAINTAIN to any of the three roles. Postgres 16 has no MAINTAIN, and
+-- has_table_privilege rejects the name, so on 16 that part is skipped.
 --
 -- 38b runs the statements as each role in turn. It runs TRUNCATE on a table
--- no foreign key points at, so the grant is the only thing that refuses it,
--- and CREATE TRIGGER with a built-in function that everyone may execute.
--- Both must be refused by the grant (42501). REFERENCES would need a table
--- of the role's own, which neither role can create, so the catalogue alone
--- covers it.
+-- no foreign key points at, so the grant is the only thing that refuses it.
+-- It runs CREATE TRIGGER with a built-in function that everyone may execute,
+-- and REINDEX TABLE on the same table. It also runs LOCK TABLE ... IN ACCESS
+-- EXCLUSIVE MODE on TeacherEmploymentLogs, where neither role may update,
+-- delete or truncate, so on 17 only MAINTAIN could allow it. UPDATE alone
+-- allows any lock, so on a table the role may update the probe would prove
+-- nothing. All four must be refused by the grant (42501). On 16, REINDEX
+-- needs ownership and LOCK needs UPDATE, DELETE or TRUNCATE, so the probes
+-- hold there too. VACUUM and ANALYZE are not run. They skip a table they may
+-- not touch with a warning instead of an error, and VACUUM cannot run in a
+-- transaction. REFERENCES would need a table of the role's own, which
+-- neither role can create, so the catalogue alone covers it.
 --
 -- CI's database has no Supabase default ACL, so there authenticated held none
 -- of this even before 20261016110000, and the section guards against a
 -- regression. On a database with Supabase's default ACL it fails without the
 -- migration, naming the 46 tables. With only the tables revoked, it names the
--- migration role's default entry.
+-- migration role's default entry. On 17 with that default ACL and without
+-- 20261016120000, it names MAINTAIN on the 77.
 -- ---------------------------------------------------------------------------
 
 DO $$
 DECLARE
-  tables int;
-  via    text;
-  held   text;
-  n      int;
+  tables   int;
+  via      text;
+  held     text;
+  n        int;
+  maintain text[] := CASE WHEN current_setting('server_version_num')::int >= 170000
+                          THEN ARRAY['MAINTAIN'] ELSE '{}' END;
+  denied   text[];
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     RAISE EXCEPTION 'table rights: the role authenticated does not exist, so nothing below says anything';
@@ -12077,18 +12106,21 @@ BEGIN
     RAISE EXCEPTION 'table rights: only % table(s) were examined; the catalog query proved nothing', tables;
   END IF;
 
-  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role'] LOOP
+    denied := CASE via WHEN 'service_role' THEN '{}' ELSE ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] END
+              || maintain;
     SELECT string_agg(item, '; ' ORDER BY item), count(*)::int INTO held, n FROM (
       SELECT c.oid::regclass::text || ': ' || string_agg(p, ', ' ORDER BY p) AS item
         FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
-       CROSS JOIN unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+       CROSS JOIN unnest(denied) p
        WHERE ns.nspname IN ('public', 'app') AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
          AND CASE p WHEN 'REFERENCES' THEN has_any_column_privilege(via, c.oid, p)
                     ELSE has_table_privilege(via, c.oid, p) END
        GROUP BY c.oid
     ) x;
     IF held IS NOT NULL THEN
-      RAISE EXCEPTION 'table rights: % holds TRUNCATE, REFERENCES or TRIGGER on % relation(s): %', via, n, held;
+      RAISE EXCEPTION 'table rights: % holds % on % relation(s): %', via,
+        regexp_replace(array_to_string(denied, ', '), ', (\w+)$', ' or \1'), n, held;
     END IF;
   END LOOP;
 
@@ -12100,14 +12132,15 @@ BEGIN
       FROM pg_default_acl d LEFT JOIN pg_namespace ns ON ns.oid = d.defaclnamespace
      CROSS JOIN aclexplode(d.defaclacl) a
      WHERE d.defaclobjtype = 'r'
-       AND a.privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER')
+       AND a.privilege_type IN ('TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN')
        AND CASE WHEN a.grantee = 0 THEN true
                 ELSE pg_has_role('authenticated', a.grantee, 'USAGE')
-                     OR pg_has_role('app_authenticated', a.grantee, 'USAGE') END
+                     OR pg_has_role('app_authenticated', a.grantee, 'USAGE')
+                     OR (a.privilege_type = 'MAINTAIN' AND pg_has_role('service_role', a.grantee, 'USAGE')) END
      GROUP BY d.oid, ns.nspname, a.grantee
   ) x;
   IF held IS NOT NULL THEN
-    RAISE EXCEPTION 'table rights: a default ACL gives new tables TRUNCATE, REFERENCES or TRIGGER: %', held;
+    RAISE EXCEPTION 'table rights: a default ACL gives new tables TRUNCATE, REFERENCES, TRIGGER or MAINTAIN: %', held;
   END IF;
 END $$;
 
@@ -12128,6 +12161,16 @@ BEGIN
       CREATE TRIGGER rls38_trigger BEFORE UPDATE ON "GuardianStudents"
         FOR EACH ROW EXECUTE FUNCTION suppress_redundant_updates_trigger();
       RAISE EXCEPTION 'table rights: % attached a trigger to GuardianStudents', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      REINDEX TABLE "GuardianStudents";
+      RAISE EXCEPTION 'table rights: % reindexed GuardianStudents, which holds its writes for every school', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      LOCK TABLE "TeacherEmploymentLogs" IN ACCESS EXCLUSIVE MODE;
+      RAISE EXCEPTION 'table rights: % locked TeacherEmploymentLogs against every reader and writer, a table it may only read', via;
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
   END LOOP;
