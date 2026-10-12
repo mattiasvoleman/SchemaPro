@@ -10,6 +10,8 @@ import { absenceFormOf, absencePeriodText, shiftDate } from "@/lib/cover-absence
 import { reasonName } from "@/lib/cover-view";
 import { ABSENCE_PHASE_VARIANT, COVER_STATUS_VARIANT } from "@/lib/status-variants";
 import { cn, toDateString } from "@/lib/utils";
+import { usePurgedBefore } from "@/lib/retention-queries";
+import { isBeforePurge } from "@/lib/retention-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -97,6 +99,8 @@ function CountsCell({ counts }: { counts: AbsenceCounts }) {
 export function AbsenceRegister({ teachers }: { teachers: { id: string; name: string }[] }) {
   const t = useTranslations("teacherAbsence");
   const tReasons = useTranslations("absenceReasons");
+  // A reason gallring took reads "Gallrad", not "Ej angiven" (ABSENCE_REASONS).
+  const purgedReasons = usePurgedBefore().of("ABSENCE_REASONS");
   const tCommon = useTranslations("common");
   const locale = useLocale();
   const today = toDateString(new Date());
@@ -201,7 +205,9 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
                     </TableCell>
                     <TableCell className={cn(INNER_TD, WIDE, "whitespace-nowrap tabular-nums")}>{period}</TableCell>
                     <TableCell className={cn(INNER_TD, WIDE)}>
-                      {absence.reasonId ? reasonName(tReasons, reasonOf.get(absence.reasonId)) : tReasons("NONE")}
+                      {absence.reasonId
+                        ? reasonName(tReasons, reasonOf.get(absence.reasonId))
+                        : tReasons(isBeforePurge(absence.endsAt, purgedReasons) ? "PURGED" : "NONE")}
                     </TableCell>
                     <TableCell className={cn(INNER_TD, "whitespace-nowrap")}>
                       <Badge variant={ABSENCE_PHASE_VARIANT[absence.phase]}>{t(`phases.${absence.phase}`)}</Badge>

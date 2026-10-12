@@ -11,6 +11,7 @@ import { DecisionList, type Decision, type DecisionRequest } from "@/components/
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PurgedNotice } from "@/components/retention/purged-notice";
 import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -100,6 +101,9 @@ export default function LeaveRequestsPage() {
       {peopleQuery.isError ? (
         <LoadError variant="inline" title={t("namesFailed")} hint={t("namesFailedHint")} />
       ) : null}
+
+      {/* Decided requests end in the past, and gallring takes the old ones. */}
+      {filter !== "PENDING" ? <PurgedNotice kind="LEAVE_REQUESTS" /> : null}
 
       {isLoading ? (
         <div aria-busy="true">

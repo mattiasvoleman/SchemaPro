@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PurgedNotice } from "@/components/retention/purged-notice";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -377,6 +378,7 @@ export default function GuardianPage() {
               })}
             </ul>
           )}
+          <PurgedNotice kind="ABSENCE_REPORTS" />
         </SectionCard>
 
         <SectionCard id="leave-request" title={t("leaveTitle")} description={t("leaveBody")}>
@@ -468,6 +470,7 @@ export default function GuardianPage() {
               ))}
             </ul>
           )}
+          <PurgedNotice kind="LEAVE_REQUESTS" />
         </SectionCard>
       </div>
 

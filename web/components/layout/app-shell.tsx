@@ -59,7 +59,8 @@ interface NavSection {
  *   Drift           Fas 4 — the dated days once the year runs
  *
  * and Integrationer last and unlabelled, as the manual's chapter 7: it is set
- * up once and serves every phase.
+ * up once and serves every phase. Dataskydd och gallring, set up once too,
+ * stands beside it.
  *
  * Several entries share an icon with another entry on purpose. The shell is
  * on every (app) route's bill, so an icon of its own would cost every page
@@ -155,7 +156,15 @@ const ADMIN_NAV: NavSection[] = [
   },
   {
     labelKey: null,
-    items: [{ labelKey: "integrations", href: "/admin/integrations", icon: KeyRound }],
+    items: [
+      // Dataskydd och gallring: how long each kind of data is kept. Like
+      // Integrationer it is set up once and serves every phase, so it sits
+      // with it, before it, and Integrationer stays last. Integrationer's key,
+      // already in the shell: both pages decide who and what reaches the
+      // school's data.
+      { labelKey: "dataProtection", href: "/admin/dataskydd", icon: KeyRound },
+      { labelKey: "integrations", href: "/admin/integrations", icon: KeyRound },
+    ],
   },
 ];
 

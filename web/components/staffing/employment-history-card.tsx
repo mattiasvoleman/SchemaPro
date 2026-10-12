@@ -12,6 +12,7 @@ import {
   historyLines,
   type HistoryLabels,
 } from "@/lib/employment-history-view";
+import { PurgedNotice } from "@/components/retention/purged-notice";
 import { Button } from "@/components/ui/button";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
@@ -144,6 +145,8 @@ export function EmploymentHistoryCard({
           {history.data?.truncated ? (
             <p className="text-xs text-muted-foreground">{t("truncated")}</p>
           ) : null}
+          {/* A läsår past the school's period has no versions left (CHANGE_LOGS). */}
+          <PurgedNotice kind="CHANGE_LOGS" />
           <p className="text-xs text-muted-foreground">{t("caption")}</p>
         </div>
       ) : null}

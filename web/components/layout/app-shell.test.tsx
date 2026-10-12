@@ -226,7 +226,7 @@ describe("AppShell navigation", () => {
     expect(navLinks()).toHaveLength(1);
   });
 
-  it("groups the admin menu by the manual's four phases, Integrationer last and unlabelled", () => {
+  it("groups the admin menu by the manual's four phases, Dataskydd and Integrationer last and unlabelled", () => {
     renderShell();
 
     // Each labelled group is a list named by its label; the order inside is
@@ -269,11 +269,14 @@ describe("AppShell navigation", () => {
       "nav.reports",
     ]);
 
-    // Översikt first and Integrationer last, each in a group without a label.
+    // Översikt first and Integrationer last, each in a group without a label;
+    // Dataskydd och gallring, set up once like it, just before it.
     const all = navLinks();
     expect(all[0]).toHaveTextContent("nav.dashboard");
+    expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
+    expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(27);
+    expect(all).toHaveLength(28);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
