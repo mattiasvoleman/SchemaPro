@@ -1,4 +1,4 @@
-import { apiRequest } from '../api';
+import { ApiError, apiRequest } from '../api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "Logga in med skolkonto" (migration 20261020090000): which provider a
@@ -23,14 +23,43 @@ export function emailDomain(email: string): string | null {
 }
 
 /**
+ * Answers this run of the app has already had, per domain: a second tap
+ * after a cancelled sign-in need not ask again, and a school signing in at
+ * once from one address asks less.
+ */
+const answered = new Map<string, SchoolAccountProvider | null>();
+
+/** For tests: forget every remembered answer. */
+export function forgetLookups(): void {
+  answered.clear();
+}
+
+/** The lookup was refused for now (429): many sign in at once from one address. */
+export function isBusy(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429;
+}
+
+/**
  * Asks the gateway which provider the domain signs in with. Only the domain
  * leaves the phone, never the address. Null when no school names it.
  */
 export async function lookupProvider(domain: string): Promise<SchoolAccountProvider | null> {
+  if (answered.has(domain)) return answered.get(domain) ?? null;
   const body = await apiRequest<{ provider?: unknown }>(`/public/v1/sign-in-methods/${encodeURIComponent(domain)}`, {
     anonymous: true,
   });
-  return body?.provider === 'azure' || body?.provider === 'google' ? body.provider : null;
+  const provider = body?.provider === 'azure' || body?.provider === 'google' ? body.provider : null;
+  answered.set(domain, provider);
+  return provider;
+}
+
+/**
+ * Whether this build offers "Logga in med skolkonto": EXPO_PUBLIC_SCHOOL_ACCOUNTS
+ * is set to "on" for a build made after the deployment set up the access-token
+ * hook and the providers (docs/DEPLOYMENT.md §11).
+ */
+export function schoolAccountsOffered(): boolean {
+  return process.env['EXPO_PUBLIC_SCHOOL_ACCOUNTS'] === 'on';
 }
 
 /** What the provider is told about who is signing in (see the web's providerHints). */

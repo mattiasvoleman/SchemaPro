@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../../src/context/AuthContext';
+import { schoolAccountsOffered } from '../../src/services/auth/schoolAccount';
 import { useI18n } from '../../src/context/LocaleContext';
 
 /** The logo's letters: a mark, the same in every language. */
@@ -94,22 +95,26 @@ export default function LoginScreen(): React.JSX.Element {
             )}
           </TouchableOpacity>
 
-          <View style={styles.divider} accessible={false} importantForAccessibility="no-hide-descendants">
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>{t('login.or')}</Text>
-            <View style={styles.dividerLine} />
-          </View>
+          {schoolAccountsOffered() ? (
+            <>
+              <View style={styles.divider} accessible={false} importantForAccessibility="no-hide-descendants">
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>{t('login.or')}</Text>
+                <View style={styles.dividerLine} />
+              </View>
 
-          <TouchableOpacity
-            style={[styles.schoolAccountBtn, isLoading && styles.loginBtnDisabled]}
-            onPress={startSchoolAccount}
-            disabled={isLoading}
-            accessibilityRole="button"
-            accessibilityLabel={t('login.schoolAccountA11y')}
-            accessibilityState={{ disabled: isLoading }}
-          >
-            <Text style={styles.schoolAccountText}>{t('login.schoolAccount')}</Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.schoolAccountBtn, isLoading && styles.loginBtnDisabled]}
+                onPress={startSchoolAccount}
+                disabled={isLoading}
+                accessibilityRole="button"
+                accessibilityLabel={t('login.schoolAccountA11y')}
+                accessibilityState={{ disabled: isLoading }}
+              >
+                <Text style={styles.schoolAccountText}>{t('login.schoolAccount')}</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
         </View>
 
         <Text style={styles.disclaimer}>{t('login.disclaimer')}</Text>

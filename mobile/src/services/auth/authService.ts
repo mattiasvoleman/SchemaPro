@@ -1,13 +1,14 @@
 import * as Linking from 'expo-linking';
-import * as WebBrowser from 'expo-web-browser';
 import { getSupabase } from '../supabase';
 import { clearCachedSchoolData } from '../database/localDatabase';
 import { SecureTokenStore } from './secureTokenStore';
 import { releaseOnSignedOut, unregisterOnLogout } from '../pushRegistration';
 import type { AuthState } from '../../types';
+import { loadWebBrowser } from './webBrowser';
 import {
   callbackParams,
   emailDomain,
+  isBusy,
   lookupProvider,
   providerHints,
   providerScopes,
@@ -47,6 +48,10 @@ export type AuthErrorCode =
   | 'SSO_NEEDS_EMAIL'
   /** No school signs in with a school account on that domain. */
   | 'SSO_NOT_FOUND'
+  /** The lookup was refused for now (429): wait a minute. */
+  | 'SSO_BUSY'
+  /** This build has no system sign-in window (expo-web-browser): an app update is needed. */
+  | 'SSO_APP_UPDATE_NEEDED'
   | SchoolAccountRefusal;
 
 /**
@@ -150,6 +155,9 @@ export const AuthService = {
    * project's redirect allow list (docs/DEPLOYMENT.md). The code is then
    * exchanged for a session with the verifier the client kept in secure
    * storage.
+   *
+   * expo-web-browser is loaded here, on the tap, and not when the app
+   * starts (./webBrowser.ts).
    */
   async loginWithSchoolAccount(email: string): Promise<AuthState> {
     const domain = emailDomain(email);
@@ -159,6 +167,7 @@ export const AuthService = {
     try {
       provider = await lookupProvider(domain);
     } catch (lookupError) {
+      if (isBusy(lookupError)) throw new AuthError('SSO_BUSY', 'The lookup is busy.');
       throw new AuthError('LOGIN_FAILED', lookupError instanceof Error ? lookupError.message : 'Lookup failed.');
     }
     if (!provider) throw new AuthError('SSO_NOT_FOUND', 'No school signs in with a school account on this domain.');
@@ -177,6 +186,12 @@ export const AuthService = {
     });
     if (error || !data?.url) throw new AuthError('LOGIN_FAILED', error?.message ?? 'No sign-in URL.');
 
+    let WebBrowser: ReturnType<typeof loadWebBrowser>;
+    try {
+      WebBrowser = loadWebBrowser();
+    } catch (moduleError) {
+      throw new AuthError('SSO_APP_UPDATE_NEEDED', moduleError instanceof Error ? moduleError.message : 'No sign-in window.');
+    }
     const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
     if (result.type !== 'success') throw new AuthError('SSO_CANCELLED', `The sign-in browser closed (${result.type}).`);
 

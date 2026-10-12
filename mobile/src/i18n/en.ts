@@ -45,6 +45,8 @@ export const en: Messages = {
     SSO_REQUIRED: 'Your school requires staff to log in with their school account. Choose Log in with school account.',
     SSO_NEEDS_EMAIL: 'Type your e-mail address first, and we will find your school\'s login.',
     SSO_NOT_FOUND: 'No school logs in with a school account on that address\'s domain. Log in with your password, or check the address.',
+    SSO_BUSY: 'Many people are logging in right now. Wait a minute and try again.',
+    SSO_APP_UPDATE_NEEDED: 'This version of the app cannot log in with a school account. Update the app.',
     SSO_NO_ACCOUNT: 'Your school account has an e-mail address nobody has invited to SchemaPro. Ask your school\'s administrator to invite you with the same address your school account has.',
     SSO_UNVERIFIED: 'Your school account sent no verified e-mail address, so it could not be linked to your account. Contact your school\'s IT staff.',
     SSO_OTHER_ORGANISATION: 'The account you logged in with does not belong to your school\'s organisation. Log in with your school account, or contact your school\'s administrator.',
