@@ -1842,6 +1842,13 @@ export interface InvitationResult {
   id: string;
   /** False when the address already had an account — no mail was sent. */
   emailSent: boolean;
+  /**
+   * True when the invitation moved the person's login to the address their
+   * row now has. With `emailSent` false nobody has told them; their old
+   * address no longer signs in. Optional while a gateway without it may
+   * still answer.
+   */
+  loginMoved?: boolean;
 }
 
 /** Result of inviting a selection. */

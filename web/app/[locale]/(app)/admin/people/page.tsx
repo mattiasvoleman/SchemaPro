@@ -627,7 +627,9 @@ export default function PeoplePage() {
       toast.success(
         result.emailSent
           ? t("invitationSent", { name: person.firstName })
-          : t("invitationAlreadyRegistered", { name: person.firstName }),
+          : result.loginMoved
+            ? t("invitationLoginMoved", { name: person.firstName })
+            : t("invitationAlreadyRegistered", { name: person.firstName }),
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));

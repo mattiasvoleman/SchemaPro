@@ -423,6 +423,7 @@
     "createdAndInvited": "Person added and invitation sent.",
     "invitationSent": "Invitation sent to {name}.",
     "invitationAlreadyRegistered": "{name} already has an account — no new email was sent.",
+    "invitationLoginMoved": "{name} now signs in with the new address. No email was sent, so let {name} know.",
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
     "inviteAll": "Invite {count} not yet invited",

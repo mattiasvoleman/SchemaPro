@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PeoplePage from "./page";
 
@@ -85,10 +86,11 @@ const state = vi.hoisted(() => ({
   guardiansFailed: false,
 }));
 
-const { saveEmployment, createPerson, unlinkGuardian } = vi.hoisted(() => ({
+const { saveEmployment, createPerson, unlinkGuardian, inviteOne } = vi.hoisted(() => ({
   saveEmployment: vi.fn(),
   createPerson: vi.fn(),
   unlinkGuardian: vi.fn(),
+  inviteOne: vi.fn(),
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -119,7 +121,7 @@ vi.mock("@/lib/queries", () => ({
     unlink: { mutateAsync: unlinkGuardian, isPending: false },
   }),
   useInvitations: () => ({
-    inviteOne: { mutateAsync: vi.fn(), isPending: false },
+    inviteOne: { mutateAsync: inviteOne, isPending: false },
     inviteMany: { mutateAsync: vi.fn(), isPending: false },
   }),
   useCrudMutations: () => ({
@@ -226,6 +228,28 @@ describe("People page", () => {
     const pupil = screen.getAllByRole("row").find((candidate) => candidate.textContent?.includes("alma@skolan.se"))!;
     expect(within(pupil).getByRole("button", { name: "sendInvitationTo(Alma Berg)" })).toBeInTheDocument();
     expect(within(pupil).queryByRole("button", { name: /moreActionsFor/ })).not.toBeInTheDocument();
+  });
+
+  it("says when an invitation moved a login and nobody was told, so the admin tells the person", async () => {
+    // Karin's address changed since she accepted her invitation: the login
+    // moved with it, and GoTrue mails a confirmed login nothing.
+    inviteOne.mockResolvedValue({ id: "t-1", emailSent: false, loginMoved: true });
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+
+    await user.click(screen.getByRole("button", { name: "resendInvitationTo(Karin Ek)" }));
+
+    expect(toast.success).toHaveBeenCalledWith("invitationLoginMoved(Karin)");
+  });
+
+  it("still says only that an address had an account when nothing moved", async () => {
+    inviteOne.mockResolvedValue({ id: "t-1", emailSent: false, loginMoved: false });
+    const user = userEvent.setup();
+    render(<PeoplePage />);
+
+    await user.click(screen.getByRole("button", { name: "resendInvitationTo(Karin Ek)" }));
+
+    expect(toast.success).toHaveBeenCalledWith("invitationAlreadyRegistered(Karin)");
   });
 
   it("lets the role tabs wrap on a phone rather than widen the page", () => {
