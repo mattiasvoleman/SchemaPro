@@ -1,8 +1,9 @@
 -- Pseudonymiseringen väntar in en återaktivering, och skolans natt går klart.
 --
 -- Amends app.gallring_pseudonymise (20261021110000). Nothing here can matter
--- before a school records a DEPARTED_PEOPLE period: until then no person is
--- due and the function returns before it reads a row.
+-- before a school records a DEPARTED_PEOPLE period: until then the job claims
+-- nobody, so it never calls the function. Called anyway with a running run,
+-- it locks the named rows and returns 0 without changing any.
 --
 -- ## A reactivation in flight failed the school's night
 --
