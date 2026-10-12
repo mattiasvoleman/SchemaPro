@@ -115,9 +115,13 @@ export function accountFits(
  * apply to them, and a domain only they use is no staff domain to offer.
  *   - Every domain the save adds must have at least one of them on it
  *     (409 SIGN_IN_DOMAIN_UNUSED). A school cannot claim a domain its staff
- *     do not use, first come, ahead of the schools whose staff do. Domains
- *     already on the row are not asked again, so turning the switch off, or
- *     any other change, never waits on a domain whose last teacher has left.
+ *     do not use, first come, ahead of the schools whose staff do. A domain
+ *     already on the row with the same provider is not asked again, so
+ *     turning the switch off, or any other change that keeps the provider,
+ *     never waits on a domain whose last teacher has left. A change of
+ *     provider asks about every domain again: keeping a domain nobody uses
+ *     would otherwise hold it for the new provider against the schools whose
+ *     staff use it with the old one.
  *   - With "Kräv skolkonto för personal" on, every one of them must have an
  *     address on one of the row's own domains (409
  *     SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT, naming the domains left out and how
@@ -196,10 +200,18 @@ export class SignInMethodsService {
 
     try {
       const row = await this.prisma.withRls(user, async (tx) => {
+        // The stored row is what the save is judged against, so it is locked
+        // before it is read: a second save by the same school waits, and its
+        // read (a new snapshot under READ COMMITTED) sees what the first one
+        // committed. FOR NO KEY UPDATE and raw SQL as in UsersService.update.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT 1 FROM "SchoolSignInMethods" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`,
+        );
         const existing = await tx.schoolSignInMethod.findUnique({ where: { schoolId } });
         const uses = await this.staffDomains(tx, schoolId, user.userId ?? null);
         const used = new Set(uses.map((use) => use.domain));
-        const unused = config.domains.filter((domain) => !existing?.domains.includes(domain) && !used.has(domain));
+        const kept = (domain: string) => existing?.provider === config.provider && existing.domains.includes(domain);
+        const unused = config.domains.filter((domain) => !kept(domain) && !used.has(domain));
         if (unused.length > 0) {
           throw new ConflictException({
             message: 'Ingen inbjuden lärare eller administratör på skolan har en adress på domänen.',

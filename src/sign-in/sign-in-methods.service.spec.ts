@@ -178,12 +178,28 @@ describe('SignInMethodsService', () => {
       tx.schoolSignInMethod.findUnique.mockResolvedValue(null);
       tx.schoolSignInMethod.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
       await service.put(admin(), entra());
-      const [query] = tx.$queryRaw.mock.calls[0] as [{ strings: string[]; values: unknown[] }];
-      const text = query.strings.join('?');
+      const [query] = tx.$queryRaw.mock.calls
+        .map(([sent]) => sent as { strings: string[]; values: unknown[] })
+        .filter((sent) => sent.strings.join('?').includes('split_part'));
+      const text = query!.strings.join('?');
       expect(text).toContain('"isActive"');
       expect(text).toContain(`"role" IN ('SCHOOL_ADMIN', 'TEACHER')`);
       expect(text).toContain('"invitedAt" IS NOT NULL OR "id" = ?::uuid');
-      expect(query.values).toEqual([SCHOOL, admin().userId]);
+      expect(query!.values).toEqual([SCHOOL, admin().userId]);
+    });
+
+    it('locks the stored row before it reads it, so a second save is judged against the first one\'s commit', async () => {
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(row());
+      tx.schoolSignInMethod.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      await service.put(admin(), entra());
+      const lock = tx.$queryRaw.mock.calls.findIndex(([sent]) =>
+        (sent as { strings: string[] }).strings.join('?').includes('FOR NO KEY UPDATE'),
+      );
+      expect(lock).toBeGreaterThanOrEqual(0);
+      const [sent] = tx.$queryRaw.mock.calls[lock] as [{ strings: string[]; values: unknown[] }];
+      expect(sent.strings.join('?')).toBe('SELECT 1 FROM "SchoolSignInMethods" WHERE "schoolId" = ?::uuid FOR NO KEY UPDATE');
+      expect(sent.values).toEqual([SCHOOL]);
+      expect(tx.$queryRaw.mock.invocationCallOrder[lock]).toBeLessThan(tx.schoolSignInMethod.findUnique.mock.invocationCallOrder[0]!);
     });
 
     it('refuses a domain the save adds that none of those staff use, before writing', async () => {
@@ -202,6 +218,25 @@ describe('SignInMethodsService', () => {
       await expect(
         service.put(admin(), entra({ domains: ['skola.example', 'gammal.example'], ssoOnlyForStaff: false })),
       ).resolves.toMatchObject({ method: { ssoOnlyForStaff: false } });
+    });
+
+    it('asks again about a kept domain when the save changes the provider', async () => {
+      // Nobody on gammal.example any more; switching to Google must not keep it for Google.
+      tx.schoolSignInMethod.findUnique.mockResolvedValue(row({ domains: ['skola.example', 'gammal.example'] }));
+      await expect(
+        service.put(admin(), {
+          provider: 'google',
+          domains: ['skola.example', 'gammal.example'],
+          googleHostedDomain: 'skola.example',
+        } as SignInMethodDto),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'SIGN_IN_DOMAIN_UNUSED', params: { domains: 'gammal.example' } } });
+      expect(tx.schoolSignInMethod.update).not.toHaveBeenCalled();
+
+      // Without it the switch goes through.
+      tx.schoolSignInMethod.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      await expect(
+        service.put(admin(), { provider: 'google', domains: ['skola.example'], googleHostedDomain: 'skola.example' } as SignInMethodDto),
+      ).resolves.toMatchObject({ method: { provider: 'google', domains: ['skola.example'] } });
     });
 
     it('requires the school account of staff only when every staff domain is on the row itself', async () => {
