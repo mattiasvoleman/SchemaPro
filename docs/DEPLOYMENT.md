@@ -613,10 +613,12 @@ For each kommun (or school) that wants it:
    its password and linked school accounts go with it, and the school account
    links to it at the next sign-in. If another login already has the new
    address, the person is given that one and the login at the old address is
-   deleted. Either way no login is left at the old address. Where the school
-   cannot send the invitation, 11.7 has an operator's manual way. Removing
-   the person and adding them again is only for someone with no schedule
-   history, since it drops them from their lessons.
+   deleted. That delete is best effort: if it fails, the gateway logs a
+   warning naming the row and the login (`[user=…] [authId=…]`), and an
+   operator deletes that login by hand (Authentication → Users). Where the
+   school cannot send the invitation, 11.7 has an operator's manual way.
+   Removing the person and adding them again is only for someone with no
+   schedule history, since it drops them from their lessons.
 3. The school's admin saves the tenant id (Entra admin center → Overview) on
    /admin/integrations → Inloggning.
 
@@ -699,14 +701,16 @@ fails at Auth, before any provider.
   to the address SchemaPro holds, with its password and linked school
   accounts: a person who never used the first invitation gets it again at
   the new address, and one who did gets no e-mail and signs in with the new
-  address. If another login already has that address, the person is given
-  that one and the login at the old address is deleted, so none is left
-  behind. Where the school's admin cannot send it, for example because no
-  admin can sign in, the operator moves the login by hand instead, after
-  setting the address in `"Users"` as above: Auth's admin API,
-  `updateUserById`, with the new e-mail confirmed. After an SS12000 e-mail
-  change the person can sign in with the old address only while the old
-  domain is listed and they have not been invited again, and a personal
+  address; the admin's receipt says so, and the admin tells them. If another
+  login already has that address, the person is given that one and the login
+  at the old address is deleted, best effort as in 11.3: a failed delete is
+  logged with the row and the login, and the operator deletes that login by
+  hand. Where the school's admin cannot send the invitation, for example
+  because no admin can sign in, the operator moves the login by hand
+  instead, after setting the address in `"Users"` as above: Auth's admin
+  API, `updateUserById`, with the new e-mail confirmed. After an SS12000
+  e-mail change the person can sign in with the old address only while the
+  old domain is listed and they have not been invited again, and a personal
   domain is never listed. If no admin can sign in, an operator turns the
   switch off as in "locked out" below.
 - **A school is told "En annan skola loggar in med en annan inloggning på
