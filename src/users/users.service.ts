@@ -166,6 +166,17 @@ export class UsersService {
    * the person could not sign in. Re-inviting somebody who already has an
    * identity is allowed — the result simply reports that no new email went
    * out, because GoTrue sends none for an address it already knows.
+   *
+   * A person who was invited before has a login, and the row's address can
+   * have changed since (an SS12000 apply, PERSON_EMAIL_CHANGE_INVITED) while
+   * the login kept the old one. Inviting the new address as it stands would
+   * mint a second login and leave the first holding the old address and any
+   * password set on it, held by no row. Gallring and remove() delete only
+   * the login a row holds, so it would outlive the school's decision. The
+   * login therefore moves to the new address first, keeping its password
+   * and linked school accounts, and the invitation resolves to that same
+   * login. Where the row ends up on another login all the same (another
+   * login already had the address), the one it left is deleted.
    */
   async invite(id: string, user: AuthenticatedUser): Promise<InvitationResult> {
     if (!this.supabaseAdmin.isConfigured) {
@@ -177,7 +188,7 @@ export class UsersService {
     const target = await this.prisma.withRls(user, (tx) =>
       tx.user.findUnique({
         where: { id },
-        select: { id: true, email: true, isActive: true },
+        select: { id: true, email: true, isActive: true, authId: true, invitedAt: true },
       }),
     );
     if (!target) {
@@ -189,8 +200,18 @@ export class UsersService {
       );
     }
 
+    // Somebody never invited holds a placeholder that is nobody's login.
+    const login = target.invitedAt === null ? null : target.authId;
+    if (login) {
+      await this.moveLogin(login, target.email);
+    }
+
     const invite = await this.mintIdentity(target.email);
     await this.adoptIdentity(id, invite.authId, user);
+
+    if (login && login !== invite.authId) {
+      await this.deleteLeftLogin(id, login);
+    }
 
     return { id, emailSent: invite.emailSent };
   }
@@ -397,6 +418,48 @@ export class UsersService {
       this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
         'Could not send the invitation email. Please try again.',
+      );
+    }
+  }
+
+  /**
+   * Gives a person's login the address their row now has (see invite()).
+   *
+   * Another login holding that address (`taken`) is not a failure: the
+   * invitation then resolves to that login, as it did before logins moved,
+   * and invite() deletes the one the row leaves. A login that is gone
+   * (`missing`) has nothing to move.
+   */
+  private async moveLogin(authId: string, email: string): Promise<void> {
+    try {
+      await this.supabaseAdmin.changeUserEmail(authId, email);
+    } catch {
+      this.logger.error('Supabase e-mail change failed.'); // no PII in logs
+      throw new ServiceUnavailableException(
+        'Could not send the invitation email. Please try again.',
+      );
+    }
+  }
+
+  /**
+   * Deletes the login a row has just moved off.
+   *
+   * Not the compensation adoptIdentity() warns against: that would delete the
+   * identity a row was about to take. This one the row held until a moment
+   * ago, and since `authId` is unique no row holds it now: nothing reaches
+   * the school through it. What it still keeps is the old address and any
+   * password set on it.
+   *
+   * Best effort, as in remove(): the invitation went out and the row is
+   * right. The pair logged on failure is what an operator deletes by hand;
+   * both are opaque ids.
+   */
+  private async deleteLeftLogin(id: string, authId: string): Promise<void> {
+    try {
+      await this.supabaseAdmin.deleteUser(authId);
+    } catch {
+      this.logger.warn(
+        `The login a re-invited row moved off was not deleted [user=${id}] [authId=${authId}]`,
       );
     }
   }

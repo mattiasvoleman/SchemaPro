@@ -59,6 +59,7 @@ describe('UsersService', () => {
   let supabaseAdmin: {
     isConfigured: boolean;
     inviteUser: jest.Mock;
+    changeUserEmail: jest.Mock;
     deleteUser: jest.Mock;
   };
 
@@ -68,6 +69,7 @@ describe('UsersService', () => {
     supabaseAdmin = {
       isConfigured: true,
       inviteUser: jest.fn().mockResolvedValue({ authId: AUTH_ID, emailSent: true }),
+      changeUserEmail: jest.fn().mockResolvedValue('unchanged'),
       deleteUser: jest.fn().mockResolvedValue(undefined),
     };
     service = new UsersService(
@@ -319,10 +321,13 @@ describe('UsersService', () => {
   });
 
   describe('invite', () => {
+    /** Somebody added and never invited: the placeholder create() wrote. */
     const target = (overrides: Record<string, unknown> = {}) => ({
       id: USER_ID,
       email: 'anna@school.se',
       isActive: true,
+      authId: '55555555-5555-4555-8555-555555555555',
+      invitedAt: null,
       ...overrides,
     });
 
@@ -417,6 +422,114 @@ describe('UsersService', () => {
         ),
       );
       expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('asks for no address change for somebody never invited: the placeholder is nobody\'s login', async () => {
+      arrangeUser(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await service.invite(USER_ID, testUser());
+
+      expect(supabaseAdmin.changeUserEmail).not.toHaveBeenCalled();
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
+    describe('somebody invited before, whose address has changed since', () => {
+      // An SS12000 apply rewrote the row's address (PERSON_EMAIL_CHANGE_INVITED);
+      // the login still has the old one.
+      const LOGIN = '44444444-4444-4444-8444-444444444444';
+      const invited = () =>
+        target({
+          email: 'anna.ny@school.se',
+          authId: LOGIN,
+          invitedAt: new Date('2026-09-01T08:00:00Z'),
+        });
+      const adoptedAuthId = (): string =>
+        (tx.user.update.mock.calls[0][0] as { data: { authId: string } }).data.authId;
+
+      beforeEach(() => {
+        arrangeUser(invited());
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+      });
+
+      it('moves the login to the new address before inviting, and keeps it', async () => {
+        supabaseAdmin.changeUserEmail.mockResolvedValue('changed');
+        // GoTrue resolves the new address to the login that now has it.
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: LOGIN, emailSent: false });
+
+        await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+          id: USER_ID,
+          emailSent: false,
+        });
+
+        expect(supabaseAdmin.changeUserEmail).toHaveBeenCalledWith(LOGIN, 'anna.ny@school.se');
+        expect(supabaseAdmin.changeUserEmail.mock.invocationCallOrder[0]).toBeLessThan(
+          supabaseAdmin.inviteUser.mock.invocationCallOrder[0],
+        );
+        expect(adoptedAuthId()).toBe(LOGIN);
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      });
+
+      it('deletes the old login once the row holds the one that already had the new address', async () => {
+        supabaseAdmin.changeUserEmail.mockResolvedValue('taken');
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: false });
+
+        await service.invite(USER_ID, testUser());
+
+        expect(adoptedAuthId()).toBe(AUTH_ID);
+        expect(supabaseAdmin.deleteUser).toHaveBeenCalledTimes(1);
+        expect(supabaseAdmin.deleteUser).toHaveBeenCalledWith(LOGIN);
+        // Never before the row has left it: until then the old login is the
+        // one the person signs in with.
+        expect(tx.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+          supabaseAdmin.deleteUser.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('keeps the old login when the row could not take the other one', async () => {
+        jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        supabaseAdmin.changeUserEmail.mockResolvedValue('taken');
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: false });
+        tx.user.update.mockRejectedValue(knownError('P2002'));
+
+        await expect(service.invite(USER_ID, testUser())).rejects.toThrow(ConflictException);
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      });
+
+      it('still reports the invitation when the old login cannot be deleted, and logs the pair', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        supabaseAdmin.changeUserEmail.mockResolvedValue('taken');
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: true });
+        supabaseAdmin.deleteUser.mockRejectedValue(new Error('gotrue down'));
+
+        await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+          id: USER_ID,
+          emailSent: true,
+        });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(`[user=${USER_ID}] [authId=${LOGIN}]`));
+      });
+
+      it('invites nobody when the login cannot be moved', async () => {
+        jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        supabaseAdmin.changeUserEmail.mockRejectedValue(new Error('gotrue down'));
+
+        await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
+          ServiceUnavailableException,
+        );
+        expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+        expect(tx.user.update).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      });
+
+      it('leaves a login whose address is unchanged as it is', async () => {
+        supabaseAdmin.changeUserEmail.mockResolvedValue('unchanged');
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: LOGIN, emailSent: false });
+
+        await service.invite(USER_ID, testUser());
+
+        expect(adoptedAuthId()).toBe(LOGIN);
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      });
     });
   });
 
