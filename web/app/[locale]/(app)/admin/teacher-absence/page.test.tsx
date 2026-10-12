@@ -32,6 +32,8 @@ const LESSONS = [
   { id: "cl-2", date: "2026-10-12", startsAt: "2026-10-12T08:00:00Z", endsAt: "2026-10-12T09:00:00Z", subjectId: "s-ma", studentGroupId: "g-7b", roomId: null, status: "SCHEDULED" },
 ];
 
+// "Gallrat före": nothing gallrat in these rows.
+vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("@/lib/queries", () => ({
   usePeople: () => ({
     data: [{ id: "t-1", role: "TEACHER", isActive: true, firstName: "Nils", lastName: "Berg" }],

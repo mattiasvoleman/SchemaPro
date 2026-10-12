@@ -34,6 +34,8 @@ import { absencePeriodText, shiftDate } from "@/lib/cover-absence-form";
 import { reasonName } from "@/lib/cover-view";
 import { COVER_STATUS_VARIANT } from "@/lib/status-variants";
 import { toDateString } from "@/lib/utils";
+import { usePurgedBefore } from "@/lib/retention-queries";
+import { isBeforePurge } from "@/lib/retention-types";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +73,8 @@ export function mayWithdraw(absence: Absence, now: number): boolean {
 export default function TeacherCoverPage() {
   const t = useTranslations("teacherCover");
   const tReasons = useTranslations("absenceReasons");
+  // A reason gallring took reads "Gallrad", not "Ej angiven" (ABSENCE_REASONS).
+  const purgedReasons = usePurgedBefore().of("ABSENCE_REASONS");
   const locale = useLocale();
   const { profile } = useProfile();
   const today = toDateString(new Date());
@@ -181,7 +185,9 @@ export default function TeacherCoverPage() {
               <li key={absence.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
                 <span className="tabular-nums">{absencePeriodText(absence, locale)}</span>
                 <span className="text-muted-foreground">
-                  {absence.reasonId ? reasonName(tReasons, reasonOf.get(absence.reasonId)) : tReasons("NONE")}
+                  {absence.reasonId
+                    ? reasonName(tReasons, reasonOf.get(absence.reasonId))
+                    : tReasons(isBeforePurge(absence.endsAt, purgedReasons) ? "PURGED" : "NONE")}
                 </span>
                 <span className="flex flex-wrap gap-1">
                   {absence.counts.covered > 0 ? (

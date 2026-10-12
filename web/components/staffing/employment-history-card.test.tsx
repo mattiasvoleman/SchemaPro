@@ -10,6 +10,11 @@ const history = vi.hoisted(() => ({
   asked: [] as unknown[][],
 }));
 
+// "Gallrat före" (CHANGE_LOGS): none unless a test says so.
+const purged = vi.hoisted(() => ({ changeLogs: null as string | null }));
+vi.mock("@/lib/retention-queries", () => ({
+  usePurgedBefore: () => ({ of: (kind: string) => (kind === "CHANGE_LOGS" ? purged.changeLogs : null) }),
+}));
 vi.mock("@/lib/staffing-history-queries", () => ({
   useEmploymentHistory: (...args: unknown[]) => {
     history.asked.push(args);
@@ -40,6 +45,7 @@ const renderCard = () =>
 
 describe("EmploymentHistoryCard", () => {
   beforeEach(() => {
+    purged.changeLogs = null;
     history.asked = [];
     history.isLoading = false;
     history.isError = false;
@@ -106,5 +112,18 @@ describe("EmploymentHistoryCard", () => {
     renderCard();
     await user.click(screen.getByRole("button", { name: "show" }));
     expect(screen.getByText("loadFailed")).toBeInTheDocument();
+  });
+
+  it("says that versions before the school's gallring are gone, and only then", async () => {
+    const user = userEvent.setup();
+    history.data = { entries: [], truncated: false };
+    const { unmount } = renderCard();
+    await user.click(screen.getByRole("button", { name: "show" }));
+    expect(screen.queryByText(/^CHANGE_LOGS/)).not.toBeInTheDocument();
+    unmount();
+    purged.changeLogs = "2024-10-21";
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "show" }));
+    expect(screen.getByText("CHANGE_LOGS(21 oktober 2024)")).toBeInTheDocument();
   });
 });

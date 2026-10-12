@@ -178,7 +178,8 @@
     "coverBoard": "Cover board",
     "myCover": "Cover and absence",
     "basics": "Basic data",
-    "label": "Main menu"
+    "label": "Main menu",
+    "dataProtection": "Data protection"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -4055,7 +4056,8 @@
     "WORK_TRAVEL": "Business travel",
     "PROFESSIONAL_DEVELOPMENT": "Professional development",
     "OTHER": "Other",
-    "NONE": "Not given"
+    "NONE": "Not given",
+    "PURGED": "Purged"
   },
   "absenceEnd": {
     "title": "End the absence early",
@@ -4412,5 +4414,116 @@
     },
     "loadFailed": "Your choices could not be loaded",
     "loadFailedHint": "Nothing has changed in what is sent to you. Reload the page in a moment."
+  },
+  "dataProtection": {
+    "title": "Data protection and retention",
+    "subtitle": "How long the school keeps data, and what has been purged",
+    "intro": "Here you decide how long each kind of data is kept, following your organisation's records management plan. Nothing is purged until you have chosen a period for it. Purging runs every night from 03:00. A period that purges more than the one before it applies only after a day, so a wrong choice can be changed before anything goes.",
+    "irreversibleTitle": "A purge cannot be undone in SchemaPro",
+    "irreversibleBody": "What is purged is gone. First export what the records management plan says must be kept. SchemaPro does not yet export to your organisation's e-archive.",
+    "loadFailed": "The retention settings could not be read",
+    "loadFailedHint": "Nothing has changed. Reload the page, or try again in a moment.",
+    "kindsTitle": "Retention periods",
+    "kindsDescription": "One decision for each kind of data. A change is saved as a new decision in the history further down.",
+    "kind": {
+      "ATTENDANCE": {
+        "name": "Attendance",
+        "body": "Attendance records of lessons before the cutoff date."
+      },
+      "ABSENCE_REPORTS": {
+        "name": "Absence reports",
+        "body": "Reports from guardians and pupils, and the days of granted leave, before the cutoff date."
+      },
+      "LEAVE_REQUESTS": {
+        "name": "Leave requests",
+        "body": "Requests whose last day is before the cutoff date, with their reason and decision."
+      },
+      "NOTIFICATIONS": {
+        "name": "Notices",
+        "body": "Notices in SchemaPro created before the cutoff date."
+      },
+      "CHANGE_LOGS": {
+        "name": "Change logs",
+        "body": "The timetable's change log, the history of guardian links and the versions of teaching posts. Versions are purged a school year at a time, for years that ended before the cutoff date. A staffing proposal applied before the cutoff date can no longer be undone."
+      },
+      "ABSENCE_REASONS": {
+        "name": "Absence reasons",
+        "body": "The reason is removed from teacher absences that ended before the cutoff date. The absence and its cover decisions stay, so substitute hours and pay still add up."
+      },
+      "DEPARTED_PEOPLE": {
+        "name": "People who left",
+        "body": "People deactivated before the cutoff date are pseudonymised. Name, email, phone, login and SS12000 id are replaced. The row stays, so attendance, decisions and the SCB return still hold together. A teacher with a post in a school year whose 15 October is less than seven weeks past waits, so the SCB return can be filed."
+      }
+    },
+    "undecided": "Not decided",
+    "keep": "Kept",
+    "purgeAfter": "Purged after {period}",
+    "periodMonths": "{count, plural, one {# month} other {# months}}",
+    "periodYears": "{count, plural, one {# year} other {# years}}",
+    "decidedBy": "Decided {date} by {name}",
+    "decidedAt": "Decided {date}",
+    "reference": "Reference: {reference}",
+    "waitsUntil": "Applies from the night before {date}. Until then the earlier decision applies.",
+    "tonightRows": "{count, plural, =0 {Nothing is dated before {date}.} one {# record is dated before {date} and is purged at the next run.} other {# records are dated before {date} and are purged at the next run.}}",
+    "tonightPeople": "{count, plural, =0 {Nobody who left was deactivated before {date}.} one {# person was deactivated before {date} and is pseudonymised at the next run.} other {# people were deactivated before {date} and are pseudonymised at the next run.}}",
+    "previewHeld": "{count, plural, one {# teacher waits for the SCB return.} other {# teachers wait for the SCB return.}}",
+    "purgedBefore": "Purged before {date}.",
+    "change": "Change",
+    "changeLabel": "Change the retention period for {kind}",
+    "dialogTitle": "{kind}: how long is it kept?",
+    "choiceLabel": "Decision",
+    "choiceKeep": "Kept (never purged)",
+    "choicePeriod": "Purged after {period}",
+    "choicePeriodPeople": "Pseudonymised after {period}",
+    "referenceLabel": "Reference in the records management plan",
+    "referenceHint": "For example a registration number or a section of the plan. At most 200 characters.",
+    "previewUndecided": "Nothing is purged while nothing is decided.",
+    "previewKeep": "Nothing is purged. The decision is kept in the history.",
+    "previewLoading": "Counting what the period would purge…",
+    "previewFailed": "What the period would purge could not be counted. You can still save the decision.",
+    "previewRows": "{count, plural, =0 {Nothing is dated before {date} today.} one {Today # record is dated before {date}. It is purged once the period applies.} other {Today # records are dated before {date}. They are purged once the period applies.}}",
+    "previewPeople": "{count, plural, =0 {Nobody who left was deactivated before {date}.} one {# person was deactivated before {date} and is pseudonymised once the period applies.} other {# people were deactivated before {date} and are pseudonymised once the period applies.}}",
+    "dialogWarningTitle": "What is purged cannot be restored",
+    "dialogWarning": "A period that purges more than the one in force applies only after a day. After that, what is counted here is gone, and SchemaPro cannot bring it back.",
+    "save": "Save decision",
+    "saved": "The decision is saved.",
+    "runsTitle": "Recent runs",
+    "runsDescription": "One row per night. Only counts are kept, never what was purged.",
+    "runsEmpty": "No purge has run yet.",
+    "runStarted": "Started",
+    "runStatusLabel": "Status",
+    "runTaken": "Purged",
+    "runWaiting": "Waiting",
+    "runStatus": {
+      "RUNNING": "Running",
+      "DONE": "Done",
+      "INTERRUPTED": "Interrupted, continues next night"
+    },
+    "runNothing": "Nothing",
+    "runWaitingScb": "{count, plural, one {# teacher waits for the SCB return} other {# teachers wait for the SCB return}}",
+    "runWaitingLogin": "{count, plural, one {# login could not be removed and is retried} other {# logins could not be removed and are retried}}",
+    "runContinues": "{kinds} continue next night",
+    "historyTitle": "Decision history",
+    "historyDescription": "Every decision saved here, newest first.",
+    "historyEmpty": "No decisions yet. Everything is kept until there is one.",
+    "historyWhen": "Decided",
+    "historyKind": "Data",
+    "historyDecision": "Decision",
+    "historyReference": "Reference",
+    "historyBy": "By",
+    "historyByUnknown": "Removed user",
+    "errors": {
+      "RETENTION_MONTHS_ONLY_FOR_A_PERIOD": "Only a retention period has a number of months.",
+      "RETENTION_PREVIEW_IS_THE_ADMINS": "Only the school's administrator sees and decides retention.",
+      "RETENTION_INVALID": "The period must be between 1 and 120 months."
+    }
+  },
+  "retentionNotice": {
+    "ATTENDANCE": "Attendance before {date} has been purged under the school's decision.",
+    "ABSENCE_REPORTS": "Absence reports before {date} have been purged under the school's decision.",
+    "LEAVE_REQUESTS": "Leave requests that ended before {date} have been purged under the school's decision.",
+    "NOTIFICATIONS": "Notices before {date} have been purged under the school's decision.",
+    "CHANGE_LOGS": "History before {date} has been purged under the school's decision.",
+    "ABSENCE_REASONS": "Reasons for absences that ended before {date} have been purged under the school's decision."
   }
 }

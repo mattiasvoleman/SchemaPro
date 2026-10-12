@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PurgedNotice } from "@/components/retention/purged-notice";
 import { FilterBar, FilterField } from "@/components/ui/filter-bar";
 import { KpiStrip, KpiTile } from "@/components/ui/kpi";
 import { LoadError } from "@/components/ui/load-error";
@@ -273,6 +274,10 @@ export function AttendanceReport() {
           {t("exportCsv")}
         </Button>
       </FilterBar>
+
+      {/* A period that starts before the school's gallring says so, rather
+          than showing the purged days as days without absence. */}
+      {groupId ? <PurgedNotice kind="ATTENDANCE" from={fromDate} /> : null}
 
       {failed ? (
         <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />

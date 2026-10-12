@@ -10,6 +10,7 @@ import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PurgedNotice } from "@/components/retention/purged-notice";
 import { KpiStrip, KpiTile } from "@/components/ui/kpi";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -84,6 +85,7 @@ export default function StudentAttendancePage() {
     return (
       <Page width="narrow">
         {header}
+        <PurgedNotice kind="ATTENDANCE" />
         <EmptyState
           icon={ClipboardCheck}
           title={t("emptyTitle")}
@@ -97,6 +99,8 @@ export default function StudentAttendancePage() {
   return (
     <Page width="narrow">
       {header}
+      {/* The rate is of what is left: older lessons may be gallrade. */}
+      <PurgedNotice kind="ATTENDANCE" />
       <KpiStrip columns={3}>
         <KpiTile
           label={t("rate")}

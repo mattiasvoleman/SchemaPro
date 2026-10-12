@@ -25,6 +25,12 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
 const state = vi.hoisted(() => ({
   people: { data: undefined as unknown, isLoading: false, isError: false },
   records: { data: undefined as unknown, isLoading: false, isError: false },
+  /** "Gallrat före" per kind, as GET /api/v1/retention/purged-before answers. */
+  purged: {} as Record<string, string>,
+}));
+
+vi.mock("@/lib/retention-queries", () => ({
+  usePurgedBefore: () => ({ of: (kind: string) => state.purged[kind] ?? null }),
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -66,6 +72,7 @@ describe("Rapporter › Närvaro", () => {
   beforeEach(() => {
     state.people = { data: PEOPLE, isLoading: false, isError: false };
     state.records = { data: RECORDS, isLoading: false, isError: false };
+    state.purged = {};
   });
 
   it("asks for a class first, with labelled filters", () => {
@@ -96,6 +103,24 @@ describe("Rapporter › Närvaro", () => {
     expect(screen.queryByText("Klassens snitt")).not.toBeInTheDocument();
     expect(screen.queryByText("Ingen närvaro registrerad under perioden")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Exportera CSV/ })).toBeDisabled();
+  });
+
+  it("says when the period reaches back past the school's gallring, and not otherwise", async () => {
+    state.purged = { ATTENDANCE: "2000-01-01" };
+    const { unmount } = render(
+      <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+        <AttendanceReport />
+      </NextIntlClientProvider>,
+    );
+    await chooseClass();
+    expect(screen.queryByText(/är gallrad enligt skolans beslut/)).not.toBeInTheDocument();
+    unmount();
+
+    // A purge date after the period's first day: the days before it are gone, not absence-free.
+    state.purged = { ATTENDANCE: "2999-01-01" };
+    renderReport();
+    await chooseClass();
+    expect(screen.getByText("Närvaro före 1 januari 2999 är gallrad enligt skolans beslut.")).toBeInTheDocument();
   });
 
   it("says why the class has no figures when nothing was recorded", async () => {

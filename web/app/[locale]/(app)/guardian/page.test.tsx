@@ -33,6 +33,8 @@ vi.mock("@/components/profile-context", () => ({
     school: null,
   }),
 }));
+// "Gallrat före": nothing gallrat in these rows.
+vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("@/lib/guardian-queries", () => ({
   useMyChildren: () => ({ data: state.children, isLoading: false }),
   useAbsenceReports: () => ({ data: state.reports }),

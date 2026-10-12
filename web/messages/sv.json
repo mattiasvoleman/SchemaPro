@@ -178,7 +178,8 @@
     "coverBoard": "Vikarietavla",
     "myCover": "Vikariepass och frånvaro",
     "basics": "Grunddata",
-    "label": "Huvudmeny"
+    "label": "Huvudmeny",
+    "dataProtection": "Dataskydd"
   },
   "dashboard": {
     "title": "Översikt",
@@ -4055,7 +4056,8 @@
     "WORK_TRAVEL": "Tjänsteresa",
     "PROFESSIONAL_DEVELOPMENT": "Kompetensutveckling",
     "OTHER": "Annat",
-    "NONE": "Ej angiven"
+    "NONE": "Ej angiven",
+    "PURGED": "Gallrad"
   },
   "absenceEnd": {
     "title": "Avsluta frånvaron i förtid",
@@ -4412,5 +4414,116 @@
     },
     "loadFailed": "Dina val kunde inte hämtas",
     "loadFailedHint": "Inget har ändrats i vad som skickas till dig. Ladda om sidan om en stund."
+  },
+  "dataProtection": {
+    "title": "Dataskydd och gallring",
+    "subtitle": "Hur länge skolan sparar uppgifter, och vad som har gallrats",
+    "intro": "Här bestämmer du hur länge varje slags uppgift sparas, efter huvudmannens dokumenthanteringsplan. Inget gallras förrän du har valt en period för det. Gallringen körs varje natt från klockan 03. En period som gallrar mer än den förra börjar gälla först efter ett dygn, så ett felval kan ändras innan något försvinner.",
+    "irreversibleTitle": "En gallring går inte att ångra i SchemaPro",
+    "irreversibleBody": "Det som gallras är borta. Ta först ut det som dokumenthanteringsplanen säger ska bevaras. SchemaPro gör ännu inga arkivuttag till huvudmannens e-arkiv.",
+    "loadFailed": "Gallringsinställningarna kunde inte läsas",
+    "loadFailedHint": "Ingenting har ändrats. Ladda om sidan, eller försök igen om en stund.",
+    "kindsTitle": "Gallringsperioder",
+    "kindsDescription": "Ett beslut för varje slags uppgift. En ändring sparas som ett nytt beslut i historiken längre ned.",
+    "kind": {
+      "ATTENDANCE": {
+        "name": "Närvaro",
+        "body": "Närvaroregistreringar för lektioner före gränsdagen."
+      },
+      "ABSENCE_REPORTS": {
+        "name": "Frånvaroanmälningar",
+        "body": "Anmälningar från vårdnadshavare och elever, och dagarna i beviljad ledighet, före gränsdagen."
+      },
+      "LEAVE_REQUESTS": {
+        "name": "Ledighetsansökningar",
+        "body": "Ansökningar vars sista dag är före gränsdagen, med anledning och beslut."
+      },
+      "NOTIFICATIONS": {
+        "name": "Notiser",
+        "body": "Notiser i SchemaPro som skapades före gränsdagen."
+      },
+      "CHANGE_LOGS": {
+        "name": "Ändringsloggar",
+        "body": "Schemats ändringslogg, historiken över kopplingar till vårdnadshavare och tjänsternas versioner. Versionerna gallras ett läsår i taget, för läsår som slutade före gränsdagen. Ett tjänstefördelningsförslag som tillämpades före gränsdagen kan inte längre ångras."
+      },
+      "ABSENCE_REASONS": {
+        "name": "Frånvaroorsaker",
+        "body": "Orsaken tas bort från lärarfrånvaro som slutade före gränsdagen. Frånvaron och vikariebesluten finns kvar, så vikarietimmar och lön går fortfarande ihop."
+      },
+      "DEPARTED_PEOPLE": {
+        "name": "Slutade personer",
+        "body": "Personer som avaktiverades före gränsdagen pseudonymiseras. Namn, e-post, telefon, inloggning och SS12000-id ersätts. Raden finns kvar, så närvaro, beslut och SCB-underlag hänger ihop. En lärare med tjänst ett läsår vars 15 oktober ligger mindre än sju veckor bakåt väntar, så att SCB-underlaget kan lämnas."
+      }
+    },
+    "undecided": "Ej beslutat",
+    "keep": "Bevaras",
+    "purgeAfter": "Gallras efter {period}",
+    "periodMonths": "{count, plural, one {# månad} other {# månader}}",
+    "periodYears": "{count, plural, one {# år} other {# år}}",
+    "decidedBy": "Beslutat {date} av {name}",
+    "decidedAt": "Beslutat {date}",
+    "reference": "Referens: {reference}",
+    "waitsUntil": "Börjar gälla natten mot {date}. Fram till dess gäller det tidigare beslutet.",
+    "tonightRows": "{count, plural, =0 {Inget är daterat före {date}.} one {# post är daterad före {date} och gallras vid nästa körning.} other {# poster är daterade före {date} och gallras vid nästa körning.}}",
+    "tonightPeople": "{count, plural, =0 {Ingen som har slutat avaktiverades före {date}.} one {# person avaktiverades före {date} och pseudonymiseras vid nästa körning.} other {# personer avaktiverades före {date} och pseudonymiseras vid nästa körning.}}",
+    "previewHeld": "{count, plural, one {# lärare väntar på SCB-underlaget.} other {# lärare väntar på SCB-underlaget.}}",
+    "purgedBefore": "Gallrat före {date}.",
+    "change": "Ändra",
+    "changeLabel": "Ändra gallringsperioden för {kind}",
+    "dialogTitle": "{kind}: hur länge sparas det?",
+    "choiceLabel": "Beslut",
+    "choiceKeep": "Bevaras (gallras inte)",
+    "choicePeriod": "Gallras efter {period}",
+    "choicePeriodPeople": "Pseudonymiseras efter {period}",
+    "referenceLabel": "Referens i dokumenthanteringsplanen",
+    "referenceHint": "Till exempel diarienummer eller punkt i planen. Högst 200 tecken.",
+    "previewUndecided": "Inget gallras så länge inget är beslutat.",
+    "previewKeep": "Inget gallras. Beslutet sparas i historiken.",
+    "previewLoading": "Räknar vad perioden skulle gallra…",
+    "previewFailed": "Det gick inte att räkna vad perioden skulle gallra. Du kan ändå spara beslutet.",
+    "previewRows": "{count, plural, =0 {Inget är daterat före {date} i dag.} one {I dag är # post daterad före {date}. Den gallras när perioden börjar gälla.} other {I dag är # poster daterade före {date}. De gallras när perioden börjar gälla.}}",
+    "previewPeople": "{count, plural, =0 {Ingen som har slutat avaktiverades före {date}.} one {# person avaktiverades före {date} och pseudonymiseras när perioden börjar gälla.} other {# personer avaktiverades före {date} och pseudonymiseras när perioden börjar gälla.}}",
+    "dialogWarningTitle": "Det som gallras kan inte återställas",
+    "dialogWarning": "En period som gallrar mer än den som gäller nu börjar gälla först efter ett dygn. Efter det försvinner det som räknas här, och det går inte att få tillbaka i SchemaPro.",
+    "save": "Spara beslut",
+    "saved": "Beslutet är sparat.",
+    "runsTitle": "Senaste gallringar",
+    "runsDescription": "En rad för varje natt. Bara antal sparas, aldrig vad som gallrades.",
+    "runsEmpty": "Ingen gallring har körts än.",
+    "runStarted": "Startad",
+    "runStatusLabel": "Status",
+    "runTaken": "Gallrat",
+    "runWaiting": "Väntar",
+    "runStatus": {
+      "RUNNING": "Pågår",
+      "DONE": "Klar",
+      "INTERRUPTED": "Avbruten, fortsätter nästa natt"
+    },
+    "runNothing": "Inget",
+    "runWaitingScb": "{count, plural, one {# lärare väntar på SCB-underlaget} other {# lärare väntar på SCB-underlaget}}",
+    "runWaitingLogin": "{count, plural, one {# inloggning kunde inte tas bort och försöks igen} other {# inloggningar kunde inte tas bort och försöks igen}}",
+    "runContinues": "{kinds} fortsätter nästa natt",
+    "historyTitle": "Beslutshistorik",
+    "historyDescription": "Varje beslut som har sparats här, det senaste först.",
+    "historyEmpty": "Inga beslut än. Allt sparas tills ett beslut finns.",
+    "historyWhen": "Beslutat",
+    "historyKind": "Uppgift",
+    "historyDecision": "Beslut",
+    "historyReference": "Referens",
+    "historyBy": "Av",
+    "historyByUnknown": "Borttagen användare",
+    "errors": {
+      "RETENTION_MONTHS_ONLY_FOR_A_PERIOD": "Bara en gallringsperiod har ett antal månader.",
+      "RETENTION_PREVIEW_IS_THE_ADMINS": "Bara skolans administratör ser och bestämmer gallringen.",
+      "RETENTION_INVALID": "Perioden måste vara mellan 1 och 120 månader."
+    }
+  },
+  "retentionNotice": {
+    "ATTENDANCE": "Närvaro före {date} är gallrad enligt skolans beslut.",
+    "ABSENCE_REPORTS": "Frånvaroanmälningar före {date} är gallrade enligt skolans beslut.",
+    "LEAVE_REQUESTS": "Ledighetsansökningar som slutade före {date} är gallrade enligt skolans beslut.",
+    "NOTIFICATIONS": "Notiser före {date} är gallrade enligt skolans beslut.",
+    "CHANGE_LOGS": "Historik före {date} är gallrad enligt skolans beslut.",
+    "ABSENCE_REASONS": "Orsaker till frånvaro som slutade före {date} är gallrade enligt skolans beslut."
   }
 }
