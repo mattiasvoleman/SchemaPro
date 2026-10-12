@@ -25,8 +25,30 @@ const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => 
   );
 };
 
+type Row = Record<string, unknown>;
+
+/**
+ * The tables the roster reader asks (calendar/lesson-roster.ts), played by
+ * rows: who is a pupil and whether active, the teaching-group memberships and
+ * the pupils named on a lesson. Each findMany applies its `where` to them, so
+ * a broadcast's studentIds are what the reader answers for these rows, filter
+ * included, and not whatever a stub was told to return.
+ */
+interface World {
+  users: { id: string; role: string; isActive: boolean; studentGroupId: string | null }[];
+  members?: { studentId: string; studentGroupId: string }[];
+  named?: { calendarLessonId: string; studentId: string }[];
+}
+
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const LESSON_ID = '44444444-4444-4444-8444-444444444444';
+
+const pupil = (id: string, studentGroupId: string | null, isActive = true) => ({
+  id,
+  role: 'STUDENT',
+  isActive,
+  studentGroupId,
+});
 
 describe('RealtimeService', () => {
   let service: RealtimeService;
@@ -64,6 +86,38 @@ describe('RealtimeService', () => {
         Promise.resolve(asSelected(row, select)),
     );
 
+  /** The rows the roster reader reads, answered by each query's own where. */
+  const arrangeWorld = (world: World) => {
+    const userOf = (id: unknown) => world.users.find((user) => user.id === id) ?? {};
+    const matches = (row: Row, where: Row = {}): boolean =>
+      Object.entries(where).every(([field, condition]) => {
+        // StudentGroupMembers filtered through the member's Users row.
+        if (field === 'student') return matches(userOf(row['studentId']), condition as Row);
+        if (condition !== null && typeof condition === 'object') {
+          const { in: list, ...rest } = condition as { in?: unknown[] };
+          // A condition this table cannot answer fails the spec, never passes it.
+          if (!Array.isArray(list) || Object.keys(rest).length > 0) throw new Error(`unplayed condition on ${field}`);
+          return list.includes(row[field]);
+        }
+        return row[field] === condition;
+      });
+    const table = (rows: Row[]) => ({ where, select }: { where?: Row; select?: Record<string, unknown> }) =>
+      Promise.resolve(rows.filter((row) => matches(row, where)).map((row) => asSelected(row, select)));
+    tx.user.findMany.mockImplementation(table(world.users));
+    tx.studentGroupMember.findMany.mockImplementation(table(world.members ?? []));
+    tx.calendarLessonStudent.findMany.mockImplementation(table(world.named ?? []));
+  };
+
+  /** The studentIds of the n-th broadcast, sorted. */
+  const broadcastPupils = (call = 0) => {
+    const [, , message] = gateway.emitLessonUpdated.mock.calls[call] as [
+      string,
+      string[],
+      { updatedLesson: { studentIds: string[] } },
+    ];
+    return [...message.updatedLesson.studentIds].sort();
+  };
+
   const lessonRow = (overrides: Record<string, unknown> = {}) => ({
     id: LESSON_ID,
     schoolId: SCHOOL_ID,
@@ -73,75 +127,91 @@ describe('RealtimeService', () => {
     subject: { name: 'Mathematics' },
     room: { name: 'A101' },
     teachers: [{ teacherId: 'teacher-1' }, { teacherId: 'teacher-2' }],
-    studentGroup: {
-      members: [{ id: 'student-1' }, { id: 'student-2' }],
-      teachingMembers: [],
-    },
+    studentGroupId: '7A',
     extraGroups: [],
-    participants: [],
     ...overrides,
   });
 
+  /** 7A at home: student-1 and student-2. */
+  const homeClass: World = { users: [pupil('student-1', '7A'), pupil('student-2', '7A')] };
+
   describe('who a lesson update is about', () => {
+    it('is the lesson’s roster as the one reader answers it: every class attending, their teaching groups, and the pupils named', async () => {
+      // 7A at home and Ma7 joined to it; Ma7 is a nivågrupp, so its pupils are
+      // members only, and Cy's home is another class. Dan is named on the
+      // lesson; Gus is in no class this lesson reaches.
+      arrangeLesson(lessonRow({ extraGroups: [{ studentGroupId: 'Ma7' }] }));
+      arrangeWorld({
+        users: [pupil('ada', '7A'), pupil('cy', '8B'), pupil('dan', null), pupil('gus', '8B')],
+        members: [{ studentId: 'cy', studentGroupId: 'Ma7' }],
+        named: [{ calendarLessonId: LESSON_ID, studentId: 'dan' }],
+      });
+
+      await service.notifyLessonChanged(client(), LESSON_ID);
+
+      expect(broadcastPupils()).toEqual(['ada', 'cy', 'dan']);
+    });
+
     it('includes a teaching group’s roster, which no home class holds', async () => {
       // Ma71 has no home-class members by construction. The teacher app writes
       // this list straight into its offline cache, so an empty broadcast does
       // not merely fail to help — it wipes the roster the teacher is about to
       // take attendance with.
-      arrangeLesson(
-        lessonRow({
-          studentGroup: {
-            members: [],
-            teachingMembers: [{ studentId: 'ma71-1' }, { studentId: 'ma71-2' }],
-          },
-        }),
-      );
+      arrangeLesson(lessonRow({ studentGroupId: 'Ma71' }));
+      arrangeWorld({
+        users: [pupil('ma71-1', '7A'), pupil('ma71-2', '7B')],
+        members: [
+          { studentId: 'ma71-1', studentGroupId: 'Ma71' },
+          { studentId: 'ma71-2', studentGroupId: 'Ma71' },
+        ],
+      });
 
-      await service.notifyLessonChanged(tx as never, LESSON_ID);
+      await service.notifyLessonChanged(client(), LESSON_ID);
 
-      const [, , message] = gateway.emitLessonUpdated.mock.calls[0] as [
-        string,
-        string[],
-        { updatedLesson: { studentIds: string[] } },
-      ];
-      expect(message.updatedLesson.studentIds.sort()).toEqual(['ma71-1', 'ma71-2']);
+      expect(broadcastPupils()).toEqual(['ma71-1', 'ma71-2']);
     });
 
-    it('gathers every class attending, plus pupils named individually', async () => {
-      arrangeLesson(
-        lessonRow({
-          studentGroup: { members: [{ id: 'a' }], teachingMembers: [] },
-          extraGroups: [
-            {
-              studentGroup: {
-                members: [{ id: 'b' }],
-                teachingMembers: [{ studentId: 'c' }],
-              },
-            },
-          ],
-          participants: [{ studentId: 'd' }],
-        }),
-      );
+    it('lists active pupils only, by every source, as the app’s own fetch of the lesson does', async () => {
+      // The app replaces the lesson's pupils in its cache with this list, and
+      // mobile/src/services/roster.ts fills the same row with active pupils of
+      // the same three sources. Before the reader the named pupils went
+      // unfiltered: Eva, named on the lesson after she left, was written back
+      // into the cache by every broadcast. Membership as recorded is the
+      // attendance check's question (a superset), not the list's.
+      arrangeLesson(lessonRow({ extraGroups: [{ studentGroupId: 'Ma7' }] }));
+      arrangeWorld({
+        users: [
+          pupil('ada', '7A'),
+          pupil('bo', '7A', false),
+          pupil('cy', '8B'),
+          pupil('eva', null, false),
+          { id: 'tess', role: 'TEACHER', isActive: true, studentGroupId: null },
+        ],
+        members: [
+          { studentId: 'cy', studentGroupId: 'Ma7' },
+          { studentId: 'bo', studentGroupId: 'Ma7' },
+          { studentId: 'tess', studentGroupId: 'Ma7' },
+        ],
+        named: [
+          { calendarLessonId: LESSON_ID, studentId: 'eva' },
+          { calendarLessonId: LESSON_ID, studentId: 'tess' },
+        ],
+      });
 
-      await service.notifyLessonChanged(tx as never, LESSON_ID);
+      await service.notifyLessonChanged(client(), LESSON_ID);
 
-      const [, , message] = gateway.emitLessonUpdated.mock.calls[0] as [
-        string,
-        string[],
-        { updatedLesson: { studentIds: string[] } },
-      ];
-      expect(message.updatedLesson.studentIds.sort()).toEqual(['a', 'b', 'c', 'd']);
+      expect(broadcastPupils()).toEqual(['ada', 'cy']);
     });
 
     it('counts a pupil once when two sources name them', async () => {
-      arrangeLesson(
-        lessonRow({
-          studentGroup: { members: [{ id: 'a' }], teachingMembers: [{ studentId: 'a' }] },
-          participants: [{ studentId: 'a' }],
-        }),
-      );
+      arrangeLesson(lessonRow());
+      arrangeWorld({
+        users: [pupil('a', '7A')],
+        members: [{ studentId: 'a', studentGroupId: '7A' }],
+        named: [{ calendarLessonId: LESSON_ID, studentId: 'a' }],
+      });
 
-      await service.notifyLessonChanged(tx as never, LESSON_ID);
+      await service.notifyLessonChanged(client(), LESSON_ID);
 
       const [, , message] = gateway.emitLessonUpdated.mock.calls[0] as [
         string,
@@ -149,6 +219,18 @@ describe('RealtimeService', () => {
         { updatedLesson: { studentIds: string[] } },
       ];
       expect(message.updatedLesson.studentIds).toEqual(['a']);
+    });
+
+    it('reads no pupil named on another lesson', async () => {
+      arrangeLesson(lessonRow());
+      arrangeWorld({
+        users: [pupil('a', '7A'), pupil('z', null)],
+        named: [{ calendarLessonId: 'another-lesson', studentId: 'z' }],
+      });
+
+      await service.notifyLessonChanged(client(), LESSON_ID);
+
+      expect(broadcastPupils()).toEqual(['a']);
     });
   });
 
@@ -199,50 +281,34 @@ describe('RealtimeService', () => {
   });
 
   describe('notifyLessonChanged', () => {
-    it('reads the lesson through the caller’s transaction, filtering to active students', async () => {
-      arrangeLesson(lessonRow());
+    it('reads the lesson through the caller’s transaction, and who is on it through the roster reader', async () => {
+      arrangeLesson(lessonRow({ extraGroups: [{ studentGroupId: 'Ma7' }] }));
+      arrangeWorld(homeClass);
 
       await service.notifyLessonChanged(client(), LESSON_ID);
 
-      expect(tx.calendarLesson.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: LESSON_ID },
-          select: expect.objectContaining({
-            studentGroup: {
-              select: {
-                members: expect.objectContaining({
-                  where: { role: 'STUDENT', isActive: true },
-                }),
-                // A teaching group holds nobody through that back-relation.
-                teachingMembers: expect.objectContaining({
-                  where: { student: { role: 'STUDENT', isActive: true } },
-                }),
-              },
-            },
-            // The same filter for every other class attending: a deactivated
-            // pupil of an extra group is no more on the roster than one of the
-            // home class.
-            extraGroups: {
-              select: {
-                studentGroup: {
-                  select: {
-                    members: expect.objectContaining({
-                      where: { role: 'STUDENT', isActive: true },
-                    }),
-                    teachingMembers: expect.objectContaining({
-                      where: { student: { role: 'STUDENT', isActive: true } },
-                    }),
-                  },
-                },
-              },
-            },
-          }),
-        }),
+      const { select } = tx.calendarLesson.findUnique.mock.calls[0]![0] as { select: Record<string, unknown> };
+      expect(tx.calendarLesson.findUnique).toHaveBeenCalledWith({ where: { id: LESSON_ID }, select });
+      // What the reader takes, and no members of its own: a second
+      // definition of who attends is what the reader replaced.
+      expect(select).toEqual(
+        expect.objectContaining({ studentGroupId: true, extraGroups: { select: { studentGroupId: true } } }),
+      );
+      expect(select).not.toHaveProperty('studentGroup');
+      expect(select).not.toHaveProperty('participants');
+      // The reader, on the same transaction, asked about this lesson's class
+      // and the group joined to it.
+      expect(tx.calendarLessonStudent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { calendarLessonId: { in: [LESSON_ID] } } }),
+      );
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ studentGroupId: { in: ['7A', 'Ma7'] } }) }),
       );
     });
 
     it('broadcasts the wire payload to the school and its teachers', async () => {
       arrangeLesson(lessonRow());
+      arrangeWorld(homeClass);
 
       await service.notifyLessonChanged(client(), LESSON_ID);
 
@@ -301,6 +367,19 @@ describe('RealtimeService', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(LESSON_ID));
     });
 
+    it('sends nothing when the roster read fails, rather than an empty roster', async () => {
+      // An empty list is not "nothing known": the app writes it over the
+      // lesson's pupils in its cache.
+      arrangeLesson(lessonRow());
+      tx.user.findMany.mockRejectedValue(new Error('connection reset'));
+
+      await expect(
+        service.notifyLessonChanged(client(), LESSON_ID),
+      ).resolves.toBeUndefined();
+      expect(gateway.emitLessonUpdated).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(LESSON_ID));
+    });
+
     it('swallows an emit failure without rejecting the mutation', async () => {
       arrangeLesson(lessonRow());
       gateway.emitLessonUpdated.mockImplementation(() => {
@@ -315,14 +394,29 @@ describe('RealtimeService', () => {
   });
 
   describe('notifyLessonsChanged (a bulk avbokning)', () => {
-    it('reads every lesson in ONE statement with the single read\'s select, and emits each', async () => {
+    it('reads every lesson in ONE statement with the single read’s select, and asks the reader no more for two lessons than for one', async () => {
+      arrangeWorld({
+        users: [pupil('ada', '7A'), pupil('bo', '8B'), pupil('dan', null)],
+        named: [{ calendarLessonId: LESSON_ID, studentId: 'dan' }],
+      });
+      const rosterReads = () =>
+        [tx.calendarLessonStudent.findMany, tx.user.findMany, tx.studentGroupMember.findMany].map(
+          (read) => read.mock.calls.length,
+        );
       arrangeLesson(lessonRow());
       await service.notifyLessonChanged(client(), LESSON_ID);
       const single = tx.calendarLesson.findUnique.mock.calls[0]![0].select;
+      const forOne = rosterReads();
 
       gateway.emitLessonUpdated.mockClear();
+      for (const read of [tx.calendarLessonStudent.findMany, tx.user.findMany, tx.studentGroupMember.findMany]) {
+        read.mockClear();
+      }
       tx.calendarLesson.findMany.mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
-        Promise.resolve([asSelected(lessonRow(), select), asSelected(lessonRow({ id: 'lesson-2' }), select)]),
+        Promise.resolve([
+          asSelected(lessonRow(), select),
+          asSelected(lessonRow({ id: 'lesson-2', studentGroupId: '8B' }), select),
+        ]),
       );
       await service.notifyLessonsChanged(client(), [LESSON_ID, 'lesson-2']);
       expect(tx.calendarLesson.findMany).toHaveBeenCalledTimes(1);
@@ -330,12 +424,25 @@ describe('RealtimeService', () => {
         where: { id: { in: [LESSON_ID, 'lesson-2'] } },
         select: single,
       });
+      // A hundred-lesson batch reads as many statements as one lesson does.
+      expect(rosterReads()).toEqual(forOne);
+      // Each lesson with its own roster.
       expect(gateway.emitLessonUpdated).toHaveBeenCalledTimes(2);
+      expect(gateway.emitLessonUpdated.mock.calls.map(([, , message]) => (message as { lessonId: string }).lessonId)).toEqual([
+        LESSON_ID,
+        'lesson-2',
+      ]);
+      expect(broadcastPupils(0)).toEqual(['ada', 'dan']);
+      expect(broadcastPupils(1)).toEqual(['bo']);
     });
 
-    it('asks nothing for no lesson, and swallows a failure', async () => {
+    it('asks nothing for no lesson, nor of the roster for lessons that have vanished, and swallows a failure', async () => {
       await service.notifyLessonsChanged(client(), []);
       expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
+      tx.calendarLesson.findMany.mockResolvedValue([]);
+      await service.notifyLessonsChanged(client(), [LESSON_ID]);
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+      expect(gateway.emitLessonUpdated).not.toHaveBeenCalled();
       tx.calendarLesson.findMany.mockRejectedValue(new Error('connection reset'));
       await expect(service.notifyLessonsChanged(client(), [LESSON_ID])).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalled();

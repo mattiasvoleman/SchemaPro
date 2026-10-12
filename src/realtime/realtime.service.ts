@@ -1,7 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
+import { calendarLessonRosters } from '../calendar/lesson-roster';
 import { RealtimeGateway } from './realtime.gateway';
 import type { RealtimeLesson } from './realtime.types';
+
+/**
+ * The lesson as a broadcast reads it: the payload's fields, and what the
+ * roster reader takes (calendar/lesson-roster.ts), its class and the groups
+ * joined to it. Who is on it is the reader's to answer, so the lesson's
+ * members are not selected here.
+ */
+const LESSON_SELECT = {
+  id: true,
+  schoolId: true,
+  startsAt: true,
+  endsAt: true,
+  status: true,
+  subject: { select: { name: true } },
+  room: { select: { name: true } },
+  teachers: { select: { teacherId: true } },
+  studentGroupId: true,
+  extraGroups: { select: { studentGroupId: true } },
+} as const satisfies Prisma.CalendarLessonSelect;
+
+type BroadcastLesson = Prisma.CalendarLessonGetPayload<{ select: typeof LESSON_SELECT }>;
 
 /**
  * Builds and broadcasts `calendar_lesson_updated` events. Called by services
@@ -51,58 +73,9 @@ export class RealtimeService {
    */
   async notifyLessonChanged(tx: PrismaClient, calendarLessonId: string): Promise<void> {
     try {
-      const lesson = await tx.calendarLesson.findUnique({
-        where: { id: calendarLessonId },
-        select: {
-          id: true,
-          schoolId: true,
-          startsAt: true,
-          endsAt: true,
-          status: true,
-          subject: { select: { name: true } },
-          room: { select: { name: true } },
-          teachers: { select: { teacherId: true } },
-          // Home-class pupils…
-          studentGroup: {
-            select: {
-              members: {
-                where: { role: 'STUDENT', isActive: true },
-                select: { id: true },
-              },
-              // …and the teaching-group roster, which lives in the join model
-              // and not in that back-relation. A nivågrupp has no home-class
-              // members at all, so asking only the first question produced an
-              // empty list — and the teacher app writes this list straight into
-              // its offline cache. Once that cache is correct, an empty
-              // broadcast does not merely fail to help: it wipes the roster the
-              // teacher is about to take attendance with.
-              teachingMembers: {
-                where: { student: { role: 'STUDENT', isActive: true } },
-                select: { studentId: true },
-              },
-            },
-          },
-          extraGroups: {
-            select: {
-              studentGroup: {
-                select: {
-                  members: {
-                    where: { role: 'STUDENT', isActive: true },
-                    select: { id: true },
-                  },
-                  teachingMembers: {
-                    where: { student: { role: 'STUDENT', isActive: true } },
-                    select: { studentId: true },
-                  },
-                },
-              },
-            },
-          },
-          participants: { select: { studentId: true } },
-        },
-      });
+      const lesson = await tx.calendarLesson.findUnique({ where: { id: calendarLessonId }, select: LESSON_SELECT });
       if (!lesson) return;
-      this.emit(lesson);
+      await this.emitAll(tx, [lesson]);
     } catch {
       this.logger.warn(`Realtime broadcast failed [lesson=${calendarLessonId}]`);
     }
@@ -115,94 +88,47 @@ export class RealtimeService {
    * writing transaction is what a hundred-lesson batch cannot afford. Called
    * AFTER the write has committed, in a transaction of its own.
    *
-   * The select is notifyLessonChanged's, word for word (the spec compares the
-   * two calls): a broadcast is the same payload however many there are.
+   * The same select and the same roster read as notifyLessonChanged (the
+   * spec compares the two): a broadcast is the same payload however many
+   * there are.
    */
   async notifyLessonsChanged(tx: PrismaClient, calendarLessonIds: readonly string[]): Promise<void> {
     if (calendarLessonIds.length === 0) return;
     try {
-      const lessons = await tx.calendarLesson.findMany({
-        where: { id: { in: [...calendarLessonIds] } },
-        // notifyLessonChanged's select, word for word: see the members
-        // comments there for why both rosters are read.
-        select: {
-          id: true,
-          schoolId: true,
-          startsAt: true,
-          endsAt: true,
-          status: true,
-          subject: { select: { name: true } },
-          room: { select: { name: true } },
-          teachers: { select: { teacherId: true } },
-          studentGroup: {
-            select: {
-              members: {
-                where: { role: 'STUDENT', isActive: true },
-                select: { id: true },
-              },
-              teachingMembers: {
-                where: { student: { role: 'STUDENT', isActive: true } },
-                select: { studentId: true },
-              },
-            },
-          },
-          extraGroups: {
-            select: {
-              studentGroup: {
-                select: {
-                  members: {
-                    where: { role: 'STUDENT', isActive: true },
-                    select: { id: true },
-                  },
-                  teachingMembers: {
-                    where: { student: { role: 'STUDENT', isActive: true } },
-                    select: { studentId: true },
-                  },
-                },
-              },
-            },
-          },
-          participants: { select: { studentId: true } },
-        },
-      });
-      for (const lesson of lessons) this.emit(lesson);
+      const lessons = await tx.calendarLesson.findMany({ where: { id: { in: [...calendarLessonIds] } }, select: LESSON_SELECT });
+      await this.emitAll(tx, lessons);
     } catch {
       this.logger.warn(`Realtime broadcast failed [lessons=${calendarLessonIds.length}]`);
     }
   }
 
-  private emit(lesson: {
-    id: string;
-    schoolId: string;
-    startsAt: Date;
-    endsAt: Date;
-    status: RealtimeLesson['status'];
-    subject: { name: string };
-    room: { name: string } | null;
-    teachers: { teacherId: string }[];
-    studentGroup: { members: { id: string }[]; teachingMembers: { studentId: string }[] };
-    extraGroups: { studentGroup: { members: { id: string }[]; teachingMembers: { studentId: string }[] } }[];
-    participants: { studentId: string }[];
-  }): void {
+  /**
+   * Who is on each lesson, asked of the one roster reader in a fixed number
+   * of statements however many lessons there are, then one emit each.
+   *
+   * ACTIVE, the filter the notices use, on all three sources. The teacher app
+   * replaces the lesson's pupils in its offline cache with studentIds, and its
+   * own fetch of the lesson (mobile/src/services/roster.ts) lists the active
+   * pupils of the same three sources: a broadcast with another filter would
+   * leave the register depending on which of the two came last. Before the
+   * reader, the named pupils went unfiltered, so a named pupil who had left
+   * was written back into the cache by the next broadcast. The attendance
+   * check reads RECORDED, a superset of this list, so every pupil it offers
+   * is accepted, and a register queued before a pupil left still drains.
+   */
+  private async emitAll(tx: PrismaClient, lessons: readonly BroadcastLesson[]): Promise<void> {
+    const rosters = await calendarLessonRosters(tx, lessons, { pupils: 'ACTIVE' });
+    for (const lesson of lessons) this.emit(lesson, rosters.get(lesson.id) ?? new Set<string>());
+  }
+
+  private emit(lesson: BroadcastLesson, roster: ReadonlySet<string>): void {
     const payload: RealtimeLesson = {
       id: lesson.id,
       startTime: lesson.startsAt.toISOString(),
       endTime: lesson.endsAt.toISOString(),
       subjectName: lesson.subject.name,
       roomName: lesson.room?.name ?? '—',
-      // The same union the clients assemble: every class attending, the
-      // teaching-group rosters of all of them, and pupils named individually.
-      studentIds: [
-        ...new Set([
-          ...lesson.studentGroup.members.map((member) => member.id),
-          ...lesson.studentGroup.teachingMembers.map((row) => row.studentId),
-          ...lesson.extraGroups.flatMap((entry) => [
-            ...entry.studentGroup.members.map((member) => member.id),
-            ...entry.studentGroup.teachingMembers.map((row) => row.studentId),
-          ]),
-          ...lesson.participants.map((row) => row.studentId),
-        ]),
-      ],
+      studentIds: [...roster],
       status: lesson.status,
     };
 
