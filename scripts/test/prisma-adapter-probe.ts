@@ -3551,7 +3551,7 @@ async function runChecks(
     try {
       const admin = budget.admin;
       const notifications = {
-        recipientsForGroups: async () => [],
+        recipientsForLessons: async () => [],
         notifyUsers: async () => undefined,
       } as unknown as NotificationsService;
       const lessons = new MasterLessonsService(
@@ -3638,7 +3638,7 @@ async function runChecks(
   {
     const f3 = await givenFas3School(owner);
     const notifications = {
-      recipientsForGroups: async () => [],
+      recipientsForLessons: async () => [],
       notifyUsers: async () => undefined,
     } as unknown as NotificationsService;
     const realtime = { notifyMasterTimetableChanged: () => undefined, notifyLessonChanged: async () => undefined } as unknown as RealtimeService;
@@ -5459,7 +5459,7 @@ function publicationServicesFor(api: PrismaService): { calendar: CalendarService
     calendar,
     new TimplanCoverageService(api),
     new StaffingLoadService(api),
-    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+    { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
   );
   return { calendar, publications };
@@ -5608,7 +5608,7 @@ async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
   );
   const silent = {
-    recipientsForGroups: async () => [],
+    recipientsForLessons: async () => [],
     notifyUsers: async () => undefined,
   } as unknown as NotificationsService;
   const announced: Array<{ schoolId: string; draft: boolean }> = [];
@@ -5863,7 +5863,7 @@ async function equivalenceCheck(owner: Client, api: PrismaService): Promise<void
   const lessons = new MasterLessonsService(
     api,
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
-    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+    { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
   const shape = async (schoolId: string) =>
     (
@@ -5916,7 +5916,7 @@ async function weekEdgeChecks(owner: Client, api: PrismaService): Promise<void> 
   const lessons = new MasterLessonsService(
     api,
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
-    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+    { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
   const rows = async (from: string, to: string, masterLessonId: string) =>
     (
@@ -6126,7 +6126,7 @@ async function batchMoveChecks(owner: Client, api: PrismaService): Promise<void>
   const lessons = new MasterLessonsService(
     api,
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
-    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+    { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
   const batches = new CancellationBatchesService(api, {
     notifyLessonsChanged: async () => undefined,
@@ -6195,7 +6195,7 @@ async function pastRowChecks(owner: Client, api: PrismaService): Promise<void> {
   const lessons = new MasterLessonsService(
     api,
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
-    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+    { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
   const ss12000 = new Ss12000Service(api);
   const load = new StaffingLoadService(api);
