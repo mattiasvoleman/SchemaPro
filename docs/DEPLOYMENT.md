@@ -356,6 +356,19 @@ Walk the full product loop once, in order:
   period is set, and a period that removes more than the one before it
   waits 24 hours. A departed person's login is deleted at Auth just before
   they are pseudonymised, if `"invitedAt"` says they had one (§7, §11.1).
+- **The read log (läslogg)**: every gateway read of another person's data
+  (people, rosters, attendance, absence and leave, guardian links, posts and
+  load, staff absences, SS12000 reads with a key) writes a
+  `PersonalDataAccess` row in the read's own transaction, through
+  `app.personal_data_read` (20261026091000): reader, role, kind, channel,
+  and the ids read about, never the data. The write is one statement more on
+  each such read, and a read whose log cannot be written fails, so the
+  migration must be in the database before an API that writes it runs. The
+  school's admin answers "who read about this pupil" on `/admin/dataskydd`;
+  the log's retention is the `ACCESS_LOG` kind there, "ej beslutat" until
+  the school decides. The web and the app read other people's rows only
+  through the gateway; PostgREST's `authenticated` keeps its own-row reads
+  until the closing migration takes the rest (its comment lists what stays).
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
