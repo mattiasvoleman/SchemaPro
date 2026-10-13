@@ -705,7 +705,26 @@ fails at Auth, before any provider.
   login already has that address, the person is given that one and the login
   at the old address is deleted, best effort as in 11.3: a failed delete is
   logged with the row and the login, and the operator deletes that login by
-  hand. Where the school's admin cannot send the invitation, for example
+  hand.
+
+  The invitation moves or deletes only the person's own login: one an
+  invitation created for that person, which carries the row's id in its
+  `app_metadata` (`schemaproUserId`), or one without an id (created before
+  invitations recorded it) that somebody has signed in with since the
+  person was last invited, which is given the id then. Any other login is
+  left where it is, for example one the row was given because its address
+  already had a login and that nobody has signed in with since, or one from
+  an invitation sent before this that nobody has used. The invitation then
+  goes to the new address as for someone never invited, and the login at
+  the old address is logged as not the row's own, with the row and the
+  login. Find out whose it is before deleting it by hand. To keep the
+  person's password and linked school accounts in that case, move the login
+  by hand as below before the admin sends the invitation, which then finds
+  it at the new address. If the id cannot be written when an invitation
+  creates a login, that is logged with the row and the login, and the login
+  counts as the person's only once they have signed in with it.
+
+  Where the school's admin cannot send the invitation, for example
   because no admin can sign in, the operator moves the login by hand
   instead, after setting the address in `"Users"` as above: Auth's admin
   API, `updateUserById`, with the new e-mail confirmed. After an SS12000
