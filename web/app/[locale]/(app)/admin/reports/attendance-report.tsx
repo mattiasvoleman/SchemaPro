@@ -6,6 +6,8 @@ import { groupLabel } from "@/lib/year-scope";
 import { useLocale, useTranslations } from "next-intl";
 import { BarChart3, Download, Users } from "lucide-react";
 import {
+  attendanceRangeProblem,
+  GROUP_ATTENDANCE_MAX_DAYS,
   useAcademicYears,
   useGroupAttendance,
   useGroups,
@@ -21,6 +23,7 @@ import { PurgedNotice } from "@/components/retention/purged-notice";
 import { FilterBar, FilterField } from "@/components/ui/filter-bar";
 import { KpiStrip, KpiTile } from "@/components/ui/kpi";
 import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableCard } from "@/components/ui/table-card";
 import {
@@ -106,6 +109,7 @@ export function AttendanceReport() {
   const activeYearId = years?.find((year) => year.isActive)?.id ?? null;
   const peopleQuery = usePeople();
   const people = peopleQuery.data;
+  const rangeProblem = attendanceRangeProblem(fromDate, toDate);
   const recordsQuery = useGroupAttendance(groupId, fromDate, toDate);
   const records = recordsQuery.data;
   const failed = groupsQuery.isError || peopleQuery.isError || recordsQuery.isError;
@@ -251,7 +255,9 @@ export function AttendanceReport() {
             id="report-from"
             className="w-40"
             value={fromDate}
+            max={toDate}
             onChange={(value) => value && setFromDate(value)}
+            {...(rangeProblem ? { "aria-describedby": "report-range-problem" } : {})}
           />
         </FilterField>
         <FilterField id="report-to" label={tCommon("to")}>
@@ -260,7 +266,9 @@ export function AttendanceReport() {
             id="report-to"
             className="w-40"
             value={toDate}
+            min={fromDate}
             onChange={(value) => value && setToDate(value)}
+            {...(rangeProblem ? { "aria-describedby": "report-range-problem" } : {})}
           />
         </FilterField>
         <Button
@@ -283,6 +291,14 @@ export function AttendanceReport() {
         <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} headingLevel={2} />
       ) : !groupId ? (
         <EmptyState icon={Users} title={t("chooseClassTitle")} description={t("chooseClass")} headingLevel={2} />
+      ) : rangeProblem ? (
+        // Said before anything is asked: the gateway would refuse the period,
+        // and its refusal would read as a failure to try again.
+        <Notice tone="warning" title={t("rangeProblemTitle")}>
+          <span id="report-range-problem">
+            {rangeProblem === "ORDER" ? t("rangeOrder") : t("rangeTooLong", { days: GROUP_ATTENDANCE_MAX_DAYS })}
+          </span>
+        </Notice>
       ) : loading ? (
         <div aria-busy="true">
           <Skeleton className="h-64 w-full" />
