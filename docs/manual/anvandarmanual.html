@@ -3421,6 +3421,7 @@
       <tr><td class="k">Notiser</td><td>Notiser i SchemaPro som skapades före gränsdagen.</td><td>—</td></tr>
       <tr><td class="k">Ändringsloggar</td><td>Schemats ändringslogg och historiken över kopplingar till vårdnadshavare före gränsdagen. Tjänsternas versioner för läsår som slutade före gränsdagen, ett helt läsår i taget.</td><td>Tjänsterna och uppdragen. Ett tjänstefördelningsförslag som tillämpades före gränsdagen kan inte längre ångras.</td></tr>
       <tr><td class="k">Frånvaroorsaker</td><td>Orsaken på lärarfrånvaro som slutade före gränsdagen. I listorna står det <span class="ui">Gallrad</span>.</td><td>Frånvaron och vikariebesluten, så att vikarietimmar och lön stämmer.</td></tr>
+      <tr><td class="k">Läslogg</td><td>Läsningar i läsloggen (se nedan) före gränsdagen.</td><td>—</td></tr>
       <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>
@@ -3503,6 +3504,54 @@
       <span class="ui">Gallrat före</span> med gränsdagen.
     </p>
   </div>
+
+  <h4>Vem har läst om en person?</h4>
+  <p>
+    Varje gång någon läser en annan persons uppgifter i SchemaPro skrivs det
+    i läsloggen: vem som läste, med vilken roll, vad, när och om det var i
+    webben, i appen eller genom en integration. Det gäller personlistan,
+    klasslistor och registret, närvaro, frånvaroanmälningar och
+    ledighetsansökningar med anledning, vem som är vårdnadshavare till vem,
+    lärarnas tjänster och belastning, personalens frånvaro och det som en
+    integration hämtar med en API-nyckel (7.3). Loggen säger bara att något
+    lästes, aldrig vad som stod där.
+  </p>
+  <p>
+    Läser samma person samma slags uppgift om samma elev flera gånger inom en
+    kvart, till exempel när en lärare öppnar registret om och om igen under en
+    lektion, skrivs det en gång. Den som läser om sig själv skrivs inte, och
+    inte heller siffror som inte nämner någon, som antalet elever på
+    översikten. Också en vårdnadshavares läsning om sitt eget barn skrivs, så
+    att den ena vårdnadshavaren kan få veta om den andra har läst.
+  </p>
+  <ol>
+    <li>Öppna <span class="path">Dataskydd</span> och gå till
+      <span class="ui">Vem har läst om en person?</span>.</li>
+    <li>Välj personen. Välj en period med <span class="ui">Från</span> och
+      <span class="ui">Till</span> om du inte vill se hela loggen.</li>
+    <li>Klicka på <span class="ui">Visa läsningar</span>. Den senaste
+      läsningen står först, med en rad per läsning.</li>
+    <li>Klicka på <span class="ui">Exportera som CSV</span> för att lämna
+      svaret till dataskyddsombudet eller till en vårdnadshavare som har
+      frågat.</li>
+  </ol>
+  <div class="note">
+    <span class="label">Bara administratören, och sökningen syns</span>
+    <p>
+      Bara skolans administratör läser läsloggen. Din sökning skrivs också i
+      loggen, som en läsning om personen du sökte på, och syns nästa gång
+      någon frågar om den personen. Läsloggen kan inte ändras eller tas bort i
+      SchemaPro, bara gallras efter skolans beslut för
+      <span class="ui">Läslogg</span>. Även den börjar som
+      <span class="ui">Ej beslutat</span>.
+    </p>
+  </div>
+  <p>
+    Visar listan att den bara tar med de senaste läsningarna, välj en kortare
+    period för att se de äldre. En läsare som har tagits bort står som
+    <em>Borttagen person</em>, och en läsare som har pseudonymiserats (se
+    ovan) står med sitt pseudonym.
+  </p>
 
   <h3 id="s75"><span class="num">7.5</span>Logga in med skolkonto</h3>
   <p>
