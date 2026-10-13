@@ -73,8 +73,31 @@ describe('the load report agrees with the shared fixture', () => {
     // Undated only: the peak IS the standardvecka, as every Fas 2 case shows.
     for (const c of cases) {
       if (c.input.duties.some((d) => d.validFrom || d.validTo)) continue;
-      for (const t of c.report.teachers) expect(t.dutyPeakMinutesPerWeek).toBe(t.dutyMinutesPerWeek);
+      for (const t of c.report.teachers) {
+        expect(t.dutyPeakMinutesPerWeek).toBe(t.dutyMinutesPerWeek);
+        expect(t.countedDutyPeakMinutesPerWeek).toBe(t.countedDutyMinutesPerWeek);
+      }
     }
+  });
+
+  it('reaches every branch of the counted uppdrag’s toppvecka: above its standardvecka, below the uppdrag’s own peak, and never above it', () => {
+    const teachers = cases.flatMap((c) => c.report.teachers);
+    expect(teachers.some((t) => t.countedDutyPeakMinutesPerWeek > t.countedDutyMinutesPerWeek)).toBe(true);
+    expect(
+      teachers.some((t) => t.countedDutyPeakMinutesPerWeek > 0 && t.countedDutyPeakMinutesPerWeek < t.dutyPeakMinutesPerWeek),
+    ).toBe(true);
+    // Counted and uncounted uppdrag in different terms: the uncounted ones'
+    // own weeks hold something although the all-uppdrag peak is the counted one.
+    expect(
+      cases.some((c) =>
+        c.report.teachers.some(
+          (t) =>
+            t.countedDutyPeakMinutesPerWeek === t.dutyPeakMinutesPerWeek &&
+            c.input.duties.some((d) => d.userId === t.userId && !d.countsAsTeaching && (d.validFrom || d.validTo)),
+        ),
+      ),
+    ).toBe(true);
+    for (const t of teachers) expect(t.countedDutyPeakMinutesPerWeek).toBeLessThanOrEqual(t.dutyPeakMinutesPerWeek);
   });
 
   it('reaches a split row, every week, odd weeks, co-taught and unstaffed', () => {

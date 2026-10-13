@@ -259,6 +259,13 @@ export interface TeacherLoad {
   dutyPeakMinutesPerWeek?: number;
   /** The uppdrag marked countsAsTeaching — the part of dutyMinutes that meets the target. */
   countedDutyMinutesPerWeek: number;
+  /**
+   * Toppvecka of the uppdrag marked countsAsTeaching, each in the weeks it
+   * runs, whole minutes: the part of a toppvecka that meets the target.
+   * Optional for the same reason as dutyPeakMinutesPerWeek: the gateway
+   * release before 20261022090000 does not send it.
+   */
+  countedDutyPeakMinutesPerWeek?: number;
   /** assigned + counted uppdrag: what the target is compared with. */
   countedMinutesPerWeek: number;
   /** target − counted: kvar till mål when positive, över mål when negative. */
@@ -552,8 +559,17 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       acc.undatedDutyMinutes += duty.minutesPerWeek;
     }
   }
-  const dutyPeaks = peakPerWeekByKey(
-    input.duties.map((duty) => ({ key: duty.userId, minutes: duty.minutesPerWeek, ...dutyPeriod(duty) })),
+  // The uppdrag's own toppvecka, once over all of them and once over the
+  // ones that count toward the target.
+  const dutyPeakItems = input.duties.map((duty) => ({
+    key: duty.userId,
+    minutes: duty.minutesPerWeek,
+    counted: duty.countsAsTeaching,
+    ...dutyPeriod(duty),
+  }));
+  const dutyPeaks = peakPerWeekByKey(dutyPeakItems, year, (item) => item.key, (item) => item.minutes);
+  const countedDutyPeaks = peakPerWeekByKey(
+    dutyPeakItems.filter((item) => item.counted),
     year,
     (item) => item.key,
     (item) => item.minutes,
@@ -726,6 +742,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       dutyMinutesPerWeek: Math.round(acc.dutyMinutes),
       dutyPeakMinutesPerWeek: Math.round(dutyPeaks.get(userId) ?? 0),
       countedDutyMinutesPerWeek: Math.round(acc.countedDutyMinutes),
+      countedDutyPeakMinutesPerWeek: Math.round(countedDutyPeaks.get(userId) ?? 0),
       countedMinutesPerWeek: Math.round(counted),
       balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
       percentOfTarget: percentOfTarget(counted, target),

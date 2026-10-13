@@ -110,8 +110,44 @@ export interface LoadBarSegments {
   countedDutyMinutes: number;
 }
 
-type BarTeacher = Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPerWeek"> &
-  Partial<Pick<TeacherLoad, "dutyMinutesPerWeek" | "countedDutyMinutesPerWeek">>;
+type DutyFigures = Partial<
+  Pick<
+    TeacherLoad,
+    | "dutyMinutesPerWeek"
+    | "countedDutyMinutesPerWeek"
+    | "dutyPeakMinutesPerWeek"
+    | "countedDutyPeakMinutesPerWeek"
+  >
+>;
+
+type BarTeacher = Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPerWeek"> & DutyFigures;
+
+/**
+ * The uppdrag minutes a week view reads: all of them, and the part that
+ * counts toward the target.
+ *
+ * The standardvecka reads the standardvecka figures, where a dated uppdrag
+ * weighs its share of the year's weeks. The TOPPVECKA reads the uppdrag's own
+ * toppvecka (20261017090000, 20261022090000), where it weighs its whole
+ * minutes in the weeks it runs: a mentor from January carries 90 minutes in
+ * March, not the 41 the year averages to, and a peak view that added the
+ * average understated exactly the week it exists to show. Each part is at
+ * its own busiest week — the teaching's beside the uppdrag's, the counted
+ * uppdrag's beside all of them — so the sum never understates a week, and
+ * where they peak in different weeks it states more than any one week holds.
+ *
+ * A report from a gateway that does not send the peaks yet reads as the
+ * standardvecka, part by part.
+ */
+export function dutyMinutesOf(teacher: DutyFigures, week: WeekView): { all: number; counted: number } {
+  const all = teacher.dutyMinutesPerWeek ?? 0;
+  const counted = teacher.countedDutyMinutesPerWeek ?? 0;
+  if (week !== "peak") return { all, counted };
+  return {
+    all: teacher.dutyPeakMinutesPerWeek ?? all,
+    counted: teacher.countedDutyPeakMinutesPerWeek ?? counted,
+  };
+}
 
 /**
  * The Lectio-style bar: uppdrag, undervisning, kvar till mål, över mål.
@@ -130,7 +166,12 @@ type BarTeacher = Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPer
  * it; one that does not count is the dark `duty` segment drawn before the
  * comparison, widening the bar without moving the target, so a mentor's 90
  * minutes are seen and never read as "over". In the peak week the uppdrag
- * are the same minutes as in any week: they have no week pattern.
+ * are their own toppvecka (dutyMinutesOf): the counted ones' peak meets the
+ * target, and the dark segment is the rest of the busiest uppdrag week. When
+ * the counted and the uncounted uppdrag run in different terms, that rest can
+ * be less than the uncounted ones hold in their own weeks — never more than
+ * the busiest uppdrag week holds — while the comparison with the target is
+ * never understated.
  *
  * Without a target there is nothing to be short of or over, and nothing to
  * be a share OF: the bar is drawn empty, its track alone, and the label beside
@@ -146,8 +187,9 @@ export function loadBarSegments(
   peakMinutes = teacher.assignedMinutesPerWeek,
 ): LoadBarSegments {
   const teaching = week === "peak" ? peakMinutes : teacher.assignedMinutesPerWeek;
-  const countedDuty = teacher.countedDutyMinutesPerWeek ?? 0;
-  const dutyMinutes = Math.max(0, (teacher.dutyMinutesPerWeek ?? 0) - countedDuty);
+  const duties = dutyMinutesOf(teacher, week);
+  const countedDuty = duties.counted;
+  const dutyMinutes = Math.max(0, duties.all - countedDuty);
   const counted = teaching + countedDuty;
   const target = teacher.targetMinutesPerWeek;
   if (target === null || target <= 0) {

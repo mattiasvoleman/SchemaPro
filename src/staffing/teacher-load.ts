@@ -78,11 +78,13 @@ import {
  * school-wide lov only, since an uppdrag sits in no grade. Its annual hours
  * are its minutes over the teaching weeks it runs, and dutyPeakMinutesPerWeek
  * is the busiest ISO week of the teacher's uppdrag, each counted only in the
- * weeks it runs (lov not subtracted, as for the teaching peak). The teaching
- * toppvecka stays the teaching's. An UNDATED duty runs the whole year and
- * every figure is the one it always was: its weight is exactly 1 (no
- * division), its annual hours are the integer sum × the year's weeks as
- * before, and its peak is its minutes.
+ * weeks it runs (lov not subtracted, as for the teaching peak);
+ * countedDutyPeakMinutesPerWeek is the same over the uppdrag marked
+ * countsAsTeaching, which is what a toppvecka view compares with the target
+ * beside the teaching's own peak. The teaching toppvecka stays the
+ * teaching's. An UNDATED duty runs the whole year and every figure is the one
+ * it always was: its weight is exactly 1 (no division), its annual hours are
+ * the integer sum × the year's weeks as before, and its peak is its minutes.
  *
  * ÄMNESFLASKHALSAR are the question the unstaffed list cannot answer on its
  * own: is there anybody left to take these rows? Per subject with an unstaffed
@@ -339,6 +341,13 @@ export interface TeacherLoad {
   dutyPeakMinutesPerWeek: number;
   /** The uppdrag marked countsAsTeaching — the part of dutyMinutes that meets the target. */
   countedDutyMinutesPerWeek: number;
+  /**
+   * Toppvecka of the uppdrag marked countsAsTeaching, each in the weeks it
+   * runs, whole minutes: the part of a toppvecka that meets the target. Never
+   * above dutyPeakMinutesPerWeek; a peak of its own, so not always in the same
+   * week as it.
+   */
+  countedDutyPeakMinutesPerWeek: number;
   /** assigned + counted uppdrag: what the target is compared with. */
   countedMinutesPerWeek: number;
   /** target − counted: kvar till mål when positive, över mål when negative. */
@@ -714,9 +723,17 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     }
   }
   // The uppdrag's own toppvecka: an undated one is in every week, a dated one
-  // only in the weeks its dates touch.
-  const dutyPeaks = peakPerWeekByKey(
-    input.duties.map((duty) => ({ key: duty.userId, minutes: duty.minutesPerWeek, ...dutyPeriod(duty) })),
+  // only in the weeks its dates touch. Once over all of them, once over the
+  // ones that count toward the target.
+  const dutyPeakItems = input.duties.map((duty) => ({
+    key: duty.userId,
+    minutes: duty.minutesPerWeek,
+    counted: duty.countsAsTeaching,
+    ...dutyPeriod(duty),
+  }));
+  const dutyPeaks = peakPerWeekByKey(dutyPeakItems, year, (item) => item.key, (item) => item.minutes);
+  const countedDutyPeaks = peakPerWeekByKey(
+    dutyPeakItems.filter((item) => item.counted),
     year,
     (item) => item.key,
     (item) => item.minutes,
@@ -889,6 +906,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       dutyMinutesPerWeek: Math.round(acc.dutyMinutes),
       dutyPeakMinutesPerWeek: Math.round(dutyPeaks.get(userId) ?? 0),
       countedDutyMinutesPerWeek: Math.round(acc.countedDutyMinutes),
+      countedDutyPeakMinutesPerWeek: Math.round(countedDutyPeaks.get(userId) ?? 0),
       countedMinutesPerWeek: Math.round(counted),
       balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
       percentOfTarget: percentOfTarget(counted, target),

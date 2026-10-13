@@ -254,6 +254,34 @@ describe("StaffingMatrix", () => {
     expect(within(anna).getAllByRole("cell")[6]?.textContent).toBe("-95");
   });
 
+  it("shows the uppdrag's own toppvecka in the peak week, header and figure, so a dated uppdrag is not averaged away", () => {
+    renderMatrix({
+      week: "peak",
+      report: {
+        ...report,
+        teachers: [
+          teacher({
+            // Mentor from January (90) and a counted resurstid until jul (60).
+            dutyMinutesPerWeek: 70,
+            countedDutyMinutesPerWeek: 29,
+            dutyPeakMinutesPerWeek: 90,
+            countedDutyPeakMinutesPerWeek: 60,
+            countedMinutesPerWeek: 929,
+            balanceMinutesPerWeek: -64,
+            dutyCount: 2,
+          }),
+        ],
+      },
+    });
+    expect(screen.getByRole("columnheader", { name: "dutyPeakHeader" })).toBeInTheDocument();
+    const anna = screen.getByText("Anna Ek").closest("tr")!;
+    const duty = within(anna).getAllByRole("cell")[5]!;
+    expect(duty.textContent).toBe("90 (dutyCellCounted(60))");
+    expect(duty).toHaveAttribute("title", "dutyCellCounted(60)");
+    // The bar: 960 teaching + 60 counted uppdrag against 865.
+    expect(within(anna).getByText("barLabel(117,9)")).toBeInTheDocument();
+  });
+
   it("opens the teacher on the row's name", async () => {
     const user = userEvent.setup();
     const { onOpenTeacher } = renderMatrix();
