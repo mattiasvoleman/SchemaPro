@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GuardianChild } from "@/lib/guardian-queries";
 import GuardianPage from "./page";
 
 /**
@@ -14,7 +15,10 @@ import GuardianPage from "./page";
 
 const state = vi.hoisted(() => ({
   role: "GUARDIAN",
-  children: [] as { id: string; firstName: string; lastName: string; isActive: boolean }[],
+  // The gateway's shape (GET /api/v1/family/children): no role, email or phone.
+  children: [] as GuardianChild[],
+  /** The guardian id each render asked useMyChildren for. */
+  childrenAskedFor: [] as (string | null)[],
   reports: [] as Record<string, unknown>[],
 }));
 
@@ -36,7 +40,10 @@ vi.mock("@/components/profile-context", () => ({
 // "Gallrat före": nothing gallrat in these rows.
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("@/lib/guardian-queries", () => ({
-  useMyChildren: () => ({ data: state.children, isLoading: false }),
+  useMyChildren: (guardianUserId: string | null) => {
+    state.childrenAskedFor.push(guardianUserId);
+    return { data: state.children, isLoading: false };
+  },
   useAbsenceReports: () => ({ data: state.reports }),
   useLeaveRequests: () => ({ data: [] }),
   useAbsenceReportActions: () => ({ report: { isPending: false }, remove: { isPending: false } }),
@@ -65,10 +72,11 @@ vi.mock("next-intl", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   state.reports = [];
+  state.childrenAskedFor = [];
   state.role = "GUARDIAN";
   state.children = [
-    { id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true },
-    { id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true },
+    { linkId: "l-1", id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
+    { linkId: "l-2", id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
   ];
 });
 
@@ -95,6 +103,26 @@ describe("the guardian's Undervisningstid cards", () => {
 });
 
 /**
+ * The children come from the gateway (GET /api/v1/family/children), which
+ * answers a guardian and refuses every other role. Another role that opens
+ * the page must not ask, or it would read a refusal as a failed load.
+ */
+describe("the children read", () => {
+  it("is asked as the signed-in guardian", () => {
+    render(<GuardianPage />);
+    expect(state.childrenAskedFor).not.toHaveLength(0);
+    expect(state.childrenAskedFor.every((id) => id === "g-1")).toBe(true);
+  });
+
+  it("is not asked when another role opens the page", () => {
+    state.role = "SCHOOL_ADMIN";
+    render(<GuardianPage />);
+    expect(state.childrenAskedFor).not.toHaveLength(0);
+    expect(state.childrenAskedFor.every((id) => id === null)).toBe(true);
+  });
+});
+
+/**
  * The "Schema" card (elev- och vårdnadshavarytan): one card for the
  * guardian's own children, lazily loaded, and none for any other role. What it
  * shows is components/guardian/child-schedule.test.tsx's.
@@ -107,13 +135,15 @@ describe("the guardian's Schema card", () => {
 
   it("leaves out a child who has left, whose week the gateway never answers, and is not there when every child has", async () => {
     state.children = [
-      { id: "c-1", firstName: "Alva", lastName: "Elev", isActive: false },
-      { id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true },
+      { linkId: "l-1", id: "c-1", firstName: "Alva", lastName: "Elev", isActive: false, studentGroupId: "g-7a" },
+      { linkId: "l-2", id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
     ];
     const { unmount } = render(<GuardianPage />);
     expect(await screen.findByText("child-schedule c-2")).toBeInTheDocument();
     unmount();
-    state.children = [{ id: "c-1", firstName: "Alva", lastName: "Elev", isActive: false }];
+    state.children = [
+      { linkId: "l-1", id: "c-1", firstName: "Alva", lastName: "Elev", isActive: false, studentGroupId: "g-7a" },
+    ];
     render(<GuardianPage />);
     expect(await screen.findByText("guardian.reportTitle")).toBeInTheDocument();
     expect(screen.queryByText(/^child-schedule/)).not.toBeInTheDocument();

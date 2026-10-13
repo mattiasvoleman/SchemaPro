@@ -2,7 +2,13 @@ import { createClient } from "@/utils/supabase/client";
 
 /**
  * Typed client for the NestJS gateway. All mutations and AI actions go
- * through this API; reads happen directly against Supabase under RLS.
+ * through this API, and so does every read of other people's personal data —
+ * the school's people, memberships, attendance, absence reports, leave
+ * requests and guardian links — because the gateway records each such read
+ * in the läslogg, and a read through PostgREST leaves no record. What still
+ * reads Supabase directly under RLS is a user's own row (the session's
+ * profile, a pupil's own attendance) and the tables the läslogg does not
+ * cover: subjects, rooms, groups, lessons and the like.
  */
 
 // Trailing slashes are stripped: every `path` below already starts with one,

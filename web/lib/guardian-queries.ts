@@ -1,10 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
-import type { AbsenceReport, LeaveRequest, Person } from "@/lib/types";
+import type { AbsenceReport, LeaveRequest } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // The guardian dashboard: children, absence reports, leave requests
@@ -28,50 +27,56 @@ import type { AbsenceReport, LeaveRequest, Person } from "@/lib/types";
 // ids (useLessonReportedAbsences). The keys are shared through
 // lib/guardian-keys.ts, because useGuardianLinkActions over there invalidates
 // the children list without importing this file.
+//
+// All three reads go through the gateway, not PostgREST, since the läslogg:
+// a child's name, an absence note and a leave reason are other people's
+// personal data, and the gateway records who read which. It also decides
+// what the caller may see — a guardian their own children, a pupil
+// themselves, an admin the school — so the hooks send only the filters the
+// page asked for. PostgREST still answers a signed-in user's reads of their
+// own row and of the tables the läslogg does not cover.
 // ---------------------------------------------------------------------------
 
-/** The signed-in guardian's children (via GuardianStudents, RLS-scoped). */
+/**
+ * A guardian's linked pupil as the gateway hands it out: what the dashboard
+ * shows and nothing more. No role, email or phone — the page never showed a
+ * child's contact details, so the read no longer carries them.
+ */
+export interface GuardianChild {
+  /** The GuardianStudents row. */
+  linkId: string;
+  id: string;
+  firstName: string;
+  lastName: string;
+  isActive: boolean;
+  studentGroupId: string | null;
+}
+
+/**
+ * The signed-in guardian's children. The gateway knows the guardian from the
+ * token; the id is here to wait for the profile and to key the cache, so a
+ * second sign-in in the same tab never shows the first guardian's children.
+ */
 export function useMyChildren(guardianUserId: string | null) {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.myChildren, guardianUserId],
     enabled: guardianUserId !== null,
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("GuardianStudents")
-        .select(
-          "id, studentId, student:Users!GuardianStudents_studentId_schoolId_fkey(id, role, firstName, lastName, email, phone, isActive, studentGroupId)",
-        )
-        .eq("guardianId", guardianUserId!);
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as unknown as Array<{
-        id: string;
-        studentId: string;
-        student: Person;
-      }>;
-      return rows.map((row) => ({ linkId: row.id, ...row.student }));
-    },
+    queryFn: () => api.get<GuardianChild[]>("/api/v1/family/children"),
   });
 }
 
-/** Absence reports visible to the caller (RLS: own children / own / admin), with the note. */
+/** Absence reports the caller may see (own children / self / the school), with the note, newest day first. */
 export function useAbsenceReports(options?: { date?: string; studentId?: string }) {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.absenceReports, options?.date ?? null, options?.studentId ?? null],
-    queryFn: async () => {
-      const supabase = createClient();
-      let query = supabase
-        .from("AbsenceReports")
-        .select(
-          "id, studentId, reportedById, date, startTime, endTime, type, note, createdAt",
-        )
-        .order("date", { ascending: false })
-        .limit(200);
-      if (options?.date) query = query.eq("date", options.date);
-      if (options?.studentId) query = query.eq("studentId", options.studentId);
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      return (data ?? []) as AbsenceReport[];
+    queryFn: () => {
+      const query = [
+        options?.date ? `date=${encodeURIComponent(options.date)}` : null,
+        options?.studentId ? `studentId=${encodeURIComponent(options.studentId)}` : null,
+      ]
+        .filter((part) => part !== null)
+        .join("&");
+      return api.get<AbsenceReport[]>(`/api/v1/absence-reports${query ? `?${query}` : ""}`);
     },
   });
 }
@@ -99,24 +104,14 @@ export function useAbsenceReportActions() {
   return { report, remove };
 }
 
-/** Leave requests visible to the caller (guardian: children; admin: all). */
+/** Leave requests the caller may see (guardian: children; pupil: self; admin: all), newest first. */
 export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED") {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.leaveRequests, status ?? null],
-    queryFn: async () => {
-      const supabase = createClient();
-      let query = supabase
-        .from("LeaveRequests")
-        .select(
-          "id, studentId, requestedById, startDate, endDate, reason, status, decidedById, decidedAt, decisionNote, createdAt",
-        )
-        .order("createdAt", { ascending: false })
-        .limit(200);
-      if (status) query = query.eq("status", status);
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      return (data ?? []) as LeaveRequest[];
-    },
+    queryFn: () =>
+      api.get<LeaveRequest[]>(
+        `/api/v1/leave-requests${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+      ),
   });
 }
 
