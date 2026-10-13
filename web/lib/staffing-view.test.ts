@@ -294,9 +294,19 @@ describe("dutyMinutesOf", () => {
     expect(dutyMinutesOf(figures, "standard")).toEqual({ all: 63, counted: 53 });
     expect(dutyMinutesOf(figures, "peak")).toEqual({ all: 120, counted: 100 });
   });
-  it("falls back part by part to the standardvecka for a report without peaks", () => {
-    expect(dutyMinutesOf({ dutyMinutesPerWeek: 63, countedDutyMinutesPerWeek: 53, dutyPeakMinutesPerWeek: 120 }, "peak")).toEqual({
-      all: 120,
+  it("falls back to the standardvecka as a pair, never a peak beside a standardvecka figure", () => {
+    // The gateway before 20261022090000 sends the uppdrag's peak but not the
+    // counted one's: a teacher whose only uppdrag is a counted 90 minutes from
+    // January. Part by part this read 90 against 41 and drew 49 minutes of
+    // uncounted uppdrag that do not exist.
+    const previousGateway = { dutyMinutesPerWeek: 41, countedDutyMinutesPerWeek: 41, dutyPeakMinutesPerWeek: 90 };
+    expect(dutyMinutesOf(previousGateway, "peak")).toEqual({ all: 41, counted: 41 });
+    expect(
+      loadBarSegments({ assignedMinutesPerWeek: 900, targetMinutesPerWeek: 1080, ...previousGateway }, "peak", 960)
+        .dutyMinutes,
+    ).toBe(0);
+    expect(dutyMinutesOf({ dutyMinutesPerWeek: 63, countedDutyMinutesPerWeek: 53, countedDutyPeakMinutesPerWeek: 120 }, "peak")).toEqual({
+      all: 63,
       counted: 53,
     });
     expect(dutyMinutesOf({}, "peak")).toEqual({ all: 0, counted: 0 });

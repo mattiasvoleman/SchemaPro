@@ -136,17 +136,19 @@ type BarTeacher = Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPer
  * uppdrag's beside all of them — so the sum never understates a week, and
  * where they peak in different weeks it states more than any one week holds.
  *
- * A report from a gateway that does not send the peaks yet reads as the
- * standardvecka, part by part.
+ * A report without both peaks reads as the standardvecka, AS A PAIR: the
+ * gateway release before 20261022090000 sends dutyPeakMinutesPerWeek but not
+ * the counted one, and a peak beside a standardvecka figure is no week at all
+ * — a counted 90-minute uppdrag from January read as 90 against 41 and drew
+ * 49 minutes of uncounted uppdrag that do not exist.
  */
 export function dutyMinutesOf(teacher: DutyFigures, week: WeekView): { all: number; counted: number } {
-  const all = teacher.dutyMinutesPerWeek ?? 0;
-  const counted = teacher.countedDutyMinutesPerWeek ?? 0;
-  if (week !== "peak") return { all, counted };
-  return {
-    all: teacher.dutyPeakMinutesPerWeek ?? all,
-    counted: teacher.countedDutyPeakMinutesPerWeek ?? counted,
-  };
+  const standard = { all: teacher.dutyMinutesPerWeek ?? 0, counted: teacher.countedDutyMinutesPerWeek ?? 0 };
+  if (week !== "peak") return standard;
+  if (teacher.dutyPeakMinutesPerWeek === undefined || teacher.countedDutyPeakMinutesPerWeek === undefined) {
+    return standard;
+  }
+  return { all: teacher.dutyPeakMinutesPerWeek, counted: teacher.countedDutyPeakMinutesPerWeek };
 }
 
 /**
