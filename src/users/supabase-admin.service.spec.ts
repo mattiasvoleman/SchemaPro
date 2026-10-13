@@ -6,6 +6,9 @@ const SUPABASE_URL = 'https://supabase.test';
 const SERVICE_KEY = 'service-role-key';
 const AUTH_ID = '99999999-9999-4999-8999-999999999999';
 const EMAIL = 'invitee@school.se';
+/** The Users row the login is for, and when the row took it. */
+const USER_ID = '66666666-6666-4666-8666-666666666666';
+const OWNER = { userId: USER_ID, since: new Date('2026-09-01T08:00:00Z') };
 
 type FetchInit = {
   method: string;
@@ -76,6 +79,26 @@ describe('SupabaseAdminService', () => {
     return match !== undefined ? init.headers[match] : undefined;
   };
 
+  /** How GoTrue answers a client that sends X-Supabase-Api-Version, as supabase-js does. */
+  const refusal = (code: string, message: string, status: number) =>
+    jsonResponse({ code, message }, status, { 'x-supabase-api-version': '2024-01-01' });
+
+  /** A login as getUserById returns it, created for OWNER's row. */
+  const ours = (fields: Record<string, unknown> = {}) =>
+    jsonResponse({
+      id: AUTH_ID,
+      app_metadata: { provider: 'email', providers: ['email'], schemaproUserId: USER_ID },
+      ...fields,
+    });
+
+  /** A login from before the tag: app_metadata as GoTrue writes it, and nothing of ours. */
+  const untagged = (fields: Record<string, unknown> = {}) =>
+    jsonResponse({
+      id: AUTH_ID,
+      app_metadata: { provider: 'email', providers: ['email'] },
+      ...fields,
+    });
+
   describe('without SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY', () => {
     it('reports unconfigured and warns that invitations are disabled', () => {
       const warn = jest
@@ -94,7 +117,7 @@ describe('SupabaseAdminService', () => {
       jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       const service = makeService({ url: SUPABASE_URL }); // key missing
 
-      await expect(service.inviteUser(EMAIL)).rejects.toThrow(
+      await expect(service.inviteUser(EMAIL, USER_ID)).rejects.toThrow(
         'Supabase admin client is not configured.',
       );
       expect(fetchMock).not.toHaveBeenCalled();
@@ -117,7 +140,7 @@ describe('SupabaseAdminService', () => {
       const service = makeService();
       expect(service.isConfigured).toBe(true);
 
-      await expect(service.inviteUser(EMAIL)).resolves.toEqual({
+      await expect(service.inviteUser(EMAIL, USER_ID)).resolves.toEqual({
         authId: AUTH_ID,
         emailSent: true,
       });
@@ -127,15 +150,88 @@ describe('SupabaseAdminService', () => {
       expect(url.origin).toBe(SUPABASE_URL);
       expect(url.pathname).toBe('/auth/v1/invite');
       expect(init.method).toBe('POST');
-      expect(JSON.parse(init.body ?? '')).toEqual({ email: EMAIL });
+      expect(JSON.parse(init.body ?? '')).toEqual({
+        email: EMAIL,
+        data: { schemaproInvitation: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+      });
       expect(header(init, 'authorization')).toBe(`Bearer ${SERVICE_KEY}`);
       expect(header(init, 'apikey')).toBe(SERVICE_KEY);
+    });
+
+    describe('the row a created user is tagged with', () => {
+      /** GoTrue creating the user: the invitation's data becomes its user_metadata. */
+      const creating = (_url: string, init: FetchInit) =>
+        Promise.resolve(
+          jsonResponse({
+            id: AUTH_ID,
+            email: EMAIL,
+            app_metadata: { provider: 'email', providers: ['email'] },
+            user_metadata: (JSON.parse(init.body ?? '{}') as { data?: unknown }).data ?? {},
+          }),
+        );
+
+      it('tags a user the invitation created with its row, and takes the one-off value off it', async () => {
+        fetchMock
+          .mockImplementationOnce(creating)
+          .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
+
+        await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
+          authId: AUTH_ID,
+          emailSent: true,
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const { url, init } = call(1);
+        expect(init.method).toBe('PUT');
+        expect(url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
+        // GoTrue merges both: other app_metadata keys stay, a null removes one.
+        expect(JSON.parse(init.body ?? '')).toEqual({
+          app_metadata: { schemaproUserId: USER_ID },
+          user_metadata: { schemaproInvitation: null },
+        });
+      });
+
+      it('leaves a user untagged that GoTrue only sent the invitation again', async () => {
+        // An unconfirmed user gets a 200 and the invitation again, and keeps
+        // its user_metadata: this call's value is not on it.
+        fetchMock.mockResolvedValueOnce(
+          jsonResponse({
+            id: AUTH_ID,
+            email: EMAIL,
+            app_metadata: { provider: 'email' },
+            user_metadata: { schemaproInvitation: 'an-earlier-invitation' },
+          }),
+        );
+
+        await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
+          authId: AUTH_ID,
+          emailSent: true,
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('still reports the invitation when the tag cannot be written, and logs the pair', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        fetchMock
+          .mockImplementationOnce(creating)
+          .mockResolvedValueOnce(jsonResponse({ msg: 'Database error updating user' }, 500));
+
+        await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
+          authId: AUTH_ID,
+          emailSent: true,
+        });
+
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(`[user=${USER_ID}] [authId=${AUTH_ID}]`),
+        );
+      });
     });
 
     it('sends invitees to the web app update-password page, trailing slash stripped', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID }));
 
-      await makeService().inviteUser(EMAIL);
+      await makeService().inviteUser(EMAIL, USER_ID);
 
       expect(call(0).url.searchParams.get('redirect_to')).toBe(
         'https://app.schemapro.test/update-password',
@@ -145,7 +241,7 @@ describe('SupabaseAdminService', () => {
     it('omits the redirect when no web origin is configured', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID }));
 
-      await makeService(undefined, []).inviteUser(EMAIL);
+      await makeService(undefined, []).inviteUser(EMAIL, USER_ID);
 
       expect(call(0).url.searchParams.get('redirect_to')).toBeNull();
     });
@@ -167,7 +263,7 @@ describe('SupabaseAdminService', () => {
 
       // GoTrue answers 422 for an address it already knows and sends nothing,
       // so the caller must not be told an invitation went out.
-      await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+      await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
         authId: AUTH_ID,
         emailSent: false,
       });
@@ -199,7 +295,7 @@ describe('SupabaseAdminService', () => {
 
       // GoTrue answers 422 for an address it already knows and sends nothing,
       // so the caller must not be told an invitation went out.
-      await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+      await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
         authId: AUTH_ID,
         emailSent: false,
       });
@@ -225,7 +321,7 @@ describe('SupabaseAdminService', () => {
           }),
         );
 
-      await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+      await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
         authId: AUTH_ID,
         emailSent: false,
       });
@@ -251,7 +347,7 @@ describe('SupabaseAdminService', () => {
           fetchMock.mockResolvedValueOnce(fullPage(page, page === 20));
         }
 
-        await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+        await expect(makeService().inviteUser(EMAIL, USER_ID)).resolves.toEqual({
           authId: AUTH_ID,
           emailSent: false,
         });
@@ -262,7 +358,7 @@ describe('SupabaseAdminService', () => {
           .mockResolvedValueOnce(jsonResponse({ msg: 'invalid email address' }, 400))
           .mockResolvedValue(fullPage(0));
 
-        await expect(makeService().inviteUser(EMAIL)).rejects.toThrow(
+        await expect(makeService().inviteUser(EMAIL, USER_ID)).rejects.toThrow(
           'Supabase invite failed: invalid email address',
         );
         // The invite itself, then twenty pages.
@@ -275,7 +371,7 @@ describe('SupabaseAdminService', () => {
         .mockResolvedValueOnce(jsonResponse({ msg: 'invalid email address' }, 400))
         .mockResolvedValueOnce(jsonResponse({ users: [], aud: 'authenticated' }));
 
-      await expect(makeService().inviteUser(EMAIL)).rejects.toThrow(
+      await expect(makeService().inviteUser(EMAIL, USER_ID)).rejects.toThrow(
         'Supabase invite failed: invalid email address',
       );
     });
@@ -287,6 +383,7 @@ describe('SupabaseAdminService', () => {
 
       await expect(makeService().resendInvitation(EMAIL)).resolves.toBeUndefined();
 
+      // No one-off value: the user is there already, and nothing is tagged.
       const { url, init } = call(0);
       expect(url.pathname).toBe('/auth/v1/invite');
       expect(url.searchParams.get('redirect_to')).toBe('https://app.schemapro.test/update-password');
@@ -321,16 +418,12 @@ describe('SupabaseAdminService', () => {
   });
 
   describe('changeUserEmail', () => {
-    /** How GoTrue answers a client that sends X-Supabase-Api-Version, as supabase-js does. */
-    const refusal = (code: string, message: string, status: number) =>
-      jsonResponse({ code, message }, status, { 'x-supabase-api-version': '2024-01-01' });
-
     it('reads the user, then PUTs the new address with the service-role credentials', async () => {
       fetchMock
-        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
+        .mockResolvedValueOnce(ours({ email: 'old@school.se' }))
         .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
         outcome: 'changed',
         confirmed: false,
       });
@@ -346,9 +439,9 @@ describe('SupabaseAdminService', () => {
     });
 
     it('writes nothing when the user already has the address, in any case', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'Invitee@School.SE' }));
+      fetchMock.mockResolvedValueOnce(ours({ email: 'Invitee@School.SE' }));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
         outcome: 'unchanged',
         confirmed: false,
       });
@@ -356,16 +449,119 @@ describe('SupabaseAdminService', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    describe('a login that may not be the row\'s own', () => {
+      /** After OWNER's row took the login, and before. */
+      const SINCE = '2026-09-03T06:45:00Z';
+      const BEFORE = '2026-08-20T12:00:00Z';
+
+      it('moves nothing for a login created for another row', async () => {
+        fetchMock.mockResolvedValueOnce(
+          jsonResponse({
+            id: AUTH_ID,
+            email: 'old@school.se',
+            app_metadata: { provider: 'email', schemaproUserId: '12121212-1212-4212-8212-121212121212' },
+            // A tag says whose the login was made for; a sign-in does not change that.
+            last_sign_in_at: SINCE,
+          }),
+        );
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'foreign',
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('moves nothing for an untagged login nobody has signed in with since the row took it', async () => {
+        // Given to the row by address: it can be anybody's.
+        fetchMock.mockResolvedValueOnce(untagged({ email: 'old@school.se', last_sign_in_at: BEFORE }));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'foreign',
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('moves nothing for an untagged login nobody has ever signed in with', async () => {
+        fetchMock.mockResolvedValueOnce(untagged({ email: 'old@school.se' }));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'foreign',
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('moves an untagged login somebody has signed in with since, and tags it in the same write', async () => {
+        fetchMock
+          .mockResolvedValueOnce(untagged({ email: 'old@school.se', last_sign_in_at: SINCE }))
+          .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'changed',
+          confirmed: false,
+        });
+
+        expect(JSON.parse(call(1).init.body ?? '')).toEqual({
+          email: EMAIL,
+          app_metadata: { schemaproUserId: USER_ID },
+        });
+      });
+
+      it('tags such a login alone when it already has the address', async () => {
+        // The row's next invitation restamps invitedAt, after which the
+        // sign-in would no longer count.
+        fetchMock
+          .mockResolvedValueOnce(untagged({ email: EMAIL, last_sign_in_at: SINCE }))
+          .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: EMAIL }));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'unchanged',
+          confirmed: false,
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(call(1).init.method).toBe('PUT');
+        expect(JSON.parse(call(1).init.body ?? '')).toEqual({
+          app_metadata: { schemaproUserId: USER_ID },
+        });
+      });
+
+      it('still answers unchanged when that tag cannot be written, and logs the pair', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        fetchMock
+          .mockResolvedValueOnce(untagged({ email: EMAIL, last_sign_in_at: SINCE }))
+          .mockResolvedValueOnce(jsonResponse({ msg: 'Database error updating user' }, 500));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'unchanged',
+          confirmed: false,
+        });
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(`[user=${USER_ID}] [authId=${AUTH_ID}]`),
+        );
+      });
+
+      it('writes nothing to a login that is not the row\'s own but already has the address', async () => {
+        // The invitation then finds that login by address, as it always did.
+        fetchMock.mockResolvedValueOnce(untagged({ email: EMAIL }));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'unchanged',
+          confirmed: false,
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it('says whether the user has confirmed an address, which GoTrue sends no invitation', async () => {
       fetchMock
         .mockResolvedValueOnce(
-          jsonResponse({ id: AUTH_ID, email: 'old@school.se', email_confirmed_at: '2026-09-02T07:30:00Z' }),
+          ours({ email: 'old@school.se', email_confirmed_at: '2026-09-02T07:30:00Z' }),
         )
         .mockResolvedValueOnce(
           jsonResponse({ id: AUTH_ID, email: EMAIL, email_confirmed_at: '2026-09-02T07:30:00Z' }),
         );
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
         outcome: 'changed',
         confirmed: true,
       });
@@ -373,29 +569,29 @@ describe('SupabaseAdminService', () => {
 
     it('says the address is taken when another user holds it', async () => {
       fetchMock
-        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
+        .mockResolvedValueOnce(ours({ email: 'old@school.se' }))
         .mockResolvedValueOnce(
           refusal('email_exists', 'A user with this email address has already been registered', 422),
         );
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({ outcome: 'taken' });
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({ outcome: 'taken' });
     });
 
     it('says the user is missing when GoTrue has no such user', async () => {
       fetchMock.mockResolvedValueOnce(refusal('user_not_found', 'User not found', 404));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).resolves.toEqual({ outcome: 'missing' });
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({ outcome: 'missing' });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('propagates any other refusal of the change', async () => {
       fetchMock
-        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID, email: 'old@school.se' }))
+        .mockResolvedValueOnce(ours({ email: 'old@school.se' }))
         .mockResolvedValueOnce(
           refusal('validation_failed', 'Unable to validate email address: invalid format', 400),
         );
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).rejects.toThrow(
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).rejects.toThrow(
         'Supabase e-mail change failed: Unable to validate email address: invalid format',
       );
     });
@@ -403,7 +599,7 @@ describe('SupabaseAdminService', () => {
     it('propagates a failed lookup without writing', async () => {
       fetchMock.mockResolvedValueOnce(refusal('not_admin', 'User not allowed', 403));
 
-      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL)).rejects.toThrow(
+      await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).rejects.toThrow(
         'Supabase user lookup failed: User not allowed',
       );
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -412,7 +608,7 @@ describe('SupabaseAdminService', () => {
     it('refuses instead of calling out when unconfigured', async () => {
       jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-      await expect(makeService({}).changeUserEmail(AUTH_ID, EMAIL)).rejects.toThrow(
+      await expect(makeService({}).changeUserEmail(AUTH_ID, EMAIL, OWNER)).rejects.toThrow(
         'Supabase admin client is not configured.',
       );
       expect(fetchMock).not.toHaveBeenCalled();
@@ -446,6 +642,84 @@ describe('SupabaseAdminService', () => {
       await expect(makeService().deleteUser(AUTH_ID)).rejects.toThrow(
         'Supabase delete failed: permission denied',
       );
+    });
+  });
+
+  describe('deleteOwnedUser', () => {
+    it('reads the login, then DELETEs one created for the row', async () => {
+      fetchMock
+        .mockResolvedValueOnce(ours({ email: 'old@school.se' }))
+        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID }));
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).resolves.toBe('deleted');
+
+      expect(call(0).init.method).toBe('GET');
+      expect(call(0).url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
+      expect(call(1).init.method).toBe('DELETE');
+      expect(call(1).url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
+    });
+
+    it('deletes an untagged login somebody has signed in with since the row took it', async () => {
+      fetchMock
+        .mockResolvedValueOnce(untagged({ email: 'old@school.se', last_sign_in_at: '2026-09-03T06:45:00Z' }))
+        .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID }));
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).resolves.toBe('deleted');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('leaves a login that is not the row\'s own', async () => {
+      fetchMock.mockResolvedValueOnce(untagged({ email: 'old@school.se', last_sign_in_at: '2026-08-20T12:00:00Z' }));
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).resolves.toBe('foreign');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a login created for another row', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({
+          id: AUTH_ID,
+          app_metadata: { schemaproUserId: '12121212-1212-4212-8212-121212121212' },
+        }),
+      );
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).resolves.toBe('foreign');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('says missing when there is no such login', async () => {
+      fetchMock.mockResolvedValueOnce(refusal('user_not_found', 'User not found', 404));
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).resolves.toBe('missing');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates a failed lookup without deleting', async () => {
+      fetchMock.mockResolvedValueOnce(refusal('not_admin', 'User not allowed', 403));
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).rejects.toThrow(
+        'Supabase user lookup failed: User not allowed',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates a failed delete', async () => {
+      fetchMock
+        .mockResolvedValueOnce(ours())
+        .mockResolvedValueOnce(jsonResponse({ msg: 'permission denied' }, 403));
+
+      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).rejects.toThrow(
+        'Supabase delete failed: permission denied',
+      );
+    });
+
+    it('refuses instead of calling out when unconfigured', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(makeService({}).deleteOwnedUser(AUTH_ID, OWNER)).rejects.toThrow(
+        'Supabase admin client is not configured.',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });
