@@ -5,6 +5,7 @@ import {
   testUser,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CalendarService } from '../calendar/calendar.service';
 import type { StaffingLoadService } from '../staffing/staffing-load.service';
@@ -257,7 +258,10 @@ describe('PublicationsService (DIRECT)', () => {
     expect(byCode.PUB_UNPLACED.items[0].label).toBe('Matematik för 7B: 60 av 120 min/vecka');
     expect(byCode.PUB_TIMPLAN).toMatchObject({ count: 1, items: [{ label: 'Åk 7 saknar timplan.' }] });
     expect(byCode.PUB_STAFFING_REFUSE.items[0].label).toBe('Anna Ek saknar behörighet: Matematik för 7B');
-    expect(load.load).toHaveBeenCalledWith(YEAR_ID, 'planned', testUser());
+    // The report is read to judge, unrecorded; the läslogg names only the
+    // teacher the check stops on, with the names read in the same transaction.
+    expect(load.load).toHaveBeenCalledWith(YEAR_ID, 'planned', testUser(), { record: false });
+    expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: ['tea'] }]);
   });
 
   it('does not ask for the load report when no staffing check refuses', async () => {

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { todayInZone } from '../common/utils/time';
@@ -894,14 +895,19 @@ export class PublicationsService {
 
     const policy = await this.prisma.withRls(user, (tx) => readCheckPolicy(tx as PrismaClient, schoolId));
     if (policy.qualificationMode === 'REFUSE' || policy.overAllocationMode === 'REFUSE') {
-      const report = await this.load.load(academicYearId, 'planned', user);
+      // The whole load report is read to judge, and not recorded as such:
+      // the check hands out only the teachers it stops on, and records those
+      // (EMPLOYMENT, their posts' figures) with their names below.
+      const report = await this.load.load(academicYearId, 'planned', user, { record: false });
       const unqualified = policy.qualificationMode === 'REFUSE' ? report.unqualifiedAssignments : [];
       const over = policy.overAllocationMode === 'REFUSE' ? report.teachers.filter((row) => row.status === 'OVER') : [];
       const ids = [...new Set([...unqualified.map((row) => row.userId), ...over.map((row) => row.userId)])];
       const people = ids.length
-        ? await this.prisma.queryWithRls(user, (db) =>
-            db.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } }),
-          )
+        ? await this.prisma.withRls(user, async (tx) => {
+            const named = await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } });
+            await recordRead(tx, 'EMPLOYMENT', ids, user.channel);
+            return named;
+          })
         : [];
       const nameOf = new Map(people.map((row) => [row.id, `${row.firstName} ${row.lastName}`]));
       findings.push({

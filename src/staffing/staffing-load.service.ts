@@ -79,10 +79,17 @@ const asClock = (value: Date): string => value.toISOString().slice(11, 16);
 export class StaffingLoadService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * `record: false` is for a caller that reads the report to judge something
+   * and hands out only part of it (the publication check, which names the
+   * teachers it stops on and records those itself). Every route that returns
+   * the report records it.
+   */
   async load(
     academicYearId: string,
     horizon: string | undefined,
     user: AuthenticatedUser,
+    options: { record?: boolean } = {},
   ): Promise<TeacherLoadReportResponse> {
     requireSchoolId(user);
     const chosen = horizon ?? 'planned';
@@ -101,7 +108,7 @@ export class StaffingLoadService {
       // Each teacher's post, percentages and target: EMPLOYMENT in the
       // läslogg, in the read's transaction. Only what the response carries:
       // a teacher is answered their own row alone (below), which is theirs.
-      if (user.role === Role.SCHOOL_ADMIN) {
+      if (user.role === Role.SCHOOL_ADMIN && options.record !== false) {
         await recordRead(tx, 'EMPLOYMENT', built.teachers.map((row) => row.userId), user.channel);
       }
       return { year: read.year, report: built };
