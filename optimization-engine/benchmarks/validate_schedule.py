@@ -35,6 +35,10 @@ Checks, all derived from the request:
                       with its lessons closer than its rule allows — the
                       lessons the school locked counted from `lockedDays`,
                       since they come back in no response
+    blocks            the requirements of one parallel block (språkval,
+                      elevens val) at the same times: each member's lessons
+                      placed on the same weekdays, starts and ends as the
+                      first member's
 
 Use as a library::
 
@@ -290,6 +294,37 @@ def _distribution_problems(request, placed_weekdays) -> list[str]:
     return problems
 
 
+def _block_problems(request, lessons) -> list[str]:
+    """Parallella block, re-read from the request.
+
+    Requirements that carry the same blockId are one block when there are two
+    or more of them; one alone constrains nothing, as the engine reads it. Each
+    member's placements are compared as a sorted list of (weekday, start, end),
+    so the check asks what a school sees — Tyska and Franska on the same
+    Monday 09:00-10:00 — and not which lesson index the engine held to which.
+    """
+    members: dict = defaultdict(list)
+    for requirement in request.requirements:
+        if requirement.block_id is not None:
+            members[requirement.block_id].append(requirement.id)
+    placed: dict = defaultdict(list)
+    for lesson in lessons:
+        placed[lesson.requirement_id].append(
+            (lesson.day_of_week, lesson.start_time, lesson.end_time))
+    problems: list[str] = []
+    for block_id, ids in members.items():
+        if len(ids) < 2:
+            continue
+        first = sorted(placed.get(ids[0], []))
+        for other in ids[1:]:
+            times = sorted(placed.get(other, []))
+            if times != first:
+                problems.append(
+                    f"block {block_id}: requirement {other} placed at {times}, "
+                    f"requirement {ids[0]} at {first}")
+    return problems
+
+
 def validate(grid, request, lessons) -> list[str]:
     """Return a list of rule violations; empty means the timetable is valid."""
     problems: list[str] = []
@@ -437,6 +472,7 @@ def validate(grid, request, lessons) -> list[str]:
                         f"{constraint.resource_id or _grade_span(constraint)}")
 
     problems.extend(_distribution_problems(request, placed_weekdays))
+    problems.extend(_block_problems(request, lessons))
 
     rules = request.rules
     if rules is not None:

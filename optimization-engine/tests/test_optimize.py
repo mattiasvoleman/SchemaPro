@@ -4171,7 +4171,9 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # uniform set (REQUIREMENT_FIELDS) and this one (REQUIREMENT_FIELDS_MIXED)
     # in src/optimization/ai-engine-contract.spec.ts. The ämnesfördelning's
     # three are sent only for a requirement that carries a rule, and the
-    # gateway pins that set as REQUIREMENT_FIELDS_DISTRIBUTED.
+    # gateway pins that set as REQUIREMENT_FIELDS_DISTRIBUTED. blockId is sent
+    # only on a member of a parallel block with two or more members left to
+    # place, pinned there as REQUIREMENT_FIELDS_BLOCKED.
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -4190,6 +4192,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "maxLessonsPerDay",
         "minDaysBetween",
         "lockedDays",
+        "blockId",
     }
     assert _field_names(AnonymousConstraint) == {
         "id",
