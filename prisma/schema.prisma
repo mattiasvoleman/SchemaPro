@@ -30,6 +30,31 @@ enum UserRole {
   GUARDIAN
 }
 
+/// Roller i skolan (20261110090000): what kind of SCHOOL_ADMIN a person is.
+/// A profile of the one administrator role, not a role of its own, so every
+/// arm that asks for TEACHER or SCHOOL_ADMIN reads the same as before. FULL is
+/// today's administrator and every existing one became it; which areas each
+/// profile writes is app.admin_profile_writes() in the database and
+/// src/auth/admin-areas.ts in the gateway, held equal by tests.
+enum AdminProfile {
+  FULL
+  REKTOR
+  SCHEMALAGGARE
+  EXPEDITION
+}
+
+/// The areas an administrator's writes fall in, the one list both the
+/// database (app.current_user_may) and the gateway (@Area) read. Every
+/// profile reads every area; the areas only decide who writes.
+enum AdminArea {
+  PLANERING
+  SCHEMALAGGNING
+  PUBLICERING
+  DRIFT
+  PERSONAL
+  INTEGRATIONER
+}
+
 enum AbsenceReportType {
   SICK
   APPOINTMENT
@@ -252,6 +277,16 @@ model User {
   /// phone, source id and login replaced. Such a row is never active again
   /// (CHECK Users_a_pseudonym_stays_inactive).
   pseudonymisedAt DateTime? @db.Timestamptz(6)
+  /// The administrator's profile (20261110090000): set exactly on a
+  /// SCHOOL_ADMIN (CHECK Users_a_profile_is_an_administrators), FULL when a
+  /// writer names none. Changed only by a person whose own profile decides
+  /// (rektor or full), which a trigger holds; every change is logged in
+  /// UserRoleChanges.
+  adminProfile    AdminProfile?
+  /// HR-läs: a schemaläggare or an expedition who may read tjänst % and
+  /// nedsättning. Rektor and full read them anyway, so the flag is false for
+  /// them and for everybody who is not an administrator (CHECK).
+  hrRead          Boolean   @default(false)
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -321,6 +356,8 @@ model User {
   /// list for the composite key's sake as workRules. readActiveStaffIds
   /// filters on it.
   substitutePoolMemberships SubstitutePoolMember[] @relation("PoolMemberUser")
+  /// This person's changes of role, profile and HR-läs, written by a trigger.
+  roleChanges               UserRoleChange[]       @relation("RoleChangeSubject")
 
   @@unique([schoolId, email])
   /// The target a tenant-scoped composite foreign key needs. Redundant as an
@@ -331,6 +368,34 @@ model User {
   @@index([schoolId, role])
   @@index([studentGroupId])
   @@map("Users")
+}
+
+/// One change of a person's role, administrator profile or HR-läs
+/// (20261110090000), and an administrator's creation. Written only by the
+/// trigger Users_role_changes_are_logged, whoever wrote Users; read by the
+/// school's administrators through the gateway alone.
+model UserRoleChange {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String        @db.Uuid
+  /// The person changed. Composite (userId, schoolId) key, cascading: the
+  /// history goes with the person.
+  userId      String        @db.Uuid
+  /// Null when the row was created.
+  fromRole    UserRole?
+  toRole      UserRole
+  fromProfile AdminProfile?
+  toProfile   AdminProfile?
+  fromHrRead  Boolean?
+  toHrRead    Boolean
+  /// app.current_user_id() of the writer; null for a migration, the seed, the
+  /// owner or a sync. No foreign key: the history outlives the writer's row.
+  actorId     String?       @db.Uuid
+  createdAt   DateTime      @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  user User @relation("RoleChangeSubject", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@index([schoolId, userId, createdAt(sort: Desc)])
+  @@map("UserRoleChanges")
 }
 
 // -----------------------------------------------------------------------------
