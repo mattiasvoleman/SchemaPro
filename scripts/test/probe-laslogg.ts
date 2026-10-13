@@ -16,8 +16,9 @@
  *        deleted reader leaves the row with no actor, and the setting
  *        app.gallring is what lets a purge's DELETE through;
  *   lä4  an integration's reads are the key's: SS12000 v1 persons records
- *        PEOPLE and GUARDIANS with the key, and v2 persons records the Users
- *        ids behind the emitted ones, the source system's ids included;
+ *        PEOPLE and GUARDIANS with the key, v2 persons records the Users ids
+ *        behind the emitted ones, the source system's ids included, and v2
+ *        activities record what expand=groups and expand=teachers embed;
  *   lä5  the staff's HR and absences: the year's posts and the load report
  *        record EMPLOYMENT, the absence list STAFF_ABSENCES;
  *   lä6  "vem har läst om eleven" (AccessLogService) answers the pupil's
@@ -264,6 +265,38 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
       // A key without responsibles.read is shown no guardian, so none is recorded.
       assert.deepEqual(v2?.subjectIds, sorted(admin.id, teacher.id, pupil.id, classmate.id));
       assert.equal(v2?.kind, 'PEOPLE');
+
+      // Activities name groups and teachers by reference (the timetable,
+      // unrecorded); expand=groups embeds the groups with their members and
+      // expand=teachers the posts with their person, which are recorded.
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, 1, '08:00', '09:00', now())`,
+        [s, year.id, subject.id, home.id, teacher.id],
+      );
+      const third = await one<{ id: string }>(
+        `INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes) VALUES ($1, 'probe läslogg aktiviteter', $2, $3::text[]) RETURNING id`,
+        [s, `${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`, '{activities.read,groups.read,duties.read}'],
+      );
+      const activityCaller: V2Caller = {
+        schoolId: s,
+        keyId: third.id,
+        scopes: new Set(['activities.read', 'groups.read', 'duties.read'] as Scope[]),
+      };
+      // The master lesson, and the dated lesson without one as an ad hoc activity.
+      const plain = await new Ss12000V2Service(api).listActivities(activityCaller, {});
+      assert.equal(plain.data.length, 2, `${plain.data.length} activities, not the master lesson and the ad hoc one`);
+      assert.deepEqual(await log(`"apiKeyId" = $2`, [third.id]), [], 'an activity by reference was recorded');
+      await new Ss12000V2Service(api).listActivities(activityCaller, { expand: ['groups', 'teachers'] });
+      const expanded = await log(`"apiKeyId" = $2`, [third.id]);
+      assert.deepEqual(
+        expanded.map((row) => [row.kind, row.subjectIds]),
+        [
+          ['EMPLOYMENT', [teacher.id]],
+          ['ROSTER', sorted(pupil.id, classmate.id)],
+        ].sort(([a], [b]) => String(a).localeCompare(String(b))),
+        JSON.stringify(expanded),
+      );
     });
 
     await check('(lä5) the staff\'s posts, load and absences are recorded for the administrator who reads them', async () => {

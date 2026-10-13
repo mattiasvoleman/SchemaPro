@@ -49,46 +49,131 @@ export interface V2Page<T> {
 
 type Obj = Record<string, unknown> & { id: string };
 
-/** What a v2 read handed out, per läslogg kind: the emitted person ids. */
-type V2Read = (items: readonly Obj[]) => Array<[AccessKind, string[]]>;
+/**
+ * What a v2 read handed out, per läslogg kind: the emitted person ids, and
+ * the duty ids (a post or an uppdrag, which names its teacher) where the
+ * response names a teacher only by their duty.
+ */
+export interface V2Seen {
+  kind: AccessKind;
+  persons?: string[];
+  duties?: string[];
+}
+export type V2Read = (items: readonly Obj[]) => V2Seen[];
 
-/** The person ids under `key` of each entry of `list`: `[{ person: { id } }]`. */
-function refsIn(list: unknown, key: 'person' | 'student'): string[] {
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((entry) => (entry as Record<string, { id?: unknown } | undefined>)[key]?.id)
-    .filter((id): id is string => typeof id === 'string');
+const isText = (id: unknown): id is string => typeof id === 'string';
+const entriesOf = (value: unknown): Array<Record<string, unknown>> =>
+  Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+
+/** The ids under `key` of each entry of `entries`: `[{ person: { id } }]`. */
+function refsIn(entries: unknown, key: 'person' | 'student' | 'duty'): string[] {
+  return entriesOf(entries)
+    .map((entry) => (entry[key] as { id?: unknown } | undefined)?.id)
+    .filter(isText);
 }
 
 const embedded = (item: Obj): Record<string, unknown> => (item['_embedded'] as Record<string, unknown> | undefined) ?? {};
 
 /**
+ * What every resource's expands embed, read the same way for all of them:
+ *
+ *   person            (duties?expand=person)   the post's person, names and
+ *                                              e-mail: PEOPLE;
+ *   duties, teachers  (persons?expand=duties, activities?expand=teachers)
+ *                                              posts with their person:
+ *                                              EMPLOYMENT;
+ *   assignmentRoles   (groups?expand=assignmentRoles) mentorships, by duty:
+ *                                              EMPLOYMENT;
+ *   groups            (activities?expand=groups) whole groups with their
+ *                                              members: ROSTER;
+ *   groupMemberships  (persons?expand=groupMemberships) which groups the
+ *                                              listed person is in: ROSTER
+ *                                              about that person.
+ *
+ * An embedded activity (calendarEvents?expand=activity) names its teachers by
+ * duty only, as the event itself does, and is not read here.
+ */
+const EMBEDDED_READ: V2Read = (items) => {
+  const inner = items.map((item) => ({ item, embedded: embedded(item) }));
+  return [
+    { kind: 'PEOPLE', persons: inner.map(({ embedded: e }) => (e['person'] as { id?: unknown } | undefined)?.id).filter(isText) },
+    {
+      kind: 'EMPLOYMENT',
+      persons: inner.flatMap(({ embedded: e }) =>
+        [...entriesOf(e['duties']), ...entriesOf(e['teachers'])].map((duty) => (duty['person'] as { id?: unknown } | undefined)?.id).filter(isText),
+      ),
+      duties: inner.flatMap(({ embedded: e }) => refsIn(e['assignmentRoles'], 'duty')),
+    },
+    {
+      kind: 'ROSTER',
+      persons: [
+        ...inner.flatMap(({ embedded: e }) => entriesOf(e['groups']).flatMap((group) => refsIn(group['groupMemberships'], 'person'))),
+        ...inner.filter(({ embedded: e }) => entriesOf(e['groupMemberships']).length > 0).map(({ item }) => item.id),
+      ],
+    },
+  ];
+};
+
+/** A resource's own read, then what its expands embedded. */
+const withEmbedded =
+  (own: V2Read): V2Read =>
+  (items) => [...own(items), ...EMBEDDED_READ(items)];
+
+/**
  * Persons: everyone listed (names, e-mail); with responsibles.read, who is
  * whose guardian for each person whose relations the page carries.
  */
-const PERSONS_READ: V2Read = (items) => [
-  ['PEOPLE', items.map((item) => item.id)],
-  [
-    'GUARDIANS',
-    items.flatMap((item) => {
+const PERSONS_READ: V2Read = withEmbedded((items) => [
+  { kind: 'PEOPLE', persons: items.map((item) => item.id) },
+  {
+    kind: 'GUARDIANS',
+    persons: items.flatMap((item) => {
       const related = [...refsIn(item['responsibles'], 'person'), ...refsIn(embedded(item)['responsibleFor'], 'person')];
       return related.length > 0 ? [item.id, ...related] : [];
     }),
-  ],
-];
+  },
+]);
 /** Groups: their members. */
-const GROUPS_READ: V2Read = (items) => [['ROSTER', items.flatMap((item) => refsIn(item['groupMemberships'], 'person'))]];
+const GROUPS_READ: V2Read = withEmbedded((items) => [
+  { kind: 'ROSTER', persons: items.flatMap((item) => refsIn(item['groupMemberships'], 'person')) },
+]);
 /** Duties: the person each post is, with their percentages when the school shares them. */
-const DUTIES_READ: V2Read = (items) => [
-  [
-    'EMPLOYMENT',
-    items
-      .map((item) => (item['person'] as { id?: unknown } | undefined)?.id)
-      .filter((id): id is string => typeof id === 'string'),
-  ],
-];
-/** Calendar events: the pupils named on a lesson outside its groups. */
-const EVENTS_READ: V2Read = (items) => [['ROSTER', items.flatMap((item) => refsIn(item['studentExceptions'], 'student'))]];
+const DUTIES_READ: V2Read = withEmbedded((items) => [
+  { kind: 'EMPLOYMENT', persons: items.map((item) => (item['person'] as { id?: unknown } | undefined)?.id).filter(isText) },
+]);
+/**
+ * Activities name their groups and teachers by reference only, which is the
+ * timetable; what an expand embeds (whole groups, posts) is read.
+ */
+const ACTIVITIES_READ: V2Read = withEmbedded(() => []);
+/**
+ * Calendar events: the pupils named on a lesson outside its groups (ROSTER),
+ * and a planned teacher who does not take the lesson (a teacherException with
+ * participates false): that tells the reader a member of staff was away from
+ * it, with no reason, which is what the cover board shows and STAFF_ABSENCES
+ * is. A teacher added (participates true) is the timetable, not an absence.
+ */
+const EVENTS_READ: V2Read = withEmbedded((items) => [
+  { kind: 'ROSTER', persons: items.flatMap((item) => refsIn(item['studentExceptions'], 'student')) },
+  {
+    kind: 'STAFF_ABSENCES',
+    duties: items.flatMap((item) =>
+      entriesOf(item['teacherExceptions'])
+        .filter((entry) => entry['participates'] === false)
+        .map((entry) => (entry['duty'] as { id?: unknown } | undefined)?.id)
+        .filter(isText),
+    ),
+  },
+]);
+
+/** The reads by resource, for the läslogg's spec. */
+export const V2_READS = {
+  persons: PERSONS_READ,
+  groups: GROUPS_READ,
+  duties: DUTIES_READ,
+  activities: ACTIVITIES_READ,
+  calendarEvents: EVENTS_READ,
+} as const;
 
 /** A lookup body may name at most this many ids in total. */
 export const LOOKUP_MAX = 1000;
@@ -205,10 +290,16 @@ export class Ss12000V2Service {
     return this.run(caller, params, async (model) => {
       const result = await fn(model);
       const items = Array.isArray(result) ? result : 'data' in result && Array.isArray(result.data) ? result.data : [result as Obj];
-      for (const [kind, emitted] of read(items)) {
-        const userIds = emitted.map((id) => model.ids.personFrom(id.toLowerCase())).filter((id): id is string => id !== null);
-        await recordRead(model.slice.tx, kind, userIds);
+      // One statement per kind: a person and a duty of one kind are one record.
+      const byKind = new Map<AccessKind, string[]>();
+      for (const seen of read(items)) {
+        const userIds = [
+          ...(seen.persons ?? []).map((id) => model.ids.personFrom(id.toLowerCase())),
+          ...(seen.duties ?? []).map((id) => model.ids.dutyFrom(id.toLowerCase())?.userId ?? null),
+        ].filter((id): id is string => id !== null);
+        byKind.set(seen.kind, [...(byKind.get(seen.kind) ?? []), ...userIds]);
       }
+      for (const [kind, userIds] of byKind) await recordRead(model.slice.tx, kind, userIds);
       return result;
     });
   }
@@ -854,7 +945,7 @@ export class Ss12000V2Service {
     const expand = expands(query.params);
     this.activityExpandScopes(caller, expand);
     const key = sortkey<Obj>(query.params, { ModifiedDesc: byModified, DisplayNameAsc: byName });
-    return this.run(caller, query.params, async (model) => {
+    return this.runRead(caller, query.params, ACTIVITIES_READ, async (model) => {
       const filter = await this.activityFilter(model, query.params);
       const items = (await this.activityObjects(model, expand)).filter(filter).map((entry) => entry.item);
       return page(items, key, query, this.token(caller, operation, query));
@@ -867,7 +958,7 @@ export class Ss12000V2Service {
     const params = parseItemQuery('GET /activities/{id}', raw);
     const expand = expands(params);
     this.activityExpandScopes(caller, expand);
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, ACTIVITIES_READ, async (model) => {
       const found = (await this.activityObjects(model, expand)).find((entry) => entry.item.id === wanted);
       if (!found) throw v2Errors.notFound();
       return found.item;
@@ -880,7 +971,7 @@ export class Ss12000V2Service {
     const expand = expands(params);
     this.activityExpandScopes(caller, expand);
     const ids = lookupIds(body, ['ids', 'teachers', 'members']);
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, ACTIVITIES_READ, async (model) => {
       const members = (ids['members'] ?? []).length > 0 ? await this.groupMembersNow(model) : new Map<string, Set<string>>();
       const memberIds = (ids['members'] ?? []).map((id) => model.ids.personFrom(id)).filter((id): id is string => id !== null);
       return (await this.activityObjects(model, expand))
