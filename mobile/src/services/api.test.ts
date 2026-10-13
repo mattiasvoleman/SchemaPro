@@ -37,7 +37,7 @@ describe('apiRequest', () => {
     await expect(apiRequest('/api/v1/push/config')).resolves.toEqual({ enabled: true });
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/api/v1/push/config', {
       method: 'GET',
-      headers: { Authorization: 'Bearer session-token' },
+      headers: { 'X-SchemaPro-Client': 'app', Authorization: 'Bearer session-token' },
     });
   });
 
@@ -46,7 +46,7 @@ describe('apiRequest', () => {
     await expect(apiRequest('/api/v1/devices/release', { method: 'POST', body: { token: 't' } })).resolves.toBeUndefined();
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       method: 'POST',
-      headers: { Authorization: 'Bearer session-token', 'Content-Type': 'application/json' },
+      headers: { 'X-SchemaPro-Client': 'app', Authorization: 'Bearer session-token', 'Content-Type': 'application/json' },
       body: '{"token":"t"}',
     });
   });
@@ -74,9 +74,21 @@ describe('apiRequest', () => {
     await expect(apiRequest('/public/v1/sign-in-methods/skola.example', { anonymous: true })).resolves.toEqual({ provider: 'azure' });
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/public/v1/sign-in-methods/skola.example', {
       method: 'GET',
-      headers: {},
+      headers: { 'X-SchemaPro-Client': 'app' },
     });
     expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it('names itself as the app on every request, signed in, public or the worker’s, so the read log says APP', async () => {
+    fetchMock.mockResolvedValue(answer(200, {}));
+    await apiRequest('/api/v1/family/children');
+    await apiRequest('/api/v1/absence-reports', { method: 'POST', body: {} });
+    await apiRequest('/public/v1/sign-in-methods/skola.example', { anonymous: true });
+    await apiRequest('/api/v1/attendance/report', { method: 'POST', body: {}, token: 'worker-token' });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init.headers['X-SchemaPro-Client']).toBe('app');
+    }
   });
 
   it('passes an abort signal through', async () => {
@@ -106,7 +118,7 @@ describe('pushLessonBatch (the offline queue’s way out)', () => {
     expect(url).toBe('https://api.example.test/api/v1/attendance/report');
     expect(init).toMatchObject({
       method: 'POST',
-      headers: { Authorization: 'Bearer worker-token', 'Content-Type': 'application/json' },
+      headers: { 'X-SchemaPro-Client': 'app', Authorization: 'Bearer worker-token', 'Content-Type': 'application/json' },
     });
     expect(JSON.parse(init.body)).toEqual({
       calendarLessonId: 'lesson-1',

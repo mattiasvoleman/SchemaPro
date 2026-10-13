@@ -105,6 +105,8 @@ export type AbsenceReportType = 'SICK' | 'APPOINTMENT' | 'OTHER';
 export interface AbsenceReportRow {
   readonly id: string;
   readonly studentId: string;
+  /** Who reported it: only the reporter may take it back (the gateway's 403 otherwise). */
+  readonly reportedById: string;
   readonly date: string;
   readonly startTime: string | null;
   readonly endTime: string | null;

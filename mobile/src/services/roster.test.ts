@@ -76,7 +76,7 @@ describe('the roster of a lesson', () => {
     expect(url).toBe(ROUTE);
     expect(init.method).toBe('GET');
     expect(init.body).toBeUndefined();
-    expect(init.headers).toEqual({ Authorization: 'Bearer jwt-teacher' });
+    expect(init.headers).toEqual({ 'X-SchemaPro-Client': 'app', Authorization: 'Bearer jwt-teacher' });
     expect(roster).toEqual(GATEWAY_ORDER);
     expect(getSupabase).not.toHaveBeenCalled();
   });
