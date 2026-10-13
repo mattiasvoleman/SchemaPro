@@ -24,12 +24,14 @@ import type { StaffingWarning } from "@/lib/types";
 /**
  * The codes the staffing policy writes; the generate pre-flight's is the
  * last. A post that changes during the year is refused per period, with the
- * period's dates (src/staffing/staffing-checks.ts).
+ * period's dates (src/staffing/staffing-checks.ts), or, to a reader who may
+ * not see how it changes, with the verdict alone (..._HIDDEN).
  */
 export const STAFFING_CODES = [
   "STAFF_TEACHER_NOT_QUALIFIED",
   "STAFF_TEACHER_OVER_TARGET",
   "STAFF_TEACHER_OVER_TARGET_IN_PERIOD",
+  "STAFF_TEACHER_OVER_TARGET_HIDDEN",
   "STAFF_UNSTAFFED_REQUIREMENTS",
 ] as const;
 

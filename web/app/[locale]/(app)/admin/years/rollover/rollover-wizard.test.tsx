@@ -64,6 +64,11 @@ vi.mock("@/i18n/navigation", () => ({
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+// The reader's profile (Roller i skolan): none read reads as a full administrator.
+const me = vi.hoisted(() => ({ adminProfile: undefined as string | undefined }));
+vi.mock("@/components/profile-context", () => ({
+  useProfile: () => ({ profile: me.adminProfile === undefined ? {} : { adminProfile: me.adminProfile }, school: null }),
+}));
 
 const HASH = "a".repeat(64);
 
@@ -197,6 +202,7 @@ const previewCalls = () =>
 describe("RolloverWizard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    me.adminProfile = undefined;
     post.mockImplementation(async (path: string, body: RolloverOptions) =>
       path.endsWith("/preview") ? previewFor(body) : { academicYear: { name: body.name }, counts: { groups: 3, requirements: 24 }, planHash: HASH },
     );
@@ -410,6 +416,20 @@ describe("RolloverWizard", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(previewCalls()).toHaveLength(before);
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("rolls a planner's year without tjänster, the switch locked with who decides them (Roller i skolan)", async () => {
+    me.adminProfile = "SCHEMALAGGARE";
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    // Never asked with them: the gateway would refuse the preview.
+    expect(previewCalls().every((call) => call.carryStaffing === false)).toBe(true);
+    await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
+    const toggle = screen.getByRole("switch", { name: /Tjänster och uppdrag följer med/ });
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByText(/skrivs av rektor eller en fullständig administratör/)).toBeInTheDocument();
   });
 
   it("carries tjänster och uppdrag by default, and previews again without them when switched off", async () => {

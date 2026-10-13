@@ -214,8 +214,14 @@ vi.mock("@/lib/staffing-history-queries", () => ({
     return { data: undefined, isLoading: false, isError: false };
   },
 }));
+const me = vi.hoisted(() => ({ adminProfile: undefined as string | undefined }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: "u-admin" }, school: { timezone: "Europe/Stockholm" } }),
+  // The page and the employment card ask who may carry or write a post
+  // (Roller i skolan): no adminProfile reads as a full administrator.
+  useProfile: () => ({
+    profile: { id: "u-admin", ...(me.adminProfile ? { adminProfile: me.adminProfile } : {}) },
+    school: { timezone: "Europe/Stockholm" },
+  }),
 }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
@@ -586,6 +592,18 @@ describe("StaffingPage", () => {
       state.employments = {};
       render(<StaffingPage />);
       expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+    });
+
+    it("offers the carry only to rektor or a full administrator: it carries tjänster (Roller i skolan)", () => {
+      state.years = [rolledYear, lastYear];
+      state.employments = { y0: [{ id: "e0", userId: "t-bo" }] };
+      me.adminProfile = "SCHEMALAGGARE";
+      try {
+        render(<StaffingPage />);
+        expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+      } finally {
+        me.adminProfile = undefined;
+      }
     });
 
     it("offers the carry to a school that keeps uppdrag but no tjänster, until this year has an uppdrag", () => {

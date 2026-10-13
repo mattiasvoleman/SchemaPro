@@ -44,6 +44,8 @@ export interface HistoryLabels {
    * never holds a note's text (migration 20261010090000), only that it moved.
    */
   noteChanged: string;
+  /** A value left out for a reader without HR-läs (Roller i skolan): "dolt". */
+  hidden: string;
 }
 
 export function formatHistoryValue(
@@ -104,6 +106,8 @@ export function historyLines(entry: HistoryEntry, labels: HistoryLabels): string
   return entry.changes.map((change: HistoryChange) => {
     if (change.field === "noteChanged") return labels.noteChanged;
     const name = labels.field(entry.entity, change.field) ?? change.field;
+    // Changed, and hidden from this reader: said as such, never as "— → —".
+    if (change.hrHidden) return `${name}: ${labels.hidden}`;
     const before = formatHistoryValue(entry.entity, change.field, change.before, labels);
     const after = formatHistoryValue(entry.entity, change.field, change.after, labels);
     if (entry.action === "CREATE") return `${name}: ${after}`;

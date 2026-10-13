@@ -173,9 +173,9 @@ export default function MyStaffingPage() {
               const start = postAtStart(row!) ?? employment;
               const changing = (row!.periods?.length ?? 0) > 0;
               const kind = tStaffing(`contract${employment.contractKind}`);
-              const percent = formatPercent(start.employmentPercent);
-              if (start.reductionPercent > 0) {
-                const reduction = formatPercent(start.reductionPercent);
+              const percent = ownPercent(start.employmentPercent);
+              if ((start.reductionPercent ?? 0) > 0) {
+                const reduction = ownPercent(start.reductionPercent);
                 return changing
                   ? t("employmentAtStartReduction", { percent, reduction, kind })
                   : tStaffing("employmentSummaryReduction", { percent, reduction, kind });
@@ -263,7 +263,7 @@ export default function MyStaffingPage() {
               ? t("lastYear", {
                   year: lastYear.yearName,
                   // Where last year's post started, should it have changed during the year.
-                  percent: formatPercent(postAtStart(lastYear.row)!.employmentPercent),
+                  percent: ownPercent(postAtStart(lastYear.row)!.employmentPercent),
                   minutes: lastYear.row.countedMinutesPerWeek,
                 })
               : t("lastYearNoPost", { year: lastYear.yearName, minutes: lastYear.row.countedMinutesPerWeek })}
@@ -369,4 +369,13 @@ export default function MyStaffingPage() {
       </SectionCard>
     </Page>
   );
+}
+
+/**
+ * A teacher's own tjänst %, which the gateway never leaves out for them
+ * (src/staffing/hr-visibility.ts hides it only from administrators); the
+ * null in the type is an administrator's reading of the same row.
+ */
+function ownPercent(value: number | null): string {
+  return value === null ? "—" : formatPercent(value);
 }

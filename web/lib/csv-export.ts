@@ -408,8 +408,9 @@ export function teachersToCsv(
   people: { id?: string; role: string; firstName: string; lastName: string; email: string }[],
   employmentOf?: (userId: string) =>
     | {
-        employmentPercent: number;
-        reductionPercent: number;
+        /** Null when hidden from this reader (Roller i skolan): the cell is left empty. */
+        employmentPercent: number | null;
+        reductionPercent: number | null;
         contractKind: TeacherContractKind;
         signature: string | null;
       }
@@ -425,8 +426,8 @@ export function teachersToCsv(
           person.firstName,
           person.lastName,
           person.email,
-          post ? String(post.employmentPercent) : "",
-          post && post.reductionPercent > 0 ? String(post.reductionPercent) : "",
+          post && post.employmentPercent !== null ? String(post.employmentPercent) : "",
+          post && (post.reductionPercent ?? 0) > 0 ? String(post.reductionPercent) : "",
           post ? CONTRACT_WORD[post.contractKind] : "",
           post?.signature ?? "",
         ];

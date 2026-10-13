@@ -84,11 +84,19 @@ const state = vi.hoisted(() => ({
   /** The guardian links' read: loading or failed, for the dialog's state ladder. */
   guardiansLoading: false,
   guardiansFailed: false,
+  /** Roller i skolan: the reader's own profile (undefined reads as full), and the school's administrators. */
+  myProfile: undefined as string | undefined,
+  administrators: new Map<string, { id: string; adminProfile: string; hrRead: boolean }>() as
+    | Map<string, { id: string; adminProfile: string; hrRead: boolean }>
+    | undefined,
+  administratorsFailed: false,
+  roleChanges: [] as unknown[],
 }));
 
-const { saveEmployment, createPerson, unlinkGuardian, inviteOne } = vi.hoisted(() => ({
+const { saveEmployment, createPerson, updatePerson, unlinkGuardian, inviteOne } = vi.hoisted(() => ({
   saveEmployment: vi.fn(),
   createPerson: vi.fn(),
+  updatePerson: vi.fn(),
   unlinkGuardian: vi.fn(),
   inviteOne: vi.fn(),
 }));
@@ -126,9 +134,18 @@ vi.mock("@/lib/queries", () => ({
   }),
   useCrudMutations: () => ({
     create: { mutateAsync: createPerson, isPending: false },
-    update: { mutateAsync: vi.fn(), isPending: false },
+    update: { mutateAsync: updatePerson, isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
+}));
+
+vi.mock("@/lib/admin-role-queries", () => ({
+  useAdministrators: () => ({ data: state.administrators, isError: state.administratorsFailed }),
+  useRoleChanges: () => ({ data: state.roleChanges, isLoading: false, isError: false }),
+}));
+
+vi.mock("@/components/profile-context", () => ({
+  useProfile: () => ({ profile: state.myProfile === undefined ? {} : { adminProfile: state.myProfile }, school: null }),
 }));
 
 // The staffing hooks come from their own module, so the page's own chunk
@@ -201,6 +218,11 @@ describe("People page", () => {
     state.studentGuardians = [];
     state.guardiansLoading = false;
     state.guardiansFailed = false;
+    state.myProfile = undefined;
+    state.administrators = new Map();
+    state.administratorsFailed = false;
+    state.roleChanges = [];
+    updatePerson.mockResolvedValue(undefined);
     saveEmployment.mockResolvedValue(undefined);
     unlinkGuardian.mockResolvedValue(undefined);
     createPerson.mockResolvedValue({ id: "t-new" });
@@ -762,6 +784,125 @@ describe("People page", () => {
         signature: "NYL",
         note: null,
       });
+    });
+  });
+
+  describe("roles and profiles (Roller i skolan)", () => {
+    it("shows a decider the administrator's profile and HR-läs, and sends them only when the chooser changed them", async () => {
+      state.administrators = new Map([["a-1", { id: "a-1", adminProfile: "SCHEMALAGGARE", hrRead: true }]]);
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(editButton("Rita Nilsson"));
+      // The chooser is its own chunk, fetched when the person is an administrator.
+      expect(await screen.findByRole("combobox", { name: /profileLabel/ })).toHaveTextContent("profile.SCHEMALAGGARE");
+      expect(screen.getByRole("switch", { name: "hrReadLabel" })).toBeChecked();
+      // A name change leaves the profile as it is stored.
+      await user.click(screen.getByRole("button", { name: "save" }));
+      const unchanged = updatePerson.mock.calls[0]![0] as Record<string, unknown>;
+      expect(unchanged).toMatchObject({ id: "a-1", role: "SCHOOL_ADMIN" });
+      expect(unchanged).not.toHaveProperty("adminProfile");
+      expect(unchanged).not.toHaveProperty("hrRead");
+
+      await user.click(editButton("Rita Nilsson"));
+      await user.click(await screen.findByRole("switch", { name: "hrReadLabel" }));
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(updatePerson).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "a-1", adminProfile: "SCHEMALAGGARE", hrRead: false }),
+      );
+    });
+
+    it("locks the chooser while the profiles are read, and says when they could not be: a save then leaves them", async () => {
+      state.administrators = undefined;
+      const user = userEvent.setup();
+      const { unmount } = render(<PeoplePage />);
+      await user.click(editButton("Rita Nilsson"));
+      const chooser = await screen.findByRole("combobox", { name: /profileLabel/ });
+      expect(chooser).toBeDisabled();
+      expect(screen.getByText("profileLoading")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "save" }));
+      const sent = updatePerson.mock.calls[0]![0] as Record<string, unknown>;
+      expect(sent).not.toHaveProperty("adminProfile");
+      expect(sent).not.toHaveProperty("hrRead");
+      unmount();
+
+      state.administratorsFailed = true;
+      render(<PeoplePage />);
+      // Said above the table, with the register's other reads.
+      expect(screen.getByText("detailsFailed")).toBeInTheDocument();
+      await user.click(editButton("Rita Nilsson"));
+      expect(await screen.findByText("profileUnreadable")).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: /profileLabel/ })).toBeDisabled();
+    });
+
+    it("offers the planner the staff's arbetstid and planering's imports, and not the register's buttons", async () => {
+      state.myProfile = "SCHEMALAGGARE";
+      render(<PeoplePage />);
+      expect(screen.queryByRole("button", { name: "addPerson" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "editNamed(Karin Ek)" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "deleteNamed(Karin Ek)" })).toBeNull();
+      expect(screen.getByRole("button", { name: "editFor(Karin Ek)" })).toBeInTheDocument();
+    });
+
+    it("leaves planering's buttons out for the expedition", async () => {
+      state.myProfile = "EXPEDITION";
+      render(<PeoplePage />);
+      expect(screen.getByRole("button", { name: "addPerson" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "editFor(Karin Ek)" })).toBeNull();
+    });
+
+    it("shows the expedition a teacher's behörigheter and uppdrag to read, and planering's profiles their buttons", async () => {
+      state.qualifications = [
+        {
+          id: "q-1", userId: "t-1", subjectId: "s-1", minGradeLevel: 7, maxGradeLevel: 9,
+          kind: "LEGITIMATION", validFrom: null, validTo: null, note: null,
+        },
+      ];
+      const user = userEvent.setup();
+      for (const [profile, writes] of [["EXPEDITION", false], ["SCHEMALAGGARE", true]] as const) {
+        state.myProfile = profile;
+        const { unmount } = render(<PeoplePage />);
+        await user.click(screen.getByRole("button", { name: /Karin Ek/, expanded: false }));
+        expect(await screen.findByText("qualificationsTitle")).toBeInTheDocument();
+        expect(await screen.findByText("dutiesTitle")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "editQualifications" }) !== null).toBe(writes);
+        expect(screen.queryByRole("button", { name: "addDuty" }) !== null).toBe(writes);
+        unmount();
+      }
+    });
+
+    it("leaves the expedition the roster: no administrator's row, no role change, no post", async () => {
+      state.myProfile = "EXPEDITION";
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      // Rita is an administrator: hers to look at, not to edit, invite or remove.
+      expect(editButton("Rita Nilsson")).toBeDisabled();
+      expect(screen.getByRole("button", { name: "deleteNamed(Rita Nilsson)" })).toBeDisabled();
+
+      await user.click(editButton("Karin Ek"));
+      expect(screen.getByRole("combobox", { name: /^role/ })).toBeDisabled();
+      expect(screen.queryByLabelText(/^employmentPercent/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "save" }));
+      const sent = updatePerson.mock.calls[0]![0] as Record<string, unknown>;
+      expect(sent).not.toHaveProperty("adminProfile");
+      expect(sent).not.toHaveProperty("hrRead");
+    });
+
+    it("lists a person's role history in their open row, naming who changed it", async () => {
+      state.roleChanges = [
+        {
+          id: "c1", fromRole: "TEACHER", toRole: "SCHOOL_ADMIN", fromProfile: null, toProfile: "EXPEDITION",
+          fromHrRead: false, toHrRead: false, actorName: "Rita Nilsson", createdAt: "2026-10-25T08:00:00.000Z",
+        },
+      ];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getByRole("button", { name: /Karin Ek/, expanded: false }));
+      const history = await screen.findByRole("region", { name: "historyTitle" });
+      expect(history).toHaveTextContent("historyChanged(TEACHER|profile.EXPEDITION)");
+      expect(history).toHaveTextContent("historyBy(Rita Nilsson)");
     });
   });
 });

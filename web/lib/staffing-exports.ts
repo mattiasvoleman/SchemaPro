@@ -30,6 +30,7 @@ import { isJudged } from "@/lib/period-view";
 import { compareUnits, gradeOutsideUnits, unitForGrade, type SchoolUnit } from "@/lib/school-units";
 import { compareSwedish } from "@/lib/sorting";
 import {
+  activePercentOf,
   qualificationValidInYear,
   type GradeSpan,
   type LoadModel,
@@ -688,7 +689,8 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
     if ((row.employment?.periods ?? []).length > 0) {
       notice({ code: "POST_CHANGES", params: { name, date: matdatum } });
     }
-    const omf = employment ? employment.employmentPercent - employment.reductionPercent : null;
+    // The SCB underlag needs tjänst %; the report offers it only to a reader who has it (hrHidden).
+    const omf = activePercentOf(employment);
 
     // Teaching per stage, in UNWEIGHTED undervisningstid (C11): SCB's
     // ämnesomfattning is how the teacher's teaching TIME is divided, so a
@@ -736,7 +738,7 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
       }
     }
 
-    if (employment && employment.reductionPercent > 0 && omf !== null && omf > 0) {
+    if (employment && (employment.reductionPercent ?? 0) > 0 && omf !== null && omf > 0) {
       notice({ code: "REDUCTION", params: { name } });
     }
     if (input.duties.some((duty) => duty.userId === row.userId && duty.kind === "FORSTELARARE")) {
@@ -770,7 +772,7 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
       notice({ code: "FULL_LEAVE", params: { name } });
       const largest = [...stages].sort((a, b) => b.minutes - a.minutes)[0];
       const record = base(largest?.unit ?? unitOf(null), largest?.type ?? "");
-      record.OmfLarare = String(Math.round(employment!.employmentPercent));
+      record.OmfLarare = String(Math.round(employment!.employmentPercent ?? 0));
       out.push(columns.map((column) => record[column] ?? ""));
       continue;
     }

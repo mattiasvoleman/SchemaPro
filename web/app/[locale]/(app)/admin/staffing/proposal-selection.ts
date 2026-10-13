@@ -19,6 +19,12 @@ import type { ProposalAssignment, ProposalTeacher, StaffingChange, StaffingPropo
  * keeping a dated one it gains can take a stretch other than the planned one
  * over its limit; overLimit says so.
  *
+ * Except for a reader without HR-läs (the proposal's hrHidden): every teacher
+ * is then stated over the year, and the apply judges a post that changes
+ * during the year per stretch. A selection can then be refused or warned
+ * about where the year shows room; the dialog says so, and no teacher is
+ * marked, since a mark would say whose post changes.
+ *
  * The status is then judged with loadStatus, and only a teacher whose minutes
  * GROW is flagged — enforcement's question (overTargetFinding returns nothing
  * for a load that does not grow), so the dialog never warns about a teacher

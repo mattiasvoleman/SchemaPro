@@ -1,4 +1,5 @@
 // Domain types mirrored from the Prisma schema (subset used by the web UI).
+import type { AdminProfile } from "@/lib/admin-areas";
 
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
@@ -51,6 +52,14 @@ export interface Profile {
   lastName: string;
   email: string;
   studentGroupId: string | null;
+  /**
+   * An administrator's profile (Roller i skolan), null for everybody else.
+   * Optional so a profile built without it (a test's fixture) reads as a
+   * profile always did; an administrator without one is shown no area.
+   */
+  adminProfile?: AdminProfile | null;
+  /** HR-läs: a schemaläggare or expedition who reads tjänst % and nedsättning. */
+  hrRead?: boolean;
 }
 
 export interface School {
@@ -635,17 +644,26 @@ export interface TeacherEmployment {
   id: string;
   userId: string;
   academicYearId: string;
-  employmentPercent: number;
-  reductionPercent: number;
+  /**
+   * Tjänstgöringsgrad and nedsättning: null, with hrHidden, for an
+   * administrator who neither decides nor has HR-läs (Roller i skolan). The
+   * note goes with them.
+   */
+  employmentPercent: number | null;
+  reductionPercent: number | null;
   contractKind: TeacherContractKind;
   /** The teacher's own riktmärke, overriding the policy's derivation. Null: derive. */
   teachingTargetMinutesPerWeek: number | null;
   /** Lärarsignatur, 1..8 characters, unique per school and year where set. */
   signature: string | null;
   note: string | null;
+  /** True when the gateway left tjänst % and nedsättning out for this reader. */
+  hrHidden?: true;
   /**
    * The post from a date (migration 20261022120000), by Från. Absent from a
-   * gateway before it; empty for a post that is the same all year.
+   * gateway before it; empty for a post that is the same all year, and for a
+   * reader the percentages are hidden from (hrHidden): when and how a post
+   * changes is HR data like the percentages.
    */
   periods?: TeacherEmploymentPeriod[];
 }

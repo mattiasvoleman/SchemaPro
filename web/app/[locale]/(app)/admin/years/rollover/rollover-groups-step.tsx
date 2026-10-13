@@ -61,6 +61,7 @@ export function RolloverGroupsStep({
   defaults,
   collisions,
   plan,
+  decides,
 }: {
   form: RolloverFormState;
   update: (patch: Partial<RolloverFormState>) => void;
@@ -71,8 +72,11 @@ export function RolloverGroupsStep({
   defaults: ResolvedGroup[];
   collisions: NameCollision[];
   plan: RolloverPreview | undefined;
+  /** Whether the reader carries tjänster: rektor or a full administrator (Roller i skolan). */
+  decides: boolean;
 }) {
   const t = useTranslations("years");
+  const tAreas = useTranslations("adminAreas");
   const lowest = lowestClassGrade(sourceGroups);
   const resolvedOf = new Map(resolved.map((row) => [row.sourceGroupId, row]));
   const defaultOf = new Map(defaults.map((row) => [row.sourceGroupId, row]));
@@ -94,12 +98,14 @@ export function RolloverGroupsStep({
             <Switch
               checked={form[key]}
               onCheckedChange={(checked) => update({ [key]: checked })}
+              disabled={key === "carryStaffing" && !decides}
               aria-describedby={`rollover-${key}-hint`}
             />
             <span>
               <span className="font-medium">{t(`option.${key}`)}</span>
               <span id={`rollover-${key}-hint`} className="block text-xs text-muted-foreground">
                 {t(`optionHint.${key}`)}
+                {key === "carryStaffing" && !decides ? ` ${tAreas("postIsDecision")}` : null}
               </span>
             </span>
           </label>

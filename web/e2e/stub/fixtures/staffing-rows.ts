@@ -283,7 +283,7 @@ export function historyOf(userId: string): HistoryEntry[] {
       );
     }
   });
-  if (post && post.reductionPercent > 0) {
+  if (post && (post.reductionPercent ?? 0) > 0) {
     add(
       {
         entity: "EMPLOYMENT",

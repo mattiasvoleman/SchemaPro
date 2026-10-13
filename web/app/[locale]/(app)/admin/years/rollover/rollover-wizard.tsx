@@ -33,6 +33,8 @@ import { ArrowLeft, ArrowRight, CalendarRange } from "lucide-react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
 import { useAcademicYears, useGroups } from "@/lib/queries";
+import { profileDecides } from "@/lib/admin-areas";
+import { useProfile } from "@/components/profile-context";
 import type { MessageLookup } from "@/lib/engine-message";
 import { groupsOfYear } from "@/lib/year-scope";
 import {
@@ -79,7 +81,12 @@ const REVIEW_ARMING_MS = 600;
  */
 const STEP_CARD_ID = "rollover-step";
 
-function initialForm(source: { name: string; startDate: string; endDate: string }): RolloverFormState {
+/**
+ * `decides`: whether the reader may carry tjänster (Roller i skolan: rektor or
+ * a full administrator). Anybody else rolls the year without them, which the
+ * gateway would otherwise refuse at the first preview.
+ */
+function initialForm(source: { name: string; startDate: string; endDate: string }, decides: boolean): RolloverFormState {
   return {
     ...defaultTarget(source),
     graduatingGradeLevel: null,
@@ -88,7 +95,7 @@ function initialForm(source: { name: string; startDate: string; endDate: string 
     carryTeachingGroupMembers: true,
     keepTeachers: true,
     carryClassRules: true,
-    carryStaffing: true,
+    carryStaffing: decides,
     breaks: {},
   };
 }
@@ -126,7 +133,9 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
     const timer = setTimeout(() => setReviewArmed(true), REVIEW_ARMING_MS);
     return () => clearTimeout(timer);
   }, [step]);
-  const form = edited ?? (source ? initialForm(source) : null);
+  const me = useProfile().profile;
+  const decides = profileDecides(me?.adminProfile === undefined ? "FULL" : me.adminProfile);
+  const form = edited ?? (source ? initialForm(source, decides) : null);
   const update = (patch: Partial<RolloverFormState>) => {
     if (form) setEdited({ ...form, ...patch });
   };
@@ -332,6 +341,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
                 defaults={defaults}
                 collisions={collisions}
                 plan={plan}
+                decides={decides}
               />
             ) : step === "breaks" ? (
               <RolloverBreaksStep form={form} update={update} plan={plan} />

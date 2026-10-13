@@ -225,7 +225,15 @@
     "actionTimplan": "Lägg upp timplanen",
     "actionTimplanHint": "Minuter per vecka i varje ämne och årskurs, mot de nationella timmarna",
     "loadFailed": "Några siffror kunde inte hämtas",
-    "loadFailedHint": "De visas som —, inte som noll. Inget har ändrats; ladda om sidan för att försöka igen."
+    "loadFailedHint": "De visas som —, inte som noll. Inget har ändrats; ladda om sidan för att försöka igen.",
+    "actionAbsence": "Frånvaro",
+    "actionAbsenceHint": "Registrera personalens frånvaro och se vilka lektioner den berör.",
+    "actionCover": "Vikarier",
+    "actionCoverHint": "Tillsätt vikarier för dagens och veckans lektioner.",
+    "actionLeave": "Ledighet",
+    "actionLeaveHint": "Besluta om elevernas ledighetsansökningar.",
+    "actionPeople": "Personer",
+    "actionPeopleHint": "Lägg till och ändra elever, personal och vårdnadshavare."
   },
   "setup": {
     "title": "Kom igång",
@@ -3063,6 +3071,7 @@
       "tooMany": "Förslaget skulle väga {teachers} lärare och {rows} timplansposter, men motorn tar högst {limitTeachers} lärare och {limitRows} poster åt gången. Behåll de poster som är klara som de är och försök igen.",
       "tooManyRequests": "Du har beräknat många förslag på kort tid. Vänta en minut och försök igen.",
       "overLimitSelection": "Urvalet lägger läraren över gränsen; tillämpningen prövas mot skolans inställning.",
+      "hrHiddenSelection": "Tjänstgöringsgraden är dold för dig, så här räknas varje lärare över hela läsåret. Ett urval av förslaget prövas när du sparar mot tjänsten som den gäller under varje del av läsåret, och kan då vägras eller ge en varning där tabellen visar utrymme.",
       "unstaffedTitle": "Blir kvar obemannade ({count})",
       "reason_NO_QUALIFIED_TEACHER": "ingen aktiv lärare är behörig",
       "reasonOnlyCoTeacher": "bara postens medlärare är behörig",
@@ -5079,5 +5088,50 @@
   "printWeek": {
     "print": "Skriv ut veckan",
     "preparing": "Förbereder utskriften …"
+  },
+  "adminAreas": {
+    "area": {
+      "PLANERING": "Planering",
+      "SCHEMALAGGNING": "Schemaläggning",
+      "PUBLICERING": "Publicering",
+      "DRIFT": "Drift",
+      "PERSONAL": "Personal",
+      "INTEGRATIONER": "Integrationer"
+    },
+    "profile": {
+      "FULL": "Fullständig administratör",
+      "REKTOR": "Rektor",
+      "SCHEMALAGGARE": "Schemaläggare",
+      "EXPEDITION": "Expedition"
+    },
+    "profileHint": {
+      "FULL": "Ändrar allt och fattar besluten, som en administratör alltid har gjort.",
+      "REKTOR": "Ändrar allt och fattar besluten: roller, HR-läs, tjänst % och dataskydd.",
+      "SCHEMALAGGARE": "Ändrar planering, schemaläggning, publicering och drift.",
+      "EXPEDITION": "Ändrar drift och personregistret."
+    },
+    "gateTitle": "Sidan hör till ett annat område",
+    "gateArea": "Sidan ändrar {area}. Som {profile} ändrar du inte det området. Be rektor eller en administratör som har det om något här behöver ändras.",
+    "gateDecides": "Sidan gäller rektors beslut. Som {profile} fattar du inte dem. Be rektor eller en fullständig administratör om något här behöver ändras.",
+    "decisions": "Rektors beslut",
+    "gateBack": "Till översikten",
+    "profileLabel": "Administratörsprofil",
+    "hrReadLabel": "HR-läs",
+    "hrReadHint": "Får läsa tjänst % och nedsättning. Rektor och en fullständig administratör läser dem ändå.",
+    "roleIsDecision": "Bara rektor eller en fullständig administratör ändrar roller, profiler och HR-läs.",
+    "postIsDecision": "Tjänst % och nedsättning skrivs av rektor eller en fullständig administratör.",
+    "historyTitle": "Rollhistorik",
+    "historyEmpty": "Inga rolländringar sparade.",
+    "historyLoadFailed": "Rollhistoriken kunde inte läsas.",
+    "historyCreated": "Blev {to}",
+    "historyChanged": "{from} → {to}",
+    "historyBy": "av {name}",
+    "historyByNobody": "utan inloggad person (import eller uppgradering)",
+    "withHr": "{profile} med HR-läs",
+    "hrHidden": "dolt",
+    "hrHiddenNotice": "Tjänst % och nedsättning visas för rektor, en fullständig administratör och den som har HR-läs. Målet i minuter visas för alla.",
+    "hrHiddenExport": "Exporter som bygger på tjänst % får tomma kolumner där.",
+    "profileLoading": "Profilen läses in. Den kan ändras när den har lästs.",
+    "profileUnreadable": "Profilen kunde inte läsas. Den ändras inte när du sparar; ladda om sidan för att ändra den."
   }
 }

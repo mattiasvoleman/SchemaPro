@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StaffingPolicy, TeacherEmployment } from "@/lib/types";
 import { EmploymentCard } from "./employment-card";
 
@@ -21,6 +21,11 @@ vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: [{ id: "y1", startDate: "2026-08-17", endDate: "2027-06-11" }] }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The reader's own profile (Roller i skolan): undefined renders as a full administrator.
+const me = vi.hoisted(() => ({ adminProfile: undefined as string | undefined }));
+vi.mock("@/components/profile-context", () => ({
+  useProfile: () => ({ profile: me.adminProfile === undefined ? {} : { adminProfile: me.adminProfile }, school: null }),
+}));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>
@@ -183,5 +188,37 @@ describe("EmploymentCard", () => {
       }),
     );
     expect(remove).toHaveBeenCalledWith({ userId: "t-anna", academicYearId: "y1" });
+  });
+});
+
+describe("EmploymentCard, Roller i skolan", () => {
+  afterEach(() => {
+    me.adminProfile = undefined;
+  });
+
+  it("shows a planner without HR-läs the signature and the avtal, not the percentages, and no edit", () => {
+    me.adminProfile = "SCHEMALAGGARE";
+    renderCard({
+      employment: { ...employment, employmentPercent: null, reductionPercent: null, note: null, hrHidden: true },
+    });
+    expect(screen.getByText("contractFERIE")).toBeInTheDocument();
+    expect(screen.getByText("employmentSummarySignature(ANN)")).toBeInTheDocument();
+    expect(screen.getByText("hrHiddenNotice")).toBeInTheDocument();
+    expect(screen.queryByText(/employmentSummary\(/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/derivedTarget/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "editEmployment" })).not.toBeInTheDocument();
+  });
+
+  it("offers no post to add to somebody who does not decide, and says who does", () => {
+    me.adminProfile = "EXPEDITION";
+    renderCard();
+    expect(screen.queryByRole("button", { name: "add" })).not.toBeInTheDocument();
+    expect(screen.getByText(/postIsDecision/)).toBeInTheDocument();
+  });
+
+  it("lets rektor edit the post", () => {
+    me.adminProfile = "REKTOR";
+    renderCard({ employment });
+    expect(screen.getByRole("button", { name: "editEmployment" })).toBeInTheDocument();
   });
 });

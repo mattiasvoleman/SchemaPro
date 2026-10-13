@@ -1,8 +1,19 @@
 import { cookies } from "next/headers";
 import { getLocale, getTranslations } from "next-intl/server";
-import { ArrowRight, CalendarDays, GraduationCap, Sparkles, Target } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarClock,
+  CalendarDays,
+  ClipboardCheck,
+  GraduationCap,
+  Sparkles,
+  Target,
+  UserCheck,
+  UserX,
+} from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { getSession } from "@/lib/auth";
+import { gateOfPath, profileOpens } from "@/lib/admin-areas";
 import { toDateString } from "@/lib/utils";
 import { Link } from "@/i18n/navigation";
 import { Page } from "@/components/layout/page";
@@ -51,7 +62,7 @@ export default async function AdminDashboardPage() {
 
   // The manual's chain in the nav's order: Kom igång, the timplan, the
   // generator, and the review that publishes.
-  const actions = [
+  const chain = [
     {
       title: t("actionSetup"),
       hint: t("actionSetupHint"),
@@ -77,6 +88,21 @@ export default async function AdminDashboardPage() {
       icon: CalendarDays,
     },
   ];
+  // The school day's, for a profile none of the chain is open to (Roller i
+  // skolan: the expedition): absence, cover, leave and the register.
+  const day = [
+    { title: t("actionAbsence"), hint: t("actionAbsenceHint"), href: "/admin/teacher-absence", icon: UserX },
+    { title: t("actionCover"), hint: t("actionCoverHint"), href: "/admin/cover", icon: CalendarClock },
+    { title: t("actionLeave"), hint: t("actionLeaveHint"), href: "/admin/leave", icon: ClipboardCheck },
+    { title: t("actionPeople"), hint: t("actionPeopleHint"), href: "/admin/people", icon: UserCheck },
+  ];
+  // Only the pages this profile uses: a tile to a closed page would lead to
+  // the page that says so, whose way out is this overview.
+  const profile = session?.profile?.adminProfile === undefined ? "FULL" : session.profile.adminProfile;
+  const opens = (action: { href: string }) => profileOpens(profile, gateOfPath(action.href));
+  const inChain = chain.some(opens);
+  const actions = inChain ? chain.filter(opens) : day.filter(opens);
+  const Tiles = inChain ? "ol" : "ul";
 
   return (
     <Page>
@@ -91,9 +117,10 @@ export default async function AdminDashboardPage() {
         <h2 id="dashboard-quick-actions" className="text-base font-semibold">
           {t("quickActions")}
         </h2>
-        {/* An ordered list: the four are the steps of one chain, and a screen
-            reader hears the position the tile's number draws. */}
-        <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* The chain's tiles are an ordered list: they are the steps of one
+            chain, and a screen reader hears the position the tile's number
+            draws. The school day's are not steps, and are not numbered. */}
+        <Tiles className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {actions.map((action, index) => (
             <li key={action.href}>
               <Link
@@ -108,12 +135,14 @@ export default async function AdminDashboardPage() {
                       <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10">
                         <action.icon className="size-5 text-primary" aria-hidden="true" />
                       </div>
-                      <span
-                        className="text-xs font-semibold tabular-nums text-muted-foreground"
-                        aria-hidden="true"
-                      >
-                        {index + 1}
-                      </span>
+                      {inChain && (
+                        <span
+                          className="text-xs font-semibold tabular-nums text-muted-foreground"
+                          aria-hidden="true"
+                        >
+                          {index + 1}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-3 flex items-center gap-1.5 font-medium">
                       {action.title}
@@ -128,7 +157,7 @@ export default async function AdminDashboardPage() {
               </Link>
             </li>
           ))}
-        </ol>
+        </Tiles>
       </section>
     </Page>
   );

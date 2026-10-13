@@ -704,6 +704,11 @@ function ProposalResult({
               </Button>
             ) : null}
           </div>
+          {proposal.hrHidden && selected.size > 0 && !allSelected ? (
+            // Without HR-läs the figures are the year's, and a part of the
+            // proposal is judged per stretch on save (proposal-selection.ts).
+            <p className="text-xs text-muted-foreground">{t("hrHiddenSelection")}</p>
+          ) : null}
           {shown.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("teachersNoneChanged")}</p>
           ) : (

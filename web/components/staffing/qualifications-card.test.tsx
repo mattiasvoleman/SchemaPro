@@ -78,6 +78,12 @@ describe("QualificationsCard", () => {
     expect(screen.getByText("expired(2026-06-30)")).toBeInTheDocument();
   });
 
+  it("is shown without its edit button to a reader who does not write planering (Roller i skolan)", () => {
+    render(<QualificationsCard teacher={teacher} qualifications={stored} subjects={subjects} today="2026-10-06" readOnly />);
+    expect(screen.queryByRole("button", { name: "editQualifications" })).toBeNull();
+    expect(screen.getAllByText("Matematik").length).toBeGreaterThan(0);
+  });
+
   it("says the fallback out loud when nothing is recorded", () => {
     renderCard([]);
     expect(screen.getByText("noQualifications")).toBeInTheDocument();

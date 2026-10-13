@@ -7,10 +7,12 @@ import type {
   TeacherReconciliation,
 } from "../../../lib/staffing-reconciliation";
 import { changesDuringYear, postStretches } from "../../../lib/employment-periods";
+import { shownEmployment } from "../../../lib/teacher-load";
 import type {
   GradeSpan,
   LoadStatus,
   PeriodLoad,
+  ShownEmployment,
   SubjectBottleneck,
   SubjectLoad,
   TeacherAssignment,
@@ -100,7 +102,7 @@ const weeklyMinutesOf = (row: TeachingRequirement) =>
     : row.lessonsPerWeek * row.minutesPerLesson;
 
 function targetOf(
-  employment: Pick<TeacherEmployment, "employmentPercent" | "reductionPercent" | "teachingTargetMinutesPerWeek"> | null,
+  employment: Pick<ShownEmployment, "employmentPercent" | "reductionPercent" | "teachingTargetMinutesPerWeek"> | null,
 ): number | null {
   if (!employment) return null;
   if (employment.teachingTargetMinutesPerWeek !== null) return employment.teachingTargetMinutesPerWeek;
@@ -127,8 +129,10 @@ function statusOf(counted: number, target: number | null): LoadStatus {
  * year's minutes. Empty for a post the same all year.
  */
 function periodsOf(year: AcademicYear, employment: TeacherEmployment | null, counted: number): PeriodLoad[] {
-  if (!employment || !changesDuringYear(employment, year)) return [];
-  return postStretches(employment, year).map((stretch): PeriodLoad => {
+  // The stub's posts all carry their percentages, as a full administrator reads them.
+  const shown = shownEmployment(employment);
+  if (!shown || !changesDuringYear(shown, year)) return [];
+  return postStretches(shown, year).map((stretch): PeriodLoad => {
     const target = targetOf(stretch.figures);
     const weeks = stretch.window ? teachingWeeks(year, stretch.window.startDate, stretch.window.endDate) : 0;
     return {
@@ -301,7 +305,7 @@ export function loadReport(
   }
 
   const teachers: TeacherLoad[] = [...tallies].map(([userId, tally]) => {
-    const employment = employments.find((row) => row.userId === userId) ?? null;
+    const employment = shownEmployment(employments.find((row) => row.userId === userId));
     const target = targetOf(employment);
     const counted = tally.assigned + tally.countedDutyMinutes;
     const periods = periodsOf(year, employment, counted);
@@ -401,7 +405,7 @@ export function loadReport(
       let noTarget = 0;
       for (const userId of holders) {
         const row = teachers.find((teacher) => teacher.userId === userId);
-        const target = targetOf(employments.find((employment) => employment.userId === userId) ?? null);
+        const target = targetOf(shownEmployment(employments.find((employment) => employment.userId === userId)));
         if (target === null) {
           noTarget += 1;
           continue;
@@ -477,7 +481,7 @@ export function suggestTeachers(requirementId: string, year: AcademicYear): Teac
     .filter((person) => person.id !== requirement.coTeacherId)
     .map((person) => {
       const post = EMPLOYMENTS.find((row) => row.userId === person.id && row.academicYearId === year.id) ?? null;
-      const target = targetOf(post);
+      const target = targetOf(shownEmployment(post));
       const after = (base.teachers.find((row) => row.userId === person.id)?.countedMinutesPerWeek ?? 0) + charge;
       const status = statusOf(after, target);
       return {

@@ -29,8 +29,14 @@ export interface EmploymentPeriodsProps {
   academicYearId: string;
   /** The läsår's bounds; null while they load — the list then shows the periods alone. */
   year: { startDate: string; endDate: string } | null;
-  employment: TeacherEmployment;
+  /** Shown only with its percentages: a reader without HR-läs gets no periods (Roller i skolan). */
+  employment: TeacherEmployment & { employmentPercent: number; reductionPercent: number };
   policy: LoadPolicy;
+  /**
+   * Whether the reader writes posts: rektor or a full administrator (Roller i
+   * skolan). An HR-läs reader sees the periods without add, edit or remove.
+   */
+  decides: boolean;
 }
 
 const later = (a: string, b: string): string => (a > b ? a : b);
@@ -53,7 +59,7 @@ const later = (a: string, b: string): string => (a > b ? a : b);
  * a whole week, no overlap — are said beside the fields before Spara
  * (validatePeriodDraft), and the gateway holds them.
  */
-export function EmploymentPeriods({ teacher, academicYearId, year, employment, policy }: EmploymentPeriodsProps) {
+export function EmploymentPeriods({ teacher, academicYearId, year, employment, policy, decides }: EmploymentPeriodsProps) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const actions = useTeacherEmploymentActions();
@@ -169,7 +175,7 @@ export function EmploymentPeriods({ teacher, academicYearId, year, employment, p
           <CalendarRange className="size-4 text-muted-foreground" aria-hidden="true" />
           {t("periodsTitle")}
         </h4>
-        {editing === null ? (
+        {editing === null && decides ? (
           <Button variant="outline" size="sm" onClick={openNew}>
             <Plus />
             {t("addPeriod")}
@@ -199,7 +205,7 @@ export function EmploymentPeriods({ teacher, academicYearId, year, employment, p
                   </p>
                   {stretch.window === null ? <p className="text-muted-foreground">{t("periodNoWeek")}</p> : null}
                 </div>
-                {period ? (
+                {period && decides ? (
                   <span className="flex shrink-0 gap-1">
                     <Button
                       variant="ghost"

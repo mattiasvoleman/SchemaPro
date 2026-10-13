@@ -79,6 +79,7 @@ const FIELD_TAG = /^[A-Za-z]+(?:\/[A-Za-z]+)*:\s+/;
 
 export function StaffingReport() {
   const t = useTranslations("reports.staffing");
+  const tAreas = useTranslations("adminAreas");
   const tYearErrors = useTranslations("years.errors");
   const locale = useLocale();
   const tCause = useTranslations("timplanCoverage.delivered.cause");
@@ -126,6 +127,8 @@ export function StaffingReport() {
   // shows the steps of the stretches the range touches, "100 → 50 %".
   const percentText = (userId: string) => {
     const row = loadOf.get(userId);
+    // Tjänst % left out for a reader without HR-läs (Roller i skolan).
+    if (row?.employment && row.employment.employmentPercent === null) return tAreas("hrHidden");
     const steps = row && data ? percentStepsIn(row, data.from, data.to) : [];
     return steps.length > 0 ? `${steps.map(formatPercent).join(" → ")} %` : "—";
   };
@@ -333,6 +336,11 @@ export function StaffingReport() {
           className={cn("space-y-4 transition-opacity", rec.isPlaceholderData && "opacity-60")}
           aria-busy={rec.isPlaceholderData || undefined}
         >
+          {load.data?.hrHidden ? (
+            <Notice>
+              {tAreas("hrHiddenNotice")} {tAreas("hrHiddenExport")}
+            </Notice>
+          ) : null}
           {data.notices.length > 0 ? (
             <Notice>
               <ul className="space-y-1">
@@ -544,7 +552,12 @@ export function StaffingReport() {
             <p className="text-xs text-muted-foreground">{t("exportSamverkanHint")}</p>
           </div>
           <div className="space-y-2">
-            <Button variant="outline" onClick={() => void exportScb()} disabled={!load.data || exporting !== null}>
+            <Button
+              variant="outline"
+              onClick={() => void exportScb()}
+              // The underlag is built on tjänst %, which this reader is not shown.
+              disabled={!load.data || load.data.hrHidden === true || exporting !== null}
+            >
               <Download />
               {t("exportScb")}
             </Button>

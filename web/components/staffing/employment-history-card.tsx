@@ -57,6 +57,7 @@ export function EmploymentHistoryCard({
   const t = useTranslations("staffing.history");
   const locale = useLocale();
   const tStaffing = useTranslations("staffing");
+  const tAreas = useTranslations("adminAreas");
   const { school } = useProfile();
   const timeZone = school?.timezone ?? "Europe/Stockholm";
   const [open, setOpen] = useState(false);
@@ -80,6 +81,7 @@ export function EmploymentHistoryCard({
     // Percentages are stored with up to three decimals (66.667).
     decimal: (value) => new Intl.NumberFormat(locale, { maximumFractionDigits: 3, useGrouping: false }).format(value),
     noteChanged: t("noteChanged"),
+    hidden: tAreas("hrHidden"),
   };
 
   const entries = history.data?.entries ?? [];

@@ -25,6 +25,8 @@ import {
   type LoadPolicy,
 } from "@/lib/teacher-load";
 import { formatPercent } from "@/lib/staffing-view";
+import { profileDecides } from "@/lib/admin-areas";
+import { useProfile } from "@/components/profile-context";
 import type { StaffingPolicy, TeacherContractKind, TeacherEmployment } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -126,6 +128,11 @@ export function EmploymentCard({
 }: EmploymentCardProps) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
+  const tAreas = useTranslations("adminAreas");
+  // A post is rektor's or a full administrator's to write (Roller i skolan);
+  // a fixture's profile without the field reads as full.
+  const me = useProfile().profile;
+  const decides = profileDecides(me?.adminProfile === undefined ? "FULL" : me.adminProfile);
   const actions = useTeacherEmploymentActions();
   const [editing, setEditing] = useState(false);
   /** Ta bort tjänsten asks first: the post's figures are gone once it is deleted. */
@@ -179,6 +186,13 @@ export function EmploymentCard({
   };
 
   const stored = employment ?? null;
+  // Tjänst % and nedsättning left out for this reader: no target or hours
+  // can be read off them here, and none is shown rather than a wrong one.
+  const hidden = stored !== null && (stored.employmentPercent === null || stored.reductionPercent === null);
+  const visible =
+    stored !== null && stored.employmentPercent !== null && stored.reductionPercent !== null
+      ? { ...stored, employmentPercent: stored.employmentPercent, reductionPercent: stored.reductionPercent }
+      : null;
   const storedTarget = stored
     ? targetMinutesPerWeek(
         {
@@ -201,7 +215,7 @@ export function EmploymentCard({
       title={t("employmentTitle")}
       description={t("employmentHint", { year: academicYearName })}
       action={
-        !editing ? (
+        !editing && decides ? (
           <Button variant="outline" size="sm" onClick={open}>
             {stored ? t("editEmployment") : tCommon("add")}
           </Button>
@@ -209,28 +223,36 @@ export function EmploymentCard({
       }
     >
       {!editing ? (
-        stored ? (
+        stored && hidden ? (
+          <ul className="space-y-0.5 text-sm">
+            <li>{t(`contract${stored.contractKind}`)}</li>
+            {stored.signature ? (
+              <li>{t("employmentSummarySignature", { signature: stored.signature })}</li>
+            ) : null}
+            <li className="text-muted-foreground">{tAreas("hrHiddenNotice")}</li>
+          </ul>
+        ) : visible ? (
           <div className="space-y-3">
           <ul className="space-y-0.5 text-sm">
             <li>
-              {stored.reductionPercent > 0
+              {visible.reductionPercent > 0
                 ? t("employmentSummaryReduction", {
-                    percent: formatPercent(stored.employmentPercent),
-                    reduction: formatPercent(stored.reductionPercent),
-                    kind: t(`contract${stored.contractKind}`),
+                    percent: formatPercent(visible.employmentPercent),
+                    reduction: formatPercent(visible.reductionPercent),
+                    kind: t(`contract${visible.contractKind}`),
                   })
                 : t("employmentSummary", {
-                    percent: formatPercent(stored.employmentPercent),
-                    kind: t(`contract${stored.contractKind}`),
+                    percent: formatPercent(visible.employmentPercent),
+                    kind: t(`contract${visible.contractKind}`),
                   })}
             </li>
-            {stored.signature ? (
-              <li>{t("employmentSummarySignature", { signature: stored.signature })}</li>
+            {visible.signature ? (
+              <li>{t("employmentSummarySignature", { signature: visible.signature })}</li>
             ) : null}
             <li>
               {storedTarget === null
                 ? t("derivedNoTarget")
-                : stored.teachingTargetMinutesPerWeek !== null
+                : visible.teachingTargetMinutesPerWeek !== null
                   ? t("derivedTargetOverride", { minutes: storedTarget })
                   : t("derivedTarget", { minutes: storedTarget })}
             </li>
@@ -239,25 +261,29 @@ export function EmploymentCard({
                 hours: formatPercent(
                   regulatedHoursPerYear(
                     loadPolicy.fullTimeRegulatedHoursPerYear,
-                    stored.employmentPercent,
-                    stored.reductionPercent,
+                    visible.employmentPercent,
+                    visible.reductionPercent,
                   ),
                 ),
                 days: loadPolicy.workDaysPerYear,
               })}
             </li>
-            {stored.note ? <li className="text-muted-foreground">{stored.note}</li> : null}
+            {visible.note ? <li className="text-muted-foreground">{visible.note}</li> : null}
           </ul>
           <EmploymentPeriods
             teacher={teacher}
             academicYearId={academicYearId}
             year={year}
-            employment={stored}
+            employment={visible}
             policy={loadPolicy}
+            decides={decides}
           />
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">{t("noEmployment")}</p>
+          <p className="text-sm text-muted-foreground">
+            {t("noEmployment")}
+            {decides ? null : ` ${tAreas("postIsDecision")}`}
+          </p>
         )
       ) : (
         <div className="space-y-3">

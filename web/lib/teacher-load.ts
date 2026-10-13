@@ -128,8 +128,10 @@ export function weigh(minutes: number, weight: number | undefined): number {
 
 export interface LoadEmployment {
   userId: string;
-  employmentPercent: number;
-  reductionPercent: number;
+  /** Null, with hrHidden, for a reader without HR-läs (Roller i skolan). */
+  employmentPercent: number | null;
+  reductionPercent: number | null;
+  hrHidden?: true;
   contractKind: TeacherContractKind;
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
@@ -392,6 +394,8 @@ export interface UnqualifiedAssignment {
 }
 
 export interface TeacherLoadReport {
+  /** True when tjänst % and nedsättning were left out for this reader (Roller i skolan). */
+  hrHidden?: true;
   /** The policy's model the figures were charged under. */
   loadModel: LoadModel;
   teachers: TeacherLoad[];
@@ -468,8 +472,31 @@ export function targetMinutesPerWeek(
     return employment.teachingTargetMinutesPerWeek;
   }
   if (policy.fullTimeTeachingMinutesPerWeek === null) return null;
-  const activePercent = employment.employmentPercent - employment.reductionPercent;
+  const activePercent = activePercentOf(employment);
+  if (activePercent === null) return null;
   return round5((policy.fullTimeTeachingMinutesPerWeek * activePercent) / 100);
+}
+
+/**
+ * Tjänst − nedsättning, or null when the post is unknown or its percentages
+ * were left out for a reader without HR-läs (Roller i skolan). A hidden post
+ * is never read as 0 %: that would put every teacher över mål.
+ */
+export function activePercentOf(employment: LoadEmployment | null): number | null {
+  if (!employment || employment.employmentPercent === null || employment.reductionPercent === null) return null;
+  return employment.employmentPercent - employment.reductionPercent;
+}
+
+/** A post whose percentages this reader has: the only kind a post's stretches are cut from. */
+export type ShownEmployment = LoadEmployment & { employmentPercent: number; reductionPercent: number };
+
+/** The post with its percentages, or null without a post or when they were left out (hrHidden). */
+export function shownEmployment<T extends Pick<LoadEmployment, "employmentPercent" | "reductionPercent">>(
+  employment: T | null | undefined,
+): (T & { employmentPercent: number; reductionPercent: number }) | null {
+  return employment && employment.employmentPercent !== null && employment.reductionPercent !== null
+    ? (employment as T & { employmentPercent: number; reductionPercent: number })
+    : null;
 }
 
 /**
@@ -629,7 +656,7 @@ export interface StretchLoad {
  * all come through here, so a stretch the matrix calls OVER is the stretch a
  * write is refused for.
  */
-export function stretchLoads(input: StretchInput, employment: LoadEmployment): StretchLoad[] {
+export function stretchLoads(input: StretchInput, employment: ShownEmployment): StretchLoad[] {
   const policy = input.policy ?? DEFAULT_LOAD_POLICY;
   return postStretches(employment, input.year).map((stretch) => ({
     stretch,
@@ -887,17 +914,18 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     dutyMinutesPerWeek += acc.dutyMinutes;
     // A post that changes during the year is judged stretch by stretch; one
     // that does not reads exactly the figures it always did, by the same code.
-    const stretches =
-      employment !== null && changesDuringYear(employment, year) ? stretchLoads(input, employment) : null;
+    // A post whose percentages were left out for this reader (Roller i
+    // skolan) is not split: nothing in it can be weighed, and it reads as the
+    // post with its own target, if it has one.
+    const shown = shownEmployment(employment);
+    const stretches = shown !== null && changesDuringYear(shown, year) ? stretchLoads(input, shown) : null;
     const baseTarget = targetMinutesPerWeek(employment, policy);
     const yearTarget = stretches
       ? weightedByWeeks(stretches, (stretch) => stretch.target, baseTarget)
       : baseTarget;
     const target = yearTarget === null ? null : Math.round(yearTarget);
     reportedTargets.set(userId, target);
-    const baseActive = employment
-      ? employment.employmentPercent - employment.reductionPercent
-      : null;
+    const baseActive = activePercentOf(employment);
     const activePercent = stretches
       ? weightedByWeeks(
           stretches,
@@ -926,7 +954,9 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
           minutesPerWeek: Math.round(subject.minutes),
           shareOfTeaching: round4(share),
           percentOfEmployment:
-            employment === null ? null : round1(employment.employmentPercent * share),
+            employment === null || employment.employmentPercent === null
+              ? null
+              : round1(employment.employmentPercent * share),
           percentOfFullTime:
             policy.fullTimeTeachingMinutesPerWeek === null
               ? null

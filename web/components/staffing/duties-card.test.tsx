@@ -101,6 +101,24 @@ describe("DutiesCard", () => {
     remove.mockResolvedValue(undefined);
   });
 
+  it("lists the uppdrag without add, edit or remove to a reader who does not write planering (Roller i skolan)", () => {
+    duties.data = [mentor, apt];
+    render(
+      <DutiesCard
+        teacher={teacher}
+        academicYearId="y1"
+        academicYearName="2026/2027"
+        subjects={[{ id: "s-ma", name: "Matematik", code: "MA" }]}
+        groups={[{ id: "g-7b", name: "7B" }]}
+        readOnly
+      />,
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "addDuty" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^editDuty/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^removeDuty/ })).toBeNull();
+  });
+
   it("reads one teacher's uppdrag for the year, and says so when there are none", () => {
     renderCard();
     expect(asked).toEqual({ year: "y1", user: "t-anna" });

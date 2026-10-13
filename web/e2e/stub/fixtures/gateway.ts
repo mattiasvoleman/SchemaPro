@@ -5,6 +5,7 @@ import { leaveRoutes } from "./gateway-leave";
 import { miscRoutes } from "./gateway-misc";
 import { publicRoutes } from "./gateway-public";
 import { readRoutes } from "./gateway-reads";
+import { roleRoutes } from "./gateway-roles";
 import { staffingRoutes } from "./gateway-staffing";
 import { timplanRoutes } from "./gateway-timplan";
 import { YEAR } from "./world";
@@ -26,6 +27,7 @@ export const ROUTE_FILES: Array<{ file: string; routes: GatewayRoute[] }> = [
   { file: "gateway-public.ts", routes: publicRoutes },
   { file: "gateway-reads.ts", routes: readRoutes },
   { file: "gateway-leave.ts", routes: leaveRoutes },
+  { file: "gateway-roles.ts", routes: roleRoutes },
 ];
 
 export const gatewayRoutes: GatewayRoute[] = ROUTE_FILES.flatMap((entry) => entry.routes);

@@ -20,6 +20,7 @@ const delegate = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({
   inbox: { data: undefined as unknown, isLoading: false, isError: false },
   delegation: { data: undefined as unknown, isLoading: false, isError: false },
+  profile: { profile: {} } as { profile: { adminProfile?: string } },
 }));
 
 vi.mock("@/lib/leave-queries", () => ({
@@ -32,6 +33,7 @@ vi.mock("@/lib/leave-queries", () => ({
   }),
 }));
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
+vi.mock("@/components/profile-context", () => ({ useProfile: () => state.profile }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const DELEGATION = { mentorMaxSchoolDays: 3, reference: "Dnr 2026:12", decidedAt: "2026-08-10T08:00:00.000Z", decidedBy: "Rut Rektor" };
@@ -75,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.inbox = { data: [request({ schoolDays: 5 })], isLoading: false, isError: false };
   state.delegation = { data: { current: DELEGATION, history: [DELEGATION] }, isLoading: false, isError: false };
+  state.profile = { profile: {} };
 });
 
 describe("Ledighetsansökningar", () => {
@@ -174,6 +177,23 @@ describe("Ledighetsansökningar", () => {
     await user.click(within(dialog).getByRole("button", { name: "Spara beslutet" }));
     await waitFor(() => expect(delegate).toHaveBeenCalledWith({ mentorMaxSchoolDays: 5, reference: "Dnr 2026:40" }));
     expect(toast.success).toHaveBeenCalledWith("Delegeringen är sparad");
+  });
+
+  it("shows the delegation to every administrator, and its change only to those who decide (Roller i skolan)", () => {
+    for (const adminProfile of ["EXPEDITION", "SCHEMALAGGARE"]) {
+      state.profile = { profile: { adminProfile } };
+      const { unmount } = render(
+        <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+          <LeaveRequestsPage />
+        </NextIntlClientProvider>,
+      );
+      expect(screen.getByText("Mentorn beslutar om ledighet på högst 3 skoldagar")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Ändra delegering" })).not.toBeInTheDocument();
+      unmount();
+    }
+    state.profile = { profile: { adminProfile: "REKTOR" } };
+    renderPage();
+    expect(screen.getByRole("button", { name: "Ändra delegering" })).toBeInTheDocument();
   });
 
   it("records no delegation as a decision of its own", async () => {

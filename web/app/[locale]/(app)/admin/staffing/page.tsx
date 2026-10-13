@@ -89,6 +89,8 @@ import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useProfile } from "@/components/profile-context";
+import { profileDecides } from "@/lib/admin-areas";
 
 /**
  * The drawer is click-opened, so it is React's lazy() — not next/dynamic,
@@ -172,6 +174,8 @@ export default function StaffingPage() {
   const [openTeacherId, setOpenTeacherId] = useState<string | null>(null);
   const [chosenView, setView] = useState<PageView>("matrix");
   const [carryOpen, setCarryOpen] = useState(false);
+  const me = useProfile().profile;
+  const decides = profileDecides(me?.adminProfile === undefined ? "FULL" : me.adminProfile);
   /**
    * Open, and mounted: the dialog stays mounted once opened, because the
    * applied toast's Ångra calls into it after it has closed.
@@ -189,7 +193,9 @@ export default function StaffingPage() {
    * it too, and a year that got one uppdrag (carried, or by hand) is not
    * offered a second run, which would bring back an uppdrag deleted since.
    */
+  // Carrying tjänster is rektor's or a full administrator's (Roller i skolan).
   const offerCarry =
+    decides &&
     predecessor !== null &&
     employments?.length === 0 &&
     duties?.length === 0 &&

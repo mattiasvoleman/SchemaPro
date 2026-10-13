@@ -29,7 +29,14 @@ const from = vi.hoisted(() => vi.fn());
 
 vi.mock("next/headers", () => ({ cookies: async () => ({ getAll: () => [], set: () => undefined }) }));
 vi.mock("@/utils/supabase/server", () => ({ createClient: () => ({ from }) }));
-vi.mock("@/lib/auth", () => ({ getSession: async () => ({ school: { name: "Testskolan" } }) }));
+// The reader's profile (Roller i skolan): none read reads as a full administrator.
+const me = vi.hoisted(() => ({ adminProfile: undefined as string | undefined }));
+vi.mock("@/lib/auth", () => ({
+  getSession: async () => ({
+    school: { name: "Testskolan" },
+    profile: me.adminProfile === undefined ? {} : { adminProfile: me.adminProfile },
+  }),
+}));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { ...actual, api: { get: vi.fn() } };
@@ -90,6 +97,7 @@ beforeEach(() => {
   state.people = { data: { byRole: { STUDENT: 412, TEACHER: 38, GUARDIAN: 690, SCHOOL_ADMIN: 2 } } };
   state.attendance = { data: { recorded: 200, present: 180 } };
   state.serverError = false;
+  me.adminProfile = undefined;
 });
 
 afterEach(() => {
@@ -163,5 +171,26 @@ describe("the admin dashboard's figures", () => {
 
     expect(figure(sv.dashboard.students)).toBe("—");
     expect(screen.queryByText(sv.dashboard.loadFailed)).not.toBeInTheDocument();
+  });
+});
+
+describe("the admin dashboard's quick actions (Roller i skolan)", () => {
+  const tiles = () => screen.getAllByRole("listitem").map((item) => item.querySelector("a")?.getAttribute("href"));
+
+  it("offers the manual's chain to a profile that uses it", async () => {
+    await renderPage();
+    await settled();
+    expect(tiles()).toEqual(["/admin/setup", "/admin/timplan", "/admin/generate", "/admin/timetable"]);
+    expect(screen.getByRole("list").tagName).toBe("OL");
+  });
+
+  it("offers the expedition the school day's pages instead, none of them closed to it", async () => {
+    me.adminProfile = "EXPEDITION";
+    await renderPage();
+    await settled();
+    expect(tiles()).toEqual(["/admin/teacher-absence", "/admin/cover", "/admin/leave", "/admin/people"]);
+    // Not steps of one chain: not an ordered list, and no tile numbered.
+    expect(screen.getByRole("list").tagName).toBe("UL");
+    for (const item of screen.getAllByRole("listitem")) expect(item).not.toHaveTextContent(/\d/);
   });
 });

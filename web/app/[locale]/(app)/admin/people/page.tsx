@@ -58,6 +58,18 @@ const DutiesCard = lazy(() =>
   })),
 );
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv-export";
+import { profileDecides, profileWrites, type AdminProfile } from "@/lib/admin-areas";
+import { useAdministrators } from "@/lib/admin-role-queries";
+import { useProfile } from "@/components/profile-context";
+// Roller i skolan's two parts of the page, each fetched when it is shown: the
+// chooser when the dialog's person is an administrator, the history when a
+// row is opened. The page already sits at its bundle budget.
+const AdminRoleFields = lazy(() =>
+  import("@/components/people/admin-role-fields").then((module) => ({ default: module.AdminRoleFields })),
+);
+const RoleHistory = lazy(() =>
+  import("@/components/people/role-history").then((module) => ({ default: module.RoleHistory })),
+);
 import {
   useCrudMutations,
   useAcademicYears,
@@ -177,6 +189,11 @@ interface PersonForm {
    */
   employmentPercent: string;
   signature: string;
+  /** An administrator's profile and HR-läs (Roller i skolan); read only when role is SCHOOL_ADMIN. */
+  adminProfile: AdminProfile;
+  hrRead: boolean;
+  /** Whether the chooser changed them in this dialog: only then are a known administrator's sent. */
+  profileTouched: boolean;
 }
 
 const EMPTY_FORM: PersonForm = {
@@ -188,6 +205,10 @@ const EMPTY_FORM: PersonForm = {
   studentGroupId: NO_GROUP,
   employmentPercent: "",
   signature: "",
+  // What an administrator is when nobody chooses: as every one was before profiles.
+  adminProfile: "FULL",
+  hrRead: false,
+  profileTouched: false,
 };
 
 /**
@@ -204,6 +225,8 @@ interface StaffingContext {
   qualifications: TeacherQualification[] | undefined;
   policy: StaffingPolicy | null | undefined;
   subjects: Subject[];
+  /** Behörigheter and uppdrag are planering's (Roller i skolan): shown, not changed, without it. */
+  readOnly: boolean;
 }
 
 /**
@@ -313,6 +336,7 @@ function PersonDetail({
                   teacher={person}
                   qualifications={staffing.qualifications}
                   subjects={staffing.subjects}
+                  readOnly={staffing.readOnly}
                 />
               </Suspense>
               <Suspense fallback={<Skeleton className="h-32 w-full" />}>
@@ -322,6 +346,7 @@ function PersonDetail({
                   academicYearName={staffing.academicYearName}
                   subjects={staffing.subjects}
                   groups={staffing.groups}
+                  readOnly={staffing.readOnly}
                 />
               </Suspense>
             </div>
@@ -367,6 +392,22 @@ export default function PeoplePage() {
   const tRoles = useTranslations("roles");
   const tCsvImport = useTranslations("csvImport");
   const { data: people, isLoading, isError } = usePeople();
+  /*
+   * Roller i skolan: who may change roles, profiles and HR-läs (rektor and a
+   * full administrator, who also write the posts), and every administrator's
+   * profile for the role chooser. A profile not read with the session (a
+   * fixture) reads as full, as every administrator was before profiles.
+   */
+  const me = useProfile().profile;
+  const myProfile = me?.adminProfile === undefined ? "FULL" : me.adminProfile;
+  const decides = profileDecides(myProfile);
+  // The page is every administrator's (Roller i skolan): the register is
+  // personal's to change, the arbetstid, behörigheter and uppdrag beside it
+  // planering's, and each control is offered to the profile that writes it.
+  const writesPeople = profileWrites(myProfile, "PERSONAL");
+  const writesPlanning = profileWrites(myProfile, "PLANERING");
+  const administratorsQuery = useAdministrators();
+  const administrators = administratorsQuery.data;
   const groupsQuery = useGroups();
   const groups = groupsQuery.data;
   const membershipsQuery = useGroupMemberships();
@@ -403,6 +444,7 @@ export default function PeoplePage() {
           qualifications: qualifications?.filter((row) => row.userId === person.id),
           policy,
           subjects: subjects ?? [],
+          readOnly: !writesPlanning,
         }
       : null;
   /**
@@ -431,6 +473,8 @@ export default function PeoplePage() {
     // The policy turns a post into the target the Anställning card shows.
     policyQuery,
     workRulesQuery,
+    // An administrator's profile and HR-läs, for the role chooser.
+    administratorsQuery,
   ].some((query) => query.isError);
   const workRuleOf = (teacherId: string) =>
     workRules?.find((rule) => rule.userId === teacherId);
@@ -462,6 +506,8 @@ export default function PeoplePage() {
     role?: UserRole;
     studentGroupId?: string | null;
     isActive?: boolean;
+    adminProfile?: AdminProfile;
+    hrRead?: boolean;
     /** Opt-in only; see the toggle in the create dialog. */
     sendInvitation?: boolean;
   }>("/api/v1/users", [["people"]]);
@@ -545,14 +591,18 @@ export default function PeoplePage() {
       phone: person.phone ?? "",
       role: person.role,
       studentGroupId: person.studentGroupId ?? NO_GROUP,
-      employmentPercent: post ? String(post.employmentPercent) : "",
+      employmentPercent: post && post.employmentPercent !== null ? String(post.employmentPercent) : "",
       signature: post?.signature ?? "",
+      adminProfile: administrators?.get(person.id)?.adminProfile ?? "FULL",
+      hrRead: administrators?.get(person.id)?.hrRead ?? false,
+      profileTouched: false,
     });
     setDialogOpen(true);
   };
 
   /** Whether the dialog shows the two post fields: a member of staff, and a year to write into. */
-  const showsPost = MAY_HAVE_WORK_TIME.includes(form.role) && activeYearId !== null;
+  // A post is rektor's or a full administrator's to write (Roller i skolan).
+  const showsPost = MAY_HAVE_WORK_TIME.includes(form.role) && activeYearId !== null && decides;
 
   /**
    * The post the dialog would write: the stored row with the two fields
@@ -572,6 +622,25 @@ export default function PeoplePage() {
     return tStaffing(`problem_${reason}`, values as Record<string, number>);
   };
 
+  /*
+   * An administrator's stored profile, while the dialog edits one: null until
+   * GET /users/administrators has answered (or when it failed), and then the
+   * chooser is locked and the save sends no profile — a default would quietly
+   * make the person full or take their HR-läs.
+   */
+  const storedProfile =
+    editing?.role === "SCHOOL_ADMIN" ? (administrators?.get(editing.id) ?? null) : null;
+  const profileUnknown = editing?.role === "SCHOOL_ADMIN" && storedProfile === null;
+  const shownProfile =
+    storedProfile && !form.profileTouched
+      ? storedProfile
+      : { adminProfile: form.adminProfile, hrRead: form.hrRead };
+  // Sent when somebody becomes an administrator, or when the chooser changed a known one.
+  const sendsProfile =
+    decides &&
+    form.role === "SCHOOL_ADMIN" &&
+    (editing?.role !== "SCHOOL_ADMIN" || (form.profileTouched && !profileUnknown));
+
   const submit = async () => {
     const body = {
       firstName: form.firstName.trim(),
@@ -582,6 +651,9 @@ export default function PeoplePage() {
         form.role === "STUDENT" && form.studentGroupId !== NO_GROUP
           ? form.studentGroupId
           : null,
+      // The profile and HR-läs travel only from somebody who may change them,
+      // and only when they are chosen (sendsProfile above).
+      ...(sendsProfile ? { adminProfile: shownProfile.adminProfile, hrRead: shownProfile.hrRead } : {}),
     };
     try {
       let userId = editing?.id ?? null;
@@ -691,17 +763,28 @@ export default function PeoplePage() {
    * most four, as before the 2026-10-11 overhaul, and the manual sends the
    * reader to the envelope on the row to invite one person.
    */
+  // The imports this profile writes: the register personal's, behörigheter and uppdrag planering's.
+  const importKinds = [
+    ...(writesPeople ? (["students", "teachers"] as const) : []),
+    ...(writesPlanning ? (["teacherQualifications", "teacherDuties"] as const) : []),
+  ];
+
   const actionsOf = (person: Person): RowAction[] => {
     const name = `${person.firstName} ${person.lastName}`;
-    const actions: RowAction[] = [
-      {
+    // An administrator's row is rektor's or a full administrator's to change,
+    // invite or remove (Roller i skolan); the gateway refuses anybody else.
+    const lockedAdmin = person.role === "SCHOOL_ADMIN" && !decides;
+    const actions: RowAction[] = [];
+    if (writesPeople) {
+      actions.push({
         label: tCommon("edit"),
         icon: Pencil,
         ariaLabel: tCommon("editNamed", { name }),
         onSelect: () => openEdit(person),
-      },
-    ];
-    if (person.role === "STUDENT") {
+        disabled: lockedAdmin,
+      });
+    }
+    if (person.role === "STUDENT" && writesPeople) {
       actions.push({
         label: t("manageGuardians"),
         icon: Link2,
@@ -715,7 +798,7 @@ export default function PeoplePage() {
     // Only on a member of staff's row, the way the guardian link is only on
     // a student's: see MAY_HAVE_WORK_TIME for why the undervisande rektor
     // counts and a pupil does not.
-    if (MAY_HAVE_WORK_TIME.includes(person.role)) {
+    if (MAY_HAVE_WORK_TIME.includes(person.role) && writesPlanning) {
       actions.push({
         label: t("workTimeLabel"),
         icon: Clock,
@@ -723,7 +806,7 @@ export default function PeoplePage() {
         onSelect: () => setWorkTimeFor(person),
       });
     }
-    if (person.isActive) {
+    if (person.isActive && writesPeople) {
       actions.push({
         label: person.invitedAt ? t("resendInvitation") : t("sendInvitation"),
         icon: Mail,
@@ -731,15 +814,18 @@ export default function PeoplePage() {
           ? t("resendInvitationTo", { name })
           : t("sendInvitationTo", { name }),
         onSelect: () => void inviteOne(person),
-        disabled: invitations.inviteOne.isPending,
+        disabled: invitations.inviteOne.isPending || lockedAdmin,
       });
     }
-    actions.push({
-      label: tCommon("delete"),
-      icon: Trash2,
-      ariaLabel: tCommon("deleteNamed", { name }),
-      onSelect: () => setDeleting(person),
-    });
+    if (writesPeople) {
+      actions.push({
+        label: tCommon("delete"),
+        icon: Trash2,
+        ariaLabel: tCommon("deleteNamed", { name }),
+        onSelect: () => setDeleting(person),
+        disabled: lockedAdmin,
+      });
+    }
     return actions;
   };
 
@@ -750,7 +836,7 @@ export default function PeoplePage() {
         subtitle={t("subtitle")}
         actions={
           <>
-            {uninvited.length > 0 ? (
+            {uninvited.length > 0 && writesPeople ? (
               <Button
                 variant="outline"
                 onClick={() => void inviteAllUninvited()}
@@ -787,14 +873,18 @@ export default function PeoplePage() {
                 },
               ]}
             />
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload aria-hidden="true" />
-              {tCsvImport("button")}
-            </Button>
-            <Button onClick={openCreate}>
-              <Plus aria-hidden="true" />
-              {t("addPerson")}
-            </Button>
+            {importKinds.length > 0 ? (
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                <Upload aria-hidden="true" />
+                {tCsvImport("button")}
+              </Button>
+            ) : null}
+            {writesPeople ? (
+              <Button onClick={openCreate}>
+                <Plus aria-hidden="true" />
+                {t("addPerson")}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -833,10 +923,12 @@ export default function PeoplePage() {
           description={t("emptyHint")}
           headingLevel={2}
           action={
-            <Button onClick={openCreate}>
-              <Plus aria-hidden="true" />
-              {t("addPerson")}
-            </Button>
+            writesPeople ? (
+              <Button onClick={openCreate}>
+                <Plus aria-hidden="true" />
+                {t("addPerson")}
+              </Button>
+            ) : undefined
           }
         />
       ) : (
@@ -945,6 +1037,11 @@ export default function PeoplePage() {
                         subjectName={subjectName}
                         t={t}
                       />
+                      <div className="mt-3">
+                        <Suspense fallback={null}>
+                          <RoleHistory userId={person.id} />
+                        </Suspense>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ) : null}
@@ -995,13 +1092,16 @@ export default function PeoplePage() {
                 {(control) => (
                   <Select
                     value={form.role}
+                    // A role is changed by rektor or a full administrator; the
+                    // expedition picks one only for somebody new, never Administratör.
+                    disabled={editing !== null && !decides}
                     onValueChange={(value) => setForm({ ...form, role: value as UserRole })}
                   >
                     <SelectTrigger {...control}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ROLES.map((role) => (
+                      {ROLES.filter((role) => decides || role !== "SCHOOL_ADMIN" || form.role === role).map((role) => (
                         <SelectItem key={role} value={role}>
                           {tRoles(role)}
                         </SelectItem>
@@ -1011,6 +1111,19 @@ export default function PeoplePage() {
                 )}
               </FormField>
             </div>
+            {form.role === "SCHOOL_ADMIN" ? (
+              <Suspense fallback={null}>
+                <AdminRoleFields
+                  adminProfile={shownProfile.adminProfile}
+                  hrRead={shownProfile.hrRead}
+                  decides={decides}
+                  unavailable={
+                    profileUnknown ? (administratorsQuery.isError ? "failed" : "loading") : undefined
+                  }
+                  onChange={(next) => setForm({ ...form, ...next, profileTouched: true })}
+                />
+              </Suspense>
+            ) : null}
             {form.role === "STUDENT" ? (
               <FormField id="person-class" label={t("class")}>
                 {(control) => (
@@ -1228,7 +1341,7 @@ export default function PeoplePage() {
       ) : null}
 
       <LazyCsvImportDialog
-        kinds={["students", "teachers", "teacherQualifications", "teacherDuties"]}
+        kinds={importKinds}
         open={importOpen}
         onOpenChange={setImportOpen}
       />
