@@ -1,111 +1,127 @@
-import { getSupabase } from './supabase';
-import { fetchRoster } from './roster';
+import { getAccessToken, getSupabase } from './supabase';
+import { ApiError } from './api';
+import { upsertCalendarLesson, upsertStudents } from './database/localDatabase';
+import { cacheLessonForAttendance, fetchRoster, rosterRefusal } from './roster';
 
-jest.mock('./supabase', () => ({ getSupabase: jest.fn() }));
+jest.mock('./supabase', () => ({ getAccessToken: jest.fn(), getSupabase: jest.fn() }));
+jest.mock('./database/localDatabase', () => ({
+  upsertStudents: jest.fn(),
+  upsertCalendarLesson: jest.fn(),
+}));
 
 /**
- * A chainable stub shaped like the PostgREST builder: every call returns itself
- * until the query is awaited, at which point it resolves to whatever the table
- * was seeded with. Recording the calls is the point — this is a test about
- * which questions get asked.
+ * The roster a teacher ticks down on the phone, and the cache it is written to.
+ *
+ * Through the real gateway client against a stubbed fetch, so what is pinned
+ * is the request the gateway receives — its URL, method and bearer — and what
+ * the cache holds afterwards. Supabase is a mock that fails the test if asked:
+ * the app built this list itself from four tables until the roster had one
+ * reader on the gateway, and the broadcast that later replaces the cached
+ * pupils asks that reader too.
  */
-function supabaseStub(tables: Record<string, unknown[]>) {
-  const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
 
-  const from = jest.fn((table: string) => {
-    const builder: Record<string, unknown> = {};
-    const record = (method: string) =>
-      jest.fn((...args: unknown[]) => {
-        calls.push({ table, method, args });
-        return builder;
-      });
-    for (const method of ['select', 'eq', 'in', 'or', 'order']) {
-      builder[method] = record(method);
-    }
-    builder['then'] = (resolve: (value: unknown) => unknown) =>
-      resolve({ data: tables[table] ?? [], error: null });
-    return builder;
+const LESSON = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const ROUTE = `https://api.example.test/api/v1/attendance/lessons/${LESSON}/roster`;
+
+const fetchMock = jest.fn();
+const answer = (status: number, body?: unknown) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+  text: async () => (body === undefined ? '' : JSON.stringify(body)),
+});
+
+const lesson = {
+  id: LESSON,
+  startTime: '2026-10-14T07:10:00.000Z',
+  endTime: '2026-10-14T08:00:00.000Z',
+  subjectName: 'Matematik',
+  roomName: 'B204',
+};
+
+// The gateway orders by Postgres collation, which folds Å into A.
+const GATEWAY_ORDER = [
+  { id: 'asa', firstName: 'Åsa', lastName: 'Åkesson' },
+  { id: 'ada', firstName: 'Ada', lastName: 'Andersson' },
+  { id: 'osten', firstName: 'Östen', lastName: 'Öberg' },
+];
+
+beforeEach(() => {
+  process.env['EXPO_PUBLIC_API_BASE_URL'] = 'https://api.example.test/';
+  Object.defineProperty(global, 'fetch', { value: fetchMock, writable: true, configurable: true });
+  fetchMock.mockReset();
+  (getAccessToken as jest.Mock).mockResolvedValue('jwt-teacher');
+  (getSupabase as jest.Mock).mockImplementation(() => {
+    throw new Error('The roster is the gateway’s to answer, not a Supabase table’s.');
   });
-
-  (getSupabase as jest.Mock).mockReturnValue({ from });
-  return { calls, argsFor: (table: string, method: string) =>
-    calls.filter((c) => c.table === table && c.method === method).map((c) => c.args) };
-}
-
-const LESSON = 'lesson-1';
-const CLASS_7A = 'group-7a';
-const MA71 = 'group-ma71';
+});
 
 describe('the roster of a lesson', () => {
-  it('asks StudentGroupMembers, which is where a teaching group keeps its pupils', async () => {
-    // A home class holds its pupils through Users.studentGroupId; a teaching
-    // group holds none at all by construction. Asking only the first question
-    // returned nothing for every nivågrupp, so a teacher opening such a lesson
-    // to take attendance met an empty list and could not report.
-    const stub = supabaseStub({ StudentGroupMembers: [{ studentId: 'sara' }] });
+  it('is asked of the gateway’s one roster reader, and of no Supabase table', async () => {
+    fetchMock.mockResolvedValue(answer(200, { students: GATEWAY_ORDER }));
 
-    await fetchRoster(LESSON, MA71);
+    const roster = await fetchRoster(LESSON);
 
-    expect(stub.argsFor('StudentGroupMembers', 'in')).toEqual([
-      ['studentGroupId', [MA71]],
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(ROUTE);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.headers).toEqual({ Authorization: 'Bearer jwt-teacher' });
+    expect(roster).toEqual(GATEWAY_ORDER);
+    expect(getSupabase).not.toHaveBeenCalled();
+  });
+
+  it('caches exactly the pupils the gateway named, the set a broadcast replaces them with', async () => {
+    fetchMock.mockResolvedValue(answer(200, { students: GATEWAY_ORDER }));
+
+    const cached = await cacheLessonForAttendance(lesson);
+
+    // In Swedish order, which neither Postgres nor SQLite gives: Å and Ö
+    // after Z. displayName is built here and never leaves the device.
+    expect(upsertStudents).toHaveBeenCalledWith([
+      { id: 'ada', displayName: 'Ada Andersson', photoUri: null },
+      { id: 'asa', displayName: 'Åsa Åkesson', photoUri: null },
+      { id: 'osten', displayName: 'Östen Öberg', photoUri: null },
     ]);
+    expect(cached).toEqual({ ...lesson, studentIds: ['ada', 'asa', 'osten'] });
+    expect(upsertCalendarLesson).toHaveBeenCalledWith(cached);
+    expect(getSupabase).not.toHaveBeenCalled();
   });
 
-  it('covers every class attending, not only the lesson’s own', async () => {
-    const stub = supabaseStub({
-      CalendarLessonGroups: [{ studentGroupId: 'group-7b' }],
-    });
+  it('caches a lesson with nobody active on it as empty, not as the last list', async () => {
+    fetchMock.mockResolvedValue(answer(200, { students: [] }));
 
-    await fetchRoster(LESSON, CLASS_7A);
+    const cached = await cacheLessonForAttendance(lesson);
 
-    expect(stub.argsFor('StudentGroupMembers', 'in')).toEqual([
-      ['studentGroupId', [CLASS_7A, 'group-7b']],
-    ]);
+    expect(cached.studentIds).toEqual([]);
+    expect(upsertCalendarLesson).toHaveBeenCalledWith({ ...lesson, studentIds: [] });
   });
 
-  it('picks up a pupil named individually on the lesson', async () => {
-    const stub = supabaseStub({
-      CalendarLessonStudents: [{ studentId: 'elev-5' }],
-    });
+  it.each([
+    [403, 'NOT_ASSIGNED', 'You are not assigned to this lesson and cannot record attendance for it.'],
+    [404, 'NOT_FOUND', `Calendar lesson not found: ${LESSON}`],
+  ] as const)('writes nothing when the gateway answers %i, and says why: %s', async (status, refusal, message) => {
+    // Recording a register for a lesson the teacher is not on is refused the
+    // same way, so a list opened from the cache could never be sent.
+    fetchMock.mockResolvedValue(answer(status, { statusCode: status, message }));
 
-    await fetchRoster(LESSON, CLASS_7A);
+    const failure = await cacheLessonForAttendance(lesson).catch((error: unknown) => error);
 
-    const [filter] = stub.argsFor('Users', 'or')[0] as [string];
-    expect(filter).toContain('id.in.(elev-5)');
-    expect(filter).toContain(`studentGroupId.in.(${CLASS_7A})`);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(rosterRefusal(failure)).toBe(refusal);
+    expect(upsertStudents).not.toHaveBeenCalled();
+    expect(upsertCalendarLesson).not.toHaveBeenCalled();
   });
 
-  it('counts a pupil once when two sources name them', async () => {
-    const stub = supabaseStub({
-      CalendarLessonStudents: [{ studentId: 'sara' }],
-      StudentGroupMembers: [{ studentId: 'sara' }],
-    });
+  it('tells a refusal from a gateway it could not reach', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Network request failed'));
+    const offline = await cacheLessonForAttendance(lesson).catch((error: unknown) => error);
 
-    await fetchRoster(LESSON, MA71);
-
-    const [filter] = stub.argsFor('Users', 'or')[0] as [string];
-    expect(filter).toContain('id.in.(sara)');
-  });
-
-  it('omits the id filter when no individual pupil is involved', async () => {
-    // An `id.in.()` with nothing in it is not an empty set to PostgREST — it is
-    // a syntax error, and it would take the whole roster down with it.
-    const stub = supabaseStub({});
-
-    await fetchRoster(LESSON, CLASS_7A);
-
-    const [filter] = stub.argsFor('Users', 'or')[0] as [string];
-    expect(filter).toBe(`studentGroupId.in.(${CLASS_7A})`);
-  });
-
-  it('asks only for active pupils', async () => {
-    const stub = supabaseStub({});
-
-    await fetchRoster(LESSON, CLASS_7A);
-
-    expect(stub.argsFor('Users', 'eq')).toEqual([
-      ['role', 'STUDENT'],
-      ['isActive', true],
-    ]);
+    expect(rosterRefusal(offline)).toBeNull();
+    expect(upsertCalendarLesson).not.toHaveBeenCalled();
+    expect(rosterRefusal(new ApiError(500, 'Internal server error'))).toBeNull();
+    expect(rosterRefusal(new ApiError(401, 'Not authenticated.', 'NOT_AUTHENTICATED'))).toBeNull();
+    expect(rosterRefusal(new ApiError(0, 'EXPO_PUBLIC_API_BASE_URL is not set.', 'NOT_CONFIGURED'))).toBeNull();
   });
 });

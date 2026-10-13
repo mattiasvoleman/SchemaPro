@@ -1,68 +1,90 @@
-import { getSupabase } from './supabase';
+import { ApiError, apiRequest } from './api';
+import { upsertCalendarLesson, upsertStudents } from './database/localDatabase';
+import { sortByDisplayName } from '../utils/sorting';
+import type { CalendarLesson } from '../types';
 
 /**
- * Everyone who is actually in the room, which is not the same as the class.
+ * Everyone who is actually in the room, as the gateway answers it.
  *
- * A home class holds its pupils through Users.studentGroupId, but a teaching
- * group — Ma71, språkval En74 — holds none by construction: its roster lives in
- * StudentGroupMembers. Asking only the first question returned nothing for
- * every nivågrupp, so a teacher opening such a lesson to take attendance met an
- * empty list and could not report at all.
+ * GET /api/v1/attendance/lessons/:lessonId/roster asks the one roster reader
+ * (src/calendar/lesson-roster.ts) for the lesson's active pupils: the home
+ * classes of its own class and of every group joined to it, the teaching-group
+ * members of those groups, and the pupils named on the lesson. The broadcast
+ * of a changed lesson (realtime.service.ts) asks the same reader with the same
+ * filter, and its studentIds replace what is cached here, so the register no
+ * longer depends on which of the two came last. The app used to build the
+ * union itself from four Supabase reads; a change to who attends a lesson
+ * would then have reached the web register, the check and the broadcast, but
+ * not the list a teacher ticks down on the phone.
  *
- * Four sources: the lesson's own class, any extra classes attending it,
- * teaching-group membership for all of those, and pupils named individually,
- * active pupils only. That is the gateway's one definition of who attends,
- * src/calendar/lesson-roster.ts with ACTIVE, which this copies until it asks
- * GET /api/v1/attendance/lessons/:lessonId/roster as the web register does. It
- * must not drift from it: the realtime broadcast writes the reader's list over
- * the same cached lesson, so the register would depend on which came last.
+ * Names only. The gateway orders them by Postgres collation for a stable
+ * answer; the list is put in Swedish order on the device.
  */
-export async function fetchRoster(
-  calendarLessonId: string,
-  primaryGroupId: string,
-): Promise<Array<{ id: string; firstName: string; lastName: string }>> {
-  const supabase = getSupabase();
-  const [extraGroups, participants] = await Promise.all([
-    supabase
-      .from('CalendarLessonGroups')
-      .select('studentGroupId')
-      .eq('calendarLessonId', calendarLessonId),
-    supabase
-      .from('CalendarLessonStudents')
-      .select('studentId')
-      .eq('calendarLessonId', calendarLessonId),
-  ]);
-  if (extraGroups.error) throw new Error(extraGroups.error.message);
-  if (participants.error) throw new Error(participants.error.message);
 
-  const groupIds = [
-    primaryGroupId,
-    ...(extraGroups.data ?? []).map((entry) => entry.studentGroupId as string),
-  ];
+export interface RosterPupil {
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+}
 
-  const memberships = await supabase
-    .from('StudentGroupMembers')
-    .select('studentId')
-    .in('studentGroupId', groupIds);
-  if (memberships.error) throw new Error(memberships.error.message);
+export function fetchRoster(calendarLessonId: string): Promise<RosterPupil[]> {
+  return apiRequest<{ students: RosterPupil[] }>(
+    `/api/v1/attendance/lessons/${encodeURIComponent(calendarLessonId)}/roster`,
+  ).then((answer) => answer.students);
+}
 
-  const studentIds = [
-    ...new Set([
-      ...(participants.data ?? []).map((entry) => entry.studentId as string),
-      ...(memberships.data ?? []).map((entry) => entry.studentId as string),
-    ]),
-  ];
+/**
+ * Why the gateway will not give this teacher the roster, when that is the
+ * answer rather than a failure to reach it.
+ *
+ * NOT_ASSIGNED (403): the teacher is not on the lesson. The register they
+ * would take could never be sent either — recording asks the same question —
+ * so the list is not opened at all, rather than filled and left in the queue.
+ * NOT_FOUND (404): the lesson is gone, or RLS hides it. Either way the
+ * schedule the teacher tapped is older than the school's.
+ */
+export type RosterRefusal = 'NOT_ASSIGNED' | 'NOT_FOUND';
 
-  const filters = [`studentGroupId.in.(${groupIds.join(',')})`];
-  if (studentIds.length > 0) filters.push(`id.in.(${studentIds.join(',')})`);
+export function rosterRefusal(error: unknown): RosterRefusal | null {
+  if (!(error instanceof ApiError)) return null;
+  if (error.status === 403) return 'NOT_ASSIGNED';
+  if (error.status === 404) return 'NOT_FOUND';
+  return null;
+}
 
-  const { data, error } = await supabase
-    .from('Users')
-    .select('id, firstName, lastName')
-    .eq('role', 'STUDENT')
-    .eq('isActive', true)
-    .or(filters.join(','))
-    .order('lastName');
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Array<{ id: string; firstName: string; lastName: string }>;
+/**
+ * The lesson and its roster, written to the encrypted offline cache for the
+ * register to open with.
+ *
+ * Nothing is written before the gateway has answered: a refusal (above), or
+ * no answer at all, leaves the cache as it was. The lesson's pupils are
+ * exactly the ones the gateway named, the set a later broadcast replaces them
+ * with. displayName is built here and stays on-device only (encrypted SQLite)
+ * — never sent to APIs.
+ */
+export async function cacheLessonForAttendance(
+  lesson: Omit<CalendarLesson, 'studentIds'>,
+): Promise<CalendarLesson> {
+  const roster = await fetchRoster(lesson.id);
+
+  const students = sortByDisplayName(
+    roster.map((pupil) => ({
+      id: pupil.id,
+      displayName: `${pupil.firstName} ${pupil.lastName}`,
+      photoUri: null,
+    })),
+  );
+
+  const cached: CalendarLesson = {
+    id: lesson.id,
+    startTime: lesson.startTime,
+    endTime: lesson.endTime,
+    subjectName: lesson.subjectName,
+    roomName: lesson.roomName,
+    studentIds: students.map((student) => student.id),
+  };
+
+  await upsertStudents(students);
+  await upsertCalendarLesson(cached);
+  return cached;
 }

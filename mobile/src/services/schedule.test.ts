@@ -4,10 +4,9 @@ import { entryKey, fetchSchedule, toSections } from './schedule';
 jest.mock('./supabase', () => ({ getSupabase: jest.fn() }));
 
 /**
- * A chainable stub shaped like the PostgREST builder, the same one roster.test
- * uses: every call returns itself until the query is awaited. `errors` lets one
- * table fail while the other answers, which is the case this module is most
- * particular about.
+ * A chainable stub shaped like the PostgREST builder: every call returns
+ * itself until the query is awaited. `errors` lets one table fail while the
+ * other answers, which is the case this module is most particular about.
  */
 function supabaseStub(
   tables: Record<string, unknown[]>,

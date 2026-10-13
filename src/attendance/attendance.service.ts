@@ -320,10 +320,11 @@ export class AttendanceService {
    * The pupils the register lists for the lesson, by name: its active pupils,
    * as the one roster reader answers it (calendar/lesson-roster.ts), which is
    * also the list the teacher app caches and the broadcast replaces. The web
-   * register assembled the same union itself, from four reads of its own,
-   * until this; now a change to who attends a lesson reaches the list and
-   * the check that accepts the register (RECORDED, a superset of this list:
-   * see assertStudentsAreOnRoster) at once.
+   * register and the teacher app assembled the same union themselves, from
+   * four reads of their own, until they asked here; now a change to who
+   * attends a lesson reaches both lists and the check that accepts the
+   * register (RECORDED, a superset of this list: see
+   * assertStudentsAreOnRoster) at once.
    *
    * Names only, no contact details: the list shows a name and takes a
    * status. A teacher must be assigned to the lesson, as for the report the

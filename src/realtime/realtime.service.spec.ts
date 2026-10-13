@@ -173,11 +173,12 @@ describe('RealtimeService', () => {
 
     it('lists active pupils only, by every source, as the app’s own fetch of the lesson does', async () => {
       // The app replaces the lesson's pupils in its cache with this list, and
-      // mobile/src/services/roster.ts fills the same row with active pupils of
-      // the same three sources. Before the reader the named pupils went
-      // unfiltered: Eva, named on the lesson after she left, was written back
-      // into the cache by every broadcast. Membership as recorded is the
-      // attendance check's question (a superset), not the list's.
+      // mobile/src/services/roster.ts fills the same row from the register's
+      // route, which asks the reader with ACTIVE too. Before the reader the
+      // named pupils went unfiltered: Eva, named on the lesson after she
+      // left, was written back into the cache by every broadcast. Membership
+      // as recorded is the attendance check's question (a superset), not the
+      // list's.
       arrangeLesson(lessonRow({ extraGroups: [{ studentGroupId: 'Ma7' }] }));
       arrangeWorld({
         users: [

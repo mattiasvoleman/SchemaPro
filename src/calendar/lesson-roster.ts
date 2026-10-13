@@ -15,8 +15,9 @@ import type { Prisma, PrismaClient } from '@prisma/client';
  *      MasterLessonStudents).
  *
  * The attendance check asks it, and so do the register's list (GET
- * attendance/lessons/:id/roster), the teacher app's broadcast of a changed
- * lesson (realtime.service.ts) and every notice about a lesson: the day
+ * attendance/lessons/:id/roster, which the web register and the teacher app
+ * both ask), the teacher app's broadcast of a changed lesson
+ * (realtime.service.ts) and every notice about a lesson: the day
  * operations (cancel, reinstate, vikarie, room), the cover board, a
  * master-lesson edit, a DRAFT publish and the avbokning digest. Before it,
  * the notices read the home class alone (User.studentGroupId), so a lesson
