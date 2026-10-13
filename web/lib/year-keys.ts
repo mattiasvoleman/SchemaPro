@@ -31,7 +31,6 @@ export const YEAR_KEYS = {
   constraints: ["constraints"],
   /** Rosters attendance reads from a home class (lib/queries.ts). */
   lessonRoster: ["lessonRoster"],
-  groupStudents: ["groupStudents"],
   /** POST …/rollover/preview, per source year and options. */
   rolloverPreview: ["yearRolloverPreview"],
   /** POST …/activation/preview, per year. */
@@ -81,7 +80,6 @@ export const AFTER_ACTIVATION = [
   YEAR_KEYS.memberships,
   YEAR_KEYS.members,
   YEAR_KEYS.lessonRoster,
-  YEAR_KEYS.groupStudents,
   YEAR_KEYS.yearTimplans,
   YEAR_KEYS.timplanCoverage,
   YEAR_KEYS.rolloverPreview,

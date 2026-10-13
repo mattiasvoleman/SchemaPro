@@ -44,7 +44,9 @@ import type {
 import type { WorkRuleBody } from "@/lib/teacher-work-rules";
 
 // ---------------------------------------------------------------------------
-// Reads — straight from Supabase under RLS.
+// Reads — the school's own tables straight from Supabase under RLS; other
+// people's personal data (people, memberships, attendance, guardian links)
+// through the gateway, which records each such read in the läslogg.
 // ---------------------------------------------------------------------------
 
 /**
@@ -230,14 +232,14 @@ export function usePeople() {
       // The school's largest list, and the one an admin scrolls most. Sorted
       // in Swedish here rather than in each of its dozen consumers — the
       // register, every teacher and student dropdown, the group-member picker
-      // and the people CSV export all read this array as it comes.
-      sortByPersonName(
-        await selectAll<Person>(
-          "Users",
-          "id, role, firstName, lastName, email, phone, isActive, studentGroupId, invitedAt",
-          "lastName",
-        ),
-      ),
+      // and the people CSV export all read this array as it comes. The
+      // gateway orders by surname too, but under the database's collation.
+      //
+      // From the gateway, not PostgREST: every pupil's and colleague's
+      // contact details in one answer is the read the läslogg exists to
+      // record, and PostgREST shows a signed-in user no one's row but their
+      // own once the läslogg migration lands.
+      sortByPersonName(await api.get<Person[]>("/api/v1/users")),
   });
 }
 
@@ -775,37 +777,23 @@ export function isNotOnLesson(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403;
 }
 
-export function useGroupStudents(groupId: string | null) {
-  return useQuery({
-    queryKey: ["groupStudents", groupId],
-    enabled: groupId !== null,
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("Users")
-        .select("id, role, firstName, lastName, email, phone, isActive, studentGroupId")
-        .eq("studentGroupId", groupId!)
-        .eq("role", "STUDENT")
-        .eq("isActive", true)
-        .order("lastName");
-      if (error) throw new Error(error.message);
-      return (data ?? []) as Person[];
-    },
-  });
-}
-
+/**
+ * What the register already holds for a lesson, one row per pupil marked.
+ * From the gateway, which answers the teacher on the lesson (or an admin)
+ * and records the read in the läslogg; the roster beside it is read the same
+ * way. A 403 is the roster's: the teacher is not on the lesson, and asking
+ * again cannot change that, so it is not retried.
+ */
 export function useLessonAttendance(calendarLessonId: string) {
   return useQuery({
     queryKey: ["lessonAttendance", calendarLessonId],
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("AttendanceRecords")
-        .select("id, calendarLessonId, studentId, status, recordedAt, note")
-        .eq("calendarLessonId", calendarLessonId);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as AttendanceRecordRow[];
-    },
+    retry: (failureCount, error) => !isNotOnLesson(error) && failureCount < 1,
+    queryFn: async () =>
+      (
+        await api.get<{ records: AttendanceRecordRow[] }>(
+          `/api/v1/attendance/lessons/${encodeURIComponent(calendarLessonId)}/records`,
+        )
+      ).records,
   });
 }
 
@@ -1465,10 +1453,18 @@ export function useRoomOptimization() {
 export interface GroupAttendanceRow {
   studentId: string;
   status: "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
-  lesson: { startsAt: string; endsAt: string } | null;
+  lesson: { id: string; date: string; startsAt: string; endsAt: string } | null;
 }
 
-/** All attendance records for a class within a date window (admin reports). */
+/**
+ * All attendance records for a class within a date window (admin reports).
+ *
+ * The gateway filters by the PUPIL's home class, not the lesson's primary
+ * class, so electives and multi-class lessons count toward the right class;
+ * the window is the lessons' dates, both ends included, and the answer stops
+ * at 20 000 records as the PostgREST read did. A whole class's attendance is
+ * a read the läslogg records, which is why it is not PostgREST's any more.
+ */
 export function useGroupAttendance(
   groupId: string | null,
   fromDate: string,
@@ -1477,22 +1473,12 @@ export function useGroupAttendance(
   return useQuery({
     queryKey: ["groupAttendance", groupId, fromDate, toDate],
     enabled: groupId !== null,
-    queryFn: async () => {
-      const supabase = createClient();
-      // Filter by the STUDENT's class (not the lesson's primary class) so
-      // electives and multi-class lessons count toward the right class.
-      const { data, error } = await supabase
-        .from("AttendanceRecords")
-        .select(
-          "studentId, status, lesson:CalendarLessons!inner(id, date, startsAt, endsAt), student:Users!AttendanceRecords_studentId_fkey!inner(studentGroupId)",
+    queryFn: async () =>
+      (
+        await api.get<{ records: GroupAttendanceRow[] }>(
+          `/api/v1/attendance/groups/${encodeURIComponent(groupId!)}/records?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`,
         )
-        .eq("student.studentGroupId", groupId!)
-        .gte("lesson.date", fromDate)
-        .lte("lesson.date", toDate)
-        .limit(20000);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as GroupAttendanceRow[];
-    },
+      ).records,
   });
 }
 
@@ -1520,26 +1506,23 @@ export function useReportAttendance() {
 // children, absence reports, leave requests — live in lib/guardian-queries.ts.
 // ---------------------------------------------------------------------------
 
-/** Guardians linked to one student (admin management view). */
+/**
+ * Guardians linked to one student (admin management view), from the gateway:
+ * who a pupil's guardians are is a read of two people's data, which the
+ * läslogg records.
+ */
 export function useStudentGuardians(studentId: string | null) {
   return useQuery({
     queryKey: ["studentGuardians", studentId],
     enabled: studentId !== null,
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("GuardianStudents")
-        .select(
-          "id, guardianId, guardian:Users!GuardianStudents_guardianId_schoolId_fkey(id, firstName, lastName, email)",
-        )
-        .eq("studentId", studentId!);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as unknown as Array<{
-        id: string;
-        guardianId: string;
-        guardian: Pick<Person, "id" | "firstName" | "lastName" | "email">;
-      }>;
-    },
+    queryFn: () =>
+      api.get<
+        Array<{
+          id: string;
+          guardianId: string;
+          guardian: Pick<Person, "id" | "firstName" | "lastName" | "email">;
+        }>
+      >(`/api/v1/guardian-links?studentId=${encodeURIComponent(studentId!)}`),
   });
 }
 
@@ -1683,23 +1666,19 @@ export interface GroupMembershipRow {
   studentGroupId: string;
 }
 
-/** Every teaching-group membership in the school (RLS-scoped). */
 /**
- * Every teaching-group membership in the school.
+ * Every teaching-group membership in the school, as id pairs.
  *
- * Paged, because this is the table that actually exceeds a thousand rows: it
- * holds one row per student per group, so an ordinary secondary school passes
- * the cap several times over.
+ * From the gateway in one answer. This is the table that exceeds PostgREST's
+ * thousand-row cap — one row per student per group, so an ordinary secondary
+ * school passes it several times over — and it was paged for that until the
+ * läslogg moved it: which pupils sit in which groups is a read of every
+ * pupil's data, which the gateway records.
  */
 export function useGroupMemberships() {
   return useQuery({
     queryKey: ["groupMemberships"],
-    queryFn: () =>
-      selectAll<GroupMembershipRow>(
-        "StudentGroupMembers",
-        "studentId, studentGroupId",
-        "studentGroupId",
-      ),
+    queryFn: () => api.get<GroupMembershipRow[]>("/api/v1/student-groups/memberships"),
   });
 }
 

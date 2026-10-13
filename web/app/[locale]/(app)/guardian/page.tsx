@@ -82,7 +82,13 @@ export default function GuardianPage() {
   const tCommon = useTranslations("common");
   const locale = useLocale();
   const { profile } = useProfile();
-  const { data: children, isLoading, isError } = useMyChildren(profile.id);
+  // Only a guardian is asked for children: the gateway answers the read for
+  // a guardian alone, and refuses any other role that opens this page. That
+  // role sees "no children", as it did when the read was PostgREST's and
+  // came back empty, not a load failure.
+  const { data: children, isLoading, isError } = useMyChildren(
+    profile.role === "GUARDIAN" ? profile.id : null,
+  );
   const reportsQuery = useAbsenceReports();
   const leavesQuery = useLeaveRequests();
   const absenceActions = useAbsenceReportActions();

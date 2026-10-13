@@ -8,6 +8,7 @@ import {
   useCreateMasterLesson,
   useCrudMutations,
   useDeleteMasterLesson,
+  useGroupAttendance,
   useGroupMembers,
   useGroupMemberships,
   useGroups,
@@ -15,6 +16,7 @@ import {
   useImportCsv,
   useInvitations,
   useLessonActions,
+  useLessonAttendance,
   useLessonReportedAbsences,
   useLessonRoster,
   isNotOnLesson,
@@ -36,6 +38,7 @@ import {
   useScheduleVersions,
   useSetGroupMembers,
   useStartOptimization,
+  useStudentGuardians,
   useSubjects,
   useSubstituteSuggestions,
   useTeacherLessons,
@@ -49,13 +52,15 @@ import {
   useAbsenceReportActions,
   useAbsenceReports,
   useLeaveRequestActions,
+  useLeaveRequests,
   useMyChildren,
 } from "./guardian-queries";
 
 // ---------------------------------------------------------------------------
-// Module mocks. Reads go through the Supabase browser client, mutations through
-// the NestJS gateway wrapper — both are mocked at the module boundary so no
-// test ever touches the network.
+// Module mocks. Reads of the school's own tables go through the Supabase
+// browser client; reads of other people's data and every mutation through the
+// NestJS gateway wrapper — both are mocked at the module boundary so no test
+// ever touches the network.
 // ---------------------------------------------------------------------------
 
 const supabaseMocks = vi.hoisted(() => ({ from: vi.fn() }));
@@ -665,47 +670,177 @@ describe("useLessonRoster", () => {
   });
 });
 
-describe("useMyChildren", () => {
-  it("flattens the guardian link into linkId + person fields", async () => {
-    const student = {
-      id: "st-1",
-      role: "STUDENT",
-      firstName: "Alma",
-      lastName: "Berg",
-      email: "alma@example.com",
-      phone: null,
-      isActive: true,
-      studentGroupId: "g-1",
-    };
-    stubTable("GuardianStudents", ok([{ id: "link-1", studentId: "st-1", student }]));
+// ---------------------------------------------------------------------------
+// Attendance and guardian links: other people's data, read through the
+// gateway, which records each read in the läslogg. Each test pins the exact
+// path, and that PostgREST is not asked as well.
+// ---------------------------------------------------------------------------
+
+describe("useLessonAttendance", () => {
+  const record = {
+    id: "ar-1",
+    calendarLessonId: "cl-1",
+    studentId: "st-1",
+    status: "PRESENT",
+    recordedAt: "2026-10-14T07:05:00.000Z",
+    note: null,
+  };
+
+  it("asks the gateway for the lesson's records and keeps them under the key the report invalidates", async () => {
+    mockApi.get.mockResolvedValue({ records: [record] });
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useLessonAttendance("cl-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/attendance/lessons/cl-1/records");
+    expect(result.current.data).toEqual([record]);
+    expect(queryClient.getQueryData(["lessonAttendance", "cl-1"])).toEqual([record]);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
+  });
+
+  /** The app's own default: every query is asked again once (app-providers.tsx). */
+  const retryingOnce = () => {
+    const harness = createHarness();
+    harness.queryClient.setDefaultOptions({ queries: { retry: 1, retryDelay: 0 } });
+    return harness;
+  };
+
+  it("does not ask again after a 403, the roster's refusal of a teacher not on the lesson", async () => {
+    mockApi.get.mockRejectedValue(new ApiError(403, "You are not assigned to this lesson"));
+    const harness = retryingOnce();
+    const { result } = renderHook(() => useLessonAttendance("cl-1"), { wrapper: harness.wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again once after any other failure", async () => {
+    mockApi.get.mockRejectedValue(new ApiError(503, "Service Unavailable"));
+    const harness = retryingOnce();
+    const { result } = renderHook(() => useLessonAttendance("cl-1"), { wrapper: harness.wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("useGroupAttendance", () => {
+  it("asks the gateway for the class's records in the window and returns the rows the report reads", async () => {
+    const rows = [
+      {
+        studentId: "st-1",
+        status: "LATE",
+        lesson: {
+          id: "cl-1",
+          date: "2026-09-02",
+          startsAt: "2026-09-02T07:00:00.000Z",
+          endsAt: "2026-09-02T07:45:00.000Z",
+        },
+      },
+    ];
+    mockApi.get.mockResolvedValue({ records: rows });
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(
+      () => useGroupAttendance("g-7a", "2026-09-01", "2026-09-30"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith(
+      "/api/v1/attendance/groups/g-7a/records?from=2026-09-01&to=2026-09-30",
+    );
+    expect(result.current.data).toEqual(rows);
+    expect(
+      queryClient.getQueryData(["groupAttendance", "g-7a", "2026-09-01", "2026-09-30"]),
+    ).toEqual(rows);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
+  });
+
+  it("stays idle until a class is chosen", () => {
     const { wrapper } = createHarness();
+    const { result } = renderHook(
+      () => useGroupAttendance(null, "2026-09-01", "2026-09-30"),
+      { wrapper },
+    );
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(mockApi.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("useStudentGuardians", () => {
+  it("asks the gateway for the pupil's guardian links", async () => {
+    const links = [
+      {
+        id: "link-1",
+        guardianId: "guard-1",
+        guardian: { id: "guard-1", firstName: "Gun", lastName: "Berg", email: "gun@example.se" },
+      },
+    ];
+    mockApi.get.mockResolvedValue(links);
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useStudentGuardians("st-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/guardian-links?studentId=st-1");
+    expect(queryClient.getQueryData(["studentGuardians", "st-1"])).toEqual(links);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
+  });
+
+  it("stays idle until a pupil is chosen", () => {
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useStudentGuardians(null), { wrapper });
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(mockApi.get).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The guardian dashboard's reads: through the gateway, which scopes them to
+// the caller and records them in the läslogg. Each test pins the exact path,
+// and that PostgREST is not asked as well.
+// ---------------------------------------------------------------------------
+
+describe("useMyChildren", () => {
+  it("asks the gateway for the signed-in guardian's children and keys them on the guardian", async () => {
+    // No role, email or phone: the gateway hands a guardian only what the
+    // dashboard shows of a child.
+    const children = [
+      { linkId: "link-1", id: "st-1", firstName: "Alma", lastName: "Berg", isActive: true, studentGroupId: "g-1" },
+    ];
+    mockApi.get.mockResolvedValue(children);
+    const { queryClient, wrapper } = createHarness();
     const { result } = renderHook(() => useMyChildren("guard-1"), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual([{ linkId: "link-1", ...student }]);
-    expect(argsFor("GuardianStudents", "eq")).toEqual([["guardianId", "guard-1"]]);
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/family/children");
+    expect(result.current.data).toEqual(children);
+    expect(queryClient.getQueryData(["myChildren", "guard-1"])).toEqual(children);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 
   it("does not fetch before the guardian id is known", () => {
     const { wrapper } = createHarness();
     const { result } = renderHook(() => useMyChildren(null), { wrapper });
     expect(result.current.fetchStatus).toBe("idle");
+    expect(mockApi.get).not.toHaveBeenCalled();
     expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 });
 
 describe("useAbsenceReports", () => {
-  it("uses null placeholders in the key and no filters when called without options", async () => {
-    stubTable("AbsenceReports", ok([]));
+  it("asks for every report the caller may see when called without options, under null placeholders", async () => {
+    mockApi.get.mockResolvedValue([]);
     const { queryClient, wrapper } = createHarness();
     const { result } = renderHook(() => useAbsenceReports(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/absence-reports");
     expect(queryClient.getQueryData(["absenceReports", null, null])).toEqual([]);
-    expect(argsFor("AbsenceReports", "eq")).toEqual([]);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 
-  it("applies date and student filters and keys the cache on them", async () => {
+  it("sends the date and student filters and keys the cache on them", async () => {
     const rows = [
       {
         id: "ar-1",
@@ -719,7 +854,7 @@ describe("useAbsenceReports", () => {
         createdAt: "2026-08-10T06:00:00.000Z",
       },
     ];
-    stubTable("AbsenceReports", ok(rows));
+    mockApi.get.mockResolvedValue(rows);
     const { queryClient, wrapper } = createHarness();
     const { result } = renderHook(
       () => useAbsenceReports({ date: "2026-08-10", studentId: "st-1" }),
@@ -727,11 +862,58 @@ describe("useAbsenceReports", () => {
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(argsFor("AbsenceReports", "eq")).toEqual([
-      ["date", "2026-08-10"],
-      ["studentId", "st-1"],
-    ]);
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/absence-reports?date=2026-08-10&studentId=st-1");
     expect(queryClient.getQueryData(["absenceReports", "2026-08-10", "st-1"])).toEqual(rows);
+  });
+
+  it("sends only the filter it was given, encoded, so a value cannot add a filter of its own", async () => {
+    mockApi.get.mockResolvedValue([]);
+    const { wrapper } = createHarness();
+    const { result } = renderHook(
+      () => useAbsenceReports({ studentId: "st-1&date=2026-01-01" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/absence-reports?studentId=st-1%26date%3D2026-01-01");
+  });
+});
+
+describe("useLeaveRequests", () => {
+  it("asks for every request the caller may see without a status, under a null placeholder", async () => {
+    mockApi.get.mockResolvedValue([]);
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useLeaveRequests(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/leave-requests");
+    expect(queryClient.getQueryData(["leaveRequests", null])).toEqual([]);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
+  });
+
+  it("narrows to a status and keys the cache on it", async () => {
+    const rows = [
+      {
+        id: "lr-1",
+        studentId: "st-1",
+        requestedById: "guard-1",
+        startDate: "2026-11-02",
+        endDate: "2026-11-06",
+        reason: "Resa",
+        status: "PENDING",
+        decidedById: null,
+        decidedAt: null,
+        decisionNote: null,
+        createdAt: "2026-10-12T08:00:00.000Z",
+      },
+    ];
+    mockApi.get.mockResolvedValue(rows);
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useLeaveRequests("PENDING"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/leave-requests?status=PENDING");
+    expect(queryClient.getQueryData(["leaveRequests", "PENDING"])).toEqual(rows);
   });
 });
 
@@ -1514,91 +1696,59 @@ describe("teaching-group membership hooks", () => {
     expect(mockApi.get).not.toHaveBeenCalled();
   });
 
-  it("useGroupMemberships reads the whole school's membership rows", async () => {
-    stubTable("StudentGroupMembers", ok([{ studentId: "st-1", studentGroupId: "g-ma71" }]));
-    const { wrapper } = createHarness();
+  it("useGroupMemberships asks the gateway for the whole school's memberships", async () => {
+    mockApi.get.mockResolvedValue([{ studentId: "st-1", studentGroupId: "g-ma71" }]);
+    const { queryClient, wrapper } = createHarness();
     const { result } = renderHook(() => useGroupMemberships(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/student-groups/memberships");
     expect(result.current.data).toEqual([
       { studentId: "st-1", studentGroupId: "g-ma71" },
     ]);
-    expect(argsFor("StudentGroupMembers", "select")).toEqual([
-      ["studentId, studentGroupId"],
-    ]);
+    expect(queryClient.getQueryData(["groupMemberships"])).toEqual(result.current.data);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 
-  it("keeps paging past PostgREST's 1000-row cap until the table runs out", async () => {
-    // The failure this pins: a school with 5400 memberships got the first
-    // thousand rows and nothing else, so every group after the cut read "0
-    // students" and the schedule editor stopped seeing their clashes. The cap
-    // is invisible — the body simply arrives short — so only a test that
-    // returns a full page can catch a regression here.
-    const page = (count: number, offset: number) =>
-      ok(
-        Array.from({ length: count }, (_, i) => ({
-          studentId: `st-${offset + i}`,
-          studentGroupId: "g-ma71",
-        })),
-      );
-    stubTable("StudentGroupMembers", page(1000, 0), page(1000, 1000), page(400, 2000));
-
+  it("takes every membership from one answer, past the thousand rows PostgREST stopped at", async () => {
+    // The failure the paging fixed: a school with 5400 memberships got the
+    // first thousand rows and nothing else, so every group after the cut read
+    // "0 students" and the schedule editor stopped seeing their clashes. The
+    // gateway answers whole; the hook must neither cut nor ask again.
+    mockApi.get.mockResolvedValue(
+      Array.from({ length: 2400 }, (_, i) => ({ studentId: `st-${i}`, studentGroupId: "g-ma71" })),
+    );
     const { wrapper } = createHarness();
     const { result } = renderHook(() => useGroupMemberships(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
     expect(result.current.data).toHaveLength(2400);
-    // Three windows, and it stops at the short page rather than asking again.
-    expect(argsFor("StudentGroupMembers", "range")).toEqual([
-      [0, 999],
-      [1000, 1999],
-      [2000, 2999],
-    ]);
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
   });
 
-  it("orders by a tie-break column so pages cannot overlap or skip rows", async () => {
-    stubTable("StudentGroupMembers", ok([]));
-    const { wrapper } = createHarness();
-    const { result } = renderHook(() => useGroupMemberships(), { wrapper });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    // Ties on studentGroupId would otherwise be free to shuffle between
-    // requests, which duplicates some rows and loses others.
-    expect(argsFor("StudentGroupMembers", "order")).toEqual([
-      ["studentGroupId"],
-      ["id"],
-    ]);
-  });
-
-  it("pages the people list too — a big school has more than 1000 rows", async () => {
-    stubTable(
-      "Users",
-      ok(
-        Array.from({ length: 1000 }, (_, i) => ({
-          id: `u-${i}`,
-          role: "STUDENT",
-          firstName: "A",
-          lastName: "B",
-          email: `a${i}@s.se`,
-          phone: null,
-          isActive: true,
-          invitedAt: null,
-          studentGroupId: null,
-        })),
-      ),
-      ok([]),
+  it("takes the people list from one gateway answer too — a big school has more than 1000", async () => {
+    mockApi.get.mockResolvedValue(
+      Array.from({ length: 1500 }, (_, i) => ({
+        id: `u-${i}`,
+        role: "STUDENT",
+        firstName: "A",
+        lastName: "B",
+        email: `a${i}@s.se`,
+        phone: null,
+        isActive: true,
+        invitedAt: null,
+        studentGroupId: null,
+      })),
     );
 
     const { wrapper } = createHarness();
     const { result } = renderHook(() => usePeople(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(argsFor("Users", "range")).toEqual([
-      [0, 999],
-      [1000, 1999],
-    ]);
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/users");
+    expect(result.current.data).toHaveLength(1500);
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 
   it("useSetGroupMembers PUTs the replacement list and invalidates every reader", async () => {
@@ -1926,21 +2076,21 @@ describe("useGroups ordering", () => {
 
 
 describe("Swedish ordering across the remaining lists", () => {
-  it("orders people by surname, then given name", async () => {
-    stubTable(
-      "Users",
-      ok([
-        { id: "1", role: "TEACHER", firstName: "Alma", lastName: "Öberg", email: "a@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
-        { id: "2", role: "TEACHER", firstName: "Örjan", lastName: "Andersson", email: "o@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
-        { id: "3", role: "TEACHER", firstName: "Alma", lastName: "Andersson", email: "al@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
-        { id: "4", role: "TEACHER", firstName: "Nils", lastName: "Åkesson", email: "n@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
-      ]),
-    );
-    const { wrapper } = createHarness();
+  it("orders people by surname, then given name, whatever order the gateway answers in", async () => {
+    // The gateway orders by surname under the database's collation, which
+    // puts Åkesson and Öberg where an English list would.
+    mockApi.get.mockResolvedValue([
+      { id: "1", role: "TEACHER", firstName: "Alma", lastName: "Öberg", email: "a@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+      { id: "2", role: "TEACHER", firstName: "Örjan", lastName: "Andersson", email: "o@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+      { id: "3", role: "TEACHER", firstName: "Alma", lastName: "Andersson", email: "al@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+      { id: "4", role: "TEACHER", firstName: "Nils", lastName: "Åkesson", email: "n@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+    ]);
+    const { queryClient, wrapper } = createHarness();
     const { result } = renderHook(() => usePeople(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/users");
     expect(
       result.current.data?.map((person) => `${person.lastName} ${person.firstName}`),
     ).toEqual([
@@ -1949,20 +2099,24 @@ describe("Swedish ordering across the remaining lists", () => {
       "Åkesson Nils",
       "Öberg Alma",
     ]);
+    expect(queryClient.getQueryData(["people"])).toEqual(result.current.data);
   });
 
-  it("fetches invitedAt, which the people page renders invitation state from", async () => {
+  it("keeps invitedAt, which the people page renders invitation state from", async () => {
     // The page reads person.invitedAt to decide between "Skicka inbjudan" and
     // "Skicka igen", and to build the "not yet invited" bulk selection. The
-    // column was missing from this select, so every already-invited person
-    // read as un-invited — and the page's own tests could not see it, because
-    // they stub the hook with a Person that has the field.
-    stubTable("Users", ok([]));
+    // column was once missing from the PostgREST select, so every
+    // already-invited person read as un-invited — and the page's own tests
+    // could not see it, because they stub the hook with a Person that has the
+    // field. The gateway sends it; the hook must hand it on.
+    mockApi.get.mockResolvedValue([
+      { id: "1", role: "TEACHER", firstName: "Alma", lastName: "Berg", email: "a@s.se", phone: null, isActive: true, invitedAt: "2026-09-01T08:00:00.000Z", studentGroupId: null },
+    ]);
     const { wrapper } = createHarness();
     const { result } = renderHook(() => usePeople(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(argsFor("Users", "select")[0]?.[0]).toContain("invitedAt");
+    expect(result.current.data?.[0]?.invitedAt).toBe("2026-09-01T08:00:00.000Z");
   });
 
   it("orders rooms in Swedish — the names schools give them", async () => {
