@@ -24,6 +24,8 @@ export const ACCESS_KINDS = [
   "EMPLOYMENT",
   "STAFF_ABSENCES",
   "ACCESS_LOG",
+  "SCHEDULE",
+  "TEACHING_TIME",
 ] as const;
 export type AccessKind = (typeof ACCESS_KINDS)[number];
 export type AccessChannel = "WEB" | "APP" | "INTEGRATION" | "OTHER";

@@ -4647,7 +4647,9 @@
         "GUARDIANS": "Guardians",
         "EMPLOYMENT": "Post and employment",
         "STAFF_ABSENCES": "Staff absence",
-        "ACCESS_LOG": "The read log"
+        "ACCESS_LOG": "The read log",
+        "SCHEDULE": "Weekly schedule",
+        "TEACHING_TIME": "Teaching time"
       },
       "channels": {
         "WEB": "Web",
