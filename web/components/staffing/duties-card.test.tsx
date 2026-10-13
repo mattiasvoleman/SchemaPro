@@ -136,6 +136,32 @@ describe("DutiesCard", () => {
       ),
     ).toBeInTheDocument();
     expect(within(row).getByText("dutyRunsFrom(2027-01-07)")).toBeInTheDocument();
+    // Dated, with times: the generator holds them all läsår, and the row says so.
+    expect(within(row).getByText("dutyTimesAllYear")).toBeInTheDocument();
+  });
+
+  it("says the generator holds the times all läsår only for an uppdrag both dated and timed", () => {
+    duties.data = [
+      mentor,
+      apt,
+      { ...apt, id: "d-whole", label: "APT hela året", validFrom: "2026-08-17", validTo: "2027-06-11" },
+    ];
+    renderCard();
+    // Dated without a time, undated with one, and dated on the läsår's own bounds.
+    expect(screen.queryByText("dutyTimesAllYear")).toBeNull();
+  });
+
+  it("tells the form, once it has dates and a time, that the generator holds the time all läsår", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "addDuty" }));
+    await user.click(screen.getByRole("switch", { name: "dutyBlockTime" }));
+    expect(screen.queryByText("dutyTimesAllYearNotice")).toBeNull();
+    type("dutyValidFrom (optional)", "2027-01-07");
+    expect(screen.getByText("dutyTimesAllYearNotice")).toBeInTheDocument();
+    // The time switched off: nothing is held.
+    await user.click(screen.getByRole("switch", { name: "dutyBlockTime" }));
+    expect(screen.queryByText("dutyTimesAllYearNotice")).toBeNull();
   });
 
   it("adds an uppdrag with a blocked time, sending the times and never a constraint id", async () => {

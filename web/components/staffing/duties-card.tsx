@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarClock, CalendarRange, ClipboardList, Pencil, Plus, Trash2, X } from "lucide-react";
-import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
+import { CalendarClock, CalendarRange, ClipboardList, Info, Pencil, Plus, Trash2, X } from "lucide-react";
+import { dutyPeriodLine, dutySlotsLine, keepsTimesAllYear } from "@/lib/duty-lines";
 import { useAcademicYears } from "@/lib/queries";
 import { useTeacherDuties, useTeacherDutyActions } from "@/lib/staffing-queries";
 import {
@@ -87,7 +87,9 @@ const PROBLEM_FIELDS: Record<DutyProblem["reason"], (keyof DutyDraft)[]> = {
  * DATES ARE THE UPPDRAG'S. Från and Till, empty for the läsår's own bound,
  * say which weeks it runs: the load counts only those, and the vikarietavla
  * keeps the teacher busy only on them. A mentor change at jul is two
- * uppdrag, each with its dates. The weekly master holds the times all year.
+ * uppdrag, each with its dates. The weekly master holds the times all year,
+ * and the card says so where it applies (keepsTimesAllYear): on a listed
+ * uppdrag with dates and times, and in the form once both are filled in.
  *
  * COUNTED OR NOT. "Räknas som undervisning" is the school's choice for
  * resurstid and pedagogisk lunch; off (the default), the minutes are drawn in
@@ -241,6 +243,12 @@ export function DutiesCard({
                         <p className="flex items-start gap-1 text-foreground">
                           <CalendarClock className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                           {dutySlotsLine(t, tDays, duty.slots)}
+                        </p>
+                      ) : null}
+                      {keepsTimesAllYear(duty, year) ? (
+                        <p className="flex items-start gap-1 text-muted-foreground">
+                          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                          {t("dutyTimesAllYear")}
                         </p>
                       ) : null}
                       {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}
@@ -414,6 +422,13 @@ export function DutiesCard({
               <Label htmlFor={idFor("blocks")}>{t("dutyBlockTime")}</Label>
             </div>
             <p className="text-xs text-muted-foreground">{t("dutyBlockTimeHint")}</p>
+            {draft.blocks &&
+            keepsTimesAllYear(
+              { validFrom: draft.validFrom || null, validTo: draft.validTo || null, slots: draft.slots },
+              year,
+            ) ? (
+              <Notice>{t("dutyTimesAllYearNotice")}</Notice>
+            ) : null}
             {draft.blocks ? (
               <div className="space-y-3">
                 {draft.slots.map((slot, index) => (
