@@ -15419,10 +15419,13 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'read log: a teacher reads % row(s) of the log', n; END IF;
 END $$;
 
--- The quarter-hour, against the fixtures' rows of teacher 126.
+-- The quarter-hour, against the fixtures' rows of teacher 126. A roster of
+-- both pupils then records only the one not read ten minutes ago, and keeps
+-- the read's size, two (checked as the admin below).
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000126')::text, true);
 DO $$
 DECLARE
+  p123 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000123');
   p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
   n integer;
 BEGIN
@@ -15430,6 +15433,8 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'read log: a roster read ten minutes ago was recorded again'; END IF;
   n := app.personal_data_read('ATTENDANCE', 'WEB', ARRAY[p124]);
   IF n <> 1 THEN RAISE EXCEPTION 'read log: an attendance read twenty minutes ago kept the next one out'; END IF;
+  n := app.personal_data_read('ROSTER', 'WEB', ARRAY[p124, p123]);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: a roster of one new and one recent pupil recorded % people, not the new one', n; END IF;
 END $$;
 
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
@@ -15440,15 +15445,25 @@ DECLARE
   p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
   got text;
 BEGIN
-  SELECT string_agg(format('%s/%s/%s/%s', kind, channel, "actorRole",
+  SELECT string_agg(format('%s/%s/%s/%s/%s', kind, channel, "actorRole",
                            (SELECT string_agg(CASE s WHEN p123 THEN '123' WHEN p124 THEN '124' ELSE 'X' END, '+' ORDER BY s = p124, s)
-                              FROM unnest("subjectIds") s)),
+                              FROM unnest("subjectIds") s), "readSize"),
                     ' ' ORDER BY "at", kind)
     INTO got
     FROM "PersonalDataAccess"
    WHERE "actorId" = t122 AND "at" > now() - interval '1 minute' AND "apiKeyId" IS NULL;
-  IF got IS DISTINCT FROM 'ROSTER/APP/TEACHER/123+124 ATTENDANCE/WEB/TEACHER/123 PEOPLE/OTHER/TEACHER/123 GUARDIANS/OTHER/TEACHER/124' THEN
+  IF got IS DISTINCT FROM 'ROSTER/APP/TEACHER/123+124/2 ATTENDANCE/WEB/TEACHER/123/1 PEOPLE/OTHER/TEACHER/123/1 GUARDIANS/OTHER/TEACHER/124/1' THEN
     RAISE EXCEPTION 'read log: the teacher''s reads were recorded as %', got;
+  END IF;
+  -- Teacher 126's roster of both pupils: the row keeps the new pupil and the
+  -- read's size, so "others in the same read" counts the read, not the row.
+  SELECT string_agg(format('%s/%s', (SELECT string_agg(CASE s WHEN p123 THEN '123' WHEN p124 THEN '124' ELSE 'X' END, '+') FROM unnest("subjectIds") s), "readSize"), ' ')
+    INTO got
+    FROM "PersonalDataAccess"
+   WHERE "actorId" = (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000126')
+     AND kind = 'ROSTER' AND "at" > now() - interval '1 minute';
+  IF got IS DISTINCT FROM '123/2' THEN
+    RAISE EXCEPTION 'read log: the deduped roster was recorded as % (pupils/size), not 123/2', got;
   END IF;
 END $$;
 ROLLBACK;

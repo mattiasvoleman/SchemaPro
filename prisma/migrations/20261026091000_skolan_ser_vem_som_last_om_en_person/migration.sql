@@ -23,8 +23,12 @@
 --   * "channel"     WEB, APP or OTHER as the gateway was told by the client
 --                   (a description, not a permission), INTEGRATION for a key;
 --   * "kind"        what was read, below;
---   * "subjectIds"  the people whose data the response carried: pupils,
---                   teachers, guardians. Never the reader themself.
+--   * "subjectIds"  the people whose data the response carried and the row
+--                   records: pupils, teachers, guardians. Never the reader
+--                   themself, and not who the dedupe below left out;
+--   * "readSize"    how many people of the school the read named, the reader
+--                   aside, before the dedupe: "how many others were in the
+--                   same read" is readSize less one, whatever the row kept.
 --
 -- The kinds ("PersonalDataAccessKind"):
 --
@@ -71,8 +75,9 @@
 --     delivers nothing to anyone): PD403, and the read fails with it.
 --
 -- Of the ids given it keeps those that are Users of the reader's school, other
--- than the reader, not already logged under the dedupe, and writes them in
--- one row; it answers how many it wrote. It runs in the read's own
+-- than the reader (their count is the row's "readSize"), drops those already
+-- logged under the dedupe, and writes the rest in one row; it answers how
+-- many it wrote. It runs in the read's own
 -- transaction: a read whose log cannot be written fails, so the log has no
 -- holes the gateway knows of.
 --
@@ -112,11 +117,14 @@ CREATE TABLE "PersonalDataAccess" (
     "channel"    "PersonalDataAccessChannel" NOT NULL,
     "kind"       "PersonalDataAccessKind" NOT NULL,
     "subjectIds" UUID[] NOT NULL,
+    "readSize"   INTEGER NOT NULL,
 
     CONSTRAINT "PersonalDataAccess_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "PersonalDataAccess_names_somebody" CHECK (
         cardinality("subjectIds") >= 1 AND array_position("subjectIds", NULL) IS NULL
     ),
+    -- The read named at least everyone the row records.
+    CONSTRAINT "PersonalDataAccess_read_holds_the_row" CHECK ("readSize" >= cardinality("subjectIds")),
     -- A person reads with a role; a key has none and reads as an integration.
     CONSTRAINT "PersonalDataAccess_a_person_or_a_key" CHECK (
         ("channel" = 'INTEGRATION') = ("actorRole" IS NULL)
@@ -198,6 +206,7 @@ DECLARE
   v_channel "PersonalDataAccessChannel";
   v_since   timestamptz := clock_timestamp() - interval '15 minutes';
   v_recent  uuid[];
+  v_read    uuid[];
   v_new     uuid[];
 BEGIN
   IF p_kind IS NULL THEN
@@ -245,24 +254,25 @@ BEGIN
        AND a."kind" = p_kind AND a."at" > v_since;
   END IF;
 
-  SELECT coalesce(array_agg(u."id" ORDER BY u."id"), '{}'::uuid[]) INTO v_new
+  -- Everyone of the school the read named, the reader aside: the read's size.
+  SELECT coalesce(array_agg(u."id" ORDER BY u."id"), '{}'::uuid[]) INTO v_read
     FROM "Users" u
    WHERE u."schoolId" = v_school
      AND u."id" = ANY (p_subjects)
-     AND u."id" IS DISTINCT FROM v_actor
-     AND NOT (u."id" = ANY (v_recent));
+     AND u."id" IS DISTINCT FROM v_actor;
+  v_new := ARRAY(SELECT x FROM unnest(v_read) AS x WHERE NOT (x = ANY (v_recent)) ORDER BY x);
 
   IF cardinality(v_new) = 0 THEN
     RETURN 0;
   END IF;
-  INSERT INTO "PersonalDataAccess" ("schoolId", "actorId", "actorRole", "apiKeyId", "channel", "kind", "subjectIds")
-  VALUES (v_school, v_actor, v_role, v_key, v_channel, p_kind, v_new);
+  INSERT INTO "PersonalDataAccess" ("schoolId", "actorId", "actorRole", "apiKeyId", "channel", "kind", "subjectIds", "readSize")
+  VALUES (v_school, v_actor, v_role, v_key, v_channel, p_kind, v_new, cardinality(v_read));
   RETURN cardinality(v_new);
 END
 $$;
 
 COMMENT ON FUNCTION app.personal_data_read("PersonalDataAccessKind", "PersonalDataAccessChannel", uuid[]) IS
-  'Records that the transaction''s reader (a person by their claims, or an SS12000 key) read p_kind about p_subjects; leaves out the reader, people of other schools and anyone the same reader read of that kind in the last 15 minutes. Answers how many people it recorded.';
+  'Records that the transaction''s reader (a person by their claims, or an SS12000 key) read p_kind about p_subjects; leaves out the reader, people of other schools and anyone the same reader read of that kind in the last 15 minutes, and keeps the read''s whole size. Answers how many people it recorded.';
 
 -- ---------------------------------------------------------------------------
 -- Gallring: ACCESS_LOG. Both bodies are 20261021110000's plus the one branch

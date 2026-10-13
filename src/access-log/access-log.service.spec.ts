@@ -16,7 +16,7 @@ const row = (overrides: Record<string, unknown>) => ({
   actorId: TEACHER,
   actorRole: 'TEACHER',
   apiKeyId: null,
-  subjects: 25,
+  readSize: 25,
   ...overrides,
 });
 
@@ -41,8 +41,8 @@ describe('AccessLogService', () => {
   it('answers who read about the person, newest first, naming readers and keys, and records its own read', async () => {
     (tx as unknown as { $queryRaw: jest.Mock }).$queryRaw.mockResolvedValue([
       row({ id: 'e2' }),
-      row({ id: 'e1', at: new Date('2026-10-12T12:00:00.000Z'), kind: 'PEOPLE', channel: 'INTEGRATION', actorId: null, actorRole: null, apiKeyId: KEY, subjects: 1 }),
-      row({ id: 'e0', actorId: null, actorRole: 'SCHOOL_ADMIN', channel: 'WEB', kind: 'GUARDIANS', subjects: 3 }),
+      row({ id: 'e1', at: new Date('2026-10-12T12:00:00.000Z'), kind: 'PEOPLE', channel: 'INTEGRATION', actorId: null, actorRole: null, apiKeyId: KEY, readSize: 1 }),
+      row({ id: 'e0', actorId: null, actorRole: 'SCHOOL_ADMIN', channel: 'WEB', kind: 'GUARDIANS', readSize: 3 }),
     ]);
     tx.user.findMany.mockResolvedValue([{ id: TEACHER, firstName: 'Bo', lastName: 'Ås' }]);
     tx.integrationApiKey.findMany.mockResolvedValue([{ id: KEY, name: 'Kommunens elevregister' }]);

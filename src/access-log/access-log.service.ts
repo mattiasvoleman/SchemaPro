@@ -23,7 +23,7 @@ export interface AccessLogEntry {
   reader:
     | { type: 'PERSON'; id: string | null; name: string | null; role: UserRole | null }
     | { type: 'KEY'; id: string | null; name: string | null };
-  /** How many other people the same read named. */
+  /** How many other people the same read named (its readSize less this person). */
   others: number;
 }
 
@@ -45,7 +45,7 @@ interface LogRow {
   actorId: string | null;
   actorRole: UserRole | null;
   apiKeyId: string | null;
-  subjects: number;
+  readSize: number;
 }
 
 const nextDay = (day: string) => {
@@ -63,7 +63,8 @@ const nextDay = (day: string) => {
  *
  * The answer is itself a read about the person, so it is recorded as
  * ACCESS_LOG in the same transaction: a follow-up of the log shows up in it.
- * Only counts of the other people a read named, never who they were.
+ * Only how many other people a read named (its readSize, which the dedupe
+ * does not shrink), never who they were.
  */
 @Injectable()
 export class AccessLogService {
@@ -93,7 +94,7 @@ export class AccessLogService {
       const rows = await tx.$queryRaw<LogRow[]>(Prisma.sql`
         SELECT a."id", a."at", a."kind"::text AS "kind", a."channel"::text AS "channel",
                a."actorId", a."actorRole"::text AS "actorRole", a."apiKeyId",
-               cardinality(a."subjectIds")::int AS "subjects"
+               a."readSize"
           FROM "PersonalDataAccess" a
          WHERE a."subjectIds" @> ARRAY[${person.id}]::uuid[]
            ${after ? Prisma.sql`AND a."at" >= ${after}` : Prisma.empty}
@@ -137,7 +138,8 @@ export class AccessLogService {
                   name: row.actorId ? (nameOf.get(row.actorId) ?? null) : null,
                   role: row.actorRole,
                 },
-          others: Math.max(row.subjects - 1, 0),
+          // The read's size, not the row's: the dedupe may have kept fewer.
+          others: Math.max(row.readSize - 1, 0),
         })),
       };
     });
