@@ -3505,6 +3505,9 @@ model PersonalDataAccess {
   channel    PersonalDataAccessChannel
   kind       PersonalDataAccessKind
   subjectIds String[]                  @db.Uuid
+  /// How many people of the school the read named, the reader aside, before
+  /// the dedupe left out those already recorded: subjectIds is a subset.
+  readSize   Int
 
   @@index([subjectIds], type: Gin)
   @@index([schoolId, at])

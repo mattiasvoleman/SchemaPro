@@ -823,11 +823,11 @@ BEGIN
   INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")
   VALUES (l, 'Läslogg-nyckel', md5('rls-laslogg-key') || md5('rls-laslogg-key-2'), now());
 
-  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds") VALUES
-    (l, now() - interval '13 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123]),
-    (l, now() - interval '11 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123]);
-  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds")
-  SELECT g, now() - interval '5 years', u.id, 'SCHOOL_ADMIN', 'WEB', 'PEOPLE', ARRAY[(SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083')]
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize") VALUES
+    (l, now() - interval '13 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123], 1),
+    (l, now() - interval '11 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123], 1);
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize")
+  SELECT g, now() - interval '5 years', u.id, 'SCHOOL_ADMIN', 'WEB', 'PEOPLE', ARRAY[(SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083')], 1
     FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000081';
 
   ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
@@ -851,9 +851,9 @@ BEGIN
   PERFORM set_config('app.gallring', l::text, true);
   DELETE FROM "PersonalDataAccess" WHERE "schoolId" = l AND "actorId" = t126;
   PERFORM set_config('app.gallring', '', true);
-  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds") VALUES
-    (l, now() - interval '10 minutes', t126, 'TEACHER', 'WEB', 'ROSTER', ARRAY[p124]),
-    (l, now() - interval '20 minutes', t126, 'TEACHER', 'WEB', 'ATTENDANCE', ARRAY[p124]);
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize") VALUES
+    (l, now() - interval '10 minutes', t126, 'TEACHER', 'WEB', 'ROSTER', ARRAY[p124], 1),
+    (l, now() - interval '20 minutes', t126, 'TEACHER', 'WEB', 'ATTENDANCE', ARRAY[p124], 1);
 END $$;
 
 -- The policy tests run as the unprivileged role, which by design cannot see
