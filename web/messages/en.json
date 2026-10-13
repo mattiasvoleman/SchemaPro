@@ -4679,6 +4679,7 @@
     "LEAVE_REQUESTS": "Leave requests that ended before {date} have been purged under the school's decision.",
     "NOTIFICATIONS": "Notices before {date} have been purged under the school's decision.",
     "CHANGE_LOGS": "History before {date} has been purged under the school's decision.",
-    "ABSENCE_REASONS": "Reasons for absences that ended before {date} have been purged under the school's decision."
+    "ABSENCE_REASONS": "Reasons for absences that ended before {date} have been purged under the school's decision.",
+    "ACCESS_LOG": "Reads before {date} have been purged under the school’s decision."
   }
 }

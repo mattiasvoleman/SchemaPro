@@ -4679,6 +4679,7 @@
     "LEAVE_REQUESTS": "Ledighetsansökningar som slutade före {date} är gallrade enligt skolans beslut.",
     "NOTIFICATIONS": "Notiser före {date} är gallrade enligt skolans beslut.",
     "CHANGE_LOGS": "Historik före {date} är gallrad enligt skolans beslut.",
-    "ABSENCE_REASONS": "Orsaker till frånvaro som slutade före {date} är gallrade enligt skolans beslut."
+    "ABSENCE_REASONS": "Orsaker till frånvaro som slutade före {date} är gallrade enligt skolans beslut.",
+    "ACCESS_LOG": "Läsningar före {date} är gallrade enligt skolans beslut."
   }
 }
