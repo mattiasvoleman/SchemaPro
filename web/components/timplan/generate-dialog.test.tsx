@@ -24,11 +24,13 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
 
 const state = vi.hoisted(() => ({
   requirements: [] as { minutesPerLesson: number }[],
+  groups: [] as { id: string; academicYearId: string; name: string; kind: string; gradeLevel: number | null }[],
   generate: { mutateAsync: vi.fn(), isPending: false },
 }));
 
 vi.mock("@/lib/queries", () => ({
   useRequirements: () => ({ data: state.requirements }),
+  useGroups: () => ({ data: state.groups }),
 }));
 vi.mock("@/lib/timplan-queries", () => ({
   useGenerateRequirements: () => state.generate,
@@ -143,6 +145,7 @@ const renderDialog = (plan: { id: string; name: string; status: "DRAFT" | "DECID
 
 beforeEach(() => {
   state.requirements = [];
+  state.groups = [];
   state.generate = {
     mutateAsync: vi.fn(async (body: GenerateBody & { planId: string }) => answer(body)),
     isPending: false,
@@ -455,5 +458,121 @@ describe("GenerateDialog", () => {
     renderDialog();
     await user.click(screen.getByRole("button", { name: "preview" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Läsåret finns inte.");
+  });
+});
+
+describe("GenerateDialog: språkval as a block", () => {
+  const entries = [
+    { subjectId: "s-ma", gradeLevel: 7, minutesPerWeek: 175 },
+    { subjectId: "s-de", gradeLevel: 7, minutesPerWeek: 120 },
+    { subjectId: "s-es", gradeLevel: 7, minutesPerWeek: 120 },
+    { subjectId: "s-de", gradeLevel: 9, minutesPerWeek: 120 },
+    { subjectId: "s-fr", gradeLevel: 7, minutesPerWeek: 0 },
+  ];
+  const subjects = [
+    { id: "s-ma", name: "Matematik", nationalCode: "MA" },
+    { id: "s-de", name: "Tyska", nationalCode: "M2" },
+    { id: "s-es", name: "Spanska", nationalCode: "M2" },
+    { id: "s-fr", name: "Franska", nationalCode: "M2" },
+  ];
+  const renderWithPlan = () =>
+    render(
+      <GenerateDialog
+        open
+        onOpenChange={() => {}}
+        plan={PLAN}
+        years={YEARS}
+        initialYearId={null}
+        entries={entries}
+        subjects={subjects}
+      />,
+    );
+
+  beforeEach(() => {
+    state.groups = [
+      { id: "g-7a", academicYearId: "y-1", name: "7A", kind: "CLASS", gradeLevel: 7 },
+      { id: "g-ty7", academicYearId: "y-1", name: "Ty7", kind: "TEACHING_GROUP", gradeLevel: 7 },
+      { id: "g-sp7", academicYearId: "y-1", name: "Sp7", kind: "TEACHING_GROUP", gradeLevel: 7 },
+      { id: "g-old", academicYearId: "y-0", name: "Ty7 förra året", kind: "TEACHING_GROUP", gradeLevel: 7 },
+    ];
+    state.generate.mutateAsync = vi.fn(async (body: GenerateBody & { planId: string }) => {
+      const base = answer(body);
+      const rows = (body.languageGroups ?? []).map((choice) => ({
+        studentGroupId: choice.studentGroupId,
+        groupName: choice.studentGroupId === "g-ty7" ? "Ty7" : "Sp7",
+        subjectId: choice.subjectId,
+        subjectName: choice.subjectId === "s-de" ? "Tyska" : "Spanska",
+        gradeLevel: 7,
+        targetMinutesPerWeek: 120,
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+        plannedMinutesPerWeek: 120,
+        surplusMinutesPerWeek: 0,
+        overridden: false,
+        capped: false,
+        blockName: "Språkval åk 7",
+      }));
+      return {
+        ...base,
+        rows: [...base.rows, ...rows],
+        ...(rows.length > 0 ? { blocks: [{ name: "Språkval åk 7", gradeLevel: 7 }] } : {}),
+      };
+    });
+  });
+
+  it("offers the year's teaching groups for each M2 language of the årskurser the preview found, and nothing before", async () => {
+    const user = userEvent.setup();
+    renderWithPlan();
+    expect(screen.queryByText("languagesTitle")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await screen.findByText("languagesTitle");
+    // Åk 9 is not attached to this year (gradeLevels [7]); Franska has no minutes.
+    expect(screen.getByLabelText("languageLabel(Spanska|7)")).toBeInTheDocument();
+    expect(screen.getByLabelText("languageLabel(Tyska|7)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("languageLabel(Tyska|9)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("languageLabel(Franska|7)")).not.toBeInTheDocument();
+    const options = within(screen.getByLabelText("languageLabel(Tyska|7)")).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["languageNone", "Ty7", "Sp7"]);
+  });
+
+  it("asks a new preview with the groups chosen, shows the block on its rows without an edit, and applies them", async () => {
+    const user = userEvent.setup();
+    renderWithPlan();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await user.selectOptions(await screen.findByLabelText("languageLabel(Tyska|7)"), "g-ty7");
+    await user.selectOptions(screen.getByLabelText("languageLabel(Spanska|7)"), "g-sp7");
+    // The preview on screen was asked without them.
+    expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    const languageGroups = [
+      { gradeLevel: 7, subjectId: "s-de", studentGroupId: "g-ty7" },
+      { gradeLevel: 7, subjectId: "s-es", studentGroupId: "g-sp7" },
+    ];
+    expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dryRun: true, languageGroups }),
+    );
+    const tyska = await screen.findByRole("row", { name: /Ty7/ });
+    expect(within(tyska).getByText("Språkval åk 7")).toBeInTheDocument();
+    expect(within(tyska).queryByRole("textbox")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^apply/ }));
+    expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dryRun: false, languageGroups }),
+    );
+    expect(await screen.findByText("resultBlocks(Språkval åk 7)")).toBeInTheDocument();
+  });
+
+  it("sends no languageGroups while no group is chosen", async () => {
+    const user = userEvent.setup();
+    renderWithPlan();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await screen.findByText("languagesTitle");
+    await user.click(screen.getByRole("button", { name: /^apply/ }));
+
+    expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ languageGroups: expect.anything() }),
+    );
   });
 });

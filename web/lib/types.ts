@@ -277,6 +277,13 @@ export interface Person {
   studentGroupId: string | null;
 }
 
+/** A parallel block of one läsår: "Språkval åk 7". Its posts carry its id. */
+export interface TeachingBlock {
+  id: string;
+  academicYearId: string;
+  name: string;
+}
+
 export interface TeachingRequirement {
   id: string;
   academicYearId: string;
@@ -337,6 +344,14 @@ export interface TeachingRequirement {
   ownDistribution?: boolean;
   maxLessonsPerDay?: number | null;
   minDaysBetween?: number | null;
+  /**
+   * Parallella block: the block this post runs in, whose posts the generator
+   * places at the same times, or null. Optional because only useRequirements
+   * names the column; absent is no block. A post in a block has the lessons
+   * and weeks of the rest of it (the database refuses anything else, 409
+   * BLOCK_MEMBERS_DIFFER), so the dialog says so before a save does.
+   */
+  blockId?: string | null;
   /**
    * Which weeks the subject is read over
  — said once on the requirement and

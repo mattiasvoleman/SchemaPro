@@ -434,6 +434,14 @@ vi.mock("@/i18n/navigation", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// Parallella block: the lazily loaded module, replaced by a stand-in that says
+// what the page handed it. Its own behaviour is teaching-blocks.test.tsx's.
+vi.mock("@/components/timplan/teaching-blocks", () => ({
+  BlocksHost: ({ academicYearId, requirements }: { academicYearId: string; requirements: unknown[] }) => (
+    <section aria-label="blocks-host">{`${academicYearId}: ${requirements.length}`}</section>
+  ),
+}));
+
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
@@ -2337,5 +2345,37 @@ describe("ämnesfördelning on the timplanspost", () => {
 
     expect(screen.getByText("perDayInvalid")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+  });
+});
+
+describe("Parallella block on the timplan", () => {
+  it("is off until pressed, then shows the year's blocks above the matrix", async () => {
+    render(<RequirementsPage />);
+    const toggle = screen.getByRole("button", { name: "blocks.toggle" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByLabelText("blocks-host")).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByLabelText("blocks-host")).toHaveTextContent(`y1: ${requirements.length}`);
+
+    await userEvent.click(toggle);
+    expect(screen.queryByLabelText("blocks-host")).not.toBeInTheDocument();
+  });
+
+  it("says in the cell dialog that a post in a block changes with the block, and only there", async () => {
+    state.requirements = loaded(
+      requirements.map((requirement) =>
+        requirement.id === "r-so" ? { ...requirement, blockId: "b-1" } : requirement,
+      ),
+    );
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByLabelText(/^cellLabel\w*\(7A\|Samhällsorientering\|/));
+    expect(screen.getByRole("dialog")).toHaveTextContent("blocks.memberNotice");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByLabelText(/^cellLabel\w*\(7A\|Slöjd\|/));
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("blocks.memberNotice");
   });
 });

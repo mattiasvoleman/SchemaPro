@@ -734,6 +734,8 @@ export default function TimplanPage() {
             plan={{ id: shown.id, name: shown.name, status: shown.status }}
             years={years ?? []}
             initialYearId={null}
+            entries={shown.entries}
+            subjects={subjects ?? []}
           />
         ) : null}
         {dialog === "yearTimplans" ? (

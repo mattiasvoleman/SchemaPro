@@ -265,7 +265,9 @@ export function useRequirements(academicYearId: string | null) {
             // read as 2 × 80 everywhere, and the dialog save it back so.
             // And the ämnesfördelning: left out, a row with its own rule would
             // open as following its subject, and the dialog save it back so.
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, lessonLengths, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, ownDistribution, maxLessonsPerDay, minDaysBetween, recurrence, startDate, endDate",
+            // And the block: left out, a post in one would open as free to
+            // change its lessons alone.
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, lessonLengths, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, ownDistribution, maxLessonsPerDay, minDaysBetween, blockId, recurrence, startDate, endDate",
           )
           .eq("academicYearId", academicYearId!)
           .order("id")

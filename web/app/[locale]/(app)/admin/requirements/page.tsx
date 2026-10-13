@@ -259,6 +259,9 @@ function RecurrenceFieldsFallback() {
  */
 type TargetModule = typeof import("@/components/timplan/requirements-target");
 const loadTargetModule = () => import("@/components/timplan/requirements-target");
+/** Parallella block, loaded on the first press of "Block" as Mål mode is. */
+type BlocksModule = typeof import("@/components/timplan/teaching-blocks");
+const loadBlocksModule = () => import("@/components/timplan/teaching-blocks");
 
 /**
  * Whether a pupil buffer field holds something the API will take: an integer
@@ -570,6 +573,24 @@ export default function RequirementsPage() {
       live = false;
     };
   }, [targetMode, targetModule, tCommon]);
+  /** "Block": the year's parallel blocks above the matrix, its module fetched on the first press. */
+  const [blocksMode, setBlocksMode] = useState(false);
+  const [blocksModule, setBlocksModule] = useState<BlocksModule | null>(null);
+  useEffect(() => {
+    if (!blocksMode || blocksModule) return;
+    let live = true;
+    loadBlocksModule().then(
+      (module) => live && setBlocksModule(module),
+      () => {
+        if (!live) return;
+        setBlocksMode(false);
+        toast.error(tCommon("error"));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [blocksMode, blocksModule, tCommon]);
   const [cell, setCell] = useState<CellTarget | null>(null);
   /** Ta bort asks first: a ConfirmDialog over the cell dialog, named after the cell. */
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -1093,6 +1114,14 @@ export default function RequirementsPage() {
             >
               {t("target.toggle")}
             </Button>
+            <Button
+              variant={blocksMode ? "default" : "outline"}
+              aria-pressed={blocksMode}
+              disabled={!activeYearId}
+              onClick={() => setBlocksMode((on) => !on)}
+            >
+              {t("blocks.toggle")}
+            </Button>
             {/*
               Export before import, as on admin/subjects and admin/groups. Both
               carry their own text label, so neither needs an aria-label — an
@@ -1247,6 +1276,18 @@ export default function RequirementsPage() {
           ) : targetMode ? (
             <p role="status" className="text-sm text-foreground">
               {t("target.loading")}
+            </p>
+          ) : null}
+          {blocksMode && blocksModule && activeYearId ? (
+            <blocksModule.BlocksHost
+              academicYearId={activeYearId}
+              requirements={requirements ?? []}
+              groups={yearGroups}
+              subjects={subjects ?? []}
+            />
+          ) : blocksMode ? (
+            <p role="status" className="text-sm text-foreground">
+              {t("blocks.loading")}
             </p>
           ) : null}
           {/*
@@ -1616,6 +1657,9 @@ export default function RequirementsPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {cell?.existing?.blockId ? (
+              <Notice role={null}>{t("blocks.memberNotice")}</Notice>
+            ) : null}
             {/* Three columns while extra lengths exist, so their rows line up under this pair. */}
             <div className={form.extraLengths.length > 0 ? EXTRA_ROW_GRID : "grid gap-4 sm:grid-cols-2 [&>*]:min-w-0"}>
               <div className="space-y-1.5">
