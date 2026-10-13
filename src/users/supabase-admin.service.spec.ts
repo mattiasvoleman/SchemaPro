@@ -1,12 +1,12 @@
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import { SupabaseAdminService } from './supabase-admin.service';
+import { SupabaseAdminService, UserLookupError } from './supabase-admin.service';
 
 const SUPABASE_URL = 'https://supabase.test';
 const SERVICE_KEY = 'service-role-key';
 const AUTH_ID = '99999999-9999-4999-8999-999999999999';
 const EMAIL = 'invitee@school.se';
-/** The Users row the login is for, and when the row took it. */
+/** The Users row the login is for, and when the row was last invited. */
 const USER_ID = '66666666-6666-4666-8666-666666666666';
 const OWNER = { userId: USER_ID, since: new Date('2026-09-01T08:00:00Z') };
 
@@ -450,7 +450,7 @@ describe('SupabaseAdminService', () => {
     });
 
     describe('a login that may not be the row\'s own', () => {
-      /** After OWNER's row took the login, and before. */
+      /** After OWNER's row was last invited, and before. */
       const SINCE = '2026-09-03T06:45:00Z';
       const BEFORE = '2026-08-20T12:00:00Z';
 
@@ -471,9 +471,29 @@ describe('SupabaseAdminService', () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
       });
 
-      it('moves nothing for an untagged login nobody has signed in with since the row took it', async () => {
+      it('moves nothing for an untagged login nobody has signed in with since the row was last invited', async () => {
         // Given to the row by address: it can be anybody's.
         fetchMock.mockResolvedValueOnce(untagged({ email: 'old@school.se', last_sign_in_at: BEFORE }));
+
+        await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
+          outcome: 'foreign',
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('takes the person\'s own untagged login for foreign when they signed in only before an invitation sent again', async () => {
+        // The trade-off: invited in June, signed in in August, sent the
+        // invitation again on 1 September (OWNER.since). That restamped
+        // invitedAt and recorded nothing, so until the person signs in again
+        // a new address gets a login of its own and this one is left.
+        fetchMock.mockResolvedValueOnce(
+          untagged({
+            email: 'old@school.se',
+            invited_at: '2026-06-10T09:00:00Z',
+            email_confirmed_at: '2026-06-10T09:20:00Z',
+            last_sign_in_at: BEFORE,
+          }),
+        );
 
         await expect(makeService().changeUserEmail(AUTH_ID, EMAIL, OWNER)).resolves.toEqual({
           outcome: 'foreign',
@@ -659,7 +679,7 @@ describe('SupabaseAdminService', () => {
       expect(call(1).url.pathname).toBe(`/auth/v1/admin/users/${AUTH_ID}`);
     });
 
-    it('deletes an untagged login somebody has signed in with since the row took it', async () => {
+    it('deletes an untagged login somebody has signed in with since the row was last invited', async () => {
       fetchMock
         .mockResolvedValueOnce(untagged({ email: 'old@school.se', last_sign_in_at: '2026-09-03T06:45:00Z' }))
         .mockResolvedValueOnce(jsonResponse({ id: AUTH_ID }));
@@ -694,23 +714,25 @@ describe('SupabaseAdminService', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('propagates a failed lookup without deleting', async () => {
+    it('propagates a failed lookup without deleting, as a lookup error', async () => {
+      // The caller logs it apart from a failed delete: whose the login is
+      // was never decided.
       fetchMock.mockResolvedValueOnce(refusal('not_admin', 'User not allowed', 403));
 
-      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).rejects.toThrow(
-        'Supabase user lookup failed: User not allowed',
-      );
+      const deletion = makeService().deleteOwnedUser(AUTH_ID, OWNER);
+      await expect(deletion).rejects.toThrow(UserLookupError);
+      await expect(deletion).rejects.toThrow('Supabase user lookup failed: User not allowed');
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('propagates a failed delete', async () => {
+    it('propagates a failed delete, not as a lookup error', async () => {
       fetchMock
         .mockResolvedValueOnce(ours())
         .mockResolvedValueOnce(jsonResponse({ msg: 'permission denied' }, 403));
 
-      await expect(makeService().deleteOwnedUser(AUTH_ID, OWNER)).rejects.toThrow(
-        'Supabase delete failed: permission denied',
-      );
+      const deletion = makeService().deleteOwnedUser(AUTH_ID, OWNER);
+      await expect(deletion).rejects.toThrow('Supabase delete failed: permission denied');
+      await expect(deletion).rejects.not.toThrow(UserLookupError);
     });
 
     it('refuses instead of calling out when unconfigured', async () => {
