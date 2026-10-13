@@ -211,7 +211,7 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
        VALUES ($1, $2, 'Probe', 'Rektor', 'SCHOOL_ADMIN', gen_random_uuid(), true, now()) RETURNING id, "authId"`,
       [school.id, `${marker}-fall-admin@example.invalid`],
     );
-    const principal: AuthenticatedUser = { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN };
+    const principal: AuthenticatedUser = { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
     for (const [index, entry] of cases.entries()) {
       const pupil = await one<{ id: string }>(
         `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
@@ -690,7 +690,14 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
     const parent = await member('GUARDIAN', 'vera', 'Vera');
     const pupil = await member('STUDENT', 'ella', 'Ella', class7a);
     await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [id, parent.id, pupil.id]);
-    const of = (who: Person, role: Role): AuthenticatedUser => ({ authId: who.authId, userId: who.id, schoolId: id, role });
+    const of = (who: Person, role: Role): AuthenticatedUser => ({
+      authId: who.authId,
+      userId: who.id,
+      schoolId: id,
+      role,
+      // Rektor, as JwtStrategy reads a full administrator's profile (Roller i skolan).
+      ...(role === Role.SCHOOL_ADMIN ? { adminProfile: 'FULL' as const } : {}),
+    });
     const headUser = of(head, Role.SCHOOL_ADMIN);
     await employments.upsert(mentor.id, source.id, { employmentPercent: 100, signature: 'ANME' }, headUser);
     await duties.create(

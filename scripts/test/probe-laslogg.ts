@@ -174,7 +174,7 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
     [s, `${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`, '{ss12000.v1,persons.read,responsibles.read}'],
   );
 
-  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s, channel: 'WEB' };
+  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s, channel: 'WEB', adminProfile: 'FULL' };
   const asTeacher: AuthenticatedUser = { authId: teacher.authId, role: Role.TEACHER, userId: teacher.id, schoolId: s, channel: 'APP' };
   const asGuardian: AuthenticatedUser = { authId: guardian.authId, role: Role.GUARDIAN, userId: guardian.id, schoolId: s, channel: 'APP' };
   const log = async (where = 'TRUE', params: unknown[] = []): Promise<LogRow[]> =>
@@ -370,7 +370,7 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
 
     // A second administrator, so that lä2's and lä5's quarter-hour leaves these rows to be written.
     const second = await person('SCHOOL_ADMIN', 'Admin2');
-    const asSecond: AuthenticatedUser = { authId: second.authId, role: Role.SCHOOL_ADMIN, userId: second.id, schoolId: s, channel: 'WEB' };
+    const asSecond: AuthenticatedUser = { authId: second.authId, role: Role.SCHOOL_ADMIN, userId: second.id, schoolId: s, channel: 'WEB', adminProfile: 'FULL' };
 
     await check('(lä9) the sync\'s change review records each change under its kind, and the provisioning list whom it lists', async () => {
       const source = await one<{ id: string }>(

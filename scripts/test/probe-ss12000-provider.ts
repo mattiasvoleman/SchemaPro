@@ -95,7 +95,7 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
   const teacher = await person('TEACHER', `${marker}-sp-teacher@example.invalid`, 'Tove', 'Lärare');
   const pupil = await person('STUDENT', `${marker}-sp-pupil@example.invalid`, 'Palle', 'Girgensohn', group.id);
   const leaver = await person('STUDENT', `${marker}-sp-leaver@example.invalid`, 'Per', 'Slutar', group.id);
-  const admin: AuthenticatedUser = { authId: adminRow.authId, userId: adminRow.id, schoolId: school.id, role: Role.SCHOOL_ADMIN };
+  const admin: AuthenticatedUser = { authId: adminRow.authId, userId: adminRow.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
   const room = await one<{ id: string }>(`INSERT INTO "Rooms" ("schoolId", name, capacity, "updatedAt") VALUES ($1, 'Sal 1', 30, now()) RETURNING id`, [school.id]);
   const subject = await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, 'Matematik', now()) RETURNING id`, [school.id]);
   const post = await one<{ id: string }>(

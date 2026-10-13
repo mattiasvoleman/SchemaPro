@@ -106,7 +106,7 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
   const adminRow = await person('SCHOOL_ADMIN', `${marker}-ss-admin@example.invalid`, 'Probe', 'Admin');
   // A teacher already in the catalogue, by the address the source gives: a LINK, not a create.
   const teacherRow = await person('TEACHER', 'tor.lund@ekskolan.example', 'Tor', 'Lund');
-  const admin: AuthenticatedUser = { authId: adminRow.authId, userId: adminRow.id, schoolId: school.id, role: Role.SCHOOL_ADMIN };
+  const admin: AuthenticatedUser = { authId: adminRow.authId, userId: adminRow.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
 
   const tls = makeTestTls();
   const provider = new MockSs12000Provider(tls, { id: 'probe', secret: SECRET });
