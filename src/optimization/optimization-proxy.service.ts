@@ -19,6 +19,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
 import { coverLockedLessons } from './locked-coverage';
+import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
 import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
 import { effectiveDistribution, hasDistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
@@ -132,6 +133,13 @@ export interface AnonMaps {
    * exists in no table and nothing would report it.
    */
   workRuleAnonMap: Map<string, string>;
+  /**
+   * And the parallel block a refusal names (BLOCK_CANNOT_BE_PLACED and the
+   * block's other sentences). Optional like `lessonAnonMap`: only the
+   * generator's route sends blocks, and a route that sends none has no block
+   * a refusal could name.
+   */
+  blockAnonMap?: Map<string, string>;
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
   /**
@@ -229,6 +237,8 @@ export class OptimizationProxyService {
       constraintAnonMap,
       workRuleAnonMap,
       nameById,
+      blockAnonMap,
+      blockRefusal,
       storedRules,
     } = fetched.data;
 
@@ -239,8 +249,25 @@ export class OptimizationProxyService {
       roomTypeAnonMap,
       constraintAnonMap,
       workRuleAnonMap,
+      blockAnonMap,
       nameById,
     };
+
+    // A block whose lessons are partly locked is refused here, by name, for
+    // the reason unstaffedRefusal gives for its own: the engine is not woken,
+    // nothing is written, and the grundschema stands. See judgeBlocks.
+    if (blockRefusal) {
+      this.logger.warn(
+        `Optimization refused before the engine: ${blockRefusal.conflicts.length} block(s) partly locked [requestId=${requestId}, academicYearId=${academicYearId}]`,
+      );
+      return {
+        requestId,
+        status: 'INFEASIBLE',
+        lessons: [],
+        lunches: [],
+        conflicts: this.realiseConflicts(blockRefusal, anonMaps),
+      };
+    }
 
     // The school's saved lunch rules, unless this caller brought their own.
     // Body-wins rather than merge-per-field: two half-specified rule sets
@@ -351,6 +378,8 @@ export class OptimizationProxyService {
       // can look up in no table — and no NAME will ever fill that slot for it,
       // since the teacher map is discarded by design.
       maps.workRuleAnonMap,
+      // The block a block's sentence names, which `resourceIds` carries too.
+      maps.blockAnonMap ?? new Map<string, string>(),
     ]) {
       for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
     }
@@ -576,6 +605,10 @@ export class OptimizationProxyService {
     workRuleAnonMap: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
     nameById: Map<string, string>;
+    /** Parallella block: the block a refusal names, back to the real one. */
+    blockAnonMap: Map<string, string>;
+    /** BLOCK_PARTLY_LOCKED, in anonymous ids, or null to go on. */
+    blockRefusal: AiEngineConflictAnalysis | null;
     storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
@@ -598,6 +631,10 @@ export class OptimizationProxyService {
     // here than anywhere else, because the refusal is about a PERSON and the
     // person's own map is deliberately thrown away.
     const workRuleAnonMap = new Map<string, string>();
+    // Parallella block. A map for the reason the work rules have one: the
+    // engine names the block in every sentence about it, and the id has to
+    // come back to the row the school wrote.
+    const blockAnonMap = new Map<string, string>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
       const existing = map.get(realId);
@@ -633,6 +670,10 @@ export class OptimizationProxyService {
         ownDistribution: true,
         maxLessonsPerDay: true,
         minDaysBetween: true,
+        // Parallella block: the block the row runs in. Forwarded as an
+        // anonymous id, and only for a block the engine can hold together —
+        // see judgeBlocks.
+        blockId: true,
         // Never forwarded — the engine has no notion of weeks. Read here
         // because the subtraction below compares a preserved lesson's weeks
         // against these, and stamped on the lessons the run produces so a
@@ -761,6 +802,19 @@ export class OptimizationProxyService {
       const roomTypeId = requirement.subject.requiredRoomTypeId;
       const roomType = requirement.subject.requiredRoomType?.name;
       if (roomTypeId && roomType) nameById.set(roomTypeId, roomType);
+    }
+    // A block is named by the name the school gave it ("Språkval åk 7"), like a
+    // class. Read only when a row of the year is in one, so a school that has
+    // written no block asks the database nothing more than it did.
+    const blockIds = [
+      ...new Set(rawRequirements.flatMap((r) => (r.blockId ? [r.blockId] : []))),
+    ];
+    if (blockIds.length > 0) {
+      const blocks = await tx.teachingBlock.findMany({
+        where: { id: { in: blockIds } },
+        select: { id: true, name: true },
+      });
+      for (const block of blocks) nameById.set(block.id, block.name);
     }
     const homeClassIds = allGroups
       .filter((group) => group.kind === 'CLASS')
@@ -928,17 +982,33 @@ export class OptimizationProxyService {
       else preservedByDemand.set(key, [lesson]);
     }
 
-    const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
+    // The lessons still to place, one length each (locked-coverage.ts): a
+    // uniform requirement loses one lesson per covering lock, as it always
+    // did; a split one loses the length each lock answers. Worked out for
+    // every row before any is sent, because a block is judged over all its
+    // members.
+    const remainingOf = new Map<string, number[]>();
+    for (const r of rawRequirements) {
       const covering = (
         preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []
       ).filter((lesson) => coversDemand(lesson, r));
-      // The lessons still to place, one length each (locked-coverage.ts): a
-      // uniform requirement loses one lesson per covering lock, as it always
-      // did; a split one loses the length each lock answers.
-      const remainingLengths = coverLockedLessons(
-        lessonMinutesOf(r),
-        covering.map((lesson) => lessonMinutes(lesson.startTime, lesson.endTime)),
+      remainingOf.set(
+        r.id,
+        coverLockedLessons(
+          lessonMinutesOf(r),
+          covering.map((lesson) => lessonMinutes(lesson.startTime, lesson.endTime)),
+        ),
       );
+    }
+    const demandOf = new Map(rawRequirements.map((r) => [r.id, `${r.studentGroupId}:${r.subjectId}`]));
+    const blocks = judgeBlocks(
+      rawRequirements,
+      (id) => remainingOf.get(id)?.length ?? 0,
+      (id) => preservedByDemand.get(demandOf.get(id) ?? '')?.length ?? 0,
+    );
+
+    const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
+      const remainingLengths = remainingOf.get(r.id) ?? [];
       const remaining = remainingLengths.length;
       if (remaining <= 0) return [];
       // A uniform remainder is today's entry exactly — no list, and the one
@@ -978,6 +1048,12 @@ export class OptimizationProxyService {
           ...(rule.maxLessonsPerDay !== null ? { maxLessonsPerDay: rule.maxLessonsPerDay } : {}),
           ...(rule.minDaysBetween !== null ? { minDaysBetween: rule.minDaysBetween } : {}),
           ...(lockedDays.length > 0 ? { lockedDays } : {}),
+          // Sent only for a block of two or more with every lesson to place —
+          // see judgeBlocks — so a school without blocks sends the payload it
+          // always sent, and an engine that predates the key never meets it.
+          ...(r.blockId && blocks.sent.has(r.blockId)
+            ? { blockId: anonId(blockAnonMap, r.blockId) }
+            : {}),
           studentGroupSize: needs.studentGroupSize,
           minGradeLevel: needs.minGradeLevel,
           maxGradeLevel: needs.maxGradeLevel,
@@ -1480,6 +1556,20 @@ export class OptimizationProxyService {
       },
     );
 
+    // A block whose lessons are partly locked, in the ids the payload uses, so
+    // it reaches the school through realiseConflicts as the engine's own
+    // refusals do. Every member is named, sent or not.
+    const blockRefusal =
+      blocks.partlyLocked.length === 0
+        ? null
+        : partlyLockedRefusal(
+            blocks.partlyLocked.map((block) => ({
+              block: anonId(blockAnonMap, block.blockId),
+              members: block.memberIds.map((id) => anonId(requirementAnonMap, id)),
+              locked: block.locked,
+            })),
+          );
+
     return {
       requirements,
       rooms,
@@ -1502,6 +1592,8 @@ export class OptimizationProxyService {
       constraintAnonMap,
       workRuleAnonMap,
       nameById,
+      blockAnonMap,
+      blockRefusal,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -1537,6 +1629,7 @@ export class OptimizationProxyService {
       maps.constraintAnonMap,
       maps.workRuleAnonMap,
       maps.lessonAnonMap ?? new Map<string, string>(),
+      maps.blockAnonMap ?? new Map<string, string>(),
     ]) {
       for (const [realId, anonId] of map) real.set(anonId, realId);
     }
