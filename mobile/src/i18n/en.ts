@@ -47,7 +47,7 @@ export const en: Messages = {
     SSO_NOT_FOUND: 'No school logs in with a school account on that address\'s domain. Log in with your password, or check the address.',
     SSO_BUSY: 'Many people are logging in right now. Wait a minute and try again.',
     SSO_APP_UPDATE_NEEDED: 'This version of the app cannot log in with a school account. Update the app.',
-    SSO_NO_ACCOUNT: 'Your school account has an e-mail address nobody has invited to SchemaPro. Ask your school\'s administrator to invite you with the same address your school account has. If you are already in SchemaPro with another address, the administrator sends your invitation again once SchemaPro has the new one, and your login moves there.',
+    SSO_NO_ACCOUNT: 'Your school account has an e-mail address nobody has invited to SchemaPro. Ask your school\'s administrator to invite you with the same address your school account has. If you are already in SchemaPro with another address, the administrator sends your invitation again once SchemaPro has the new one, and your login moves there, or you get a new invitation at that address.',
     SSO_UNVERIFIED: 'Your school account sent no verified e-mail address, so it could not be linked to your account. Contact your school\'s IT staff.',
     SSO_OTHER_ORGANISATION: 'The account you logged in with does not belong to your school\'s organisation. Log in with your school account, or contact your school\'s administrator.',
     SSO_NOT_ENABLED: 'Your school has not turned on logging in with a school account. Log in with your password.',

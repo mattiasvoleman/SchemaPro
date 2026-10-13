@@ -145,7 +145,7 @@
     "schoolAccountBusy": "Många loggar in just nu. Vänta en minut och försök igen.",
     "ssoRequired": "Din skola kräver att personal loggar in med skolkonto. Välj Logga in med skolkonto.",
     "ssoReasons": {
-      "no-account": "Ditt skolkonto har en e-postadress som ingen har bjudit in till SchemaPro. Be skolans administratör bjuda in dig med samma adress som ditt skolkonto har. Finns du redan i SchemaPro med en annan adress skickar administratören inbjudan igen när SchemaPro har den nya, och då flyttar din inloggning dit.",
+      "no-account": "Ditt skolkonto har en e-postadress som ingen har bjudit in till SchemaPro. Be skolans administratör bjuda in dig med samma adress som ditt skolkonto har. Finns du redan i SchemaPro med en annan adress skickar administratören inbjudan igen när SchemaPro har den nya, och då flyttar din inloggning dit, eller så får du en ny inbjudan till den adressen.",
       "unverified": "Ditt skolkonto skickade ingen bekräftad e-postadress, så det gick inte att koppla till ditt konto. Kontakta skolans IT-ansvariga.",
       "other-organisation": "Kontot du loggade in med hör inte till din skolas organisation. Logga in med ditt skolkonto, eller kontakta skolans administratör.",
       "not-enabled": "Din skola har inte slagit på inloggning med skolkonto. Logga in med lösenord.",
@@ -153,7 +153,7 @@
       "blocked": "Kontot är spärrat. Kontakta skolans administratör.",
       "failed": "Inloggningen med skolkonto blev inte klar. Försök igen, eller logga in med lösenord."
     },
-    "noProfileSchoolAccount": "Du loggade in med skolkontot {email}, men ingen på din skola har bjudit in den adressen till SchemaPro. Be skolans administratör bjuda in dig med just den adressen. Finns du redan i SchemaPro med en annan adress kopplar administratören dig till skolkontot du nyss loggade in med: SchemaPro behöver få den här adressen, och sedan skickar administratören inbjudan igen. Din gamla inloggning tas då bort med sitt lösenord, och du loggar in med skolkontot.",
+    "noProfileSchoolAccount": "Du loggade in med skolkontot {email}, men ingen på din skola har bjudit in den adressen till SchemaPro. Be skolans administratör bjuda in dig med just den adressen. Finns du redan i SchemaPro med en annan adress kopplar administratören dig till skolkontot du nyss loggade in med: SchemaPro behöver få den här adressen, och sedan skickar administratören inbjudan igen. Då loggar du in med skolkontot. Din gamla inloggning tas bort med sitt lösenord, eller tas om hand av den som driftar SchemaPro.",
     "linkNeedsSchoolAccount": "Din skola kräver att personal loggar in med skolkonto, så länken kan inte användas för att välja lösenord. Gå till inloggningen och välj Logga in med skolkonto."
   },
   "nav": {
