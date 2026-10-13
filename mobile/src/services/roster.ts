@@ -7,12 +7,15 @@ import { getSupabase } from './supabase';
  * group — Ma71, språkval En74 — holds none by construction: its roster lives in
  * StudentGroupMembers. Asking only the first question returned nothing for
  * every nivågrupp, so a teacher opening such a lesson to take attendance met an
- * empty list and could not report at all. The web view was given the full union
- * and this one was not; it is the same union, kept deliberately in the same
- * shape as web/lib/queries.ts useLessonRoster so the two can be read together.
+ * empty list and could not report at all.
  *
  * Four sources: the lesson's own class, any extra classes attending it,
- * teaching-group membership for all of those, and pupils named individually.
+ * teaching-group membership for all of those, and pupils named individually,
+ * active pupils only. That is the gateway's one definition of who attends,
+ * src/calendar/lesson-roster.ts with ACTIVE, which this copies until it asks
+ * GET /api/v1/attendance/lessons/:lessonId/roster as the web register does. It
+ * must not drift from it: the realtime broadcast writes the reader's list over
+ * the same cached lesson, so the register would depend on which came last.
  */
 export async function fetchRoster(
   calendarLessonId: string,
