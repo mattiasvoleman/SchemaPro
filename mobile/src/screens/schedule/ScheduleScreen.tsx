@@ -15,7 +15,7 @@ import { useI18n } from '../../context/LocaleContext';
 import { useSync } from '../../context/SyncContext';
 import { formatDayHeading, formatTime } from '../../i18n/format';
 import { getSupabase } from '../../services/supabase';
-import { cacheLessonForAttendance, rosterRefusal } from '../../services/roster';
+import { openLessonForAttendance } from '../../services/roster';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only schedule for the signed-in teacher.
@@ -92,14 +92,17 @@ export function ScheduleScreen(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
-  const load = useCallback(async (): Promise<void> => {
-    if (!authState.teacherId) return;
+  /** True when the schedule shown is the one just read. */
+  const load = useCallback(async (): Promise<boolean> => {
+    if (!authState.teacherId) return false;
     try {
       setError(null);
       const fetched = await fetchSchedule(authState.teacherId);
       setRows(fetched);
+      return true;
     } catch (err) {
       setError(t('schedule.loadError'));
+      return false;
     }
   }, [authState.teacherId, t]);
 
@@ -128,26 +131,28 @@ export function ScheduleScreen(): React.JSX.Element {
     async (row: ScheduleRow): Promise<void> => {
       setOpeningId(row.id);
       try {
-        const lesson = await cacheLessonForAttendance({
-          id: row.id,
-          startTime: row.startsAt,
-          endTime: row.endsAt,
-          subjectName: row.subjectName ?? t('common.lesson'),
-          roomName: row.roomName ?? t('common.noValue'),
-        });
-        setActiveLesson(lesson);
-        router.push('/(app)/attendance');
-      } catch (err) {
-        const refusal = rosterRefusal(err);
-        if (refusal === null) {
-          setError(t('schedule.openError'));
-        } else {
-          // The schedule the teacher tapped is older than the school's. Read
-          // it again, so the lesson leaves the list, and then say why it did
-          // not open: load() clears the error it starts with.
-          await load();
-          setError(t(`schedule.refused.${refusal}`));
+        // Every decision is the service's, where jest can reach it: the
+        // gateway's list, the cached copy when the gateway does not answer,
+        // and a refusal said only after the schedule has been read again.
+        const opening = await openLessonForAttendance(
+          {
+            id: row.id,
+            startTime: row.startsAt,
+            endTime: row.endsAt,
+            subjectName: row.subjectName ?? t('common.lesson'),
+            roomName: row.roomName ?? t('common.noValue'),
+          },
+          load,
+        );
+        if (opening.kind === 'OPEN') {
+          setActiveLesson(opening.lesson, { fromCache: opening.fromCache });
+          router.push('/(app)/attendance');
+        } else if (opening.message !== null) {
+          setError(t(opening.message));
         }
+      } catch (err) {
+        // The roster arrived but could not be written to this phone.
+        setError(t('schedule.openError'));
       } finally {
         setOpeningId(null);
       }

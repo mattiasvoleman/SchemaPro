@@ -1,6 +1,7 @@
 import { ApiError, apiRequest } from './api';
-import { upsertCalendarLesson, upsertStudents } from './database/localDatabase';
+import { getCalendarLesson, upsertCalendarLesson, upsertStudents } from './database/localDatabase';
 import { sortByDisplayName } from '../utils/sorting';
+import type { MessageKey } from '../i18n';
 import type { CalendarLesson } from '../types';
 
 /**
@@ -53,20 +54,71 @@ export function rosterRefusal(error: unknown): RosterRefusal | null {
 }
 
 /**
- * The lesson and its roster, written to the encrypted offline cache for the
- * register to open with.
+ * What tapping a lesson came to.
  *
- * Nothing is written before the gateway has answered: a refusal (above), or
- * no answer at all, leaves the cache as it was. The lesson's pupils are
- * exactly the ones the gateway named, the set a later broadcast replaces them
- * with. displayName is built here and stays on-device only (encrypted SQLite)
- * — never sent to APIs.
+ * OPEN: the register opens with `lesson`. `fromCache` when the gateway did not
+ * answer and the copy this phone last saved stands in; the register says so.
+ * NOT_OPENED: the schedule shows `message`, or, when that is null, keeps what
+ * its own reload said.
  */
-export async function cacheLessonForAttendance(
-  lesson: Omit<CalendarLesson, 'studentIds'>,
-): Promise<CalendarLesson> {
-  const roster = await fetchRoster(lesson.id);
+export type LessonOpening =
+  | { readonly kind: 'OPEN'; readonly lesson: CalendarLesson; readonly fromCache: boolean }
+  | { readonly kind: 'NOT_OPENED'; readonly message: MessageKey | null };
 
+/**
+ * Opens a lesson for attendance: asks the gateway for its roster and writes
+ * both to the encrypted offline cache, which the register reads its names
+ * from.
+ *
+ * A refusal (403/404) is final, and no cached copy stands in for it: the list
+ * would be taken and then refused when sent. The schedule the teacher tapped
+ * is older than the school's, so it is read again (`reload`), and the refusal
+ * is said only once that read has succeeded. Over a schedule that failed to
+ * load it would explain a row that is still there and hide why.
+ *
+ * Anything else is not an answer about the lesson: the gateway down or
+ * unreachable while Supabase answers, a 5xx, or a 429 under the per-address
+ * limit that a school or a kommun behind one address shares. The register
+ * opened through Supabase alone before it asked the gateway, so an outage of
+ * the gateway does not stop it now. The copy this phone last cached, by an
+ * earlier open or a broadcast, opens instead: the lesson as the schedule shows
+ * it, the pupils as last saved. Its marks go to the queue under the lesson's
+ * id like any others and are sent when the gateway answers. Only with nothing
+ * cached does the tap fail, and a 429 then says to wait a minute.
+ */
+export async function openLessonForAttendance(
+  lesson: Omit<CalendarLesson, 'studentIds'>,
+  reload: () => Promise<boolean>,
+): Promise<LessonOpening> {
+  let roster: RosterPupil[];
+  try {
+    roster = await fetchRoster(lesson.id);
+  } catch (error) {
+    const refusal = rosterRefusal(error);
+    if (refusal !== null) {
+      return { kind: 'NOT_OPENED', message: (await reload()) ? `schedule.refused.${refusal}` : null };
+    }
+    const cached = await getCalendarLesson(lesson.id).catch(() => null);
+    if (cached !== null) {
+      return { kind: 'OPEN', lesson: withPupils(lesson, cached.studentIds), fromCache: true };
+    }
+    const busy = error instanceof ApiError && error.status === 429;
+    return { kind: 'NOT_OPENED', message: busy ? 'schedule.busy' : 'schedule.openError' };
+  }
+  return { kind: 'OPEN', lesson: await cacheRoster(lesson, roster), fromCache: false };
+}
+
+/**
+ * The lesson and the roster the gateway answered, written to the cache.
+ *
+ * The lesson's pupils are exactly the ones the gateway named, the set a later
+ * broadcast replaces them with. displayName is built here and stays on-device
+ * only (encrypted SQLite) — never sent to APIs.
+ */
+async function cacheRoster(
+  lesson: Omit<CalendarLesson, 'studentIds'>,
+  roster: readonly RosterPupil[],
+): Promise<CalendarLesson> {
   const students = sortByDisplayName(
     roster.map((pupil) => ({
       id: pupil.id,
@@ -75,16 +127,20 @@ export async function cacheLessonForAttendance(
     })),
   );
 
-  const cached: CalendarLesson = {
+  const cached = withPupils(lesson, students.map((student) => student.id));
+
+  await upsertStudents(students);
+  await upsertCalendarLesson(cached);
+  return cached;
+}
+
+function withPupils(lesson: Omit<CalendarLesson, 'studentIds'>, studentIds: readonly string[]): CalendarLesson {
+  return {
     id: lesson.id,
     startTime: lesson.startTime,
     endTime: lesson.endTime,
     subjectName: lesson.subjectName,
     roomName: lesson.roomName,
-    studentIds: students.map((student) => student.id),
+    studentIds,
   };
-
-  await upsertStudents(students);
-  await upsertCalendarLesson(cached);
-  return cached;
 }

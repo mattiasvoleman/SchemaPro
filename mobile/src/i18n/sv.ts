@@ -66,6 +66,7 @@ export const sv = {
     openA11y: 'Öppna {subject} för närvaro',
     loadError: 'Schemat gick inte att hämta.',
     openError: 'Lektionen gick inte att öppna.',
+    busy: 'Många öppnar lektioner just nu. Vänta en minut och försök igen.',
     refused: {
       NOT_ASSIGNED: 'Du är inte längre lärare på lektionen och kan inte ta närvaro på den.',
       NOT_FOUND: 'Lektionen finns inte längre i schemat.',
@@ -90,6 +91,7 @@ export const sv = {
     noLessonTitle: 'Ingen aktiv lektion',
     noLessonBody: 'Välj en lektion i schemat för att börja ta närvaro.',
     recorded: '{done} av {total} registrerade',
+    cachedList: 'Listan gick inte att hämta just nu. Det här är den som sparades senast på telefonen, och den kan vara inaktuell.',
     submit: 'Skicka närvaro · Face ID / Touch ID',
     submitA11y: 'Skicka närvaro, kräver biometrisk verifiering',
     incompleteTitle: 'Närvaron är inte klar',

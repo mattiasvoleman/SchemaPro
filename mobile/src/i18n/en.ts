@@ -62,6 +62,7 @@ export const en: Messages = {
     openA11y: 'Open {subject} for attendance',
     loadError: 'The schedule could not be loaded.',
     openError: 'The lesson could not be opened.',
+    busy: 'Many people are opening lessons right now. Wait a minute and try again.',
     refused: {
       NOT_ASSIGNED: 'You are no longer a teacher on this lesson and cannot take attendance for it.',
       NOT_FOUND: 'This lesson is no longer on the schedule.',
@@ -86,6 +87,7 @@ export const en: Messages = {
     noLessonTitle: 'No active lesson',
     noLessonBody: 'Select a lesson from your schedule to begin taking attendance.',
     recorded: '{done} of {total} recorded',
+    cachedList: 'The list could not be fetched just now. This is the one last saved on this phone, and it may be out of date.',
     submit: 'Submit attendance · Face ID / Touch ID',
     submitA11y: 'Submit attendance, requires biometric verification',
     incompleteTitle: 'Attendance is incomplete',
