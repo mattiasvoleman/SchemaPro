@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Check, CheckCheck, Loader2 } from "lucide-react";
 import {
+  isNotOnLesson,
   useLesson,
   useLessonRoster,
   useLessonAttendance,
@@ -62,6 +63,7 @@ export default function LessonAttendancePage({
     data: students,
     isLoading: studentsLoading,
     isError: studentsError,
+    error: rosterError,
   } = useLessonRoster(lesson ? lessonId : null);
   const { data: existingRecords, isError: existingError } = useLessonAttendance(lessonId);
   const { data: reported } = useLessonReportedAbsences(lessonId);
@@ -169,17 +171,26 @@ export default function LessonAttendancePage({
   );
 
   // The state ladder: the lesson first, then its roster. A lesson that cannot
-  // be read never leaves the skeleton standing: the roster waits for it.
+  // be read never leaves the skeleton standing: the roster waits for it. A
+  // roster refused because the teacher is not on the lesson is no failure to
+  // wait out, and "reload in a moment" would never help.
+  const notOnLesson = studentsError && isNotOnLesson(rosterError);
   const failed = lessonQuery.isError
     ? t("lessonLoadFailed")
-    : studentsError
-      ? t("rosterLoadFailed")
-      : null;
+    : notOnLesson
+      ? t("notOnLesson")
+      : studentsError
+        ? t("rosterLoadFailed")
+        : null;
   if (failed) {
     return (
       <Page width="narrow">
         {header}
-        <LoadError title={failed} hint={t("lessonLoadFailedHint")} headingLevel={2} />
+        <LoadError
+          title={failed}
+          hint={notOnLesson ? t("notOnLessonHint") : t("lessonLoadFailedHint")}
+          headingLevel={2}
+        />
       </Page>
     );
   }
