@@ -201,6 +201,51 @@ export default function MyStaffingPage() {
               )}
             </p>
             <LoadBar teacher={row} />
+            {/* The post from a date (20261022120000): the teacher's own
+                stretches, each judged on its own; the status above is the
+                worst of them. Only the teacher's own — the report hands a
+                teacher nobody else's row. */}
+            {(row.periods?.length ?? 0) > 0 ? (
+              <section aria-labelledby="tjanst-periods" className="space-y-1 border-t pt-3">
+                <h3 id="tjanst-periods" className="font-medium">
+                  {t("periodsTitle")}
+                </h3>
+                <p className="text-muted-foreground">{t("periodsIntro")}</p>
+                <ol className="divide-y">
+                  {row.periods!.map((period) => (
+                    <li key={`${period.kind}-${period.from}`} className="space-y-0.5 py-1.5">
+                      <p>
+                        <span className="font-medium">
+                          {tStaffing("periodDates", { from: period.from, to: period.to })}
+                        </span>
+                        {" · "}
+                        {period.reductionPercent > 0
+                          ? tStaffing("periodFiguresReduction", {
+                              percent: formatPercent(period.employmentPercent),
+                              reduction: formatPercent(period.reductionPercent),
+                            })
+                          : tStaffing("periodFigures", { percent: formatPercent(period.employmentPercent) })}
+                      </p>
+                      <p>
+                        {period.effectiveFrom === null ? (
+                          tStaffing("periodNoWeek")
+                        ) : period.targetMinutesPerWeek === null ? (
+                          t("countedOnly", { minutes: period.countedMinutesPerWeek })
+                        ) : (
+                          <>
+                            {t("target", { minutes: period.targetMinutesPerWeek })}
+                            {" · "}
+                            {t("counted", { minutes: period.countedMinutesPerWeek })}
+                            {" · "}
+                            <span className="font-medium">{tStaffing(`status${period.status}`)}</span>
+                          </>
+                        )}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : null}
           </>
         ) : null}
         {lastYear ? (

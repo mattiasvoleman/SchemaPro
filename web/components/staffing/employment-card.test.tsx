@@ -11,7 +11,14 @@ vi.mock("@/lib/staffing-queries", () => ({
   useTeacherEmploymentActions: () => ({
     save: { mutateAsync: save, isPending: false },
     remove: { mutateAsync: remove, isPending: false },
+    createPeriod: { mutateAsync: vi.fn(), isPending: false },
+    updatePeriod: { mutateAsync: vi.fn(), isPending: false },
+    removePeriod: { mutateAsync: vi.fn(), isPending: false },
   }),
+}));
+// The year's bounds, for the periods' dates (employment-periods.test.tsx tests the timeline).
+vi.mock("@/lib/queries", () => ({
+  useAcademicYears: () => ({ data: [{ id: "y1", startDate: "2026-08-17", endDate: "2027-06-11" }] }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
@@ -78,6 +85,8 @@ describe("EmploymentCard", () => {
     expect(screen.getByText("employmentSummaryReduction(80|20|contractFERIE)")).toBeInTheDocument();
     expect(screen.getByText("employmentSummarySignature(ANN)")).toBeInTheDocument();
     expect(screen.getByText("Mentor 7B")).toBeInTheDocument();
+    // A post without periods says so under the summary (20261022120000).
+    expect(screen.getByText("noPeriods")).toBeInTheDocument();
   });
 
   it("says there is no post, and no target without a riktmärke", () => {

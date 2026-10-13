@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import type { DutyBody } from "@/lib/duty-forms";
+import type { EmploymentPeriodBody } from "@/lib/employment-period-forms";
 import type {
   EmploymentBody,
   PolicyBody,
@@ -15,6 +16,7 @@ import type {
   StaffingWarning,
   TeacherDuty,
   TeacherEmployment,
+  TeacherEmploymentPeriod,
   TeacherQualification,
   TeacherSuggestions,
   TeachingRequirement,
@@ -118,7 +120,30 @@ export function useTeacherEmploymentActions() {
       ),
     onSuccess: invalidate,
   });
-  return { save, remove };
+  // A post's periods (20261022120000): a new one on the teacher and year, an
+  // existing one by its id. Each moves the same figures a post's PUT does.
+  const createPeriod = useMutation({
+    mutationFn: ({
+      userId,
+      academicYearId,
+      ...body
+    }: { userId: string; academicYearId: string } & EmploymentPeriodBody) =>
+      api.post<TeacherEmploymentPeriod>(
+        `/api/v1/teacher-employments/${userId}/periods?academicYearId=${encodeURIComponent(academicYearId)}`,
+        body,
+      ),
+    onSuccess: invalidate,
+  });
+  const updatePeriod = useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & EmploymentPeriodBody) =>
+      api.put<TeacherEmploymentPeriod>(`/api/v1/teacher-employments/periods/${id}`, body),
+    onSuccess: invalidate,
+  });
+  const removePeriod = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/teacher-employments/periods/${id}`),
+    onSuccess: invalidate,
+  });
+  return { save, remove, createPeriod, updatePeriod, removePeriod };
 }
 
 /** The school's qualifications, or one teacher's when a userId is given. */

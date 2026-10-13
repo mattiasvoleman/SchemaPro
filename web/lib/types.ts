@@ -643,6 +643,28 @@ export interface TeacherEmployment {
   /** Lärarsignatur, 1..8 characters, unique per school and year where set. */
   signature: string | null;
   note: string | null;
+  /**
+   * The post from a date (migration 20261022120000), by Från. Absent from a
+   * gateway before it; empty for a post that is the same all year.
+   */
+  periods?: TeacherEmploymentPeriod[];
+}
+
+/**
+ * A stretch of a post with other figures: "80 % från 1 november". Overrides
+ * the post on the days it covers; periods of one post never overlap.
+ */
+export interface TeacherEmploymentPeriod {
+  id: string;
+  employmentId: string;
+  /** Från, yyyy-mm-dd inclusive. */
+  validFrom: string;
+  /** Till, yyyy-mm-dd inclusive; null = the läsår's last day. */
+  validTo: string | null;
+  employmentPercent: number;
+  reductionPercent: number;
+  /** Own riktmärke for the period; null = derived from the school's. */
+  teachingTargetMinutesPerWeek: number | null;
 }
 
 /** One behörighet per (teacher, subject): an inclusive grade span and a kind. */

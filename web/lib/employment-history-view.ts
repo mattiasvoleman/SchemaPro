@@ -53,8 +53,13 @@ export function formatHistoryValue(
   labels: HistoryLabels,
 ): string {
   // An empty Från or Till is the läsår's own bound, which a reader of
-  // "Till och med: 2026-12-18 → —" could not tell from a removed date.
-  if ((value === null || value === undefined || value === "") && entity === "DUTY" && (field === "validFrom" || field === "validTo")) {
+  // "Till och med: 2026-12-18 → —" could not tell from a removed date. An
+  // uppdrag's either end, a period's open Till (20261022120000).
+  if (
+    (value === null || value === undefined || value === "") &&
+    (entity === "DUTY" || entity === "PERIOD") &&
+    (field === "validFrom" || field === "validTo")
+  ) {
     return labels.yearBound;
   }
   if (value === null || value === undefined || value === "") return labels.empty;
@@ -117,6 +122,18 @@ export function dutyLabelOf(entry: HistoryEntry): string | null {
   const label = entry.changes.find((change) => change.field === "label");
   const value = label ? (entry.action === "DELETE" ? label.before : label.after) : null;
   return typeof value === "string" && value !== "" ? value : null;
+}
+
+/**
+ * Which period of the post a version is about, by its Från — every CREATE
+ * and DELETE carries it, an UPDATE when the Från itself moved (it says the
+ * new one). Null otherwise; the card then names the kind alone.
+ */
+export function periodLabelOf(entry: HistoryEntry): string | null {
+  if (entry.entity !== "PERIOD") return null;
+  const from = entry.changes.find((change) => change.field === "validFrom");
+  const value = from ? (entry.action === "DELETE" ? from.before : from.after) : null;
+  return typeof value === "string" && value !== "" ? value.slice(0, 10) : null;
 }
 
 /**

@@ -8,6 +8,7 @@ import { useEmploymentHistory } from "@/lib/staffing-history-queries";
 import {
   actorLabel,
   dutyLabelOf,
+  periodLabelOf,
   formatStamp,
   historyLines,
   type HistoryLabels,
@@ -116,8 +117,11 @@ export function EmploymentHistoryCard({
           ) : (
             <ol className="divide-y">
               {entries.map((entry) => {
+                const period = periodLabelOf(entry);
                 const label =
-                  dutyLabelOf(entry) ?? (entry.entity === "DUTY" ? (dutyLabel?.(entry.entityId) ?? null) : null);
+                  dutyLabelOf(entry) ??
+                  (entry.entity === "DUTY" ? (dutyLabel?.(entry.entityId) ?? null) : null) ??
+                  (period ? t("periodFrom", { from: period }) : null);
                 const title = t(`action.${entry.entity}_${entry.action}`);
                 return (
                   <li key={entry.id} className="space-y-0.5 py-2">

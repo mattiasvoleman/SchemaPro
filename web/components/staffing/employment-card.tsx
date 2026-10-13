@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Briefcase } from "lucide-react";
+import { useAcademicYears } from "@/lib/queries";
 import { useTeacherEmploymentActions } from "@/lib/staffing-queries";
 import {
   EMPTY_EMPLOYMENT_DRAFT,
@@ -32,6 +33,7 @@ import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Textarea } from "@/components/ui/textarea";
+import { EmploymentPeriods } from "@/components/staffing/employment-periods";
 import {
   Select,
   SelectContent,
@@ -110,6 +112,10 @@ function derived(
  * THE WHOLE ROW IS SENT, every field, because PUT replaces it: a body that
  * carried only the fields the admin touched would clear the note on every
  * save. employmentDraftToBody keeps every key present.
+ *
+ * THE POST FROM A DATE (migration 20261022120000) is a timeline under the
+ * summary — EmploymentPeriods — once there is a post to change: the base
+ * row's figures above are the post where no period says otherwise.
  */
 export function EmploymentCard({
   teacher,
@@ -126,6 +132,9 @@ export function EmploymentCard({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [draft, setDraft] = useState<EmploymentDraft>(EMPTY_EMPLOYMENT_DRAFT);
   const loadPolicy = loadPolicyOf(policy);
+  // The year's bounds, for the periods' dates; the gateway measures the same.
+  const { data: years } = useAcademicYears();
+  const year = years?.find((candidate) => candidate.id === academicYearId) ?? null;
 
   const open = () => {
     setDraft(employmentToDraft(employment));
@@ -201,6 +210,7 @@ export function EmploymentCard({
     >
       {!editing ? (
         stored ? (
+          <div className="space-y-3">
           <ul className="space-y-0.5 text-sm">
             <li>
               {stored.reductionPercent > 0
@@ -238,6 +248,14 @@ export function EmploymentCard({
             </li>
             {stored.note ? <li className="text-muted-foreground">{stored.note}</li> : null}
           </ul>
+          <EmploymentPeriods
+            teacher={teacher}
+            academicYearId={academicYearId}
+            year={year}
+            employment={stored}
+            policy={loadPolicy}
+          />
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">{t("noEmployment")}</p>
         )
