@@ -3424,6 +3424,8 @@ enum RetentionDataType {
   CHANGE_LOGS
   ABSENCE_REASONS
   DEPARTED_PEOPLE
+  /// The read log, PersonalDataAccess (20261026090000).
+  ACCESS_LOG
 }
 
 /// PURGE_AFTER `months`; KEEP (bevaras); UNDECIDED (back to ej beslutat).
@@ -3460,6 +3462,53 @@ model RetentionDecision {
 
   @@index([schoolId, dataType, decidedAt(sort: Desc)])
   @@map("RetentionDecisions")
+}
+
+/// What a read of another person's personal data is recorded as (Läslogg).
+enum PersonalDataAccessKind {
+  PEOPLE
+  ROSTER
+  ATTENDANCE
+  ABSENCE_REPORTS
+  LEAVE_REQUESTS
+  LEAVE_REASON_AS_MENTOR
+  GUARDIANS
+  EMPLOYMENT
+  STAFF_ABSENCES
+  ACCESS_LOG
+}
+
+/// The client a read came through; INTEGRATION for an SS12000 key.
+enum PersonalDataAccessChannel {
+  WEB
+  APP
+  INTEGRATION
+  OTHER
+}
+
+/// Läsloggen (20261026091000): one row per request that returned other
+/// people's personal data, per kind. Who read (actorId and the role then, or
+/// the integration key), through which client, what kind, and the ids of the
+/// people read about, never the reader themself. Append-only by trigger; only
+/// app.personal_data_read writes it, from the read's own transaction, leaving
+/// out whoever the same reader read of that kind in the last 15 minutes. The
+/// school's administrator reads it through the gateway; ACCESS_LOG is its
+/// Gallring kind. The keys to Schools, Users and IntegrationApiKeys live in
+/// the migration.
+model PersonalDataAccess {
+  id         String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String                    @db.Uuid
+  at         DateTime                  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  actorId    String?                   @db.Uuid
+  actorRole  UserRole?
+  apiKeyId   String?                   @db.Uuid
+  channel    PersonalDataAccessChannel
+  kind       PersonalDataAccessKind
+  subjectIds String[]                  @db.Uuid
+
+  @@index([subjectIds], type: Gin)
+  @@index([schoolId, at])
+  @@map("PersonalDataAccess")
 }
 
 /// One night's gallring of one school: the periods and cutoffs applied and,

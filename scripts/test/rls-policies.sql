@@ -15309,3 +15309,399 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 120: läsloggen skrivs bara av databasen och läses bara av skolans
+-- administratör genom API:t (PersonalDataAccess, 20261026091000).
+--
+-- The catalogue: no API role holds INSERT, UPDATE, DELETE, TRUNCATE,
+-- REFERENCES or TRIGGER on the log; PostgREST's authenticated and anon hold
+-- nothing at all on it; app_authenticated holds SELECT, through its own grant
+-- and not authenticated's. The one writer, app.personal_data_read, is
+-- app_authenticated's alone to execute (not PUBLIC's, not authenticated's).
+-- The table's one policy is SELECT TO app_authenticated.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r text;
+  p text;
+  n bigint;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"PersonalDataAccess"'::regclass) THEN
+    RAISE EXCEPTION 'read log: row security is off';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege(r, '"PersonalDataAccess"', p) THEN
+        RAISE EXCEPTION 'read log: % holds % on the log', r, p;
+      END IF;
+    END LOOP;
+  END LOOP;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    IF has_table_privilege(r, '"PersonalDataAccess"', 'SELECT') THEN
+      RAISE EXCEPTION 'read log: % may read the log', r;
+    END IF;
+    IF has_function_privilege(r, 'app.personal_data_read("PersonalDataAccessKind", "PersonalDataAccessChannel", uuid[])', 'EXECUTE') THEN
+      RAISE EXCEPTION 'read log: % may write the log', r;
+    END IF;
+  END LOOP;
+  IF NOT has_table_privilege('app_authenticated', '"PersonalDataAccess"', 'SELECT') THEN
+    RAISE EXCEPTION 'read log: the API may not read the log';
+  END IF;
+  IF NOT has_function_privilege('app_authenticated', 'app.personal_data_read("PersonalDataAccessKind", "PersonalDataAccessChannel", uuid[])', 'EXECUTE') THEN
+    RAISE EXCEPTION 'read log: the API may not write the log';
+  END IF;
+  SELECT count(*) INTO n
+    FROM pg_proc pr, aclexplode(coalesce(pr.proacl, acldefault('f', pr.proowner))) a
+   WHERE pr.oid = 'app.personal_data_read("PersonalDataAccessKind", "PersonalDataAccessChannel", uuid[])'::regprocedure
+     AND a.grantee = 0;
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: PUBLIC may write the log'; END IF;
+  SELECT count(*) INTO n FROM pg_policies WHERE tablename = 'PersonalDataAccess';
+  IF n <> 1 OR NOT EXISTS (
+       SELECT 1 FROM pg_policies
+        WHERE tablename = 'PersonalDataAccess' AND cmd = 'SELECT' AND roles = '{app_authenticated}') THEN
+    RAISE EXCEPTION 'read log: the policies are not the one SELECT arm TO app_authenticated';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 121: en läsning skrivs med läsaren ur transaktionen, utan läsaren
+-- själv och utan den som samma läsare läst samma slag av den senaste
+-- kvarten (app.personal_data_read, 20261026091000).
+--
+-- The läslogg school's teacher (122) records reads through the function as
+-- the gateway does, and the school's admin (121) then reads exactly what was
+-- written: who (the claims' user and role, never an argument), which
+-- channel (WEB or APP as given, anything else OTHER), which kind, and only
+-- people of the school other than the reader. The quarter-hour is measured
+-- against the fixtures' rows of teacher 126, ten and twenty minutes old.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- Another school's pupil, read by the runner as the owner: the teacher's
+-- own row security could not name them.
+SELECT set_config('app.test_rls121_stranger', :'student_b', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000122')::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  p123 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000123');
+  p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
+  n integer;
+BEGIN
+  IF me IS NULL OR p123 IS NULL OR p124 IS NULL THEN RAISE EXCEPTION 'read log: the läslogg school is not planted'; END IF;
+  n := app.personal_data_read('ROSTER', 'APP', ARRAY[p123, p124, me, p123]);
+  IF n <> 2 THEN RAISE EXCEPTION 'read log: a roster of two pupils and the reader recorded % people', n; END IF;
+  n := app.personal_data_read('ROSTER', 'APP', ARRAY[p124, p123]);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: the same roster again within the quarter-hour recorded % people', n; END IF;
+  n := app.personal_data_read('ATTENDANCE', 'WEB', ARRAY[p123]);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: another kind about the same pupil was left out as a repeat'; END IF;
+  n := app.personal_data_read('ROSTER', 'APP', ARRAY[me]);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: the reader was recorded reading about themself'; END IF;
+  n := app.personal_data_read('ROSTER', 'APP', ARRAY[current_setting('app.test_rls121_stranger')::uuid]);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: a pupil of another school was recorded'; END IF;
+  n := app.personal_data_read('ROSTER', 'APP', ARRAY[gen_random_uuid()]);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: an id of nobody was recorded'; END IF;
+  n := app.personal_data_read('PEOPLE', 'INTEGRATION', ARRAY[p123]);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: a person''s read naming INTEGRATION was not recorded'; END IF;
+  n := app.personal_data_read('GUARDIANS', NULL, ARRAY[p124]);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: a read without a channel was not recorded'; END IF;
+  BEGIN
+    PERFORM app.personal_data_read(NULL, 'WEB', ARRAY[p123]);
+    RAISE EXCEPTION 'read log: a read of no kind was recorded';
+  EXCEPTION WHEN SQLSTATE 'PD400' THEN NULL;
+  END;
+  -- A teacher records reads and reads none of them back.
+  SELECT count(*) INTO n FROM "PersonalDataAccess";
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: a teacher reads % row(s) of the log', n; END IF;
+END $$;
+
+-- The quarter-hour, against the fixtures' rows of teacher 126.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000126')::text, true);
+DO $$
+DECLARE
+  p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
+  n integer;
+BEGIN
+  n := app.personal_data_read('ROSTER', 'WEB', ARRAY[p124]);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: a roster read ten minutes ago was recorded again'; END IF;
+  n := app.personal_data_read('ATTENDANCE', 'WEB', ARRAY[p124]);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: an attendance read twenty minutes ago kept the next one out'; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  t122 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122');
+  p123 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000123');
+  p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
+  got text;
+BEGIN
+  SELECT string_agg(format('%s/%s/%s/%s', kind, channel, "actorRole",
+                           (SELECT string_agg(CASE s WHEN p123 THEN '123' WHEN p124 THEN '124' ELSE 'X' END, '+' ORDER BY s = p124, s)
+                              FROM unnest("subjectIds") s)),
+                    ' ' ORDER BY "at", kind)
+    INTO got
+    FROM "PersonalDataAccess"
+   WHERE "actorId" = t122 AND "at" > now() - interval '1 minute' AND "apiKeyId" IS NULL;
+  IF got IS DISTINCT FROM 'ROSTER/APP/TEACHER/123+124 ATTENDANCE/WEB/TEACHER/123 PEOPLE/OTHER/TEACHER/123 GUARDIANS/OTHER/TEACHER/124' THEN
+    RAISE EXCEPTION 'read log: the teacher''s reads were recorded as %', got;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 122: bara skolans administratör läser läsloggen, och bara genom
+-- API:ts roll.
+--
+-- The läslogg school's admin reads the school's rows and none of another
+-- school's; school A's admin reads none of the läslogg school's; a guardian
+-- reads none. As PostgREST's authenticated, the läslogg admin neither reads
+-- the log nor writes it (no grant on either; anon's grants are section
+-- 120's, since the suite's role cannot become anon).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "schoolId" = school;
+  IF n < 4 THEN RAISE EXCEPTION 'read log: the admin reads % of the school''s planted rows', n; END IF;
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: the admin reads % row(s) of another school', n; END IF;
+  PERFORM set_config('app.test_rls122_school', school::text, true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "schoolId" = current_setting('app.test_rls122_school')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: school A''s admin reads the läslogg school''s log'; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000125')::text, true);
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonalDataAccess";
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: a guardian reads % row(s) of the log', n; END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  via text;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'read log: could not act as %', via; END IF;
+    BEGIN
+      PERFORM count(*) FROM "PersonalDataAccess";
+      RAISE EXCEPTION 'read log: % read the log', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      PERFORM app.personal_data_read('PEOPLE', 'WEB', ARRAY[gen_random_uuid()]);
+      RAISE EXCEPTION 'read log: % called the writer', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 123: en integrations läsning skrivs som nyckeln, och synken eller
+-- ingen alls läser inte.
+--
+-- As the service principal of the läslogg school with its key, a read is
+-- recorded with the key, channel INTEGRATION and no person whatever the
+-- caller names, and the quarter-hour holds per key. A key of another school,
+-- the sync principal and no principal at all are refused with PD403, so a
+-- read that cannot be recorded fails.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls123_school', app.current_school_id()::text, true);
+  PERFORM set_config('app.test_rls123_key', (SELECT id::text FROM "IntegrationApiKeys" WHERE name = 'Läslogg-nyckel'), true);
+  PERFORM set_config('app.test_rls123_pupil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124'), true);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls123_school')::uuid;
+  pupil uuid := current_setting('app.test_rls123_pupil')::uuid;
+  n integer;
+BEGIN
+  PERFORM set_config('app.service_school_id', school::text, true);
+  PERFORM set_config('app.service_key_id', current_setting('app.test_rls123_key'), true);
+  n := app.personal_data_read('PEOPLE', 'APP', ARRAY[pupil]);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: the key''s read was not recorded'; END IF;
+  n := app.personal_data_read('PEOPLE', 'APP', ARRAY[pupil]);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log: the key''s repeat within the quarter-hour was recorded'; END IF;
+  PERFORM set_config('app.service_key_id', gen_random_uuid()::text, true);
+  BEGIN
+    PERFORM app.personal_data_read('PEOPLE', 'APP', ARRAY[pupil]);
+    RAISE EXCEPTION 'read log: a key of no school of the read was recorded';
+  EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+  END;
+  PERFORM set_config('app.service_key_id', '', true);
+  PERFORM set_config('app.service_school_id', '', true);
+  BEGIN
+    PERFORM app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil]);
+    RAISE EXCEPTION 'read log: a read with no reader was recorded';
+  EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+  END;
+  -- The sync reads its own source for nobody, even beside a key.
+  PERFORM set_config('app.sync_school_id', school::text, true);
+  BEGIN
+    PERFORM app.personal_data_read('PEOPLE', 'WEB', ARRAY[pupil]);
+    RAISE EXCEPTION 'read log: the sync was recorded as a reader';
+  EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+  END;
+  PERFORM set_config('app.service_school_id', school::text, true);
+  PERFORM set_config('app.service_key_id', current_setting('app.test_rls123_key'), true);
+  BEGIN
+    PERFORM app.personal_data_read('ROSTER', 'WEB', ARRAY[pupil]);
+    RAISE EXCEPTION 'read log: the sync beside a key was recorded as the key';
+  EXCEPTION WHEN SQLSTATE 'PD403' THEN NULL;
+  END;
+  PERFORM set_config('app.service_key_id', '', true);
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.sync_school_id', '', true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  row_ record;
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE channel = 'INTEGRATION' AND "at" > now() - interval '1 minute';
+  IF n <> 1 THEN RAISE EXCEPTION 'read log: % integration row(s) were written', n; END IF;
+  SELECT * INTO row_ FROM "PersonalDataAccess" WHERE channel = 'INTEGRATION' AND "at" > now() - interval '1 minute';
+  IF row_."apiKeyId" IS DISTINCT FROM current_setting('app.test_rls123_key')::uuid
+     OR row_."actorId" IS NOT NULL OR row_."actorRole" IS NOT NULL OR row_.kind <> 'PEOPLE'
+     OR row_."subjectIds" <> ARRAY[current_setting('app.test_rls123_pupil')::uuid] THEN
+    RAISE EXCEPTION 'read log: the key''s read was recorded as %', row_;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 124: ingen API-roll ändrar eller tar bort en rad i läsloggen.
+--
+-- No grant: INSERT, UPDATE, DELETE and TRUNCATE are refused as the API's
+-- role and as PostgREST's, the school's own admin included. (The owner is
+-- refused by the append-only trigger outside a cascade or gallring; the
+-- adapter probe checks that as the owner, (lä3).)
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  via text;
+  school uuid := app.current_school_id();
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    BEGIN
+      INSERT INTO "PersonalDataAccess" ("schoolId", channel, kind, "subjectIds", "actorRole")
+      VALUES (school, 'WEB', 'PEOPLE', ARRAY[gen_random_uuid()], 'SCHOOL_ADMIN');
+      RAISE EXCEPTION 'read log: % wrote a row of its own', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      UPDATE "PersonalDataAccess" SET "at" = now();
+      RAISE EXCEPTION 'read log: % changed a row', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      DELETE FROM "PersonalDataAccess";
+      RAISE EXCEPTION 'read log: % removed rows', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      TRUNCATE "PersonalDataAccess";
+      RAISE EXCEPTION 'read log: % emptied the log', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 125: läsloggen gallras som skolan bestämt, och bara skolans
+-- (ACCESS_LOG, 20261026090000 and 20261026091000).
+--
+-- The läslogg school keeps the log 12 months (decided two days ago in the
+-- fixtures). The preview counts the 13-month row; the night's purge takes
+-- it past the append-only trigger, leaves the 11-month row and the gallring
+-- school's five-year-old row (that school decided nothing for ACCESS_LOG),
+-- counts it on the run, and "gallrat före" then answers ACCESS_LOG.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  prev record;
+BEGIN
+  SELECT * INTO prev FROM app.gallring_preview('ACCESS_LOG', 12);
+  IF prev.due <> 1 THEN RAISE EXCEPTION 'read log gallring: the preview counts % row(s), not the 13-month one', prev.due; END IF;
+  PERFORM set_config('app.test_rls125_school', app.current_school_id()::text, true);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  run uuid := app.gallring_begin(current_setting('app.test_rls125_school')::uuid, clock_timestamp());
+  n integer;
+BEGIN
+  n := app.gallring_purge(run, 'ACCESS_LOG', 5000);
+  IF n <> 1 THEN RAISE EXCEPTION 'read log gallring: the purge took % row(s), not 1', n; END IF;
+  n := app.gallring_purge(run, 'ACCESS_LOG', 5000);
+  IF n <> 0 THEN RAISE EXCEPTION 'read log gallring: a second batch took % more', n; END IF;
+  PERFORM app.gallring_finish(run, '{}', clock_timestamp());
+  PERFORM set_config('app.test_rls125_run', run::text, true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  run "GallringRuns";
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "at" < now() - interval '12 months';
+  IF n <> 0 THEN RAISE EXCEPTION 'read log gallring: % row(s) older than the period are left', n; END IF;
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "at" < now() - interval '10 months';
+  IF n <> 1 THEN RAISE EXCEPTION 'read log gallring: the 11-month row is gone or doubled (% left)', n; END IF;
+  SELECT * INTO run FROM "GallringRuns" WHERE id = current_setting('app.test_rls125_run')::uuid;
+  IF (run.counts ->> 'ACCESS_LOG')::int IS DISTINCT FROM 1 OR (run.complete ->> 'ACCESS_LOG')::boolean IS NOT TRUE
+     OR (run.periods ->> 'ACCESS_LOG')::int IS DISTINCT FROM 12 THEN
+    RAISE EXCEPTION 'read log gallring: the run says %, %, %', run.periods, run.counts, run.complete;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM app.retention_purged_before() WHERE data_type = 'ACCESS_LOG') THEN
+    RAISE EXCEPTION 'read log gallring: "gallrat före" does not answer ACCESS_LOG';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "at" < now() - interval '4 years';
+  IF n <> 1 THEN RAISE EXCEPTION 'read log gallring: another school''s purge took the gallring school''s old row'; END IF;
+END $$;
+ROLLBACK;

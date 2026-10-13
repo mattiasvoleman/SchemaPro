@@ -758,6 +758,104 @@ SELECT id, 'azure', ARRAY['rls-fixture-b.example', 'rls-delad.example'],
 FROM "Schools" WHERE slug = 'rls-fixture-school'
 ON CONFLICT ("schoolId") DO NOTHING;
 
+-- The läslogg's school (20261026091000, sections 120–127): an admin (121),
+-- two teachers (122, 126), two pupils of one class (123, 124), the
+-- guardian of the first (125), a teaching group of the first with a lesson,
+-- marks, a report and a request for the first, and an integration key.
+--
+-- The read log as it stood before the suite: the teacher 122 read pupil
+-- 123's roster 13 and 11 months ago, and ACCESS_LOG is to be kept 12
+-- months, decided two days ago (section 125 gallrar the first). The
+-- GALLRING school, which has decided nothing for ACCESS_LOG, has a log row
+-- five years old that no other school's purge may take. The rows section
+-- 121 measures the quarter-hour against are planted fresh on every run,
+-- below.
+DO $$
+DECLARE
+  l uuid;
+  g uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-gallring-school');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  y uuid; home uuid; tg uuid; sub uuid; lesson uuid;
+  admin uuid; t122 uuid; t126 uuid; p123 uuid; p124 uuid; g125 uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-laslogg-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Läslogg School', 'rls-laslogg-school', 'Europe/Stockholm', now())
+  RETURNING id INTO l;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (l, 'Läslogg i år', today - 30, today + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (l, 'Läsloggsämne', 'LÄS', now()) RETURNING id INTO sub;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES (l, y, 'L7A', now()) RETURNING id INTO home;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES (l, y, 'L7 Ma-nivå', now()) RETURNING id INTO tg;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'laslogg-admin@example.invalid', 'Läslogg', 'Admin', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000121', true, now())
+    RETURNING id INTO admin;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'laslogg-teacher@example.invalid', 'Läslogg', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000122', true, now())
+    RETURNING id INTO t122;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (l, 'laslogg-pupil@example.invalid', 'Läslogg', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000123', true, home, now())
+    RETURNING id INTO p123;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (l, 'laslogg-pupil2@example.invalid', 'Läslogg', 'Klasskamrat', 'STUDENT', '00000000-0000-4000-8000-000000000124', true, home, now())
+    RETURNING id INTO p124;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'laslogg-guardian@example.invalid', 'Läslogg', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000000125', true, now())
+    RETURNING id INTO g125;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'laslogg-teacher2@example.invalid', 'Läslogg', 'Kollega', 'TEACHER', '00000000-0000-4000-8000-000000000126', true, now())
+    RETURNING id INTO t126;
+
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (l, g125, p123);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (l, tg, p123);
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (l, sub, tg, today, today + time '07:10', today + time '07:50', now()) RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("calendarLessonId", "teacherId", "schoolId") VALUES (lesson, t122, l);
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  VALUES (l, lesson, p123, 'PRESENT', now());
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, note)
+  VALUES (l, p123, g125, today + 1, 'Läslogg: tandläkare');
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (l, p123, g125, today + 10, today + 12, 'Läslogg: resa');
+  INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")
+  VALUES (l, 'Läslogg-nyckel', md5('rls-laslogg-key') || md5('rls-laslogg-key-2'), now());
+
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds") VALUES
+    (l, now() - interval '13 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123]),
+    (l, now() - interval '11 months', t122, 'TEACHER', 'APP', 'ROSTER', ARRAY[p123]);
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds")
+  SELECT g, now() - interval '5 years', u.id, 'SCHOOL_ADMIN', 'WEB', 'PEOPLE', ARRAY[(SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000083')]
+    FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000081';
+
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (l, 'ACCESS_LOG', 'PURGE_AFTER', 12, 'DHP 9.1', admin, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+END $$;
+
+-- The quarter-hour of section 121, on EVERY run: the teacher 126 read pupil
+-- 124's roster ten minutes ago and its attendance twenty minutes ago.
+-- Planted once with the school they would age past the window between two
+-- runs on one database, and the suite would fail for the clock's sake. The
+-- log is append-only to its owner too, so the earlier run's rows go the one
+-- way the trigger allows: app.gallring set to the school, no principal.
+DO $$
+DECLARE
+  l uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-laslogg-school');
+  t126 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000126');
+  p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
+BEGIN
+  PERFORM set_config('app.gallring', l::text, true);
+  DELETE FROM "PersonalDataAccess" WHERE "schoolId" = l AND "actorId" = t126;
+  PERFORM set_config('app.gallring', '', true);
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds") VALUES
+    (l, now() - interval '10 minutes', t126, 'TEACHER', 'WEB', 'ROSTER', ARRAY[p124]),
+    (l, now() - interval '20 minutes', t126, 'TEACHER', 'WEB', 'ATTENDANCE', ARRAY[p124]);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
