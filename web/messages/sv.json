@@ -4647,7 +4647,9 @@
         "GUARDIANS": "Vårdnadshavare",
         "EMPLOYMENT": "Tjänst och anställning",
         "STAFF_ABSENCES": "Personalens frånvaro",
-        "ACCESS_LOG": "Läsloggen"
+        "ACCESS_LOG": "Läsloggen",
+        "SCHEDULE": "Veckoschema",
+        "TEACHING_TIME": "Undervisningstid"
       },
       "channels": {
         "WEB": "Webben",
