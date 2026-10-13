@@ -62,6 +62,10 @@ export const en: Messages = {
     openA11y: 'Open {subject} for attendance',
     loadError: 'The schedule could not be loaded.',
     openError: 'The lesson could not be opened.',
+    refused: {
+      NOT_ASSIGNED: 'You are no longer a teacher on this lesson and cannot take attendance for it.',
+      NOT_FOUND: 'This lesson is no longer on the schedule.',
+    },
   },
   attendance: {
     statusLetter: { present: 'P', absent: 'A', late: 'L', excused: 'E' },

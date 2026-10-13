@@ -55,7 +55,8 @@ mirrored to `CalendarLessonGroups` / `CalendarLessonStudents` at publish.
   other individual lessons block the slot.
 - **Publish** — participants are copied onto every materialized calendar
   lesson.
-- **Attendance** — the teacher's attendance roster (`useLessonRoster`) reads
+- **Attendance** — the teacher's attendance roster, on the web
+  (`useLessonRoster`) and in the teacher app (`fetchRoster`), reads
   `GET /api/v1/attendance/lessons/:id/roster`, which asks the one roster
   reader (`src/calendar/lesson-roster.ts`): the primary class, every extra
   class, their teaching groups and individual participants, active pupils

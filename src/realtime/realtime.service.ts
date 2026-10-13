@@ -108,13 +108,14 @@ export class RealtimeService {
    *
    * ACTIVE, the filter the notices use, on all three sources. The teacher app
    * replaces the lesson's pupils in its offline cache with studentIds, and its
-   * own fetch of the lesson (mobile/src/services/roster.ts) lists the active
-   * pupils of the same three sources: a broadcast with another filter would
-   * leave the register depending on which of the two came last. Before the
-   * reader, the named pupils went unfiltered, so a named pupil who had left
-   * was written back into the cache by the next broadcast. The attendance
-   * check reads RECORDED, a superset of this list, so every pupil it offers
-   * is accepted, and a register queued before a pupil left still drains.
+   * own fetch of the lesson (mobile/src/services/roster.ts) asks the
+   * register's route, which asks this reader with the same filter: a
+   * broadcast with another filter would leave the register depending on
+   * which of the two came last. Before the reader, the named pupils went
+   * unfiltered, so a named pupil who had left was written back into the
+   * cache by the next broadcast. The attendance check reads RECORDED, a
+   * superset of this list, so every pupil it offers is accepted, and a
+   * register queued before a pupil left still drains.
    */
   private async emitAll(tx: PrismaClient, lessons: readonly BroadcastLesson[]): Promise<void> {
     const rosters = await calendarLessonRosters(tx, lessons, { pupils: 'ACTIVE' });

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { sortByDisplayName } from '../../utils/sorting';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -16,16 +15,15 @@ import { useI18n } from '../../context/LocaleContext';
 import { useSync } from '../../context/SyncContext';
 import { formatDayHeading, formatTime } from '../../i18n/format';
 import { getSupabase } from '../../services/supabase';
-import { fetchRoster } from '../../services/roster';
-import { upsertCalendarLesson, upsertStudents } from '../../services/database/localDatabase';
-import type { CalendarLesson } from '../../types';
+import { cacheLessonForAttendance, rosterRefusal } from '../../services/roster';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only schedule for the signed-in teacher.
 //
-// Reads flow directly from Supabase under RLS (no gateway round-trip) and are
-// cached into the encrypted local SQLite store, so a lesson opened here can be
-// taken offline later. Selecting a lesson also caches its roster.
+// The schedule is read directly from Supabase under RLS (no gateway
+// round-trip). Selecting a lesson asks the gateway for its roster and caches
+// both into the encrypted local SQLite store, so the register can be taken
+// offline (services/roster.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DAYS_AHEAD = 7;
@@ -39,7 +37,6 @@ interface ScheduleRow {
   /** Null when the lesson has no subject; the screen says "Lesson" in the reader's language. */
   readonly subjectName: string | null;
   readonly roomName: string | null;
-  readonly studentGroupId: string;
 }
 
 interface RawLessonRow {
@@ -49,7 +46,6 @@ interface RawLessonRow {
     readonly startsAt: string;
     readonly endsAt: string;
     readonly status: string;
-    readonly studentGroupId: string;
     readonly subject: { readonly name: string } | null;
     readonly room: { readonly name: string } | null;
   } | null;
@@ -62,7 +58,7 @@ async function fetchSchedule(teacherId: string): Promise<ScheduleRow[]> {
   const { data, error } = await getSupabase()
     .from('CalendarLessonTeachers')
     .select(
-      'lesson:CalendarLessons!inner(id, date, startsAt, endsAt, status, studentGroupId, subject:Subjects(name), room:Rooms(name))',
+      'lesson:CalendarLessons!inner(id, date, startsAt, endsAt, status, subject:Subjects(name), room:Rooms(name))',
     )
     .eq('teacherId', teacherId)
     .gte('lesson.date', from)
@@ -80,38 +76,8 @@ async function fetchSchedule(teacherId: string): Promise<ScheduleRow[]> {
       status: lesson.status,
       subjectName: lesson.subject?.name ?? null,
       roomName: lesson.room?.name ?? null,
-      studentGroupId: lesson.studentGroupId,
     }))
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-}
-
-async function cacheLessonForAttendance(
-  row: ScheduleRow,
-  fallback: { subject: string; room: string },
-): Promise<CalendarLesson> {
-  const data = await fetchRoster(row.id, row.studentGroupId);
-
-  const students = sortByDisplayName(
-    data.map((student) => ({
-      id: student.id as string,
-      // displayName stays on-device only (encrypted SQLite) — never sent to APIs.
-      displayName: `${student.firstName as string} ${student.lastName as string}`,
-      photoUri: null,
-    })),
-  );
-
-  const lesson: CalendarLesson = {
-    id: row.id,
-    startTime: row.startsAt,
-    endTime: row.endsAt,
-    subjectName: row.subjectName ?? fallback.subject,
-    roomName: row.roomName ?? fallback.room,
-    studentIds: students.map((student) => student.id),
-  };
-
-  await upsertStudents(students);
-  await upsertCalendarLesson(lesson);
-  return lesson;
 }
 
 export function ScheduleScreen(): React.JSX.Element {
@@ -162,19 +128,31 @@ export function ScheduleScreen(): React.JSX.Element {
     async (row: ScheduleRow): Promise<void> => {
       setOpeningId(row.id);
       try {
-        const lesson = await cacheLessonForAttendance(row, {
-          subject: t('common.lesson'),
-          room: t('common.noValue'),
+        const lesson = await cacheLessonForAttendance({
+          id: row.id,
+          startTime: row.startsAt,
+          endTime: row.endsAt,
+          subjectName: row.subjectName ?? t('common.lesson'),
+          roomName: row.roomName ?? t('common.noValue'),
         });
         setActiveLesson(lesson);
         router.push('/(app)/attendance');
       } catch (err) {
-        setError(t('schedule.openError'));
+        const refusal = rosterRefusal(err);
+        if (refusal === null) {
+          setError(t('schedule.openError'));
+        } else {
+          // The schedule the teacher tapped is older than the school's. Read
+          // it again, so the lesson leaves the list, and then say why it did
+          // not open: load() clears the error it starts with.
+          await load();
+          setError(t(`schedule.refused.${refusal}`));
+        }
       } finally {
         setOpeningId(null);
       }
     },
-    [router, setActiveLesson, t],
+    [load, router, setActiveLesson, t],
   );
 
   if (isLoading) {

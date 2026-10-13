@@ -14,10 +14,10 @@
  */
 module.exports = {
   preset: 'jest-expo',
-  // Node, not jsdom: what is worth pinning here is logic — the roster union,
-  // the queue's owner filter, Swedish ordering. Screens are React Native
-  // components that jsdom cannot render meaningfully anyway, and pretending
-  // otherwise buys confidence that is not there.
+  // Node, not jsdom: what is worth pinning here is logic — the roster the
+  // cache holds, the queue's owner filter, Swedish ordering. Screens are React
+  // Native components that jsdom cannot render meaningfully anyway, and
+  // pretending otherwise buys confidence that is not there.
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/*.test.ts', '**/*.test.tsx'],

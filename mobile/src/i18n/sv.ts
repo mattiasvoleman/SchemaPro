@@ -66,6 +66,10 @@ export const sv = {
     openA11y: 'Öppna {subject} för närvaro',
     loadError: 'Schemat gick inte att hämta.',
     openError: 'Lektionen gick inte att öppna.',
+    refused: {
+      NOT_ASSIGNED: 'Du är inte längre lärare på lektionen och kan inte ta närvaro på den.',
+      NOT_FOUND: 'Lektionen finns inte längre i schemat.',
+    },
   },
   attendance: {
     statusLetter: { present: 'N', absent: 'F', late: 'S', excused: 'G' },
