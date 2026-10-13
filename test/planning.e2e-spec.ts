@@ -290,6 +290,92 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('parallella block (teaching blocks)', () => {
+    const BLOCK_ID = '77777777-7777-4777-8777-777777777777';
+    const TEACHING_BLOCKS: LockedTable = {
+      name: 'TeachingBlocks',
+      columns: ['id', 'schoolId', 'academicYearId', 'name', 'createdAt', 'updatedAt'],
+      lock: 'FOR UPDATE',
+    };
+
+    it('creates a block with its rows and answers them back', async () => {
+      harness.tx['teachingBlock']!['create']!.mockResolvedValue({
+        id: BLOCK_ID,
+        academicYearId: YEAR_ID,
+        name: 'Språkval åk 7',
+      });
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+        {
+          id: SUBJECT_ID,
+          academicYearId: YEAR_ID,
+          blockId: null,
+          subject: { name: 'Tyska' },
+          studentGroup: { name: 'Ty7' },
+          block: null,
+        },
+      ]);
+      harness.tx['teachingRequirement']!['updateMany']!.mockResolvedValue({ count: 1 });
+
+      const response = await request(http())
+        .post('/api/v1/teaching-blocks')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, name: 'Språkval åk 7', requirementIds: [SUBJECT_ID] })
+        .expect(201);
+
+      expect(response.body).toEqual({
+        id: BLOCK_ID,
+        academicYearId: YEAR_ID,
+        name: 'Språkval åk 7',
+        requirementIds: [SUBJECT_ID],
+      });
+    });
+
+    it('refuses a member that is not an id before the service runs', async () => {
+      await request(http())
+        .post('/api/v1/teaching-blocks')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, name: 'Språkval åk 7', requirementIds: ['7A'] })
+        .expect(400);
+      expect(harness.tx['teachingBlock']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('renames a block under its row lock', async () => {
+      const queryRaw = givenLockedRows(TEACHING_BLOCKS, [
+        { id: BLOCK_ID, academicYearId: YEAR_ID, name: 'Språkval åk 7' },
+      ]);
+      harness.tx['teachingBlock']!['update']!.mockResolvedValue({
+        id: BLOCK_ID,
+        academicYearId: YEAR_ID,
+        name: 'Moderna språk åk 7',
+      });
+
+      await request(http())
+        .patch(`/api/v1/teaching-blocks/${BLOCK_ID}`)
+        .set('x-test-user', admin())
+        .send({ name: 'Moderna språk åk 7' })
+        .expect(200);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('deletes a block', async () => {
+      harness.tx['teachingBlock']!['delete']!.mockResolvedValue({ id: BLOCK_ID });
+
+      await request(http())
+        .delete(`/api/v1/teaching-blocks/${BLOCK_ID}`)
+        .set('x-test-user', admin())
+        .expect(204);
+    });
+
+    it('is the administrator’s alone', async () => {
+      await request(http())
+        .post('/api/v1/teaching-blocks')
+        .set('x-test-user', asUser({ role: 'TEACHER' }))
+        .send({ academicYearId: YEAR_ID, name: 'Språkval åk 7' })
+        .expect(403);
+      expect(harness.tx['teachingBlock']!['create']).not.toHaveBeenCalled();
+    });
+  });
+
   describe('timplan (teaching requirements)', () => {
     it('creates a requirement', async () => {
       harness.tx['teachingRequirement']!['create']!.mockResolvedValue({

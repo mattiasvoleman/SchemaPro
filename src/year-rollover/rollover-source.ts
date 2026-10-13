@@ -71,6 +71,14 @@ export interface SourceRequirement {
   recurrence: LessonRecurrence;
   startDate: string | null;
   endDate: string | null;
+  /** Parallella block: the block the row runs in, or null. */
+  blockId: string | null;
+}
+
+/** A parallel block of the source year that holds at least one row. */
+export interface SourceBlock {
+  id: string;
+  name: string;
 }
 
 export interface SourceBreak {
@@ -119,6 +127,8 @@ export interface RolloverSource {
   /** studentId → home class, for every member above. */
   homeClassOf: Map<string, string | null>;
   requirements: SourceRequirement[];
+  /** The blocks the rows above name; empty for a school that has written none. */
+  blocks: SourceBlock[];
   breaks: SourceBreak[];
   classRules: SourceClassRule[];
   frames: FrameWindow[];
@@ -228,10 +238,22 @@ export async function readRolloverSource(
       recurrence: true,
       startDate: true,
       endDate: true,
+      blockId: true,
       subject: { select: { name: true } },
     },
     orderBy: { id: 'asc' },
   });
+  // Read only when a row is in a block, so a school that has written none
+  // reads what it always read.
+  const blockIds = [...new Set((requirements ?? []).flatMap((row) => (row.blockId ? [row.blockId] : [])))];
+  const blocks =
+    blockIds.length > 0
+      ? await tx.teachingBlock.findMany({
+          where: { id: { in: blockIds } },
+          select: { id: true, name: true },
+          orderBy: { id: 'asc' },
+        })
+      : [];
   const breaks = await tx.schoolBreak.findMany({
     where: { academicYearId: sourceYearId },
     select: {
@@ -417,7 +439,9 @@ export async function readRolloverSource(
       recurrence: row.recurrence,
       startDate: row.startDate ? asDay(row.startDate) : null,
       endDate: row.endDate ? asDay(row.endDate) : null,
+      blockId: row.blockId ?? null,
     })),
+    blocks: (blocks ?? []).map((block) => ({ id: block.id, name: block.name })),
     breaks: (breaks ?? []).map((row) => ({
       ...row,
       startDate: asDay(row.startDate),

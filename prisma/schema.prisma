@@ -165,6 +165,7 @@ model School {
   academicYears           AcademicYear[]
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
+  teachingBlocks          TeachingBlock[]
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
   calendarLessonTeachers  CalendarLessonTeacher[]
@@ -1213,6 +1214,8 @@ model AcademicYear {
   successor            AcademicYear?         @relation("YearSuccession")
   studentGroups        StudentGroup[]
   teachingRequirements TeachingRequirement[]
+  /// Parallella block: the rows of this year that run together (TeachingBlock).
+  teachingBlocks       TeachingBlock[]
   masterLessons        MasterLesson[]
   schoolBreaks         SchoolBreak[]
   lunchSittings        LunchSitting[]
@@ -1413,6 +1416,15 @@ model TeachingRequirement {
   maxLessonsPerDay Int?
   minDaysBetween   Int?
 
+  /// Parallella block: the block this row runs in, whose rows have their
+  /// lessons placed at the same times. Null, the default, is a row in no
+  /// block. The key is (blockId, academicYearId, schoolId), so a block is in
+  /// its row's own year and school, and the members have the same lessons and
+  /// weeks by trigger (SQLSTATE TB409, BLOCK_MEMBERS_DIFFER). Deleting the
+  /// block clears this column only — ON DELETE SET NULL ("blockId"), which
+  /// the SetNull below cannot say and the migration does. See 20261024090000.
+  blockId          String? @db.Uuid
+
   /// Which weeks the requirement is read over, inherited by every lesson the
   /// optimizer generates for it. `lessonsPerWeek` counts weeks the requirement
   /// actually runs, so 2 lessons a week over a spring-only window is two a week
@@ -1445,6 +1457,7 @@ model TeachingRequirement {
   studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
   teacher      User?        @relation("RequirementTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
   coTeacher    User?        @relation("RequirementCoTeacher", fields: [coTeacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
+  block        TeachingBlock? @relation(fields: [blockId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   /// `schoolId` leads the key so the slot a school occupies is its own. Without
   /// it one school's forged row took the (year, group, subject) slot of
@@ -1453,7 +1466,33 @@ model TeachingRequirement {
   @@unique([schoolId, academicYearId, studentGroupId, subjectId])
   @@index([schoolId])
   @@index([teacherId])
+  @@index([blockId])
   @@map("TeachingRequirements")
+}
+
+/// Parallella block: rows of one läsår whose lessons are placed at the same
+/// times — "Språkval åk 7" holds Spanska, Tyska and Franska for the
+/// teaching groups cut across 7A, 7B and 7C, and takes one slot of 7A's week
+/// per lesson rather than one per language. A row joins through
+/// TeachingRequirement.blockId. See migration 20261024090000.
+model TeachingBlock {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  academicYearId String   @db.Uuid
+  /// Trimmed, 1..80 characters by CHECK (TeachingBlocks_name_is_sane).
+  name           String
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear          @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  requirements TeachingRequirement[]
+
+  @@unique([schoolId, academicYearId, name])
+  /// The target TeachingRequirement's block key needs: a block OF ITS OWN YEAR.
+  @@unique([id, academicYearId, schoolId])
+  @@index([academicYearId])
+  @@map("TeachingBlocks")
 }
 
 // -----------------------------------------------------------------------------

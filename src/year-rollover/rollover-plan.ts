@@ -7,6 +7,7 @@ import {
   frameChanges,
   mapPeriod,
   nameCollisions,
+  promoteName,
   proposeBreak,
   resolveGroups,
   volumeFindings,
@@ -135,7 +136,20 @@ export interface RolloverWrites {
     recurrence: LessonRecurrence;
     startDate: string | null;
     endDate: string | null;
+    /**
+     * Parallella block: the key of the block copy the row is carried into
+     * (`blocks` below). Only on a row in a block, so a school that has none
+     * writes, and hashes, what it always did.
+     */
+    blockKey?: string;
   }[];
+  /**
+   * The parallel blocks carried, one copy per block and side: the rows
+   * carried to the successor groups, keyed by the source block's id, and
+   * those carried to intake twins, keyed `intake:<id>`. A copy holding no
+   * carried row is not written. See planBlocks.
+   */
+  blocks: { key: string; sourceBlockId: string; name: string }[];
   breaks: {
     sourceBreakId: string;
     name: string;
@@ -373,6 +387,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     groups: [],
     members: [],
     requirements: [],
+    blocks: [],
     breaks: [],
     classRules: [],
     timplans: [],
@@ -563,17 +578,30 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         teacherId = keep('TEACHER', requirement.teacherId);
         coTeacherId = keep('CO_TEACHER', requirement.coTeacherId);
       }
-      writes.requirements.push({ ...base, groupKey: group.id, teacherId, coTeacherId });
+      writes.requirements.push({
+        ...base,
+        groupKey: group.id,
+        teacherId,
+        coTeacherId,
+        ...(requirement.blockId ? { blockKey: requirement.blockId } : {}),
+      });
       requirementStats.carried++;
       carriedPerGroup.set(group.id, (carriedPerGroup.get(group.id) ?? 0) + 1);
     }
     if (row.intake) {
       // The intake class reads what its grade read this year, taught by
       // whoever is staffed later: unpromoted, no teachers.
-      writes.requirements.push({ ...base, groupKey: intakeKey(group.id), teacherId: null, coTeacherId: null });
+      writes.requirements.push({
+        ...base,
+        groupKey: intakeKey(group.id),
+        teacherId: null,
+        coTeacherId: null,
+        ...(requirement.blockId ? { blockKey: intakeKey(requirement.blockId) } : {}),
+      });
       requirementStats.carried++;
     }
   }
+  writes.blocks = planBlocks(source, writes.requirements, groupById);
   if (requirementStats.oddEvenRows > 0 && crossesIsoWeek53(sourceBounds.startDate, target.startDate)) {
     problems.push({ code: 'ISO_WEEK_53_CROSSED', blocking: false, params: { rows: requirementStats.oddEvenRows } });
   }
@@ -832,6 +860,11 @@ export function hashWrites(writes: RolloverWrites): string {
     requirements: [...writes.requirements].sort((a, b) =>
       `${a.groupKey}|${a.sourceRequirementId}` < `${b.groupKey}|${b.sourceRequirementId}` ? -1 : 1,
     ),
+    // Appended only when blocks are carried, so a school without blocks
+    // hashes what it always did.
+    ...(writes.blocks.length > 0
+      ? { blocks: [...writes.blocks].sort((a, b) => (a.key < b.key ? -1 : 1)) }
+      : {}),
     breaks: [...writes.breaks].sort((a, b) => (a.sourceBreakId < b.sourceBreakId ? -1 : 1)),
     classRules: [...writes.classRules]
       .sort((a, b) => (a.sourceConstraintId < b.sourceConstraintId ? -1 : 1))
@@ -843,6 +876,71 @@ export function hashWrites(writes: RolloverWrites): string {
   };
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
 }
+
+/**
+ * Parallella block: one copy per source block and side, holding the rows
+ * carried with it.
+ *
+ * A block follows its rows, as the rows follow their groups. The rows carried
+ * to the successor groups make one copy, named as the groups are promoted:
+ * promoteName() at the årskurs every member's group carries, so "Språkval åk
+ * 7" over Ty7, Fr7 and Sp7 becomes "Språkval åk 8"; members in different
+ * årskurser, or in groups with none, keep the name. The rows carried to the
+ * intake twins make a second copy under the source's own name, as the twins
+ * keep theirs. A copy holding no carried row is not written.
+ *
+ * The rows' lessons and weeks are carried as they are and their periods by
+ * one rule, so a block whose rows agreed agrees in the new year as well, and
+ * the trigger of 20261024090000 holds the insert to it.
+ *
+ * NAMES ARE UNIQUE IN THE NEW YEAR: successor copies first, then intake ones,
+ * each by name and then by source id, and a name another copy already took
+ * gets " (2)", " (3)" …, cut to the 80 characters a block name may have.
+ */
+function planBlocks(
+  source: RolloverSource,
+  rows: RolloverWrites['requirements'],
+  groupById: ReadonlyMap<string, SourceGroup>,
+): RolloverWrites['blocks'] {
+  if (source.blocks.length === 0) return [];
+  const used = new Set(rows.flatMap((row) => (row.blockKey ? [row.blockKey] : [])));
+  const copies = source.blocks.flatMap((block) => {
+    const sides: { key: string; sourceBlockId: string; name: string; intake: boolean }[] = [];
+    if (used.has(block.id)) {
+      const grades = new Set(
+        source.requirements
+          .filter((requirement) => requirement.blockId === block.id)
+          .map((requirement) => groupById.get(requirement.studentGroupId)?.gradeLevel ?? null),
+      );
+      const [grade] = [...grades];
+      const name = grades.size === 1 && grade !== null && grade !== undefined ? promoteName(block.name, grade).name : block.name;
+      sides.push({ key: block.id, sourceBlockId: block.id, name, intake: false });
+    }
+    if (used.has(intakeKey(block.id))) {
+      sides.push({ key: intakeKey(block.id), sourceBlockId: block.id, name: block.name, intake: true });
+    }
+    return sides;
+  });
+  copies.sort(
+    (a, b) =>
+      Number(a.intake) - Number(b.intake) ||
+      a.name.localeCompare(b.name, 'sv') ||
+      (a.sourceBlockId < b.sourceBlockId ? -1 : a.sourceBlockId > b.sourceBlockId ? 1 : 0),
+  );
+  const taken = new Set<string>();
+  return copies.map(({ key, sourceBlockId, name }) => {
+    let unique = name;
+    for (let n = 2; taken.has(unique); n++) {
+      const suffix = ` (${n})`;
+      unique = `${name.slice(0, BLOCK_NAME_MAX - suffix.length).trimEnd()}${suffix}`;
+    }
+    taken.add(unique);
+    return { key, sourceBlockId, name: unique };
+  });
+}
+
+/** TeachingBlocks_name_is_sane's bound. */
+const BLOCK_NAME_MAX = 80;
 
 /** The plan as the API answers it: everything but the rows to write. */
 export function previewOf(plan: RolloverPlan): Omit<RolloverPlan, 'writes'> {

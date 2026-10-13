@@ -28,6 +28,25 @@ const OPTIONS: RolloverOptionsDto = {
   endDate: '2028-06-09',
 };
 
+const BLOCK_ID = '00000000-0000-4000-8000-0000000000b1';
+
+/**
+ * A parallel block over two rows of åk 7 with the same lessons: Svenska for
+ * 7A and Matematik for Ma7 grupp 1, each 3 × 60 every week. The rollover
+ * carries it with them (rollover-plan.ts, planBlocks).
+ */
+function withBlock(rows: Record<string, Row[]>): Record<string, Row[]> {
+  rows['teachingBlock'] = [
+    { id: BLOCK_ID, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 7' },
+  ];
+  for (const requirement of rows['teachingRequirement']!) {
+    const svenska7a = requirement['studentGroupId'] === IDS.g7a && requirement['subjectId'] === IDS.sv;
+    const ma7 = requirement['studentGroupId'] === IDS.gMa7 && requirement['subjectId'] === IDS.ma;
+    if (svenska7a || ma7) requirement['blockId'] = BLOCK_ID;
+  }
+  return rows;
+}
+
 function setup(rows?: Record<string, Row[]>) {
   const world = givenRolloverWorld(rows);
   const prisma = prismaFor(world);
@@ -423,7 +442,7 @@ describe('YearRolloverService — rollover execute', () => {
    * id where the table has one, studentGroupId is one of its new groups.
    */
   it('reads, locks the source FOR SHARE and creates into the new year only (write audit)', async () => {
-    const { world, service } = setup();
+    const { world, service } = setup(withBlock(defaultRolloverRows()));
     const { result } = await previewAndExecute(world, service, {
       ...OPTIONS,
       breaks: [{ sourceBreakId: IDS.jullov }],
@@ -463,6 +482,7 @@ describe('YearRolloverService — rollover execute', () => {
       'schoolBreak',
       'studentGroup',
       'studentGroupMember',
+      'teachingBlock',
       'teachingRequirement',
     ]);
     // And they are exactly the tables the registry says are carried.
@@ -484,7 +504,7 @@ describe('YearRolloverService — rollover execute', () => {
     ['without tjänster', false],
     ['with tjänster and uppdrag (carryStaffing)', true],
   ])('writes every COPY column as the source has it, and every NULL column as null (registry against the writes), %s', async (_label, carryStaffing) => {
-    const rows = carryStaffing ? staffingRows() : defaultRolloverRows();
+    const rows = withBlock(carryStaffing ? staffingRows() : defaultRolloverRows());
     // A decided plan, so the new year's entry grade (åk 7) is written from
     // the default rule and not only the cohorts' rows are audited.
     rows['localTimplan']!.push({
@@ -578,7 +598,15 @@ describe('YearRolloverService — rollover execute', () => {
       },
       // The source row a written grade comes from (timplanOrigin).
       academicYearTimplan: (row) => timplanOrigin(row).from,
+      // The fixture's one block, whichever side's copy this is.
+      teachingBlock: () => source['teachingBlock']![0],
     };
+    /** Whether a written block holds rows of intake twins: the copy that keeps its name. */
+    const isIntakeCopy = (blockId: unknown) =>
+      world.rows['teachingRequirement']!
+        .filter((requirement) => requirement['blockId'] === blockId)
+        .some((requirement) => created(requirement['studentGroupId'])['predecessorId'] === null);
+    const blockRules: string[] = [];
     /**
      * Where a written timplan row must come from, read off the source rows
      * and not off the planner: CARRIED from the source row below it when a
@@ -723,11 +751,38 @@ describe('YearRolloverService — rollover execute', () => {
           } else if (rule === 'DUTY_SLOT_REASON') {
             expect({ ...at, value: row[column] }).toEqual({ ...at, value: 'Uppdrag' });
             checked++;
+          } else if (rule === 'MAP_BLOCK') {
+            // Only a row in a block names one: a block of the new year that
+            // holds the rows carried with it to the same side.
+            const block = row[column] === undefined ? undefined : writtenRow('teachingBlock', row[column]);
+            expect({ ...at, written: column in row, year: block?.['academicYearId'] ?? null }).toEqual({
+              ...at,
+              written: from![column] != null,
+              year: from![column] != null ? target : null,
+            });
+            if (from![column] != null) {
+              const intake = created(row['studentGroupId'])['predecessorId'] === null;
+              expect({ ...at, intake: isIntakeCopy(row[column]) }).toEqual({ ...at, intake });
+              blockRules.push(rule);
+            }
+            checked++;
+          } else if (rule === 'PROMOTE_BLOCK_NAME') {
+            // The create's data carries no id; the block it made is found by
+            // the name it was written with, and judged by the rows it holds.
+            const made = world.rows['teachingBlock']!.find(
+              (block) => block['academicYearId'] === target && block['name'] === row[column],
+            );
+            const expected = isIntakeCopy(made?.['id']) ? from![column] : String(from![column]).replace('åk 7', 'åk 8');
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: expected });
+            blockRules.push(rule);
+            checked++;
           }
         }
       }
     }
     expect(checked).toBeGreaterThan(40);
+    // The block was carried and its rows joined it.
+    expect([...new Set(blockRules)].sort()).toEqual(['MAP_BLOCK', 'PROMOTE_BLOCK_NAME']);
     // Both ways a timplan row is written were audited.
     expect(timplanKinds.sort()).toEqual(['CARRIED', 'CARRIED', 'DEFAULT']);
     // And every staffing rule, when tjänster are carried; none without.
@@ -736,7 +791,42 @@ describe('YearRolloverService — rollover execute', () => {
     );
   });
 
-  it('refuses a stale preview with 409 before any write', async () => {
+  it('carries a block with its rows: the successor copy promoted, the intake copy under its own name, a taken name numbered', async () => {
+    const rows = withBlock(defaultRolloverRows());
+    // A second block, over 8A's and 9A's Matematik: årskurser that differ, so
+    // its name is kept — the very name the first block is promoted to.
+    const other = '00000000-0000-4000-8000-0000000000b2';
+    rows['teachingBlock']!.push({ id: other, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 8' });
+    for (const requirement of rows['teachingRequirement']!) {
+      if ([IDS.g8a, IDS.g9a].includes(requirement['studentGroupId'] as string)) requirement['blockId'] = other;
+    }
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, {
+      ...OPTIONS,
+      groups: [{ sourceGroupId: IDS.g7a, outcome: 'INTAKE' }],
+    });
+    const target = result.academicYear.id;
+    const groupName = (id: unknown) => world.rows['studentGroup']!.find((group) => group['id'] === id)!['name'];
+    const subjectName = (id: unknown) => world.rows['subject']!.find((subject) => subject['id'] === id)!['name'];
+    const blocks = world.rows['teachingBlock']!
+      .filter((block) => block['academicYearId'] === target)
+      .map((block) => [
+        block['name'],
+        world.rows['teachingRequirement']!
+          .filter((requirement) => requirement['blockId'] === block['id'])
+          .map((requirement) => `${subjectName(requirement['subjectId'])} för ${groupName(requirement['studentGroupId'])}`)
+          .sort(),
+      ])
+      .sort(([a], [b]) => String(a).localeCompare(String(b), 'sv'));
+
+    expect(blocks).toEqual([
+      ['Språkval åk 7', ['Svenska för 7A']],
+      ['Språkval åk 8', ['Matematik för Ma8 grupp 1', 'Svenska för 8A']],
+      ['Språkval åk 8 (2)', ['Matematik för 9A']],
+    ]);
+  });
+
+    it('refuses a stale preview with 409 before any write', async () => {
     const { world, service } = setup();
     const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
     world.rows['user']!.push({ id: 'c0000000-0000-4000-8000-000000000073', role: 'STUDENT', isActive: true, studentGroupId: IDS.g7a });
@@ -874,6 +964,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         ownDistribution: true,
         maxLessonsPerDay: true,
         minDaysBetween: true,
+        blockId: true,
       });
     }
     // The SECOND, named the same way: the count of the uppdrag's times reads
@@ -896,6 +987,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         ownDistribution: _own,
         maxLessonsPerDay: _perDay,
         minDaysBetween: _apart,
+        blockId: _block,
         ...select
       } = args.select;
       return { ...call, args: { ...args, select } };
@@ -988,7 +1080,7 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
   });
 
   it('writes the posts, the uppdrag and NEW slots into the new year, takes the staff and their rows under lock, and changes nothing of the source', async () => {
-    const rows = staffingRows();
+    const rows = withBlock(staffingRows());
     const { world, service } = setup(rows);
     const before = JSON.stringify(rows);
     const { result } = await previewAndExecute(world, service, {

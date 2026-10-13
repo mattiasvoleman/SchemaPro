@@ -44,6 +44,12 @@ import { Prisma } from '@prisma/client';
  * (ROLLOVER_LINK_MISMATCH), and a linked group moved to another year
  * (ROLLOVER_GROUP_IS_LINKED) — the last one met by the groups PATCH, which
  * takes academicYearId. See rolloverLinkRefusal.
+ *
+ * A parallel block's trigger (migration 20261024090000) answers SQLSTATE TB409
+ * when a timplanspost in a block would have other lessons or weeks than the
+ * rest of it, and that is the 409 BLOCK_MEMBERS_DIFFER naming the block —
+ * whichever writer met it: the requirements PATCH, a block's members, the
+ * import, the rollover or "Skapa timplansposter". See teachingBlockRefusal.
  */
 export function rethrowPrismaError(error: unknown): never {
   const decided = decidedTimplanRefusal(error);
@@ -60,6 +66,10 @@ export function rethrowPrismaError(error: unknown): never {
   const rolloverLink = rolloverLinkRefusal(error);
   if (rolloverLink) {
     throw rolloverLinkConflict(rolloverLink);
+  }
+  const block = teachingBlockRefusal(error);
+  if (block) {
+    throw blockMembersDifferConflict(block);
   }
   const enrolmentKey = enrolmentClassKeyRefusal(error);
   if (enrolmentKey === 'CLASS_MOVED') {
@@ -89,6 +99,62 @@ export function rethrowPrismaError(error: unknown): never {
     }
   }
   throw error;
+}
+
+/** The problem `code` of a timplanspost whose lessons or weeks are not its block's. */
+export const BLOCK_MEMBERS_DIFFER = 'BLOCK_MEMBERS_DIFFER';
+
+/** What the block trigger (migration 20261024090000) names. */
+export interface TeachingBlockRefusal {
+  blockName: string | null;
+  teachingBlockId: string | null;
+  requirementId: string | null;
+  otherRequirementId: string | null;
+}
+
+/**
+ * Recognises the block trigger's refusal, and reads which block and rows.
+ *
+ * Like TP409 a SQLSTATE class Postgres does not define, so @prisma/adapter-pg
+ * hands it over as P2039 with the driver's fields under
+ * meta.driverAdapterError.cause; the rendered message ("Code: `TB409`") is the
+ * fallback, so an adapter release that stops carrying the cause degrades to a
+ * 409 without the block's name rather than to a 500. The message names the
+ * block in quotes, and DETAIL carries the three ids — never a person.
+ */
+export function teachingBlockRefusal(error: unknown): TeachingBlockRefusal | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const byMeta = cause?.originalCode === 'TB409';
+  const byMessage = error.code === 'P2039' && error.message.includes('Code: `TB409`');
+  if (!byMeta && !byMessage) return null;
+
+  const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+  const detail = typeof cause?.detail === 'string' ? cause.detail : '';
+  return {
+    blockName: /i blocket "(.*)" har inte samma/.exec(text)?.[1] ?? null,
+    teachingBlockId: /teachingBlockId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    requirementId: /(?:^| )requirementId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    otherRequirementId: /otherRequirementId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+  };
+}
+
+/**
+ * The 409 for a write that would leave a block's timplansposter with different
+ * lessons or weeks. The block's lessons are placed at the same times, so every
+ * member has the same lessons per week, lengths and weeks; the sentence says
+ * how to get there — the row out of the block first, or every member alike.
+ */
+export function blockMembersDifferConflict(refusal: TeachingBlockRefusal): ConflictException {
+  const which = refusal.blockName === null ? 'ett block' : `blocket "${refusal.blockName}"`;
+  return new ConflictException({
+    message:
+      `Timplansposterna i ${which} läggs på samma tider och måste ha samma antal lektioner, ` +
+      'samma längder och samma veckor. Ta posten ur blocket först, eller ändra alla poster i blocket likadant.',
+    code: BLOCK_MEMBERS_DIFFER,
+    ...(refusal.teachingBlockId !== null ? { teachingBlockId: refusal.teachingBlockId } : {}),
+  });
 }
 
 /** The problem `code` every refusal to touch a decided timplan carries. */
@@ -284,6 +350,7 @@ const NAMED_CHECKS: Record<string, string> = {
   TimplanCredits_scope_is_one: 'studentGroupId: beslutet gäller en grupp eller ett årskursspann, inte båda.',
   TimplanCredits_name_is_sane: 'name: beslutet behöver ett namn på högst 80 tecken.',
   TimplanCredits_note_is_sane: 'note: anteckningen kan vara högst 500 tecken, och inte bara blanktecken.',
+  TeachingBlocks_name_is_sane: 'name: blocket behöver ett namn på högst 80 tecken, utan blanksteg först eller sist.',
   TeachingRequirements_lesson_lengths_are_canonical:
     'lessonLengths: en längd per lektion, längsta först, 15–240 minuter i femminuterssteg och ' +
     'två eller tre olika längder — och lessonsPerWeek och minutesPerLesson ska vara antalet och den längsta.',

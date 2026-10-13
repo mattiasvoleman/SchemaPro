@@ -17421,3 +17421,533 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 100: ett block läses av skolans personal och skrivs av
+-- administratören (TeachingBlocks, 20261024090000).
+--
+-- A block is how a school says that rows of its timplan run at the same
+-- times: "Språkval åk 7" holds Spanska, Tyska and Franska for the teaching
+-- groups cut across 7A, 7B and 7C. It is read and written like the rows it
+-- groups: staff of the school read it, the administrator writes it, and
+-- nobody else sees it at all. Asserted as the administrator through the
+-- gateway's role (app_authenticated) and through PostgREST's (authenticated),
+-- which reads blocks and writes none, then as a teacher, a pupil and the
+-- other school's administrator.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid;
+  n bigint;
+  via text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'block: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  PERFORM set_config('app.test_rls100_year', year::text, true);
+
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS100 Språkval åk 7', now());
+
+  -- A row stamped with a school that is not this one: WITH CHECK or the key
+  -- refuses it, and nothing lands either way.
+  BEGIN
+    INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', year, 'RLS100 främmande', now());
+    RAISE EXCEPTION 'block: the admin wrote a block into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'block: running as %, not %', current_user, via;
+    END IF;
+    SELECT count(*) INTO n FROM "TeachingBlocks";
+    IF n <> 1 THEN
+      RAISE EXCEPTION 'block: the admin reads % block(s) of their school as %, not 1', n, via;
+    END IF;
+  END LOOP;
+
+  -- PostgREST reads blocks and writes none: the gateway writes them, after
+  -- the checks a block needs.
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+    VALUES (school, year, 'RLS100 via PostgREST', now());
+    RAISE EXCEPTION 'block: PostgREST''s role wrote a block';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeachingBlocks" SET name = 'RLS100 omdöpt via PostgREST';
+    RAISE EXCEPTION 'block: PostgREST''s role renamed a block';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "TeachingBlocks";
+    RAISE EXCEPTION 'block: PostgREST''s role deleted a block';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+  SET LOCAL ROLE app_authenticated;
+
+  UPDATE "TeachingBlocks" SET name = 'RLS100 Språkval åk 7 (omdöpt)', "updatedAt" = now();
+  IF NOT FOUND THEN RAISE EXCEPTION 'block: the admin cannot rename their own block'; END IF;
+END $$;
+
+-- A teacher of the school reads the block and changes nothing.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive"
+        AND "authId" IS NOT NULL
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION 'block: expected to be acting as a teacher, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingBlocks";
+  IF n <> 1 THEN RAISE EXCEPTION 'block: a teacher reads % block(s) of their school, not 1', n; END IF;
+  BEGIN
+    INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+    VALUES (app.current_school_id(), current_setting('app.test_rls100_year')::uuid, 'RLS100 lärarens', now());
+    RAISE EXCEPTION 'block: a teacher wrote a block';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "TeachingBlocks" SET name = 'RLS100 lärarens namn';
+  IF FOUND THEN RAISE EXCEPTION 'block: a teacher renamed a block'; END IF;
+  DELETE FROM "TeachingBlocks";
+  IF FOUND THEN RAISE EXCEPTION 'block: a teacher deleted a block'; END IF;
+END $$;
+
+-- A pupil of the school reads nothing: a block is planning, as the rows are.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = (SELECT "schoolId" FROM "TeachingBlocks" LIMIT 1)
+        AND role = 'STUDENT' AND "authId" IS NOT NULL
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'block: expected to be acting as a pupil, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingBlocks";
+  IF n <> 0 THEN RAISE EXCEPTION 'block: a pupil reads % block(s)', n; END IF;
+END $$;
+
+-- The other school's administrator sees none of this school's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'block: expected the other school''s admin, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingBlocks";
+  IF n <> 0 THEN RAISE EXCEPTION 'block: the other school''s admin reads % block(s)', n; END IF;
+  UPDATE "TeachingBlocks" SET name = 'RLS100 kapad';
+  IF FOUND THEN RAISE EXCEPTION 'block: the other school''s admin renamed a block'; END IF;
+  DELETE FROM "TeachingBlocks";
+  IF FOUND THEN RAISE EXCEPTION 'block: the other school''s admin deleted a block'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 101: blockets rättigheter och regel står i katalogen.
+--
+-- What the sections around it prove by acting, read from the catalogue,
+-- where a later migration that loosens one of them shows up even if no
+-- section happens to act on that path: row security is on, with the two
+-- arms TO authenticated; PostgREST's role holds SELECT and no write; the
+-- gateway's role holds the four it uses; the trigger's function is SECURITY
+-- DEFINER with a pinned search_path, executed by no API role; the trigger
+-- runs AFTER each row, on the columns that are a block's lessons and weeks;
+-- and the requirements' key clears "blockId" alone.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  arms text[];
+  cols text[];
+  setcols text[];
+  deltype "char";
+  fn oid := 'app.teaching_block_members_agree()'::regprocedure;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"TeachingBlocks"'::regclass) THEN
+    RAISE EXCEPTION 'block catalogue: row security is off on TeachingBlocks';
+  END IF;
+  SELECT array_agg(policyname || ' ' || cmd || ' ' || array_to_string(roles, ',') ORDER BY policyname)
+    INTO arms FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingBlocks';
+  IF arms IS DISTINCT FROM ARRAY[
+    'teaching_blocks_admin_all ALL authenticated',
+    'teaching_blocks_staff_select SELECT authenticated'
+  ] THEN
+    RAISE EXCEPTION 'block catalogue: the arms are %', arms;
+  END IF;
+
+  IF NOT has_table_privilege('authenticated', '"TeachingBlocks"', 'SELECT') THEN
+    RAISE EXCEPTION 'block catalogue: PostgREST''s role cannot read blocks';
+  END IF;
+  IF has_table_privilege('authenticated', '"TeachingBlocks"', 'INSERT')
+     OR has_table_privilege('authenticated', '"TeachingBlocks"', 'UPDATE')
+     OR has_table_privilege('authenticated', '"TeachingBlocks"', 'DELETE') THEN
+    RAISE EXCEPTION 'block catalogue: PostgREST''s role may write blocks';
+  END IF;
+  IF NOT (has_table_privilege('app_authenticated', '"TeachingBlocks"', 'SELECT')
+          AND has_table_privilege('app_authenticated', '"TeachingBlocks"', 'INSERT')
+          AND has_table_privilege('app_authenticated', '"TeachingBlocks"', 'UPDATE')
+          AND has_table_privilege('app_authenticated', '"TeachingBlocks"', 'DELETE')) THEN
+    RAISE EXCEPTION 'block catalogue: the gateway''s role lacks a write it uses';
+  END IF;
+
+  IF has_function_privilege('app_authenticated', fn, 'EXECUTE')
+     OR has_function_privilege('authenticated', fn, 'EXECUTE') THEN
+    RAISE EXCEPTION 'block catalogue: an API role may execute the trigger''s function';
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn) THEN
+    RAISE EXCEPTION 'block catalogue: the trigger''s function is not SECURITY DEFINER';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = fn AND proconfig @> ARRAY['search_path=public, pg_temp']) THEN
+    RAISE EXCEPTION 'block catalogue: the trigger''s function has no pinned search_path (%)',
+      (SELECT proconfig FROM pg_proc WHERE oid = fn);
+  END IF;
+
+  SELECT array_agg(a.attname::text ORDER BY a.attname) INTO cols
+    FROM pg_trigger t
+    JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = ANY (t.tgattr)
+   WHERE t.tgrelid = '"TeachingRequirements"'::regclass
+     AND t.tgname = 'TeachingRequirements_block_members_agree'
+     AND t.tgfoid = fn
+     -- ROW (1) | AFTER (0 in bit 2) | INSERT (4) | UPDATE (16)
+     AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 0 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16;
+  IF cols IS DISTINCT FROM ARRAY['blockId', 'endDate', 'lessonLengths', 'lessonsPerWeek',
+                                 'minutesPerLesson', 'recurrence', 'startDate'] THEN
+    RAISE EXCEPTION 'block catalogue: the trigger reads %', cols;
+  END IF;
+
+  SELECT c.confdeltype,
+         ARRAY(SELECT a.attname::text FROM pg_attribute a
+                WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.confdelsetcols))
+    INTO deltype, setcols
+    FROM pg_constraint c
+   WHERE c.conname = 'TeachingRequirements_blockId_academicYearId_schoolId_fkey';
+  IF deltype IS DISTINCT FROM 'n' OR setcols IS DISTINCT FROM ARRAY['blockId'] THEN
+    RAISE EXCEPTION 'block catalogue: deleting a block does % to %', deltype, setcols;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 102: ett block är i sin rads eget läsår och sin egen skola, och
+-- tas det bort står raderna kvar.
+--
+-- The key from TeachingRequirements is (blockId, academicYearId, schoolId),
+-- so a row cannot join a block of another year, cannot be moved to another
+-- year while it is in a block, and a block that is deleted lets its rows go
+-- with "blockId" cleared and nothing else touched.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid;
+  later uuid;
+  grp uuid;
+  subject uuid;
+  r uuid;
+  here uuid;
+  there uuid;
+  row_after record;
+BEGIN
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT id INTO subject FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS102 senare år', DATE '2093-08-15', DATE '2094-06-10', false, now())
+  RETURNING id INTO later;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS102 Ty7', 'TEACHING_GROUP', now()) RETURNING id INTO grp;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (school, year, subject, grp, 2, 60, now()) RETURNING id INTO r;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS102 i år', now()) RETURNING id INTO here;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, later, 'RLS102 senare år', now()) RETURNING id INTO there;
+
+  BEGIN
+    UPDATE "TeachingRequirements" SET "blockId" = there WHERE id = r;
+    RAISE EXCEPTION 'block key: a row joined a block of another year';
+  EXCEPTION
+    WHEN foreign_key_violation THEN NULL;
+  END;
+
+  UPDATE "TeachingRequirements" SET "blockId" = here WHERE id = r;
+  IF NOT FOUND THEN RAISE EXCEPTION 'block key: a row could not join its own year''s block'; END IF;
+
+  BEGIN
+    UPDATE "TeachingRequirements" SET "academicYearId" = later WHERE id = r;
+    RAISE EXCEPTION 'block key: a row in a block was moved to another year';
+  EXCEPTION
+    WHEN foreign_key_violation THEN NULL;
+  END;
+
+  DELETE FROM "TeachingBlocks" WHERE id = here;
+  SELECT "blockId", "academicYearId", "schoolId", "lessonsPerWeek" INTO row_after
+    FROM "TeachingRequirements" WHERE id = r;
+  IF NOT FOUND THEN RAISE EXCEPTION 'block key: deleting a block took its row with it'; END IF;
+  IF row_after."blockId" IS NOT NULL OR row_after."academicYearId" <> year
+     OR row_after."schoolId" <> school OR row_after."lessonsPerWeek" <> 2 THEN
+    RAISE EXCEPTION 'block key: deleting a block left the row as %', row_after;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 103: ett blocks timplansposter har samma lektioner och veckor
+-- (SQLSTATE TB409, BLOCK_MEMBERS_DIFFER).
+--
+-- The k-th lesson of each member starts with the k-th of the others, so the
+-- members agree on lessonsPerWeek, minutesPerLesson and lessonLengths, and on
+-- recurrence, startDate and endDate. Every way one member can leave the
+-- others is refused with TB409, the block named in the message and the rows
+-- in DETAIL; one statement that moves every member at once is not. Through
+-- both API roles, because PostgREST's may write TeachingRequirements and
+-- meets no DTO.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid;
+  subject uuid;
+  g1 uuid; g2 uuid; g3 uuid;
+  r1 uuid; r2 uuid; r3 uuid;
+  block uuid;
+  via text;
+  msg text;
+  det text;
+  change text;
+  refused int;
+BEGIN
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT id INTO subject FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS103 Ty7', 'TEACHING_GROUP', now()) RETURNING id INTO g1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS103 Fr7', 'TEACHING_GROUP', now()) RETURNING id INTO g2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS103 Sp7', 'TEACHING_GROUP', now()) RETURNING id INTO g3;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (school, year, subject, g1, 2, 60, now()) RETURNING id INTO r1;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (school, year, subject, g2, 2, 60, now()) RETURNING id INTO r2;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS103 Språkval', now()) RETURNING id INTO block;
+  PERFORM set_config('app.test_rls103', json_build_object(
+    'school', school, 'year', year, 'subject', subject, 'g3', g3,
+    'r1', r1, 'r2', r2, 'block', block)::text, true);
+
+  -- Both rows in one statement: the trigger judges it at the statement's end.
+  UPDATE "TeachingRequirements" SET "blockId" = block WHERE id IN (r1, r2);
+  IF (SELECT count(*) FROM "TeachingRequirements" WHERE "blockId" = block) <> 2 THEN
+    RAISE EXCEPTION 'block members: two equal rows could not form a block';
+  END IF;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN
+      RAISE EXCEPTION 'block members: running as %, not %', current_user, via;
+    END IF;
+    refused := 0;
+    FOREACH change IN ARRAY ARRAY[
+      '"lessonsPerWeek" = 3',
+      '"minutesPerLesson" = 45',
+      '"minutesPerLesson" = 80, "lessonLengths" = ''{80,40}''',
+      '"recurrence" = ''ODD_WEEKS''',
+      '"startDate" = DATE ''2020-01-01''',
+      '"endDate" = DATE ''2100-01-01'''
+    ] LOOP
+      BEGIN
+        EXECUTE format('UPDATE "TeachingRequirements" SET %s WHERE id = %L', change, r2);
+        RAISE EXCEPTION 'block members: % on one member was not refused as %', change, via;
+      EXCEPTION
+        WHEN SQLSTATE 'TB409' THEN
+          GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+          IF msg NOT LIKE 'BLOCK_MEMBERS_DIFFER: %"RLS103 Språkval"%' THEN
+            RAISE EXCEPTION 'block members: the refusal reads "%"', msg;
+          END IF;
+          IF det <> format('teachingBlockId=%s requirementId=%s otherRequirementId=%s', block, r2, r1) THEN
+            RAISE EXCEPTION 'block members: the refusal''s detail reads "%"', det;
+          END IF;
+          refused := refused + 1;
+      END;
+    END LOOP;
+    IF refused <> 6 THEN RAISE EXCEPTION 'block members: % of 6 changes refused as %', refused, via; END IF;
+
+    -- A third row joins with other lessons: refused; with the same: let in.
+    BEGIN
+      INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                          "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+      VALUES (school, year, subject, g3, 1, 60, block, now());
+      RAISE EXCEPTION 'block members: a row with one lesson joined a block of two as %', via;
+    EXCEPTION
+      WHEN SQLSTATE 'TB409' THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+-- What a block may do: change every member in one statement, and hold
+-- anything that is not its lessons and weeks per member.
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls103')::jsonb;
+  r3 uuid;
+BEGIN
+  UPDATE "TeachingRequirements"
+     SET "lessonsPerWeek" = 2, "minutesPerLesson" = 80, "lessonLengths" = '{80,40}',
+         "recurrence" = 'EVEN_WEEKS', "startDate" = DATE '2020-01-01'
+   WHERE "blockId" = (t ->> 'block')::uuid;
+  IF NOT FOUND THEN RAISE EXCEPTION 'block members: the block could not change its lessons as one'; END IF;
+
+  UPDATE "TeachingRequirements" SET "teacherLoadPercent" = 50, "minutesBefore" = 10
+   WHERE id = (t ->> 'r1')::uuid;
+
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "lessonLengths",
+                                      "recurrence", "startDate", "blockId", "updatedAt")
+  VALUES ((t ->> 'school')::uuid, (t ->> 'year')::uuid, (t ->> 'subject')::uuid, (t ->> 'g3')::uuid,
+          2, 80, '{80,40}', 'EVEN_WEEKS', DATE '2020-01-01', (t ->> 'block')::uuid, now())
+  RETURNING id INTO r3;
+  IF (SELECT count(*) FROM "TeachingRequirements" WHERE "blockId" = (t ->> 'block')::uuid) <> 3 THEN
+    RAISE EXCEPTION 'block members: a row with the block''s lessons could not join it';
+  END IF;
+
+  -- Out of the block, a row has its own lessons again.
+  UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = r3;
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 1, "minutesPerLesson" = 60, "lessonLengths" = '{}'
+   WHERE id = r3;
+END $$;
+
+-- The block's name: trimmed, 1..80 characters, unique in its year.
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls103')::jsonb;
+  bad text;
+BEGIN
+  FOREACH bad IN ARRAY ARRAY[' RLS103 kant', 'RLS103 kant ', '', repeat('x', 81)] LOOP
+    BEGIN
+      INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+      VALUES ((t ->> 'school')::uuid, (t ->> 'year')::uuid, bad, now());
+      RAISE EXCEPTION 'block name: "%" was accepted', bad;
+    EXCEPTION
+      WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES ((t ->> 'school')::uuid, (t ->> 'year')::uuid, repeat('x', 80), now());
+  BEGIN
+    INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+    VALUES ((t ->> 'school')::uuid, (t ->> 'year')::uuid, 'RLS103 Språkval', now());
+    RAISE EXCEPTION 'block name: two blocks of one year share a name';
+  EXCEPTION
+    WHEN unique_violation THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 104: den som skriver ett blocks timplanspost håller blocket till
+-- COMMIT.
+--
+-- Two transactions that each change one member would each read the other
+-- member as it was, both pass, and commit a block that disagrees. The trigger
+-- therefore takes the block's own row FOR UPDATE before it reads the members,
+-- and holds it to COMMIT, so the second writer waits and then reads what the
+-- first committed. One connection cannot race itself, so this asserts the
+-- lock as it shows: the block row's xmax is this transaction once a member
+-- is written, and not before. Read before anything else updates the row,
+-- and outside any exception block, whose subtransaction would own the lock.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid;
+  subject uuid;
+  grp uuid;
+  r uuid;
+  block uuid;
+BEGIN
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT id INTO subject FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS104 Ty7', 'TEACHING_GROUP', now()) RETURNING id INTO grp;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+                                      "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (school, year, subject, grp, 2, 60, now()) RETURNING id INTO r;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS104 Språkval', now()) RETURNING id INTO block;
+
+  IF (SELECT xmax FROM "TeachingBlocks" WHERE id = block) <> '0'::xid THEN
+    RAISE EXCEPTION 'block lock: the block is locked before any member is written';
+  END IF;
+  -- A write the trigger does not read leaves the block alone.
+  UPDATE "TeachingRequirements" SET "teacherLoadPercent" = 90 WHERE id = r;
+  IF (SELECT xmax FROM "TeachingBlocks" WHERE id = block) <> '0'::xid THEN
+    RAISE EXCEPTION 'block lock: a write outside any block locked a block';
+  END IF;
+
+  UPDATE "TeachingRequirements" SET "blockId" = block WHERE id = r;
+  IF (SELECT xmax FROM "TeachingBlocks" WHERE id = block) IS DISTINCT FROM pg_current_xact_id()::xid THEN
+    RAISE EXCEPTION 'block lock: writing a member left the block unlocked (xmax %)',
+      (SELECT xmax FROM "TeachingBlocks" WHERE id = block);
+  END IF;
+END $$;
+ROLLBACK;
