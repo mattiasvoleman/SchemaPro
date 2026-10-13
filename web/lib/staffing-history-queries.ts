@@ -9,6 +9,11 @@ export interface HistoryChange {
   field: string;
   before: unknown;
   after: unknown;
+  /**
+   * The values left out for a reader without HR-läs (Roller i skolan): that
+   * the field changed is said, not from what to what.
+   */
+  hrHidden?: true;
 }
 
 /**

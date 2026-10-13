@@ -77,6 +77,7 @@ export function StaffingMatrix({
   onOpenTeacher,
 }: StaffingMatrixProps) {
   const t = useTranslations("staffing");
+  const tAreas = useTranslations("adminAreas");
   const columns = useMemo(() => matrixColumns(report, subjects), [report, subjects]);
   const colorOf = (id: string) =>
     subjectColor(id, subjects.find((subject) => subject.id === id)?.color ?? null);
@@ -107,6 +108,10 @@ export function StaffingMatrix({
   // each step, "100 → 50", said in full for a screen reader and on hover. One
   // step is the grad all year — a period over the whole year included.
   const percentCell = (teacher: TeacherLoad) => {
+    // Roller i skolan: tjänst % is not shown to this reader.
+    if (teacher.employment!.employmentPercent === null) {
+      return <span className="text-xs text-muted-foreground">{tAreas("hrHidden")}</span>;
+    }
     const steps = percentSteps(teacher.periods ?? []);
     if (steps.length <= 1) return formatPercent(steps[0] ?? teacher.employment!.employmentPercent);
     const said = t("periodPercentSteps", { steps: steps.map((step) => `${formatPercent(step)} %`).join(" → ") });

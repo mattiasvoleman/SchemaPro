@@ -28,7 +28,7 @@ export const getSession = cache(async (): Promise<SessionInfo | null> => {
   const [{ data: profile }, sessionResult] = await Promise.all([
     supabase
       .from("Users")
-      .select("id, authId, schoolId, role, firstName, lastName, email, studentGroupId")
+      .select("id, authId, schoolId, role, firstName, lastName, email, studentGroupId, adminProfile, hrRead")
       .eq("authId", user.id)
       .maybeSingle(),
     supabase.auth.getSession(),

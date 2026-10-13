@@ -504,6 +504,30 @@ describe("StaffingProposalDialog", () => {
       expect(screen.getByRole("button", { name: "Tillämpa 0 valda" })).toBeDisabled();
     });
 
+    it("says to a reader without HR-läs that a part of the proposal is judged on save, and only for a part (Roller i skolan)", async () => {
+      const user = userEvent.setup();
+      post.mockResolvedValue(proposal({ hrHidden: true }));
+      renderDialog();
+      await computeProposal(user);
+      const note = /Ett urval av förslaget prövas när du sparar/;
+      // Everything selected: the figures are the apply's own.
+      expect(screen.queryByText(note)).toBeNull();
+      await user.click(screen.getByRole("checkbox", { name: "Ta med NO för 7A" }));
+      expect(screen.getByText(note)).toBeInTheDocument();
+      // Nothing selected: nothing to save.
+      await user.click(screen.getByRole("checkbox", { name: "Ta med alla förslag" }));
+      await user.click(screen.getByRole("checkbox", { name: "Ta med alla förslag" }));
+      expect(screen.queryByText(note)).toBeNull();
+    });
+
+    it("says nothing of it to a reader who sees the posts", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med NO för 7A" }));
+      expect(screen.queryByText(/Ett urval av förslaget prövas när du sparar/)).toBeNull();
+    });
+
     it("pins a row as it is and asks again without it", async () => {
       const user = userEvent.setup();
       renderDialog();

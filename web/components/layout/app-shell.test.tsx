@@ -1,8 +1,12 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, MouseEvent, ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
+import { closedPages, type AdminProfile } from "@/lib/admin-areas";
+import { closedMenuStyle, closedPagesFor } from "@/components/admin/area-refusal";
+import { ClosedPageGate, ProfileProvider } from "@/components/profile-context";
+import type { Profile } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Boundary mocks. The four header widgets (locale switcher, theme toggle,
@@ -60,11 +64,15 @@ vi.mock("./user-menu", () => ({
   ),
 }));
 
-// Namespace-aware key echo: pins which namespace each label comes from.
+vi.mock("@/components/layout/document-title", () => ({ DocumentTitle: () => null }));
+
+// Namespace-aware key echo: pins which namespace each label comes from, and
+// the values a message is given.
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
-  useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
+  useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
+    values ? `${namespace}.${key}(${Object.values(values).join("|")})` : `${namespace}.${key}`,
 }));
 
 function renderShell(overrides: Partial<ComponentProps<typeof AppShell>> = {}) {
@@ -480,5 +488,121 @@ describe("AppShell content width", () => {
     expect(column).not.toBeNull();
     expect(column?.className).toContain("flex-1");
     expect(column?.className).toContain("min-w-0");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Roller i skolan: the admin menu shows the areas the profile writes
+// ---------------------------------------------------------------------------
+
+/** The menu's closed paths as the (app) layout works them out on the server. */
+const closedFor = (profile: AdminProfile) => closedPagesFor(closedPages(profile), profile, "sv");
+
+/**
+ * The menu's style rule as the (app) layout writes it, put in the document's
+ * head as text: the layout renders it in a <style> on the server, and a
+ * stylesheet applies wherever it sits. Taken out again after each test.
+ */
+const menuStyles: HTMLStyleElement[] = [];
+afterEach(() => {
+  for (const style of menuStyles.splice(0)) style.remove();
+});
+
+/** The shell as the (app) layout renders it for a profile: inside the provider, the page behind the gate. */
+const shellFor = (profile: AdminProfile, body = "page body") => {
+  const style = document.createElement("style");
+  style.textContent = closedMenuStyle(closedPages(profile), "nav.label");
+  document.head.append(style);
+  menuStyles.push(style);
+  return render(
+    <ProfileProvider profile={{ adminProfile: profile } as Profile} school={null} closed={closedFor(profile)}>
+      <AppShell role="SCHOOL_ADMIN" userName="Alma Berg" email="alma@example.com" schoolName="Norra Real">
+        <ClosedPageGate>
+          <p>{body}</p>
+        </ClosedPageGate>
+      </AppShell>
+    </ProfileProvider>,
+  );
+};
+
+describe("AppShell navigation by administrator profile", () => {
+  const hrefs = () => navLinks().map((anchor) => anchor.getAttribute("href"));
+
+  it("shows a full administrator every page, as before profiles", () => {
+    shellFor("FULL");
+    expect(hrefs()).toEqual(expect.arrayContaining(["/admin/people", "/admin/timetable", "/admin/dataskydd", "/admin/integrations"]));
+  });
+
+  it("shows the expedition the school day and the roster, and nothing it does not change", () => {
+    shellFor("EXPEDITION");
+    expect(hrefs()).toEqual(
+      expect.arrayContaining(["/admin", "/admin/people", "/admin/teacher-absence", "/admin/leave", "/admin/cover"]),
+    );
+    for (const href of ["/admin/timetable", "/admin/generate", "/admin/publishing", "/admin/subjects", "/admin/dataskydd", "/admin/integrations"]) {
+      expect(hrefs()).not.toContain(href);
+    }
+    // A group with nothing left in it goes with its pages (both hidden by
+    // the layout's style rule, so out of the accessibility tree too).
+    for (const group of screen.getAllByText("nav.planning")) expect(group).not.toBeVisible();
+    for (const group of screen.getAllByText("nav.scheduling")) expect(group).not.toBeVisible();
+    expect(screen.getAllByText("nav.operations")[0]).toBeVisible();
+  });
+
+  it("shows the planner planning, scheduling, publishing and the day, and not the roster or the decisions", () => {
+    shellFor("SCHEMALAGGARE");
+    // Personer too: its arbetstid, behörigheter and uppdrag are planering's.
+    expect(hrefs()).toEqual(
+      expect.arrayContaining(["/admin/subjects", "/admin/staffing", "/admin/timetable", "/admin/publishing", "/admin/cover", "/admin/people"]),
+    );
+    for (const href of ["/admin/dataskydd", "/admin/integrations"]) {
+      expect(hrefs()).not.toContain(href);
+    }
+  });
+
+  it("shows rektor the decisions too", () => {
+    shellFor("REKTOR");
+    expect(hrefs()).toEqual(expect.arrayContaining(["/admin/dataskydd", "/admin/people", "/admin/integrations"]));
+  });
+});
+
+describe("AppShell in place of an admin page the profile does not use", () => {
+  it("shows the page to a profile that writes its area", () => {
+    navState.pathname = "/admin/people";
+    shellFor("EXPEDITION", "the roster");
+    expect(screen.getByText("the roster")).toBeInTheDocument();
+  });
+
+  it("says which area a page belongs to, and leads back, instead of its buttons", async () => {
+    navState.pathname = "/admin/timetable";
+    shellFor("EXPEDITION", "the timetable");
+    expect(screen.queryByText("the timetable")).not.toBeInTheDocument();
+    const main = screen.getByRole("main");
+    expect(await within(main).findByRole("heading", { level: 1 })).toHaveTextContent("adminAreas.gateTitle");
+    expect(within(main).getByRole("heading", { level: 2 })).toHaveTextContent("adminAreas.area.SCHEMALAGGNING");
+    expect(
+      within(main).getByText(/adminAreas\.gateArea\(adminAreas\.area\.SCHEMALAGGNING\|adminAreas\.profile\.EXPEDITION\)/),
+    ).toBeInTheDocument();
+    expect(within(main).getByRole("link", { name: "adminAreas.gateBack" })).toHaveAttribute("href", "/sv/admin");
+    // The shell around it stays: the menu still leads where the profile works.
+    expect(link("nav.people")).toBeInTheDocument();
+  });
+
+  it("refuses a page's sub-pages with it, and not a page that only starts alike", async () => {
+    navState.pathname = "/admin/staffing/uppdragsbeskrivning/t-1";
+    shellFor("EXPEDITION", "a description");
+    expect(await within(screen.getByRole("main")).findByRole("heading", { level: 2 })).toHaveTextContent(
+      "adminAreas.area.PLANERING",
+    );
+  });
+
+  it("keeps the decisions to rektor and a full administrator", async () => {
+    navState.pathname = "/admin/dataskydd";
+    const { unmount } = shellFor("SCHEMALAGGARE", "gallring");
+    expect(await within(screen.getByRole("main")).findByRole("heading", { level: 2 })).toHaveTextContent(
+      "adminAreas.decisions",
+    );
+    unmount();
+    shellFor("REKTOR", "gallring");
+    expect(screen.getByText("gallring")).toBeInTheDocument();
   });
 });

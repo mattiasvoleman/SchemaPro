@@ -181,6 +181,12 @@ export interface StaffingProposal {
   unstaffed: ProposalUnstaffed[];
   conflicts: ProposalConflict[];
   terms: unknown;
+  /**
+   * The reader may not see when and how a post changes (Roller i skolan):
+   * every teacher is stated over the year, while the apply judges a changing
+   * post per stretch. One flag for the answer, never one per teacher.
+   */
+  hrHidden?: true;
 }
 
 export interface StaffingChange {

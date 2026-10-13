@@ -1,4 +1,4 @@
-import type { LoadEmployment } from "@/lib/teacher-load";
+import type { LoadEmployment, ShownEmployment } from "@/lib/teacher-load";
 import type { YearBounds } from "@/lib/teaching-hours";
 
 /*
@@ -44,7 +44,7 @@ export interface LoadPeriod {
 
 /** The figures a period can change. */
 export type PostFigures = Pick<
-  LoadEmployment,
+  ShownEmployment,
   "employmentPercent" | "reductionPercent" | "teachingTargetMinutesPerWeek"
 >;
 
@@ -113,7 +113,11 @@ function periodsInYear(
  * figures, or the employment itself on a day no period covers. Everything
  * else about the post — avtalsform, signature — is the base row's.
  */
-export function postOn<T extends PostFigures & { periods?: readonly LoadPeriod[] }>(
+export function postOn<
+  T extends Pick<LoadEmployment, "employmentPercent" | "reductionPercent" | "teachingTargetMinutesPerWeek"> & {
+    periods?: readonly LoadPeriod[];
+  },
+>(
   employment: T,
   day: string,
 ): T {

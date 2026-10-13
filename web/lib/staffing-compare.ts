@@ -1,5 +1,5 @@
 import { percentSteps, postAtStart } from "@/lib/period-view";
-import type { TeacherLoad } from "@/lib/teacher-load";
+import { shownEmployment, type TeacherLoad } from "@/lib/teacher-load";
 
 /*
  * "Jämför med förra läsåret" on /admin/staffing (staffing Fas 5): per teacher,
@@ -70,7 +70,8 @@ export interface ComparisonRow {
 const thousandths = (value: number) => String(Math.round(value * 1000));
 
 function figures(load: TeacherLoad): YearFigures {
-  const start = postAtStart(load);
+  // A post whose percentages this reader does not have compares as none (Roller i skolan).
+  const start = shownEmployment(postAtStart(load));
   const stretches = (load.periods?.length ?? 0) > 0 ? load.periods! : start ? [start] : [];
   const steps = (load.periods?.length ?? 0) > 0 ? percentSteps(load.periods!) : start ? [start.employmentPercent] : [];
   const postSteps: string[] = [];

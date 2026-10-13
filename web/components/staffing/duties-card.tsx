@@ -54,6 +54,8 @@ export interface DutiesCardProps {
   subjects: { id: string; name: string; code: string | null }[];
   /** For mentorskap: the year's groups, by name. */
   groups: { id: string; name: string }[];
+  /** Shown without its add, edit and remove buttons: a reader who does not write planering (Roller i skolan). */
+  readOnly?: boolean;
 }
 
 /** Which fields a problem is about: it is said once one of them is touched. */
@@ -106,6 +108,7 @@ export function DutiesCard({
   academicYearName,
   subjects,
   groups,
+  readOnly = false,
 }: DutiesCardProps) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
@@ -198,7 +201,7 @@ export function DutiesCard({
       title={t("dutiesTitle")}
       description={t("dutiesHint", { year: academicYearName })}
       action={
-        editing === null ? (
+        editing === null && !readOnly ? (
           <Button variant="outline" size="sm" onClick={openNew}>
             <Plus />
             {t("addDuty")}
@@ -253,24 +256,26 @@ export function DutiesCard({
                       ) : null}
                       {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}
                     </div>
-                    <span className="flex shrink-0 gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openEdit(duty)}
-                        aria-label={t("editDuty", { label: duty.label })}
-                      >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setRemoving(duty)}
-                        aria-label={t("removeDuty", { label: duty.label })}
-                      >
-                        <Trash2 aria-hidden="true" />
-                      </Button>
-                    </span>
+                    {readOnly ? null : (
+                      <span className="flex shrink-0 gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEdit(duty)}
+                          aria-label={t("editDuty", { label: duty.label })}
+                        >
+                          <Pencil />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setRemoving(duty)}
+                          aria-label={t("removeDuty", { label: duty.label })}
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </Button>
+                      </span>
+                    )}
                   </li>
                 );
               })}

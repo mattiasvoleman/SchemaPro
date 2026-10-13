@@ -15,6 +15,8 @@ import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PurgedNotice } from "@/components/retention/purged-notice";
+import { useProfile } from "@/components/profile-context";
+import { profileDecides } from "@/lib/admin-areas";
 import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,6 +50,10 @@ export default function LeaveRequestsPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [editUsed, setEditUsed] = useState(false);
   const [editLoad, setEditLoad] = useState(0);
+  // Roller i skolan: delegating leave decisions to the mentors is rektor's
+  // (or a full administrator's); anybody else reads the delegation.
+  const me = useProfile().profile;
+  const decides = profileDecides(me?.adminProfile === undefined ? "FULL" : me.adminProfile);
 
   const current = delegation.data?.current ?? null;
   const rowOf = useLeaveRows("admin", current);
@@ -100,17 +106,19 @@ export default function LeaveRequestsPage() {
         <DelegationNotice
           delegation={current}
           action={
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setEditUsed(true);
-                setEditOpen(true);
-              }}
-            >
-              <Pencil aria-hidden="true" />
-              {t("delegationEdit")}
-            </Button>
+            decides ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setEditUsed(true);
+                  setEditOpen(true);
+                }}
+              >
+                <Pencil aria-hidden="true" />
+                {t("delegationEdit")}
+              </Button>
+            ) : undefined
           }
         />
       )}

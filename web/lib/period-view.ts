@@ -41,7 +41,7 @@ export function percentStepsIn(
 ): number[] {
   const touching = (load.periods ?? []).filter((period) => period.from <= to && period.to >= from);
   if (touching.length > 0) return percentSteps(touching);
-  return load.employment ? [load.employment.employmentPercent] : [];
+  return load.employment && load.employment.employmentPercent !== null ? [load.employment.employmentPercent] : [];
 }
 
 /**
@@ -51,7 +51,7 @@ export function percentStepsIn(
  */
 export function postAtStart(
   load: Pick<TeacherLoad, "employment" | "periods">,
-): { employmentPercent: number; reductionPercent: number } | null {
+): { employmentPercent: number | null; reductionPercent: number | null } | null {
   if (!load.employment) return null;
   const first = load.periods?.[0] ?? load.employment;
   return { employmentPercent: first.employmentPercent, reductionPercent: first.reductionPercent };

@@ -40,6 +40,8 @@ export interface QualificationsCardProps {
   subjects: Subject[];
   /** yyyy-mm-dd; today unless a test says otherwise. */
   today?: string;
+  /** Shown without its edit button: a reader who does not write planering (Roller i skolan). */
+  readOnly?: boolean;
 }
 
 /** A kind as a badge: strongest reads greenest, a rektor's permission is neutral. */
@@ -77,6 +79,7 @@ export function QualificationsCard({
   qualifications,
   subjects,
   today = toDateString(new Date()),
+  readOnly = false,
 }: QualificationsCardProps) {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
@@ -123,7 +126,7 @@ export function QualificationsCard({
       title={t("qualificationsTitle")}
       description={t("qualificationsHint")}
       action={
-        !editing ? (
+        !editing && !readOnly ? (
           <Button variant="outline" size="sm" onClick={open}>
             {stored.length > 0 ? t("editQualifications") : tCommon("add")}
           </Button>

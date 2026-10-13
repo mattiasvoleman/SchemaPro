@@ -225,7 +225,15 @@
     "actionTimplan": "Set up the timplan",
     "actionTimplanHint": "Minutes per week in each subject and year, against the national hours",
     "loadFailed": "Some figures could not be loaded",
-    "loadFailedHint": "They show as —, not as zero. Nothing has changed; reload the page to try again."
+    "loadFailedHint": "They show as —, not as zero. Nothing has changed; reload the page to try again.",
+    "actionAbsence": "Absence",
+    "actionAbsenceHint": "Record staff absence and see which lessons it affects.",
+    "actionCover": "Cover",
+    "actionCoverHint": "Arrange cover for today's and this week's lessons.",
+    "actionLeave": "Leave",
+    "actionLeaveHint": "Decide pupils' leave requests.",
+    "actionPeople": "People",
+    "actionPeopleHint": "Add and edit pupils, staff and guardians."
   },
   "setup": {
     "title": "School setup",
@@ -3063,6 +3071,7 @@
       "tooMany": "The proposal would weigh {teachers} teachers and {rows} curriculum entries, but the engine takes at most {limitTeachers} teachers and {limitRows} entries at a time. Keep the entries that are settled as they are and try again.",
       "tooManyRequests": "You have computed many proposals in a short time. Wait a minute and try again.",
       "overLimitSelection": "The selection puts the teacher over the limit; the apply is judged against the school's settings.",
+      "hrHiddenSelection": "Employment percentages are hidden from you, so each teacher is counted here over the whole school year. A selection from the proposal is checked on saving against the post as it applies in each part of the year, and may then be refused or warned about where this table shows room.",
       "unstaffedTitle": "Stay unstaffed ({count})",
       "reason_NO_QUALIFIED_TEACHER": "no active teacher is qualified",
       "reasonOnlyCoTeacher": "only the entry's co-teacher is qualified",
@@ -5079,5 +5088,50 @@
   "printWeek": {
     "print": "Print the week",
     "preparing": "Preparing the printout …"
+  },
+  "adminAreas": {
+    "area": {
+      "PLANERING": "Planning",
+      "SCHEMALAGGNING": "Scheduling",
+      "PUBLICERING": "Publishing",
+      "DRIFT": "Operations",
+      "PERSONAL": "People",
+      "INTEGRATIONER": "Integrations"
+    },
+    "profile": {
+      "FULL": "Full administrator",
+      "REKTOR": "Principal",
+      "SCHEMALAGGARE": "Scheduler",
+      "EXPEDITION": "School office"
+    },
+    "profileHint": {
+      "FULL": "Changes everything and makes the decisions, as an administrator always has.",
+      "REKTOR": "Changes everything and makes the decisions: roles, HR read, employment % and data protection.",
+      "SCHEMALAGGARE": "Changes planning, scheduling, publishing and operations.",
+      "EXPEDITION": "Changes operations and the people register."
+    },
+    "gateTitle": "This page belongs to another area",
+    "gateArea": "This page changes {area}. As {profile} you do not change that area. Ask the principal or an administrator who has it if something here needs changing.",
+    "gateDecides": "This page is about the principal's decisions. As {profile} you do not make them. Ask the principal or a full administrator if something here needs changing.",
+    "decisions": "The principal's decisions",
+    "gateBack": "To the overview",
+    "profileLabel": "Administrator profile",
+    "hrReadLabel": "HR read",
+    "hrReadHint": "May read employment % and reduction. The principal and a full administrator read them anyway.",
+    "roleIsDecision": "Only the principal or a full administrator changes roles, profiles and HR read.",
+    "postIsDecision": "Employment % and reduction are written by the principal or a full administrator.",
+    "historyTitle": "Role history",
+    "historyEmpty": "No role changes recorded.",
+    "historyLoadFailed": "The role history could not be read.",
+    "historyCreated": "Became {to}",
+    "historyChanged": "{from} → {to}",
+    "historyBy": "by {name}",
+    "historyByNobody": "without a signed-in person (import or upgrade)",
+    "withHr": "{profile} with HR read",
+    "hrHidden": "hidden",
+    "hrHiddenNotice": "Employment % and reduction are shown to the principal, a full administrator and anyone with HR read. The target in minutes is shown to everyone.",
+    "hrHiddenExport": "Exports built on employment % have empty columns there.",
+    "profileLoading": "The profile is being read. It can be changed once it has been read.",
+    "profileUnreadable": "The profile could not be read. Saving leaves it unchanged; reload the page to change it."
   }
 }

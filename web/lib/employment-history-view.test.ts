@@ -44,6 +44,7 @@ const labels: HistoryLabels = {
   yearBound: "läsårets egen gräns",
   decimal: (value) => new Intl.NumberFormat("sv", { maximumFractionDigits: 3, useGrouping: false }).format(value),
   noteChanged: "Anteckningen skrevs eller ändrades (texten sparas inte i historiken).",
+  hidden: "dolt",
 };
 
 const entry = (overrides: Partial<HistoryEntry>): HistoryEntry => ({
@@ -89,6 +90,24 @@ describe("historyLines", () => {
       "Tjänstgöringsgrad: 100 % → 66,667 %",
       "Nedsättning: — → 20 %",
       "Avtalsform: Ferietjänst → Semestertjänst",
+    ]);
+  });
+
+  it("says a percentage hidden from the reader changed, as 'dolt', never as — → — (Roller i skolan)", () => {
+    const hidden = { before: null, after: null, hrHidden: true as const };
+    expect(
+      historyLines(
+        entry({
+          changes: [
+            { field: "employmentPercent", ...hidden },
+            { field: "contractKind", before: "FERIE", after: "SEMESTER" },
+          ],
+        }),
+        labels,
+      ),
+    ).toEqual(["Tjänstgöringsgrad: dolt", "Avtalsform: Ferietjänst → Semestertjänst"]);
+    expect(historyLines(entry({ action: "CREATE", changes: [{ field: "reductionPercent", ...hidden }] }), labels)).toEqual([
+      "Nedsättning: dolt",
     ]);
   });
 

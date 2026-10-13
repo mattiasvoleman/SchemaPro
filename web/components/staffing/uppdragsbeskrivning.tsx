@@ -77,6 +77,7 @@ export function Uppdragsbeskrivning({
 }: UppdragsbeskrivningProps) {
   const t = useTranslations("uppdrag");
   const tStaffing = useTranslations("staffing");
+  const tAreas = useTranslations("adminAreas");
   const tDays = useTranslations("days");
   const locale = useLocale();
   const employment = load.employment;
@@ -124,12 +125,18 @@ export function Uppdragsbeskrivning({
     {
       label: atStart ? t("employmentPercentAtStart") : t("employmentPercent"),
       value: employment
-        ? `${formatPercent((atStart ?? employment).employmentPercent)} %`
+        ? (atStart ?? employment).employmentPercent === null
+          ? tAreas("hrHidden")
+          : `${formatPercent((atStart ?? employment).employmentPercent!)} %`
         : t("noPost"),
     },
     {
       label: atStart ? t("reductionPercentAtStart") : t("reductionPercent"),
-      value: employment ? `${formatPercent((atStart ?? employment).reductionPercent)} %` : "—",
+      value: employment
+        ? (atStart ?? employment).reductionPercent === null
+          ? tAreas("hrHidden")
+          : `${formatPercent((atStart ?? employment).reductionPercent!)} %`
+        : "—",
     },
     {
       label: t("contractKind"),

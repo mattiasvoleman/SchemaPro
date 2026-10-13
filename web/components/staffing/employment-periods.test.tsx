@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_LOAD_POLICY } from "@/lib/teacher-load";
 import type { TeacherEmployment } from "@/lib/types";
-import { EmploymentPeriods } from "./employment-periods";
+import { EmploymentPeriods, type EmploymentPeriodsProps } from "./employment-periods";
 
 const createPeriod = vi.hoisted(() => vi.fn());
 const updatePeriod = vi.hoisted(() => vi.fn());
@@ -24,7 +24,7 @@ vi.mock("next-intl", () => ({
 
 const YEAR = { startDate: "2026-08-17", endDate: "2027-06-11" };
 const policy = { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080 };
-const post = (periods: TeacherEmployment["periods"] = []): TeacherEmployment => ({
+const post = (periods: TeacherEmployment["periods"] = []): EmploymentPeriodsProps["employment"] => ({
   id: "e1",
   userId: "t-anna",
   academicYearId: "y1",
@@ -46,9 +46,9 @@ const november = {
   teachingTargetMinutesPerWeek: null,
 };
 
-const renderPeriods = (employment: TeacherEmployment, year: typeof YEAR | null = YEAR) =>
+const renderPeriods = (employment: EmploymentPeriodsProps["employment"], year: typeof YEAR | null = YEAR) =>
   render(
-    <EmploymentPeriods teacher={{ id: "t-anna" }} academicYearId="y1" year={year} employment={employment} policy={policy} />,
+    <EmploymentPeriods teacher={{ id: "t-anna" }} academicYearId="y1" year={year} employment={employment} policy={policy} decides />,
   );
 
 const type = (label: string, value: string) =>
@@ -80,6 +80,23 @@ describe("EmploymentPeriods", () => {
     // Only a period is the period's to edit; the post's own stretch is edited above.
     expect(within(items[0]!).queryByRole("button")).toBeNull();
     expect(within(items[1]!).getByRole("button", { name: "editPeriod(2026-11-01)" })).toBeInTheDocument();
+  });
+
+  it("shows an HR-läs reader who does not decide the periods without add, edit or remove (Roller i skolan)", () => {
+    render(
+      <EmploymentPeriods
+        teacher={{ id: "t-anna" }}
+        academicYearId="y1"
+        year={YEAR}
+        employment={post([november])}
+        policy={policy}
+        decides={false}
+      />,
+    );
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThan(1);
+    expect(screen.queryByRole("button", { name: "addPeriod" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^editPeriod/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^removePeriod/ })).toBeNull();
   });
 
   it("says a period that holds no whole week changes no target", () => {
