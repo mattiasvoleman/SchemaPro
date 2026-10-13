@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Prisma } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import fixture from '../common/__fixtures__/timplan-stage-cases.json';
 import { computePupilStages, type StageInput } from '../common/timplan-stage';
 import type { PrismaService } from '../database/prisma.service';
@@ -182,6 +183,26 @@ describe('TimplanStageService', () => {
       tx.timplanStatement.findMany.mockResolvedValue([row('MELLAN', 'MA')]);
       tx.academicYear.findUnique.mockResolvedValue({ isActive: false });
       await expect(service.card({ studentId: PUPIL }, guardian)).resolves.toEqual({ statement: null });
+      // Nothing was shown, so nothing is recorded.
+      expect(recordedReads(tx)).toEqual([]);
+    });
+
+    it('records the child’s statement as TEACHING_TIME for the guardian who reads it, after its reads', async () => {
+      tx.academicYear.findUnique.mockResolvedValue({ isActive: true });
+      tx.timplanStatement.findMany.mockResolvedValue([row('MELLAN', 'MA')]);
+      tx.nationalSubject.findMany.mockResolvedValue([{ code: 'MA', name: 'Matematik' }]);
+      const order: string[] = [];
+      tx.nationalSubject.findMany.mockImplementation(async () => {
+        order.push('subjects');
+        return [{ code: 'MA', name: 'Matematik' }];
+      });
+      (tx.$executeRaw as jest.Mock).mockImplementation(async () => {
+        order.push('log');
+        return 1;
+      });
+      await service.card({ studentId: PUPIL }, testUser({ role: Role.GUARDIAN, channel: 'APP' }));
+      expect(recordedReads(tx)).toEqual([{ kind: 'TEACHING_TIME', channel: 'APP', ids: [PUPIL] }]);
+      expect(order).toEqual(['subjects', 'log']);
     });
 
     it('asks a guardian which child', async () => {

@@ -1,4 +1,5 @@
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CoverService } from './cover.service';
 import { basisOf, CoverSuggestionsService } from './cover-suggestions.service';
@@ -128,6 +129,20 @@ describe('CoverSuggestionsService', () => {
     expect(tx.teacherAbsence.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ select: { userId: true, startsAt: true, endsAt: true } }),
     );
+  });
+
+  it('candidates record each candidate’s load and counter as EMPLOYMENT and the absent one as STAFF_ABSENCES, never one busy elsewhere', async () => {
+    await service.candidates(LESSON, testUser({ channel: 'WEB' }));
+    // A is excluded as ABSENT (and on the lesson); BUSY only for another lesson, the timetable's.
+    expect(recordedReads(tx)).toEqual([
+      { kind: 'EMPLOYMENT', channel: 'WEB', ids: [S, P] },
+      { kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [A] },
+    ]);
+  });
+
+  it('the day proposal records nothing: it names the substitutes it would book and the absences by id', async () => {
+    await service.proposal(D, [], testUser({ channel: 'WEB' }));
+    expect(recordedReads(tx)).toEqual([]);
   });
 
   it('candidates: a colleague whose own lesson then is cancelled is free and on site; one cancelled for an activity is ranked down, not up', async () => {

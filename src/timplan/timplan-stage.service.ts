@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient, type SchoolForm } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -188,6 +189,11 @@ export class TimplanStageService {
             };
           }
           const { coverage, subjectNames } = computed;
+          // A class's drill-down lists its pupils, stage by stage (TEACHING_TIME);
+          // the school's overview gives classes and counts and names nobody.
+          if (query.studentGroupId !== undefined) {
+            await recordRead(tx, 'TEACHING_TIME', coverage.pupils.map((pupil) => pupil.pupilId), user.channel);
+          }
           const counts = new Map<string, { code: StageVerdict['code']; severity: StageVerdict['severity']; pupils: Set<string> }>();
           for (const pupil of coverage.pupils) {
             for (const verdict of pupil.verdicts) {
@@ -381,6 +387,10 @@ export class TimplanStageService {
           });
         }
         const order = ['LAG', 'LAG_MELLAN', 'MELLAN', 'HOG'];
+        // The pupil's statement (TEACHING_TIME), for a guardian and an admin;
+        // the pupil's own read names nobody but the reader, which the log
+        // leaves out. No statement (above) records nothing.
+        await recordRead(tx, 'TEACHING_TIME', [studentId], user.channel);
         return {
           statement: {
             studentId,

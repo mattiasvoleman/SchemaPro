@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import {
   FamilyScheduleService,
@@ -159,6 +160,29 @@ describe('FamilyScheduleService', () => {
     await expect(run('2027-06-30')).resolves.toMatchObject({ week: { from: '2027-06-28' }, lessons: [] });
     await expect(run('2027-06-21')).rejects.toBeInstanceOf(BadRequestException);
     await expect(run('2027-07-05')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('records the pupil’s week as SCHEDULE with the caller’s channel, once, after the week’s reads', async () => {
+    const order: string[] = [];
+    tx.calendarRast.findMany.mockImplementation(async () => {
+      order.push('rasts');
+      return [];
+    });
+    (tx.$executeRaw as jest.Mock).mockImplementation(async () => {
+      order.push('log');
+      return 1;
+    });
+    await service.week({ studentId: CHILD, week: '2026-10-13' }, { ...guardian, channel: 'APP' });
+    expect(recordedReads(tx)).toEqual([{ kind: 'SCHEDULE', channel: 'APP', ids: [CHILD] }]);
+    expect(order).toEqual(['rasts', 'log']);
+  });
+
+  it('records nothing for a pupil it cannot see, nor for the summer week past the year, which reads no lesson', async () => {
+    tx.user.findFirst.mockResolvedValueOnce(null);
+    await run().catch(() => undefined);
+    today = '2027-07-01';
+    await run();
+    expect(recordedReads(tx)).toEqual([]);
   });
 
   it('lets the first week past the year step back to the year’s last week', async () => {

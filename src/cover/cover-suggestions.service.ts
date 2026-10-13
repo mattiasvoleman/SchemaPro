@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { CoverPoolPreference, PrismaClient, TeacherQualificationKind } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
@@ -121,6 +122,17 @@ export class CoverSuggestionsService {
       }
       const ranked = (c: Candidate) => ({ ...c, tier: poolTier(c.kind, context.poolPreference), counter: { week: c.counter.weekLessons } });
       candidates.sort((a, b) => compareRanked(ranked(a), ranked(b)));
+      // Each candidate's week against their tjänst and their cover counter
+      // (EMPLOYMENT), and who is left out as away (STAFF_ABSENCES, the code
+      // without the reason). The other exclusions are the timetable's and the
+      // pool's, not logged (src/access-log/access-log.ts).
+      await recordRead(tx, 'EMPLOYMENT', candidates.map((candidate) => candidate.userId), user.channel);
+      await recordRead(
+        tx,
+        'STAFF_ABSENCES',
+        excluded.filter((entry) => entry.codes.some((finding) => finding.code === 'ABSENT')).map((entry) => entry.userId),
+        user.channel,
+      );
       return { lessonId, candidates, excluded };
     });
   }

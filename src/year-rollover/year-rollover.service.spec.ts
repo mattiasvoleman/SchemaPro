@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../database/prisma.service';
 import { testUser } from '../../test/utils/prisma-mock';
+import { recordedReadsIn } from '../../test/utils/recorded-reads';
 import {
   GRUNDSKOLA_2024,
   IDS,
@@ -931,6 +932,17 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect(result.planHash).toBe(PINNED);
   });
 
+  it('records the tjänster the preview reviews as EMPLOYMENT; without carryStaffing, and for its pupils, it records nothing', async () => {
+    const { world, service } = setup(staffingRows());
+    await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    expect(recordedReadsIn(world.calls)).toEqual([]);
+    const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, { ...admin, channel: 'WEB' });
+    const reads = recordedReadsIn(world.calls);
+    expect(reads.map((read) => [read.kind, read.channel])).toEqual([['EMPLOYMENT', 'WEB']]);
+    expect([...reads[0]!.ids].sort()).toEqual([...new Set(preview.staffing!.teachers.map((row) => row.userId))].sort());
+    expect(reads[0]!.ids).toEqual(expect.arrayContaining([IDS.anna, IDS.bo, IDS.cecilia]));
+  });
+
   it('previews who and what is carried, names every nedsättning and target override, and blocks on none of it', async () => {
     const { world, service } = setup(staffingRows());
     const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
@@ -1262,6 +1274,24 @@ describe('YearRolloverService — activation', () => {
     expect(preview.graduates).toEqual({ count: 1, studentIds: [IDS.p9a1] });
     expect(preview).not.toHaveProperty('writes');
     expect(writesOf(world.calls)).toEqual([]);
+  });
+
+  it('records next year’s class lists as ROSTER: the activation preview’s moves, graduates and unplaced, and the GET rosters overlay', async () => {
+    const { world, service, yearB } = await rolled();
+    const web = { ...admin, channel: 'WEB' as const };
+    const preview = await service.previewActivation(yearB, web, AFTER);
+    const moved = [...preview.moves.flatMap((move) => move.studentIds), ...preview.graduates.studentIds, ...preview.unplaced.studentIds];
+    expect(moved).toContain(IDS.p9a1);
+    expect(recordedReadsIn(world.calls)).toEqual([{ kind: 'ROSTER', channel: 'WEB', ids: [...new Set(moved)] }]);
+    world.calls.length = 0;
+    const rosters = await service.rosters(yearB, web);
+    expect(rosters.basis).toBe('PROJECTED');
+    expect(rosters.homeClasses.length).toBeGreaterThan(0);
+    expect(recordedReadsIn(world.calls)).toEqual([{ kind: 'ROSTER', channel: 'WEB', ids: rosters.homeClasses.map((row) => row.studentId) }]);
+    // The active year is CURRENT: the people list is the class list, and this names nobody.
+    world.calls.length = 0;
+    expect((await service.rosters(IDS.yearA, web)).homeClasses).toEqual([]);
+    expect(recordedReadsIn(world.calls)).toEqual([]);
   });
 
   it('hands over the active flag and moves exactly the planned pupils by id; a second run moves nobody', async () => {

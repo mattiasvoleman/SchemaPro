@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -23,6 +24,7 @@ import { applyRollover, type StaffingCounts } from './rollover-apply';
 import { planRollover, previewOf, type RolloverPlan, type RolloverProblem } from './rollover-plan';
 import { readRolloverSource, type RolloverSource } from './rollover-source';
 import { rostersOfYear } from './projected-rosters';
+import { staffNamedBy } from './rollover-staffing';
 import type { ExecuteActivationDto, ExecuteRolloverDto, RolloverOptionsDto } from './dto/year-rollover.dto';
 
 /** The problem codes the rollover and the activation answer with, beside RolloverProblemCode. */
@@ -120,7 +122,13 @@ export class YearRolloverService {
           const source = await readRolloverSource(tx, sourceYearId, { carryStaffing: dto.carryStaffing === true });
           if (!source) throw yearNotFound();
           refuseUnrollable(source);
-          return previewOf(planRollover(source, dto));
+          const preview = previewOf(planRollover(source, dto));
+          // Pupils only as counts. The tjänster and uppdrag carryStaffing
+          // reviews are the teachers' (EMPLOYMENT); the cleared teachers and
+          // behörighet warnings beside them are the timetable's, not logged
+          // (src/access-log/access-log.ts).
+          if (preview.staffing) await recordRead(tx, 'EMPLOYMENT', staffNamedBy(preview.staffing), user.channel);
+          return preview;
         },
         { timeoutMs: ROLLOVER_TIMEOUT_MS },
       );
@@ -217,6 +225,14 @@ export class YearRolloverService {
         const source = await readActivationSource(tx, yearId);
         if (!source) throw yearNotFound();
         const { writes: _writes, ...preview } = planActivation(source, today);
+        // Who moves to which class, who graduates and who is left unplaced:
+        // next year's class lists, pupil by pupil (ROSTER).
+        await recordRead(
+          tx,
+          'ROSTER',
+          [...preview.moves.flatMap((move) => move.studentIds), ...preview.graduates.studentIds, ...preview.unplaced.studentIds],
+          user.channel,
+        );
         return preview;
       });
     } catch (error) {
@@ -342,12 +358,16 @@ export class YearRolloverService {
             membershipsOutOfDate: { missing: 0, stale: 0 },
           };
         }
+        const homeClasses = [...basis.homeOf]
+          .map(([studentId, studentGroupId]) => ({ studentId, studentGroupId }))
+          .sort((a, b) => (a.studentId < b.studentId ? -1 : 1));
+        // The class each moved pupil will be in: a class list of the coming
+        // year (ROSTER). A CURRENT year names nobody here.
+        await recordRead(tx, 'ROSTER', homeClasses.map((row) => row.studentId), user.channel);
         return {
           academicYearId: yearId,
           basis: 'PROJECTED' as const,
-          homeClasses: [...basis.homeOf]
-            .map(([studentId, studentGroupId]) => ({ studentId, studentGroupId }))
-            .sort((a, b) => (a.studentId < b.studentId ? -1 : 1)),
+          homeClasses,
           counts: basis.counts,
           membershipsOutOfDate: basis.membershipsOutOfDate,
         };

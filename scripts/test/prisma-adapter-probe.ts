@@ -2266,6 +2266,13 @@ async function runChecks(
     const forTeacherAnswer = await coverage.delivered({ academicYearId: year.id, layer: 'delivered', studentGroupId: sevenA.id }, teacher);
     assert.equal(forTeacherAnswer.pupils, null);
     assert.ok(!JSON.stringify(forTeacherAnswer).includes(pupil.id), 'a pupil id reached the teacher');
+    // The admin's answers named the pupil and are recorded (TEACHING_TIME), once within the
+    // quarter-hour; the teacher's named nobody.
+    const timeReads = await owner.query<{ actor: string }>(
+      `SELECT "actorId"::text AS actor FROM "PersonalDataAccess" WHERE kind = 'TEACHING_TIME' AND $1::uuid = ANY("subjectIds")`,
+      [pupil.id],
+    );
+    assert.deepEqual(timeReads.rows.map((row) => row.actor), [admin.userId]);
     assert.deepEqual(
       forTeacherAnswer.groups.map((g) => g.totals),
       answer.groups.map((g) => g.totals),
@@ -3464,14 +3471,29 @@ async function runChecks(
           [eh.schoolId, curYear, subject, await cls('8B')],
         );
         // 11: the statements sent do not grow with the pupils read — one class
-        // or the whole school, the same reads per läsår.
+        // or the whole school, the same reads per läsår. Since Läslogg fas 2
+        // the class's drill-down, which lists its pupils, records them
+        // (TEACHING_TIME) in one statement more, however many they are; the
+        // school's overview names nobody and records nothing.
         const class8bId = await cls('8B');
+        let drilled: string[] = [];
         const small = await statementsDuring(async () => {
           const answer = await stages.overview({ academicYearId: curYear, studentGroupId: class8bId }, ehAdmin);
           assert.ok(answer.pupils!.length >= 3, `8B holds ${answer.pupils!.length} pupils`);
+          drilled = answer.pupils!.map((pupil) => pupil.pupilId);
         });
         const whole = await statementsDuring(() => stages.overview({ academicYearId: curYear }, ehAdmin));
-        assert.equal(small.length, whole.length, `one class sent ${small.length} statements, the school ${whole.length}`);
+        const logged = (sent: string[]) => sent.filter((statement) => statement.includes('app.personal_data_read('));
+        assert.deepEqual([logged(small).length, logged(whole).length], [1, 0]);
+        assert.equal(small.length - 1, whole.length, `one class sent ${small.length} statements, the school ${whole.length}`);
+        const recorded = (
+          await owner.query<{ ids: string[] }>(
+            `SELECT ARRAY(SELECT x::text FROM unnest("subjectIds") x ORDER BY x) AS ids FROM "PersonalDataAccess"
+              WHERE "schoolId" = $1 AND "actorId" = $2 AND kind = 'TEACHING_TIME'`,
+            [eh.schoolId, eh.adminId],
+          )
+        ).rows.map((row) => row.ids);
+        assert.deepEqual(recorded, [[...new Set(drilled)].sort()]);
         // 12: published under the admin, read under the pupil's own RLS and a guardian's.
         const published = await stages.publish({ academicYearId: curYear }, ehAdmin);
         assert.ok(published.rows > 0, JSON.stringify(published));
@@ -3500,6 +3522,13 @@ async function runChecks(
         await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [eh.schoolId, guardian.id, p5Pupil.id]);
         const guardianUser = { authId: guardian.authId, userId: guardian.id, schoolId: eh.schoolId, role: Role.GUARDIAN } as AuthenticatedUser;
         assert.equal((await stages.card({ studentId: p5Pupil.id }, guardianUser)).statement?.studentId, p5Pupil.id);
+        // The guardian's read of the child's statement is recorded (TEACHING_TIME); the pupil's own is not.
+        const cards = await owner.query<{ actor: string; ids: string[] }>(
+          `SELECT "actorId"::text AS actor, ARRAY(SELECT x::text FROM unnest("subjectIds") x) AS ids FROM "PersonalDataAccess"
+            WHERE "schoolId" = $1 AND kind = 'TEACHING_TIME' AND "actorId" IN ($2, $3)`,
+          [eh.schoolId, guardian.id, csvPupil.id],
+        );
+        assert.deepEqual(cards.rows, [{ actor: guardian.id, ids: [p5Pupil.id] }]);
         assert.deepEqual(await stages.card({ studentId: csvPupil.id }, guardianUser), { statement: null }, 'a guardian read a child not theirs');
         // A publication is a snapshot: the admin who published it can be removed, and it stays, unattributed.
         const admin2 = (
@@ -5164,8 +5193,27 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
     });
 
     await check('(æ3) candidates never break a hard rule: the busy teacher and the absent one are excluded with their codes, the pool member inside their window is offered', async () => {
-      const x1 = await suggestions.candidates(school.x1, school.admin);
+      let x1!: Awaited<ReturnType<CoverSuggestionsService['candidates']>>;
+      const sent = await statementsDuring(async () => {
+        x1 = await suggestions.candidates(school.x1, school.admin);
+      });
       outputs.push(x1);
+      // The läslogg: the candidates' load and counter (EMPLOYMENT), the absent one (STAFF_ABSENCES), last before COMMIT.
+      const logs = sent.filter((statement) => statement.includes('app.personal_data_read('));
+      assert.equal(logs.length, 2, JSON.stringify(sent));
+      assert.equal(sent.lastIndexOf(logs[1]!), sent.length - 2);
+      const employment = await owner.query<{ ids: string[] }>(
+        `SELECT ARRAY(SELECT x::text FROM unnest("subjectIds") x) AS ids FROM "PersonalDataAccess"
+          WHERE "schoolId" = $1 AND "actorId" = $2 AND kind = 'EMPLOYMENT'`,
+        [school.schoolId, school.admin.userId],
+      );
+      assert.deepEqual(employment.rows.map((row) => [...row.ids].sort()), [x1.candidates.map((c) => c.userId).sort()]);
+      const away = await owner.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PersonalDataAccess"
+          WHERE "schoolId" = $1 AND "actorId" = $2 AND kind = 'STAFF_ABSENCES' AND $3::uuid = ANY("subjectIds")`,
+        [school.schoolId, school.admin.userId, school.a.id],
+      );
+      assert.equal(away.rows[0]!.n, 1, 'the absent teacher was recorded more than once in the quarter-hour, or never');
       const excluded = new Map(x1.excluded.map((entry) => [entry.userId, entry.codes.map((c) => c.code)]));
       assert.deepEqual(excluded.get(school.s1.id), ['BUSY_LESSON']);
       assert.deepEqual(excluded.get(school.a.id), ['ON_LESSON', 'ABSENT']);

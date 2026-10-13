@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 import { createTxMock } from '../../test/utils/prisma-mock';
 import { recordedReads } from '../../test/utils/recorded-reads';
@@ -57,7 +59,45 @@ describe('recordRead', () => {
   it('names the kinds the migration names, the mentor\'s leave reason among them', () => {
     expect(ACCESS_KINDS).toEqual([
       'PEOPLE', 'ROSTER', 'ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'LEAVE_REASON_AS_MENTOR',
-      'GUARDIANS', 'EMPLOYMENT', 'STAFF_ABSENCES', 'ACCESS_LOG',
+      'GUARDIANS', 'EMPLOYMENT', 'STAFF_ABSENCES', 'ACCESS_LOG', 'SCHEDULE', 'TEACHING_TIME',
     ]);
+  });
+});
+
+/*
+ * A kind is named in four places: the enum (and the migration that adds it),
+ * this module, the web's list on /admin/dataskydd and its labels. One left out
+ * fails quietly — a recordRead the type checker accepts and Postgres refuses
+ * (22P02, the read fails), or a row the page shows as its raw key.
+ */
+describe('the read log\'s kinds across the schema, the gateway and the web', () => {
+  const ROOT = join(__dirname, '..', '..');
+  const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+  const ENUM = /enum PersonalDataAccessKind \{([^}]*)\}/
+    .exec(read('prisma/schema.prisma'))![1]!
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('///'));
+
+  it('the gateway knows exactly the enum, and a migration adds every value', () => {
+    expect([...ACCESS_KINDS]).toEqual(ENUM);
+    const migrations = readdirSync(join(ROOT, 'prisma', 'migrations'))
+      .filter((dir) => !dir.endsWith('.toml'))
+      .map((dir) => read(`prisma/migrations/${dir}/migration.sql`))
+      .join('\n');
+    for (const kind of ENUM) {
+      expect(migrations).toMatch(new RegExp(`'${kind}'`));
+    }
+  });
+
+  it('the web lists every kind and labels it in Swedish and English', () => {
+    const web = /export const ACCESS_KINDS = \[([^\]]*)\]/.exec(read('web/app/[locale]/(app)/admin/dataskydd/use-access-log.ts'))![1]!;
+    expect([...web.matchAll(/"([A-Z_]+)"/g)].map((match) => match[1])).toEqual(ENUM);
+    for (const locale of ['sv', 'en']) {
+      const messages = JSON.parse(read(`web/messages/${locale}.json`)) as Record<string, unknown>;
+      const kinds = (((messages['dataProtection'] as Record<string, unknown>)['accessLog'] as Record<string, unknown>)['kinds'] ?? {}) as Record<string, string>;
+      expect(Object.keys(kinds).sort()).toEqual([...ENUM].sort());
+      for (const kind of ENUM) expect(kinds[kind]?.trim()).toBeTruthy();
+    }
   });
 });

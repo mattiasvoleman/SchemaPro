@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
@@ -78,6 +79,9 @@ export class CoverReportsService {
       const rows = [...counter.values()]
         .map((row) => ({ ...row, kind: kindOf.of(row.userId) }))
         .sort((a, b) => b.weekLessons - a.weekLessons || b.termLessons - a.termLessons || a.userId.localeCompare(b.userId));
+      // How much cover each member of staff and the pool has done: their work
+      // under the tjänst, as the delivered report is (EMPLOYMENT).
+      await recordRead(tx, 'EMPLOYMENT', rows.map((row) => row.userId), user.channel);
       return { date, rows };
     });
   }
@@ -155,6 +159,11 @@ export class CoverReportsService {
         planned.set(row.teacherId, entry);
       }
       const byUser = <T extends { userId: string }>(a: T, b: T) => a.userId.localeCompare(b.userId);
+      // Who covered what, held and booked: their work under the tjänst
+      // (EMPLOYMENT). A row to check is there because its substitute was away
+      // over the lesson, so its people are STAFF_ABSENCES too, without why.
+      await recordRead(tx, 'EMPLOYMENT', [...all.map((row) => row.userId), ...planned.keys()], user.channel);
+      await recordRead(tx, 'STAFF_ABSENCES', toCheck.map((row) => row.userId), user.channel);
       return {
         from,
         to,

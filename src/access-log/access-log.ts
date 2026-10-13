@@ -16,6 +16,44 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   EMPLOYMENT               tjänst and anställning
  *   STAFF_ABSENCES           when a member of staff is away, and why
  *   ACCESS_LOG               the log itself, read about a person
+ *   SCHEDULE                 one pupil's week, as the family sees it (20261026110000)
+ *   TEACHING_TIME            undervisningstid per pupil: timplan coverage and
+ *                            the pupil's statement (20261026110000)
+ *
+ * NOT RECORDED, by decision. Each of these hands out something about other
+ * people and was weighed; the reason is why a row would answer nothing:
+ *
+ *   - the timetable layer: who teaches a lesson and which pupils are named on
+ *     it (schedule versions, the calendar, master lessons). The web and the
+ *     app read CalendarLessons, MasterLessons and MasterLessonStudents
+ *     directly through PostgREST, where every member of staff sees them, so
+ *     a row for one gateway copy (GET /schedule-versions/:id) would not
+ *     answer who saw a pupil's lessons. Recorded where the gateway is the
+ *     only way: the family's week (SCHEDULE);
+ *   - substitute suggestions (GET /calendar-lessons/:id/substitute-
+ *     suggestions) and the rollover preview's cleared teachers and
+ *     qualification warnings: teachers with their behörighet, which staff
+ *     read directly (TeacherSubjectQualifications), against the timetable.
+ *     An absent teacher is left out, not named. The cover candidates, which
+ *     do name the absent and state load, are recorded;
+ *   - the cover day proposal: the substitutes it would book, and the
+ *     absences only by id; who is away is the board's, which records it;
+ *   - counts and summaries that name nobody (/users/counts, the attendance
+ *     summary, the rollover preview's pupils, the stage overview without a
+ *     class);
+ *   - a write's echo: POST /users answers with the row its caller just
+ *     typed. PATCH /users/:id answers with the whole row, fields the caller
+ *     did not send among them, so it is recorded (PEOPLE);
+ *   - the realtime pushes (src/realtime): a changed lesson's pupil ids to
+ *     its teachers, the timetable editor's presence to the staff. Nobody
+ *     asks, no transaction is the recipient's, and the ids name no one
+ *     without the register, which records its read;
+ *   - notification meta (names in an absence or leave notice): a delivery
+ *     the school's rules decide, and the Notifications row is its record —
+ *     recipient, kind, content and time, kept until gallring;
+ *   - an SS12000 sync change about a person not yet in Users (a CREATE):
+ *     the log names Users rows only. The run's changes about linked people
+ *     are recorded.
  */
 export const ACCESS_KINDS = [
   'PEOPLE',
@@ -28,6 +66,8 @@ export const ACCESS_KINDS = [
   'EMPLOYMENT',
   'STAFF_ABSENCES',
   'ACCESS_LOG',
+  'SCHEDULE',
+  'TEACHING_TIME',
 ] as const;
 export type AccessKind = (typeof ACCESS_KINDS)[number];
 
