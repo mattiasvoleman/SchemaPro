@@ -187,6 +187,40 @@ describe("Vem har läst om en person?", () => {
     expect(screen.getByText("Ingen har läst om Ada Ek under perioden.")).toBeInTheDocument();
   });
 
+  it("asks again on every press, the same person and period too, and exports the fresh answer", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    get.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/users") return PEOPLE;
+      if (path === "/api/v1/retention/purged-before") return [];
+      calls += 1;
+      return calls === 1 ? answer({ entries: answer().entries.slice(0, 1) }) : answer();
+    });
+    renderCard();
+    await choosePupil(user);
+    await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
+    await screen.findByText("1 läsning om Ada Ek, av 1 läsare.");
+    await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
+    await screen.findByText("3 läsningar om Ada Ek, av 3 läsare.");
+    expect(asked()).toEqual([`/api/v1/access-log?personId=${PUPIL}`, `/api/v1/access-log?personId=${PUPIL}`]);
+    await user.click(screen.getByRole("button", { name: "Exportera som CSV" }));
+    await waitFor(() => expect(csv.downloadCsv).toHaveBeenCalledTimes(1));
+    const [, content] = csv.downloadCsv.mock.calls[0] as [string, string];
+    expect((JSON.parse(content) as string[][]).length).toBe(4);
+  });
+
+  it("announces only the sentence: the table is outside the live region", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await choosePupil(user);
+    await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
+    const status = await screen.findByRole("status");
+    await within(status).findByText("3 läsningar om Ada Ek, av 3 läsare.");
+    const table = await screen.findByRole("table", { name: "Läsningar om Ada Ek" });
+    expect(status.contains(table)).toBe(false);
+    expect(within(status).queryByRole("button")).toBeNull();
+  });
+
   it("builds one export row per entry, the count of others as a number", () => {
     const rows = accessLogRows(answer().entries, {
       headers: [],

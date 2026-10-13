@@ -50,11 +50,17 @@ export interface AccessLogAnswer {
   truncated: boolean;
 }
 
-/** What the administrator asked: one person, optionally between two school days. */
+/**
+ * What the administrator asked: one person, optionally between two school
+ * days, and which press of the button asked it. Every press is a question of
+ * its own, so the same person and period asked again is fetched again rather
+ * than answered from the cache (and the export carries the fresh answer).
+ */
 export interface AccessLogQuery {
   personId: string;
   from: string;
   to: string;
+  press: number;
 }
 
 export function accessLogPath(query: AccessLogQuery): string {
@@ -67,10 +73,10 @@ export function accessLogPath(query: AccessLogQuery): string {
 /** The answer to the question asked last; nothing is asked until there is one. */
 export function useAccessLog(query: AccessLogQuery | null) {
   return useQuery({
-    queryKey: ["accessLog", query?.personId ?? null, query?.from ?? "", query?.to ?? ""],
+    queryKey: ["accessLog", query?.personId ?? null, query?.from ?? "", query?.to ?? "", query?.press ?? 0],
     enabled: query !== null,
-    // A repeat within the quarter-hour is not recorded again, but nothing on
-    // this page should ask without the button: no refetch on its own.
+    // Nothing on this page asks without the button: no refetch on its own.
+    // A press is a new key (above), so it always asks.
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     retry: false,
