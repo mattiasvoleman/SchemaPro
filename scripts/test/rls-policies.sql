@@ -11119,9 +11119,12 @@ BEGIN
   PERFORM set_config('app.test_rls32_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
 END $$;
 
--- 32c: the guardian files a request through PostgREST's role, as the app
--- does, and reads both of their child's requests with the reason, under
--- either role, and nobody else's.
+-- 32c: the guardian files a request through PostgREST's role (the insert's
+-- arm still reads the guardian's own link as the reader), and reads both of
+-- their child's requests with the reason through the API's role, and nobody
+-- else's. Through PostgREST's role they read none since 20261026100000: a
+-- child's request is another person's data, and the app reads it through
+-- the gateway, which writes the read to the läslogg.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
 SET LOCAL ROLE authenticated;
 DO $$
@@ -11130,10 +11133,8 @@ BEGIN
   IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'leave: expected the GUARDIAN'; END IF;
   INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
   VALUES (app.current_school_id(), child, app.current_user_id(), DATE '2095-05-18', DATE '2095-05-22', 'rls32 familjeresa');
-  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" = child AND reason IN ('rls32 läkarbesök', 'rls32 familjeresa');
-  IF n <> 2 THEN RAISE EXCEPTION 'leave: through PostgREST''s role the guardian reads % of their child''s two requests', n; END IF;
-  SELECT count(*) INTO n FROM "LeaveRequests" WHERE "studentId" <> child;
-  IF n <> 0 THEN RAISE EXCEPTION 'leave: through PostgREST''s role the guardian reads % request(s) of another pupil', n; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests";
+  IF n <> 0 THEN RAISE EXCEPTION 'leave: through PostgREST''s role the guardian reads % request(s) directly', n; END IF;
 END $$;
 SET LOCAL ROLE app_authenticated;
 DO $$
@@ -11280,22 +11281,22 @@ BEGIN
   PERFORM set_config('app.test_rls33_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
 END $$;
 
--- 33c: the guardian reports their child sick through PostgREST's role, as the
--- app does, and reads the report with its note under either role, and nobody
--- else's. They cannot call the teacher's function, and under the API's role it
--- answers them nothing.
+-- 33c: the guardian reports their child sick through PostgREST's role (the
+-- insert's arm reads their own link as the reader), and reads the report
+-- with its note through the API's role, and nobody else's. Through
+-- PostgREST's role they read none since 20261026100000: the app reads its
+-- child's reports through the gateway and the läslogg. They cannot call the
+-- teacher's function, and under the API's role it answers them nothing.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
 SET LOCAL ROLE authenticated;
 DO $$
-DECLARE child uuid := current_setting('app.test_rls33_child')::uuid; n bigint; r text;
+DECLARE child uuid := current_setting('app.test_rls33_child')::uuid; n bigint;
 BEGIN
   IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'absence: expected the GUARDIAN'; END IF;
   INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
   VALUES (app.current_school_id(), child, app.current_user_id(), DATE '2095-06-01', 'SICK', 'rls33 feber');
-  SELECT note INTO r FROM "AbsenceReports" WHERE "studentId" = child AND date = DATE '2095-06-01';
-  IF r IS DISTINCT FROM 'rls33 feber' THEN RAISE EXCEPTION 'absence: through PostgREST''s role the guardian reads the note %', coalesce(r, 'NULL'); END IF;
-  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" <> child;
-  IF n <> 0 THEN RAISE EXCEPTION 'absence: through PostgREST''s role the guardian reads % report(s) of another pupil', n; END IF;
+  SELECT count(*) INTO n FROM "AbsenceReports";
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: through PostgREST''s role the guardian reads % report(s) directly', n; END IF;
   BEGIN
     PERFORM app.reported_absences(DATE '2095-06-01');
     RAISE EXCEPTION 'absence: authenticated may call app.reported_absences';
@@ -11655,10 +11656,15 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN
       RAISE EXCEPTION 'guardian leave: through % the guardian could not file the app''s own request', via;
     END;
+    -- Read back through the API's role: since 20261026100000 PostgREST's
+    -- role reads none of a child's requests, its own insert included (35e
+    -- counts both rows as the admin).
+    SET LOCAL ROLE app_authenticated;
     SELECT count(*) INTO n FROM "LeaveRequests"
      WHERE reason = 'rls35 appens ansökan genom ' || via AND "studentId" = child AND "requestedById" = me
        AND status = 'PENDING' AND "decidedById" IS NULL AND "decidedAt" IS NULL AND "decisionNote" IS NULL;
-    IF n <> 1 THEN RAISE EXCEPTION 'guardian leave: through % the guardian reads % of their undecided request', via, n; END IF;
+    IF n <> 1 THEN RAISE EXCEPTION 'guardian leave: through % the guardian filed % undecided request(s), not one', via, n; END IF;
+    EXECUTE format('SET LOCAL ROLE %I', via);
 
     FOR r IN SELECT * FROM (VALUES
         ('approved by themselves, as measured on main', 'APPROVED'::"LeaveRequestStatus", me, now(), 'Beviljad'),
@@ -15718,5 +15724,168 @@ DECLARE
 BEGIN
   SELECT count(*) INTO n FROM "PersonalDataAccess" WHERE "at" < now() - interval '4 years';
   IF n <> 1 THEN RAISE EXCEPTION 'read log gallring: another school''s purge took the gallring school''s old row'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 126: PostgREST:s roll läser bara sitt eget i de sex tabellerna
+-- (20261026100000), och allt som läser dem som den rollen klarar sig med det.
+--
+-- The catalogue. On Users, AttendanceRecords, AbsenceReports, LeaveRequests,
+-- GuardianStudents and StudentGroupMembers, the arms that show rows to
+-- authenticated (FOR SELECT or FOR ALL, TO authenticated or PUBLIC) are
+-- exactly the six own-row arms the migration names; every other is the
+-- API's role's. A later migration that recreates an arm TO authenticated, or
+-- adds one (a mentor's read of a leave request, say), fails here, so the
+-- read goes through the gateway and its log instead. And every function a
+-- signed-in user may execute that reads the six tables is SECURITY DEFINER:
+-- an invoker function would read them under the reader's row security and
+-- answer the narrowed rows (or, after a GRANT change, 42501).
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  got text;
+  want text := 'AbsenceReports.absence_reports_student_select AttendanceRecords.attendance_student_select '
+            || 'GuardianStudents.guardian_students_own_select LeaveRequests.leave_requests_student_select '
+            || 'StudentGroupMembers.student_group_members_own_select Users.users_self_select';
+  bad text;
+BEGIN
+  SELECT string_agg(tablename || '.' || policyname, ' ' ORDER BY tablename, policyname) INTO got
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND tablename IN ('Users', 'AttendanceRecords', 'AbsenceReports', 'LeaveRequests', 'GuardianStudents', 'StudentGroupMembers')
+     AND cmd IN ('SELECT', 'ALL')
+     AND roles && ARRAY['authenticated', 'public']::name[];
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION 'direct reads: authenticated reads the six tables through %, not only the own-row arms', got;
+  END IF;
+  -- The own-row arms say "own": the predicate names the reader.
+  SELECT string_agg(policyname, ', ') INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND policyname IN ('absence_reports_student_select', 'attendance_student_select', 'guardian_students_own_select',
+                        'leave_requests_student_select', 'student_group_members_own_select', 'users_self_select')
+     AND qual NOT LIKE '%= ( SELECT app.current_user_id() AS current_user_id)%';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'direct reads: % no longer reads only the reader''s own rows', bad; END IF;
+
+  SELECT string_agg(n.nspname || '.' || p.proname, ', ') INTO bad
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname IN ('public', 'app', 'sign_in', 'auth')
+     AND NOT p.prosecdef
+     AND p.prosrc ~ '"(Users|AttendanceRecords|AbsenceReports|LeaveRequests|GuardianStudents|StudentGroupMembers)"'
+     AND (has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') AND has_function_privilege('anon', p.oid, 'EXECUTE')));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'direct reads: % reads the six tables as its caller and a signed-in user may call it', bad;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 127: som PostgREST:s roll läser var och en sitt eget och inget
+-- annat; som API:ts roll läser samma personer det de alltid har läst.
+--
+-- In the läslogg school, each person in turn, first as authenticated and
+-- then as app_authenticated: the admin, a teacher, the guardian and the
+-- pupil. Directly each sees their own row and their own rows of the six
+-- tables and nothing of anyone else; through the API's role the admin and
+-- the teacher see the school, the guardian their child. The policies on
+-- other tables that read the six as the reader still work directly: the
+-- guardian files an absence for their child (absence_reports_guardian_insert
+-- reads GuardianStudents), and the pupil reads their teaching group's lesson
+-- (calendar_lessons_teaching_group_select reads StudentGroupMembers).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  via text;
+  me uuid;
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'direct reads: could not act as %', via; END IF;
+    me := app.current_user_id();
+    SELECT count(*) INTO n FROM "Users";
+    IF via = 'authenticated' AND n <> 1 THEN RAISE EXCEPTION 'direct reads: the admin reads % Users rows directly', n; END IF;
+    IF via = 'app_authenticated' AND n < 6 THEN RAISE EXCEPTION 'direct reads: the admin reads % Users rows through the API', n; END IF;
+    SELECT count(*) INTO n FROM "Users" WHERE id = me;
+    IF n <> 1 THEN RAISE EXCEPTION 'direct reads: the admin lost their own row as %', via; END IF;
+    SELECT (SELECT count(*) FROM "AttendanceRecords") + (SELECT count(*) FROM "AbsenceReports") + (SELECT count(*) FROM "LeaveRequests")
+         + (SELECT count(*) FROM "GuardianStudents") + (SELECT count(*) FROM "StudentGroupMembers") INTO n;
+    IF via = 'authenticated' AND n <> 0 THEN RAISE EXCEPTION 'direct reads: the admin reads % rows of others directly', n; END IF;
+    IF via = 'app_authenticated' AND n < 5 THEN RAISE EXCEPTION 'direct reads: the admin reads % of the school''s rows through the API', n; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000122')::text, true);
+DO $$
+DECLARE
+  via text;
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT count(*) INTO n FROM "Users";
+    IF via = 'authenticated' AND n <> 1 THEN RAISE EXCEPTION 'direct reads: a teacher reads % Users rows directly', n; END IF;
+    IF via = 'app_authenticated' AND n < 6 THEN RAISE EXCEPTION 'direct reads: a teacher reads % Users rows through the API', n; END IF;
+    SELECT (SELECT count(*) FROM "AttendanceRecords") + (SELECT count(*) FROM "GuardianStudents") + (SELECT count(*) FROM "StudentGroupMembers") INTO n;
+    IF via = 'authenticated' AND n <> 0 THEN RAISE EXCEPTION 'direct reads: a teacher reads % rows of others directly', n; END IF;
+    IF via = 'app_authenticated' AND n < 3 THEN RAISE EXCEPTION 'direct reads: a teacher reads % of the school''s rows through the API', n; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000125')::text, true);
+DO $$
+DECLARE
+  via text;
+  child uuid;
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT count(*) INTO n FROM "GuardianStudents";
+    IF n <> 1 THEN RAISE EXCEPTION 'direct reads: the guardian reads % of their own links as %', n, via; END IF;
+    SELECT "studentId" INTO child FROM "GuardianStudents";
+    SELECT count(*) INTO n FROM "Users" WHERE id = child;
+    IF via = 'authenticated' AND n <> 0 THEN RAISE EXCEPTION 'direct reads: the guardian reads their child''s Users row directly'; END IF;
+    IF via = 'app_authenticated' AND n <> 1 THEN RAISE EXCEPTION 'direct reads: the guardian lost their child through the API'; END IF;
+    SELECT (SELECT count(*) FROM "AbsenceReports") + (SELECT count(*) FROM "LeaveRequests") + (SELECT count(*) FROM "StudentGroupMembers") INTO n;
+    IF via = 'authenticated' AND n <> 0 THEN RAISE EXCEPTION 'direct reads: the guardian reads % of the child''s rows directly', n; END IF;
+    IF via = 'app_authenticated' AND n < 3 THEN RAISE EXCEPTION 'direct reads: the guardian reads % of the child''s rows through the API', n; END IF;
+  END LOOP;
+  -- A policy on another table reading GuardianStudents as the reader still
+  -- admits the guardian's child, directly.
+  SET LOCAL ROLE authenticated;
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date)
+  VALUES (app.current_school_id(), child, app.current_user_id(), (now() AT TIME ZONE 'Europe/Stockholm')::date + 2);
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000123')::text, true);
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM "Users";
+  IF n <> 1 THEN RAISE EXCEPTION 'direct reads: the pupil reads % Users rows directly', n; END IF;
+  SELECT count(*) INTO n FROM "AttendanceRecords";
+  IF n <> 1 THEN RAISE EXCEPTION 'direct reads: the pupil lost their own mark (% read)', n; END IF;
+  SELECT (SELECT count(*) FROM "AbsenceReports") INTO n;
+  IF n < 1 THEN RAISE EXCEPTION 'direct reads: the pupil lost their own absence report'; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests";
+  IF n <> 1 THEN RAISE EXCEPTION 'direct reads: the pupil lost their own leave request (% read)', n; END IF;
+  SELECT count(*) INTO n FROM "StudentGroupMembers";
+  IF n <> 1 THEN RAISE EXCEPTION 'direct reads: the pupil lost their own teaching group (% read)', n; END IF;
+  -- calendar_lessons_teaching_group_select reads StudentGroupMembers as the pupil.
+  SELECT count(*) INTO n FROM "CalendarLessons" l
+    JOIN "StudentGroupMembers" m ON m."studentGroupId" = l."studentGroupId";
+  IF n < 1 THEN RAISE EXCEPTION 'direct reads: the pupil no longer reads their teaching group''s lesson'; END IF;
+  SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
