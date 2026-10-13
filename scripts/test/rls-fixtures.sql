@@ -1061,6 +1061,233 @@ BEGIN
     (s2, 'Delad 7–9', '32323232', '{GR}', 7, 9);
 END $$;
 
+-- The role × table matrix's school (Roller i skolan, 20261110100000): one row
+-- in every table an administrator's arm reaches, and one administrator of
+-- each profile. Section 116 runs every profile against every table here; no
+-- other section looks at this school, so nothing planted here moves theirs.
+-- Planted as the owner, so row security does not apply and the triggers that
+-- answer only for a signed-in person let the rows through.
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  subj uuid;
+  rtype uuid;
+  room uuid;
+  grp uuid;
+  tgrp uuid;
+  admin_full uuid;
+  teacher uuid;
+  pupil uuid;
+  pupil2 uuid;
+  guardian uuid;
+  ml uuid;
+  cl uuid;
+  cl2 uuid;
+  plan uuid;
+  ntv uuid;
+  absence uuid;
+  reason uuid;
+  batch uuid;
+  credit uuid;
+  pref uuid;
+  pub uuid;
+  tpub uuid;
+  src uuid;
+  run uuid;
+  ikey uuid;
+  sub uuid;
+  ac uuid;
+  duty uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-roller-school') THEN
+    RETURN;
+  END IF;
+
+  INSERT INTO "Schools" (name, slug, "updatedAt") VALUES ('RLS Roller', 'rls-roller-school', now()) RETURNING id INTO m;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (m, 'Roller 2030/31', '2030-08-15', '2031-06-15', true, now()) RETURNING id INTO yr;
+  INSERT INTO "RoomTypes" ("schoolId", name) VALUES (m, 'Roller sal') RETURNING id INTO rtype;
+  INSERT INTO "Rooms" ("schoolId", name, "roomTypeId", "updatedAt") VALUES (m, 'Roller 1', rtype, now()) RETURNING id INTO room;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (m, 'Roller ämne', 'RLSR', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (m, yr, 'Roller 7A', 7, now()) RETURNING id INTO grp;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+  VALUES (m, yr, 'Roller Spanska', 7, 'TEACHING_GROUP', now()) RETURNING id INTO tgrp;
+
+  -- One administrator of each profile; two with HR-läs. The log trigger
+  -- gives each a UserRoleChanges row, which is that table's row here.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt")
+  VALUES
+    (m, 'roller-full@example.invalid',    'Roller', 'Full',          'SCHOOL_ADMIN', 'FULL',          false, '00000000-0000-4000-8000-000000000105', true, now()),
+    (m, 'roller-rektor@example.invalid',  'Roller', 'Rektor',        'SCHOOL_ADMIN', 'REKTOR',        false, '00000000-0000-4000-8000-000000000106', true, now()),
+    (m, 'roller-schema@example.invalid',  'Roller', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', false, '00000000-0000-4000-8000-000000000107', true, now()),
+    (m, 'roller-exp@example.invalid',     'Roller', 'Expedition',    'SCHOOL_ADMIN', 'EXPEDITION',    false, '00000000-0000-4000-8000-000000000108', true, now()),
+    (m, 'roller-schema-hr@example.invalid','Roller', 'Schema HR',    'SCHOOL_ADMIN', 'SCHEMALAGGARE', true,  '00000000-0000-4000-8000-000000000109', true, now()),
+    (m, 'roller-exp-hr@example.invalid',  'Roller', 'Expedition HR', 'SCHOOL_ADMIN', 'EXPEDITION',    true,  '00000000-0000-4000-8000-000000000110', true, now());
+  SELECT id INTO admin_full FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (m, 'roller-teacher@example.invalid', 'Roller', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000111', true, now())
+  RETURNING id INTO teacher;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (m, 'roller-pupil@example.invalid', 'Roller', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000112', true, grp, now())
+  RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (m, 'roller-pupil2@example.invalid', 'Roller', 'Elev Två', 'STUDENT', '00000000-0000-4000-8000-000000000114', true, grp, now())
+  RETURNING id INTO pupil2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (m, 'roller-guardian@example.invalid', 'Roller', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000000113', true, now())
+  RETURNING id INTO guardian;
+
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (m, guardian, pupil);
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (m, tgrp, pupil);
+
+  -- Planering.
+  SELECT id INTO ntv FROM "NationalTimplanVersions" WHERE "schoolForm" = 'GRUNDSKOLA' ORDER BY id LIMIT 1;
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (m, 'Roller timplan', 'GRUNDSKOLA', ntv, now()) RETURNING id INTO plan;
+  INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+  VALUES (m, plan, subj, 7, 60);
+  INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+  VALUES (m, yr, 7, plan, now());
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+  VALUES (m, yr, '2030-09-10', 60, 'Roller friluftsdag', now()) RETURNING id INTO credit;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "updatedAt")
+  VALUES (m, yr, subj, grp, teacher, 1, now());
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (m, 'TEACHER', teacher, 1, '08:00', '09:00', now()) RETURNING id INTO ac;
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, "startDate", "endDate", "updatedAt")
+  VALUES (m, yr, 'Roller lov', '2030-10-28', '2030-11-01', now());
+  INSERT INTO "FrameTimes" ("schoolId", "minGradeLevel", "maxGradeLevel", "startTime", "endTime", "updatedAt")
+  VALUES (m, 7, 9, '08:00', '16:00', now());
+  INSERT INTO "Rasts" ("schoolId", name, "minGradeLevel", "maxGradeLevel", "startTime", "endTime", "updatedAt")
+  VALUES (m, 'Roller rast', 7, 9, '10:00', '10:15', now());
+  INSERT INTO "LunchSettings" ("schoolId", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+  VALUES (m, '11:00', '13:00', 30, now());
+  INSERT INTO "LunchServings" ("schoolId", "minGradeLevel", "maxGradeLevel", "startTime", "endTime", "updatedAt")
+  VALUES (m, 7, 9, '11:30', '12:00', now());
+  INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (m, yr, grp, 1, '11:30', '12:00', now());
+  INSERT INTO "RoomPreferences" ("schoolId", "subjectId", "updatedAt") VALUES (m, subj, now()) RETURNING id INTO pref;
+  INSERT INTO "RoomPreferenceRooms" ("schoolId", "preferenceId", "roomId") VALUES (m, pref, room);
+  INSERT INTO "StaffingPolicies" ("schoolId", "updatedAt") VALUES (m, now());
+  INSERT INTO "TeacherSubjectQualifications" ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+  VALUES (m, teacher, subj, 7, 9, 'LEGITIMATION', now());
+  INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "updatedAt") VALUES (m, teacher, now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (m, teacher, yr, 'RASTVAKT', 'Roller rastvakt', 30, now()) RETURNING id INTO duty;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (m, 'TEACHER', teacher, 2, '12:00', '12:30', now()) RETURNING id INTO ac;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (m, duty, ac);
+  -- HR: the post, which the log trigger also records, and a period of it
+  -- from two weeks into the year (Tjänstens perioder).
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", signature, "updatedAt")
+  VALUES (m, teacher, yr, 80, 10, 'RL', now());
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+  SELECT e."schoolId", e.id, e."userId", e."academicYearId", y."startDate" + 14, 60, now()
+    FROM "TeacherEmployments" e JOIN "AcademicYears" y ON y.id = e."academicYearId"
+   WHERE e."schoolId" = m AND e."userId" = teacher;
+
+  -- Planering: a skolenhet and a block of parallel teaching.
+  INSERT INTO "SchoolUnits" ("schoolId", name, code, "schoolTypes", "gradeFrom", "gradeTo")
+  VALUES (m, 'Roller F–9', '41414141', '{FKLASS,GR}', 0, 9);
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (m, yr, 'Roller block', now());
+
+  -- The decisions: rektor's delegation of short leave to the mentors.
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", reference) VALUES (m, 3, 'Roller');
+
+  -- Schemaläggning.
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId",
+                               "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES (m, yr, subj, grp, teacher, room, 1, '09:00', '10:00', now()) RETURNING id INTO ml;
+  INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId") VALUES (m, ml, tgrp);
+  INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId") VALUES (m, ml, pupil2);
+  INSERT INTO "ScheduleVersions" ("schoolId", "academicYearId", name, lessons, "lessonCount") VALUES (m, yr, 'Roller version', '[]', 0);
+  INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", action) VALUES (m, yr, 'CREATE');
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (m, yr);
+
+  -- Drift.
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (m, ml, subj, grp, room, '2030-09-02', '2030-09-02 07:00+00', '2030-09-02 08:00+00', now()) RETURNING id INTO cl;
+  INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (m, ml, subj, grp, room, '2030-09-09', '2030-09-09 07:00+00', '2030-09-09 08:00+00', now()) RETURNING id INTO cl2;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId") VALUES (m, cl, teacher);
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (m, cl, tgrp);
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (m, cl, pupil2);
+  INSERT INTO "CalendarLunches" ("schoolId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (m, grp, '2030-09-02', '2030-09-02 09:30+00', '2030-09-02 10:00+00', now());
+  INSERT INTO "CalendarRasts" ("schoolId", "studentGroupId", name, date, "startsAt", "endsAt", "updatedAt")
+  VALUES (m, grp, 'Roller rast', '2030-09-02', '2030-09-02 08:00+00', '2030-09-02 08:15+00', now());
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", "updatedAt") VALUES (m, cl, pupil, now());
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date) VALUES (m, pupil, guardian, '2030-09-03');
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (m, pupil, guardian, '2030-09-20', '2030-09-20', 'Roller');
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt")
+  VALUES (m, room, teacher, 'Roller bokning', '2030-09-04 12:00+00', '2030-09-04 13:00+00', now());
+  INSERT INTO "Notifications" ("schoolId", "userId", type) VALUES (m, teacher, 'SCHEDULE_CHANGED');
+  INSERT INTO "TeacherAbsenceReasons" ("schoolId", builtin) VALUES (m, 'SICK') RETURNING id INTO reason;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId")
+  VALUES (m, teacher, '2030-09-02 06:00+00', '2030-09-02 15:00+00', reason) RETURNING id INTO absence;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision)
+  VALUES (m, absence, cl, teacher, 'CANCELLED');
+  INSERT INTO "CoverSettings" ("schoolId") VALUES (m);
+  INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId") VALUES (m, teacher);
+  INSERT INTO "SubstituteAvailabilities" ("schoolId", "userId", "dayOfWeek", "startTime", "endTime")
+  VALUES (m, teacher, 3, '08:00', '12:00');
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope)
+  VALUES (m, yr, 'Roller prao', 'EVENT', '2030-09-09', '2030-09-09', 'SCHOOL') RETURNING id INTO batch;
+  INSERT INTO "CancellationBatchLessons" ("schoolId", "batchId", "calendarLessonId") VALUES (m, batch, cl2);
+  INSERT INTO "CancellationBatchCredits" ("schoolId", "batchId", "creditId") VALUES (m, batch, credit);
+
+  -- Publicering.
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (m);
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedByUserId")
+  VALUES (m, yr, 'PUBLISH', 'PUBLISHED', 'DRAFT', '2030-08-15', '2031-06-15', admin_full) RETURNING id INTO pub;
+  INSERT INTO "PublishedLessons" ("schoolId", "publicationId", "academicYearId", "masterLessonId", "subjectId", "studentGroupId",
+                                  "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "isParked", recurrence)
+  VALUES (m, pub, yr, ml, subj, grp, 1, '09:00', '10:00', false, false, false, 'ALL_WEEKS');
+  INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime")
+  VALUES (m, pub, yr, grp, 1, '11:30', '12:00');
+  ALTER TABLE "PublicationPendingRemovals" DISABLE TRIGGER "PublicationPendingRemovals_only_by_trigger";
+  INSERT INTO "PublicationPendingRemovals" ("schoolId", "calendarLessonId", "academicYearId", "masterLessonId", reconcilable)
+  VALUES (m, cl2, yr, ml, true);
+  ALTER TABLE "PublicationPendingRemovals" ENABLE TRIGGER "PublicationPendingRemovals_only_by_trigger";
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "tokenHash")
+  VALUES (m, yr, 'GROUP', grp, encode(sha256('roller-token'), 'hex'));
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden) VALUES (teacher, m, true);
+  INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "asOfDate", pupils)
+  VALUES (m, yr, '2030-12-01', 1) RETURNING id INTO tpub;
+  INSERT INTO "TimplanStatements" ("schoolId", "publicationId", "academicYearId", "asOfDate", "studentId", stage, "subjectCode",
+                                   "distributionPublished", "gradesFrom", "gradesTo", "plannedHours", "outcomeHours", "projectedHours",
+                                   status, "projectedStatus", complete)
+  VALUES (m, tpub, yr, '2030-12-01', pupil, 'HOG', 'EN', true, 7, 9, 10, 5, 10, 'MET', 'MET', false);
+
+  -- Integrationer.
+  INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash") VALUES (m, 'Roller nyckel', encode(sha256('roller-key'), 'hex')) RETURNING id INTO ikey;
+  INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes")
+  VALUES (m, ikey, 'Roller prenumeration', 'https://roller.example.invalid/hook', ARRAY['Person']) RETURNING id INTO sub;
+  INSERT INTO "Ss12000SubscriptionDeliveries" ("schoolId", "subscriptionId", outcome, "durationMs") VALUES (m, sub, 'OK', 10);
+  INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind") VALUES (m, 'Roller källa', 'https://roller.example.invalid', 'BEARER_TOKEN')
+  RETURNING id INTO src;
+  INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", trigger, mode, status) VALUES (m, src, 'MANUAL', 'FULL', 'RUNNING') RETURNING id INTO run;
+  INSERT INTO "Ss12000SyncChanges" ("schoolId", "runId", seq, entity, op, selected) VALUES (m, run, 1, 'PERSON', 'INFO', false);
+  INSERT INTO "Ss12000DutyLinks" ("schoolId", "userId", "academicYearId", "ss12000DutyId", "dutyRole", "startDate")
+  VALUES (m, teacher, yr, gen_random_uuid(), 'Lärare', '2030-08-15');
+  INSERT INTO "SchoolSignInMethods" ("schoolId", provider, domains, "entraTenantId", "ssoOnlyForStaff", "updatedAt") VALUES (m, 'azure', ARRAY['rls-roller.example'], '7b0c2a9e-3c1d-4e5f-8a6b-0c1d2e3f4a5c', false, now());
+
+  -- Beslut: a dataskydd decision, and a gallring run beside it.
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (m, 'NOTIFICATIONS', 'KEEP');
+  INSERT INTO "GallringRuns" ("schoolId", "localDay", "startedAt") VALUES (m, '2030-09-01', now());
+
+  -- A link removed, so the history has its row.
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (m, guardian, pupil2);
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = guardian AND "studentId" = pupil2;
+
+  -- A read in the läslogg, which those who decide read (20261026091000).
+  INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize")
+  VALUES (m, now(), teacher, 'TEACHER', 'WEB', 'ROSTER', ARRAY[pupil], 1);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

@@ -4039,8 +4039,9 @@ BEGIN
     SELECT count(*) INTO n FROM pg_policy WHERE polrelid = format('public.%I', tbl)::regclass
        AND NOT (tbl = 'LocalTimplans' AND polname = 'local_timplans_service_select'
                 AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
-    IF n <> 3 THEN
-      RAISE EXCEPTION 'timplan: % has % policies, expected admin_all, staff_select and family_select', tbl, n;
+    -- The admin's arm is four since 20261110100000: select, insert, update, delete.
+    IF n <> 6 THEN
+      RAISE EXCEPTION 'timplan: % has % policies, expected the admin''s four, staff_select and family_select', tbl, n;
     END IF;
   END LOOP;
 
@@ -4579,8 +4580,9 @@ BEGIN
     RAISE EXCEPTION 'duties: row security is off on TeacherDuties';
   END IF;
   SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."TeacherDuties"'::regclass;
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'duties: TeacherDuties has % policies, expected admin_all, teacher_own_select and service_select', n;
+  -- The admin's arm is four since 20261110100000.
+  IF n <> 6 THEN
+    RAISE EXCEPTION 'duties: TeacherDuties has % policies, expected the admin''s four, teacher_own_select and service_select', n;
   END IF;
   SELECT count(*) INTO n
     FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
@@ -5032,8 +5034,9 @@ BEGIN
   SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."AcademicYearTimplans"'::regclass
      AND NOT (polname = 'academic_year_timplans_service_select'
               AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'year timplans: AcademicYearTimplans has % policies, expected admin_all, staff_select and family_select', n;
+  -- The admin's arm is four since 20261110100000.
+  IF n <> 6 THEN
+    RAISE EXCEPTION 'year timplans: AcademicYearTimplans has % policies, expected the admin''s four, staff_select and family_select', n;
   END IF;
   SELECT confdeltype INTO action FROM pg_constraint
    WHERE conname = 'AcademicYearTimplans_localTimplanId_schoolId_fkey';
@@ -6732,13 +6735,15 @@ BEGIN
   END IF;
   SELECT string_agg(polname, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid = 'public."TimplanCredits"'::regclass;
-  IF bad IS DISTINCT FROM 'timplan_credits_admin_all,timplan_credits_staff_select' THEN
-    RAISE EXCEPTION 'credits: TimplanCredits has policies (%), expected admin_all and staff_select', bad;
+  -- The admin's arm is four since 20261110100000: select, insert, update, delete.
+  IF bad IS DISTINCT FROM 'timplan_credits_admin_delete,timplan_credits_admin_insert,timplan_credits_admin_select,'
+                          'timplan_credits_admin_update,timplan_credits_staff_select' THEN
+    RAISE EXCEPTION 'credits: TimplanCredits has policies (%), expected the admin''s four and staff_select', bad;
   END IF;
   SELECT string_agg(polname, ',') INTO bad FROM pg_policy
    WHERE polrelid = 'public."TimplanCredits"'::regclass
-     AND (pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%'
-          OR (polcmd = '*' AND pg_get_expr(polwithcheck, polrelid) NOT LIKE '%SCHOOL_ADMIN%'));
+     AND (coalesce(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) NOT LIKE '%current_user_role%'
+          OR (polcmd IN ('*', 'a', 'w') AND pg_get_expr(polwithcheck, polrelid) NOT LIKE '%SCHOOL_ADMIN%'));
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'credits: policies without the role in USING / WITH CHECK: %', bad;
   END IF;
@@ -7861,14 +7866,19 @@ DECLARE bad text; api_role text;
 BEGIN
   SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid IN ('public."TimplanStatements"'::regclass, 'public."TimplanStatementPublications"'::regclass);
-  IF bad IS DISTINCT FROM 'timplan_statement_publications_admin_all:*,timplan_statements_admin_all:*,timplan_statements_guardian_select:r,timplan_statements_student_select:r' THEN
+  -- The admin's arm is four since 20261110100000: select, insert, update, delete.
+  IF bad IS DISTINCT FROM 'timplan_statement_publications_admin_delete:d,timplan_statement_publications_admin_insert:a,'
+                          'timplan_statement_publications_admin_select:r,timplan_statement_publications_admin_update:w,'
+                          'timplan_statements_admin_delete:d,timplan_statements_admin_insert:a,'
+                          'timplan_statements_admin_select:r,timplan_statements_admin_update:w,'
+                          'timplan_statements_guardian_select:r,timplan_statements_student_select:r' THEN
     RAISE EXCEPTION 'statement: policies are %', bad;
   END IF;
   SELECT string_agg(polname, ',') INTO bad FROM pg_policy
    WHERE polrelid IN ('public."TimplanStatements"'::regclass, 'public."TimplanStatementPublications"'::regclass)
-     AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%';
+     AND coalesce(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) NOT LIKE '%current_user_role%';
   IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'statement: policies without the role in USING: %', bad;
+    RAISE EXCEPTION 'statement: policies without the role in USING (WITH CHECK for an insert): %', bad;
   END IF;
   FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
     SELECT string_agg(p, ', ') INTO bad
@@ -8066,7 +8076,10 @@ BEGIN
   SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid IN ('public."PublicationSettings"'::regclass, 'public."TimetablePublications"'::regclass,
                       'public."PublishedLessons"'::regclass);
-  IF bad IS DISTINCT FROM 'publication_settings_admin_all:*,published_lessons_admin_erase:w,published_lessons_admin_insert:a,'
+  -- PublicationSettings' admin arm is four since 20261110100000.
+  IF bad IS DISTINCT FROM 'publication_settings_admin_delete:d,publication_settings_admin_insert:a,'
+                          'publication_settings_admin_select:r,publication_settings_admin_update:w,'
+                          'published_lessons_admin_erase:w,published_lessons_admin_insert:a,'
                           'published_lessons_admin_select:r,published_lessons_service_select:r,published_lessons_staff_select:r,'
                           'timetable_publications_admin_insert:a,timetable_publications_admin_select:r,'
                           'timetable_publications_service_select:r' THEN
@@ -8126,7 +8139,8 @@ BEGIN
    WHERE schemaname = 'public'
      AND tablename IN ('MasterLessons', 'MasterLessonGroups', 'MasterLessonStudents', 'LunchSittings')
      AND cmd IN ('SELECT', 'ALL')
-     AND policyname NOT LIKE '%admin_all'
+     -- The admin's read arm: admin_all until 20261110100000, admin_select since.
+     AND policyname !~ '_admin_(all|select)$'
      AND coalesce(qual, '') NOT LIKE '%grundschema_is_live%';
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'draft: arms without the predicate: %', bad;
@@ -8482,15 +8496,18 @@ BEGIN
   SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid IN ('public."CancellationBatches"'::regclass, 'public."CancellationBatchLessons"'::regclass,
                       'public."CancellationBatchCredits"'::regclass);
-  IF bad IS DISTINCT FROM 'cancellation_batch_credits_admin_all:*,cancellation_batch_credits_staff_select:r,'
-                          'cancellation_batch_lessons_admin_all:*,cancellation_batches_admin_all:*' THEN
+  -- Each admin arm is four since 20261110100000.
+  IF bad IS DISTINCT FROM 'cancellation_batch_credits_admin_delete:d,cancellation_batch_credits_admin_insert:a,cancellation_batch_credits_admin_select:r,cancellation_batch_credits_admin_update:w,'
+                          'cancellation_batch_credits_staff_select:r,'
+                          'cancellation_batch_lessons_admin_delete:d,cancellation_batch_lessons_admin_insert:a,cancellation_batch_lessons_admin_select:r,cancellation_batch_lessons_admin_update:w,'
+                          'cancellation_batches_admin_delete:d,cancellation_batches_admin_insert:a,cancellation_batches_admin_select:r,cancellation_batches_admin_update:w' THEN
     RAISE EXCEPTION 'batch: policies are %', bad;
   END IF;
   SELECT string_agg(polname, ',') INTO bad FROM pg_policy
    WHERE polrelid IN ('public."CancellationBatches"'::regclass, 'public."CancellationBatchLessons"'::regclass,
                       'public."CancellationBatchCredits"'::regclass)
-     AND (pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%'
-          OR (polcmd = '*' AND pg_get_expr(polwithcheck, polrelid) NOT LIKE '%current_user_role%'));
+     AND (coalesce(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) NOT LIKE '%current_user_role%'
+          OR (polcmd IN ('*', 'a', 'w') AND pg_get_expr(polwithcheck, polrelid) NOT LIKE '%current_user_role%'));
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'batch: arms without the role: %', bad; END IF;
   FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
     SELECT string_agg(p, ', ') INTO bad
@@ -8587,7 +8604,9 @@ DECLARE bad text; api_role text;
 BEGIN
   SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid IN ('public."PublicTimetableLinks"'::regclass, 'public."TeacherPublicLabels"'::regclass);
-  IF bad IS DISTINCT FROM 'public_timetable_links_admin_all:*,teacher_public_labels_admin_all:*' THEN
+  -- Each admin arm is four since 20261110100000.
+  IF bad IS DISTINCT FROM 'public_timetable_links_admin_delete:d,public_timetable_links_admin_insert:a,public_timetable_links_admin_select:r,public_timetable_links_admin_update:w,'
+                          'teacher_public_labels_admin_delete:d,teacher_public_labels_admin_insert:a,teacher_public_labels_admin_select:r,teacher_public_labels_admin_update:w' THEN
     RAISE EXCEPTION 'viewer: policies are %', bad;
   END IF;
   FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role') LOOP
@@ -9217,13 +9236,19 @@ BEGIN
    WHERE schemaname = 'public'
      AND tablename IN ('TeacherAbsenceReasons', 'TeacherAbsences', 'CoverSettings', 'TeacherAbsenceCovers',
                        'SubstitutePoolMembers', 'SubstituteAvailabilities');
+  -- Each admin arm is four since 20261110100000.
   IF bad IS DISTINCT FROM
-     'CoverSettings.cover_settings_admin_all:ALL,CoverSettings.cover_settings_staff_select:SELECT,'
-     'SubstituteAvailabilities.substitute_availabilities_admin_all:ALL,SubstituteAvailabilities.substitute_availabilities_own_all:ALL,'
-     'SubstitutePoolMembers.substitute_pool_members_admin_all:ALL,SubstitutePoolMembers.substitute_pool_members_own_select:SELECT,'
-     'TeacherAbsenceCovers.teacher_absence_covers_admin_all:ALL,TeacherAbsenceCovers.teacher_absence_covers_own_select:SELECT,'
-     'TeacherAbsenceReasons.teacher_absence_reasons_admin_all:ALL,TeacherAbsenceReasons.teacher_absence_reasons_staff_select:SELECT,'
-     'TeacherAbsences.teacher_absences_admin_all:ALL,TeacherAbsences.teacher_absences_own_insert:INSERT,'
+     'CoverSettings.cover_settings_admin_delete:DELETE,CoverSettings.cover_settings_admin_insert:INSERT,CoverSettings.cover_settings_admin_select:SELECT,CoverSettings.cover_settings_admin_update:UPDATE,CoverSettings.cover_settings_staff_select:SELECT,'
+     'SubstituteAvailabilities.substitute_availabilities_admin_delete:DELETE,SubstituteAvailabilities.substitute_availabilities_admin_insert:INSERT,SubstituteAvailabilities.substitute_availabilities_admin_select:SELECT,SubstituteAvailabilities.substitute_availabilities_admin_update:UPDATE,'
+     'SubstituteAvailabilities.substitute_availabilities_own_all:ALL,'
+     'SubstitutePoolMembers.substitute_pool_members_admin_delete:DELETE,SubstitutePoolMembers.substitute_pool_members_admin_insert:INSERT,SubstitutePoolMembers.substitute_pool_members_admin_select:SELECT,SubstitutePoolMembers.substitute_pool_members_admin_update:UPDATE,'
+     'SubstitutePoolMembers.substitute_pool_members_own_select:SELECT,'
+     'TeacherAbsenceCovers.teacher_absence_covers_admin_delete:DELETE,TeacherAbsenceCovers.teacher_absence_covers_admin_insert:INSERT,TeacherAbsenceCovers.teacher_absence_covers_admin_select:SELECT,TeacherAbsenceCovers.teacher_absence_covers_admin_update:UPDATE,'
+     'TeacherAbsenceCovers.teacher_absence_covers_own_select:SELECT,'
+     'TeacherAbsenceReasons.teacher_absence_reasons_admin_delete:DELETE,TeacherAbsenceReasons.teacher_absence_reasons_admin_insert:INSERT,TeacherAbsenceReasons.teacher_absence_reasons_admin_select:SELECT,TeacherAbsenceReasons.teacher_absence_reasons_admin_update:UPDATE,'
+     'TeacherAbsenceReasons.teacher_absence_reasons_staff_select:SELECT,'
+     'TeacherAbsences.teacher_absences_admin_delete:DELETE,TeacherAbsences.teacher_absences_admin_insert:INSERT,TeacherAbsences.teacher_absences_admin_select:SELECT,TeacherAbsences.teacher_absences_admin_update:UPDATE,'
+     'TeacherAbsences.teacher_absences_own_insert:INSERT,'
      'TeacherAbsences.teacher_absences_own_select:SELECT,TeacherAbsences.teacher_absences_own_update:UPDATE' THEN
     RAISE EXCEPTION 'cover: the policies are %', bad;
   END IF;
@@ -11220,7 +11245,10 @@ DECLARE arms text;
 BEGIN
   SELECT string_agg(policyname, ',' ORDER BY policyname) INTO arms
     FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveRequests';
-  IF arms IS DISTINCT FROM 'leave_requests_admin_all,leave_requests_guardian_insert,leave_requests_guardian_select,leave_requests_mentor_select,leave_requests_mentor_update,leave_requests_student_insert,leave_requests_student_select' THEN
+  -- The admin's arm is four since 20261110100000.
+  IF arms IS DISTINCT FROM 'leave_requests_admin_delete,leave_requests_admin_insert,leave_requests_admin_select,leave_requests_admin_update,'
+                           'leave_requests_guardian_insert,leave_requests_guardian_select,leave_requests_mentor_select,leave_requests_mentor_update,'
+                           'leave_requests_student_insert,leave_requests_student_select' THEN
     RAISE EXCEPTION 'leave: the arms on LeaveRequests are %', arms;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveRequests'
@@ -11423,7 +11451,9 @@ DECLARE arms text; fn text := 'app.reported_absences(date)'; r text;
 BEGIN
   SELECT string_agg(policyname, ',' ORDER BY policyname) INTO arms
     FROM pg_policies WHERE schemaname = 'public' AND tablename = 'AbsenceReports';
-  IF arms IS DISTINCT FROM 'absence_reports_admin_all,absence_reports_guardian_insert,absence_reports_guardian_select,'
+  -- The admin's arm is four since 20261110100000.
+  IF arms IS DISTINCT FROM 'absence_reports_admin_delete,absence_reports_admin_insert,absence_reports_admin_select,absence_reports_admin_update,'
+                           'absence_reports_guardian_insert,absence_reports_guardian_select,'
                            'absence_reports_mentor_leave_insert,'
                            'absence_reports_reporter_delete,absence_reports_student_insert,absence_reports_student_select' THEN
     RAISE EXCEPTION 'absence: the arms on AbsenceReports are %', arms;
@@ -15681,8 +15711,13 @@ BEGIN
   END IF;
   SELECT string_agg(format('%s %s', polname, polroles::regrole[]::text), ', ' ORDER BY polname) INTO wrong
     FROM pg_policy WHERE polrelid = rel;
+  -- The admin's arm is four since 20261110100000 (Roller i skolan), which
+  -- keeps its role.
   IF wrong IS DISTINCT FROM concat_ws(', ',
-       'teacher_employment_periods_admin_all {app_authenticated}',
+       'teacher_employment_periods_admin_delete {app_authenticated}',
+       'teacher_employment_periods_admin_insert {app_authenticated}',
+       'teacher_employment_periods_admin_select {app_authenticated}',
+       'teacher_employment_periods_admin_update {app_authenticated}',
        'teacher_employment_periods_service_select {app_authenticated}',
        'teacher_employment_periods_teacher_own_select {authenticated}') THEN
     RAISE EXCEPTION 'period table: the arms are %', wrong;
@@ -16373,17 +16408,22 @@ BEGIN
       OR p.qual LIKE '%NOT %';
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'direct reads: % no longer reads only the reader''s own rows', bad; END IF;
 
+  -- Each FOR ALL admin arm is four since 20261110100000 (Roller i skolan),
+  -- which keeps the arm's roles.
   SELECT string_agg(m.tbl || '.' || m.pol || coalesce(' TO ' || p.roles::text, ' is gone'), ', ') INTO bad
-    FROM (VALUES ('TeacherAbsences', 'teacher_absences_admin_all'),
-                 ('TeacherAbsenceCovers', 'teacher_absence_covers_admin_all'),
-                 ('TeacherEmployments', 'teacher_employments_admin_all'),
-                 ('TeacherEmploymentLogs', 'teacher_employment_logs_admin_select'),
-                 ('TeacherEmploymentPeriods', 'teacher_employment_periods_admin_all'),
-                 ('TeacherDuties', 'teacher_duties_admin_all'),
+    FROM (SELECT v.tbl, v.pol || c.cmd AS pol
+            FROM (VALUES ('TeacherAbsences', 'teacher_absences_admin_'),
+                         ('TeacherAbsenceCovers', 'teacher_absence_covers_admin_'),
+                         ('TeacherEmployments', 'teacher_employments_admin_'),
+                         ('TeacherEmploymentPeriods', 'teacher_employment_periods_admin_'),
+                         ('TeacherDuties', 'teacher_duties_admin_'),
+                         ('TimplanStatements', 'timplan_statements_admin_')) AS v(tbl, pol),
+                 unnest(ARRAY['select', 'insert', 'update', 'delete']) AS c(cmd)
+          UNION ALL
+          VALUES ('TeacherEmploymentLogs', 'teacher_employment_logs_admin_select'),
                  ('StudentEnrollments', 'student_enrollments_admin_select'),
                  ('StudentEnrollments', 'student_enrollments_staff_select'),
                  ('StudentEnrollments', 'student_enrollments_guardian_select'),
-                 ('TimplanStatements', 'timplan_statements_admin_all'),
                  ('TimplanStatements', 'timplan_statements_guardian_select'),
                  ('Ss12000SyncChanges', 'ss12000_sync_changes_admin_select')) AS m(tbl, pol)
     LEFT JOIN pg_policies p ON p.schemaname = 'public' AND p.tablename = m.tbl AND p.policyname = m.pol
@@ -18230,8 +18270,13 @@ BEGIN
   END IF;
   SELECT array_agg(policyname || ' ' || cmd || ' ' || array_to_string(roles, ',') ORDER BY policyname)
     INTO arms FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingBlocks';
+  -- The admin's arm is four since 20261110100000 (Roller i skolan), which
+  -- keeps its role.
   IF arms IS DISTINCT FROM ARRAY[
-    'teaching_blocks_admin_all ALL authenticated',
+    'teaching_blocks_admin_delete DELETE authenticated',
+    'teaching_blocks_admin_insert INSERT authenticated',
+    'teaching_blocks_admin_select SELECT authenticated',
+    'teaching_blocks_admin_update UPDATE authenticated',
     'teaching_blocks_staff_select SELECT authenticated'
   ] THEN
     RAISE EXCEPTION 'block catalogue: the arms are %', arms;
@@ -18602,9 +18647,13 @@ BEGIN
     RAISE EXCEPTION 'school units: row security is off';
   END IF;
   SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SchoolUnits';
-  IF n <> 3
-     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolUnits' AND policyname = 'school_units_admin_all'
-                      AND cmd = 'ALL' AND roles = '{app_authenticated}')
+  -- The admin's arm is four since 20261110100000 (Roller i skolan), which
+  -- keeps its role.
+  IF n <> 6
+     OR (SELECT count(*) FROM pg_policies WHERE tablename = 'SchoolUnits'
+          AND (policyname, cmd) IN (('school_units_admin_select', 'SELECT'), ('school_units_admin_insert', 'INSERT'),
+                                    ('school_units_admin_update', 'UPDATE'), ('school_units_admin_delete', 'DELETE'))
+          AND roles = '{app_authenticated}') <> 4
      OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolUnits' AND policyname = 'school_units_service_select'
                       AND cmd = 'SELECT' AND roles = '{app_authenticated}')
      OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolUnits' AND policyname = 'school_units_sync_select'
@@ -19545,3 +19594,293 @@ BEGIN
     RAISE EXCEPTION 'split duties: a post''s history carries its stretch key';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 116: varje profil mot varje tabell (Roller i skolan, 20261110100000).
+--
+-- The role × table matrix. In the fixtures' school rls-roller-school every
+-- table an administrator's arm reaches has a row, and there is one
+-- administrator of each profile, two of them with HR-läs. Each of the six
+-- reads, inserts, updates and deletes in each table, and every cell is
+-- compared with what src/auth/admin-areas.ts says, through the rows the
+-- generator writes below (scripts/test/generate-rls-area-matrix.ts):
+--
+--   * read: every profile sees the rows FULL sees, and FULL sees some; a
+--     table with readers of its own (the läslogg) is read by them and seen
+--     empty by everybody else;
+--   * a command with a gate: FULL is admitted; a profile holding one of the
+--     command's gates is admitted, and one that holds none is refused by row
+--     security (42501, "row-level security"), not by anything else;
+--   * a command with no gate: every profile meets exactly what FULL meets,
+--     which is a refusal: no administrator had it before either.
+--
+-- The probes, each undone at once: an INSERT copies one of the table's rows
+-- (a unique violation means the policy let the row through), an UPDATE sets
+-- an updatable column to itself, a DELETE takes one row. Users' probes use a
+-- pupil, since an administrator's row is the decisions' (section 108). The
+-- update arm's USING admits every administrator (row locks need it), so a
+-- refused update is the WITH CHECK's error, never zero rows.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE TEMP TABLE area_profiles (profile text PRIMARY KEY, writes text[] NOT NULL, decides boolean NOT NULL);
+CREATE TEMP TABLE area_gates (tbl text PRIMARY KEY, ins text[] NOT NULL, upd text[] NOT NULL, del text[] NOT NULL, rd text[] NOT NULL);
+-- BEGIN GENERATED: area matrix (scripts/test/generate-rls-area-matrix.ts)
+INSERT INTO area_profiles (profile, writes, decides) VALUES
+  ('FULL', '{PLANERING,SCHEMALAGGNING,PUBLICERING,DRIFT,PERSONAL,INTEGRATIONER}', true),
+  ('REKTOR', '{PLANERING,SCHEMALAGGNING,PUBLICERING,DRIFT,PERSONAL,INTEGRATIONER}', true),
+  ('SCHEMALAGGARE', '{PLANERING,SCHEMALAGGNING,PUBLICERING,DRIFT}', false),
+  ('EXPEDITION', '{DRIFT,PERSONAL}', false);
+INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
+  ('AbsenceReports', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('AcademicYearTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('AcademicYears', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('AttendanceRecords', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('AvailabilityConstraints', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('CalendarLessonGroups', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CalendarLessonStudents', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CalendarLessonTeachers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CalendarLessons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CalendarLunches', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CalendarRasts', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CancellationBatchCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CancellationBatchLessons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CancellationBatches', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('CoverSettings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('FrameTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('GallringRuns', '{}', '{}', '{}', '{}'),
+  ('GuardianStudentHistory', '{}', '{}', '{}', '{}'),
+  ('GuardianStudents', '{PERSONAL}', '{PERSONAL}', '{PERSONAL}', '{}'),
+  ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
+  ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
+  ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('LocalTimplanEntries', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('LocalTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('LunchServings', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('LunchSettings', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('LunchSittings', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('MasterLessonGroups', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('MasterLessonStudents', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('MasterLessons', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('Notifications', '{DRIFT}', '{}', '{}', '{}'),
+  ('OptimizationJobs', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('PersonalDataAccess', '{}', '{}', '{}', '{DECIDES}'),
+  ('PublicTimetableLinks', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('PublicationPendingRemovals', '{}', '{}', '{PUBLICERING}', '{}'),
+  ('PublicationSettings', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('PublishedLessons', '{PUBLICERING}', '{PUBLICERING}', '{}', '{}'),
+  ('PublishedLunchSittings', '{PUBLICERING}', '{}', '{}', '{}'),
+  ('Rasts', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('RetentionDecisions', '{DECIDES}', '{}', '{}', '{}'),
+  ('RoomBookings', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('RoomPreferenceRooms', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('RoomPreferences', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('RoomTypes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('Rooms', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('ScheduleChangeLogs', '{SCHEMALAGGNING}', '{}', '{}', '{}'),
+  ('ScheduleVersions', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('SchoolBreaks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('SchoolSignInMethods', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
+  ('SchoolUnits', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('Schools', '{}', '{PLANERING}', '{}', '{}'),
+  ('Ss12000DutyLinks', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
+  ('Ss12000Sources', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
+  ('Ss12000SubscriptionDeliveries', '{}', '{}', '{}', '{}'),
+  ('Ss12000Subscriptions', '{}', '{INTEGRATIONER}', '{}', '{}'),
+  ('Ss12000SyncChanges', '{}', '{INTEGRATIONER}', '{}', '{}'),
+  ('Ss12000SyncRuns', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
+  ('StaffingPolicies', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('StudentEnrollments', '{}', '{}', '{}', '{}'),
+  ('StudentGroupMembers', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('StudentGroups', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('Subjects', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('SubstituteAvailabilities', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('SubstitutePoolMembers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('TeacherAbsenceCovers', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('TeacherAbsenceReasons', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('TeacherAbsences', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('TeacherDuties', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeacherDutySlots', '{PLANERING}', '{}', '{PLANERING}', '{}'),
+  ('TeacherEmploymentLogs', '{}', '{}', '{}', '{}'),
+  ('TeacherEmploymentPeriods', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
+  ('TeacherEmployments', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
+  ('TeacherPublicLabels', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('TeacherSubjectQualifications', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeacherWorkRules', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeachingBlocks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeachingRequirements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TimetablePublications', '{PUBLICERING}', '{}', '{}', '{}'),
+  ('TimplanCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('TimplanStatementPublications', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('TimplanStatements', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('UserRoleChanges', '{}', '{}', '{}', '{}'),
+  ('Users', '{PERSONAL}', '{PERSONAL,PLANERING}', '{PERSONAL}', '{}');
+-- END GENERATED: area matrix
+
+DO $$
+DECLARE
+  principals constant text[][] := ARRAY[
+    ['00000000-0000-4000-8000-000000000105', 'FULL', 'false'],
+    ['00000000-0000-4000-8000-000000000106', 'REKTOR', 'false'],
+    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'false'],
+    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'false'],
+    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE', 'true'],
+    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true']];
+  i integer;
+  m uuid;
+  pr record;
+  g record;
+  key_col text;
+  pick text;
+  ins_cols text;
+  upd_col text;
+  n bigint;
+  st text;
+  msg text;
+  outcome text;
+  refusal text;
+  holds boolean;
+  expected bigint;
+  cmd text;
+  gate_list text[];
+  full_seen jsonb := '{}';
+  wrong text[] := '{}';
+  cells integer := 0;
+BEGIN
+  IF (SELECT count(*) FROM area_gates) < 70 OR (SELECT count(*) FROM area_profiles) <> 4 THEN
+    RAISE EXCEPTION 'matrix: the generated rows are missing (% tables, % profiles)',
+      (SELECT count(*) FROM area_gates), (SELECT count(*) FROM area_profiles);
+  END IF;
+
+  FOR i IN 1 .. array_length(principals, 1) LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
+    IF i = 1 THEN
+      m := app.current_school_id();
+      IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+        RAISE EXCEPTION 'matrix: the full administrator is not in rls-roller-school; fixtures did not run';
+      END IF;
+    END IF;
+    SELECT u."adminProfile"::text AS profile, u."hrRead" AS hr INTO pr
+      FROM "Users" u WHERE u.id = app.current_user_id();
+    IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() IS DISTINCT FROM m
+       OR pr.profile IS DISTINCT FROM principals[i][2] OR pr.hr::text IS DISTINCT FROM principals[i][3] THEN
+      RAISE EXCEPTION 'matrix: % resolved as % % % in %, expected % with HR-läs %', principals[i][1],
+        app.current_user_role(), pr.profile, pr.hr, app.current_school_id(), principals[i][2], principals[i][3];
+    END IF;
+
+    FOR g IN SELECT * FROM area_gates ORDER BY tbl LOOP
+      key_col := CASE g.tbl WHEN 'Schools' THEN 'id' ELSE 'schoolId' END;
+      pick := format('(SELECT ctid FROM %I WHERE %I = %L%s LIMIT 1)', g.tbl, key_col, m,
+                     CASE g.tbl WHEN 'Users' THEN ' AND role = ''STUDENT''' ELSE '' END);
+      SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) INTO ins_cols
+        FROM pg_attribute a
+       WHERE a.attrelid = format('public.%I', g.tbl)::regclass AND a.attnum > 0 AND NOT a.attisdropped
+         AND has_column_privilege(format('public.%I', g.tbl), a.attname, 'INSERT');
+      SELECT quote_ident(a.attname) INTO upd_col
+        FROM pg_attribute a
+       WHERE a.attrelid = format('public.%I', g.tbl)::regclass AND a.attnum > 0 AND NOT a.attisdropped
+         AND has_column_privilege(format('public.%I', g.tbl), a.attname, 'UPDATE')
+       ORDER BY (a.attname = key_col) DESC, a.attnum LIMIT 1;
+
+      -- Read.
+      EXECUTE format('SELECT count(*) FROM %I WHERE %I = $1', g.tbl, key_col) INTO n USING m;
+      IF i = 1 THEN
+        IF n = 0 THEN
+          wrong := wrong || format('%s: FULL reads no row (the fixtures planted none?)', g.tbl);
+        END IF;
+        full_seen := full_seen || jsonb_build_object(g.tbl || ':read', n);
+      ELSE
+        -- A table with readers of its own (the läslogg) is read by those
+        -- profiles and by nobody else; every other table by every profile.
+        SELECT cardinality(g.rd) = 0 OR bool_or(CASE gl WHEN 'DECIDES' THEN p.decides ELSE gl = ANY (p.writes) END)
+          INTO holds
+          FROM area_profiles p LEFT JOIN unnest(g.rd) gl ON true
+         WHERE p.profile = principals[i][2];
+        expected := 0;
+        IF holds THEN
+          expected := (full_seen ->> (g.tbl || ':read'))::bigint;
+        END IF;
+        IF n IS DISTINCT FROM expected THEN
+          wrong := wrong || format('%s %s%s reads %s rows of %s, FULL %s, readers %s', principals[i][2],
+                                   CASE principals[i][3] WHEN 'true' THEN '+HR ' ELSE '' END, g.tbl, n, g.tbl,
+                                   full_seen ->> (g.tbl || ':read'), g.rd);
+        END IF;
+      END IF;
+      cells := cells + 1;
+
+      FOREACH cmd IN ARRAY ARRAY['insert', 'update', 'delete'] LOOP
+        outcome := NULL;
+        BEGIN
+          IF cmd = 'insert' THEN
+            IF ins_cols IS NULL THEN
+              outcome := 'denied';
+            ELSE
+              EXECUTE format('INSERT INTO %I (%s) SELECT %s FROM %I WHERE ctid = %s', g.tbl, ins_cols, ins_cols, g.tbl, pick);
+              GET DIAGNOSTICS n = ROW_COUNT;
+              outcome := CASE WHEN n = 1 THEN 'admitted' ELSE 'none' END;
+            END IF;
+          ELSIF cmd = 'update' THEN
+            IF upd_col IS NULL THEN
+              outcome := 'denied';
+            ELSE
+              EXECUTE format('UPDATE %I SET %s = %s WHERE ctid = %s', g.tbl, upd_col, upd_col, pick);
+              GET DIAGNOSTICS n = ROW_COUNT;
+              outcome := CASE WHEN n = 1 THEN 'admitted' ELSE 'none' END;
+            END IF;
+          ELSE
+            EXECUTE format('DELETE FROM %I WHERE ctid = %s', g.tbl, pick);
+            GET DIAGNOSTICS n = ROW_COUNT;
+            outcome := CASE WHEN n = 1 THEN 'admitted' ELSE 'none' END;
+          END IF;
+          RAISE EXCEPTION USING ERRCODE = 'ZM116';
+        EXCEPTION
+          WHEN SQLSTATE 'ZM116' THEN NULL;
+          WHEN unique_violation OR foreign_key_violation THEN
+            outcome := 'admitted';
+          WHEN insufficient_privilege THEN
+            GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+            outcome := CASE WHEN msg LIKE '%row-level security%' THEN 'refused' ELSE 'denied' END;
+          WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+            outcome := 'error ' || st || ' ' || left(msg, 80);
+        END;
+
+        gate_list := CASE cmd WHEN 'insert' THEN g.ins WHEN 'update' THEN g.upd ELSE g.del END;
+        IF i = 1 THEN
+          full_seen := full_seen || jsonb_build_object(g.tbl || ':' || cmd, outcome);
+          IF cardinality(gate_list) > 0 AND outcome <> 'admitted' THEN
+            wrong := wrong || format('FULL may %s %s but met %s', cmd, g.tbl, outcome);
+          ELSIF cardinality(gate_list) = 0 AND outcome = 'admitted' THEN
+            wrong := wrong || format('FULL may not %s %s, no gate says so, but was admitted', cmd, g.tbl);
+          END IF;
+        ELSIF cardinality(gate_list) = 0 THEN
+          IF outcome IS DISTINCT FROM full_seen ->> (g.tbl || ':' || cmd) THEN
+            wrong := wrong || format('%s %s met %s on %s, FULL met %s', principals[i][2], cmd, outcome, g.tbl,
+                                     full_seen ->> (g.tbl || ':' || cmd));
+          END IF;
+        ELSE
+          -- A delete's arm has only USING, so a refused delete finds no row.
+          refusal := CASE cmd WHEN 'delete' THEN 'none' ELSE 'refused' END;
+          SELECT bool_or(CASE gl WHEN 'DECIDES' THEN p.decides ELSE gl = ANY (p.writes) END) INTO holds
+            FROM area_profiles p, unnest(gate_list) gl
+           WHERE p.profile = principals[i][2];
+          IF holds AND outcome <> 'admitted' THEN
+            wrong := wrong || format('%s may %s %s (%s) but met %s', principals[i][2], cmd, g.tbl,
+                                     array_to_string(gate_list, '|'), outcome);
+          ELSIF NOT holds AND outcome <> refusal THEN
+            wrong := wrong || format('%s may not %s %s (%s) but met %s', principals[i][2], cmd, g.tbl,
+                                     array_to_string(gate_list, '|'), outcome);
+          END IF;
+        END IF;
+        cells := cells + 1;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'matrix: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
+  END IF;
+  RAISE NOTICE 'matrix: % cells, 6 administrators × % tables × read, insert, update, delete', cells,
+    (SELECT count(*) FROM area_gates);
+END $$;
+ROLLBACK;
