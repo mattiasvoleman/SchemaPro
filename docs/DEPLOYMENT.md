@@ -369,6 +369,14 @@ Walk the full product loop once, in order:
   the school decides. The web and the app read other people's rows only
   through the gateway; PostgREST's `authenticated` keeps its own-row reads
   until the closing migration takes the rest (its comment lists what stays).
+  20261026110000 adds the kinds `SCHEDULE` (the family's week) and
+  `TEACHING_TIME` (timplan coverage per pupil and the pupil's statement), and
+  the planning previews, the cover board and reports, the sync's change
+  review and a person's PATCH record under the existing kinds. It, too, must
+  be in the database before the API that writes them: an unknown kind is
+  22P02 and fails the read. What is deliberately not recorded (the timetable
+  layer, pushes, notices, a create's echo) is listed with the reason in
+  `src/access-log/access-log.ts`.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
