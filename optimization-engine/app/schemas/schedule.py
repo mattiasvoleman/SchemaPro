@@ -49,6 +49,10 @@ ConflictCategory = Literal[
     # own rather than REQUIREMENT_DEMAND, because the fix is a different row on
     # a different screen: the subject's rule, not the lessons per week.
     "SUBJECT_DISTRIBUTION",
+    # Parallella block: requirements the school runs at the same times
+    # (språkval, elevens val). A category of its own because the fix is the
+    # block on the timplan page, not any one of its rows.
+    "TEACHING_BLOCK",
 ]
 
 
@@ -190,6 +194,23 @@ class AnonymousRequirement(CamelModel):
     locked_days: list[DayOfWeek] = Field(
         default_factory=list, alias="lockedDays", max_length=80,
     )
+    #: Parallella block: the anonymous id of the block this requirement runs
+    #: in, shared by every member. Språkval åk 7 is Tyska for Ty7, Franska for
+    #: Fr7 and Spanska for Sp7, and the k-th lesson of each starts when the
+    #: k-th lesson of the others does — so the block takes one slot of 7A's
+    #: week per lesson, not one per language.
+    #:
+    #: OPTIONAL AND ADDITIVE. None is a requirement in no block, which is every
+    #: requirement of every school until one writes a block; the gateway sends
+    #: the key only on a member of a block with two or more members still to
+    #: place, so a payload without blocks is byte for byte what it was.
+    #:
+    #: THE MEMBERS MUST AGREE, and the engine says so by name rather than
+    #: building a model that cannot hold: the same lesson lengths
+    #: (BLOCK_MEMBERS_DIFFER), no teacher in two of them
+    #: (BLOCK_MEMBERS_SHARE_TEACHER) and no pupil in two of them
+    #: (BLOCK_MEMBERS_SHARE_PUPILS). See SchedulerSolver._validate_blocks.
+    block_id: UUID4 | None = Field(default=None, alias="blockId")
 
     @model_validator(mode="after")
     def validate_lesson_lengths(self) -> AnonymousRequirement:

@@ -419,6 +419,60 @@ MESSAGES: dict[str, str] = {
         "least {minDaysBetween} days apart}}."
     ),
 
+    # ---- Parallella block: requirements run at the same times -----------
+    #
+    # `block` is the anonymous id the gateway turns into the block's name
+    # ("Språkval åk 7"); `requirement` and `other` are two of its members,
+    # named as every timplanspost is ("Tyska för Ty7"). Never a person: a
+    # teacher two members share is said to be shared, and nobody is named.
+    "BLOCK_MEMBERS_DIFFER": (
+        "{block}: {requirement} does not have the same lessons as {other}, and the lessons of a "
+        "block are placed at the same times. Give every entry in the block the same lessons per "
+        "week and the same lengths."
+    ),
+    "BLOCK_MEMBERS_SHARE_TEACHER": (
+        "{block}: {requirement} and {other} have the same teacher, who cannot teach both at the "
+        "same time. Give one of them another teacher, or take it out of the block."
+    ),
+    "BLOCK_MEMBERS_SHARE_PUPILS": (
+        "{block}: {requirement} and {other} share pupils, who cannot be in both at the same "
+        "time. Take one of them out of the block, or let each pupil be in only one group of it."
+    ),
+    "BLOCK_NO_COMMON_START": (
+        "{block}: its groups have no time in common at which a {minutes}-minute lesson can "
+        "start, with the frame times, breaks and margins of their years. Widen the frame times, "
+        "or take an entry out of the block."
+    ),
+    "BLOCK_CANNOT_BE_PLACED": (
+        "{block} cannot have all its lessons at the same times, and that rule is one of those "
+        "that cannot all hold at once. Check when its groups, teachers and rooms are free, or "
+        "take an entry out of the block."
+    ),
+    # A proved INFEASIBLE the assumption solve could not explain, measured
+    # instead: the same week without its blocks, given the probe's budget.
+    # Removing every block made the week solve, so the blocks are what make
+    # it impossible — together, which is all this establishes about each one.
+    "BLOCK_PROBE_SUMMARY": (
+        "No timetable satisfies every rule, and the solver could not name which of them collide. "
+        "With the blocks dropped a timetable was found in {seconds} s, so it is the blocks listed "
+        "below that cannot all have their lessons at the same times."
+    ),
+    # Sent by the GATEWAY before the engine is called (the generate pre-flight
+    # in optimization-proxy.service.ts): only it knows which locked lesson
+    # belongs to which entry, since a locked lesson reaches this engine as a
+    # fixed lesson with no requirement id. Here because this is the one
+    # catalogue the web renders a school's sentences from.
+    "BLOCK_PARTLY_LOCKED_SUMMARY": (
+        "{count, plural, one {# block has} other {# blocks have}} lessons locked or placed by "
+        "hand while the rest of the block is still to be placed, and a block's lessons are "
+        "placed together."
+    ),
+    "BLOCK_PARTLY_LOCKED": (
+        "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand "
+        "while the rest of it is still to be placed. Unlock the block's lessons, or lock all of "
+        "them."
+    ),
+
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (
         "No timetable was found within {budget} s, and none of the {rules, plural, "
@@ -457,6 +511,10 @@ MESSAGES: dict[str, str] = {
     "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "
         "no consecutive days — a timetable was found in {seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_BLOCKS": (
+        "With the blocks dropped, so that the lessons of a block could take different times, a "
+        "timetable was found in {seconds} s."
     ),
     # TWO PROBES AND NEVER ONE "teachers' working time", for the reason the
     # lunch above is three: a school cannot switch its teachers' working time

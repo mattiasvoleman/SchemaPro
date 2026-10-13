@@ -470,6 +470,10 @@ class SchedulerSolver:
             step=step,
         )
 
+        # Parallella block, first among the rules because it only says which
+        # starts are the same start: every family below then sees one block
+        # lesson where the school sees one.
+        self._add_block_constraints(model, registry, decisions, request.requirements)
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
         self._add_group_no_overlap(model, decisions, request.group_conflicts)
@@ -1587,6 +1591,16 @@ class SchedulerSolver:
         conflicts = None
         if solver.Solve(model) == cp_model.INFEASIBLE:
             conflicts = build_conflict_analysis(solver, registry)
+        # A PROOF WITH NOTHING TO SAY, ON A WEEK WITH BLOCKS. A block is the
+        # one rule a school writes to make its week NARROWER, so a refusal that
+        # names nothing while blocks are in force sends the school looking
+        # everywhere but at the thing it just did. When the explaining solve
+        # finds no core, the week is solved again without its blocks; if that
+        # finds a timetable, the blocks are what make the week impossible, and
+        # the refusal says so by name rather than as an unexplained INFEASIBLE.
+        unexplained = conflicts is None or conflicts.summary_code == "CONFLICT_NO_CORE"
+        if unexplained and _blocks_of(request.requirements):
+            conflicts = self._blocks_verdict(request) or conflicts
         return OptimizeScheduleResponse(
             request_id=request.request_id,
             status="INFEASIBLE",
@@ -1874,26 +1888,77 @@ class SchedulerSolver:
 
         Returns the number of hints installed.
         """
+        pairs = self._previous_hints(decisions, previous_lessons)
+        for decision, slot in pairs:
+            model.AddHint(decision.start, slot)
+        return len(pairs)
+
+    def _previous_hints(
+        self,
+        decisions: list[LessonDecision],
+        previous_lessons: list[PreviousLesson],
+    ) -> list[tuple[LessonDecision, int]]:
+        """Which lesson instance each previous slot hints, in the order they are hinted.
+
+        ONE PAIRING FOR BOTH HINTERS, _hint_previous_lessons and the warm start
+        inside _add_disruption_objective, so the two builds of a solve start
+        from the same guess. A requirement in no block is paired as it always
+        was: each previous slot, in the payload's order, on the first instance
+        of its requirement not yet hinted, skipping a slot off the grid.
+
+        A BLOCK IS HINTED AS ONE. Its members' k-th lessons must start
+        together, and hinting Ty7's first lesson at Monday 09:00 and Fr7's at
+        Wednesday 10:00 would point the search at an assignment the block
+        rules out before it has begun. So every member is hinted from one list:
+        the previous slots of the member that had the most of them (the first
+        such in the payload), in time order, the k-th slot on each member's
+        k-th lesson. A block placed as one last run is hinted back where it
+        was; a member added since has no slots of its own and takes the
+        block's; members placed apart before the block existed are hinted
+        where one of them was.
+        """
         by_requirement: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
             by_requirement.setdefault(decision.lesson.requirement.id, []).append(decision)
 
-        hinted: set[str] = set()
+        own: dict[UUID, list[int]] = {}
+        order: list[UUID] = []
         for previous in previous_lessons:
-            candidates = by_requirement.get(previous.requirement_id)
-            if not candidates:
+            if previous.requirement_id not in by_requirement:
                 continue
             try:
                 start_slot = self._grid.parse_hhmmss(previous.start_time)
                 abs_slot = self._grid.absolute_start(previous.day_of_week, start_slot)
             except ValueError:
                 continue  # off-grid previous slot — nothing to warm-start from
-            for decision in candidates:
-                if decision.lesson.key() not in hinted:
-                    model.AddHint(decision.start, abs_slot)
-                    hinted.add(decision.lesson.key())
-                    break
-        return len(hinted)
+            own.setdefault(previous.requirement_id, []).append(abs_slot)
+            order.append(previous.requirement_id)
+
+        slots = dict(own)
+        requirements = {
+            decision.lesson.requirement.id: decision.lesson.requirement for decision in decisions
+        }
+        for members in _blocks_of(requirements.values()).values():
+            richest = max(members, key=lambda member: len(own.get(member.id, ())))
+            shared = sorted(own.get(richest.id, ()))
+            for member in members:
+                slots[member.id] = shared
+
+        pairs: list[tuple[LessonDecision, int]] = []
+        used: dict[UUID, int] = {}
+        for requirement_id in order:
+            index = used.get(requirement_id, 0)
+            used[requirement_id] = index + 1
+            candidates = by_requirement[requirement_id]
+            if index < len(candidates) and index < len(slots[requirement_id]):
+                pairs.append((candidates[index], slots[requirement_id][index]))
+        # A member with fewer previous slots of its own than the block's list
+        # takes the rest of it. Every other requirement has used all of its own.
+        for requirement_id, shared in slots.items():
+            candidates = by_requirement[requirement_id]
+            for index in range(used.get(requirement_id, 0), min(len(candidates), len(shared))):
+                pairs.append((candidates[index], shared[index]))
+        return pairs
 
     def _estimate_model_size(self, request: OptimizeScheduleRequest) -> int:
         """Predict the variable count of the model this request would build.
@@ -2212,6 +2277,9 @@ class SchedulerSolver:
             + teacher_work_vars
             + rast_order_vars
             + distribution_vars
+            # _add_block_constraints: one literal per block. Its equalities are
+            # constraints on starts that exist already, and add no variable.
+            + len(_blocks_of(request.requirements))
             + 2 * len(request.previous_lessons)
         )
 
@@ -2450,6 +2518,13 @@ class SchedulerSolver:
         # because "four lessons do not fit on five days without consecutive
         # days" is a contradiction inside ONE row, fixed on that row.
         self._verify_subject_distribution(request)
+
+        # PARALLELLA BLOCK, for the same reason and in the same place: a block
+        # whose members differ, share a teacher or share pupils, or have no
+        # start in common, is a contradiction inside the block, and the model
+        # it would build is INFEASIBLE with nothing to say why. After the
+        # per-requirement checks, which name a member's own problem first.
+        self._validate_blocks(request)
 
         # THE BREAKS THAT ASK FOR A LESSON, before any of the counting below:
         # a demand no stretch can hold is a contradiction between two of the
@@ -2786,6 +2861,82 @@ class SchedulerSolver:
                     "windowEnd": rules.lunch_end_time[:5],
                     "day": day_of_week,
                 })
+
+    def _validate_blocks(self, request: OptimizeScheduleRequest) -> None:
+        """Refuse by name a block the model could only call INFEASIBLE.
+
+        Each check is a pair of members that cannot start together whatever
+        the rest of the week is, so each is decided here on constants, and the
+        refusal names the block and the two members — "Språkval åk 7: Tyska
+        för Ty7 and Franska för Fr7 share pupils" — where the model would have
+        proved the week impossible with an empty core.
+
+        THE SAME LESSONS (BLOCK_MEMBERS_DIFFER). The k-th lessons start
+        together, so they must be as long as each other and as many. The
+        gateway refuses a block like that when it is written (409) and when a
+        lock leaves members with different lessons to place
+        (BLOCK_PARTLY_LOCKED); this holds the engine to it whatever a caller
+        sends.
+
+        NO TEACHER IN TWO MEMBERS (BLOCK_MEMBERS_SHARE_TEACHER), lead or
+        co-teacher: one body, two rooms, the same minute.
+
+        NO PUPIL IN TWO MEMBERS (BLOCK_MEMBERS_SHARE_PUPILS): two members on
+        one group, or a pair the gateway's groupConflicts says share a pupil.
+        SvA beside class svenska is the case a school will meet first, and it
+        is refused until Ersättande grupper settles whether an SvA pupil leaves
+        class svenska; a block is not the place to decide that a pupil may be
+        in two rooms.
+
+        A START IN COMMON (BLOCK_NO_COMMON_START). Each member's starts are
+        its own domain — frames, rasts, margins, the week's step — and the
+        block's are their intersection, computed by the builder's own
+        _start_domains so the two cannot disagree. Members in different years
+        can have frames that never meet.
+        """
+        blocks = _blocks_of(request.requirements)
+        if not blocks:
+            return
+        conflicts = {frozenset(pair) for pair in request.group_conflicts}
+        step = _start_step(request, self._grid)
+        lattice = _start_lattice(step, self._grid.horizon)
+        for block_id, members in blocks.items():
+            leader = members[0]
+            for member in members[1:]:
+                if member.lesson_minutes() != leader.lesson_minutes():
+                    raise InvalidScheduleInputError.of("BLOCK_MEMBERS_DIFFER", {
+                        "block": str(block_id),
+                        "requirement": str(member.id),
+                        "other": str(leader.id),
+                    })
+            for index, first in enumerate(members):
+                for second in members[index + 1:]:
+                    if set(_teachers_of(first)) & set(_teachers_of(second)):
+                        raise InvalidScheduleInputError.of("BLOCK_MEMBERS_SHARE_TEACHER", {
+                            "block": str(block_id),
+                            "requirement": str(first.id),
+                            "other": str(second.id),
+                        })
+                    if (
+                        first.student_group_id == second.student_group_id
+                        or frozenset((first.student_group_id, second.student_group_id))
+                        in conflicts
+                    ):
+                        raise InvalidScheduleInputError.of("BLOCK_MEMBERS_SHARE_PUPILS", {
+                            "block": str(block_id),
+                            "requirement": str(first.id),
+                            "other": str(second.id),
+                        })
+            common = _common_domains([
+                self._start_domains(member, request.frame_times, request.rasts, lattice)
+                for member in members
+            ])
+            for duration in sorted(common, reverse=True):
+                if common[duration].is_empty():
+                    raise InvalidScheduleInputError.of("BLOCK_NO_COMMON_START", {
+                        "block": str(block_id),
+                        "minutes": duration * self._grid.slot_minutes,
+                    })
 
     def _verify_subject_distribution(self, request: OptimizeScheduleRequest) -> None:
         """Refuse a requirement whose lessons cannot be spread as its rule asks.
@@ -3796,6 +3947,52 @@ class SchedulerSolver:
             cp_model.Domain(0, self._grid.horizon),
         )
 
+    def _blocks_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
+        """Name the blocks of a proved INFEASIBLE week the core did not explain.
+
+        The week is solved once more without its blocks, the requirements
+        kept, on the satisfaction model and the probe's budget. A timetable
+        found then means removing the blocks is enough, so the blocks are
+        named, each as BLOCK_CANNOT_BE_PLACED, under a summary that says how it
+        was established. Not one probe per block: that tells which subset
+        would do, which the school learns faster by moving one entry and
+        generating again, and it would multiply the wait on a week that is
+        already refused.
+
+        None when the probe has no budget, the relaxed week refuses by name,
+        or it finds nothing inside the budget: the unexplained verdict stands
+        rather than an invented one.
+        """
+        budget = self._settings.solver_probe_seconds
+        blocks = _blocks_of(request.requirements)
+        if budget <= 0 or not blocks:
+            return None
+        try:
+            feas_model, _, _, _, _ = self._build_model(
+                _without_blocks(request), use_assumptions=False, include_objective=False,
+            )
+        except InvalidScheduleInputError:
+            return None
+        probe = cp_model.CpSolver()
+        probe.parameters.max_time_in_seconds = budget
+        started = time.perf_counter()
+        if probe.Solve(feas_model) not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return None
+        return ConflictAnalysis(
+            summary_code="BLOCK_PROBE_SUMMARY",
+            summary_params={"seconds": round(time.perf_counter() - started, 1)},
+            conflicts=[
+                ConflictDetail(
+                    category="TEACHING_BLOCK",
+                    code="BLOCK_CANNOT_BE_PLACED",
+                    params={"block": str(block_id)},
+                    requirement_ids=[member.id for member in members],
+                    resource_ids=[block_id],
+                )
+                for block_id, members in blocks.items()
+            ],
+        )
+
     def _probe_timeout(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
         """Name what does not fit, when nothing was proved.
 
@@ -3949,6 +4146,15 @@ class SchedulerSolver:
                     ],
                 }),
             ))
+        if _blocks_of(request.requirements):
+            # EVERY BLOCK AT ONCE, for the reason the distribution is one probe
+            # above: a timeout is a fact about the week, and a probe per block
+            # would split a short budget into slices too thin to find anything.
+            # The requirements stay, each with its own lessons; only the rule
+            # that their lessons start together goes. Next to the
+            # distribution because both are rules of the timplan page, about
+            # how a row's lessons may lie.
+            out.append(("PROBE_SOLVED_WITHOUT_BLOCKS", _without_blocks(request)))
         # THE TEACHERS' OWN TIME IS TWO PROBES AND NEVER ONE, for the reason the
         # lunch below is three: "with the teachers' working time switched off, a
         # timetable was found" is true and useless, because a school cannot
@@ -4105,6 +4311,8 @@ class SchedulerSolver:
             if requirement.max_lessons_per_day is not None
             or requirement.min_days_between is not None
         )
+        # Parallella block the model held together: two or more members each.
+        blocks = len(_blocks_of(request.requirements))
         # One sentence per thing worth trying at zero, in the order the
         # measurements rank them, and none at all for a week that carries
         # neither — the line already says what was in force, and advice about a
@@ -4129,7 +4337,7 @@ class SchedulerSolver:
             f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
             f"fixedLessons={len(request.fixed_lessons)}, "
             f"teacherLunches={teacher_lunches}, teacherRests={teacher_rests}, "
-            f"distributionRules={distribution_rules}, "
+            f"distributionRules={distribution_rules}, blocks={blocks}, "
             f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
             + " ".join(hints)
@@ -4147,140 +4355,32 @@ class SchedulerSolver:
     ) -> list[LessonDecision]:
         decisions: list[LessonDecision] = []
         horizon = self._grid.horizon
-
-        slots_per_day = self._grid.slots_per_day
         lattice = _start_lattice(step, horizon)
 
+        domains_of = {
+            requirement.id: self._start_domains(requirement, frames, rasts, lattice)
+            for requirement in requirements
+        }
+        # PARALLELLA BLOCK NARROW THE DOMAINS TOO, before any variable exists.
+        # The k-th lessons of a block's members start together, so a start one
+        # member may not take is a start none of them can: Ty7 and Fr7 inherit
+        # each other's frames, rasts and margins. Intersected here, the members
+        # get fewer free starts and the equalities posted under the block's
+        # literal (_add_block_constraints) have nothing left to prune. Every
+        # member has the same lengths (_validate_blocks), so the keys agree, and
+        # an empty intersection was refused there as BLOCK_NO_COMMON_START.
+        for members in _blocks_of(requirements).values():
+            shared = _common_domains([domains_of[member.id] for member in members])
+            for member in members:
+                domains_of[member.id] = shared
+
         for requirement in requirements:
-            # One interval per day, each ending in time for the lesson to finish
-            # before that day does. A single contiguous [0, horizon - duration]
-            # range would also admit starts near a day's end, which put a lesson
-            # across the 18:00 -> 08:00 boundary: reported as e.g. "Monday
-            # 17:30-18:30" (past the configured day end) while the model has
-            # actually reserved the teacher, group and room for Tuesday morning.
-            #
-            # RAMTIDER NARROW THIS DOMAIN RATHER THAN FORBIDDING INTERVALS IN
-            # IT. A frame is a positive window, so the hours it closes never
-            # become variables at all — which is the whole reason a frame is its
-            # own row and not the two UNAVAILABLE constraints around it. With no
-            # frames every day is (0, slots_per_day) and this is the expression
-            # it always was. _validate_request has already refused the case
-            # where the WINDOWS leave a requirement nowhere to go, so every
-            # interval below is non-empty as far as the windows go.
-            #
-            # AND THE MARGINS BELOW ARE IN A REFUSAL OF THEIR OWN, beside that
-            # one: a lesson that fits its stage's window exactly, whose margin
-            # then does not, used to empty this domain and reach the caller as
-            # CP-SAT's own "var has no domain" — a 500 where a named 4xx belongs.
-            # The corridor can only do it where a frame reaches the day's end,
-            # which is older than the pupils' buffer; a lead can do it wherever a
-            # window is exactly as wide as the lesson and opens on the day's
-            # first slot. MARGIN_NO_WINDOW_FOR_REQUIREMENT names the margin
-            # rather than blaming the frame for minutes it does offer, and is
-            # deliberately not folded into FRAME_NO_WINDOW_FOR_REQUIREMENT, whose
-            # sentence would then be untrue about the frame. Its arithmetic is
-            # the arithmetic below, and the two must stay the same one: a check
-            # that rounded differently would either refuse a week this builds
-            # perfectly well or let the 500 back through.
             span = span_of(requirement)
-            windows = day_windows(frames, span, self._grid)
             changeover = changeover_slots(frames, span, self._grid)
-            # The pupils' own margin, rounded UP for the reason a corridor is:
-            # it is a floor on time the class is unavailable, so a value that
-            # misses the grid takes the next whole slot rather than lose the
-            # remainder. Seven minutes on a five-minute grid is two slots.
             lead = -(-requirement.minutes_before // self._grid.slot_minutes)
             trail = -(-requirement.minutes_after // self._grid.slot_minutes)
-            # THE DAY'S EDGE IS CLIPPED IN THE DOMAIN, not with a constraint.
-            #
-            # A padded interval runs `changeover` slots past the lesson, and the
-            # horizon addresses day d as [d*spd, (d+1)*spd) — so an unclipped
-            # last lesson would pad into tomorrow morning's slots and collide
-            # with a lesson that is not on the same day at all.
-            #
-            # BOTH EDGES NOW, because the pupils' interval reaches backwards as
-            # well: it starts `lead` slots before the lesson, and a first lesson
-            # left unclipped would have its changing room in YESTERDAY's last
-            # slots — the same collision in the other direction, and an interval
-            # with a start below the horizon's floor on day 0 besides.
-            #
-            # Two other fixes were considered and both are worse. A guard band
-            # in TimeGrid (a `day_stride` wider than `slots_per_day`) re-encodes
-            # every absolute slot for every school, so the next regeneration
-            # moves lessons across the whole estate — and two places decode with
-            # `// slots_per_day` that a rename would miss silently. An
-            # AddMinEquality against the day's end costs an IntVar and a
-            # constraint per lesson. Clipping the bounds costs nothing.
-            #
-            # THE FRAME BOUNDS THE TEACHING, THE DAY'S EDGE BOUNDS THE BODIES,
-            # which is why the two compose as a min and a max rather than by
-            # subtraction. A frame says which hours a stage may be TAUGHT in: a
-            # lesson may end exactly at its close and still let the corridor and
-            # the shower run past it, exactly as the corridor has always been
-            # allowed to. What may not happen is either margin crossing into a
-            # neighbouring day, and that is the day's own edge talking. So the
-            # close is clipped with the whole trailing margin and the open is
-            # raised only where the lead would otherwise reach below the day.
-            #
-            # The price is that the last lesson of a day may not END later than
-            # the day's close minus those margins, which binds only for a school
-            # teaching to 18:00 with no ramtid. Wherever a frame closes earlier,
-            # `close_slot - duration` is the tighter bound and nothing is lost.
-            #
-            # ONE DOMAIN PER LENGTH. A requirement of 1 × 80 + 1 × 40 has two
-            # kinds of lesson, and the last start of a day is the close minus
-            # the lesson, so the 40 may start forty minutes later than the 80.
-            # Built once per distinct length, longest first; a uniform
-            # requirement builds the one domain it always built. Every check
-            # _validate_request makes reads the longest, and a window, a margin
-            # or a rast that holds the longest holds every shorter lesson too,
-            # so no domain built here is empty where the longest's is not.
-            domains: dict[int, cp_model.Domain] = {}
+            domains = domains_of[requirement.id]
             lengths = [self._grid.minutes_to_slots(m) for m in requirement.lesson_minutes()]
-            for duration in sorted(set(lengths), reverse=True):
-                day_ranges: list[list[int]] = []
-                for day, (open_slot, close_slot) in sorted(windows.items()):
-                    first = max(open_slot, lead)
-                    last = min(close_slot, slots_per_day - changeover - trail) - duration
-                    # A day too narrow for this lesson drops out here rather than
-                    # reaching Domain.FromIntervals as a reversed pair. That happens
-                    # to be safe today — FromIntervals discards such a pair silently
-                    # — but it is undocumented behaviour to hang a whole feature's
-                    # correctness on, and "silently discards" is one release away
-                    # from "raises".
-                    if last < first:
-                        continue
-                    day_ranges.append(
-                        [day * slots_per_day + first, day * slots_per_day + last],
-                    )
-                start_domain = cp_model.Domain.FromIntervals(day_ranges)
-
-                # RASTER CUT HOLES IN THE SAME DOMAIN, for the reason the paragraph
-                # above gives for frames: the minutes a stage is free never become
-                # variable values at all. No new variables, no new constraints, and
-                # a strictly smaller search space than the same model without them.
-                # _validate_request has already refused the case where the holes
-                # leave a requirement nowhere to go on any day, so what remains here
-                # is never empty.
-                #
-                # LESSONS ONLY. The lunch interval is deliberately NOT narrowed the
-                # same way, and the reason is in the Swedish word: a lunchrast IS a
-                # rast. A school that writes "lunchrast 11:30-12:30" and lets the
-                # engine seat its classes inside it is describing the ordinary case,
-                # and subtracting the rast from the meal's domain would push the
-                # meal out of exactly the window the school reserved for it — then
-                # refuse the run when nowhere else is left. A rast keeps TEACHING
-                # out; it has nothing to say about a break.
-                if rasts:
-                    start_domain = start_domain.intersection_with(
-                        self._rast_free_starts(rasts, span, duration),
-                    )
-                # ON THE WEEK'S STEP, last. Every bound and hole above is cut on the
-                # grid the school wrote it on, and only the starts between the
-                # step's multiples go — none of which a timetable needs, and every
-                # bound above is itself a multiple. _start_step says why.
-                start_domain = _on_lattice(start_domain, lattice)
-                domains[duration] = start_domain
             for lesson_index, duration in enumerate(lengths):
                 lesson = LessonInstance(requirement=requirement, lesson_index=lesson_index)
                 start = model.NewIntVarFromDomain(domains[duration], f"start_{lesson.key()}")
@@ -4303,6 +4403,208 @@ class SchedulerSolver:
                 )
 
         return decisions
+
+    def _start_domains(
+        self,
+        requirement: AnonymousRequirement,
+        frames: list[FrameTime],
+        rasts: list[Rast],
+        lattice: cp_model.Domain | None,
+    ) -> dict[int, cp_model.Domain]:
+        """The starts each length of a requirement may take, one domain per length.
+
+        Read by _create_lesson_decisions, which builds the variables on them,
+        and by _validate_blocks, which refuses a block whose members share none.
+        One computation for both, for the reason the margins' refusal gives for
+        sharing its arithmetic with the builder: two would disagree.
+        """
+        slots_per_day = self._grid.slots_per_day
+        # One interval per day, each ending in time for the lesson to finish
+        # before that day does. A single contiguous [0, horizon - duration]
+        # range would also admit starts near a day's end, which put a lesson
+        # across the 18:00 -> 08:00 boundary: reported as e.g. "Monday
+        # 17:30-18:30" (past the configured day end) while the model has
+        # actually reserved the teacher, group and room for Tuesday morning.
+        #
+        # RAMTIDER NARROW THIS DOMAIN RATHER THAN FORBIDDING INTERVALS IN
+        # IT. A frame is a positive window, so the hours it closes never
+        # become variables at all — which is the whole reason a frame is its
+        # own row and not the two UNAVAILABLE constraints around it. With no
+        # frames every day is (0, slots_per_day) and this is the expression
+        # it always was. _validate_request has already refused the case
+        # where the WINDOWS leave a requirement nowhere to go, so every
+        # interval below is non-empty as far as the windows go.
+        #
+        # AND THE MARGINS BELOW ARE IN A REFUSAL OF THEIR OWN, beside that
+        # one: a lesson that fits its stage's window exactly, whose margin
+        # then does not, used to empty this domain and reach the caller as
+        # CP-SAT's own "var has no domain" — a 500 where a named 4xx belongs.
+        # The corridor can only do it where a frame reaches the day's end,
+        # which is older than the pupils' buffer; a lead can do it wherever a
+        # window is exactly as wide as the lesson and opens on the day's
+        # first slot. MARGIN_NO_WINDOW_FOR_REQUIREMENT names the margin
+        # rather than blaming the frame for minutes it does offer, and is
+        # deliberately not folded into FRAME_NO_WINDOW_FOR_REQUIREMENT, whose
+        # sentence would then be untrue about the frame. Its arithmetic is
+        # the arithmetic below, and the two must stay the same one: a check
+        # that rounded differently would either refuse a week this builds
+        # perfectly well or let the 500 back through.
+        span = span_of(requirement)
+        windows = day_windows(frames, span, self._grid)
+        changeover = changeover_slots(frames, span, self._grid)
+        # The pupils' own margin, rounded UP for the reason a corridor is:
+        # it is a floor on time the class is unavailable, so a value that
+        # misses the grid takes the next whole slot rather than lose the
+        # remainder. Seven minutes on a five-minute grid is two slots.
+        lead = -(-requirement.minutes_before // self._grid.slot_minutes)
+        trail = -(-requirement.minutes_after // self._grid.slot_minutes)
+        # THE DAY'S EDGE IS CLIPPED IN THE DOMAIN, not with a constraint.
+        #
+        # A padded interval runs `changeover` slots past the lesson, and the
+        # horizon addresses day d as [d*spd, (d+1)*spd) — so an unclipped
+        # last lesson would pad into tomorrow morning's slots and collide
+        # with a lesson that is not on the same day at all.
+        #
+        # BOTH EDGES NOW, because the pupils' interval reaches backwards as
+        # well: it starts `lead` slots before the lesson, and a first lesson
+        # left unclipped would have its changing room in YESTERDAY's last
+        # slots — the same collision in the other direction, and an interval
+        # with a start below the horizon's floor on day 0 besides.
+        #
+        # Two other fixes were considered and both are worse. A guard band
+        # in TimeGrid (a `day_stride` wider than `slots_per_day`) re-encodes
+        # every absolute slot for every school, so the next regeneration
+        # moves lessons across the whole estate — and two places decode with
+        # `// slots_per_day` that a rename would miss silently. An
+        # AddMinEquality against the day's end costs an IntVar and a
+        # constraint per lesson. Clipping the bounds costs nothing.
+        #
+        # THE FRAME BOUNDS THE TEACHING, THE DAY'S EDGE BOUNDS THE BODIES,
+        # which is why the two compose as a min and a max rather than by
+        # subtraction. A frame says which hours a stage may be TAUGHT in: a
+        # lesson may end exactly at its close and still let the corridor and
+        # the shower run past it, exactly as the corridor has always been
+        # allowed to. What may not happen is either margin crossing into a
+        # neighbouring day, and that is the day's own edge talking. So the
+        # close is clipped with the whole trailing margin and the open is
+        # raised only where the lead would otherwise reach below the day.
+        #
+        # The price is that the last lesson of a day may not END later than
+        # the day's close minus those margins, which binds only for a school
+        # teaching to 18:00 with no ramtid. Wherever a frame closes earlier,
+        # `close_slot - duration` is the tighter bound and nothing is lost.
+        #
+        # ONE DOMAIN PER LENGTH. A requirement of 1 × 80 + 1 × 40 has two
+        # kinds of lesson, and the last start of a day is the close minus
+        # the lesson, so the 40 may start forty minutes later than the 80.
+        # Built once per distinct length, longest first; a uniform
+        # requirement builds the one domain it always built. Every check
+        # _validate_request makes reads the longest, and a window, a margin
+        # or a rast that holds the longest holds every shorter lesson too,
+        # so no domain built here is empty where the longest's is not.
+        domains: dict[int, cp_model.Domain] = {}
+        lengths = [self._grid.minutes_to_slots(m) for m in requirement.lesson_minutes()]
+        for duration in sorted(set(lengths), reverse=True):
+            day_ranges: list[list[int]] = []
+            for day, (open_slot, close_slot) in sorted(windows.items()):
+                first = max(open_slot, lead)
+                last = min(close_slot, slots_per_day - changeover - trail) - duration
+                # A day too narrow for this lesson drops out here rather than
+                # reaching Domain.FromIntervals as a reversed pair. That happens
+                # to be safe today — FromIntervals discards such a pair silently
+                # — but it is undocumented behaviour to hang a whole feature's
+                # correctness on, and "silently discards" is one release away
+                # from "raises".
+                if last < first:
+                    continue
+                day_ranges.append(
+                    [day * slots_per_day + first, day * slots_per_day + last],
+                )
+            start_domain = cp_model.Domain.FromIntervals(day_ranges)
+
+            # RASTER CUT HOLES IN THE SAME DOMAIN, for the reason the paragraph
+            # above gives for frames: the minutes a stage is free never become
+            # variable values at all. No new variables, no new constraints, and
+            # a strictly smaller search space than the same model without them.
+            # _validate_request has already refused the case where the holes
+            # leave a requirement nowhere to go on any day, so what remains here
+            # is never empty.
+            #
+            # LESSONS ONLY. The lunch interval is deliberately NOT narrowed the
+            # same way, and the reason is in the Swedish word: a lunchrast IS a
+            # rast. A school that writes "lunchrast 11:30-12:30" and lets the
+            # engine seat its classes inside it is describing the ordinary case,
+            # and subtracting the rast from the meal's domain would push the
+            # meal out of exactly the window the school reserved for it — then
+            # refuse the run when nowhere else is left. A rast keeps TEACHING
+            # out; it has nothing to say about a break.
+            if rasts:
+                start_domain = start_domain.intersection_with(
+                    self._rast_free_starts(rasts, span, duration),
+                )
+            # ON THE WEEK'S STEP, last. Every bound and hole above is cut on the
+            # grid the school wrote it on, and only the starts between the
+            # step's multiples go — none of which a timetable needs, and every
+            # bound above is itself a multiple. _start_step says why.
+            start_domain = _on_lattice(start_domain, lattice)
+            domains[duration] = start_domain
+        return domains
+
+    def _add_block_constraints(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        decisions: list[LessonDecision],
+        requirements: list[AnonymousRequirement],
+    ) -> None:
+        """Parallella block: the k-th lesson of every member starts with the k-th of the first.
+
+        Språkval åk 7 is Tyska for Ty7, Franska for Fr7 and Spanska for Sp7. 7A
+        shares pupils with all three, so without the block each language took
+        a slot of 7A's week of its own wherever the search happened to put it;
+        with it, the three are one slot of 7A's week per lesson.
+
+        FEWER FREE STARTS, NOT MORE VARIABLES. One equality per member and
+        lesson, on the start variables that already exist, and the members'
+        domains were already intersected (_create_lesson_decisions). With the
+        literal pinned true, as every build but the explaining one pins it,
+        presolve merges the equal starts into one variable per block lesson.
+        The end follows, since the k-th lessons have the same length: the
+        members have the same lesson lengths, longest first, or
+        _validate_blocks refused them.
+
+        ONE ASSUMPTION LITERAL PER BLOCK, carrying BLOCK_CANNOT_BE_PLACED and
+        the block's id, which the gateway turns back into the block's name.
+        Per block and not per lesson or member, because the school's fix is
+        the block: its times, its groups, or taking an entry out of it. Every
+        equality hangs on it, so a core can only blame the block by naming the
+        literal, and lifting the literal lifts the whole block.
+
+        The order of the lessons inside a member is the builder's, by length
+        and then by index, and nothing else reads it: the lessons of one
+        requirement are interchangeable, so holding the k-th to the k-th loses
+        no timetable that holding the sets equal would keep.
+        """
+        blocks = _blocks_of(requirements)
+        if not blocks:
+            return
+        by_requirement: dict[UUID, list[LessonDecision]] = {}
+        for decision in decisions:
+            by_requirement.setdefault(decision.lesson.requirement.id, []).append(decision)
+        for block_id, members in blocks.items():
+            literal = registry.register(
+                model,
+                name=f"block_{block_id}",
+                category="TEACHING_BLOCK",
+                code="BLOCK_CANNOT_BE_PLACED",
+                params={"block": str(block_id)},
+                requirement_ids=[member.id for member in members],
+                resource_ids=[block_id],
+            )
+            leader = by_requirement.get(members[0].id, [])
+            for member in members[1:]:
+                for first, other in zip(leader, by_requirement.get(member.id, [])):
+                    model.Add(other.start == first.start).OnlyEnforceIf(literal)
 
     def _add_capacity_constraints(
         self,
@@ -5029,7 +5331,6 @@ class SchedulerSolver:
         for decision in decisions:
             by_requirement.setdefault(decision.lesson.requirement.id, []).append(decision)
 
-        hinted: set[str] = set()
         penalties: list[cp_model.LinearExpr] = []
 
         for index, previous in enumerate(previous_lessons):
@@ -5054,12 +5355,11 @@ class SchedulerSolver:
             model.AddBoolAnd([m.Not() for m in matches]).OnlyEnforceIf(kept.Not())
             penalties.append((1 - kept) * weights.disruption)
 
-            # Warm-start hint: point one not-yet-hinted instance at the slot.
-            for decision in candidates:
-                if decision.lesson.key() not in hinted:
-                    model.AddHint(decision.start, abs_slot)
-                    hinted.add(decision.lesson.key())
-                    break
+        # Warm-start hints: one not-yet-hinted instance per previous slot, a
+        # block's members from one list. The pairing is _hint_previous_lessons'
+        # own; see _previous_hints.
+        for decision, slot in self._previous_hints(decisions, previous_lessons):
+            model.AddHint(decision.start, slot)
 
         return penalties
 
@@ -7434,6 +7734,51 @@ def _teachers_of(requirement: AnonymousRequirement) -> tuple[UUID, ...]:
         for teacher_id in (requirement.teacher_id, requirement.co_teacher_id)
         if teacher_id is not None
     )
+
+
+def _blocks_of(
+    requirements: Iterable[AnonymousRequirement],
+) -> dict[UUID, list[AnonymousRequirement]]:
+    """Every parallel block the payload names, its members in payload order.
+
+    TWO OR MORE MEMBERS, or it is no block at all: one requirement starting
+    when itself starts constrains nothing, so a block whose other members are
+    all locked or not yet written builds nothing and is refused for nothing.
+    The gateway sends no blockId on such a member; this holds the engine to the
+    same reading whatever a caller sends.
+
+    The first member leads: its k-th lesson is the one every other member's
+    k-th is held equal to, and its order is the payload's, so a refusal names
+    the same two members on every run.
+    """
+    members: dict[UUID, list[AnonymousRequirement]] = {}
+    for requirement in requirements:
+        if requirement.block_id is not None:
+            members.setdefault(requirement.block_id, []).append(requirement)
+    return {block_id: rows for block_id, rows in members.items() if len(rows) >= 2}
+
+
+def _common_domains(domains: list[dict[int, cp_model.Domain]]) -> dict[int, cp_model.Domain]:
+    """The starts every member of a block may take, per lesson length.
+
+    The members have the same lengths (_validate_blocks refuses any that do
+    not), so the first member's keys are every member's.
+    """
+    common = dict(domains[0])
+    for other in domains[1:]:
+        for duration, domain in common.items():
+            common[duration] = domain.intersection_with(other[duration])
+    return common
+
+
+def _without_blocks(request: OptimizeScheduleRequest) -> OptimizeScheduleRequest:
+    """The same week with every block dropped and every requirement kept."""
+    return request.model_copy(update={
+        "requirements": [
+            requirement.model_copy(update={"block_id": None})
+            for requirement in request.requirements
+        ],
+    })
 
 
 def _group_ids_with_lessons(
