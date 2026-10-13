@@ -42,6 +42,7 @@ import { formatTime } from "@/lib/utils";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { solverRunVariant } from "@/lib/status-variants";
 import { useStaffingPolicy, useTeacherDuties } from "@/lib/staffing-queries";
+import { dutyPeriodLine, keepsTimesAllYear } from "@/lib/duty-lines";
 import { usePlanningYear } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
 import {
@@ -68,6 +69,7 @@ export default function GeneratePage() {
   const tLunch = useTranslations("lunch");
   const tConflicts = useTranslations("conflictCategories");
   const tEngine = useTranslations("engineMessages");
+  const tStaffing = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const locale = useLocale();
   /*
@@ -128,16 +130,20 @@ export default function GeneratePage() {
    * vikarietavla and the load count only the uppdrag's dates, the weekly
    * timetable cannot. Said here, before the run, because a teacher missing
    * from Tuesday 15:00 in September for an APT that starts in January is
-   * otherwise a mystery in the grid.
+   * otherwise a mystery in the grid. keepsTimesAllYear is the rule, the one
+   * the duties card says the same sentence by: dates on the läsår's own
+   * bounds shorten nothing. Each is named — teacher, uppdrag and dates — so
+   * the school can find the row the sentence is about.
    */
   const { data: yearDuties } = useTeacherDuties(year?.id ?? null);
   const datedTimes = useMemo(
-    () =>
-      (yearDuties ?? []).filter(
-        (duty) => (duty.validFrom || duty.validTo) && (duty.slots?.length ?? 0) > 0,
-      ).length,
-    [yearDuties],
+    () => (yearDuties ?? []).filter((duty) => keepsTimesAllYear(duty, year)),
+    [yearDuties, year],
   );
+  const personName = (userId: string) => {
+    const person = (storedPeople ?? []).find((candidate) => candidate.id === userId);
+    return person ? `${person.firstName} ${person.lastName}` : null;
+  };
   const blockedByStaffing = refusesUnstaffed && unstaffedCount > 0;
 
   /**
@@ -436,9 +442,20 @@ export default function GeneratePage() {
         <LoadError variant="inline" title={t("groupsLoadFailed")} hint={t("groupsLoadFailedHint")} />
       ) : null}
 
-      {datedTimes > 0 ? (
-        <Notice title={t("datedDutyTimesTitle", { count: datedTimes })}>
-          {t("datedDutyTimesBody")}
+      {datedTimes.length > 0 ? (
+        <Notice title={t("datedDutyTimesTitle", { count: datedTimes.length })}>
+          <div className="space-y-1">
+            <p>{t("datedDutyTimesBody")}</p>
+            <ul className="list-disc space-y-0.5 pl-5">
+              {datedTimes.map((duty) => (
+                <li key={duty.id}>
+                  {[personName(duty.userId), duty.label, dutyPeriodLine(tStaffing, duty)]
+                    .filter((part): part is string => Boolean(part))
+                    .join(" · ")}
+                </li>
+              ))}
+            </ul>
+          </div>
         </Notice>
       ) : null}
 

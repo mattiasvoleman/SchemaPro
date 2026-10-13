@@ -183,18 +183,23 @@ describe("uppdrag with dates and fixed times (20261017090000)", () => {
     slots: [{ dayOfWeek: 1, startTime: "10:00", endTime: "10:20" }], note: null, ...overrides,
   });
 
-  it("says before the run that a dated uppdrag's times are held every week of the master", () => {
+  it("says before the run that a dated uppdrag's times are held every week of the master, naming each", () => {
+    state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null, firstName: "Anna", lastName: "Ek" });
     state.duties = [
-      duty({ validFrom: "2027-01-07" }),
+      duty({ validFrom: "2027-01-07", label: "APT" }),
       duty({ id: "d-2", validTo: "2026-12-18" }),
       // Undated, or dated without a time: the master holds nothing it would not anyway.
       duty({ id: "d-3" }),
       duty({ id: "d-4", validTo: "2026-12-18", slots: [] }),
+      // Dated on the läsår's own bounds: it runs the whole year.
+      duty({ id: "d-5", validFrom: "2026-08-17", validTo: "2027-06-11" }),
     ];
     render(<GeneratePage />);
     expect(state.dutiesFor).toContain("y-1");
     expect(screen.getByText("generate.datedDutyTimesTitle(2)")).toBeInTheDocument();
     expect(screen.getByText("generate.datedDutyTimesBody")).toBeInTheDocument();
+    expect(screen.getByText("Anna Ek · APT · staffing.dutyRunsFrom(2027-01-07)")).toBeInTheDocument();
+    expect(screen.getByText("Anna Ek · Rastvakt · staffing.dutyRunsTo(2026-12-18)")).toBeInTheDocument();
   });
 
   it("says nothing when no uppdrag is both dated and timed", () => {

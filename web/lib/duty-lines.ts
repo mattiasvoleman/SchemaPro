@@ -38,3 +38,27 @@ export function dutySlotsLine(
     .join(", ");
   return t("dutyBlocksList", { times });
 }
+
+/**
+ * Whether the generator keeps an uppdrag's fixed times free in weeks the
+ * uppdrag does not run: it has times, and its Från or Till shortens it inside
+ * the läsår. The weekly master is one week and the engine has no dated weeks
+ * (src/staffing/duty-slot-year.ts), so such a time is held free all läsår,
+ * while the load and the vikarietavla count only the uppdrag's dates. Dates
+ * on the läsår's own bounds shorten nothing. Without the year's bounds, any
+ * date counts: the sentence is then said once too often, never once too few.
+ *
+ * One rule for the two places a school meets the limit: the generate page,
+ * before a run, and the duties card, beside the uppdrag.
+ */
+export function keepsTimesAllYear(
+  duty: Pick<TeacherDuty, "validFrom" | "validTo"> & { slots?: readonly unknown[] },
+  year: { startDate: string; endDate: string } | null | undefined,
+): boolean {
+  if (!duty.slots || duty.slots.length === 0) return false;
+  if (!year) return Boolean(duty.validFrom || duty.validTo);
+  // The day alone, whether the year came as a date or as a timestamp.
+  const start = year.startDate.slice(0, 10);
+  const end = year.endDate.slice(0, 10);
+  return Boolean((duty.validFrom && duty.validFrom > start) || (duty.validTo && duty.validTo < end));
+}
