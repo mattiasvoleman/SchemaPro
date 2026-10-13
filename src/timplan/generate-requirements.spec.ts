@@ -182,6 +182,113 @@ describe('proposeRequirements', () => {
       ]);
     });
 
+    describe('M2 on the språkval groups, as a block (Parallella block)', () => {
+      const TY7 = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+      const SP7 = 'e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2';
+      const named = (over: Partial<GenerateInput> = {}) =>
+        alternatives({
+          languageGroups: [
+            { gradeLevel: 7, subjectId: DE, studentGroupId: TY7, groupName: 'Ty7' },
+            { gradeLevel: 7, subjectId: ES, studentGroupId: SP7, groupName: 'Sp7' },
+          ],
+          ...over,
+        });
+
+      it('posts each language on its group, all of an årskurs in one block, and still none on the class', () => {
+        const { rows, skipped, blocks } = proposeRequirements(named());
+        expect(rows.map((row) => [row.groupName, row.subjectName, row.lessonsPerWeek, row.minutesPerLesson, row.blockName ?? null])).toEqual([
+          ['7A', 'Matematik', 3, 60, null],
+          ['7A', 'Svenska', 3, 60, null],
+          ['Sp7', 'Spanska', 2, 60, 'Språkval åk 7'],
+          ['Ty7', 'Tyska', 2, 60, 'Språkval åk 7'],
+        ]);
+        expect(blocks).toEqual([{ name: 'Språkval åk 7', gradeLevel: 7 }]);
+        // The class still reads no språkval of its own.
+        expect(skipped.filter((row) => row.alternativeCode === 'M2').map((row) => [row.groupName, row.reason])).toEqual([
+          ['7A', 'ALTERNATIVE'],
+          ['7A', 'ALTERNATIVE'],
+        ]);
+      });
+
+      it('gives every row of the block the line’s highest target, laid out once', () => {
+        const { rows } = proposeRequirements(
+          named({
+            remainder: 'SPLIT',
+            entries: [
+              { subjectId: ES, gradeLevel: 7, minutesPerWeek: 110 },
+              { subjectId: DE, gradeLevel: 7, minutesPerWeek: 100 },
+            ],
+          }),
+        );
+        expect(rows.map((row) => [row.subjectName, row.targetMinutesPerWeek, row.lessonsPerWeek, row.minutesPerLesson, row.lessonLengths])).toEqual([
+          ['Spanska', 110, 2, 60, [60, 50]],
+          ['Tyska', 110, 2, 60, [60, 50]],
+        ]);
+      });
+
+      it('skips a group that already reads its language, and makes no block for an årskurs it leaves empty', () => {
+        const { rows, skipped, blocks } = proposeRequirements(
+          named({
+            languageGroups: [{ gradeLevel: 7, subjectId: DE, studentGroupId: TY7, groupName: 'Ty7' }],
+            existing: [{ studentGroupId: TY7, subjectId: DE }],
+          }),
+        );
+        expect(rows.some((row) => row.blockName)).toBe(false);
+        expect(blocks).toEqual([]);
+        expect(skipped).toContainEqual(
+          expect.objectContaining({ groupName: 'Ty7', subjectName: 'Tyska', reason: 'EXISTS', alternativeCode: 'M2' }),
+        );
+      });
+
+      it('answers without blocks, as it always did, when no group is named', () => {
+        expect(proposeRequirements(alternatives())).not.toHaveProperty('blocks');
+        expect(proposeRequirements(alternatives({ languageGroups: [] }))).not.toHaveProperty('blocks');
+      });
+
+      it.each([
+        [{ gradeLevel: 7, subjectId: MA, studentGroupId: TY7, groupName: 'Ty7' }, /rad 1: Matematik är inget språkval/],
+        [{ gradeLevel: 8, subjectId: DE, studentGroupId: TY7, groupName: 'Ty7' }, /rad 1: läsåret följer inte den här timplanen i åk 8/],
+      ])('refuses a group named for what is no språkval of the year', (choice, message) => {
+        expect(() => proposeRequirements(alternatives({ languageGroups: [choice] }))).toThrow(message);
+      });
+
+      it('refuses a language without minutes, a language named twice and a group named twice', () => {
+        expect(() =>
+          proposeRequirements(
+            named({ entries: [{ subjectId: ES, gradeLevel: 7, minutesPerWeek: 120 }, { subjectId: DE, gradeLevel: 7, minutesPerWeek: 0 }] }),
+          ),
+        ).toThrow(/rad 1: timplanen ger Tyska ingen tid i åk 7/);
+        expect(() =>
+          proposeRequirements(
+            named({
+              languageGroups: [
+                { gradeLevel: 7, subjectId: DE, studentGroupId: TY7, groupName: 'Ty7' },
+                { gradeLevel: 7, subjectId: DE, studentGroupId: SP7, groupName: 'Sp7' },
+              ],
+            }),
+          ),
+        ).toThrow(/rad 2: Tyska i åk 7 har redan en grupp/);
+        expect(() =>
+          proposeRequirements(
+            named({
+              languageGroups: [
+                { gradeLevel: 7, subjectId: DE, studentGroupId: TY7, groupName: 'Ty7' },
+                { gradeLevel: 7, subjectId: ES, studentGroupId: TY7, groupName: 'Ty7' },
+              ],
+            }),
+          ),
+        ).toThrow(/rad 2: Ty7 läser redan ett annat språk/);
+      });
+
+      it('takes no override on a row of the block', () => {
+        expect(() =>
+          proposeRequirements(
+            named({ overrides: [{ studentGroupId: TY7, subjectId: DE, lessonsPerWeek: 3, minutesPerLesson: 60 }] }),
+          ),
+        ).toThrow(/overrides: språkvalets rader läggs i ett block/);
+      });
+    });
+
     it('proposes nothing in SV_SVA when the class already has either subject', () => {
       const { rows, skipped } = proposeRequirements(
         alternatives({ existing: [{ studentGroupId: A7, subjectId: SVA }] }),

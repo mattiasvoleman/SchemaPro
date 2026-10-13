@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { LocalTimplanStatus } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -8,6 +8,7 @@ import type { GenerateRequirementsDto } from './dto/generate-requirements.dto';
 import {
   alternativeLineOf,
   proposeRequirements,
+  type ProposedBlock,
   type ProposedRow,
   type SkippedRow,
 } from './generate-requirements';
@@ -32,6 +33,8 @@ export interface GenerateRequirementsResponse {
   created: number;
   rows: GeneratedRow[];
   skipped: SkippedRow[];
+  /** Only when språkval groups were named: the blocks the rows are posted in. */
+  blocks?: ProposedBlock[];
 }
 
 /**
@@ -49,6 +52,14 @@ export interface GenerateRequirementsResponse {
  * and its insert is not overwritten and not a 409: the insert passes it by,
  * and the answer moves that row from "created" to "skipped". Nothing existing
  * is ever updated or deleted.
+ *
+ * SPRÅKVAL AS A BLOCK. Teaching groups named in `languageGroups` get their
+ * language's row, and each årskurs' rows go into the block "Språkval åk g" —
+ * the year's block of that name, or a new one. The block is written before
+ * the rows, which name it in the same INSERT, so the block trigger judges the
+ * block as it stands with all of them in it: a block the school already filled
+ * with rows of other lessons refuses the apply as a whole (409
+ * BLOCK_MEMBERS_DIFFER), and nothing is written.
  *
  * No teacher is set, so the staffing policy's checks have nothing to judge;
  * no period is set, so the year's bounds need no FOR SHARE read. A draft plan
@@ -96,11 +107,29 @@ export class TimplanRequirementsService {
                 where: { academicYearId: dto.academicYearId, kind: 'CLASS', gradeLevel: { in: gradeLevels } },
                 select: { id: true, name: true, gradeLevel: true },
               });
+        // The språkval groups, read only when named: teaching groups of this year.
+        const languageIds = [...new Set((dto.languageGroups ?? []).map((choice) => choice.studentGroupId))];
+        const languageGroups =
+          languageIds.length === 0
+            ? []
+            : await tx.studentGroup.findMany({
+                where: { id: { in: languageIds }, academicYearId: dto.academicYearId, kind: 'TEACHING_GROUP' },
+                select: { id: true, name: true },
+              });
+        const languageName = new Map(languageGroups.map((group) => [group.id, group.name]));
+        for (const [index, choice] of (dto.languageGroups ?? []).entries()) {
+          if (!languageName.has(choice.studentGroupId)) {
+            throw new BadRequestException(
+              `languageGroups: rad ${index + 1}: gruppen är ingen undervisningsgrupp i läsåret.`,
+            );
+          }
+        }
+        const groupIds = [...classes.map((g) => g.id), ...languageIds];
         const existing =
-          classes.length === 0
+          groupIds.length === 0
             ? []
             : await tx.teachingRequirement.findMany({
-                where: { academicYearId: dto.academicYearId, studentGroupId: { in: classes.map((g) => g.id) } },
+                where: { academicYearId: dto.academicYearId, studentGroupId: { in: groupIds } },
                 select: { studentGroupId: true, subjectId: true },
               });
         const subjectIds = [...new Set(plan.entries.map((entry) => entry.subjectId))];
@@ -122,6 +151,14 @@ export class TimplanRequirementsService {
           minutesPerLesson: dto.minutesPerLesson,
           remainder: dto.remainder ?? 'ROUND_UP',
           overrides: dto.overrides ?? [],
+          ...(dto.languageGroups && dto.languageGroups.length > 0
+            ? {
+                languageGroups: dto.languageGroups.map((choice) => ({
+                  ...choice,
+                  groupName: languageName.get(choice.studentGroupId) ?? '',
+                })),
+              }
+            : {}),
         });
 
         const answer = {
@@ -133,9 +170,24 @@ export class TimplanRequirementsService {
           minutesPerLesson: dto.minutesPerLesson,
           ...(dto.remainder !== undefined ? { remainder: dto.remainder } : {}),
           dryRun: dto.dryRun,
+          ...(proposal.blocks ? { blocks: proposal.blocks } : {}),
         };
         if (dto.dryRun || proposal.rows.length === 0) {
           return { ...answer, created: 0, rows: proposal.rows, skipped: proposal.skipped };
+        }
+
+        // The blocks first: the year's own of that name, or a new one.
+        const blockIdByName = new Map<string, string>();
+        for (const block of proposal.blocks ?? []) {
+          const { id } = await tx.teachingBlock.upsert({
+            where: {
+              schoolId_academicYearId_name: { schoolId, academicYearId: dto.academicYearId, name: block.name },
+            },
+            create: { schoolId, academicYearId: dto.academicYearId, name: block.name },
+            update: {},
+            select: { id: true },
+          });
+          blockIdByName.set(block.name, id);
         }
 
         const written = await tx.teachingRequirement.createManyAndReturn({
@@ -160,6 +212,7 @@ export class TimplanRequirementsService {
             recurrence: 'ALL_WEEKS',
             startDate: null,
             endDate: null,
+            ...(row.blockName ? { blockId: blockIdByName.get(row.blockName) } : {}),
           })),
           skipDuplicates: true,
           select: { id: true, studentGroupId: true, subjectId: true },

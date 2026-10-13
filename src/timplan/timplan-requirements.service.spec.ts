@@ -107,6 +107,100 @@ describe('TimplanRequirementsService', () => {
     expect(answer.skipped).toEqual([expect.objectContaining({ subjectId: SV, reason: 'EXISTS' })]);
   });
 
+  describe('språkval as a block', () => {
+    const DE = 'd7d7d7d7-d7d7-4d7d-8d7d-d7d7d7d7d7d7';
+    const ES = 'd6d6d6d6-d6d6-4d6d-8d6d-d6d6d6d6d6d6';
+    const TY7 = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+    const SP7 = 'e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2';
+    const BLOCK = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+    const languages = (dryRun: boolean) => ({
+      ...dto(dryRun),
+      languageGroups: [
+        { gradeLevel: 7, subjectId: DE, studentGroupId: TY7 },
+        { gradeLevel: 7, subjectId: ES, studentGroupId: SP7 },
+      ],
+    });
+
+    beforeEach(() => {
+      tx.localTimplan.findUnique.mockResolvedValue({
+        id: PLAN_ID,
+        name: 'Grundskolan 2027',
+        status: 'DECIDED',
+        entries: [
+          { subjectId: MA, gradeLevel: 7, minutesPerWeek: 180 },
+          { subjectId: DE, gradeLevel: 7, minutesPerWeek: 120 },
+          { subjectId: ES, gradeLevel: 7, minutesPerWeek: 120 },
+        ],
+      });
+      tx.studentGroup.findMany.mockImplementation(async ({ where }: { where: { kind: string } }) =>
+        where.kind === 'CLASS'
+          ? [{ id: A7, name: '7A', gradeLevel: 7 }]
+          : [
+              { id: TY7, name: 'Ty7' },
+              { id: SP7, name: 'Sp7' },
+            ],
+      );
+      tx.subject.findMany.mockResolvedValue([
+        { id: MA, name: 'Matematik', nationalCode: 'MA' },
+        { id: DE, name: 'Tyska', nationalCode: 'M2' },
+        { id: ES, name: 'Spanska', nationalCode: 'M2' },
+      ]);
+      tx.teachingBlock.upsert.mockResolvedValue({ id: BLOCK });
+      tx.teachingRequirement.createManyAndReturn.mockImplementation(async ({ data }: { data: Record<string, string>[] }) =>
+        data.map((row, index) => ({ id: `f${index}`, studentGroupId: row['studentGroupId'], subjectId: row['subjectId'] })),
+      );
+    });
+
+    it('previews the block and the rows in it, reading the groups as teaching groups of the year', async () => {
+      const answer = await service.generate(PLAN_ID, languages(true), testUser());
+
+      expect(answer.blocks).toEqual([{ name: 'Språkval åk 7', gradeLevel: 7 }]);
+      expect(answer.rows.filter((row) => row.blockName).map((row) => row.groupName)).toEqual(['Sp7', 'Ty7']);
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+        where: { id: { in: [TY7, SP7] }, academicYearId: YEAR_ID, kind: 'TEACHING_GROUP' },
+        select: { id: true, name: true },
+      });
+      expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR_ID, studentGroupId: { in: [A7, TY7, SP7] } },
+        select: { studentGroupId: true, subjectId: true },
+      });
+      expect(tx.teachingBlock.upsert).not.toHaveBeenCalled();
+    });
+
+    it('writes the year’s block of that name first, and the rows name it in the one INSERT', async () => {
+      await service.generate(PLAN_ID, languages(false), testUser());
+
+      expect(tx.teachingBlock.upsert).toHaveBeenCalledWith({
+        where: { schoolId_academicYearId_name: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, name: 'Språkval åk 7' } },
+        create: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, name: 'Språkval åk 7' },
+        update: {},
+        select: { id: true },
+      });
+      const { data } = tx.teachingRequirement.createManyAndReturn.mock.calls[0]![0] as {
+        data: Record<string, unknown>[];
+      };
+      expect(data.map((row) => [row['studentGroupId'], row['blockId'] ?? null])).toEqual([
+        [A7, null],
+        [SP7, BLOCK],
+        [TY7, BLOCK],
+      ]);
+      expect(tx.teachingBlock.upsert.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.teachingRequirement.createManyAndReturn.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('refuses a group that is no teaching group of the year, naming the row', async () => {
+      tx.studentGroup.findMany.mockImplementation(async ({ where }: { where: { kind: string } }) =>
+        where.kind === 'CLASS' ? [{ id: A7, name: '7A', gradeLevel: 7 }] : [{ id: TY7, name: 'Ty7' }],
+      );
+
+      await expect(service.generate(PLAN_ID, languages(false), testUser())).rejects.toThrow(
+        'languageGroups: rad 2: gruppen är ingen undervisningsgrupp i läsåret.',
+      );
+      expect(tx.teachingRequirement.createManyAndReturn).not.toHaveBeenCalled();
+    });
+  });
+
   it('SPLIT writes the lengths of a split row, and only of a split row', async () => {
     tx.teachingRequirement.createManyAndReturn.mockResolvedValue([
       { id: 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1', studentGroupId: A7, subjectId: MA },
