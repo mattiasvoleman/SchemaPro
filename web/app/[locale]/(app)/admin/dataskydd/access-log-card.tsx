@@ -54,7 +54,7 @@ export function AccessLogCard() {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!personId || rangeInvalid) return;
-    setAsked({ personId, from, to });
+    setAsked((last) => ({ personId, from, to, press: (last?.press ?? 0) + 1 }));
   };
 
   const data = answer.data;
@@ -130,25 +130,32 @@ export function AccessLogCard() {
         </div>
       </form>
 
-      <div className="mt-6 space-y-3" aria-live="polite" aria-busy={answer.isFetching || undefined}>
-        {answer.isFetching && !data ? (
-          <div className="space-y-2">
+      <div className="mt-6 space-y-3">
+        {/* The live region holds one short sentence: what the answer is,
+            or that it is coming. The table below it is read when the reader
+            goes to it, not announced row by row; a refusal is its own alert
+            (the inline LoadError is role=alert). */}
+        <div role="status" aria-live="polite" aria-busy={answer.isFetching || undefined}>
+          {answer.isFetching && !data ? (
             <p className="sr-only">{t("loading")}</p>
-            <Skeleton className="h-24 w-full" />
-          </div>
-        ) : answer.isError ? (
-          <LoadError variant="inline" title={t("loadFailed")} hint={errorText(answer.error)} />
-        ) : data ? (
+          ) : answer.isError ? null : data ? (
+            data.entries.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("empty", { name })}</p>
+            ) : (
+              <p className="text-sm">{t("summary", { count: data.entries.length, readers, name })}</p>
+            )
+          ) : null}
+        </div>
+        {answer.isError ? <LoadError variant="inline" title={t("loadFailed")} hint={errorText(answer.error)} /> : null}
+        {answer.isFetching && !data ? <Skeleton className="h-24 w-full" /> : null}
+        {data && !answer.isError ? (
           <>
             {/* Reads before the school's gallring are gone: said, so that an
                 empty or short answer is not taken for nobody having read. */}
             <PurgedNotice kind="ACCESS_LOG" from={data.from ?? undefined} />
-            {data.entries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("empty", { name })}</p>
-            ) : (
+            {data.entries.length > 0 ? (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-sm">{t("summary", { count: data.entries.length, readers, name })}</p>
+                <div className="flex justify-end">
                   <Button type="button" variant="outline" size="sm" onClick={exportCsv}>
                     {t("export")}
                   </Button>
@@ -183,7 +190,7 @@ export function AccessLogCard() {
                   </TableBody>
                 </TableCard>
               </>
-            )}
+            ) : null}
           </>
         ) : null}
       </div>
