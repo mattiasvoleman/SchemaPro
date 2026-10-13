@@ -38,11 +38,20 @@
 // override) and can be undone; splitting a post differently is the
 // Timplansposter dialog's job once it exists. Focus follows those two
 // buttons: each replaces itself, so focus moves to what took its place.
+//
+// SPRÅKVAL AS A BLOCK. Once a preview has said which årskurser the year
+// follows this plan in, each M2 language of those årskurser offers a choice
+// of the year's teaching groups. A language given a group is posted on it,
+// and every such row of an årskurs goes into the block "Språkval åk 7", whose
+// lessons the generator places at the same times. Those rows have one shape —
+// the line's — so they offer no edit, and a changed choice throws the preview
+// away like a changed length. With no group chosen the request carries no
+// `languageGroups`, and M2 is skipped on the classes as it always was.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
-import { useRequirements } from "@/lib/queries";
+import { useGroups, useRequirements } from "@/lib/queries";
 import { useGenerateRequirements } from "@/lib/timplan-queries";
 import {
   editedRow,
@@ -53,6 +62,7 @@ import {
   rowKey,
   suggestLessonLength,
   uniformEdit,
+  type GenerateLanguageGroup,
   type GenerateRequirementsResponse,
   type Remainder,
   type RowEdit,
@@ -65,6 +75,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
@@ -89,18 +100,27 @@ export interface GenerateDialogProps {
   years: readonly AcademicYear[];
   /** The year the dialog starts on; the active one when null. */
   initialYearId: string | null;
+  /** The plan's entries and the school's subjects: which M2 languages the plan has. */
+  entries?: readonly { subjectId: string; gradeLevel: number; minutesPerWeek: number }[];
+  subjects?: readonly { id: string; name: string; nationalCode?: string | null }[];
 }
 
 const grade = (t: (key: string, values?: Record<string, string>) => string, value: number) =>
   t("grade", { grade: String(value) });
 
-export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId }: GenerateDialogProps) {
+export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId, entries, subjects }: GenerateDialogProps) {
   const t = useTranslations("timplan.generate");
   const tCommon = useTranslations("common");
 
   // Derived, not frozen at mount, as in the year dialog: the years may
   // arrive after the dialog opened.
-  const [chosenYearId, setYearId] = useState<string | null>(null);
+  const [chosenYearId, setChosenYearId] = useState<string | null>(null);
+  // Språkval: "grade:subject" → the teaching group chosen for it, of this year.
+  const [languageChoice, setLanguageChoice] = useState<Map<string, string>>(new Map());
+  const setYearId = (id: string) => {
+    setChosenYearId(id);
+    setLanguageChoice(new Map());
+  };
   const yearId =
     chosenYearId ?? initialYearId ?? years.find((year) => year.isActive)?.id ?? years[0]?.id ?? null;
   const year = years.find((entry) => entry.id === yearId) ?? null;
@@ -117,7 +137,31 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
 
   const [split, setSplit] = useState(false);
   const remainder: Remainder = split ? "SPLIT" : "ROUND_UP";
-  const [preview, setPreview] = useState<GenerateRequirementsResponse | null>(null);
+  const [preview, setPreview] = useState<(GenerateRequirementsResponse & { languages?: string }) | null>(null);
+
+  const groups = useGroups();
+  const languages = useMemo(() => {
+    const m2 = new Map(
+      (subjects ?? []).filter((subject) => subject.nationalCode === "M2").map((subject) => [subject.id, subject.name]),
+    );
+    return (entries ?? [])
+      .filter((entry) => entry.minutesPerWeek > 0 && m2.has(entry.subjectId))
+      .map((entry) => ({ gradeLevel: entry.gradeLevel, subjectId: entry.subjectId, subjectName: m2.get(entry.subjectId)! }))
+      .sort((a, b) => a.gradeLevel - b.gradeLevel || a.subjectName.localeCompare(b.subjectName, "sv"));
+  }, [entries, subjects]);
+  const attached = preview && preview.academicYearId === yearId ? preview.gradeLevels : [];
+  const shownLanguages = languages.filter((language) => attached.includes(language.gradeLevel));
+  const teachingGroups = (groups.data ?? []).filter(
+    (group) => group.academicYearId === yearId && group.kind === "TEACHING_GROUP",
+  );
+  const languageGroups: GenerateLanguageGroup[] = [...languageChoice]
+    .filter(([, groupId]) => groupId !== "")
+    .map(([key, studentGroupId]) => {
+      const [gradeLevel, subjectId] = key.split(":");
+      return { gradeLevel: Number(gradeLevel), subjectId: subjectId!, studentGroupId };
+    });
+  const languagesKey = JSON.stringify(languageGroups);
+  const withLanguages = languageGroups.length > 0 ? { languageGroups } : {};
   const [edits, setEdits] = useState<Map<string, RowEdit>>(new Map());
   const [result, setResult] = useState<GenerateRequirementsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -127,7 +171,8 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
     preview &&
     preview.academicYearId === yearId &&
     preview.minutesPerLesson === length &&
-    preview.remainder === remainder
+    preview.remainder === remainder &&
+    (preview.languages ?? "[]") === languagesKey
       ? preview
       : null;
   const overrides = current ? overridesFrom(current.rows, edits) : null;
@@ -146,10 +191,11 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
         minutesPerLesson: length,
         ...(split ? { remainder } : {}),
         dryRun: true,
+        ...withLanguages,
       });
-      // Kept with the remainder it was asked for, so a toggle discards it
-      // whether or not the gateway echoes the field.
-      setPreview({ ...answer, remainder });
+      // Kept with the remainder and the språkval groups it was asked for, so a
+      // toggle discards it whether or not the gateway echoes the field.
+      setPreview({ ...answer, remainder, languages: languagesKey });
       setEdits(new Map());
     } catch (caught) {
       fail(caught);
@@ -167,6 +213,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
         ...(split ? { remainder } : {}),
         dryRun: false,
         ...(overrides.length > 0 ? { overrides } : {}),
+        ...withLanguages,
       });
       setResult(answer);
       setPreview(null);
@@ -185,6 +232,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
       setError(null);
       setTypedLength(null);
       setSplit(false);
+      setLanguageChoice(new Map());
     }
     onOpenChange(next);
   };
@@ -219,6 +267,9 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
           >
             <div className="space-y-2">
               {existingCount(result) > 0 ? <p>{t("resultSkipped", { count: existingCount(result) })}</p> : null}
+              {result.blocks && result.blocks.length > 0 ? (
+                <p>{t("resultBlocks", { blocks: result.blocks.map((block) => block.name).join(", ") })}</p>
+              ) : null}
               <p>{t("resultNext")}</p>
               <Link
                 href={`/admin/requirements?year=${encodeURIComponent(result.academicYearId)}`}
@@ -296,6 +347,42 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
               <Notice tone="warning" role={null}>
                 {t("draft")}
               </Notice>
+            ) : null}
+
+            {shownLanguages.length > 0 ? (
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">{t("languagesTitle")}</legend>
+                <p className="text-xs text-foreground">{t("languagesHint")}</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {shownLanguages.map((language) => {
+                    const key = `${language.gradeLevel}:${language.subjectId}`;
+                    return (
+                      <div key={key} className="space-y-1">
+                        <Label htmlFor={`generate-language-${key}`}>
+                          {t("languageLabel", { subject: language.subjectName, grade: String(language.gradeLevel) })}
+                        </Label>
+                        <NativeSelect
+                          id={`generate-language-${key}`}
+                          value={languageChoice.get(key) ?? ""}
+                          disabled={generate.isPending}
+                          onChange={(event) => {
+                            const next = new Map(languageChoice);
+                            next.set(key, event.target.value);
+                            setLanguageChoice(next);
+                          }}
+                        >
+                          <option value="">{t("languageNone")}</option>
+                          {teachingGroups.map((group) => (
+                            <option key={group.id} value={group.id}>
+                              {group.name}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      </div>
+                    );
+                  })}
+                </div>
+              </fieldset>
             ) : null}
 
             <Button
@@ -425,10 +512,16 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                 return (
                   <tr key={key} className="border-b last:border-b-0">
                     <th scope="row" className="px-3 py-1.5 text-left font-medium">{row.groupName}</th>
-                    <td className="px-3 py-1.5">{row.subjectName}</td>
+                    <td className="px-3 py-1.5">
+                      {row.subjectName}
+                      {row.blockName ? <Badge variant="outline" className="ml-2">{row.blockName}</Badge> : null}
+                    </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">{row.targetMinutesPerWeek}</td>
                     <td className="px-3 py-1.5">
-                      {splitShown ? (
+                      {row.blockName ? (
+                        // A block's rows have the line's one shape: no edit.
+                        <span className="tabular-nums">{formatLengths(row)}</span>
+                      ) : splitShown ? (
                         <div className="flex items-center gap-2">
                           <span className="tabular-nums">{formatLengths(row)}</span>
                           <Button

@@ -95,6 +95,8 @@ export interface GenerateProposedRow {
   surplusMinutesPerWeek: number;
   overridden: boolean;
   capped: boolean;
+  /** Only on a språkval row: the block it is posted in ("Språkval åk 7"). */
+  blockName?: string;
   /** The created requirement; absent in a preview. */
   requirementId?: string;
 }
@@ -127,6 +129,15 @@ export interface GenerateRequirementsResponse {
   created: number;
   rows: GenerateProposedRow[];
   skipped: GenerateSkippedRow[];
+  /** Only when språkval groups were named: the blocks the rows are posted in. */
+  blocks?: { name: string; gradeLevel: number }[];
+}
+
+/** A teaching group named to read one språkval language in one årskurs. */
+export interface GenerateLanguageGroup {
+  gradeLevel: number;
+  subjectId: string;
+  studentGroupId: string;
 }
 
 export interface GenerateOverride {
@@ -151,6 +162,8 @@ export interface GenerateBody {
   remainder?: Remainder;
   dryRun: boolean;
   overrides?: GenerateOverride[];
+  /** Språkval: M2 is posted on these groups, as one block per årskurs. */
+  languageGroups?: GenerateLanguageGroup[];
 }
 
 /** One preview row's fields as the admin typed them. */
