@@ -19,7 +19,8 @@ export interface HistoryEntry {
   id: string;
   /** 1, 2, 3 … per teacher and läsår — what a protokoll cites as "Version 7". */
   version: number;
-  entity: "EMPLOYMENT" | "DUTY";
+  /** PERIOD: a period of the post (migration 20261022120000). */
+  entity: "EMPLOYMENT" | "DUTY" | "PERIOD";
   entityId: string;
   action: "CREATE" | "UPDATE" | "DELETE";
   /** Who wrote it; null for the seed, a migration or the database owner. */

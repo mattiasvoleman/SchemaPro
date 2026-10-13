@@ -282,6 +282,47 @@ describe("StaffingMatrix", () => {
     expect(within(anna).getByText("barLabel(117,9)")).toBeInTheDocument();
   });
 
+  it("marks a post that changes during the year with its periods, and names each stretch's status for a screen reader", () => {
+    const stretch = (from: string, to: string, kind: "BASE" | "PERIOD", status: TeacherLoad["status"]) => ({
+      from,
+      to,
+      kind,
+      effectiveFrom: from,
+      effectiveTo: to,
+      employmentPercent: kind === "BASE" ? 100 : 80,
+      reductionPercent: 0,
+      ownTargetMinutesPerWeek: null,
+      targetMinutesPerWeek: kind === "BASE" ? 1080 : 865,
+      teachingWeeks: 10,
+      countedMinutesPerWeek: 1000,
+      balanceMinutesPerWeek: kind === "BASE" ? 80 : -135,
+      percentOfTarget: null,
+      status,
+    });
+    renderMatrix({
+      report: {
+        ...report,
+        teachers: [
+          teacher({
+            status: "OVER",
+            periods: [stretch("2026-08-17", "2026-10-31", "BASE", "OK"), stretch("2026-11-01", "2027-06-11", "PERIOD", "OVER")],
+          }),
+          teacher({ userId: "t-bo" }),
+        ],
+      },
+    });
+    const anna = screen.getByText("Anna Ek").closest("tr")!;
+    expect(within(anna).getByText("periodsBadge(1)")).toBeInTheDocument();
+    expect(
+      within(anna).getByText("periodStatusLine(2026-08-17|2026-10-31|statusOK); periodStatusLine(2026-11-01|2027-06-11|statusOVER)", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    // A post without periods carries no mark.
+    const bo = screen.getByText("Bo Alm").closest("tr")!;
+    expect(within(bo).queryByText(/periodsBadge/)).toBeNull();
+  });
+
   it("opens the teacher on the row's name", async () => {
     const user = userEvent.setup();
     const { onOpenTeacher } = renderMatrix();

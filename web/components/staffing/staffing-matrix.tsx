@@ -86,6 +86,13 @@ export function StaffingMatrix({
   // reads their own peak, where a dated uppdrag weighs its whole minutes.
   const duties = (teacher: TeacherLoad) => dutyMinutesOf(teacher, week);
 
+  const stretchSummary = (teacher: TeacherLoad) =>
+    (teacher.periods ?? [])
+      .map((period) =>
+        t("periodStatusLine", { from: period.from, to: period.to, status: t(`status${period.status}`) }),
+      )
+      .join("; ");
+
   const balanceText = (teacher: TeacherLoad) => {
     if (teacher.balanceMinutesPerWeek === null) return "—";
     const balance = teacher.balanceMinutesPerWeek;
@@ -170,6 +177,20 @@ export function StaffingMatrix({
                     <span>{name}</span>
                     <StatusBadge status={teacher.status} />
                   </button>
+                  {/* A post that changes during the year (20261022120000): the
+                      status above is its worst stretch, so the row says how
+                      many periods there are and, for a screen reader and on
+                      hover, each stretch's dates and status. */}
+                  {(teacher.periods?.length ?? 0) > 0 ? (
+                    <p className="mt-1" title={stretchSummary(teacher)}>
+                      <Badge variant="outline">
+                        {t("periodsBadge", {
+                          count: teacher.periods!.filter((period) => period.kind === "PERIOD").length,
+                        })}
+                      </Badge>
+                      <span className="sr-only">{` ${stretchSummary(teacher)}`}</span>
+                    </p>
+                  ) : null}
                 </th>
                 {columns.map((subject) => {
                   const cell = cellValue(teacher, subject.id, unit);

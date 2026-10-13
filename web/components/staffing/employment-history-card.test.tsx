@@ -100,6 +100,33 @@ describe("EmploymentHistoryCard", () => {
     expect(items[1]).toHaveTextContent("field.employmentPercent: percent(80)");
   });
 
+  it("names a period's version by its Från (20261022120000)", async () => {
+    history.data = {
+      truncated: false,
+      entries: [
+        {
+          id: "l3",
+          version: 3,
+          entity: "PERIOD",
+          entityId: "p1",
+          action: "CREATE",
+          actorId: null,
+          createdAt: "2026-10-09T12:10:00.000Z",
+          changes: [
+            { field: "validFrom", before: null, after: "2026-11-01" },
+            { field: "employmentPercent", before: null, after: 80 },
+          ],
+        },
+      ],
+    };
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "show" }));
+    const items = screen.getAllByRole("listitem").filter((item) => item.querySelector("ul"));
+    expect(items[0]).toHaveTextContent("action.PERIOD_CREATE: periodFrom(2026-11-01)");
+    expect(items[0]).toHaveTextContent("field.employmentPercent: percent(80)");
+  });
+
   it("says when the history is empty or could not be read, never an empty list", async () => {
     const user = userEvent.setup();
     history.data = { entries: [], truncated: false };

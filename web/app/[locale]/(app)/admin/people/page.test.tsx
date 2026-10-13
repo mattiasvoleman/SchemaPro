@@ -140,6 +140,9 @@ vi.mock("@/lib/staffing-queries", () => ({
   useTeacherEmploymentActions: () => ({
     save: { mutateAsync: saveEmployment, isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
+    createPeriod: { mutateAsync: vi.fn(), isPending: false },
+    updatePeriod: { mutateAsync: vi.fn(), isPending: false },
+    removePeriod: { mutateAsync: vi.fn(), isPending: false },
   }),
   useReplaceTeacherQualifications: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useTeacherDuties: (academicYearId: string, userId: string) => ({

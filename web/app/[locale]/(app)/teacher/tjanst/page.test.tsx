@@ -159,6 +159,58 @@ describe("Min tjänst", () => {
     expect(screen.queryByText("staffing.annual.captionAdmin")).not.toBeInTheDocument();
   });
 
+  it("lists the teacher's own post over the year when it changes, each period with its target, counted minutes and status", () => {
+    const stretch = (from: string, to: string, extra: Record<string, unknown>) => ({
+      from,
+      to,
+      kind: "PERIOD",
+      effectiveFrom: from,
+      effectiveTo: to,
+      employmentPercent: 100,
+      reductionPercent: 0,
+      ownTargetMinutesPerWeek: null,
+      targetMinutesPerWeek: 1080,
+      teachingWeeks: 10,
+      countedMinutesPerWeek: 960,
+      balanceMinutesPerWeek: 120,
+      percentOfTarget: 88.9,
+      status: "UNDER",
+      ...extra,
+    });
+    state.load = {
+      ...state.load,
+      data: {
+        teachers: [
+          row({
+            status: "OVER",
+            periods: [
+              stretch("2026-08-17", "2026-10-31", { kind: "BASE" }),
+              stretch("2026-11-01", "2027-06-11", {
+                employmentPercent: 80,
+                reductionPercent: 10,
+                targetMinutesPerWeek: 755,
+                status: "OVER",
+              }),
+              stretch("2027-02-16", "2027-02-19", { effectiveFrom: null, effectiveTo: null }),
+            ],
+          }),
+        ],
+      },
+    };
+    render(<MyStaffingPage />);
+    expect(screen.getByRole("heading", { level: 3, name: "myStaffing.periodsTitle" })).toBeInTheDocument();
+    const items = within(screen.getByRole("heading", { name: "myStaffing.periodsTitle" }).closest("section")!).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[1]).toHaveTextContent("staffing.periodDates(2026-11-01|2027-06-11) · staffing.periodFiguresReduction(80|10)");
+    expect(items[1]).toHaveTextContent("myStaffing.target(755) · myStaffing.counted(960) · staffing.statusOVER");
+    expect(items[2]).toHaveTextContent("staffing.periodNoWeek");
+  });
+
+  it("draws no period list for a post that is the same all year", () => {
+    render(<MyStaffingPage />);
+    expect(screen.queryByText("myStaffing.periodsTitle")).toBeNull();
+  });
+
   it("links to the printable uppdragsbeskrivning of the teacher's own tjänst, by year and never by person", () => {
     render(<MyStaffingPage />);
     const link = screen.getByRole("link", { name: "myStaffing.printLink" });

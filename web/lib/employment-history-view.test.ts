@@ -6,6 +6,7 @@ import {
   formatStamp,
   historyLines,
   latestVersion,
+  periodLabelOf,
   versionStampOf,
   type HistoryLabels,
 } from "./employment-history-view";
@@ -142,6 +143,32 @@ describe("historyLines", () => {
     expect(historyLines(times, labels)).toEqual(["Fasta tider: 1 tid → 3 tider"]);
     // A post has no dates: an empty value there is still just empty.
     expect(formatHistoryValue("EMPLOYMENT", "validFrom", null, labels)).toBe("—");
+  });
+
+  it("says a period's versions with its dates and figures, an open Till as the year's own bound (20261022120000)", () => {
+    const created = entry({
+      entity: "PERIOD",
+      action: "CREATE",
+      changes: [
+        { field: "validFrom", before: null, after: "2026-11-01" },
+        { field: "validTo", before: null, after: null },
+        { field: "employmentPercent", before: null, after: 80 },
+      ],
+    });
+    expect(historyLines(created, labels)).toEqual([
+      "Gäller från: 2026-11-01",
+      "Gäller till och med: läsårets egen gräns",
+      "Tjänstgöringsgrad: 80 %",
+    ]);
+    expect(periodLabelOf(created)).toBe("2026-11-01");
+    // A deleted period by the Från it had; an update that kept its dates by none.
+    expect(periodLabelOf({ ...created, action: "DELETE", changes: [{ field: "validFrom", before: "2026-11-01", after: null }] })).toBe(
+      "2026-11-01",
+    );
+    expect(
+      periodLabelOf(entry({ entity: "PERIOD", action: "UPDATE", changes: [{ field: "employmentPercent", before: 80, after: 75 }] })),
+    ).toBeNull();
+    expect(periodLabelOf(entry({ entity: "DUTY", changes: [{ field: "validFrom", before: null, after: "2026-11-01" }] }))).toBeNull();
   });
 
   it("never hides a field it does not know: its own name and raw value", () => {
