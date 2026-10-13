@@ -50,6 +50,26 @@ export class GenerateOverrideDto {
   minutesPerLesson!: number;
 }
 
+/**
+ * A teaching group named to read one språkval language (an M2 subject of the
+ * plan) in one årskurs. The rows of an årskurs are posted as one block,
+ * "Språkval åk 7" (generate-requirements.ts).
+ */
+export class GenerateLanguageGroupDto {
+  @IsInt({ message: 'languageGroups: årskursen anges som ett heltal.' })
+  @Min(0, { message: 'languageGroups: årskursen är 0 (förskoleklass) till 10.' })
+  @Max(10, { message: 'languageGroups: årskursen är 0 (förskoleklass) till 10.' })
+  gradeLevel!: number;
+
+  @Transform(lowerUuid)
+  @IsUUID('4', { message: 'languageGroups: språket anges med sitt id (subjectId).' })
+  subjectId!: string;
+
+  @Transform(lowerUuid)
+  @IsUUID('4', { message: 'languageGroups: gruppen anges med sitt id (studentGroupId).' })
+  studentGroupId!: string;
+}
+
 export class GenerateRequirementsDto {
   @Transform(lowerUuid)
   @IsUUID('4', { message: 'academicYearId: läsåret anges med sitt id.' })
@@ -92,4 +112,16 @@ export class GenerateRequirementsDto {
   @ValidateNested({ each: true })
   @Type(() => GenerateOverrideDto)
   overrides?: GenerateOverrideDto[];
+
+  /**
+   * Språkval: the teaching group that reads each M2 language of an årskurs.
+   * Omitted or empty, M2 is skipped on every class as it always was.
+   */
+  @IsOptional()
+  @IsArray({ message: 'languageGroups: grupperna anges som en lista.' })
+  @ArrayMaxSize(100, { message: 'languageGroups: högst 100 grupper.' })
+  @IsObject({ each: true, message: 'languageGroups: varje grupp anges som ett objekt.' })
+  @ValidateNested({ each: true })
+  @Type(() => GenerateLanguageGroupDto)
+  languageGroups?: GenerateLanguageGroupDto[];
 }
