@@ -4489,7 +4489,7 @@
   },
   "dataProtection": {
     "title": "Dataskydd och gallring",
-    "subtitle": "Hur länge skolan sparar uppgifter, och vad som har gallrats",
+    "subtitle": "Hur länge skolan sparar uppgifter, vad som har gallrats och vem som har läst om en person",
     "intro": "Här bestämmer du hur länge varje slags uppgift sparas, efter huvudmannens dokumenthanteringsplan. Inget gallras förrän du har valt en period för det. Gallringen körs varje natt från klockan 03. En period som gallrar mer än den förra börjar gälla först efter ett dygn, så ett felval kan ändras innan något försvinner.",
     "irreversibleTitle": "En gallring går inte att ångra i SchemaPro",
     "irreversibleBody": "Det som gallras är borta. Ta först ut det som dokumenthanteringsplanen säger ska bevaras. SchemaPro gör ännu inga arkivuttag till huvudmannens e-arkiv.",
@@ -4521,6 +4521,10 @@
       "ABSENCE_REASONS": {
         "name": "Frånvaroorsaker",
         "body": "Orsaken tas bort från lärarfrånvaro som slutade före gränsdagen. Frånvaron och vikariebesluten finns kvar, så vikarietimmar och lön går fortfarande ihop."
+      },
+      "ACCESS_LOG": {
+        "name": "Läslogg",
+        "body": "Vem som har läst andra personers uppgifter, och när. Läsningar före gränsdagen gallras."
       },
       "DEPARTED_PEOPLE": {
         "name": "Slutade personer",
@@ -4593,6 +4597,76 @@
     "historyReference": "Referens",
     "historyBy": "Av",
     "historyByUnknown": "Borttagen användare",
+    "accessLog": {
+      "title": "Vem har läst om en person?",
+      "description": "Varje gång någon läser en annan persons uppgifter i SchemaPro skrivs det i läsloggen: personlistan, klasslistor, närvaro, frånvaro, ledighet, vårdnadshavare, tjänster och det som en integration hämtar. Samma läsare och samma slags uppgift om samma person skrivs en gång per kvart.",
+      "person": "Person",
+      "personPlaceholder": "Välj en person",
+      "peopleLoading": "Läser personerna…",
+      "peopleFailed": "Personerna kunde inte läsas",
+      "inactive": "avaktiverad",
+      "groups": {
+        "STUDENT": "Elever",
+        "GUARDIAN": "Vårdnadshavare",
+        "TEACHER": "Lärare",
+        "SCHOOL_ADMIN": "Administratörer"
+      },
+      "from": "Från",
+      "to": "Till",
+      "show": "Visa läsningar",
+      "searchIsLogged": "Din sökning skrivs också i läsloggen.",
+      "loading": "Läser läsloggen…",
+      "loadFailed": "Läsloggen kunde inte läsas",
+      "loadFailedHint": "Ingenting har ändrats. Försök igen om en stund.",
+      "empty": "Ingen har läst om {name} under perioden.",
+      "summary": "{count, plural, one {# läsning} other {# läsningar}} om {name}, av {readers, plural, one {# läsare} other {# läsare}}.",
+      "truncatedTitle": "Bara de senaste läsningarna visas",
+      "truncated": "Listan visar de {count} senaste. Välj en kortare period för att se äldre läsningar.",
+      "caption": "Läsningar om {name}",
+      "columns": {
+        "at": "När",
+        "reader": "Vem",
+        "role": "Roll",
+        "kind": "Vad",
+        "channel": "Hur",
+        "others": "Fler i samma läsning"
+      },
+      "key": "Integration: {name}",
+      "removedKey": "Borttagen integrationsnyckel",
+      "removedPerson": "Borttagen person",
+      "kinds": {
+        "PEOPLE": "Personuppgifter",
+        "ROSTER": "Klasslista",
+        "ATTENDANCE": "Närvaro",
+        "ABSENCE_REPORTS": "Frånvaroanmälan",
+        "LEAVE_REQUESTS": "Ledighetsansökan",
+        "LEAVE_REASON_AS_MENTOR": "Ledighetens anledning, som mentor",
+        "GUARDIANS": "Vårdnadshavare",
+        "EMPLOYMENT": "Tjänst och anställning",
+        "STAFF_ABSENCES": "Personalens frånvaro",
+        "ACCESS_LOG": "Läsloggen"
+      },
+      "channels": {
+        "WEB": "Webben",
+        "APP": "Appen",
+        "INTEGRATION": "Integration",
+        "OTHER": "Annat"
+      },
+      "export": "Exportera som CSV",
+      "exportFile": "lasningar-{name}-{date}.csv",
+      "csv": {
+        "at": "Tid",
+        "reader": "Läsare",
+        "role": "Roll",
+        "kind": "Uppgift",
+        "channel": "Kanal",
+        "others": "Fler i samma läsning"
+      },
+      "errors": {
+        "ACCESS_LOG_PERSON_NOT_FOUND": "Personen finns inte i skolan.",
+        "ACCESS_LOG_RANGE_INVALID": "Perioden börjar efter att den slutar."
+      }
+    },
     "errors": {
       "RETENTION_MONTHS_ONLY_FOR_A_PERIOD": "Bara en gallringsperiod har ett antal månader.",
       "RETENTION_PREVIEW_IS_THE_ADMINS": "Bara skolans administratör ser och bestämmer gallringen.",

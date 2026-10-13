@@ -4489,7 +4489,7 @@
   },
   "dataProtection": {
     "title": "Data protection and retention",
-    "subtitle": "How long the school keeps data, and what has been purged",
+    "subtitle": "How long the school keeps data, what has been purged and who has read about a person",
     "intro": "Here you decide how long each kind of data is kept, following your organisation's records management plan. Nothing is purged until you have chosen a period for it. Purging runs every night from 03:00. A period that purges more than the one before it applies only after a day, so a wrong choice can be changed before anything goes.",
     "irreversibleTitle": "A purge cannot be undone in SchemaPro",
     "irreversibleBody": "What is purged is gone. First export what the records management plan says must be kept. SchemaPro does not yet export to your organisation's e-archive.",
@@ -4521,6 +4521,10 @@
       "ABSENCE_REASONS": {
         "name": "Absence reasons",
         "body": "The reason is removed from teacher absences that ended before the cutoff date. The absence and its cover decisions stay, so substitute hours and pay still add up."
+      },
+      "ACCESS_LOG": {
+        "name": "Read log",
+        "body": "Who has read other people's data, and when. Reads before the cutoff date are purged."
       },
       "DEPARTED_PEOPLE": {
         "name": "People who left",
@@ -4593,6 +4597,76 @@
     "historyReference": "Reference",
     "historyBy": "By",
     "historyByUnknown": "Removed user",
+    "accessLog": {
+      "title": "Who has read about a person?",
+      "description": "Every time someone reads another person's data in SchemaPro it is written to the read log: the people list, class lists, attendance, absence, leave, guardians, posts and what an integration fetches. The same reader and the same kind of data about the same person is written once per quarter of an hour.",
+      "person": "Person",
+      "personPlaceholder": "Choose a person",
+      "peopleLoading": "Reading the people…",
+      "peopleFailed": "The people could not be read",
+      "inactive": "deactivated",
+      "groups": {
+        "STUDENT": "Pupils",
+        "GUARDIAN": "Guardians",
+        "TEACHER": "Teachers",
+        "SCHOOL_ADMIN": "Administrators"
+      },
+      "from": "From",
+      "to": "To",
+      "show": "Show reads",
+      "searchIsLogged": "Your search is written to the read log too.",
+      "loading": "Reading the read log…",
+      "loadFailed": "The read log could not be read",
+      "loadFailedHint": "Nothing has changed. Try again in a moment.",
+      "empty": "Nobody has read about {name} in the period.",
+      "summary": "{count, plural, one {# read} other {# reads}} about {name}, by {readers, plural, one {# reader} other {# readers}}.",
+      "truncatedTitle": "Only the latest reads are shown",
+      "truncated": "The list shows the latest {count}. Choose a shorter period to see older reads.",
+      "caption": "Reads about {name}",
+      "columns": {
+        "at": "When",
+        "reader": "Who",
+        "role": "Role",
+        "kind": "What",
+        "channel": "How",
+        "others": "Others in the same read"
+      },
+      "key": "Integration: {name}",
+      "removedKey": "Deleted integration key",
+      "removedPerson": "Deleted person",
+      "kinds": {
+        "PEOPLE": "Personal data",
+        "ROSTER": "Class list",
+        "ATTENDANCE": "Attendance",
+        "ABSENCE_REPORTS": "Absence report",
+        "LEAVE_REQUESTS": "Leave request",
+        "LEAVE_REASON_AS_MENTOR": "Leave reason, as mentor",
+        "GUARDIANS": "Guardians",
+        "EMPLOYMENT": "Post and employment",
+        "STAFF_ABSENCES": "Staff absence",
+        "ACCESS_LOG": "The read log"
+      },
+      "channels": {
+        "WEB": "Web",
+        "APP": "App",
+        "INTEGRATION": "Integration",
+        "OTHER": "Other"
+      },
+      "export": "Export as CSV",
+      "exportFile": "reads-{name}-{date}.csv",
+      "csv": {
+        "at": "Time",
+        "reader": "Reader",
+        "role": "Role",
+        "kind": "Data",
+        "channel": "Channel",
+        "others": "Others in the same read"
+      },
+      "errors": {
+        "ACCESS_LOG_PERSON_NOT_FOUND": "The person is not in the school.",
+        "ACCESS_LOG_RANGE_INVALID": "The period starts after it ends."
+      }
+    },
     "errors": {
       "RETENTION_MONTHS_ONLY_FOR_A_PERIOD": "Only a retention period has a number of months.",
       "RETENTION_PREVIEW_IS_THE_ADMINS": "Only the school's administrator sees and decides retention.",
