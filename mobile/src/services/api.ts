@@ -4,14 +4,27 @@ import { assertSecureBaseUrl } from './network/secureUrl';
 /**
  * The one way the app talks to the NestJS gateway.
  *
- * Reads that RLS can answer go straight to Supabase; what needs the gateway —
- * attendance ingestion, the family schedule (its teacher labels come from a
- * SECURITY DEFINER function), push registration and notice preferences —
- * comes through here. The base URL must be TLS (secureUrl), the bearer is the
- * Supabase session's, and a refusal carries the gateway's machine-readable
+ * Every read of another person's data comes through here, and the gateway
+ * records it in the read log (Läslogg): a guardian's children, their absence
+ * reports and leave requests, a lesson's roster, the family schedule (its
+ * teacher labels come from a SECURITY DEFINER function). So do the writes
+ * beside them, where the gateway derives the school and the reporter rather
+ * than taking the phone's word, and attendance ingestion, push registration
+ * and notice preferences. What still reads Supabase directly under RLS is the
+ * signed-in person's own row (their profile, authService), their own notices
+ * and the schedule tables. The base URL must be TLS (secureUrl), the bearer is
+ * the Supabase session's, and a refusal carries the gateway's machine-readable
  * `code` so a screen can say it in the reader's language rather than show the
  * gateway's Swedish sentence.
  */
+
+/**
+ * Sent on every request, a public one too: the gateway records the channel of
+ * a read as APP from it. It describes the client to whoever reads the log and
+ * grants nothing — any caller can send it. The app is no browser, so a custom
+ * header costs no CORS preflight.
+ */
+export const CLIENT_HEADER = 'X-SchemaPro-Client';
 
 export class ApiError extends Error {
   constructor(
@@ -47,7 +60,7 @@ function baseUrl(): string {
 /** JSON in, JSON out; 204 resolves to undefined. Throws ApiError on anything else. */
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const url = `${baseUrl()}${path}`;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { [CLIENT_HEADER]: 'app' };
   if (!options.anonymous) {
     const token = options.token ?? (await getAccessToken());
     if (!token) throw new ApiError(401, 'Not authenticated.', 'NOT_AUTHENTICATED');

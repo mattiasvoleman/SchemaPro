@@ -1,50 +1,74 @@
-import { getSupabase } from './supabase';
+import { getAccessToken, getSupabase } from './supabase';
+import { ApiError } from './api';
 import { childListState, fetchChildren, scheduleChildren } from './children';
 
-jest.mock('./supabase', () => ({ getSupabase: jest.fn() }));
+jest.mock('./supabase', () => ({ getAccessToken: jest.fn(), getSupabase: jest.fn() }));
+
+/**
+ * A guardian's children, through the real gateway client against a stubbed
+ * fetch: what is pinned is the request the gateway receives, which reads the
+ * links of the bearer's own guardian and records the read (Läslogg). Supabase
+ * fails the test if asked; the app read GuardianStudents and the children's
+ * Users rows itself until the read log needed every such read to pass the
+ * gateway.
+ */
+
+const fetchMock = jest.fn();
+const answer = (status: number, body?: unknown) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body,
+  text: async () => (body === undefined ? '' : JSON.stringify(body)),
+});
+
+beforeEach(() => {
+  process.env['EXPO_PUBLIC_API_BASE_URL'] = 'https://api.example.test/';
+  Object.defineProperty(global, 'fetch', { value: fetchMock, writable: true, configurable: true });
+  fetchMock.mockReset();
+  (getAccessToken as jest.Mock).mockResolvedValue('jwt-guardian');
+  (getSupabase as jest.Mock).mockImplementation(() => {
+    throw new Error('A guardian’s children are the gateway’s to answer, and to log.');
+  });
+});
 
 describe('fetchChildren', () => {
-  function stub(rows: unknown[] | null, error: string | null = null) {
-    const calls: Array<[string, unknown[]]> = [];
-    const builder: Record<string, unknown> = {};
-    for (const method of ['select', 'eq']) {
-      builder[method] = (...args: unknown[]) => {
-        calls.push([method, args]);
-        return builder;
-      };
-    }
-    builder['then'] = (resolve: (value: unknown) => unknown) =>
-      resolve({ data: rows, error: error ? { message: error } : null });
-    (getSupabase as jest.Mock).mockReturnValue({
-      from: (table: string) => {
-        calls.push(['from', [table]]);
-        return builder;
-      },
+  it('asks the gateway for the signed-in guardian’s children, and orders them Swedishly', async () => {
+    // The gateway orders by link id: stable, and meaningless to a reader.
+    fetchMock.mockResolvedValue(
+      answer(200, [
+        { linkId: 'link-1', id: 'c-2', firstName: 'Örjan', lastName: 'Elev', isActive: true, studentGroupId: 'g-7a' },
+        { linkId: 'link-2', id: 'c-1', firstName: 'Åsa', lastName: 'Elev', isActive: true, studentGroupId: null },
+        { linkId: 'link-3', id: 'c-4', firstName: 'Bo', lastName: 'Öberg', isActive: true, studentGroupId: null },
+        { linkId: 'link-4', id: 'c-3', firstName: 'Bo', lastName: 'Andersson', isActive: false, studentGroupId: null },
+      ]),
+    );
+    const children = await fetchChildren();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/api/v1/family/children', {
+      method: 'GET',
+      headers: { 'X-SchemaPro-Client': 'app', Authorization: 'Bearer jwt-guardian' },
     });
-    return calls;
-  }
-
-  it('asks GuardianStudents for this guardian’s own links, and orders the children Swedishly', async () => {
-    const calls = stub([
-      { id: 'link-2', student: { id: 'c-2', firstName: 'Örjan', lastName: 'Elev', isActive: true } },
-      { id: 'link-1', student: { id: 'c-1', firstName: 'Åsa', lastName: 'Elev', isActive: true } },
-      { id: 'link-3', student: { id: 'c-3', firstName: 'Bo', lastName: 'Elev', isActive: false } },
-      { id: 'link-4', student: null },
+    expect(children.map((child) => `${child.firstName} ${child.lastName}`)).toEqual([
+      'Bo Andersson',
+      'Bo Öberg',
+      'Åsa Elev',
+      'Örjan Elev',
     ]);
-    const children = await fetchChildren('g-1');
-    expect(calls[0]).toEqual(['from', ['GuardianStudents']]);
-    expect(calls).toContainEqual(['eq', ['guardianId', 'g-1']]);
-    expect(children.map((child) => child.firstName)).toEqual(['Bo', 'Åsa', 'Örjan']);
-    expect(children[0]).toEqual({ linkId: 'link-3', id: 'c-3', firstName: 'Bo', lastName: 'Elev', isActive: false });
-    expect(calls).toContainEqual([
-      'select',
-      ['id, student:Users!GuardianStudents_studentId_fkey(id, firstName, lastName, isActive)'],
-    ]);
+    // A ChildRow, as the screens draw it: the group id is not carried along.
+    expect(children[3]).toEqual({ linkId: 'link-1', id: 'c-2', firstName: 'Örjan', lastName: 'Elev', isActive: true });
+    expect(getSupabase).not.toHaveBeenCalled();
   });
 
-  it('throws what the database said', async () => {
-    stub(null, 'permission denied');
-    await expect(fetchChildren('g-1')).rejects.toThrow('permission denied');
+  it('answers no links with no children', async () => {
+    fetchMock.mockResolvedValue(answer(200, []));
+    await expect(fetchChildren()).resolves.toEqual([]);
+  });
+
+  it('throws the gateway’s refusal as it came, so the screen says a failure and not "no children"', async () => {
+    fetchMock.mockResolvedValue(answer(403, { message: 'Forbidden resource' }));
+    const error = await fetchChildren().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 403, message: 'Forbidden resource' });
   });
 });
 

@@ -11,8 +11,8 @@ import {
   View,
   SafeAreaView,
 } from 'react-native';
-import { getSupabase } from '../../services/supabase';
 import { fetchChildren } from '../../services/children';
+import { fetchAbsenceReports, removeAbsenceReport, reportAbsence } from '../../services/absenceReports';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import type { AbsenceReportRow, AbsenceReportType, ChildRow } from '../../types';
@@ -20,16 +20,6 @@ import type { AbsenceReportRow, AbsenceReportType, ChildRow } from '../../types'
 const TYPES: readonly AbsenceReportType[] = ['SICK', 'APPOINTMENT', 'OTHER'];
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-async function fetchReports(): Promise<AbsenceReportRow[]> {
-  const { data, error } = await getSupabase()
-    .from('AbsenceReports')
-    .select('id, studentId, date, startTime, endTime, type, note')
-    .order('date', { ascending: false })
-    .limit(30);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as AbsenceReportRow[];
 }
 
 /** Guardian home: children overview + one-tap absence reporting. */
@@ -50,8 +40,8 @@ export function GuardianHomeScreen(): React.JSX.Element {
     if (!authState.teacherId) return;
     try {
       const [kids, existing] = await Promise.all([
-        fetchChildren(authState.teacherId),
-        fetchReports(),
+        fetchChildren(),
+        fetchAbsenceReports(),
       ]);
       setChildren(kids);
       setReports(existing);
@@ -87,38 +77,25 @@ export function GuardianHomeScreen(): React.JSX.Element {
     }
     setIsSubmitting(true);
     try {
-      // Direct insert under RLS: guardians may only report for linked children.
-      const { data: profile } = await getSupabase()
-        .from('Users')
-        .select('schoolId')
-        .eq('id', selectedChild)
-        .single();
-      const { error: insertError } = await getSupabase().from('AbsenceReports').insert({
-        schoolId: (profile as { schoolId: string }).schoolId,
-        studentId: selectedChild,
-        reportedById: authState.teacherId,
-        date,
-        type,
-      });
-      if (insertError) throw new Error(insertError.message);
+      // The gateway takes the school from the child and the reporter from the
+      // session, and refuses a child who is not this guardian's.
+      await reportAbsence({ studentId: selectedChild, date, type });
       Alert.alert(t('guardian.alertTitle'), t('guardian.reported'));
       await load();
     } catch (submitError) {
-      // The database's own refusal stays in the log; the reader gets a sentence.
+      // The gateway's own refusal stays in the log; the reader gets a sentence.
       console.warn(`[Guardian] Absence report failed: ${submitError instanceof Error ? submitError.name : 'unknown'}`);
       Alert.alert(t('guardian.alertTitle'), t('guardian.reportFailed'));
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedChild, date, type, authState.teacherId, load, t]);
+  }, [selectedChild, date, type, load, t]);
 
   const removeReport = useCallback(
     async (id: string) => {
-      const { error: deleteError } = await getSupabase()
-        .from('AbsenceReports')
-        .delete()
-        .eq('id', id);
-      if (deleteError) {
+      try {
+        await removeAbsenceReport(id);
+      } catch {
         Alert.alert(t('guardian.alertTitle'), t('guardian.reportFailed'));
         return;
       }
@@ -239,7 +216,10 @@ export function GuardianHomeScreen(): React.JSX.Element {
                   ].join(' · ')}
                 </Text>
               </View>
-              {report.date.slice(0, 10) >= todayISO() ? (
+              {/* Only the reporter takes a report back, and only before its day
+                  has passed: the gateway refuses anyone else, so the other
+                  guardian is not offered a button that can only fail. */}
+              {report.date.slice(0, 10) >= todayISO() && report.reportedById === authState.teacherId ? (
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={t('guardian.deleteA11y')}

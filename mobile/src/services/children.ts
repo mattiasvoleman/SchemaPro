@@ -1,28 +1,33 @@
-import { getSupabase } from './supabase';
+import { apiRequest } from './api';
 import type { ChildRow } from '../types';
 import { compareSwedish } from '../utils/sorting';
 
+/** One linked pupil as GET /api/v1/family/children answers it. */
+interface ChildView {
+  readonly linkId: string;
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly isActive: boolean;
+  readonly studentGroupId: string | null;
+}
+
 /**
- * The signed-in guardian's children, through GuardianStudents under RLS: a
- * guardian reads their own links and nothing else, so another family's child
- * is not even a row to filter out.
+ * The signed-in guardian's children, as the gateway answers them
+ * (GET /api/v1/family/children) and records the read (Läslogg). The guardian
+ * is the bearer's: the gateway reads that guardian's own links and nothing
+ * else, so another family's child is not even a row to filter out, and there
+ * is no guardian id to send.
  *
  * One function for the three guardian screens (home, leave, schedule), which
  * each carried an identical copy. Ordered by first name so the chips keep
- * their places between screens and between refreshes.
+ * their places between screens and between refreshes; the gateway's own order
+ * is by link id, stable but meaningless to a reader.
  */
-export async function fetchChildren(guardianId: string): Promise<ChildRow[]> {
-  const { data, error } = await getSupabase()
-    .from('GuardianStudents')
-    .select('id, student:Users!GuardianStudents_studentId_fkey(id, firstName, lastName, isActive)')
-    .eq('guardianId', guardianId);
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as unknown as ReadonlyArray<{
-    id: string;
-    student: { id: string; firstName: string; lastName: string; isActive: boolean } | null;
-  }>;
+export async function fetchChildren(): Promise<ChildRow[]> {
+  const rows = await apiRequest<ChildView[]>('/api/v1/family/children');
   return rows
-    .flatMap((row) => (row.student ? [{ linkId: row.id, ...row.student }] : []))
+    .map(({ linkId, id, firstName, lastName, isActive }) => ({ linkId, id, firstName, lastName, isActive }))
     .sort((a, b) => compareSwedish(a.firstName, b.firstName) || compareSwedish(a.lastName, b.lastName));
 }
 

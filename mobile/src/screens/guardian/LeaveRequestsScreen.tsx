@@ -11,8 +11,8 @@ import {
   View,
   SafeAreaView,
 } from 'react-native';
-import { getSupabase } from '../../services/supabase';
 import { fetchChildren } from '../../services/children';
+import { fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import type { ChildRow, LeaveRequestRow, LeaveRequestStatus } from '../../types';
@@ -25,16 +25,6 @@ const STATUS_COLORS: Record<LeaveRequestStatus, string> = {
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-async function fetchLeaves(): Promise<LeaveRequestRow[]> {
-  const { data, error } = await getSupabase()
-    .from('LeaveRequests')
-    .select('id, studentId, startDate, endDate, reason, status, decisionNote, createdAt')
-    .order('createdAt', { ascending: false })
-    .limit(50);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as LeaveRequestRow[];
 }
 
 /** Leave requests (ledighetsansökan): submit + follow decisions. */
@@ -54,8 +44,8 @@ export function LeaveRequestsScreen(): React.JSX.Element {
   const load = useCallback(async () => {
     if (!authState.teacherId) return;
     const [kids, rows] = await Promise.all([
-      fetchChildren(authState.teacherId),
-      fetchLeaves(),
+      fetchChildren(),
+      fetchLeaveRequests(),
     ]);
     setChildren(kids);
     setLeaves(rows);
@@ -89,22 +79,10 @@ export function LeaveRequestsScreen(): React.JSX.Element {
     }
     setIsSubmitting(true);
     try {
-      const { data: profile } = await getSupabase()
-        .from('Users')
-        .select('schoolId')
-        .eq('id', selectedChild)
-        .single();
-      // No status or decision column: leave_requests_guardian_insert admits
-      // only an undecided request (20261015140000). The school decides it.
-      const { error } = await getSupabase().from('LeaveRequests').insert({
-        schoolId: (profile as { schoolId: string }).schoolId,
-        studentId: selectedChild,
-        requestedById: authState.teacherId,
-        startDate,
-        endDate,
-        reason: reason.trim(),
-      });
-      if (error) throw new Error(error.message);
+      // No status: a new request is undecided, and the school decides it. The
+      // gateway takes the school from the child and the requester from the
+      // session.
+      await requestLeave({ studentId: selectedChild, startDate, endDate, reason });
       setReason('');
       Alert.alert(t('leave.alertTitle'), t('leave.submitted'));
       await load();
@@ -114,7 +92,7 @@ export function LeaveRequestsScreen(): React.JSX.Element {
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedChild, startDate, endDate, reason, authState.teacherId, load, t]);
+  }, [selectedChild, startDate, endDate, reason, load, t]);
 
   if (isLoading) {
     return (

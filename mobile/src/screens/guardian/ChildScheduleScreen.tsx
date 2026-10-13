@@ -60,7 +60,7 @@ export function ChildScheduleScreen(): React.JSX.Element {
   const loadChildren = useCallback(async () => {
     if (!authState.teacherId) return;
     try {
-      setChildren(scheduleChildren(await fetchChildren(authState.teacherId)));
+      setChildren(scheduleChildren(await fetchChildren()));
       setChildrenFailed(false);
     } catch {
       setChildrenFailed(true);
