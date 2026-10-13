@@ -294,6 +294,7 @@ describe('the rollover’s timplans step', () => {
       } as RolloverWrites,
       targetYearId: 'new-year',
       groupIdByKey: new Map(),
+      blockIdByKey: new Map(),
       counts: { groups: 0, members: 0, requirements: 0, breaks: 0, classRules: 0, timplans: 0 },
     };
     return { tx, context };

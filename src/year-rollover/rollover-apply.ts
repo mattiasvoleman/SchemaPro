@@ -28,6 +28,8 @@ export interface StepContext {
   writes: RolloverWrites;
   targetYearId: string | null;
   groupIdByKey: Map<string, string>;
+  /** The block each key of `writes.blocks` was created as. */
+  blockIdByKey: Map<string, string>;
   counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number; timplans: number };
   /**
    * What the two staffing steps wrote, beside `counts` rather than in it: the
@@ -44,6 +46,12 @@ export interface StaffingCounts {
 }
 
 const day = (value: string | null): Date | null => (value === null ? null : parseDateString(value));
+
+const blockOf = (context: StepContext, key: string): string => {
+  const id = context.blockIdByKey.get(key);
+  if (!id) throw new Error(`Rollover: no block was created for ${key}.`);
+  return id;
+};
 
 const groupOf = (context: StepContext, key: string): string => {
   const id = context.groupIdByKey.get(key);
@@ -103,6 +111,28 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
     context.counts.members = count;
   },
 
+  /**
+   * The blocks first, so the rows can name them. Matched back by name, which
+   * the plan made unique in the new year, as the groups are.
+   */
+  async blocks(context) {
+    if (context.writes.blocks.length === 0) return;
+    const created = await context.tx.teachingBlock.createManyAndReturn({
+      data: context.writes.blocks.map((block) => ({
+        schoolId: context.schoolId,
+        academicYearId: context.targetYearId as string,
+        name: block.name,
+      })),
+      select: { id: true, name: true },
+    });
+    const idByName = new Map(created.map((block) => [block.name, block.id]));
+    for (const block of context.writes.blocks) {
+      const id = idByName.get(block.name);
+      if (!id) throw new Error('Rollover: a created block did not come back.');
+      context.blockIdByKey.set(block.key, id);
+    }
+  },
+
   async requirements(context) {
     if (context.writes.requirements.length === 0) return;
     const { count } = await context.tx.teachingRequirement.createMany({
@@ -131,6 +161,9 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
         recurrence: row.recurrence,
         startDate: day(row.startDate),
         endDate: day(row.endDate),
+        // Only a row in a block names one. One INSERT for every row, so the
+        // block trigger judges each block as it stands once all are in.
+        ...(row.blockKey ? { blockId: blockOf(context, row.blockKey) } : {}),
       })),
     });
     context.counts.requirements = count;
@@ -316,6 +349,7 @@ export async function applyRollover(
     writes,
     targetYearId: null,
     groupIdByKey: new Map(),
+    blockIdByKey: new Map(),
     counts: { groups: 0, members: 0, requirements: 0, breaks: 0, classRules: 0, timplans: 0 },
     staffingCounts: { employments: 0, duties: 0, dutySlots: 0 },
   };

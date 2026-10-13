@@ -63,6 +63,21 @@ export type ColumnRule =
   | 'TARGET_YEAR'
   /** The source group's successor (or intake twin) in the new year. */
   | 'MAP_GROUP'
+  /**
+   * The new block this run carried the source row's block into: the block of
+   * the rows carried with it to the successor groups, or of those carried to
+   * the intake twins. Written only for a row in a block, so a school that has
+   * none writes what it always wrote. See rollover-plan.ts.
+   */
+  | 'MAP_BLOCK'
+  /**
+   * A parallel block's name, promoted as its rows' groups are: promoteName()
+   * at the årskurs every member's group carries ("Språkval åk 7" → "Språkval
+   * åk 8"); the source's name for the intake twins' copy, or when the members
+   * are in different årskurser; and " (2)", " (3)" … after a name another
+   * carried block already took.
+   */
+  | 'PROMOTE_BLOCK_NAME'
   /** The source row's own id: the predecessor link. */
   | 'SOURCE_ID'
   /** The source grade + 1 (null stays null; CARRY and INTAKE keep it). */
@@ -134,6 +149,7 @@ export type RolloverStepName =
   | 'year'
   | 'groups'
   | 'members'
+  | 'blocks'
   | 'requirements'
   | 'breaks'
   | 'classRules'
@@ -145,6 +161,8 @@ export const ROLLOVER_STEP_ORDER: readonly RolloverStepName[] = [
   'year',
   'groups',
   'members',
+  // Before the rows, which name the block they are carried into.
+  'blocks',
   'requirements',
   'breaks',
   'classRules',
@@ -262,11 +280,27 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       ownDistribution: 'COPY_UNLESS_DEFAULT',
       maxLessonsPerDay: 'COPY_UNLESS_DEFAULT',
       minDaysBetween: 'COPY_UNLESS_DEFAULT',
+      // Parallella block: the row joins its block's copy in the new year.
+      blockId: 'MAP_BLOCK',
       teacherLoadPercent: 'COPY',
       coTeacherLoadPercent: 'COPY',
       recurrence: 'COPY',
       startDate: 'SHIFT_DATE',
       endDate: 'SHIFT_DATE',
+      ...timestamps,
+    },
+  },
+
+  TeachingBlock: {
+    kind: 'COPIED',
+    step: 'blocks',
+    reason:
+      'A parallel block follows its timplansposter: Språkval åk 7 over Ty7, Fr7 and Sp7 becomes Språkval åk 8 over the rows carried to Ty8, Fr8 and Sp8.',
+    columns: {
+      id: 'NEW_ID',
+      schoolId: 'COPY',
+      academicYearId: 'TARGET_YEAR',
+      name: 'PROMOTE_BLOCK_NAME',
       ...timestamps,
     },
   },

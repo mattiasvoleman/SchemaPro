@@ -277,11 +277,14 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
     ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
+    // fa4a3d6's tables, and the parallel blocks (20261024090000), whose rows
+    // fa4a3d6 carried and which a school without blocks never writes.
     expect(carriedModels().map(({ model }) => model)).toEqual([
       'AcademicYear',
       'StudentGroup',
       'StudentGroupMember',
       'TeachingRequirement',
+      'TeachingBlock',
       'SchoolBreak',
       'AvailabilityConstraint',
       'AcademicYearTimplan',
