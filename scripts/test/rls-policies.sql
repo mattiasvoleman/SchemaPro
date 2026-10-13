@@ -19883,4 +19883,660 @@ BEGIN
   RAISE NOTICE 'matrix: % cells, 6 administrators × % tables × read, insert, update, delete', cells,
     (SELECT count(*) FROM area_gates);
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 106: armarna säger samma sak som matrisen (Roller i skolan).
+--
+-- The catalogue half of section 116, against the same generated rows:
+--   a. the tables are the same set: every table with an arm that names
+--      SCHOOL_ADMIN or asks the area or the decisions is in the list, and
+--      every listed table has one;
+--   b. each command's arms ask exactly the command's gates, by name;
+--   c. an update arm's USING never asks the area, so a row lock for a read
+--      keeps working for every administrator (20261110100000);
+--   d. no write arm admits an administrator without asking, which is the
+--      migration's own closing guard, here for a branch that adds an arm
+--      after it.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(t, ', ' ORDER BY t) INTO bad FROM (
+    (SELECT DISTINCT tablename AS t FROM pg_policies
+      WHERE schemaname = 'public'
+        AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'SCHOOL_ADMIN|current_user_may|current_user_decides'
+     EXCEPT SELECT tbl FROM area_gates)
+    UNION ALL
+    (SELECT tbl FROM area_gates
+     EXCEPT SELECT DISTINCT tablename FROM pg_policies
+      WHERE schemaname = 'public'
+        AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'SCHOOL_ADMIN|current_user_may|current_user_decides')
+  ) x;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'arms: the tables with an administrator''s arm and src/auth/admin-areas.ts differ: %', bad;
+  END IF;
+
+  WITH asked AS (
+    SELECT p.tablename AS tbl, c.cmd,
+           coalesce(array_agg(DISTINCT g.gate ORDER BY g.gate) FILTER (WHERE g.gate IS NOT NULL), '{}') AS gates
+      FROM pg_policies p
+     CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) c(cmd)
+      LEFT JOIN LATERAL (
+        SELECT m[1] AS gate FROM regexp_matches(
+                 CASE WHEN c.cmd = 'DELETE' THEN coalesce(p.qual, '') ELSE coalesce(p.with_check, p.qual, '') END,
+                 'current_user_may\(''(\w+)''', 'g') m
+        UNION ALL
+        SELECT 'DECIDES' WHERE (CASE WHEN c.cmd = 'DELETE' THEN coalesce(p.qual, '') ELSE coalesce(p.with_check, p.qual, '') END)
+                               LIKE '%current_user_decides()%'
+      ) g ON true
+     WHERE p.schemaname = 'public' AND p.cmd IN (c.cmd, 'ALL')
+       AND (coalesce(p.qual, '') || coalesce(p.with_check, '')) LIKE '%SCHOOL_ADMIN%'
+     GROUP BY p.tablename, c.cmd
+  ), expected AS (
+    SELECT tbl, 'INSERT' AS cmd, (SELECT coalesce(array_agg(x ORDER BY x), '{}') FROM unnest(ins) x) AS gates FROM area_gates
+    UNION ALL SELECT tbl, 'UPDATE', (SELECT coalesce(array_agg(x ORDER BY x), '{}') FROM unnest(upd) x) FROM area_gates
+    UNION ALL SELECT tbl, 'DELETE', (SELECT coalesce(array_agg(x ORDER BY x), '{}') FROM unnest(del) x) FROM area_gates
+  )
+  SELECT string_agg(format('%s %s asks %s, the matrix says %s', e.tbl, e.cmd, coalesce(a.gates, '{}'), e.gates), '; ')
+    INTO bad
+    FROM expected e LEFT JOIN asked a ON a.tbl = e.tbl AND a.cmd = e.cmd
+   WHERE coalesce(a.gates, '{}') IS DISTINCT FROM e.gates
+     -- A command neither API role is granted (TeacherDutySlots' UPDATE: a
+     -- link is deleted and made again) is nobody's, whatever its arm says.
+     AND NOT (e.gates = '{}'
+              AND NOT has_table_privilege('app_authenticated', format('public.%I', e.tbl), e.cmd)
+              AND NOT has_table_privilege('authenticated', format('public.%I', e.tbl), e.cmd));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'arms: %', bad;
+  END IF;
+
+  -- A read arm asks the area or the decisions exactly where the table names
+  -- its readers (the läslogg), and nowhere else: reading is every
+  -- administrator's.
+  SELECT string_agg(format('%s.%s', p.tablename, p.policyname), ', ') INTO bad
+    FROM pg_policies p JOIN area_gates g ON g.tbl = p.tablename
+   WHERE p.schemaname = 'public' AND p.cmd = 'SELECT'
+     AND coalesce(p.qual, '') LIKE '%SCHOOL_ADMIN%'
+     AND (coalesce(p.qual, '') ~ 'current_user_may|current_user_decides') IS DISTINCT FROM (cardinality(g.rd) > 0);
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'arms: these read arms ask, or fail to ask, what the matrix says about the table''s readers: %', bad;
+  END IF;
+
+  SELECT string_agg(format('%s.%s', tablename, policyname), ', ') INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND cmd = 'UPDATE'
+     AND coalesce(qual, '') LIKE '%SCHOOL_ADMIN%'
+     AND coalesce(qual, '') ~ 'current_user_may|current_user_decides';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'arms: an update arm asks the area in USING, which hands a row lock zero rows: %', bad;
+  END IF;
+
+  SELECT string_agg(format('%s.%s', tablename, policyname), ', ') INTO bad
+    FROM pg_policies
+   WHERE schemaname = 'public' AND cmd <> 'SELECT'
+     AND (coalesce(qual, '') || coalesce(with_check, '')) LIKE '%SCHOOL_ADMIN%'
+     AND NOT CASE cmd
+           WHEN 'DELETE' THEN coalesce(qual, '') ~ 'current_user_(may|decides)\('
+           WHEN 'ALL' THEN coalesce(qual, '') ~ 'current_user_(may|decides)\('
+                           AND coalesce(with_check, qual, '') ~ 'current_user_(may|decides)\('
+           ELSE coalesce(with_check, '') ~ 'current_user_(may|decides)\('
+         END;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'arms: these admit an administrator''s write without asking: %', bad;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 107: app.current_user_may och app.current_user_decides
+-- (20261110090000).
+--
+-- Every principal of the matrix school, a teacher, a pupil, a guardian and
+-- the primary school's deactivated administrator, against every area: an
+-- active administrator reads every area and writes those of their profile;
+-- nobody else reads or writes any; a NULL area is nothing, a NULL for write
+-- is a write. Only FULL and REKTOR decide. The two functions run as their
+-- owner with a fixed search_path, as every identity helper does.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  rec record;
+  a "AdminArea";
+  admin boolean;
+  writes "AdminArea"[];
+  wrong text[] := '{}';
+BEGIN
+  FOR rec IN SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000000105', 'FULL'),
+      ('00000000-0000-4000-8000-000000000106', 'REKTOR'),
+      ('00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE'),
+      ('00000000-0000-4000-8000-000000000108', 'EXPEDITION'),
+      ('00000000-0000-4000-8000-000000000110', 'EXPEDITION'),
+      ('00000000-0000-4000-8000-000000000111', 'TEACHER'),
+      ('00000000-0000-4000-8000-000000000112', 'STUDENT'),
+      ('00000000-0000-4000-8000-000000000113', 'GUARDIAN'),
+      ('00000000-0000-4000-8000-000000000003', 'DEACTIVATED')) v(sub, who)
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', rec.sub)::text, true);
+    admin := rec.who IN ('FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION');
+    writes := CASE WHEN admin THEN app.admin_profile_writes(rec.who::"AdminProfile") ELSE '{}' END;
+    FOREACH a IN ARRAY enum_range(NULL::"AdminArea") LOOP
+      IF app.current_user_may(a, false) IS DISTINCT FROM admin THEN
+        wrong := wrong || format('%s reads %s: %s', rec.who, a, app.current_user_may(a, false));
+      END IF;
+      IF app.current_user_may(a, true) IS DISTINCT FROM (a = ANY (writes)) THEN
+        wrong := wrong || format('%s writes %s: %s', rec.who, a, app.current_user_may(a, true));
+      END IF;
+      IF app.current_user_may(a, NULL) IS DISTINCT FROM app.current_user_may(a, true) THEN
+        wrong := wrong || format('%s: a NULL write is not a write on %s', rec.who, a);
+      END IF;
+    END LOOP;
+    IF app.current_user_may(NULL, false) OR app.current_user_may(NULL, true) THEN
+      wrong := wrong || format('%s may do something with no area at all', rec.who);
+    END IF;
+    IF app.current_user_decides() IS DISTINCT FROM (rec.who IN ('FULL', 'REKTOR')) THEN
+      wrong := wrong || format('%s decides: %s', rec.who, app.current_user_decides());
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'functions: %', array_to_string(wrong, '; ');
+  END IF;
+
+  IF (SELECT count(*) FROM pg_proc p
+       WHERE p.pronamespace = 'app'::regnamespace
+         AND p.proname IN ('current_user_may', 'current_user_decides')
+         AND p.prosecdef
+         AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%')) <> 2 THEN
+    RAISE EXCEPTION 'functions: the area functions are not SECURITY DEFINER with a fixed search_path';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 108: rektor beslutar vem som är administratör, och varje ändring
+-- loggas (Users_administrators_are_decided, Users_role_changes_are_logged).
+--
+-- The expedition writes the roster but makes nobody an administrator,
+-- changes no role, and touches no administrator's row. Rektor does all of
+-- it; each change of role, profile or HR-läs leaves one row with rektor as
+-- the actor, and a name change leaves none. The profile follows the role:
+-- an administrator written without one is FULL, HR-läs goes with a
+-- deciding profile, and both go when somebody stops being an
+-- administrator. Nobody writes the log but the trigger; every
+-- administrator reads it, a teacher does not.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  m uuid;
+  teacher uuid;
+  planner uuid;
+  rektor uuid;
+  newcomer uuid;
+  n bigint;
+  row_ record;
+BEGIN
+  -- The expedition.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+  m := app.current_school_id();
+  IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'decisions: the expedition is not in rls-roller-school; fixtures did not run';
+  END IF;
+  teacher := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
+  planner := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000107');
+  rektor := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000106');
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+  VALUES (m, 'roller-ny-larare@example.invalid', 'Ny', 'Lärare', 'TEACHER', gen_random_uuid(), now());
+  UPDATE "Users" SET phone = '070-108' WHERE id = teacher;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'decisions: the expedition could not write a teacher''s phone'; END IF;
+
+  BEGIN
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+    VALUES (m, 'roller-ny-admin@example.invalid', 'Ny', 'Admin', 'SCHOOL_ADMIN', 'EXPEDITION', gen_random_uuid(), now());
+    RAISE EXCEPTION 'decisions: the expedition made an administrator';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET role = 'SCHOOL_ADMIN' WHERE id = teacher;
+    RAISE EXCEPTION 'decisions: the expedition made a teacher an administrator';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET role = 'STUDENT' WHERE id = teacher;
+    RAISE EXCEPTION 'decisions: the expedition changed a teacher''s role';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "firstName" = 'Bytt' WHERE id = planner;
+    RAISE EXCEPTION 'decisions: the expedition renamed an administrator';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "hrRead" = true WHERE id = planner;
+    RAISE EXCEPTION 'decisions: the expedition gave HR-läs';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "Users" WHERE id = planner;
+    RAISE EXCEPTION 'decisions: the expedition removed an administrator';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  IF (SELECT "firstName" FROM "Users" WHERE id = planner) IS DISTINCT FROM 'Roller' THEN
+    RAISE EXCEPTION 'decisions: a refused write changed the planner''s row';
+  END IF;
+
+  -- Rektor.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+  n := (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = teacher);
+  UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'SCHEMALAGGARE', "hrRead" = true WHERE id = teacher;
+  SELECT * INTO row_ FROM "UserRoleChanges" WHERE "userId" = teacher ORDER BY "createdAt" DESC LIMIT 1;
+  IF (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = teacher) <> n + 1
+     OR (row_."fromRole", row_."toRole", row_."fromProfile", row_."toProfile", row_."fromHrRead", row_."toHrRead", row_."actorId")
+        IS DISTINCT FROM ('TEACHER'::"UserRole", 'SCHOOL_ADMIN'::"UserRole", NULL::"AdminProfile",
+                          'SCHEMALAGGARE'::"AdminProfile", false, true, rektor) THEN
+    RAISE EXCEPTION 'decisions: rektor''s promotion was logged as %', row_;
+  END IF;
+  UPDATE "Users" SET "firstName" = 'Omdöpt' WHERE id = teacher;
+  IF (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = teacher) <> n + 1 THEN
+    RAISE EXCEPTION 'decisions: a name change was logged as a role change';
+  END IF;
+  UPDATE "Users" SET "adminProfile" = 'REKTOR' WHERE id = teacher;
+  IF (SELECT "hrRead" FROM "Users" WHERE id = teacher) THEN
+    RAISE EXCEPTION 'decisions: a rektor kept HR-läs, which is the narrow profiles''';
+  END IF;
+  UPDATE "Users" SET role = 'TEACHER' WHERE id = teacher;
+  IF (SELECT ("adminProfile", "hrRead") FROM "Users" WHERE id = teacher) IS DISTINCT FROM (NULL::"AdminProfile", false) THEN
+    RAISE EXCEPTION 'decisions: a teacher kept an administrator''s profile';
+  END IF;
+  IF (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = teacher) <> n + 3 THEN
+    RAISE EXCEPTION 'decisions: % rows logged for three changes', (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = teacher) - n;
+  END IF;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+  VALUES (m, 'roller-rektors-nya@example.invalid', 'Rektors', 'Nya', 'SCHOOL_ADMIN', gen_random_uuid(), now())
+  RETURNING id INTO newcomer;
+  IF (SELECT "adminProfile" FROM "Users" WHERE id = newcomer) IS DISTINCT FROM 'FULL' THEN
+    RAISE EXCEPTION 'decisions: an administrator written without a profile is not FULL';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "UserRoleChanges" WHERE "userId" = newcomer AND "fromRole" IS NULL AND "toProfile" = 'FULL' AND "actorId" = rektor) THEN
+    RAISE EXCEPTION 'decisions: a new administrator was not logged';
+  END IF;
+
+  -- The log is the trigger's.
+  BEGIN
+    INSERT INTO "UserRoleChanges" ("schoolId", "userId", "toRole", "toHrRead") VALUES (m, teacher, 'SCHOOL_ADMIN', false);
+    RAISE EXCEPTION 'decisions: the API wrote the log';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "UserRoleChanges" WHERE "userId" = teacher;
+    RAISE EXCEPTION 'decisions: the API erased the log';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+  IF (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = teacher) <> n + 3 THEN
+    RAISE EXCEPTION 'decisions: the expedition does not read the log rektor wrote';
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+  IF (SELECT count(*) FROM "UserRoleChanges") <> 0 THEN
+    RAISE EXCEPTION 'decisions: a teacher reads the role log';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 109: utan personal flyttar en administratör bara en elev mellan
+-- klasser (Users_class_moves_are_narrow, 20261110100000).
+--
+-- The planner writes planering, not the roster: Aktivera moves pupils into
+-- next year's classes, and that update is the planner's, but not a pupil's
+-- name, not a teacher's class, not a new person and not a removal. The
+-- expedition, who writes the roster, renames the pupil.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  m uuid;
+  pupil uuid;
+  teacher uuid;
+  next_class uuid;
+  n bigint;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  m := app.current_school_id();
+  pupil := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112');
+  teacher := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  SELECT m, "academicYearId", 'Roller 7B', 7, now() FROM "StudentGroups" WHERE name = 'Roller 7A' AND "schoolId" = m
+  RETURNING id INTO next_class;
+
+  UPDATE "Users" SET "studentGroupId" = next_class, "updatedAt" = now() WHERE id = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'class move: the planner could not move a pupil (% rows)', n; END IF;
+
+  BEGIN
+    UPDATE "Users" SET "firstName" = 'Bytt' WHERE id = pupil;
+    RAISE EXCEPTION 'class move: the planner renamed a pupil';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET phone = '070-107' WHERE id = teacher;
+    RAISE EXCEPTION 'class move: the planner wrote a teacher''s row';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+    VALUES (m, 'roller-planerarens@example.invalid', 'Ny', 'Elev', 'STUDENT', gen_random_uuid(), now());
+    RAISE EXCEPTION 'class move: the planner added a person';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "Users" WHERE id = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'class move: the planner removed a pupil'; END IF;
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+  UPDATE "Users" SET "firstName" = 'Expeditionens' WHERE id = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'class move: the expedition could not rename a pupil'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 110: varje profil kan låsa raderna gatewayen låser
+-- (20261110100000).
+--
+-- Postgres applies an UPDATE arm's USING to SELECT ... FOR UPDATE and FOR
+-- SHARE, and the gateway locks a teacher's Users row (an uppdrag, a
+-- behörighet), the posts (the timplansposter), the läsår (a lov) and the
+-- plans (a subject's removal) in work that is not those tables' area. Every
+-- profile must get the row; zero would be a silent wrong answer mid-term.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  sub text;
+  n bigint;
+  wrong text[] := '{}';
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106',
+                             '00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000108']
+  LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111' FOR NO KEY UPDATE) x;
+    IF n <> 1 THEN wrong := wrong || format('%s locks %s Users rows', sub, n); END IF;
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "TeacherEmployments" WHERE "schoolId" = app.current_school_id() FOR NO KEY UPDATE) x;
+    IF n <> 1 THEN wrong := wrong || format('%s locks %s posts', sub, n); END IF;
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() FOR SHARE) x;
+    IF n <> 1 THEN wrong := wrong || format('%s locks %s läsår', sub, n); END IF;
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "LocalTimplans" WHERE "schoolId" = app.current_school_id() FOR SHARE) x;
+    IF n <> 1 THEN wrong := wrong || format('%s locks %s plans', sub, n); END IF;
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "TeachingRequirements" WHERE "schoolId" = app.current_school_id() FOR NO KEY UPDATE) x;
+    IF n <> 1 THEN wrong := wrong || format('%s locks %s requirements', sub, n); END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION 'locks: %', array_to_string(wrong, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 111: en annans tjänst % nås bara genom gatewayen (20261110100000).
+--
+-- Through PostgREST's role (authenticated) every administrator, rektor and
+-- full and HR-läs included, reads no colleague's post or its log: the
+-- administrators' arms are the API role's alone since 20261028090000, and
+-- the split keeps that. The teacher reads their own (section 129's read).
+-- Through the API's role (app_authenticated) a planner without HR-läs reads
+-- the row, whose percentages the gateway leaves out, and the API keeps its
+-- privileges to write the posts.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  rel text;
+  p text;
+  bad text[] := '{}';
+BEGIN
+  FOREACH rel IN ARRAY ARRAY['public."TeacherEmployments"', 'public."TeacherEmploymentLogs"'] LOOP
+    IF NOT has_table_privilege('app_authenticated', rel, 'SELECT') THEN bad := bad || format('the API cannot read %s', rel); END IF;
+  END LOOP;
+  FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
+    IF NOT has_table_privilege('app_authenticated', 'public."TeacherEmployments"', p) THEN
+      bad := bad || format('the API cannot %s a post', p);
+    END IF;
+  END LOOP;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION 'hr: %', array_to_string(bad, '; ');
+  END IF;
+END $$;
+
+BEGIN;
+DO $$
+DECLARE
+  who text;
+  posts bigint;
+  logs bigint;
+  bad text[] := '{}';
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106',
+                             '00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000108',
+                             '00000000-0000-4000-8000-000000000109', '00000000-0000-4000-8000-000000000110',
+                             '00000000-0000-4000-8000-000000000111'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    IF (SELECT slug FROM "Schools" WHERE id = app.current_school_id()) IS DISTINCT FROM 'rls-roller-school' THEN
+      RAISE EXCEPTION 'hr: % is not in rls-roller-school; fixtures did not run', who;
+    END IF;
+    SET LOCAL ROLE authenticated;
+    SELECT count(*) INTO posts FROM "TeacherEmployments" WHERE "userId" IS DISTINCT FROM app.current_user_id();
+    SELECT count(*) INTO logs FROM "TeacherEmploymentLogs" WHERE "userId" IS DISTINCT FROM app.current_user_id();
+    IF posts + logs > 0 THEN
+      bad := bad || format('%s reads %s posts and %s log rows of others through PostgREST', who, posts, logs);
+    END IF;
+    IF who LIKE '%111' THEN
+      SELECT count(*) INTO posts FROM "TeacherEmployments";
+      SELECT count(*) INTO logs FROM "TeacherEmploymentLogs";
+      IF posts = 0 OR logs = 0 THEN
+        bad := bad || format('the teacher reads %s of their own posts and %s of their log rows through PostgREST', posts, logs);
+      END IF;
+    END IF;
+    SET LOCAL ROLE app_authenticated;
+    IF who LIKE '%107' THEN
+      SELECT count(*) INTO posts FROM "TeacherEmployments";
+      IF posts = 0 THEN bad := bad || 'the planner reads no post through the API'; END IF;
+    END IF;
+  END LOOP;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION 'hr: %', array_to_string(bad, '; ');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 112: integrationernas hemligheter och SS12000-id är
+-- integrationer (20261110100000).
+--
+-- The three SECURITY DEFINER functions that write the integrations' secrets
+-- run past every arm, so they ask the area themselves; a planner is refused
+-- (SS403), a full administrator passes the question. Reading whether a
+-- secret is set stays every administrator's. A row's SS12000 id, which only
+-- an administrator's sync writes, is integrationer's too.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  src uuid;
+  ikey uuid;
+  grp uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  src := (SELECT id FROM "Ss12000Sources" WHERE "schoolId" = app.current_school_id() LIMIT 1);
+  ikey := (SELECT id FROM "IntegrationApiKeys" WHERE "schoolId" = app.current_school_id() LIMIT 1);
+  grp := (SELECT id FROM "StudentGroups" WHERE "schoolId" = app.current_school_id() AND name = 'Roller 7A');
+  IF src IS NULL OR ikey IS NULL OR grp IS NULL THEN
+    RAISE EXCEPTION 'secrets: the matrix school has no source, key or class; fixtures did not run';
+  END IF;
+
+  BEGIN
+    PERFORM app.ss12000_set_source_secret(src, 'BEARER_TOKEN', '\x00'::bytea, '\x000000000000000000000000'::bytea,
+                                          '\x00000000000000000000000000000000'::bytea, 'a1b2c3d4');
+    RAISE EXCEPTION 'secrets: the planner set a source secret';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.ss12000_clear_source_secrets(src, ARRAY['BEARER_TOKEN']::"Ss12000SecretKind"[]);
+    RAISE EXCEPTION 'secrets: the planner cleared a source secret';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.integration_key_set_webhook_secret(ikey, '\x00'::bytea, '\x000000000000000000000000'::bytea,
+                                                   '\x00000000000000000000000000000000'::bytea, 'a1b2c3d4');
+    RAISE EXCEPTION 'secrets: the planner set a signing secret';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  -- Reading presence is every administrator's.
+  PERFORM app.ss12000_source_secret_presence(src);
+  BEGIN
+    UPDATE "StudentGroups" SET "ss12000Id" = gen_random_uuid() WHERE id = grp;
+    RAISE EXCEPTION 'secrets: the planner linked a class to the source';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+
+  -- A full administrator: the same calls, with the same (valid) bytes, pass.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+  PERFORM app.ss12000_set_source_secret(src, 'BEARER_TOKEN', '\x00'::bytea, '\x000000000000000000000000'::bytea,
+                                        '\x00000000000000000000000000000000'::bytea, 'a1b2c3d4');
+  IF app.ss12000_clear_source_secrets(src, ARRAY['BEARER_TOKEN']::"Ss12000SecretKind"[]) <> 1 THEN
+    RAISE EXCEPTION 'secrets: a full administrator''s secret was not there to clear';
+  END IF;
+  PERFORM app.integration_key_set_webhook_secret(ikey, '\x00'::bytea, '\x000000000000000000000000'::bytea,
+                                                 '\x00000000000000000000000000000000'::bytea, 'a1b2c3d4');
+  UPDATE "StudentGroups" SET "ss12000Id" = gen_random_uuid() WHERE id = grp;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 113: att dela tjänst % med integrationerna är ett beslut
+-- (StaffingPolicies_sharing_is_decided, 20261110100000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  UPDATE "StaffingPolicies" SET "fullTimeTeachingMinutesPerWeek" = 1000 WHERE "schoolId" = app.current_school_id();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sharing: the planner could not set the riktmärke'; END IF;
+  BEGIN
+    UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = true WHERE "schoolId" = app.current_school_id();
+    RAISE EXCEPTION 'sharing: the planner shared tjänst %% with the integrations';
+  EXCEPTION WHEN SQLSTATE 'AR403' THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+  UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = true WHERE "schoolId" = app.current_school_id();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sharing: rektor could not share'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 114: de nya objekten börjar som nya objekt ska (20261110090000,
+-- 20261110100000).
+--
+-- UserRoleChanges: row security on, the API reads and writes nothing,
+-- PostgREST's role and anon hold nothing, service_role reads (20261016130000),
+-- MAINTAIN for nobody on Postgres 17. The trigger functions are no API
+-- role's to call; the two policy functions are every role's that evaluates a
+-- policy; the writers' school function is the API's alone. Users carries its
+-- two CHECKs, validated.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  rel regclass := 'public."UserRoleChanges"';
+  maintain text[] := CASE WHEN current_setting('server_version_num')::int >= 170000 THEN ARRAY['MAINTAIN'] ELSE '{}' END;
+  r text;
+  p text;
+  fn text;
+  bad text[] := '{}';
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = rel) THEN
+    bad := bad || 'UserRoleChanges has row security off'::text;
+  END IF;
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] || maintain LOOP
+      IF has_table_privilege(r, rel, p) IS DISTINCT FROM (p = 'SELECT' AND r IN ('app_authenticated', 'service_role')) THEN
+        bad := bad || format('%s %s %s', r, p, has_table_privilege(r, rel, p));
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  FOREACH fn IN ARRAY ARRAY['app.users_profile_follows_the_role()', 'app.users_administrators_are_decided()',
+                            'app.users_role_changes_are_logged()', 'app.users_class_moves_are_narrow()',
+                            'app.staffing_policies_sharing_is_decided()'] LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn, 'EXECUTE') THEN bad := bad || format('%s may call %s', r, fn); END IF;
+    END LOOP;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.current_user_may("AdminArea", boolean)', 'app.current_user_decides()'] LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+      IF NOT has_function_privilege(r, fn, 'EXECUTE') THEN bad := bad || format('%s may not call %s', r, fn); END IF;
+    END LOOP;
+  END LOOP;
+  IF NOT has_function_privilege('app_authenticated', 'app.ss12000_admin_writer_school()', 'EXECUTE') THEN
+    bad := bad || 'the API may not call app.ss12000_admin_writer_school()'::text;
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    IF has_function_privilege(r, 'app.ss12000_admin_writer_school()', 'EXECUTE') THEN
+      bad := bad || format('%s may call app.ss12000_admin_writer_school()', r);
+    END IF;
+  END LOOP;
+
+  IF (SELECT count(*) FROM pg_constraint
+       WHERE conrelid = 'public."Users"'::regclass AND contype = 'c' AND convalidated
+         AND conname IN ('Users_a_profile_is_an_administrators', 'Users_hr_read_is_a_narrow_administrators')) <> 2 THEN
+    bad := bad || 'Users lacks a validated profile CHECK'::text;
+  END IF;
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION 'new objects: %', array_to_string(bad, '; ');
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 115: en avaktiverad administratör skriver inget område och
+-- beslutar inget (20261110090000).
+--
+-- The primary school's deactivated administrator, a FULL one: the identity
+-- helpers already give nobody, and the area functions answer false for
+-- every area and decide nothing, so no arm and no trigger lets them through.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'inactive_auth_id')::text, true);
+DO $$
+DECLARE
+  a "AdminArea";
+BEGIN
+  FOREACH a IN ARRAY enum_range(NULL::"AdminArea") LOOP
+    IF app.current_user_may(a, false) OR app.current_user_may(a, true) THEN
+      RAISE EXCEPTION 'deactivated: may read or write %', a;
+    END IF;
+  END LOOP;
+  IF app.current_user_decides() THEN
+    RAISE EXCEPTION 'deactivated: still decides';
+  END IF;
+END $$;
 ROLLBACK;

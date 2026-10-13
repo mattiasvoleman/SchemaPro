@@ -86,7 +86,7 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
   const gone = await person('STUDENT', 'gone', true, true);
   const stuck = await person('STUDENT', 'stuck', true, true);
   const autumn = await person('TEACHER', 'autumn');
-  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s };
+  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL', userId: admin.id, schoolId: s };
   const asTeacher: AuthenticatedUser = { authId: teacher.authId, role: Role.TEACHER, userId: teacher.id, schoolId: s };
 
   const year = await one<{ id: string }>(

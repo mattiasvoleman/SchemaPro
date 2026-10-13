@@ -83,7 +83,7 @@ export async function skolenheterChecks(owner: Client, api: PrismaService, marke
   };
   const admin = await person('SCHOOL_ADMIN', 'admin');
   const teacher = await person('TEACHER', 'larare');
-  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s, channel: 'WEB' };
+  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s, channel: 'WEB', adminProfile: 'FULL' };
   const asTeacher: AuthenticatedUser = { authId: teacher.authId, role: Role.TEACHER, userId: teacher.id, schoolId: s, channel: 'WEB' };
   const units = new SchoolUnitsService(api);
   const sourceOrg = 'aaaaaaaa-0000-4000-8000-0000000005e1';

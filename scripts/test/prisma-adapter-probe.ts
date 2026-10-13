@@ -123,6 +123,7 @@ import { gallringChecks, sweepGallringSchool } from './probe-gallring';
 import { lasloggChecks, sweepLasloggSchool } from './probe-laslogg';
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
+import { adminAreaChecks, sweepRollerSchool } from './probe-admin-areas';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -2341,7 +2342,9 @@ async function runChecks(
     await assert.rejects(
       credits.create({ academicYearId: year.id, date: '2096-09-26', minutes: 60, name: MARKER }, teacher),
       (error: unknown) => {
-        assert.equal(sqlStateOf(error), '42501', summarise(error));
+        // Row security's 42501, which rethrowPrismaError answers as a 403
+        // since Roller i skolan (areaRefusal), not a 500.
+        assert.ok(error instanceof ForbiddenException, summarise(error));
         return true;
       },
     );
@@ -2733,6 +2736,7 @@ async function runChecks(
     userId: rull.adminId,
     schoolId: rull.schoolId,
     role: Role.SCHOOL_ADMIN,
+    adminProfile: 'FULL',
   };
   const rollover = new YearRolloverService(api);
   const rullYears = new AcademicYearsService(api);
@@ -3178,7 +3182,7 @@ async function runChecks(
    * and 9A, which graduates.
    */
   const tj = await givenStaffingSchool(owner);
-  const tjAdmin: AuthenticatedUser = { authId: tj.adminAuthId, userId: tj.adminId, schoolId: tj.schoolId, role: Role.SCHOOL_ADMIN };
+  const tjAdmin: AuthenticatedUser = { authId: tj.adminAuthId, userId: tj.adminId, schoolId: tj.schoolId, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
   const tjTeacher = (who: { id: string; authId: string }): AuthenticatedUser => ({
     authId: who.authId,
     userId: who.id,
@@ -3609,7 +3613,7 @@ async function runChecks(
   // moves pupils and hands the active flag over).
   {
     const eh = await givenEnrolmentSchool(owner);
-    const ehAdmin: AuthenticatedUser = { authId: eh.adminAuthId, userId: eh.adminId, schoolId: eh.schoolId, role: Role.SCHOOL_ADMIN };
+    const ehAdmin: AuthenticatedUser = { authId: eh.adminAuthId, userId: eh.adminId, schoolId: eh.schoolId, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
     const segmentsOf = async (email: string) =>
       (
         await owner.query<{ group: string | null; grade: number | null; from: string; to: string | null; source: string; year: string }>(
@@ -3819,7 +3823,7 @@ async function runChecks(
             [eh.schoolId, `${MARKER}-eh-admin2@example.invalid`],
           )
         ).rows[0];
-        const admin2User = { authId: admin2.authId, userId: admin2.id, schoolId: eh.schoolId, role: Role.SCHOOL_ADMIN } as AuthenticatedUser;
+        const admin2User = { authId: admin2.authId, userId: admin2.id, schoolId: eh.schoolId, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' } as AuthenticatedUser;
         await stages.publish({ academicYearId: curYear }, admin2User);
         await users.remove(admin2.id, ehAdmin);
         assert.deepEqual(
@@ -4412,6 +4416,7 @@ async function runChecks(
   await lasloggChecks(owner, api, MARKER, check);
   await leaveChecks(owner, api, MARKER, check);
   await skolenheterChecks(owner, api, MARKER, check);
+  await adminAreaChecks(owner, api, MARKER, check);
 }
 
 
@@ -4455,7 +4460,7 @@ async function givenStaffingSchool(owner: Client): Promise<StaffingSchool> {
   const t2 = await person('TEACHER', 'tj-t2');
   const t3 = await person('TEACHER', 'tj-t3');
   const t4 = await person('TEACHER', 'tj-t4');
-  const principal: AuthenticatedUser = { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN };
+  const principal: AuthenticatedUser = { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' };
   const api = prismaServiceFor(requiredEnv('DATABASE_URL'));
   try {
     const year = await new AcademicYearsService(api).create(
@@ -4641,6 +4646,7 @@ async function givenRolloverSchool(owner: Client, grundskolaVersionId: string): 
     userId: admin.id,
     schoolId: school.id,
     role: Role.SCHOOL_ADMIN,
+    adminProfile: 'FULL',
   };
   const api = prismaServiceFor(requiredEnv('DATABASE_URL'));
   try {
@@ -4846,6 +4852,7 @@ async function findFixture(owner: Client): Promise<Fixture> {
       userId: admin.id,
       schoolId: school.id,
       role: Role.SCHOOL_ADMIN,
+      adminProfile: 'FULL',
     },
     roomId: room.id,
     constraintId: constraint.id,
@@ -4871,6 +4878,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepLeaveSchool(owner, MARKER);
   // Skolenheter's school, likewise.
   await sweepSkolenheterSchool(owner, MARKER);
+  // Roller i skolan's school, likewise.
+  await sweepRollerSchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Duties first: each one's links cascade, and TeacherDutySlots_take_their_block
   // deletes the slot with its link (the service writes the slot's reason as the bare word "Uppdrag", so a
@@ -5127,7 +5136,7 @@ async function givenFas3School(owner: Client): Promise<Fas3School> {
   return {
     schoolId: school.id,
     yearId: year.id,
-    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN },
+    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' },
     t1,
     t2,
     t3,
@@ -5230,7 +5239,7 @@ async function givenBudgetSchool(owner: Client): Promise<BudgetSchool> {
   );
   return {
     schoolId: school.id,
-    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN },
+    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' },
     teachers: teachers.map((teacher) => teacher.id),
     lesson7a: l7a.id,
     requirement8a: requirement.id,
@@ -5974,7 +5983,7 @@ async function givenPublicationSchool(
   return {
     schoolId: school.id,
     yearId: year.id,
-    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN },
+    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL' },
     teacher: { authId: teacher.authId, userId: teacher.id, schoolId: school.id, role: Role.TEACHER },
     class7a: g7a.id,
     subject: subject.id,
