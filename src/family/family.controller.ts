@@ -18,8 +18,16 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { FamilyService } from './family.service';
+import {
+  FamilyReadsService,
+  type AbsenceReportView,
+  type ChildView,
+  type GuardianLinkView,
+  type LeaveRequestView,
+} from './family-reads.service';
 import { FamilyScheduleService, type FamilySchedule } from './family-schedule.service';
 import { FamilyScheduleQueryDto } from './dto/family-schedule.dto';
+import { AbsenceReportsQueryDto, GuardianLinksQueryDto, LeaveRequestsQueryDto } from './dto/family-reads.dto';
 import {
   CreateAbsenceReportDto,
   CreateGuardianLinkDto,
@@ -29,9 +37,11 @@ import {
 
 /**
  * Guardian↔student links, absence reporting and leave requests, and a
- * child's schedule for the family. Most reads go straight to Supabase under
- * RLS; mutations and the schedule (which needs the teacher labels only a
- * SECURITY DEFINER function may give) pass through here.
+ * child's schedule for the family. Every read of them passes through here
+ * too (Läslogg): a guardian's children, the absence reports and leave
+ * requests a caller may see, and a pupil's guardians each name other people,
+ * so each response is recorded in the read log (FamilyReadsService). The
+ * schedule needs the teacher labels only a SECURITY DEFINER function may give.
  */
 @Controller('api/v1')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -39,7 +49,15 @@ export class FamilyController {
   constructor(
     private readonly family: FamilyService,
     private readonly schedule: FamilyScheduleService,
+    private readonly reads: FamilyReadsService,
   ) {}
+
+  /** The signed-in guardian's linked pupils: names and whether they are active, no contact details. */
+  @Get('family/children')
+  @Roles(Role.GUARDIAN)
+  children(@CurrentUser() user: AuthenticatedUser): Promise<ChildView[]> {
+    return this.reads.children(user);
+  }
 
   /**
    * A child's published week as the school shows it to the family. A pupil
@@ -53,6 +71,16 @@ export class FamilyController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<FamilySchedule> {
     return this.schedule.week(query, user);
+  }
+
+  /** One pupil's guardians, for the administrator's people page. */
+  @Get('guardian-links')
+  @Roles(Role.SCHOOL_ADMIN)
+  guardianLinks(
+    @Query() query: GuardianLinksQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<GuardianLinkView[]> {
+    return this.reads.guardianLinks(query, user);
   }
 
   @Post('guardian-links')
@@ -73,6 +101,16 @@ export class FamilyController {
     return this.family.removeLink(id, user);
   }
 
+  /** The absence reports row security shows the caller: a guardian's children's, a pupil's own, the school's. */
+  @Get('absence-reports')
+  @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
+  absenceReports(
+    @Query() query: AbsenceReportsQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<AbsenceReportView[]> {
+    return this.reads.absenceReports(query, user);
+  }
+
   @Post('absence-reports')
   @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
@@ -90,6 +128,16 @@ export class FamilyController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.family.removeAbsenceReport(id, user);
+  }
+
+  /** The leave requests row security shows the caller, with their reasons. */
+  @Get('leave-requests')
+  @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
+  leaveRequests(
+    @Query() query: LeaveRequestsQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<LeaveRequestView[]> {
+    return this.reads.leaveRequests(query, user);
   }
 
   @Post('leave-requests')

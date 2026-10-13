@@ -112,7 +112,31 @@ describe('JwtAuthGuard', () => {
       Promise.resolve(guard.canActivate(routeTo(LessonsController, 'list', request))),
     ).resolves.toBe(true);
     expect(strategy.asked).toHaveLength(1);
-    expect(request.user).toEqual({ userId: 'user-1', role: 'TEACHER' });
+    // No Origin and no client header: a script with a token (läslogg channel OTHER).
+    expect(request.user).toEqual({ userId: 'user-1', role: 'TEACHER', channel: 'OTHER' });
+  });
+
+  describe('the channel the läslogg records', () => {
+    const channelOf = async (headers: Record<string, string | undefined>) => {
+      const request: FakeRequest = { headers: { authorization: 'Bearer verified', ...headers } };
+      await guard.canActivate(routeTo(LessonsController, 'list', request));
+      return (request.user as { channel?: string }).channel;
+    };
+
+    it('is APP when the app names itself, whatever else the request carries', async () => {
+      await expect(channelOf({ 'x-schemapro-client': 'app' })).resolves.toBe('APP');
+      await expect(channelOf({ 'x-schemapro-client': ' App ', origin: 'https://schemapro.example' })).resolves.toBe('APP');
+    });
+
+    it('is WEB for a browser, which sends an Origin to the cross-origin gateway', async () => {
+      await expect(channelOf({ origin: 'https://schemapro.example' })).resolves.toBe('WEB');
+    });
+
+    it('is OTHER for anything else, an unknown client name included', async () => {
+      await expect(channelOf({})).resolves.toBe('OTHER');
+      await expect(channelOf({ 'x-schemapro-client': 'web' })).resolves.toBe('OTHER');
+      await expect(channelOf({ origin: '' })).resolves.toBe('OTHER');
+    });
   });
 
   describe('remembering a request it has verified', () => {

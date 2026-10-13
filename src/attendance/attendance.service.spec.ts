@@ -7,6 +7,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import { Role } from '../auth/enums/role.enum';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
@@ -829,6 +830,9 @@ describe('AttendanceService', () => {
       await expect(service.reportedAbsences(LESSON_ID, teacher())).resolves.toEqual({
         studentIds: [STUDENT_A, STUDENT_B],
       });
+      // That their absence was reported, in the läslogg: the stranger, away
+      // but not in this lesson, was not answered and is not recorded.
+      expect(recordedReads(tx)).toEqual([{ kind: 'ABSENCE_REPORTS', channel: null, ids: [STUDENT_A, STUDENT_B] }]);
       expectDayAskedOfTheFunction('2026-09-02');
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: {
@@ -952,6 +956,11 @@ describe('AttendanceService', () => {
         firstName: 'Ada',
         lastName: 'Ek',
       });
+      // The läslogg: one ROSTER statement in the read's transaction, naming
+      // whom the list named.
+      const reads = recordedReads(tx);
+      expect(reads.map((read) => read.kind)).toEqual(['ROSTER']);
+      expect([...reads[0]!.ids].sort()).toEqual([STUDENT_A, STUDENT_B, STUDENT_C].sort());
     });
 
     it('asks the one roster reader, for the active pupils, and names only whom it answered', async () => {
@@ -982,6 +991,7 @@ describe('AttendanceService', () => {
       await expect(service.lessonRoster(LESSON_ID, teacher())).rejects.toThrow(ForbiddenException);
       expect(tx.user.findMany).not.toHaveBeenCalled();
       expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
+      expect(recordedReads(tx)).toEqual([]);
     });
 
     it('lets an admin read any lesson of the school', async () => {
@@ -1000,6 +1010,94 @@ describe('AttendanceService', () => {
         new NotFoundException(`Calendar lesson not found: ${LESSON_ID}`),
       );
       expect(tx.user.findMany).not.toHaveBeenCalled();
+    });
+  });
+  describe('the marks a register opens with (Läslogg)', () => {
+    const mark = (studentId: string, status: string) => ({
+      id: `mark-${studentId}`,
+      calendarLessonId: LESSON_ID,
+      studentId,
+      status,
+      recordedAt: new Date('2026-09-02T07:05:00.000Z'),
+      note: null,
+    });
+
+    it('answers the lesson\'s marks with ISO instants and records ATTENDANCE', async () => {
+      tx.attendanceRecord.findMany.mockResolvedValue([mark(STUDENT_A, 'PRESENT'), mark(STUDENT_B, 'ABSENT')]);
+      const result = await service.lessonRecords(LESSON_ID, testUser({ role: Role.TEACHER, userId: TEACHER_ID, channel: 'APP' }));
+      expect(result.records.map((record) => [record.studentId, record.status, record.recordedAt])).toEqual([
+        [STUDENT_A, 'PRESENT', '2026-09-02T07:05:00.000Z'],
+        [STUDENT_B, 'ABSENT', '2026-09-02T07:05:00.000Z'],
+      ]);
+      expect(tx.attendanceRecord.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { calendarLessonId: LESSON_ID } }),
+      );
+      expect(recordedReads(tx)).toEqual([{ kind: 'ATTENDANCE', channel: 'APP', ids: [STUDENT_A, STUDENT_B] }]);
+    });
+
+    it('refuses a teacher not on the lesson before reading a mark, and answers 404 for a lesson RLS hides', async () => {
+      tx.calendarLessonTeacher.findUnique.mockResolvedValue(null);
+      await expect(service.lessonRecords(LESSON_ID, teacher())).rejects.toThrow(ForbiddenException);
+      expect(tx.attendanceRecord.findMany).not.toHaveBeenCalled();
+      tx.calendarLesson.findUnique.mockResolvedValue(null);
+      await expect(service.lessonRecords(LESSON_ID, testUser({ role: Role.SCHOOL_ADMIN }))).rejects.toThrow(NotFoundException);
+      expect(recordedReads(tx)).toEqual([]);
+    });
+  });
+
+  describe('a class\'s marks over a period (Läslogg)', () => {
+    it('reads the home class\'s marks on lessons dated from..to, answers the lesson\'s day bare, and records ATTENDANCE', async () => {
+      tx.attendanceRecord.findMany.mockResolvedValue([
+        {
+          studentId: STUDENT_A,
+          status: 'LATE',
+          calendarLesson: {
+            id: LESSON_ID,
+            date: new Date('2026-09-02T00:00:00.000Z'),
+            startsAt: new Date('2026-09-02T07:00:00.000Z'),
+            endsAt: new Date('2026-09-02T07:45:00.000Z'),
+          },
+        },
+      ]);
+      const result = await service.groupRecords(PRIMARY_GROUP, '2026-09-01', '2026-09-30', testUser({ channel: 'WEB' }));
+      expect(result.records).toEqual([
+        {
+          studentId: STUDENT_A,
+          status: 'LATE',
+          lesson: { id: LESSON_ID, date: '2026-09-02', startsAt: '2026-09-02T07:00:00.000Z', endsAt: '2026-09-02T07:45:00.000Z' },
+        },
+      ]);
+      const [query] = tx.attendanceRecord.findMany.mock.calls[0] as [{ where: unknown; take: number }];
+      expect(query.where).toEqual({
+        student: { studentGroupId: PRIMARY_GROUP },
+        calendarLesson: { date: { gte: new Date('2026-09-01T00:00:00.000Z'), lte: new Date('2026-09-30T00:00:00.000Z') } },
+      });
+      expect(query.take).toBe(20_000);
+      expect(recordedReads(tx)).toEqual([{ kind: 'ATTENDANCE', channel: 'WEB', ids: [STUDENT_A] }]);
+    });
+
+    it('refuses a period that ends before it begins, or runs past 400 days, before reading anything', async () => {
+      await expect(service.groupRecords(PRIMARY_GROUP, '2026-09-30', '2026-09-01', testUser())).rejects.toThrow('to must not be before from.');
+      await expect(service.groupRecords(PRIMARY_GROUP, '2025-01-01', '2026-09-01', testUser())).rejects.toThrow(/at most 400 days/);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the dashboard\'s attendance figure', () => {
+    it('counts marks since the day and those present or late, and records nothing: it names nobody', async () => {
+      tx.attendanceRecord.groupBy = jest.fn().mockResolvedValue([
+        { status: 'PRESENT', _count: { _all: 40 } },
+        { status: 'LATE', _count: { _all: 5 } },
+        { status: 'ABSENT', _count: { _all: 4 } },
+        { status: 'UNKNOWN', _count: { _all: 1 } },
+      ]);
+      await expect(service.summary('2026-08-26', testUser())).resolves.toEqual({ recorded: 50, present: 45 });
+      expect(tx.attendanceRecord.groupBy).toHaveBeenCalledWith({
+        by: ['status'],
+        where: { recordedAt: { gte: new Date('2026-08-26T00:00:00.000Z') } },
+        _count: { _all: true },
+      });
+      expect(recordedReads(tx)).toEqual([]);
     });
   });
 });

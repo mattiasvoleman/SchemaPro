@@ -54,6 +54,12 @@ export class StudentGroupsController {
     await this.studentGroups.remove(id, user);
   }
 
+  /** Every teaching-group membership of the school, ids only (ROSTER in the läslogg). */
+  @Get('memberships')
+  memberships(@CurrentUser() user: AuthenticatedUser) {
+    return this.studentGroups.memberships(user);
+  }
+
   @Get(':id/members')
   listMembers(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

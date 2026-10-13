@@ -1,3 +1,4 @@
+import type { AccessChannel } from '../../access-log/access-log';
 import type { Role } from '../enums/role.enum';
 import type { SchoolAccountSession } from '../school-account';
 
@@ -21,4 +22,10 @@ export interface AuthenticatedUser {
    * person can rewrite, so it is a self-lockout check and never a permission.
    */
   schoolAccount?: SchoolAccountSession;
+  /**
+   * The client the request came through: APP (X-SchemaPro-Client: app), WEB
+   * (a browser's Origin) or OTHER (src/access-log). Set by JwtAuthGuard; read
+   * only by the läslogg (recordRead), never a permission.
+   */
+  channel?: AccessChannel;
 }

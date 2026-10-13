@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -7,7 +8,8 @@ import {
 import { Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
-import { zonedTimeToUtc } from '../common/utils/time';
+import { parseDateString, zonedTimeToUtc } from '../common/utils/time';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
@@ -34,6 +36,38 @@ export interface RosterPupil {
 export interface LessonRosterResult {
   students: RosterPupil[];
 }
+
+/** A lesson's attendance marks, as the register opens with them. */
+export interface LessonAttendanceResult {
+  records: Array<{
+    id: string;
+    calendarLessonId: string;
+    studentId: string;
+    status: string;
+    recordedAt: string | null;
+    note: string | null;
+  }>;
+}
+
+/** A class's attendance over a period, for the administrator's report. */
+export interface GroupAttendanceResult {
+  records: Array<{
+    studentId: string;
+    status: string;
+    lesson: { id: string; date: string; startsAt: string; endsAt: string };
+  }>;
+}
+
+/** The dashboard's attendance figure: how many marks, how many of them present or late. Counts only. */
+export interface AttendanceSummaryResult {
+  recorded: number;
+  present: number;
+}
+
+/** The most rows a class report returns, as the web's direct read did. */
+export const GROUP_ATTENDANCE_LIMIT = 20_000;
+/** The longest period a class report reads at once. */
+export const GROUP_ATTENDANCE_MAX_DAYS = 400;
 
 /** The lesson as the register and the absence check read it. */
 const LESSON_SELECT = {
@@ -310,9 +344,11 @@ export class AttendanceService {
       ];
       if (covered.length === 0) return { studentIds: [] };
       const roster = await this.rosterAmong(tx, lesson, covered);
-      return {
-        studentIds: covered.filter((studentId) => roster.has(studentId)).sort(),
-      };
+      const studentIds = covered.filter((studentId) => roster.has(studentId)).sort();
+      // That a pupil's absence was reported is the report's, even without
+      // its note: in the läslogg as ABSENCE_REPORTS.
+      await recordRead(tx, 'ABSENCE_REPORTS', studentIds, user.channel);
+      return { studentIds };
     });
   }
 
@@ -358,8 +394,127 @@ export class AttendanceService {
         select: { id: true, firstName: true, lastName: true },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
       });
+      // The register's hot path: the read log leaves out whoever this
+      // teacher already read on a roster in the last quarter-hour, so the
+      // list opened again and again within a lesson writes once.
+      await recordRead(tx, 'ROSTER', students.map((student) => student.id), user.channel);
       return { students };
     });
+  }
+
+  /**
+   * The marks already recorded for a lesson, as the register opens with them
+   * (the web's useLessonAttendance read them from PostgREST until Läslogg).
+   * The same door as the roster: an unknown lesson is a 404, and a teacher
+   * must be assigned to it. ATTENDANCE in the läslogg.
+   */
+  async lessonRecords(
+    calendarLessonId: string,
+    user: AuthenticatedUser,
+  ): Promise<LessonAttendanceResult> {
+    return this.prisma.withRls(user, async (tx) => {
+      const lesson = await tx.calendarLesson.findUnique({
+        where: { id: calendarLessonId },
+        select: { id: true },
+      });
+      if (!lesson) {
+        throw new NotFoundException(
+          `Calendar lesson not found: ${calendarLessonId}`,
+        );
+      }
+      if (user.role === Role.TEACHER) {
+        await this.assertTeacherIsAssigned(tx, calendarLessonId, user);
+      }
+      const rows = await tx.attendanceRecord.findMany({
+        where: { calendarLessonId },
+        select: {
+          id: true,
+          calendarLessonId: true,
+          studentId: true,
+          status: true,
+          recordedAt: true,
+          note: true,
+        },
+        orderBy: [{ studentId: 'asc' }],
+      });
+      await recordRead(tx, 'ATTENDANCE', rows.map((row) => row.studentId), user.channel);
+      return {
+        records: rows.map((row) => ({
+          ...row,
+          recordedAt: row.recordedAt ? row.recordedAt.toISOString() : null,
+        })),
+      };
+    });
+  }
+
+  /**
+   * A class's attendance over a period: every mark of a pupil whose home
+   * class is the group, on a lesson dated from..to (the administrator's
+   * attendance report; read from PostgREST until Läslogg). At most
+   * GROUP_ATTENDANCE_LIMIT marks, as the direct read was. ATTENDANCE in the
+   * läslogg, naming the pupils whose marks were returned.
+   */
+  async groupRecords(
+    groupId: string,
+    fromDay: string,
+    toDay: string,
+    user: AuthenticatedUser,
+  ): Promise<GroupAttendanceResult> {
+    const from = parseDateString(fromDay);
+    const to = parseDateString(toDay);
+    if (to < from) {
+      throw new BadRequestException('to must not be before from.');
+    }
+    if ((to.getTime() - from.getTime()) / 86_400_000 > GROUP_ATTENDANCE_MAX_DAYS) {
+      throw new BadRequestException(`A report reads at most ${GROUP_ATTENDANCE_MAX_DAYS} days at once.`);
+    }
+    return this.prisma.withRls(user, async (tx) => {
+      const rows = await tx.attendanceRecord.findMany({
+        where: {
+          student: { studentGroupId: groupId },
+          calendarLesson: { date: { gte: from, lte: to } },
+        },
+        select: {
+          studentId: true,
+          status: true,
+          calendarLesson: { select: { id: true, date: true, startsAt: true, endsAt: true } },
+        },
+        orderBy: [{ calendarLesson: { startsAt: 'asc' } }, { id: 'asc' }],
+        take: GROUP_ATTENDANCE_LIMIT,
+      });
+      await recordRead(tx, 'ATTENDANCE', rows.map((row) => row.studentId), user.channel);
+      return {
+        records: rows.map((row) => ({
+          studentId: row.studentId,
+          status: row.status,
+          lesson: {
+            id: row.calendarLesson.id,
+            date: toDateString(row.calendarLesson.date),
+            startsAt: row.calendarLesson.startsAt.toISOString(),
+            endsAt: row.calendarLesson.endsAt.toISOString(),
+          },
+        })),
+      };
+    });
+  }
+
+  /** The dashboard's attendance figure since a day. Counts only, so not in the läslogg. */
+  async summary(sinceDay: string, user: AuthenticatedUser): Promise<AttendanceSummaryResult> {
+    const since = parseDateString(sinceDay);
+    const groups = await this.prisma.queryWithRls(user, (db) =>
+      db.attendanceRecord.groupBy({
+        by: ['status'],
+        where: { recordedAt: { gte: since } },
+        _count: { _all: true },
+      }),
+    );
+    let recorded = 0;
+    let present = 0;
+    for (const group of groups) {
+      recorded += group._count._all;
+      if (group.status === 'PRESENT' || group.status === 'LATE') present += group._count._all;
+    }
+    return { recorded, present };
   }
 
   // ---------------------------------------------------------------------------

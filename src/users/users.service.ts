@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, type User, type UserRole } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -48,6 +49,24 @@ function describeStaffingRows(
   }
   if (parts.length <= 1) return parts.join('');
   return `${parts.slice(0, -1).join(', ')} och ${parts[parts.length - 1]}`;
+}
+
+/** A person as the administrator's register lists them (GET /api/v1/users). */
+export interface PersonView {
+  id: string;
+  role: UserRole;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  isActive: boolean;
+  studentGroupId: string | null;
+  invitedAt: string | null;
+}
+
+/** How many people of each role the school has, active or not. Counts only. */
+export interface UserCounts {
+  byRole: Record<UserRole, number>;
 }
 
 /** Outcome of inviting one person. */
@@ -100,6 +119,48 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly supabaseAdmin: SupabaseAdminService,
   ) {}
+
+  /**
+   * The school's people with their contact details: the administrator's
+   * register, every picker and the people CSV (the web's usePeople). Read
+   * through here rather than PostgREST so it is in the läslogg: one PEOPLE
+   * record naming everyone listed, the administrator left out.
+   */
+  async list(user: AuthenticatedUser): Promise<PersonView[]> {
+    requireSchoolId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const people = await tx.user.findMany({
+        select: {
+          id: true,
+          role: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          isActive: true,
+          studentGroupId: true,
+          invitedAt: true,
+        },
+        orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+      });
+      await recordRead(tx, 'PEOPLE', people.map((person) => person.id), user.channel);
+      return people.map((person) => ({
+        ...person,
+        invitedAt: person.invitedAt ? person.invitedAt.toISOString() : null,
+      }));
+    });
+  }
+
+  /** The dashboard's figures: people per role. Names nobody, so it is not logged. */
+  async counts(user: AuthenticatedUser): Promise<UserCounts> {
+    requireSchoolId(user);
+    const groups = await this.prisma.queryWithRls(user, (db) =>
+      db.user.groupBy({ by: ['role'], _count: { _all: true } }),
+    );
+    const byRole: Record<UserRole, number> = { STUDENT: 0, TEACHER: 0, SCHOOL_ADMIN: 0, GUARDIAN: 0 };
+    for (const group of groups) byRole[group.role] = group._count._all;
+    return { byRole };
+  }
 
   async create(dto: CreateUserDto, user: AuthenticatedUser): Promise<User> {
     const schoolId = requireSchoolId(user);

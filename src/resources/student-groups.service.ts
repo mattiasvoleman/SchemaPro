@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { StudentGroup } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, studentGroupHasEnrolmentHistory } from '../common/utils/prisma-errors';
@@ -15,6 +16,12 @@ export interface GroupMember {
   firstName: string;
   lastName: string;
   homeGroupId: string | null;
+}
+
+/** One teaching-group membership: ids only. */
+export interface GroupMembership {
+  studentId: string;
+  studentGroupId: string;
 }
 
 @Injectable()
@@ -97,13 +104,16 @@ export class StudentGroupsService {
     }
   }
 
-  /** Teaching-group members (the M2M list — home-class members not included). */
+  /**
+   * Teaching-group members (the M2M list — home-class members not included).
+   * A ROSTER read in the läslogg, naming the members listed.
+   */
   async listMembers(
     groupId: string,
     user: AuthenticatedUser,
   ): Promise<GroupMember[]> {
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.studentGroupMember.findMany({
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const members = await tx.studentGroupMember.findMany({
         where: { studentGroupId: groupId },
         select: {
           student: {
@@ -116,14 +126,35 @@ export class StudentGroupsService {
           },
         },
         orderBy: { student: { lastName: 'asc' } },
-      }),
-    );
+      });
+      await recordRead(tx, 'ROSTER', members.map((row) => row.student.id), user.channel);
+      return members;
+    });
     return rows.map((row) => ({
       id: row.student.id,
       firstName: row.student.firstName,
       lastName: row.student.lastName,
       homeGroupId: row.student.studentGroupId,
     }));
+  }
+
+  /**
+   * Every teaching-group membership of the school, ids only: the planning
+   * pages' grid of who is in which group (the web's useGroupMemberships, read
+   * from PostgREST until Läslogg). A ROSTER read naming every pupil listed.
+   * Unpaged: one row per pupil per group is a few thousand rows for a large
+   * school, which the web paged through 1 000 at a time before.
+   */
+  async memberships(user: AuthenticatedUser): Promise<GroupMembership[]> {
+    requireSchoolId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const rows = await tx.studentGroupMember.findMany({
+        select: { studentId: true, studentGroupId: true },
+        orderBy: [{ studentGroupId: 'asc' }, { studentId: 'asc' }],
+      });
+      await recordRead(tx, 'ROSTER', rows.map((row) => row.studentId), user.channel);
+      return rows;
+    });
   }
 
   /**

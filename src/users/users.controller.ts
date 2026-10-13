@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
@@ -17,7 +18,7 @@ import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { UsersService } from './users.service';
+import { UsersService, type PersonView, type UserCounts } from './users.service';
 import { CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 
 @Controller('api/v1/users')
@@ -25,6 +26,18 @@ import { CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 @Roles(Role.SCHOOL_ADMIN)
 export class UsersController {
   constructor(private readonly users: UsersService) {}
+
+  /** The school's people with contact details; recorded in the läslogg. */
+  @Get()
+  list(@CurrentUser() user: AuthenticatedUser): Promise<PersonView[]> {
+    return this.users.list(user);
+  }
+
+  /** People per role, for the dashboard. */
+  @Get('counts')
+  counts(@CurrentUser() user: AuthenticatedUser): Promise<UserCounts> {
+    return this.users.counts(user);
+  }
 
   @Post()
   create(@Body() dto: CreateUserDto, @CurrentUser() user: AuthenticatedUser) {
