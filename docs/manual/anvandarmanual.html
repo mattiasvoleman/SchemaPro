@@ -829,6 +829,19 @@
     tjänstefördelningen. Trycker du en gång till skapas ingenting nytt.
   </p>
   <p>
+    <strong>Språkvalet kan läggas på språkgrupperna.</strong> Planen kan inte
+    veta vilken elev som läser vilket språk, men du kan säga vilken grupp som
+    läser vilket. Efter förhandsvisningen visar dialogen <span class="ui">Språkvalets
+    grupper</span>, med ett val per språk och årskurs som läsåret följer planen
+    i. Välj undervisningsgruppen, till exempel <em>Ty7</em> för Tyska åk 7, och
+    förhandsvisa igen. Språkets post läggs då på gruppen, och alla språkvalets
+    poster i en årskurs läggs i blocket <em>Språkval åk 7</em> (se 4.2), så att
+    de läggs på samma tider. Posterna får alla samma lektioner, efter språkvalets
+    högsta mål i planen, och de kan inte ändras en och en i förhandsvisningen.
+    Ett språk utan vald grupp skapas inte, och klasserna får fortfarande inget
+    eget språkval. Finns ett block med det namnet redan används det.
+  </p>
+  <p>
     Planens alternativ läggs inte alla på klassen. Språkvalets språk skapas
     aldrig som klassposter — vilken elev som läser vilket språk avgör
     språkvalsgrupperna. Av svenska och svenska som andraspråk får klassen ett
@@ -1288,6 +1301,42 @@
     exempel <em>Timplanen säger 180 min/vecka för åk 7; 3 × 60 täcker det</em>,
     medan du skriver.
   </p>
+  <h4>Parallella block</h4>
+  <p>
+    Språkval och elevens val läses i undervisningsgrupper som skär över
+    klasserna. Varje språkgrupp har elever från 7A, så 7A kan inte ha
+    lektion när någon av dem har det. Utan block kan genereringen lägga
+    Tyska, Franska och Spanska på olika tider, och språkvalet tar då en tid i
+    7A:s vecka per språk. Lägg posterna i ett <strong>block</strong> så läggs
+    de på samma tider, och språkvalet tar en tid per lektion.
+  </p>
+  <p>
+    Tryck <span class="ui">Block</span> bredvid läsåret. Rutan
+    <span class="ui">Parallella block</span> visar läsårets block med deras
+    poster och lektioner. <span class="ui">Nytt block</span> ger ett namn,
+    till exempel <em>Språkval åk 7</em>, och en lista att kryssa posterna i;
+    undervisningsgrupperna står först, och en post som redan ligger i ett annat
+    block kan inte väljas förrän den tagits ur det. <span class="ui">Ändra</span>
+    byter namn eller poster, och <span class="ui">Ta bort</span> tar bort blocket
+    men behåller posterna. Schemat som redan är lagt ändras inte förrän du
+    genererar igen.
+  </p>
+  <p>
+    Posterna i ett block måste ha samma antal lektioner, samma längder och
+    samma veckor (period och udda/jämna veckor). Allt annat sparas inte. Vill du
+    ändra lektionerna tar du posterna ur blocket, ändrar dem och lägger tillbaka
+    dem. En posts dialog säger när posten ligger i ett block.
+  </p>
+  <div class="note">
+    <span class="label">Vad ett block inte kan</span>
+    <p>
+      Två poster i ett block kan inte ha samma lärare, och inte dela elever —
+      samma grupp två gånger, eller en elev i två av grupperna. Rutan varnar för
+      samma lärare och samma grupp direkt; genereringen vägrar blocket med
+      dess namn i alla tre fallen. Svenska som andraspråk bredvid klassens
+      svenska är ännu inte ett block, eftersom SvA-eleverna också går i klassen.
+    </p>
+  </div>
   <div class="note">
     <span class="label">Räkna på utrymmet</span>
     <p>
@@ -2036,6 +2085,15 @@
       utgå från.
     </p>
     <p>
+      Parallella block (4.2) vägras med blockets namn i stället för som en
+      omöjlig vecka: när blockets poster har olika lektioner, delar lärare eller
+      elever, när deras ramtider inte har någon gemensam start, och när blocket
+      inte får plats med resten av veckan. Har några av blockets lektioner låsts
+      eller lagts för hand medan resten ska läggas, vägras genereringen innan
+      motorn startar, med blockets namn: lås upp blockets lektioner eller lås
+      alla. Ett block där varje lektion är låst står kvar som du lagt det.
+    </p>
+    <p>
       Allt motorn säger står på svenska, med skolans egna namn: klassen, salen,
       salstypen, och timplansposten som "Matematik för 7A". En begränsning
       namnges av vad den gäller och när — en lärare namnges inte vid namn, bara
@@ -2187,6 +2245,12 @@
     lektioner överlever en omgenerering — motorn planerar runt dem. Det är det
     effektivaste sättet att arbeta iterativt: lås det du är nöjd med, generera
     om, och låt motorn arbeta vidare med resten.
+  </p>
+  <p>
+    Ett parallellt block (4.2) låser du helt eller inte alls. Flyttar du en av
+    blockets lektioner för hand flyttas bara den, och den räknas då som lagd
+    för hand. Nästa generering säger då att blocket är delvis låst och ber dig
+    låsa upp eller låsa resten.
   </p>
 
   <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
@@ -3754,6 +3818,14 @@
     raderna: en årskurs utan klass som flyttas upp bär ingen plan vidare.
     Den högsta årskursens plan följer eleverna ut. Ett utkast som en årskull
     följer följer med som utkast och märks <em>utkast — inte beslutad</em>.
+  </p>
+  <p>
+    Parallella block (4.2) följer sina poster. Posterna som följer med till
+    efterföljargrupperna bildar ett block med namnet uppflyttat som grupperna:
+    <em>Språkval åk 7</em> över Ty7, Fr7 och Sp7 blir <em>Språkval åk 8</em>.
+    Poster som följer med till en ny klass för intaget bildar ett block med det
+    gamla namnet. Ett namn som redan är taget får ett nummer efter sig, och ett
+    block vars poster inte följer med följer inte heller med.
   </p>
   <p>
     En årskurs som ingen klass flyttas upp till — skolans lägsta årskurs,
