@@ -17,7 +17,7 @@ import {
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import type { CreateUserDto } from './dto/user.dto';
-import type { SupabaseAdminService } from './supabase-admin.service';
+import { UserLookupError, type SupabaseAdminService } from './supabase-admin.service';
 import { UsersService } from './users.service';
 
 /**
@@ -539,8 +539,8 @@ describe('UsersService', () => {
 
         expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
         expect(adoptedAuthId()).toBe(AUTH_ID);
-        // Only as the row's own, which the provider reads again then: the
-        // row's invitedAt before this invitation is when it took the login.
+        // Only as the row's own, which the provider reads again then, with
+        // the row's invitedAt from before this invitation restamped it.
         expect(supabaseAdmin.deleteOwnedUser).toHaveBeenCalledTimes(1);
         expect(supabaseAdmin.deleteOwnedUser).toHaveBeenCalledWith(LOGIN, OWNER);
         expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
@@ -581,7 +581,8 @@ describe('UsersService', () => {
         // row's address is the school's to set, through SS12000 too.
         const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
         supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'foreign' });
-        supabaseAdmin.deleteOwnedUser.mockResolvedValue('foreign');
+        // Were it asked, a failed read would be logged as something else.
+        supabaseAdmin.deleteOwnedUser.mockRejectedValue(new UserLookupError('gotrue down'));
 
         await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
           id: USER_ID,
@@ -592,19 +593,79 @@ describe('UsersService', () => {
         expect(supabaseAdmin.resendInvitation).not.toHaveBeenCalled();
         expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
         expect(adoptedAuthId()).toBe(AUTH_ID);
+        // changeUserEmail has said whose it is: no delete is even asked for.
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
         expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
-        // The pair is what an operator finds the login it left by.
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('not the row\'s own'));
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining(`[user=${USER_ID}] [authId=${LOGIN}]`));
+        // The pair is what an operator finds the login it left by, and the
+        // line is not the one that names a login to delete by hand.
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(`not the row's own and was left [user=${USER_ID}] [authId=${LOGIN}]`),
+        );
       });
 
-      it('mints a login for the address when the old one is gone', async () => {
+      it('says so when the re-read finds the left login is not the row\'s own after all', async () => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'taken' });
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: false });
+        supabaseAdmin.deleteOwnedUser.mockResolvedValue('foreign');
+
+        await service.invite(USER_ID, testUser());
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(`not the row's own and was left [user=${USER_ID}] [authId=${LOGIN}]`),
+        );
+      });
+
+      it('does not call a login "not deleted" when its owner could not be read', async () => {
+        // "was not deleted" is the line an operator deletes a login by hand
+        // on. A read that failed decided nothing about whose the login is.
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'taken' });
+        supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: false });
+        supabaseAdmin.deleteOwnedUser.mockRejectedValue(
+          new UserLookupError('Supabase user lookup failed: gateway timeout'),
+        );
+
+        await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+          id: USER_ID,
+          emailSent: false,
+          loginMoved: false,
+        });
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(`whose it is not checked [user=${USER_ID}] [authId=${LOGIN}]`),
+        );
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('was not deleted'));
+      });
+
+      it('mints a login for the address when the old one is gone, and deletes nothing', async () => {
         supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'missing' });
 
         await service.invite(USER_ID, testUser());
 
         expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
         expect(adoptedAuthId()).toBe(AUTH_ID);
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
+      });
+
+      it('tags and checks with the row id as the database spells it, not as the request did', async () => {
+        // ParseUUIDPipe and Postgres both take an upper-case uuid; a tag
+        // written in one spelling would never match a check in the other.
+        const ROW = 'abcdefab-cdef-4abc-8def-abcdefabcdef';
+        arrangeUser({ ...invited(), id: ROW });
+        supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'foreign' });
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+        await service.invite(ROW.toUpperCase(), testUser());
+
+        expect(supabaseAdmin.changeUserEmail).toHaveBeenCalledWith(LOGIN, 'anna.ny@school.se', {
+          userId: ROW,
+          since: INVITED_AT,
+        });
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', ROW);
       });
 
       it('invites nobody when the login cannot be moved', async () => {

@@ -14,6 +14,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import {
   SupabaseAdminService,
+  UserLookupError,
   type EmailChange,
   type LoginOwner,
 } from './supabase-admin.service';
@@ -190,12 +191,14 @@ export class UsersService {
    *
    * Both only for a login that is the row's own: one this row's invitation
    * created, or, created before invitations recorded that, one somebody has
-   * signed in with since the row took it (SupabaseAdminService, belongsTo).
-   * A row can also hold a login it was given by address, which can be
-   * anybody's, and the row's address is the school's to set, through SS12000
-   * too. Such a login is neither moved nor deleted: the invitation goes to
-   * the new address as it did before logins moved, and the login the row
-   * leaves is logged with the row for an operator.
+   * signed in with since the row was last invited (SupabaseAdminService,
+   * belongsTo). A row can also hold a login it was given by address, which
+   * can be anybody's, and the row's address is the school's to set, through
+   * SS12000 too. Such a login is neither moved nor deleted: the invitation
+   * goes to the new address as it did before logins moved, and the login the
+   * row leaves is logged with the row for an operator. The tag is the row's
+   * id as the database spells it (`target.id`), never the request's, which
+   * may be in upper case.
    *
    * Once the login has the row's address, moved or already there, the
    * invitation is for that login and is not resolved by address again:
@@ -229,10 +232,11 @@ export class UsersService {
 
     // Somebody never invited holds a placeholder that is nobody's login.
     const owner: LoginOwner | null =
-      target.invitedAt === null ? null : { userId: id, since: target.invitedAt };
+      target.invitedAt === null ? null : { userId: target.id, since: target.invitedAt };
     const login = owner ? target.authId : null;
+    let change: EmailChange | null = null;
     if (login && owner) {
-      const change = await this.moveLogin(login, target.email, owner);
+      change = await this.moveLogin(login, target.email, owner);
       if (change.outcome === 'unchanged' || change.outcome === 'changed') {
         if (!change.confirmed) {
           await this.resendInvitation(target.email);
@@ -242,11 +246,17 @@ export class UsersService {
       }
     }
 
-    const invite = await this.mintIdentity(target.email, id);
+    const invite = await this.mintIdentity(target.email, target.id);
     await this.adoptIdentity(id, invite.authId, user);
 
+    // The login the row left: the row's own when another login had the
+    // address ('taken'), not the row's ('foreign'), or gone ('missing').
     if (login && owner && login !== invite.authId) {
-      await this.deleteLeftLogin(login, owner);
+      if (change?.outcome === 'taken') {
+        await this.deleteLeftLogin(login, owner);
+      } else if (change?.outcome === 'foreign') {
+        this.warnLeftForeignLogin(login, owner);
+      }
     }
 
     return { id, emailSent: invite.emailSent, loginMoved: false };
@@ -504,28 +514,36 @@ export class UsersService {
    * the school through it. What it still keeps is the old address and any
    * password set on it.
    *
-   * Only if it is the row's own, which the provider reads again here: a login
-   * the row was given by address is left where it is, and logged. Whose it
-   * is, is then the operator's to find out.
+   * Only if it is the row's own: invite() asks only for a login
+   * changeUserEmail found to be the row's, and the provider reads it again
+   * here. One that is not after all is left and logged as such
+   * (warnLeftForeignLogin), and one that cannot be read is left with a line
+   * of its own. Whose either is, is the operator's to find out before
+   * deleting it.
    *
    * Best effort, as in remove(): the invitation went out and the row is
-   * right. The pair logged on failure is what an operator deletes by hand;
-   * both are opaque ids.
+   * right. The pair logged when the delete itself fails ("was not deleted")
+   * is what an operator deletes by hand; both are opaque ids.
    */
   private async deleteLeftLogin(authId: string, owner: LoginOwner): Promise<void> {
     const id = owner.userId;
     try {
       const deletion = await this.supabaseAdmin.deleteOwnedUser(authId, owner);
-      if (deletion === 'foreign') {
-        this.logger.warn(
-          `The login a re-invited row moved off is not the row's own and was left [user=${id}] [authId=${authId}]`,
-        );
-      }
-    } catch {
+      if (deletion === 'foreign') this.warnLeftForeignLogin(authId, owner);
+    } catch (error) {
       this.logger.warn(
-        `The login a re-invited row moved off was not deleted [user=${id}] [authId=${authId}]`,
+        error instanceof UserLookupError
+          ? `The login a re-invited row moved off was left, whose it is not checked [user=${id}] [authId=${authId}]`
+          : `The login a re-invited row moved off was not deleted [user=${id}] [authId=${authId}]`,
       );
     }
+  }
+
+  /** Logs a login a re-invited row left that is not the row's own. */
+  private warnLeftForeignLogin(authId: string, owner: LoginOwner): void {
+    this.logger.warn(
+      `The login a re-invited row moved off is not the row's own and was left [user=${owner.userId}] [authId=${authId}]`,
+    );
   }
 
   /**

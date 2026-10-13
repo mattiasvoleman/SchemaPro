@@ -20,7 +20,11 @@ const INVITATION_NONCE = 'schemaproInvitation';
  */
 export interface LoginOwner {
   userId: string;
-  /** When the row took the login: its `invitedAt` before this invitation. */
+  /**
+   * When the row was last invited: its `invitedAt` before this invitation.
+   * Every invitation restamps it, also one that leaves the row on the login
+   * it had, so the row has held its login since then.
+   */
   since: Date;
 }
 
@@ -31,6 +35,9 @@ export type EmailChange =
 
 /** What SupabaseAdminService.deleteOwnedUser did with a login. */
 export type OwnedUserDeletion = 'deleted' | 'missing' | 'foreign';
+
+/** A login could not be read, so whose it is was not decided. */
+export class UserLookupError extends Error {}
 
 /**
  * Thin wrapper around the Supabase Admin (GoTrue) API.
@@ -176,7 +183,7 @@ export class SupabaseAdminService {
     const found = await this.client.auth.admin.getUserById(authId);
     if (found.error) {
       if (found.error.status === 404) return { outcome: 'missing' };
-      throw new Error(`Supabase user lookup failed: ${found.error.message}`);
+      throw new UserLookupError(`Supabase user lookup failed: ${found.error.message}`);
     }
     const login = found.data.user;
     const confirmed = Boolean(login.email_confirmed_at);
@@ -211,7 +218,8 @@ export class SupabaseAdminService {
   /**
    * Deletes an auth user only if it is `owner`'s own (see belongsTo), read
    * again just before: `foreign` leaves it as it is, `missing` had nothing
-   * to delete. Anything else throws.
+   * to delete. A read that fails throws UserLookupError, and nothing was
+   * deleted; anything else throws.
    */
   async deleteOwnedUser(authId: string, owner: LoginOwner): Promise<OwnedUserDeletion> {
     if (!this.client) {
@@ -220,7 +228,7 @@ export class SupabaseAdminService {
     const found = await this.client.auth.admin.getUserById(authId);
     if (found.error) {
       if (found.error.status === 404) return 'missing';
-      throw new Error(`Supabase user lookup failed: ${found.error.message}`);
+      throw new UserLookupError(`Supabase user lookup failed: ${found.error.message}`);
     }
     if (!belongsTo(found.data.user, owner)) return 'foreign';
     await this.deleteUser(authId);
@@ -283,10 +291,14 @@ export class SupabaseAdminService {
  * was made for that one.
  *
  * A login created before the tag existed carries none. It counts as the
- * row's once somebody has signed in with it since the row took it: from the
- * moment the row holds a login, a sign-in with it is a sign-in as that row's
- * person, so the login is in use as the row's. One resolved by address and
- * not used since is not the row's.
+ * row's once somebody has signed in with it since the row was last invited
+ * (`owner.since`): the row has held it since then, so that sign-in was a
+ * sign-in as the row's person, and the login is in use as the row's. One the
+ * row was given by address and nobody has used since is not the row's. The
+ * price is the person's own login when they last signed in before an
+ * invitation sent again: that restamped `invitedAt` and recorded nothing,
+ * so until they sign in again it is not the row's either, and a new address
+ * gets a login of its own.
  */
 function belongsTo(login: AuthUser, owner: LoginOwner): boolean {
   const tag: unknown = login.app_metadata?.[CREATED_FOR_ROW];
