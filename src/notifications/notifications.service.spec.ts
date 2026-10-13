@@ -189,7 +189,12 @@ describe('NotificationsService', () => {
       );
       await flushDelivery();
       expect(sentAt).toHaveLength(3);
-      for (let i = 1; i < sentAt.length; i++) expect(sentAt[i]! - sentAt[i - 1]!).toBeGreaterThanOrEqual(39);
+      // The service waits from the instant it records before each fetch; this
+      // mock reads the clock again inside fetch, so each gap carries a
+      // millisecond of rounding at either end and any pause in between (38 ms
+      // on a loaded CI runner). Without the wait the gaps are about 0 ms, so 30
+      // still tells the two apart.
+      for (let i = 1; i < sentAt.length; i++) expect(sentAt[i]! - sentAt[i - 1]!).toBeGreaterThanOrEqual(30);
     });
 
     it('writes nothing and returns 0 for an empty recipient list', async () => {
