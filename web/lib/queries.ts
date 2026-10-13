@@ -7,7 +7,7 @@ import {
   type UseMutationResult,
 } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
@@ -739,19 +739,40 @@ export interface RosterPupil {
  * attends, which a change to the reader would not have reached.
  */
 export function useLessonRoster(calendarLessonId: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["lessonRoster", calendarLessonId],
     enabled: calendarLessonId !== null,
+    // One retry, as every query has (app-providers.tsx), but none for a 403:
+    // asking again cannot put the teacher back on the lesson.
+    retry: (failureCount, error) => !isNotOnLesson(error) && failureCount < 1,
     queryFn: async () => {
-      const { students } = await api.get<{ students: RosterPupil[] }>(
-        `/api/v1/attendance/lessons/${calendarLessonId}/roster`,
-      );
-      // The list a teacher ticks down, lesson by lesson. Out of Swedish order
-      // it is worse than unsorted: the teacher scans for Åkesson where the
-      // A-names are and does not find her.
-      return sortByPersonName(students);
+      try {
+        const { students } = await api.get<{ students: RosterPupil[] }>(
+          `/api/v1/attendance/lessons/${calendarLessonId}/roster`,
+        );
+        // The list a teacher ticks down, lesson by lesson. Out of Swedish order
+        // it is worse than unsorted: the teacher scans for Åkesson where the
+        // A-names are and does not find her.
+        return sortByPersonName(students);
+      } catch (error) {
+        // The lesson list that led here is out of date: read it again, so the
+        // way back shows the teacher's lessons as they are now.
+        if (isNotOnLesson(error)) void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+        throw error;
+      }
     },
   });
+}
+
+/**
+ * The register's 403: the teacher is not on the lesson. Typically a vikarie
+ * was put in, or they were removed as a co-teacher, after the lesson list
+ * that led here was read; the list keeps its rows for 30 s and does not
+ * refetch on focus. A failure to wait out is anything else.
+ */
+export function isNotOnLesson(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403;
 }
 
 export function useGroupStudents(groupId: string | null) {

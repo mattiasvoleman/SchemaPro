@@ -1610,6 +1610,8 @@
     "backToLessons": "Till dagens lektioner",
     "lessonLoadFailed": "Lektionen kunde inte hämtas",
     "rosterLoadFailed": "Elevlistan kunde inte hämtas",
+    "notOnLesson": "Du står inte som lärare på den här lektionen",
+    "notOnLessonHint": "Lektionen kan ha fått en vikarie eller en annan lärare sedan listan öppnades. Ingen närvaro har sparats eller ändrats. Gå tillbaka till dagens lektioner för att se dem som de är nu.",
     "lessonLoadFailedHint": "Ingen närvaro har sparats eller ändrats. Ladda om sidan om en stund.",
     "existingLoadFailed": "Den närvaro som redan är registrerad kunde inte hämtas",
     "existingLoadFailedHint": "Eleverna visas därför utan markering. Det du sparar gäller bara de elever du markerar nu.",

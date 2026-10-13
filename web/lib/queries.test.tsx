@@ -2,7 +2,7 @@ import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import {
   useActiveYear,
   useCreateMasterLesson,
@@ -17,6 +17,7 @@ import {
   useLessonActions,
   useLessonReportedAbsences,
   useLessonRoster,
+  isNotOnLesson,
   useMasterLessons,
   useNationalTimplans,
   useOptimizationHistory,
@@ -63,7 +64,9 @@ vi.mock("@/utils/supabase/client", () => ({
   createClient: () => ({ from: supabaseMocks.from }),
 }));
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async (importOriginal) => ({
+  // The real ApiError: a hook that branches on its status must see one.
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
@@ -628,6 +631,37 @@ describe("useLessonRoster", () => {
     const { result } = renderHook(() => useLessonRoster(null), { wrapper });
     expect(result.current.fetchStatus).toBe("idle");
     expect(mockApi.get).not.toHaveBeenCalled();
+  });
+
+  /** The app's own default: every query is asked again once (app-providers.tsx). */
+  const retryingOnce = () => {
+    const harness = createHarness();
+    harness.queryClient.setDefaultOptions({ queries: { retry: 1, retryDelay: 0 } });
+    return harness;
+  };
+
+  it("takes a 403 as the teacher not being on the lesson: asked once, and the lesson list read again", async () => {
+    // A vikarie was put in after the teacher's lesson list was read. Asking
+    // again cannot change the answer, and the list that led here is stale.
+    mockApi.get.mockRejectedValue(new ApiError(403, "You are not assigned to this lesson"));
+    const harness = retryingOnce();
+    const { result } = renderHook(() => useLessonRoster("cl-1"), { wrapper: harness.wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(isNotOnLesson(result.current.error)).toBe(true);
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
+    expect(invalidatedKeys(harness)).toContainEqual(["teacherLessons"]);
+  });
+
+  it("asks again once after any other failure, and leaves the lesson list alone", async () => {
+    mockApi.get.mockRejectedValue(new ApiError(503, "Service Unavailable"));
+    const harness = retryingOnce();
+    const { result } = renderHook(() => useLessonRoster("cl-1"), { wrapper: harness.wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(isNotOnLesson(result.current.error)).toBe(false);
+    expect(mockApi.get).toHaveBeenCalledTimes(2);
+    expect(invalidatedKeys(harness)).not.toContainEqual(["teacherLessons"]);
   });
 });
 

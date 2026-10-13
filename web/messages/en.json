@@ -1610,6 +1610,8 @@
     "backToLessons": "To today's lessons",
     "lessonLoadFailed": "The lesson could not be loaded",
     "rosterLoadFailed": "The class list could not be loaded",
+    "notOnLesson": "You are not a teacher on this lesson",
+    "notOnLessonHint": "The lesson may have been given a substitute or another teacher since the list was opened. No attendance has been saved or changed. Go back to today's lessons to see them as they are now.",
     "lessonLoadFailedHint": "No attendance has been saved or changed. Reload the page in a moment.",
     "existingLoadFailed": "The attendance already recorded could not be loaded",
     "existingLoadFailedHint": "So the students are shown unmarked. What you save applies only to the students you mark now.",
