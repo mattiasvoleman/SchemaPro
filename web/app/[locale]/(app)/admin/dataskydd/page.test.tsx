@@ -59,6 +59,8 @@ describe("/admin/dataskydd", () => {
     vi.resetAllMocks();
     get.mockImplementation(async (path: string) => {
       if (path === "/api/v1/retention") return overview();
+      // The read log's picker (access-log-card.test.tsx has its own cases).
+      if (path === "/api/v1/users") return [];
       if (path.startsWith("/api/v1/retention/preview")) {
         const months = Number(new URLSearchParams(path.split("?")[1]).get("months"));
         return { cutoff: months === 12 ? "2025-10-21" : "2026-04-21", due: months === 12 ? 1234 : 0, held: 0 };
@@ -73,7 +75,7 @@ describe("/admin/dataskydd", () => {
     expect(screen.getByText("En gallring går inte att ångra i SchemaPro")).toBeInTheDocument();
     expect(screen.getByText(/SchemaPro gör ännu inga arkivuttag/)).toBeInTheDocument();
     await screen.findByRole("button", { name: "Ändra gallringsperioden för Närvaro" });
-    for (const name of ["Närvaro", "Frånvaroanmälningar", "Ledighetsansökningar", "Notiser", "Ändringsloggar", "Frånvaroorsaker", "Slutade personer"]) {
+    for (const name of ["Närvaro", "Frånvaroanmälningar", "Ledighetsansökningar", "Notiser", "Ändringsloggar", "Frånvaroorsaker", "Läslogg", "Slutade personer"]) {
       expect(within(row(name)).getByText("Ej beslutat")).toBeInTheDocument();
     }
     expect(screen.getByText("Ingen gallring har körts än.")).toBeInTheDocument();

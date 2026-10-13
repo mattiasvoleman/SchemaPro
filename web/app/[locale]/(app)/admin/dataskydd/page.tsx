@@ -1,7 +1,8 @@
 "use client";
 
 // Dataskydd och gallring: how long the school keeps each kind of data, what
-// each period would take, and the nights that have run.
+// each period would take, the nights that have run, and who has read about a
+// person (the read log, Läslogg).
 //
 // THE DEFAULT REMOVES NOTHING. Every kind starts at "Ej beslutat", and a kind
 // nobody has decided is never touched (PRODUCT.md principle 6: the school's
@@ -17,6 +18,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AccessLogCard } from "./access-log-card";
 import { HistoryCard } from "./history-card";
 import { KindsCard } from "./kinds-card";
 import { RunsCard } from "./runs-card";
@@ -54,6 +56,10 @@ export default function DataProtectionPage() {
           <HistoryCard history={data.history} timeZone={data.timezone} />
         </>
       ) : null}
+
+      {/* Its own reads: the question is answered whether or not the
+          retention overview above could be read. */}
+      <AccessLogCard />
     </Page>
   );
 }
