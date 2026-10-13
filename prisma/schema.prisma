@@ -2148,18 +2148,15 @@ model AvailabilityConstraint {
   user         User?         @relation("ConstraintTeacher", fields: [userId], references: [id], onDelete: Cascade)
   room         Room?         @relation(fields: [roomId], references: [id], onDelete: Cascade)
   studentGroup StudentGroup? @relation("ConstraintGroup", fields: [studentGroupId], references: [id], onDelete: Cascade)
-  /// The duty this constraint is the fixed slot of, when it is one: created
-  /// and deleted by the duties service in the duty's transaction. Two triggers
-  /// (migration 20261007090000) keep the pair a weekly UNAVAILABLE TEACHER row
-  /// for the duty's own teacher, and refuse a TEACHER writing it.
-  teacherDuty  TeacherDuty?  @relation("DutyBlockedSlot")
   /// The uppdrag time this constraint holds, when it is one (migration
-  /// 20261017090000): the link table that replaces blockedConstraintId. The
-  /// same guards keep it a weekly UNAVAILABLE row of the duty's own teacher.
+  /// 20261017090000): created and deleted by the duties service in the
+  /// duty's transaction. Triggers keep it a weekly UNAVAILABLE row of the
+  /// duty's own teacher and refuse a TEACHER writing it. The link table
+  /// replaced TeacherDuty.blockedConstraintId, retired by 20261022090000.
   teacherDutySlot TeacherDutySlot? @relation("DutySlotConstraint")
 
-  /// The target TeacherDuty's composite (blockedConstraintId, schoolId) key
-  /// needs; see User.
+  /// The target TeacherDutySlot's composite (availabilityConstraintId,
+  /// schoolId) key needs; see User.
   @@unique([id, schoolId])
   @@index([schoolId, dayOfWeek])
   @@index([userId, dayOfWeek])
@@ -2444,7 +2441,7 @@ model TeacherSubjectQualification {
 /// Ett uppdrag beside teaching — mentorskap, ämnesansvar, rastvakt, APT — for
 /// one teacher in one läsår. HR data: a teacher reads their own and no
 /// colleague's, the admin writes, the service principal reads by school. See
-/// migration 20261007090000 for every bound and the slot-link triggers.
+/// migration 20261007090000 for every bound, and 20261017090000 for the times.
 model TeacherDuty {
   id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId       String          @db.Uuid
@@ -2464,11 +2461,9 @@ model TeacherDuty {
   subjectId      String?         @db.Uuid
   /// Mentorskap's class. ON DELETE SET NULL of this column only.
   studentGroupId String?         @db.Uuid
-  /// LEGACY, read by the previous API release only (migration 20261017090000
-  /// backfilled it into `slots` and a trigger turns every write of it into a
-  /// slot row). The current code reads and writes `slots`; a later migration
-  /// drops this column. ON DELETE SET NULL of this column only.
-  blockedConstraintId String?    @db.Uuid
+  // blockedConstraintId, the one-time column `slots` replaced, is not named
+  // here: 20261022090000 retired it (no trigger, no key, CHECK IS NULL) while
+  // the previous release still selected it, and a later migration drops it.
   /// At most 500 characters.
   note           String?
   /// Från, inclusive; null = the läsår's first day. Inside the läsår (the
@@ -2487,9 +2482,7 @@ model TeacherDuty {
   academicYear      AcademicYear            @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
   subject           Subject?                @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   studentGroup      StudentGroup?           @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
-  blockedConstraint AvailabilityConstraint? @relation("DutyBlockedSlot", fields: [blockedConstraintId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
-  @@unique([blockedConstraintId, schoolId])
   /// The composite target TeacherDutySlot's key needs.
   @@unique([id, schoolId])
   @@index([schoolId, academicYearId, userId])

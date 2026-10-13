@@ -31,7 +31,7 @@ const DUTIES: LockedTable = {
   name: 'TeacherDuties',
   columns: [
     'id', 'schoolId', 'userId', 'academicYearId', 'kind', 'label', 'minutesPerWeek',
-    'countsAsTeaching', 'subjectId', 'studentGroupId', 'blockedConstraintId', 'note',
+    'countsAsTeaching', 'subjectId', 'studentGroupId', 'note',
     'validFrom', 'validTo', 'createdAt', 'updatedAt',
   ],
   lock: 'FOR NO KEY UPDATE',
@@ -64,7 +64,6 @@ const storedDuty = (overrides: Record<string, unknown> = {}) => ({
   countsAsTeaching: false,
   subjectId: null,
   studentGroupId: null,
-  blockedConstraintId: null,
   note: null,
   validFrom: null,
   validTo: null,

@@ -159,7 +159,7 @@ describe('StaffingRolloverService — execute', () => {
   it('carries a teacher with no post in the target, matching their hand-made uppdrag one to one', async () => {
     const { world, service, yearB } = await rolledWithoutStaffing();
     // Anna was given a rastvakt by hand in the new year, and no post.
-    world.rows['teacherDuty']!.push({ id: 'hand', schoolId: IDS.school, userId: IDS.anna, academicYearId: yearB, kind: 'RASTVAKT', label: 'rastvakt ', minutesPerWeek: 20, studentGroupId: null, blockedConstraintId: null });
+    world.rows['teacherDuty']!.push({ id: 'hand', schoolId: IDS.school, userId: IDS.anna, academicYearId: yearB, kind: 'RASTVAKT', label: 'rastvakt ', minutesPerWeek: 20, studentGroupId: null });
     const preview = await service.preview(yearB, admin);
     expect(preview.duties.notCarried).toEqual(expect.arrayContaining([expect.objectContaining({ sourceDutyId: IDS.dutyRast, reason: 'ALREADY_PRESENT' })]));
     expect(preview.employments.carried).toBe(2);

@@ -7,8 +7,8 @@ import { parseTimeString, toWallClock } from '../common/utils/time';
  *
  * ONE WRITER OF THE SHAPE. A duty's slot is an UNAVAILABLE TEACHER
  * AvailabilityConstraint for the duty's own teacher, weekly, with the bare
- * word "Uppdrag" as its reason — the shape the Fas 2 triggers
- * (TeacherDuties_block_is_the_teachers, 20261007090000) accept and the
+ * word "Uppdrag" as its reason — the shape the link's triggers
+ * (TeacherDutySlots_are_the_teachers, 20261017090000) accept and the
  * drawer reads back. Two paths write it: TeacherDutiesService, one duty at a
  * time, and the läsårsrullning, which carries every uppdrag's slot into the
  * next year as a NEW row (staffing Fas 5). Both take the row's data from
@@ -18,9 +18,9 @@ import { parseTimeString, toWallClock } from '../common/utils/time';
  * SEVERAL TIMES, ONE LINK EACH (migration 20261017090000). An uppdrag holds
  * any number of times, each a TeacherDutySlots row naming one such
  * constraint; the rastvakt on Monday, Wednesday and Friday is one uppdrag
- * with three. The old one-slot column, blockedConstraintId, is read by the
- * previous API release only, and a trigger makes every write of it a link
- * row, so this code reads and writes the link table and nothing else.
+ * with three. The old one-slot column, blockedConstraintId, is retired
+ * (20261022090000: no trigger, no key, held empty), so this code reads and
+ * writes the link table and nothing else.
  */
 
 /** The weekly time an uppdrag blocks, as the client writes it and reads it back. */
@@ -97,7 +97,7 @@ export const WITH_SLOT_TIMES = {
  * AvailabilityConstraints row, so whatever stands here is read by every
  * colleague — and the label ("Förstelärare matematik", "Mentor 7B") is the HR
  * data teacher_duties_teacher_own_select keeps from them. The admin reads the
- * label from the duty, which the constraint names through blockedConstraintId.
+ * label from the duty, which the constraint's link (TeacherDutySlots) names.
  * A carried slot gets the word too, whatever its source row said.
  */
 export const DUTY_SLOT_REASON = 'Uppdrag';

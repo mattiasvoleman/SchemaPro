@@ -640,7 +640,6 @@ describe("People page", () => {
           countsAsTeaching: false,
           subjectId: null,
           studentGroupId: "g-7a",
-          blockedConstraintId: null,
           blockedSlot: null,
           note: null,
         },

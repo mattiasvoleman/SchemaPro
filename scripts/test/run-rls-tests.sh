@@ -212,15 +212,15 @@ if [ -z "$plan_b" ] || [ -z "$subject_b" ] || [ -z "$school_b" ]; then
 fi
 
 # The second school's duty slot: an UNAVAILABLE TEACHER constraint a duty there
-# links to. Section 17 has school A's admin point a duty at it, stamped with
-# school A, which only the composite (blockedConstraintId, schoolId) key can
-# refuse — and the link trigger must leave it to the key rather than describe
-# school B's row. Read as the owner, like the decided plan above.
+# links to. Sections 17 and 41 have school A's admin link a duty to it, stamped
+# with school A, which only the composite (availabilityConstraintId, schoolId)
+# key can refuse — and the link trigger must leave it to the key rather than
+# describe school B's row. Read as the owner, like the decided plan above.
 constraint_b="$(
   compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
     -v ON_ERROR_STOP=1 -tAc \
     "SELECT c.id FROM \"AvailabilityConstraints\" c \
-       JOIN \"TeacherDuties\" d ON d.\"blockedConstraintId\" = c.id \
+       JOIN \"TeacherDutySlots\" s ON s.\"availabilityConstraintId\" = c.id AND s.\"schoolId\" = c.\"schoolId\" \
       WHERE c.\"schoolId\" <> '${school_a}' AND c.reason = 'RLS fixture: APT' LIMIT 1" \
   | tr -d '[:space:]'
 )"

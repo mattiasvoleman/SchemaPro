@@ -40,9 +40,10 @@ export type TeacherDutySlot = DutySlot;
  * yyyy-mm-dd, and its times read back from the linked constraints rather
  * than stored twice, Monday first.
  *
- * `blockedSlot` is the first of `slots` (or null), and `blockedConstraintId`
- * the old column as it stands, both for one release: the previous web reads
- * them. Neither is ever accepted as an id in a body.
+ * `blockedSlot` is the first of `slots` (or null), for the web release
+ * before 20261017090000, which read it. The old one-time column
+ * blockedConstraintId is no longer served: 20261022090000 retired it, and the
+ * client never named a constraint anyway.
  */
 export interface TeacherDutyResponse extends Omit<TeacherDuty, 'validFrom' | 'validTo'> {
   validFrom: string | null;

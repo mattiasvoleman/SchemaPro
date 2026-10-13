@@ -2619,7 +2619,7 @@ describe('Planning surface (e2e)', () => {
       const CONSTRAINT_ID = '90909090-9090-4090-8090-909090909090';
       const DUTIES: LockedTable = {
         name: 'TeacherDuties',
-        columns: ['id', 'schoolId', 'userId', 'academicYearId', 'label', 'blockedConstraintId', 'validFrom', 'validTo'],
+        columns: ['id', 'schoolId', 'userId', 'academicYearId', 'label', 'validFrom', 'validTo'],
         lock: 'FOR NO KEY UPDATE',
       };
       const storedDuty = (overrides: Record<string, unknown> = {}) => ({
@@ -2633,7 +2633,6 @@ describe('Planning surface (e2e)', () => {
         countsAsTeaching: false,
         subjectId: null,
         studentGroupId: null,
-        blockedConstraintId: null,
         note: null,
         validFrom: null,
         validTo: null,
