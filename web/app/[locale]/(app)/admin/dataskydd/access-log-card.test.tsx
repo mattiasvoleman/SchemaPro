@@ -79,6 +79,7 @@ describe("Vem har läst om en person?", () => {
     vi.resetAllMocks();
     get.mockImplementation(async (path: string) => {
       if (path === "/api/v1/users") return PEOPLE;
+      if (path === "/api/v1/retention/purged-before") return [];
       if (path.startsWith("/api/v1/access-log")) return answer();
       throw new Error(`unexpected GET ${path}`);
     });
@@ -136,14 +137,18 @@ describe("Vem har läst om en person?", () => {
     const user = userEvent.setup();
     get.mockImplementation(async (path: string) => {
       if (path === "/api/v1/users") return PEOPLE;
+      if (path === "/api/v1/retention/purged-before") return [];
       return answer({ entries: [] });
     });
     renderCard();
     await choosePupil(user);
     await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
     expect(await screen.findByText("Ingen har läst om Ada Ek under perioden.")).toBeInTheDocument();
+    expect(screen.queryByText(/är gallrade enligt skolans beslut/)).not.toBeInTheDocument();
 
-    get.mockImplementation(async (path: string) => (path === "/api/v1/users" ? PEOPLE : answer({ truncated: true })));
+    get.mockImplementation(async (path: string) =>
+      path === "/api/v1/users" ? PEOPLE : path === "/api/v1/retention/purged-before" ? [] : answer({ truncated: true }),
+    );
     await user.type(to(), "2026-10-13");
     await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
     expect(await screen.findByText("Bara de senaste läsningarna visas")).toBeInTheDocument();
@@ -160,11 +165,26 @@ describe("Vem har läst om en person?", () => {
 
     get.mockImplementation(async (path: string) => {
       if (path === "/api/v1/users") return PEOPLE;
+      if (path === "/api/v1/retention/purged-before") return [];
       throw new ApiError(404, "Personen finns inte i skolan.", "ACCESS_LOG_PERSON_NOT_FOUND");
     });
     await user.clear(to());
     await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
     expect(await screen.findByText("Personen finns inte i skolan.")).toBeInTheDocument();
+  });
+
+  it("says when the log is gallrat before the period asked, rather than letting a short answer read as nobody", async () => {
+    const user = userEvent.setup();
+    get.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/users") return PEOPLE;
+      if (path === "/api/v1/retention/purged-before") return [{ dataType: "ACCESS_LOG", purgedBefore: "2025-10-13" }];
+      return answer({ entries: [] });
+    });
+    renderCard();
+    await choosePupil(user);
+    await user.click(screen.getByRole("button", { name: "Visa läsningar" }));
+    expect(await screen.findByText("Läsningar före 13 oktober 2025 är gallrade enligt skolans beslut.")).toBeInTheDocument();
+    expect(screen.getByText("Ingen har läst om Ada Ek under perioden.")).toBeInTheDocument();
   });
 
   it("builds one export row per entry, the count of others as a number", () => {

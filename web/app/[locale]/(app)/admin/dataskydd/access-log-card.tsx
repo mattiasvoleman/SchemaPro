@@ -14,6 +14,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { ApiError } from "@/lib/api";
 import { formatRetentionInstant } from "@/lib/retention-types";
 import type { UserRole } from "@/lib/types";
+import { PurgedNotice } from "@/components/retention/purged-notice";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { FormField } from "@/components/ui/form-field";
@@ -138,47 +139,52 @@ export function AccessLogCard() {
         ) : answer.isError ? (
           <LoadError variant="inline" title={t("loadFailed")} hint={errorText(answer.error)} />
         ) : data ? (
-          data.entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("empty", { name })}</p>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm">{t("summary", { count: data.entries.length, readers, name })}</p>
-                <Button type="button" variant="outline" size="sm" onClick={exportCsv}>
-                  {t("export")}
-                </Button>
-              </div>
-              {data.truncated ? (
-                <Notice tone="warning" title={t("truncatedTitle")}>
-                  {t("truncated", { count: data.entries.length })}
-                </Notice>
-              ) : null}
-              <TableCard caption={t("caption", { name })} tableClassName="min-w-[44rem]" busy={answer.isFetching}>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("columns.at")}</TableHead>
-                    <TableHead>{t("columns.reader")}</TableHead>
-                    <TableHead>{t("columns.role")}</TableHead>
-                    <TableHead>{t("columns.kind")}</TableHead>
-                    <TableHead>{t("columns.channel")}</TableHead>
-                    <TableHead className="text-right">{t("columns.others")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.entries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell className="whitespace-nowrap">{when(entry)}</TableCell>
-                      <TableCell>{reader(entry)}</TableCell>
-                      <TableCell>{role(entry)}</TableCell>
-                      <TableCell>{kind(entry)}</TableCell>
-                      <TableCell>{channel(entry)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{entry.others > 0 ? entry.others : "–"}</TableCell>
+          <>
+            {/* Reads before the school's gallring are gone: said, so that an
+                empty or short answer is not taken for nobody having read. */}
+            <PurgedNotice kind="ACCESS_LOG" from={data.from ?? undefined} />
+            {data.entries.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("empty", { name })}</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm">{t("summary", { count: data.entries.length, readers, name })}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={exportCsv}>
+                    {t("export")}
+                  </Button>
+                </div>
+                {data.truncated ? (
+                  <Notice tone="warning" title={t("truncatedTitle")}>
+                    {t("truncated", { count: data.entries.length })}
+                  </Notice>
+                ) : null}
+                <TableCard caption={t("caption", { name })} tableClassName="min-w-[44rem]" busy={answer.isFetching}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("columns.at")}</TableHead>
+                      <TableHead>{t("columns.reader")}</TableHead>
+                      <TableHead>{t("columns.role")}</TableHead>
+                      <TableHead>{t("columns.kind")}</TableHead>
+                      <TableHead>{t("columns.channel")}</TableHead>
+                      <TableHead className="text-right">{t("columns.others")}</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </TableCard>
-            </>
-          )
+                  </TableHeader>
+                  <TableBody>
+                    {data.entries.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="whitespace-nowrap">{when(entry)}</TableCell>
+                        <TableCell>{reader(entry)}</TableCell>
+                        <TableCell>{role(entry)}</TableCell>
+                        <TableCell>{kind(entry)}</TableCell>
+                        <TableCell>{channel(entry)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{entry.others > 0 ? entry.others : "–"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </TableCard>
+              </>
+            )}
+          </>
         ) : null}
       </div>
     </SectionCard>
