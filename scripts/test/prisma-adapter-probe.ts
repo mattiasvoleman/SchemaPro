@@ -78,11 +78,13 @@ import { TimplanCreditsService } from '../../src/timplan/timplan-credits.service
 import { readDeliveredRows, staffingCreditStatement } from '../../src/timplan/timplan-delivered.sql';
 import type { DeliveredLineDetail } from '../../src/common/timplan-delivered';
 import {
+  BLOCK_MEMBERS_DIFFER,
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
   rethrowPrismaError,
   rolloverLinkRefusal,
   teacherDutyBlockRefusal,
+  teachingBlockRefusal,
   timplanCreditKeyField,
 } from '../../src/common/utils/prisma-errors';
 import { todayInZone } from '../../src/common/utils/time';
@@ -91,6 +93,7 @@ import type { SupabaseAdminService } from '../../src/users/supabase-admin.servic
 import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
 import { attendanceSpan, lockEmploymentsOf } from '../../src/staffing/staffing-enforcement';
 import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
+import { TeachingBlocksService } from '../../src/resources/teaching-blocks.service';
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
@@ -1967,6 +1970,147 @@ async function runChecks(
     await timplans.remove(plan.id, admin);
     await subjects.remove(idrott.id, admin);
     await subjects.remove(matematik.id, admin);
+  });
+
+  // ---- (u2b) parallella block: TB409 through the real adapter, and the block's lock
+  await check('(u2b) a block whose posts would differ is a TB409 the adapter carries whole and a 409 BLOCK_MEMBERS_DIFFER, and two writers of one block wait for each other', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const blocks = new TeachingBlocksService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const other = open(withConnectionLimit(appUrl, 1));
+    await other.onModuleInit();
+    const rivalRequirements = new TeachingRequirementsService(other);
+
+    const year = await years.create(
+      { name: `${MARKER} bl`, startDate: '2096-08-17', endDate: '2097-06-11' } as never,
+      admin,
+    );
+    const language = await subjects.create({ name: `${MARKER} bl-språk` } as never, admin);
+    const post = async (name: string) => {
+      const groupId = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' ' || $4, 'TEACHING_GROUP', 7, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER, name],
+        )
+      ).rows[0].id;
+      return requirements.create(
+        { academicYearId: year.id, subjectId: language.id, studentGroupId: groupId, lessonsPerWeek: 2, minutesPerLesson: 60 } as never,
+        admin,
+      );
+    };
+    const lessonsOf = async (id: string) =>
+      (await owner.query<{ lessonsPerWeek: number; blockId: string | null }>(
+        'SELECT "lessonsPerWeek", "blockId" FROM "TeachingRequirements" WHERE id = $1',
+        [id],
+      )).rows[0];
+    const isDiffer = (name: string) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, summarise(error));
+      const body = error.getResponse() as { code?: string; message?: string };
+      assert.equal(body.code, BLOCK_MEMBERS_DIFFER);
+      assert.ok(body.message?.includes(`blocket "${name}"`), body.message);
+      return true;
+    };
+
+    try {
+      const ty = await post('Ty7');
+      const fr = await post('Fr7');
+      const sp = await post('Sp7');
+      const de = await post('De7');
+      const sprakval = await blocks.create(
+        { academicYearId: year.id, name: `${MARKER} Språkval`, requirementIds: [ty.id, fr.id] },
+        admin,
+      );
+
+      // A member written alone past the service: the adapter's P2039 with the
+      // driver's cause, whose message and DETAIL name the block and both rows.
+      try {
+        await api.withRls(admin, (tx) =>
+          tx.teachingRequirement.update({ where: { id: fr.id }, data: { lessonsPerWeek: 3 } }),
+        );
+        assert.fail('a member of a block took other lessons alone');
+      } catch (error) {
+        assert.equal(sqlStateOf(error), 'TB409', summarise(error));
+        assert.equal((error as Prisma.PrismaClientKnownRequestError).code, 'P2039', summarise(error));
+        assert.deepEqual(teachingBlockRefusal(error), {
+          blockName: `${MARKER} Språkval`,
+          teachingBlockId: sprakval.id,
+          requirementId: fr.id,
+          otherRequirementId: ty.id,
+        });
+      }
+      // Through the requirements service, the 409 naming the block; nothing written.
+      await assert.rejects(
+        requirements.update(fr.id, { lessonsPerWeek: 3 } as never, admin),
+        isDiffer(`${MARKER} Språkval`),
+      );
+      assert.equal((await lessonsOf(fr.id)).lessonsPerWeek, 2);
+
+      // Two writers of one block, each right alone and wrong together. The
+      // block holds Sp7 alone. The holder adds De7 (2 × 60) through the block
+      // service and parks before COMMIT; the rival changes Sp7 to 3 × 60
+      // through the requirements service on its own connection, which takes
+      // no lock of its own on the block. Only the trigger's FOR UPDATE on the
+      // block's row makes it wait — asked of the database, not of a clock —
+      // and after the holder commits it reads De7 and is refused.
+      const elevensVal = await blocks.create(
+        { academicYearId: year.id, name: `${MARKER} Elevens val`, requirementIds: [sp.id] },
+        admin,
+      );
+      const touched = deferred<number>();
+      const release = deferred<void>();
+      const parked = {
+        withRls: <T>(user: AuthenticatedUser, fn: (tx: PrismaClient) => Promise<T>) =>
+          api.withRls(user, async (tx) => {
+            const result = await fn(tx);
+            const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            touched.resolve(pid);
+            await release.promise;
+            return result;
+          }),
+      } as unknown as PrismaService;
+      const holderSettled = new TeachingBlocksService(parked)
+        .update(elevensVal.id, { requirementIds: [sp.id, de.id] }, admin)
+        .then(() => null, (error: unknown) => error);
+      const pid = await Promise.race([
+        touched.promise,
+        holderSettled.then((error) => {
+          throw error ?? new Error('the holder committed before it parked');
+        }),
+      ]);
+      let rivalDone = false;
+      const rivalSettled = rivalRequirements
+        .update(sp.id, { lessonsPerWeek: 3 } as never, admin)
+        .then(() => null, (error: unknown) => error)
+        .finally(() => {
+          rivalDone = true;
+        });
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',
+          [pid],
+        );
+        if (rows[0].n > 0) break;
+        if (rivalDone || tries > 500) {
+          release.resolve();
+          await holderSettled;
+          throw new Error('the second writer of the block never waited on the first: the trigger takes no lock on the block');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      const [holderError, rivalError] = await Promise.all([holderSettled, rivalSettled]);
+      assert.equal(holderError, null, `the holder failed: ${summarise(holderError)}`);
+      isDiffer(`${MARKER} Elevens val`)(rivalError);
+      assert.deepEqual(await lessonsOf(sp.id), { lessonsPerWeek: 2, blockId: elevensVal.id });
+      assert.deepEqual(await lessonsOf(de.id), { lessonsPerWeek: 2, blockId: elevensVal.id });
+    } finally {
+      // The year takes its groups, posts and blocks with it.
+      await years.remove(year.id, admin);
+      await subjects.remove(language.id, admin);
+      await other.$disconnect();
+    }
   });
 
   // ---- (u3) tillgodoräknad tid through the real adapter
