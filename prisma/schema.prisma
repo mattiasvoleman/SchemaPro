@@ -3476,6 +3476,8 @@ enum PersonalDataAccessKind {
   EMPLOYMENT
   STAFF_ABSENCES
   ACCESS_LOG
+  SCHEDULE
+  TEACHING_TIME
 }
 
 /// The client a read came through; INTEGRATION for an SS12000 key.
