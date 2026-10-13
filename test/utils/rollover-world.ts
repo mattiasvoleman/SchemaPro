@@ -199,9 +199,8 @@ export function defaultRolloverRows(): Record<string, Row[]> {
         note: null,
       },
     ],
-    teacherDuty: [
-      duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { blockedConstraintId: IDS.slotRast, note: 'rast' }),
-    ],
+    teacherDuty: [duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { note: 'rast' })],
+    teacherDutySlot: [dutyLink(IDS.dutyRast, IDS.slotRast)],
   };
 
   function requirement(id: string, studentGroupId: string, subjectId: string, subjectRow: Row, extra: Row): Row {
@@ -255,9 +254,23 @@ function duty(id: string, userId: string, kind: string, label: string, minutesPe
     countsAsTeaching: false,
     subjectId: null,
     studentGroupId: null,
-    blockedConstraintId: null,
     note: null,
     ...extra,
+  };
+}
+
+/**
+ * One time of an uppdrag, as TeacherDutiesService links it (20261017090000).
+ * The id is the one the backfill below gives a frozen fixture's time, so a
+ * plan that names a link reads the same either way.
+ */
+function dutyLink(teacherDutyId: string, availabilityConstraintId: string): Row {
+  return {
+    id: `f9${availabilityConstraintId.slice(2)}`,
+    schoolId: IDS.school,
+    teacherDutyId,
+    availabilityConstraintId,
+    createdAt: new Date('2026-08-01T00:00:00.000Z'),
   };
 }
 
@@ -326,10 +339,9 @@ export function staffingRows(rows: Record<string, Row[]> = defaultRolloverRows()
     }),
   ];
   rows['teacherDuty'] = [
-    duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { blockedConstraintId: IDS.slotRast, note: 'rast' }),
+    duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { note: 'rast' }),
     duty(IDS.dutyMentor7a, IDS.anna, 'MENTORSKAP', 'Mentor 7A', 60, {
       studentGroupId: IDS.g7a,
-      blockedConstraintId: IDS.slotMentor,
       countsAsTeaching: true,
       note: 'mentor 7a',
     }),
@@ -337,8 +349,13 @@ export function staffingRows(rows: Record<string, Row[]> = defaultRolloverRows()
     duty(IDS.dutyStudie9a, IDS.cecilia, 'ANNAT', 'Studiehandledning 9A', 30, { studentGroupId: IDS.g9a, note: 'studie' }),
     duty(IDS.dutyAmne, IDS.cecilia, 'AMNESANSVAR', 'Ämnesansvar Ma', 40, { subjectId: IDS.ma, note: 'amne' }),
     duty(IDS.dutyBo, IDS.bo, 'RASTVAKT', 'Rastvakt', 20, { note: 'bo' }),
-    duty(IDS.dutyApt, IDS.cecilia, 'APT_KONFERENS', 'APT', 120, { blockedConstraintId: IDS.slotApt, note: 'apt' }),
+    duty(IDS.dutyApt, IDS.cecilia, 'APT_KONFERENS', 'APT', 120, { note: 'apt' }),
     duty(IDS.dutyGuardian, IDS.guardian, 'ANNAT', 'Föräldraråd', 15, { note: 'guardian' }),
+  ];
+  rows['teacherDutySlot'] = [
+    dutyLink(IDS.dutyRast, IDS.slotRast),
+    dutyLink(IDS.dutyMentor7a, IDS.slotMentor),
+    dutyLink(IDS.dutyApt, IDS.slotApt),
   ];
   rows['availabilityConstraint']!.push(
     teacherSlot(IDS.slotMentor, IDS.anna, 1, '08:00', '08:30'),
@@ -449,12 +466,10 @@ function relationMatches(row: Row, key: string, wanted: unknown, context: MatchC
     }
   }
   // A to-one relation by `is`/`isNot`: forward through `${key}Id`, or one of
-  // the back-relations a year-scoped read filters on (a duty's blocked slot).
+  // the back-relations a year-scoped read filters on (an uppdrag's time).
   if (wanted !== null && typeof wanted === 'object' && ('is' in (wanted as Row) || 'isNot' in (wanted as Row))) {
     const filter = wanted as Row;
     const back: Record<string, (subject: Row) => Row | undefined> = {
-      'availabilityConstraint.teacherDuty': (subject) =>
-        context.table('teacherDuty').find((duty) => duty['blockedConstraintId'] === subject['id']),
       // The link a constraint is an uppdrag's time through (20261017090000).
       'availabilityConstraint.teacherDutySlot': (subject) =>
         context.table('teacherDutySlot').find((link) => link['availabilityConstraintId'] === subject['id']),
@@ -544,12 +559,15 @@ export function givenRolloverWorld(
     },
   };
   const table = (model: string): Row[] => (rows[model] ??= []);
-  // An uppdrag's times are TeacherDutySlots rows (20261017090000), and the
-  // database makes every blockedConstraintId one (the backfill, then a
-  // trigger). The world does the same, so a fixture can keep stating a duty's
-  // one time on the duty and still be read through the link as the code reads it.
+  // An uppdrag's times are TeacherDutySlots rows (20261017090000). A fixture
+  // frozen before then (rollover-rows-fa4a3d6.ts) states a duty's one time
+  // on the duty, in the column 20261017090000 backfilled into a link and
+  // 20261022090000 retired. The world does what the database did: the link,
+  // and the column gone from the row, so the frozen fixture is read through
+  // the link as the code reads it.
   for (const duty of rows['teacherDuty'] ?? []) {
     const constraintId = duty['blockedConstraintId'];
+    delete duty['blockedConstraintId'];
     if (typeof constraintId !== 'string') continue;
     if (table('teacherDutySlot').some((link) => link['availabilityConstraintId'] === constraintId)) continue;
     table('teacherDutySlot').push({
@@ -650,8 +668,6 @@ export function givenRolloverWorld(
                       : name === 'teacherDuty'
                         ? {
                             ...row,
-                            blockedConstraint:
-                              table('availabilityConstraint').find((constraint) => constraint['id'] === row['blockedConstraintId']) ?? null,
                             // Its times through their links, each with its constraint.
                             slots: table('teacherDutySlot')
                               .filter((link) => link['teacherDutyId'] === row['id'])

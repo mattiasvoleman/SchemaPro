@@ -845,7 +845,9 @@ describe('CalendarLessonsService', () => {
           type: 'UNAVAILABLE',
         },
       ]);
-      tx.teacherDuty.findMany.mockResolvedValue([{ blockedConstraintId: 'slot', label: 'Rastvakt', academicYearId: 'year-1' }]);
+      tx.teacherDutySlot.findMany.mockResolvedValue([
+        { availabilityConstraintId: 'slot', teacherDuty: { label: 'Rastvakt', academicYearId: 'year-1', validFrom: null, validTo: null } },
+      ]);
 
       await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
         { teacherId: FREE, isPrimary: true, qualificationKind: null },

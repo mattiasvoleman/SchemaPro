@@ -668,9 +668,8 @@ export interface TeacherDutySlot {
  * UNAVAILABLE constraints the gateway writes in the same transaction (one
  * link each, migration 20261017090000); the client never names a
  * constraint. `validFrom`/`validTo` are its Från and Till, yyyy-mm-dd, null
- * for the läsår's own bound. `blockedSlot` (the first time) and
- * `blockedConstraintId` are the previous release's fields, still served for
- * one release; nothing here reads them.
+ * for the läsår's own bound. `blockedSlot` (the first time) is the field
+ * the web before 20261017090000 read, still served; nothing here reads it.
  */
 export interface TeacherDuty {
   id: string;
@@ -686,7 +685,6 @@ export interface TeacherDuty {
   validFrom: string | null;
   validTo: string | null;
   slots: TeacherDutySlot[];
-  blockedConstraintId?: string | null;
   blockedSlot?: TeacherDutySlot | null;
   note: string | null;
 }

@@ -291,7 +291,6 @@ export async function applyStaffingWrites(
       studentGroupId: duty.groupKey === null ? null : groupOf(duty.groupKey),
       validFrom: null,
       validTo: null,
-      blockedConstraintId: null,
       note: duty.note,
     };
   });

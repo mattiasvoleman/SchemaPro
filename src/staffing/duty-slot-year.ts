@@ -17,9 +17,8 @@ import type { Prisma } from '@prisma/client';
  * that decides the year is the one the database already guards.
  *
  * THE LINK IS TeacherDutySlots (migration 20261017090000). Every time an
- * uppdrag holds has a link row there, the ones written through the old
- * blockedConstraintId column included (backfilled, and a trigger since), so
- * the old column is not read here.
+ * uppdrag holds has a link row there; the old one-time column it replaced is
+ * retired (20261022090000) and held empty.
  *
  * AN UPPDRAG'S DATES ARE NOT. A time of an uppdrag that runs from January
  * still blocks the teacher in the year's weekly master for the whole year:

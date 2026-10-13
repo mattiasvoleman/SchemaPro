@@ -4066,10 +4066,11 @@ END $$;
 -- admin plants duties for TWO teachers and the teacher's read is an exact
 -- count of their own, against the colleague's existing in the transaction.
 --
--- The second half is the link. blockedConstraintId must name a weekly
--- UNAVAILABLE TEACHER constraint of the duty's own teacher, and the two
--- triggers say so with SQLSTATE TD409 for every writer, the admin through
--- PostgREST's SQL included: a colleague's constraint, a ROOM's, a wish
+-- The second half is the link, a TeacherDutySlots row since 20261017090000
+-- (the one-time column blockedConstraintId it replaced is retired by
+-- 20261022090000; section 90). A link must name a weekly UNAVAILABLE TEACHER
+-- constraint of the duty's own teacher, and the triggers say so with SQLSTATE
+-- TD409 for every writer, the admin through PostgREST's SQL included: a colleague's constraint, a ROOM's, a wish
 -- (PREFERRED_FREE), a one-off date, a duty moved to another teacher with its
 -- slot, and the constraint itself moved or retyped under a linked duty. A
 -- constraint in ANOTHER school, under a row honestly stamped with this one,
@@ -4157,8 +4158,9 @@ BEGIN
   -- Three duties: two of the acting teacher's (one with the APT slot, the
   -- mentor class and the subject), one of the colleague's.
   INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
-                               "studentGroupId", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, year, 'APT_KONFERENS', 'APT', 120, grp, c_me, now()) RETURNING id INTO d_me;
+                               "studentGroupId", "updatedAt")
+  VALUES (school, me, year, 'APT_KONFERENS', 'APT', 120, grp, now()) RETURNING id INTO d_me;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me, c_me);
   INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
                                "countsAsTeaching", "subjectId", "updatedAt")
   VALUES (school, me, year, 'AMNESANSVAR', 'Ämnesansvar', 60, true, subj, now()) RETURNING id INTO d_me2;
@@ -4172,34 +4174,30 @@ BEGIN
   -- The link, refused for every wrong target. Only TD409 is caught: any
   -- other error (a CHECK, a key) would mean the guard never got its say.
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'ANNAT', 'Fel lärare', 30, c_col, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me2, c_col);
     RAISE EXCEPTION 'duties: a duty took a colleague''s constraint as its slot';
   EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
   END;
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'ANNAT', 'Sal', 30, room_c, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me2, room_c);
     RAISE EXCEPTION 'duties: a duty took a ROOM constraint as its slot';
   EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
   END;
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'ANNAT', 'Önskemål', 30, c_wish, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me2, c_wish);
     RAISE EXCEPTION 'duties: a duty took a PREFERRED_FREE wish as its slot';
   EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
   END;
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'ANNAT', 'En dag', 30, c_date, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me2, c_date);
     RAISE EXCEPTION 'duties: a duty took a one-off dated constraint as its weekly slot';
   EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
   END;
-  -- By UPDATE as well: the colleague's duty given the acting teacher's slot,
-  -- and the APT duty moved to the colleague with the acting teacher's slot.
+  -- The colleague's duty given the acting teacher's slot, and the APT duty
+  -- moved to the colleague with the acting teacher's slot.
   BEGIN
-    UPDATE "TeacherDuties" SET "blockedConstraintId" = c_me2 WHERE id = d_col;
-    RAISE EXCEPTION 'duties: an UPDATE gave a colleague''s duty this teacher''s slot';
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_col, c_me2);
+    RAISE EXCEPTION 'duties: a link gave a colleague''s duty this teacher''s slot';
   EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
   END;
   BEGIN
@@ -4209,8 +4207,7 @@ BEGIN
   END;
   -- One duty per slot: the unique key, not the trigger.
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'ANNAT', 'Samma tid', 30, c_me, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_me2, c_me);
     RAISE EXCEPTION 'duties: two duties hold one slot';
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
@@ -4219,8 +4216,8 @@ BEGIN
   -- Caught as foreign_key_violation ONLY — a TD409 here would be the trigger
   -- describing school B's row, which it must never reach.
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'ANNAT', 'Skola B', 30, current_setting('app.test_constraint_b')::uuid, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+    VALUES (school, d_me2, current_setting('app.test_constraint_b')::uuid);
     RAISE EXCEPTION 'duties: a duty in school A took school B''s constraint as its slot';
   EXCEPTION WHEN foreign_key_violation THEN NULL;
   END;
@@ -4455,8 +4452,11 @@ BEGIN
   IF c_me IS NULL THEN
     RAISE EXCEPTION 'duties: the APT slot moved or vanished under the teacher''s refused writes';
   END IF;
-  SELECT id INTO d_me FROM "TeacherDuties" WHERE "blockedConstraintId" = c_me;
+  SELECT "teacherDutyId" INTO d_me FROM "TeacherDutySlots" WHERE "availabilityConstraintId" = c_me;
   SELECT id INTO d_me2 FROM "TeacherDuties" WHERE kind = 'AMNESANSVAR';
+  IF d_me IS NULL THEN
+    RAISE EXCEPTION 'duties: the APT''s link is gone before its slot was deleted';
+  END IF;
 
   -- The admin deletes the slot: the duty stays, in its school, with no slot.
   DELETE FROM "AvailabilityConstraints" WHERE id = c_me;
@@ -4465,10 +4465,14 @@ BEGIN
     RAISE EXCEPTION 'duties: an admin could not delete a duty''s slot (% row(s))', n;
   END IF;
   SELECT count(*) INTO n FROM "TeacherDuties"
-   WHERE id = d_me AND "blockedConstraintId" IS NULL AND "schoolId" = school
+   WHERE id = d_me AND "schoolId" = school
      AND "studentGroupId" IS NOT NULL AND "minutesPerWeek" = 120;
   IF n <> 1 THEN
-    RAISE EXCEPTION 'duties: deleting the slot did more than clear blockedConstraintId';
+    RAISE EXCEPTION 'duties: deleting the slot did more than remove its link';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = d_me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a deleted slot left % link(s) on its duty', n;
   END IF;
 
   -- The mentor class and the ämnesansvar subject deleted: links cleared, duties kept.
@@ -4486,8 +4490,9 @@ $$;
 -- both in one transaction, but a duty also leaves by PostgREST and by the
 -- year's cascade (DELETE /academic-years/:id is tx.academicYear.delete), and
 -- a slot left behind is a weekly UNAVAILABLE row no uppdrag shows any more,
--- blocking the teacher in every later generation. The AFTER DELETE trigger
--- takes it; both doors are exercised here, as the admin through RLS.
+-- blocking the teacher in every later generation. The link cascades and its
+-- AFTER DELETE trigger takes the slot; both doors are exercised here, as the
+-- admin through RLS.
 DO $$
 DECLARE
   school uuid := app.current_school_id();
@@ -4502,8 +4507,9 @@ BEGIN
   -- A duty deleted on its own, not through the service.
   INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
   VALUES (school, 'TEACHER', me, 1, '07:30', '08:00', 'UNAVAILABLE', 'RLS17 städas', now()) RETURNING id INTO c_one;
-  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, year, 'RASTVAKT', 'Morgonvakt', 30, c_one, now()) RETURNING id INTO d_one;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'RASTVAKT', 'Morgonvakt', 30, now()) RETURNING id INTO d_one;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_one, c_one);
   DELETE FROM "TeacherDuties" WHERE id = d_one;
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN
@@ -4519,8 +4525,9 @@ BEGIN
   VALUES (school, 'RLS17 nästa år', DATE '2098-08-15', DATE '2099-06-10', false, now()) RETURNING id INTO next_year;
   INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
   VALUES (school, 'TEACHER', me, 3, '15:00', '17:00', 'UNAVAILABLE', 'RLS17 nästa års APT', now()) RETURNING id INTO c_next;
-  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, next_year, 'APT_KONFERENS', 'APT nästa år', 120, c_next, now()) RETURNING id INTO d_next;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, next_year, 'APT_KONFERENS', 'APT nästa år', 120, now()) RETURNING id INTO d_next;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d_next, c_next);
   DELETE FROM "AcademicYears" WHERE id = next_year;
   SELECT count(*) INTO n FROM "TeacherDuties" WHERE id = d_next;
   IF n <> 0 THEN
@@ -4562,7 +4569,8 @@ END
 $$;
 ROLLBACK;
 
--- The catalog half: three arms, the three triggers enabled and SECURITY DEFINER,
+-- The catalog half: three arms, the slot triggers enabled and SECURITY DEFINER
+-- (the link's since 20261017090000; the old column's are gone, section 90),
 -- and the two new load-percent CHECKs on TeachingRequirements.
 DO $$
 DECLARE n integer;
@@ -4578,11 +4586,12 @@ BEGIN
     FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
    WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
      AND (t.tgrelid, t.tgname) IN (
-       ('public."TeacherDuties"'::regclass,           'TeacherDuties_block_is_the_teachers'),
-       ('public."TeacherDuties"'::regclass,           'TeacherDuties_take_their_block'),
+       ('public."TeacherDutySlots"'::regclass,        'TeacherDutySlots_are_the_teachers'),
+       ('public."TeacherDutySlots"'::regclass,        'TeacherDutySlots_take_their_block'),
+       ('public."TeacherDuties"'::regclass,           'TeacherDuties_slots_stay_the_teachers'),
        ('public."AvailabilityConstraints"'::regclass, 'AvailabilityConstraints_keep_duty_blocks'));
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'duties: % of the three slot triggers are present, enabled and SECURITY DEFINER', n;
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'duties: % of the four slot triggers are present, enabled and SECURITY DEFINER', n;
   END IF;
   SELECT count(*) INTO n FROM pg_constraint
    WHERE conrelid = 'public."TeachingRequirements"'::regclass AND contype = 'c'
@@ -5695,8 +5704,10 @@ BEGIN
   INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
   VALUES (school, 'TEACHER', me, 2, '15:00', '15:30', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO s_old;
   INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
-                               "studentGroupId", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, y1, 'MENTORSKAP', 'RLS20 Mentor 7A', 60, g7, s_old, now());
+                               "studentGroupId", "updatedAt")
+  VALUES (school, me, y1, 'MENTORSKAP', 'RLS20 Mentor 7A', 60, g7, now());
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+  SELECT school, d.id, s_old FROM "TeacherDuties" d WHERE d.label = 'RLS20 Mentor 7A';
 
   -- The carry's writes, in its order and shape: the posts (the same
   -- signatures, which the per-year key allows), a NEW slot from the builder's
@@ -5712,8 +5723,10 @@ BEGIN
   VALUES (school, 'TEACHER', me, NULL, NULL, NULL, NULL, 2, NULL, '15:00', '15:30', 'UNAVAILABLE', 'Uppdrag', now())
   RETURNING id INTO c_new;
   INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
-                               "studentGroupId", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, y2, 'MENTORSKAP', 'RLS20 Mentor 8A', 60, g8, c_new, now());
+                               "studentGroupId", "updatedAt")
+  VALUES (school, me, y2, 'MENTORSKAP', 'RLS20 Mentor 8A', 60, g8, now());
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+  SELECT school, d.id, c_new FROM "TeacherDuties" d WHERE d.label = 'RLS20 Mentor 8A';
   INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
   VALUES (school, colleague, y2, 'RASTVAKT', 'RLS20 Rastvakt', 30, now());
   SELECT count(*) INTO n FROM "TeacherDuties" WHERE "academicYearId" = y2;
@@ -5730,8 +5743,10 @@ BEGIN
   VALUES (school, 'TEACHER', colleague, 2, '15:00', '15:30', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO c_col;
   BEGIN
     INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
-                                 "studentGroupId", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, y2, 'MENTORSKAP', 'RLS20 Fel lärare', 60, g8, c_col, now());
+                                 "studentGroupId", "updatedAt")
+    VALUES (school, me, y2, 'MENTORSKAP', 'RLS20 Fel lärare', 60, g8, now());
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+    SELECT school, d.id, c_col FROM "TeacherDuties" d WHERE d.label = 'RLS20 Fel lärare';
     RAISE EXCEPTION 'carried: a carried uppdrag took the colleague''s constraint as its slot';
   EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
   END;
@@ -5782,7 +5797,9 @@ BEGIN
   IF n <> 1 THEN
     RAISE EXCEPTION 'carried: a teacher reads % uppdrag in the new year, expected exactly their own', n;
   END IF;
-  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "academicYearId" = y2 AND "blockedConstraintId" = slot;
+  SELECT count(*) INTO n FROM "TeacherDuties" d
+    JOIN "TeacherDutySlots" s ON s."teacherDutyId" = d.id AND s."schoolId" = d."schoolId"
+   WHERE d."academicYearId" = y2 AND s."availabilityConstraintId" = slot;
   IF n <> 1 THEN
     RAISE EXCEPTION 'carried: a teacher cannot read their own carried uppdrag with its slot';
   END IF;
@@ -5960,7 +5977,8 @@ BEGIN
     RAISE EXCEPTION 'carried: a deleted year''s carried uppdrag left its slot behind';
   END IF;
   SELECT count(*) INTO n FROM "TeacherDuties" d
-    JOIN "AvailabilityConstraints" c ON c.id = d."blockedConstraintId"
+    JOIN "TeacherDutySlots" s ON s."teacherDutyId" = d.id AND s."schoolId" = d."schoolId"
+    JOIN "AvailabilityConstraints" c ON c.id = s."availabilityConstraintId"
    WHERE d."academicYearId" = y1 AND c.id = current_setting('app.test_rls20_old_slot')::uuid
      AND c."dayOfWeek" = 2 AND c."startTime" = '15:00';
   IF n <> 1 THEN
@@ -7014,8 +7032,9 @@ BEGIN
     ELSIF kind = 'slot' THEN
       INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
       VALUES (school, 'TEACHER', u, 2, '15:00', '16:00', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO slot;
-      INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-      VALUES (school, u, y, 'APT_KONFERENS', 'RLS24 APT', 60, slot, now());
+      INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+      VALUES (school, u, y, 'APT_KONFERENS', 'RLS24 APT', 60, now()) RETURNING id INTO d;
+      INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d, slot);
     ELSE
       INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
       SELECT school, u, y, 'MENTORSKAP', 'RLS24 Mentor', 60, g."id", now()
@@ -12527,15 +12546,15 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 42: en tid går med sin länk, en länk med sin tid och sitt uppdrag,
--- och den gamla kolumnen blir en länk (20261017090000).
+-- Section 42: en tid går med sin länk, och en länk med sin tid och sitt
+-- uppdrag (20261017090000).
 --
 -- A link removed takes its constraint (no weekly UNAVAILABLE row outlives the
 -- uppdrag time it was); a constraint the admin deletes takes its link and
 -- leaves the uppdrag; a duty deleted takes its links and their constraints.
--- The previous API release and PostgREST still write blockedConstraintId: a
--- value there is a link row in the same statement, the same value again is
--- no second link, and a time another uppdrag already holds is TD409.
+-- The old one-time column's half of this section, a write of it becoming a
+-- link, went with that trigger (20261022090000); section 90 holds the column
+-- to meaning nothing.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -12572,24 +12591,12 @@ BEGIN
   SELECT count(*) INTO n FROM "TeacherDuties" WHERE id = d1;
   IF n <> 1 THEN RAISE EXCEPTION 'duty link cleanup: deleting a time deleted its uppdrag'; END IF;
 
-  -- The old column, as the previous API writes it: a link in the same statement.
-  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, year, 'APT_KONFERENS', 'RLS42 gammal APT', 90, c3, now()) RETURNING id INTO d2;
-  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = d2 AND "availabilityConstraintId" = c3;
-  IF n <> 1 THEN RAISE EXCEPTION 'duty link cleanup: the old column''s write made no link'; END IF;
-  -- The same value again: no second link.
-  UPDATE "TeacherDuties" SET "blockedConstraintId" = c3, "minutesPerWeek" = 91 WHERE id = d2;
-  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "teacherDutyId" = d2;
-  IF n <> 1 THEN RAISE EXCEPTION 'duty link cleanup: re-saving the old column made % links', n; END IF;
-  -- A time another uppdrag holds through its link: refused.
+  -- Two more uppdrag, one time each.
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'APT_KONFERENS', 'RLS42 APT', 90, now()) RETURNING id INTO d2;
   INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
   VALUES (school, me, year, 'ANNAT', 'RLS42 annat', 30, now()) RETURNING id INTO d3;
-  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d3, c4);
-  BEGIN
-    UPDATE "TeacherDuties" SET "blockedConstraintId" = c4 WHERE id = d2;
-    RAISE EXCEPTION 'duty link cleanup: the old column took a time another uppdrag holds';
-  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
-  END;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (school, d2, c3), (school, d3, c4);
 
   -- A duty deleted: its links and their constraints with it.
   DELETE FROM "TeacherDuties" WHERE id IN (d2, d3);
@@ -12610,7 +12617,8 @@ ROLLBACK;
 -- after}, by the admin. A duty created with three times is its CREATE and
 -- one "0 -> 3"; two removed in one statement one "3 -> 1"; a deleted duty is
 -- its DELETE alone, its links' cascade adding nothing. blockedConstraintId is
--- no longer logged: its SET NULL is no version, and the link's removal says it.
+-- no longer logged (and retired since 20261022090000): a time the admin
+-- deletes on tillgänglighet is the link's removal, one version.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -12663,13 +12671,12 @@ BEGIN
    WHERE "academicYearId" = y AND ("actorId" IS DISTINCT FROM admin OR COALESCE(before, after) ? 'blockedConstraintId');
   IF n <> 0 THEN RAISE EXCEPTION 'times history: % version(s) without the admin as actor, or logging blockedConstraintId', n; END IF;
 
-  -- The old column's SET NULL is no version; the link's removal is.
-  UPDATE "TeacherDuties" SET "blockedConstraintId" = c2 WHERE id = d1;
+  -- The time deleted on its constraint: the link's cascade is one version.
   DELETE FROM "AvailabilityConstraints" WHERE id = c2;
   SELECT string_agg(format('%s:%s:%s', version, action, coalesce(after::text, '-')), ' | ' ORDER BY version)
     INTO got FROM "TeacherEmploymentLogs" WHERE "userId" = me AND "academicYearId" = y AND version > 3;
   IF got IS DISTINCT FROM '4:UPDATE:{"slotCount": 0}' THEN
-    RAISE EXCEPTION 'times history: setting and clearing the old column wrote %', got;
+    RAISE EXCEPTION 'times history: deleting a linked time wrote %', got;
   END IF;
 
   -- A duty deleted with its links: its DELETE alone.
@@ -15192,5 +15199,113 @@ BEGIN
     RAISE EXCEPTION 'claim: a finished run claimed a person';
   EXCEPTION WHEN SQLSTATE 'GL404' THEN NULL;
   END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 90: ett uppdrags gamla engångskolumn betyder ingenting
+-- (20261022090000).
+--
+-- 20261017090000 moved an uppdrag's times to TeacherDutySlots and kept the
+-- one-time column blockedConstraintId, its keys and its triggers for the API
+-- release before it. 20261022090000 retires them. The catalogue half: no
+-- trigger and no function of the column is left, no foreign key, unique
+-- constraint or index names it, the constraint guard finds the duty through
+-- the link alone, and a validated CHECK holds the column empty until a later
+-- migration drops it. The behaviour half, as the admin: a value written to
+-- the column is refused (23514) by INSERT and by UPDATE, rather than made a
+-- link or silently kept; null is accepted, which is all the previous
+-- release's rollover writes; and no link appears for the time named.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  rel regclass := '"TeacherDuties"'::regclass;
+  col smallint;
+  n integer;
+  def text;
+BEGIN
+  SELECT attnum INTO col FROM pg_attribute WHERE attrelid = rel AND attname = 'blockedConstraintId' AND NOT attisdropped;
+  IF col IS NULL THEN
+    RAISE EXCEPTION 'retired column: TeacherDuties has no blockedConstraintId — this section is for the release that still has it';
+  END IF;
+  SELECT count(*) INTO n FROM pg_trigger
+   WHERE tgrelid = rel AND NOT tgisinternal
+     AND tgname IN ('TeacherDuties_block_is_the_teachers', 'TeacherDuties_take_their_block',
+                    'TeacherDuties_old_block_is_a_slot');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'retired column: % of the old column''s triggers are still on TeacherDuties', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+   WHERE s.nspname = 'app'
+     AND p.proname IN ('teacher_duties_block_is_the_teachers', 'teacher_duties_take_their_block',
+                       'teacher_duties_old_block_is_a_slot');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'retired column: % of the old column''s trigger functions are still in app', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = rel AND contype IN ('f', 'u', 'p') AND col = ANY (conkey);
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'retired column: % key(s) on TeacherDuties still name blockedConstraintId', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_index WHERE indrelid = rel AND col = ANY (indkey::smallint[]);
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'retired column: % index(es) on TeacherDuties still cover blockedConstraintId', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+   WHERE s.nspname = 'app' AND p.prosrc LIKE '%blockedConstraintId%'
+     AND p.proname <> 'teacher_staffing_log';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'retired column: % function(s) in app besides the log''s strip list still read blockedConstraintId', n;
+  END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c
+   WHERE c.conrelid = rel AND c.conname = 'TeacherDuties_blockedConstraintId_is_retired'
+     AND c.contype = 'c' AND c.convalidated;
+  IF def IS DISTINCT FROM 'CHECK (("blockedConstraintId" IS NULL))' THEN
+    RAISE EXCEPTION 'retired column: the CHECK holding blockedConstraintId empty is %', coalesce(def, 'missing or not validated');
+  END IF;
+END $$;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; year uuid; c uuid; d uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'retired column: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 3, '15:00', '16:00', 'UNAVAILABLE', 'RLS90 APT', now()) RETURNING id INTO c;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, year, 'APT_KONFERENS', 'RLS90 APT', 60, now()) RETURNING id INTO d;
+
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'APT_KONFERENS', 'RLS90 gammal APT', 60, c, now());
+    RAISE EXCEPTION 'retired column: an INSERT stored a value in blockedConstraintId';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherDuties" SET "blockedConstraintId" = c WHERE id = d;
+    RAISE EXCEPTION 'retired column: an UPDATE stored a value in blockedConstraintId';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "availabilityConstraintId" = c;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'retired column: a write of the old column left % link(s)', n;
+  END IF;
+
+  -- Null, as the previous release's rollover writes it.
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, year, 'RASTVAKT', 'RLS90 rullad', 20, NULL, now());
+  UPDATE "TeacherDuties" SET "blockedConstraintId" = NULL, "minutesPerWeek" = 61 WHERE id = d;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'retired column: an UPDATE writing null to it changed % row(s)', n;
+  END IF;
 END $$;
 ROLLBACK;

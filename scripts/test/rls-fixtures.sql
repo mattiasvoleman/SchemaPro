@@ -268,8 +268,8 @@ WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
 ON CONFLICT ("schoolId", "userId", "subjectId") DO NOTHING;
 
 -- An uppdrag in the SECOND school with its fixed slot: the fixture teacher's
--- APT on Tuesdays, an UNAVAILABLE TEACHER constraint, and a duty linked to it.
--- Section 17 needs both. The duty is what the tenant half counts (school A's
+-- APT on Tuesdays, an UNAVAILABLE TEACHER constraint, and a duty linked to it
+-- through a TeacherDutySlots row (20261017090000). Sections 17 and 40 need them. The duty is what the tenant half counts (school A's
 -- admin, teacher and service principal see none of it; school B's admin sees
 -- it), and the constraint is what an admin of school A points a duty of their
 -- own at, stamped with their own school — the shape only the composite key
@@ -287,15 +287,26 @@ WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
   );
 
 INSERT INTO "TeacherDuties"
-  ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-SELECT u."schoolId", u.id, y.id, 'APT_KONFERENS', 'RLS fixture APT', 120, c.id, now()
+  ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+SELECT u."schoolId", u.id, y.id, 'APT_KONFERENS', 'RLS fixture APT', 120, now()
 FROM "Users" u
 JOIN "AcademicYears" y ON y."schoolId" = u."schoolId" AND y.name = 'RLS Fixture Year'
-JOIN "AvailabilityConstraints" c ON c."schoolId" = u."schoolId" AND c.reason = 'RLS fixture: APT'
 WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
   AND NOT EXISTS (
     SELECT 1 FROM "TeacherDuties" d
      WHERE d."schoolId" = u."schoolId" AND d.label = 'RLS fixture APT'
+  );
+
+-- The link. A database at an older suite's fixtures already has it: the
+-- one-time column it was written through was backfilled (20261017090000).
+INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId")
+SELECT d."schoolId", d.id, c.id
+FROM "TeacherDuties" d
+JOIN "AvailabilityConstraints" c ON c."schoolId" = d."schoolId" AND c.reason = 'RLS fixture: APT'
+WHERE d.label = 'RLS fixture APT'
+  AND NOT EXISTS (
+    SELECT 1 FROM "TeacherDutySlots" s
+     WHERE s."schoolId" = d."schoolId" AND s."availabilityConstraintId" = c.id
   );
 
 -- A SCHOOL_ADMIN in the SECOND school, and two local timplans there — a DRAFT

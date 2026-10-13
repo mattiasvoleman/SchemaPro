@@ -117,7 +117,6 @@ export type ColumnRule =
    * Written as null whatever the source row holds. An uppdrag's Från and Till:
    * a carried uppdrag runs the whole new year, and one whose Till ended
    * before the source year did is not carried at all (rollover-staffing.ts).
-   * And the old one-time column, blockedConstraintId: the times are links.
    */
   | 'CLEARED'
   /** DUTY_SLOT_REASON, the bare word a colleague may read; never the source row's reason. */
@@ -482,7 +481,6 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       studentGroupId: 'FOLLOW_GROUP',
       validFrom: 'CLEARED',
       validTo: 'CLEARED',
-      blockedConstraintId: 'CLEARED',
       note: 'COPY',
       ...timestamps,
     },

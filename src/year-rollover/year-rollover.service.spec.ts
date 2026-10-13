@@ -1010,8 +1010,8 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     const g8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === '8A')!['id'];
     expect(carried.find((row) => row['kind'] === 'MENTORSKAP')).toMatchObject({ label: 'Mentor 8A', studentGroupId: g8a, countsAsTeaching: true });
     expect(carried.find((row) => row['note'] === 'studie')).toMatchObject({ studentGroupId: null, label: 'Studiehandledning 9A' });
-    // Never the old one-time column, and undated: the times are links.
-    expect(carried.every((row) => row['blockedConstraintId'] === null && row['validFrom'] === null && row['validTo'] === null)).toBe(true);
+    // Never the retired one-time column (20261022090000), and undated: the times are links.
+    expect(carried.every((row) => !('blockedConstraintId' in row) && row['validFrom'] === null && row['validTo'] === null)).toBe(true);
     const carriedIds = new Set(carried.map((row) => row['id']));
     const links = world.rows['teacherDutySlot']!.filter((link) => carriedIds.has(link['teacherDutyId']));
     expect(links.some((link) => carried.find((row) => row['id'] === link['teacherDutyId'])!['note'] === 'apt')).toBe(false);
@@ -1091,7 +1091,6 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       id: 'f4000000-0000-4000-8000-000000000009',
       label: 'Mentor Ma7 grupp 1',
       studentGroupId: IDS.gMa7,
-      blockedConstraintId: null,
       note: 'ma7',
     });
     const { service } = setup(rows);

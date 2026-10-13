@@ -1003,26 +1003,28 @@ async function runChecks(
       { resourceType: 'TEACHER', userId: colleague.id, dayOfWeek: 2, startTime: '15:00', endTime: '17:00', reason: MARKER } as never,
       admin,
     );
-    const dutyOf = (blockedConstraintId: string | null, label = MARKER) => ({
+    const dutyOf = (label = MARKER) => ({
       schoolId: fixture.schoolId,
       userId: mine.id,
       academicYearId: fixture.activeYearId,
       kind: 'APT_KONFERENS' as const,
       label,
       minutesPerWeek: 120,
-      blockedConstraintId,
     });
 
-    // The previous release's link, as the old API and PostgREST still write
-    // it: accepted, read back in the model's types, and made a TeacherDutySlots
-    // row by the trigger (20261017090000), so the new readers see it.
-    const duty = await api.withRls(admin, (tx) => tx.teacherDuty.create({ data: dutyOf(slot.id) }));
-    assert.equal(duty.blockedConstraintId, slot.id);
+    // The uppdrag and its time's link, as the admin writes them: read back
+    // in the model's types, and the link a TeacherDutySlots row.
+    const duty = await api.withRls(admin, (tx) => tx.teacherDuty.create({ data: dutyOf() }));
+    await api.withRls(admin, (tx) =>
+      tx.teacherDutySlot.create({ data: { schoolId: fixture.schoolId, teacherDutyId: duty.id, availabilityConstraintId: slot.id } }),
+    );
     assert.equal(duty.countsAsTeaching, false);
     assert.equal(duty.kind, 'APT_KONFERENS');
+    // The model no longer has the retired one-time column (20261022090000).
+    assert.equal('blockedConstraintId' in duty, false, 'the client still reads the retired column');
     const linkOf = async (constraintId: string) =>
       (await owner.query<{ teacherDutyId: string }>('SELECT "teacherDutyId" FROM "TeacherDutySlots" WHERE "availabilityConstraintId" = $1', [constraintId])).rows;
-    assert.deepEqual(await linkOf(slot.id), [{ teacherDutyId: duty.id }], 'the old column’s write made no link row');
+    assert.deepEqual(await linkOf(slot.id), [{ teacherDutyId: duty.id }], 'the admin’s link row is not stored');
 
     // A link row of its own to a colleague's constraint: TD409 from the link's trigger, 409.
     await assert.rejects(
@@ -1040,10 +1042,14 @@ async function runChecks(
       (error: unknown) => !(error instanceof assert.AssertionError),
     );
 
-    // A colleague's constraint as the slot: TD409 from the duty trigger, 409.
+    // The retired one-time column, written as PostgREST could still write
+    // it: its CHECK refuses a value (23514), where the dropped trigger once
+    // made it a link.
     await assert.rejects(
-      direct(admin, 'TD409', (tx) => tx.teacherDuty.create({ data: dutyOf(theirs.id, `${MARKER} fel`) })),
-      isCode(ConflictException, 'TEACHER_DUTY_BLOCK_MISMATCH'),
+      direct(admin, '23514', (tx) =>
+        tx.$executeRaw`UPDATE "TeacherDuties" SET "blockedConstraintId" = ${theirs.id}::uuid WHERE "id" = ${duty.id}::uuid`,
+      ),
+      (error: unknown) => !(error instanceof assert.AssertionError),
     );
     // The admin's generic constraint PATCH moving the linked slot: the
     // service's own rethrowPrismaError answers the constraint trigger's TD409.
@@ -1071,7 +1077,7 @@ async function runChecks(
 
     // The CHECKs a DTO bound did not foresee: a 400 naming the field.
     await assert.rejects(
-      direct(admin, '23514', (tx) => tx.teacherDuty.create({ data: dutyOf(null, '\u00a0') })),
+      direct(admin, '23514', (tx) => tx.teacherDuty.create({ data: dutyOf('\u00a0') })),
       isField('label'),
     );
     await assert.rejects(
@@ -1091,15 +1097,15 @@ async function runChecks(
       isField('teacherLoadPercent'),
     );
 
-    // The admin deletes the slot through the service: the duty keeps all but the pointer.
+    // The admin deletes the slot through the service: the duty stays as it was.
     await constraints.remove(slot.id, admin);
     const [after] = (
-      await owner.query<{ blockedConstraintId: string | null; schoolId: string; minutesPerWeek: number }>(
-        'SELECT "blockedConstraintId", "schoolId", "minutesPerWeek" FROM "TeacherDuties" WHERE id = $1',
+      await owner.query<{ schoolId: string; minutesPerWeek: number }>(
+        'SELECT "schoolId", "minutesPerWeek" FROM "TeacherDuties" WHERE id = $1',
         [duty.id],
       )
     ).rows;
-    assert.deepEqual(after, { blockedConstraintId: null, schoolId: fixture.schoolId, minutesPerWeek: 120 });
+    assert.deepEqual(after, { schoolId: fixture.schoolId, minutesPerWeek: 120 });
     // And its link went with it, the duty staying.
     assert.deepEqual(await linkOf(slot.id), []);
   });
@@ -1152,8 +1158,8 @@ async function runChecks(
     );
     assert.deepEqual(created.slots, [{ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }]);
     assert.deepEqual(created.blockedSlot, { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' });
-    // The new API never writes the old one-time column.
-    assert.equal(created.blockedConstraintId, null);
+    // The response no longer carries the retired one-time column.
+    assert.equal('blockedConstraintId' in created, false);
     const [first] = await slotsOf(created.id);
     assert.deepEqual(
       { ...first, constraintId: undefined },
@@ -1359,12 +1365,12 @@ async function runChecks(
     );
     assert.equal(changed.updated, 1);
     const stored = (
-      await owner.query<{ userId: string; minutesPerWeek: number; countsAsTeaching: boolean; blockedConstraintId: string | null }>(
-        `SELECT "userId", "minutesPerWeek", "countsAsTeaching", "blockedConstraintId" FROM "TeacherDuties" WHERE label = $1`,
+      await owner.query<{ userId: string; minutesPerWeek: number; countsAsTeaching: boolean }>(
+        `SELECT "userId", "minutesPerWeek", "countsAsTeaching" FROM "TeacherDuties" WHERE label = $1`,
         [`${MARKER} import`],
       )
     ).rows;
-    assert.deepEqual(stored, [{ userId: person.id, minutesPerWeek: 25, countsAsTeaching: true, blockedConstraintId: null }]);
+    assert.deepEqual(stored, [{ userId: person.id, minutesPerWeek: 25, countsAsTeaching: true }]);
     // Staffing Fas 3: the import's writes are versions by the admin, and the
     // identical re-import is none (the trigger skips an unchanged row).
     const versions = (
@@ -4474,8 +4480,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // Gallring's school and its JobRuns row, likewise.
   await sweepGallringSchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
-  // Duties first: TeacherDuties_take_their_block deletes each one's slot with
-  // it (the service writes the slot's reason as the bare word "Uppdrag", so a
+  // Duties first: each one's links cascade, and TeacherDutySlots_take_their_block
+  // deletes the slot with its link (the service writes the slot's reason as the bare word "Uppdrag", so a
   // reason match could not find them, and must not: it would take the seed's).
   await owner.query(`DELETE FROM "TeacherDuties" WHERE "schoolId" = $1 AND label LIKE $2 || '%'`, [schoolId, MARKER]);
   await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE $2 || '%'`, [schoolId, MARKER]);
@@ -4667,10 +4673,14 @@ async function givenFas3School(owner: Client): Promise<Fas3School> {
      VALUES ($1, 'TEACHER', $2, 2, '15:00', '16:00', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id`,
     [school.id, t4.id],
   );
+  const apt = await one<{ id: string }>(
+    `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+     VALUES ($1, $2, $3, 'APT_KONFERENS', 'APT', 60, now()) RETURNING id`,
+    [school.id, t4.id, year.id],
+  );
   await owner.query(
-    `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-     VALUES ($1, $2, $3, 'APT_KONFERENS', 'APT', 60, $4, now())`,
-    [school.id, t4.id, year.id, slot.id],
+    `INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES ($1, $2, $3)`,
+    [school.id, apt.id, slot.id],
   );
   await owner.query(
     `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
