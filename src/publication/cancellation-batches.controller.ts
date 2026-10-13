@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -26,6 +27,7 @@ import {
 @Controller('api/v1/cancellation-batches')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('DRIFT')
 export class CancellationBatchesController {
   constructor(private readonly batches: CancellationBatchesService) {}
 

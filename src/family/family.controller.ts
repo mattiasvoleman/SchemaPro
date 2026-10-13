@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area, Decides } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -89,6 +90,7 @@ export class FamilyController {
 
   @Post('guardian-links')
   @Roles(Role.SCHOOL_ADMIN)
+  @Area('PERSONAL')
   createLink(
     @Body() dto: CreateGuardianLinkDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -98,6 +100,7 @@ export class FamilyController {
 
   @Delete('guardian-links/:id')
   @Roles(Role.SCHOOL_ADMIN)
+  @Area('PERSONAL')
   removeLink(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -118,6 +121,7 @@ export class FamilyController {
   @Post('absence-reports')
   @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Area('DRIFT')
   createAbsenceReport(
     @Body() dto: CreateAbsenceReportDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -127,6 +131,7 @@ export class FamilyController {
 
   @Delete('absence-reports/:id')
   @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
+  @Area('DRIFT')
   removeAbsenceReport(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -154,6 +159,7 @@ export class FamilyController {
   @Post('leave-requests')
   @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Area('DRIFT')
   createLeaveRequest(
     @Body() dto: CreateLeaveRequestDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -164,6 +170,7 @@ export class FamilyController {
   /** Rektor decides any request; a TEACHER only one theirs to decide as the pupil's mentor. */
   @Patch('leave-requests/:id/decide')
   @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+  @Area('DRIFT')
   decideLeaveRequest(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: DecideLeaveRequestDto,
@@ -191,6 +198,8 @@ export class FamilyController {
 
   @Post('leave-delegation')
   @Roles(Role.SCHOOL_ADMIN)
+  // Roller i skolan: delegating leave decisions to the mentors is rektor's.
+  @Decides()
   recordLeaveDelegation(
     @Body() dto: RecordLeaveDelegationDto,
     @CurrentUser() user: AuthenticatedUser,

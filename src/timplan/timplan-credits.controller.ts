@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -40,6 +41,7 @@ const uuid = () => new ParseUUIDPipe({ version: '4' });
 @Controller('api/v1/timplan-credits')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('DRIFT')
 export class TimplanCreditsController {
   constructor(private readonly credits: TimplanCreditsService) {}
 

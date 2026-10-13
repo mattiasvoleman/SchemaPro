@@ -15,6 +15,7 @@ import {
   STAFF_PROPOSAL_STALE,
   StaffingProposalService,
   floorTenthsOf,
+  limitMinutes,
   limitTenthsOf,
   toTenthsUp,
   type StaffingProposal,
@@ -732,6 +733,74 @@ describe('StaffingProposalService.propose', () => {
       expect(proposal.teachers.find((t) => t.userId === BO)!.period).toBeUndefined();
     });
 
+    it("states it as the year to a planner without HR-läs: no stretch dates, the report's year target, the same plan (Roller i skolan)", async () => {
+      const full = await setup(withAnnaHalfInSpring()).service.propose(ask(), admin());
+      const planner = testUser({ schoolId: SCHOOL, userId: REKTOR, adminProfile: 'SCHEMALAGGARE', hrRead: false });
+      const masked = await setup(withAnnaHalfInSpring()).service.propose(ask(), planner);
+      // The plan is the same for every reader.
+      const moves = (proposal: StaffingProposal) =>
+        proposal.assignments.map(({ requirementId, fromTeacherId, toTeacherId }) => [requirementId, fromTeacherId, toTeacherId]);
+      expect(moves(masked)).toEqual(moves(full));
+      const anna = masked.teachers.find((t) => t.userId === ANNA)!;
+      expect(anna).not.toHaveProperty('period');
+      // Nor the post stretch by stretch, nor what a row charges each stretch.
+      expect(anna).not.toHaveProperty('stretches');
+      expect(anna).not.toHaveProperty('plannedStretch');
+      expect(full.assignments.some((a) => a.toStretchCharges !== undefined)).toBe(true);
+      expect(masked.assignments.every((a) => a.toStretchCharges === undefined && a.fromStretchCharges === undefined)).toBe(true);
+      // Not the spring's 300: the year, weighted by teaching weeks, between the spring's and the autumn's.
+      expect(anna.targetMinutesPerWeek).toBeGreaterThan(300);
+      expect(anna.targetMinutesPerWeek).toBeLessThan(600);
+      expect(anna.limitMinutesPerWeek).toBe(limitMinutes(anna.targetMinutesPerWeek!, 10));
+      expect(JSON.stringify(masked.teachers)).not.toMatch(/2027-01-11/);
+      // With HR-läs the planner reads it as the full administrator does.
+      const withHr = await setup(withAnnaHalfInSpring()).service.propose(ask(), { ...planner, hrRead: true });
+      expect(withHr.teachers.find((t) => t.userId === ANNA)).toMatchObject({ period: { from: '2027-01-11', to: '2027-06-11' } });
+    });
+
+    it("tells a planner without HR-läs nothing of the stretch: no conflict naming the post, C1 and the counts asked of the year (Roller i skolan)", async () => {
+      // Anna at 0 % from 11 January: the plan's stretch has target 0, so she
+      // keeps or sheds and counts as a zero target; the year's target is above
+      // 0 and her 180 is not over it.
+      const rows = () => {
+        const world = schoolRows();
+        world['teacherEmploymentPeriod'] = [periodOf(ANNA, { employmentPercent: new Prisma.Decimal('0.000') })];
+        return world;
+      };
+      const engine = (payload: StaffRequest): StaffResponse => ({
+        ...engineAnswer(payload),
+        conflicts: [ANNA, BO].map((_teacher, index) => ({
+          code: 'STAFF_TEACHER_CAPACITY_ZERO',
+          params: { fixedMinutes: 180, limitMinutes: index === 0 ? 0 : 660 },
+          message: 'Already carries …',
+          requirementIds: [],
+          teacherIds: [payload.teachers[index]!.id],
+          subjectIds: [],
+        })),
+      });
+      const full = await setup(rows(), engine).service.propose(ask(), admin());
+      const planner = testUser({ schoolId: SCHOOL, userId: REKTOR, adminProfile: 'SCHEMALAGGARE', hrRead: false });
+      const masked = await setup(rows(), engine).service.propose(ask(), planner);
+
+      expect(full.teachers.find((t) => t.userId === ANNA)).toMatchObject({ keepOrShed: true, targetMinutesPerWeek: 0 });
+      expect(full.conflicts.map((c) => c.teacherIds)).toEqual([[ANNA], [BO]]);
+      expect(full).not.toHaveProperty('hrHidden');
+
+      const anna = masked.teachers.find((t) => t.userId === ANNA)!;
+      expect(anna.targetMinutesPerWeek).toBeGreaterThan(0);
+      expect(anna).toMatchObject({ keepOrShed: false, before: { countedMinutesPerWeek: 180 } });
+      // Bo's post does not change: his conflict stays, with its figures.
+      expect(masked.conflicts.map((c) => c.teacherIds)).toEqual([[BO]]);
+      expect(masked.counts).toEqual({
+        ...full.counts,
+        teachersWithZeroTarget: full.counts.teachersWithZeroTarget - 1,
+      });
+      // One flag for the whole answer, so the dialog can say a selection is
+      // judged on save; never one per teacher.
+      expect(masked.hrHidden).toBe(true);
+      expect(masked.assignments.map((a) => a.requirementId)).toEqual(full.assignments.map((a) => a.requirementId));
+    });
+
     it('leaves a dated row such a post leads where it is, and a spring row excludes a post that halves in January', async () => {
       const dated = (rows: Record<string, Row[]>) => {
         const list = rows['teachingRequirement']!;
@@ -889,6 +958,13 @@ describe('StaffingProposalService.propose', () => {
         });
         // An undated row it was not offered for want of a behörighet names nobody.
         expect(proposal.unstaffed.find((row) => row.requirementId === R_SV8)?.excludedChanging).toBeUndefined();
+        // Nor does any row to a planner without HR-läs: whose post changes is HR data (Roller i skolan).
+        const masked = await setup(qualifiedAnna()).service.propose(
+          ask({ respectQualifications: true }),
+          testUser({ schoolId: SCHOOL, userId: REKTOR, adminProfile: 'SCHEMALAGGARE', hrRead: false }),
+        );
+        expect(masked.unstaffed.find((row) => row.requirementId === R_MA8)).toMatchObject({ reason: 'NO_CAPACITY_LEFT' });
+        expect(masked.unstaffed.every((row) => row.excludedChanging === undefined)).toBe(true);
         // The same year with Anna's post the same all year: she takes it, and nothing is excluded.
         const steady = qualifiedAnna();
         steady['teacherEmploymentPeriod'] = [];

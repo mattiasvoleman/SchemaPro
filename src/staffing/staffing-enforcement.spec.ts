@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
-import { STAFFING_FIELDS, enforceRequirementBatch, mergeRequirement, touchesStaffing } from './staffing-enforcement';
+import type { PrismaClient } from '@prisma/client';
+import { STAFFING_FIELDS, enforceRequirementBatch, mergeRequirement, readCheckPolicy, touchesStaffing } from './staffing-enforcement';
 import { judgeRequirementWrite } from './staffing-checks';
 import { DEFAULT_CHECK_POLICY } from './staffing-checks';
 import { buildTeacherLoadReport, loadWeightOf, type LoadInput, type LoadRequirement } from './teacher-load';
@@ -26,6 +27,30 @@ const STORED: LoadRequirement = {
   startDate: null,
   endDate: null,
 };
+
+describe('readCheckPolicy', () => {
+  // Roller i skolan: the policy carries whether its reader may see when a
+  // post changes during the year, and the findings' wording follows it.
+  const txWith = (row: object | null) =>
+    ({ staffingPolicy: { findUnique: jest.fn().mockResolvedValue(row) } }) as unknown as PrismaClient;
+
+  it("carries the reader's showsPeriods, with the school's row and with the table's defaults", async () => {
+    const row = {
+      qualificationMode: 'REFUSE',
+      overAllocationMode: 'WARN',
+      overAllocationTolerancePercent: 5,
+      fullTimeTeachingMinutesPerWeek: 1000,
+      unstaffedGeneration: 'ALLOW',
+    };
+    await expect(readCheckPolicy(txWith(row), 'school', false)).resolves.toEqual({ ...row, showsPeriods: false });
+    await expect(readCheckPolicy(txWith(row), 'school', true)).resolves.toEqual({ ...row, showsPeriods: true });
+    await expect(readCheckPolicy(txWith(null), 'school', false)).resolves.toEqual({
+      ...DEFAULT_CHECK_POLICY,
+      unstaffedGeneration: 'ALLOW',
+      showsPeriods: false,
+    });
+  });
+});
 
 describe('mergeRequirement', () => {
   it('keeps the stored lengths when the patch names none', () => {

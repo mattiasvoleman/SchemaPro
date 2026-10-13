@@ -11,6 +11,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Area } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -24,6 +25,8 @@ import { SchoolUnitsService } from './school-units.service';
 @Controller('api/v1/school-units')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+// Roller i skolan: the school's units are grunddata, planering's.
+@Area('PLANERING')
 export class SchoolUnitsController {
   constructor(private readonly units: SchoolUnitsService) {}
 

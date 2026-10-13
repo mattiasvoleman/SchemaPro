@@ -5,6 +5,7 @@ import {
   DEFAULT_CHECK_POLICY,
   STAFF_TEACHER_NOT_QUALIFIED,
   STAFF_TEACHER_OVER_TARGET,
+  STAFF_TEACHER_OVER_TARGET_HIDDEN,
   STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
   STAFF_UNSTAFFED_REQUIREMENTS,
   gradesParam,
@@ -514,6 +515,72 @@ describe('a post that changes during the year (20261022120000): the load questio
     ).toEqual([]);
   });
 
+  it("gives a reader who may not see how a post changes the verdict alone (Roller i skolan), in a write, a batch and a 409", () => {
+    const hidden = policy({ showsPeriods: false });
+    const verdict = {
+      code: STAFF_TEACHER_OVER_TARGET_HIDDEN,
+      mode: 'WARN',
+      userId: ANNA,
+      params: { role: 'TEACHER', tolerance: 10 },
+    };
+    expect(
+      judgeRequirementWrite({
+        input: year(850),
+        policy: hidden,
+        before: null,
+        after: requirement({ id: 'req-new', teacherId: ANNA, lessonsPerWeek: 4, minutesPerLesson: 50 }),
+        subjectName: 'Matematik',
+      }).filter((finding) => finding.code !== STAFF_TEACHER_NOT_QUALIFIED),
+    ).toEqual([verdict]);
+    // Neither the stretch's 1050, 800 and 880, nor its dates, nor a figure
+    // that would read as the year's: the tolerance is the policy's own.
+    expect(staffingSentence(verdict).match(/\d+/g)).toEqual(['10']);
+    const batch = judgeRequirementBatch({
+      input: { ...year(850), requirements: [...year(850).requirements, requirement({ id: 'req-new', teacherId: null, lessonsPerWeek: 4, minutesPerLesson: 50 })] },
+      policy: hidden,
+      changes: [{ requirementId: 'req-new', teacherId: ANNA }],
+    }).filter((finding) => finding.code !== STAFF_TEACHER_NOT_QUALIFIED);
+    expect(batch.map((finding) => [finding.code, finding.params])).toEqual([
+      [STAFF_TEACHER_OVER_TARGET_HIDDEN, { role: 'TEACHER', tolerance: 10 }],
+    ]);
+    const refused = judgeRequirementWrite({
+      input: year(850),
+      policy: policy({ overAllocationMode: 'REFUSE', showsPeriods: false }),
+      before: null,
+      after: requirement({ id: 'req-new', teacherId: ANNA, lessonsPerWeek: 4, minutesPerLesson: 50 }),
+      subjectName: 'Matematik',
+    });
+    try {
+      settleFindings(refused);
+      throw new Error('not refused');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toEqual({
+        message: staffingSentence(verdict),
+        code: STAFF_TEACHER_OVER_TARGET_HIDDEN,
+        params: { role: 'TEACHER', tolerance: 10 },
+      });
+    }
+    // A post that does not change is worded with its figures for every
+    // reader: its target in minutes is the matrix's own.
+    expect(
+      judgeRequirementWrite({
+        input: { ...year(850), employments: [employment(ANNA)] },
+        policy: hidden,
+        before: null,
+        after: requirement({ id: 'req-new', teacherId: ANNA, lessonsPerWeek: 8, minutesPerLesson: 50 }),
+        subjectName: 'Matematik',
+      }).filter((finding) => finding.code !== STAFF_TEACHER_NOT_QUALIFIED),
+    ).toEqual([
+      {
+        code: STAFF_TEACHER_OVER_TARGET,
+        mode: 'WARN',
+        userId: ANNA,
+        params: { role: 'TEACHER', minutes: 1250, target: 1000, limit: 1100, tolerance: 10 },
+      },
+    ]);
+  });
+
   it('judges a row only in the stretch it runs in: an autumn course adds nothing to the spring', () => {
     expect(write(200, { startDate: '2026-08-17', endDate: '2026-10-30' })).toEqual([]);
     // In the 80 % stretch the same minutes are over.
@@ -696,6 +763,8 @@ describe('the catalogue says what staffingSentence says', () => {
       code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
       params: { role: 'CO_TEACHER', minutes: 600, target: 540, limit: 540, tolerance: 0, from: '2027-02-01', to: '2027-03-28' },
     },
+    { code: STAFF_TEACHER_OVER_TARGET_HIDDEN, params: { role: 'TEACHER', tolerance: 10 } },
+    { code: STAFF_TEACHER_OVER_TARGET_HIDDEN, params: { role: 'SUBSTITUTE', tolerance: 0 } },
   ];
 
   it.each(cases.map((warning) => [warning.code, warning.params.role, warning] as const))(

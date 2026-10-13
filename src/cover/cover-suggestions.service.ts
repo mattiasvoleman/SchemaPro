@@ -7,10 +7,11 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
-import { postOfWeek } from '../staffing/employment-periods';
+import { changesDuringYear, postOfWeek } from '../staffing/employment-periods';
+import { readsHr } from '../staffing/hr-visibility';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
 import { gradesParam } from '../staffing/staffing-checks';
-import { targetMinutesPerWeek } from '../staffing/teacher-load';
+import { targetMinutesPerWeek, yearTargetMinutesPerWeek, type LoadEmployment, type LoadPolicy } from '../staffing/teacher-load';
 import { pairsStatement, toBoardItem, type PairRow } from './cover-board';
 import {
   asDay,
@@ -85,6 +86,13 @@ interface RankContext {
   weekMinutes: Map<string, number>;
   subjectName: Map<string, string>;
   groupName: Map<string, string>;
+  /**
+   * For a reader who may not see when and how a post changes (Roller i
+   * skolan, readsHr): the year's target of each post that changes during the
+   * year, which such a post is judged and stated by. Null for every other
+   * reader, who is told the period in force that week.
+   */
+  yearTargets: Map<string, number | null> | null;
 }
 
 /**
@@ -114,7 +122,7 @@ export class CoverSuggestionsService {
         academicYearId: year?.id ?? null,
         withPeriods: true,
       });
-      const context = await this.rankContext(tx, user, schoolId, [lesson], lesson.date, year);
+      const context = await this.rankContext(tx, user, schoolId, [lesson], lesson.date, year, read.employments);
       const target = targetOf(lesson);
       const candidates: Candidate[] = [];
       const excluded: CandidatesResponse['excluded'] = [];
@@ -242,7 +250,7 @@ export class CoverSuggestionsService {
     const lessons = new Map((await this.readLessons(tx, open.map((item) => item.lessonId))).map((lesson) => [lesson.id, lesson]));
     const year = await this.yearOf(tx, [...lessons.values()][0]!.studentGroupId);
     const read = await readPersonDays(tx, { date, timezone, academicYearId: year?.id ?? null, withPeriods: true });
-    const context = await this.rankContext(tx, user, schoolId, [...lessons.values()], date, year);
+    const context = await this.rankContext(tx, user, schoolId, [...lessons.values()], date, year, read.employments);
     const excluded = new Set(excludeUserIds);
     const candidates = [...read.days.keys()].filter((id) => !excluded.has(id)).sort();
     const proposalLessons: ProposalLesson[] = open.flatMap((item) => {
@@ -289,16 +297,17 @@ export class CoverSuggestionsService {
     const released = cancelledThen.find((row) => row.cancelCause !== 'EVENT');
     const atEvent = cancelledThen.find((row) => row.cancelCause === 'EVENT');
     // The post the lesson's week is judged by: a period in force then, else
-    // the post itself (postOfWeek, the load report's own week rule).
+    // the post itself (postOfWeek, the load report's own week rule). For a
+    // reader who may not see how a post changes, a changing post's year
+    // target instead, as the load report states it: the period of the week
+    // would give back when the post changes and its level then. (A post is
+    // read only with its year, so every post with a period in force is in
+    // yearTargets.)
     const post = read.employments.get(userId) ?? null;
     const employment = post ? postOfWeek(post, lesson.date, context.year) : null;
-    const target_ = targetMinutesPerWeek(employment, {
-      fullTimeTeachingMinutesPerWeek: context.policy.fullTimeTeachingMinutesPerWeek,
-      overAllocationTolerancePercent: context.policy.overAllocationTolerancePercent,
-      fullTimeRegulatedHoursPerYear: 1360,
-      workDaysPerYear: 194,
-      qualificationMode: 'WARN',
-    });
+    const target_ = context.yearTargets?.has(userId)
+      ? context.yearTargets.get(userId)!
+      : targetMinutesPerWeek(employment, loadPolicyOf(context.policy));
     const counted = context.counter.get(userId);
     const pickedMinutes = picked.reduce((sum, row) => sum + (row.end - row.start) / 60_000, 0);
     const kind: 'STAFF' | 'POOL' = day.pool.member && !day.pool.hasEmployment ? 'POOL' : 'STAFF';
@@ -345,6 +354,7 @@ export class CoverSuggestionsService {
     lessons: LessonInfo[],
     date: string,
     year: YearInfo | null,
+    employments: ReadonlyMap<string, LoadEmployment>,
   ): Promise<RankContext> {
     const subjectIds = [...new Set(lessons.map((lesson) => lesson.subjectId))];
     const groupIds = [...new Set(lessons.flatMap((lesson) => [lesson.studentGroupId, ...lesson.extraGroupIds]))];
@@ -388,6 +398,11 @@ export class CoverSuggestionsService {
       where: { schoolId },
       select: { fullTimeTeachingMinutesPerWeek: true, overAllocationTolerancePercent: true },
     });
+    const shownPolicy = {
+      fullTimeTeachingMinutesPerWeek: policy?.fullTimeTeachingMinutesPerWeek ?? null,
+      overAllocationTolerancePercent: policy?.overAllocationTolerancePercent ?? 10,
+    };
+    const yearTargets = readsHr(user) ? null : await readYearTargets(tx, year, employments, loadPolicyOf(shownPolicy));
     const settings = await tx.coverSettings.findUnique({ where: { schoolId }, select: { poolPreference: true } });
     const counter = await readCounter(tx, date, year, this.cover.now());
     const weekMinutes = await readWeekMinutes(tx, date);
@@ -406,15 +421,13 @@ export class CoverSuggestionsService {
       spanOf,
       requirements,
       mentors,
-      policy: {
-        fullTimeTeachingMinutesPerWeek: policy?.fullTimeTeachingMinutesPerWeek ?? null,
-        overAllocationTolerancePercent: policy?.overAllocationTolerancePercent ?? 10,
-      },
+      policy: shownPolicy,
       poolPreference: settings?.poolPreference ?? 'NEUTRAL',
       counter,
       weekMinutes,
       subjectName: new Map((subjects ?? []).map((row) => [row.id, row.name])),
       groupName: new Map([...(groups ?? []), ...(releasedGroups ?? [])].map((row) => [row.id, row.name])),
+      yearTargets,
     };
   }
 
@@ -558,4 +571,53 @@ export function coveredTogether<T extends { lessonId: string; absentTeacherId: s
         )
       ),
   );
+}
+
+/** The load policy a candidate's target is read with: the school's two figures, the rest as the ranking has always read them. */
+function loadPolicyOf(policy: RankContext['policy']): LoadPolicy {
+  return {
+    fullTimeTeachingMinutesPerWeek: policy.fullTimeTeachingMinutesPerWeek,
+    overAllocationTolerancePercent: policy.overAllocationTolerancePercent,
+    fullTimeRegulatedHoursPerYear: 1360,
+    workDaysPerYear: 194,
+    qualificationMode: 'WARN',
+  };
+}
+
+/**
+ * The year's target of each post that changes during the year, as the load
+ * report states it (yearTargetMinutesPerWeek, its stretches weighted by
+ * their teaching weeks over the year's breaks): what a reader without
+ * HR-läs is told and judged by. No statement when no post changes.
+ */
+async function readYearTargets(
+  tx: PrismaClient,
+  year: YearInfo | null,
+  employments: ReadonlyMap<string, LoadEmployment>,
+  policy: LoadPolicy,
+): Promise<Map<string, number | null>> {
+  const targets = new Map<string, number | null>();
+  if (!year) return targets;
+  const bounds = { startDate: year.startDate, endDate: year.endDate };
+  const changing = [...employments].filter(([, post]) => changesDuringYear(post, bounds));
+  if (changing.length === 0) return targets;
+  const breaks =
+    (await tx.schoolBreak.findMany({
+      where: { academicYearId: year.id },
+      select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+    })) ?? [];
+  const input = {
+    year: bounds,
+    closures: breaks.map((row) => ({
+      startDate: asDay(row.startDate),
+      endDate: asDay(row.endDate),
+      minGradeLevel: row.minGradeLevel,
+      maxGradeLevel: row.maxGradeLevel,
+    })),
+    requirements: [],
+    duties: [],
+    policy,
+  };
+  for (const [userId, post] of changing) targets.set(userId, yearTargetMinutesPerWeek(input, post));
+  return targets;
 }

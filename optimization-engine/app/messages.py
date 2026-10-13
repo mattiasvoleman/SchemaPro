@@ -694,6 +694,16 @@ MESSAGES: dict[str, str] = {
         "other {The teacher}} would carry {minutes} minutes a week against a target of "
         "{target} from {from} to {to} (the limit is {limit} with the {tolerance} % tolerance)."
     ),
+    # The same verdict for a reader who may not see how the post changes
+    # (Roller i skolan, without HR read access): the stretch's minutes, target
+    # and dates would give back the post's level in it, so only the verdict
+    # and the school's tolerance go out.
+    "STAFF_TEACHER_OVER_TARGET_HIDDEN": (
+        "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
+        "other {The teacher}} would carry more than the limit, the target with the "
+        "{tolerance} % tolerance. The minutes are shown to the principal, a full "
+        "administrator and anyone with HR read access."
+    ),
     # "Curriculum entry", the English the web's nav uses for a timplanspost.
     "STAFF_UNSTAFFED_REQUIREMENTS": (
         "{count, plural, one {# curriculum entry has} other {# curriculum entries have}} no "

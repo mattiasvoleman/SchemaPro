@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -35,6 +36,7 @@ const optionalUuid = () => new ParseUUIDPipe({ version: '4', optional: true });
 @Controller('api/v1/teacher-duties')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+@Area('PLANERING')
 export class TeacherDutiesController {
   constructor(private readonly duties: TeacherDutiesService) {}
 

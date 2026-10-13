@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -48,6 +49,7 @@ import { AttendanceSummaryQueryDto, GroupAttendanceQueryDto } from './dto/attend
 @Controller('api/v1/attendance')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.TEACHER, Role.SCHOOL_ADMIN)
+@Area('DRIFT')
 export class AttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 

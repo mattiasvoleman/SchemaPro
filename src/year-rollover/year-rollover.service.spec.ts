@@ -1781,3 +1781,30 @@ describe('YearRolloverService — the leave requests a rolled MENTORSKAP gives (
     expect(deliver).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Roller i skolan: carrying tjänster forward copies tjänst % and nedsättning
+ * into next year, and its preview names who has a nedsättning, so it is
+ * rektor's or a full administrator's. Refused before the database is asked.
+ */
+describe('YearRolloverService, carrying tjänster', () => {
+  const withRls = jest.fn();
+  const service = new YearRolloverService({ withRls } as unknown as PrismaService);
+  const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true });
+
+  it("refuses a planner's preview and rollover with tjänster, even with HR-läs", async () => {
+    await expect(service.previewRollover('year', { ...OPTIONS, carryStaffing: true }, planner)).rejects.toMatchObject({
+      status: 403,
+      response: { code: 'DECISION_NOT_YOURS' },
+    });
+    await expect(
+      service.executeRollover('year', { ...OPTIONS, carryStaffing: true, planHash: 'x' } as ExecuteRolloverDto, planner),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(withRls).not.toHaveBeenCalled();
+  });
+
+  it('lets the planner roll the year without them', async () => {
+    withRls.mockRejectedValueOnce(new Error('reached the database'));
+    await expect(service.previewRollover('year', OPTIONS, planner)).rejects.toThrow('reached the database');
+  });
+});

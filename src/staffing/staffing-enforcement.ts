@@ -87,9 +87,15 @@ export interface EnforcedPolicy extends CheckPolicy {
   unstaffedGeneration: UnstaffedGenerationMode;
 }
 
+/**
+ * The school's policy, for one reader: `showsPeriods` is whether they may see
+ * when a post changes during the year (readsHr), which the findings' wording
+ * follows (CheckPolicy.showsPeriods).
+ */
 export async function readCheckPolicy(
   tx: PrismaClient,
   schoolId: string,
+  showsPeriods: boolean,
 ): Promise<EnforcedPolicy> {
   const row = await tx.staffingPolicy.findUnique({
     where: { schoolId },
@@ -101,7 +107,7 @@ export async function readCheckPolicy(
       unstaffedGeneration: true,
     },
   });
-  return row ?? { ...DEFAULT_CHECK_POLICY, unstaffedGeneration: 'ALLOW' };
+  return { ...(row ?? { ...DEFAULT_CHECK_POLICY, unstaffedGeneration: 'ALLOW' as const }), showsPeriods };
 }
 
 /**
@@ -219,6 +225,8 @@ export async function enforceRequirementWrite(
   args: {
     /** Whoever writes: the year's roster basis is computed for them (projected-rosters.ts). */
     viewer: RosterViewer;
+    /** Whether they may see when a post changes during the year (readsHr). */
+    showsPeriods: boolean;
     schoolId: string;
     academicYearId: string;
     /** Null for a create. */
@@ -237,7 +245,7 @@ export async function enforceRequirementWrite(
     patch.coTeacherId !== undefined ? patch.coTeacherId : (before?.coTeacherId ?? null);
   const assignees = [teacherAfter, coTeacherAfter].filter((id): id is string => id !== null);
   if (assignees.length === 0) return [];
-  const policy = await readCheckPolicy(tx, args.schoolId);
+  const policy = await readCheckPolicy(tx, args.schoolId, args.showsPeriods);
   if (!checksAnything(policy)) return [];
 
   const newlyAssigned =
@@ -307,6 +315,8 @@ export class RequirementImportChecks {
     tx: PrismaClient,
     args: {
       viewer: RosterViewer;
+      /** Whether the uploader may see when a post changes during the year (readsHr). */
+      showsPeriods: boolean;
       schoolId: string;
       academicYearId: string;
       /** Every teacher a row of the file can end up with. */
@@ -316,7 +326,7 @@ export class RequirementImportChecks {
     },
   ): Promise<RequirementImportChecks | null> {
     if (args.teacherIds.length === 0) return null;
-    const policy = await readCheckPolicy(tx, args.schoolId);
+    const policy = await readCheckPolicy(tx, args.schoolId, args.showsPeriods);
     if (!checksAnything(policy)) return null;
     const asksLoad =
       policy.overAllocationMode !== 'OFF' &&
@@ -511,7 +521,8 @@ export async function lessonQualificationFindings(
   },
 ): Promise<StaffingFinding[]> {
   if (args.assignees.length === 0) return [];
-  const policy = await readCheckPolicy(tx, args.schoolId);
+  // Behörighet only: no load question, so no stretch to word.
+  const policy = await readCheckPolicy(tx, args.schoolId, true);
   if (policy.qualificationMode === 'OFF') return [];
   const rows = await tx.teacherSubjectQualification.findMany({
     select: {

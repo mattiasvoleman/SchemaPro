@@ -226,6 +226,54 @@ describe('StaffingLoadService', () => {
     expect(report.bottlenecksComputed).toBe(false);
   });
 
+  it('leaves tjänst %, the stretches and the year figures read off them out for a planner without HR-läs (Roller i skolan)', async () => {
+    tx.teacherEmployment.findMany.mockResolvedValue([
+      {
+        id: 'emp-me',
+        userId: ME,
+        employmentPercent: new Prisma.Decimal('80.000'),
+        reductionPercent: new Prisma.Decimal('10.000'),
+        contractKind: 'FERIE',
+        teachingTargetMinutesPerWeek: null,
+        signature: 'ME',
+      },
+    ]);
+    tx.teacherEmploymentPeriod.findMany.mockResolvedValue([
+      {
+        employmentId: 'emp-me',
+        validFrom: new Date('2026-11-02T00:00:00.000Z'),
+        validTo: null,
+        employmentPercent: new Prisma.Decimal('50.000'),
+        reductionPercent: new Prisma.Decimal('0.000'),
+        teachingTargetMinutesPerWeek: null,
+      },
+    ]);
+
+    const full = await service.load(YEAR_ID, 'planned', testUser());
+    const mine = (report: typeof full) => report.teachers.find((row) => row.userId === ME)!;
+    expect(mine(full).periods.length).toBeGreaterThan(1);
+    expect(mine(full).annual.regulatedHoursPerYear).not.toBeNull();
+
+    const hidden = await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+    expect(hidden.hrHidden).toBe(true);
+    expect(mine(hidden)).toMatchObject({
+      employment: { employmentPercent: null, reductionPercent: null, hrHidden: true },
+      periods: [],
+      // The target in minutes stays: it is what tjänstefördelning is done against.
+      targetMinutesPerWeek: mine(full).targetMinutesPerWeek,
+      annual: {
+        regulatedHoursPerYear: null,
+        annualHours: null,
+        unregulatedHoursPerYear: null,
+        semesterHoursPerWeek: null,
+        percentOfRegulated: null,
+        assignedHoursPerYear: mine(full).annual.assignedHoursPerYear,
+      },
+    });
+    expect(mine(hidden).employment).not.toHaveProperty('periods.0');
+    expect(mine(hidden).subjects.every((subject) => subject.percentOfEmployment === null)).toBe(true);
+  });
+
   it('reads the year’s uppdrag and the rows’ percentages into the report', async () => {
     tx.teachingRequirement.findMany.mockResolvedValue([
       requirementRow({ coTeacherId: COLLEAGUE, coTeacherLoadPercent: 50 }),
@@ -535,6 +583,46 @@ describe('StaffingLoadService', () => {
         expect.objectContaining({ userId: ME, teachesSubjectAlready: true, remainingMinutesPerWeek: 145, status: 'UNDER' }),
         expect.objectContaining({ userId: COLLEAGUE, remainingMinutesPerWeek: null, status: 'NO_TARGET' }),
       ]);
+    });
+
+    it("gives a planner without HR-läs a changing post's room as the year's, as the report states it (Roller i skolan)", async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: MA,
+        studentGroup: { predecessorId: null },
+      });
+      tx.user.findMany.mockResolvedValue([{ id: ME }]);
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        {
+          id: 'emp-me',
+          userId: ME,
+          employmentPercent: new Prisma.Decimal('100.000'),
+          reductionPercent: new Prisma.Decimal('0.000'),
+          contractKind: 'FERIE',
+          teachingTargetMinutesPerWeek: null,
+          signature: 'ME',
+        },
+      ]);
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([
+        {
+          employmentId: 'emp-me',
+          validFrom: new Date('2026-11-02T00:00:00.000Z'),
+          validTo: null,
+          employmentPercent: new Prisma.Decimal('50.000'),
+          reductionPercent: new Prisma.Decimal('0.000'),
+          teachingTargetMinutesPerWeek: null,
+        },
+      ]);
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false });
+
+      const full = (await service.suggestTeachers('req-2', testUser())).candidates[0]!;
+      const shown = (await service.suggestTeachers('req-2', planner)).candidates[0]!;
+      const report = (await service.load(YEAR_ID, 'planned', planner)).teachers.find((row) => row.userId === ME)!;
+
+      // The report's year: its target less the year's minutes with the row.
+      expect(shown.remainingMinutesPerWeek).toBe(report.targetMinutesPerWeek! - (report.countedMinutesPerWeek + 120));
+      expect(shown.remainingMinutesPerWeek).not.toBe(full.remainingMinutesPerWeek);
+      expect(shown.wouldExceed).toBe(full.wouldExceed);
     });
 
     it('with a predecessor group, reads its rows of the subject once, after the year, and ranks on them', async () => {

@@ -10,6 +10,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Area } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -26,6 +27,8 @@ import { CreateTeachingBlockDto, UpdateTeachingBlockDto } from './dto/teaching-b
 @Controller('api/v1/teaching-blocks')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+// Roller i skolan: a block and its requirements are the timplan's, planering's.
+@Area('PLANERING')
 export class TeachingBlocksController {
   constructor(private readonly blocks: TeachingBlocksService) {}
 

@@ -14,6 +14,7 @@ import {
   TIMPLAN_IN_USE,
   TIMPLAN_IS_DECIDED,
   WRITE_CONFLICT,
+  areaRefusal,
   decidedTimplanConflict,
   decidedTimplanRefusal,
   enrolmentClassKeyRefusal,
@@ -594,5 +595,58 @@ describe('rethrowPrismaError and the class history’s keys (timplan P4)', () =>
     const other = keyRefusal('TimplanCredits_subjectId_schoolId_fkey', 'insert or update on table "TimplanCredits"', 'TimplanCredit');
     expect(enrolmentClassKeyRefusal(other)).toBeNull();
     expect(enrolmentClassKeyRefusal(knownError('P2025'))).toBeNull();
+  });
+});
+
+/**
+ * Roller i skolan: the database's own refusal of an administrator's write
+ * the profile does not hold. A trigger answers AR403 with a token and a
+ * Swedish sentence; an area-checked arm answers row security's 42501.
+ */
+describe('areaRefusal', () => {
+  const decision =
+    'ADMINISTRATOR_IS_A_DECISION: bara rektor eller en fullständig administratör ändrar en administratör, en roll eller HR-läs';
+  const roster = 'USER_WRITE_IS_THE_ROSTERS: utan personal flyttar en administratör bara en elev mellan klasser';
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+
+  it('reads a decision and a roster refusal from the driver, with their sentence', () => {
+    expect(areaRefusal(driverError('AR403', decision))).toEqual({
+      code: 'DECISION_NOT_YOURS',
+      message: 'bara rektor eller en fullständig administratör ändrar en administratör, en roll eller HR-läs',
+    });
+    expect(areaRefusal(driverError('AR403', roster))).toEqual({
+      code: 'AREA_NOT_YOURS',
+      message: 'utan personal flyttar en administratör bara en elev mellan klasser',
+    });
+  });
+
+  it('reads the rendered message when the driver fields are missing', () => {
+    const rendered = new Prisma.PrismaClientKnownRequestError(
+      `Database error. Code: \`AR403\`. Message: \`${decision}\``,
+      { code: 'P2039', clientVersion: Prisma.prismaVersion.client },
+    );
+    expect(areaRefusal(rendered)).toMatchObject({ code: 'DECISION_NOT_YOURS' });
+  });
+
+  it("answers row security's refusal of a WITH CHECK as a 403, not a 500", () => {
+    const refused = driverError('42501', 'new row violates row-level security policy for table "Rooms"');
+    expect(areaRefusal(refused)).toEqual({ code: 'AREA_NOT_YOURS', message: 'Din roll får inte göra den här ändringen.' });
+    const thrown = answer(refused);
+    expect(thrown).toBeInstanceOf(ForbiddenException);
+    expect((thrown as ForbiddenException).getResponse()).toMatchObject({ code: 'AREA_NOT_YOURS' });
+  });
+
+  it('leaves a missing grant, another code and a lookalike alone', () => {
+    expect(areaRefusal(driverError('42501', 'permission denied for table "Rooms"'))).toBeNull();
+    expect(areaRefusal(driverError('SS403', 'SS12000_SECRET_REFUSED: bara skolans administratör'))).toBeNull();
+    expect(areaRefusal(knownError('P2039'))).toBeNull();
+    expect(areaRefusal(Object.assign(new Error('Code: `AR403`'), { code: 'P2039' }))).toBeNull();
   });
 });

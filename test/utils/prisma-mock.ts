@@ -164,11 +164,15 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
 export function testUser(
   overrides: Partial<AuthenticatedUser> = {},
 ): AuthenticatedUser {
+  // An administrator is a full one unless the test says otherwise, as every
+  // administrator became on the day profiles arrived (20261110090000).
+  const administrator = (overrides.role ?? 'SCHOOL_ADMIN') === 'SCHOOL_ADMIN';
   return {
     authId: '11111111-1111-4111-8111-111111111111',
     role: 'SCHOOL_ADMIN',
     userId: '22222222-2222-4222-8222-222222222222',
     schoolId: '33333333-3333-4333-8333-333333333333',
+    ...(administrator ? { adminProfile: 'FULL', hrRead: false } : {}),
     ...overrides,
   } as AuthenticatedUser;
 }

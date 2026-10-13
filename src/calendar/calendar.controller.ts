@@ -1,6 +1,7 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -13,6 +14,7 @@ import { PublishScheduleDto } from './dto/publish-schedule.dto';
 @Controller('api/v1/calendar')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('PUBLICERING', 'DRIFT')
 export class CalendarController {
   constructor(private readonly publications: PublicationsService) {}
 

@@ -1,5 +1,7 @@
 import { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
-import { PATH_METADATA } from '@nestjs/common/constants';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { RequestMethod } from '@nestjs/common';
+import { AREA_KEY, type AreaRequirement } from '../src/auth/decorators/area.decorator';
 import request from 'supertest';
 import { IS_PUBLIC_KEY } from '../src/auth/decorators/public.decorator';
 import { ROLES_KEY } from '../src/auth/decorators/roles.decorator';
@@ -27,8 +29,10 @@ const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'public/v1/sign-in-metho
 interface RouteInfo {
   controller: string;
   method: string;
+  verb: string;
   path: string;
   roles: unknown;
+  area: AreaRequirement | undefined;
   isPublic: boolean;
 }
 
@@ -59,8 +63,10 @@ describe('Route guard coverage (e2e)', () => {
           return {
             controller: cls.name,
             method: name,
+            verb: RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod],
             path: basePath,
             roles: reflector.getAllAndOverride(ROLES_KEY, [handler, cls]),
+            area: reflector.getAllAndOverride<AreaRequirement | undefined>(AREA_KEY, [handler, cls]),
             isPublic:
               reflector.getAllAndOverride(IS_PUBLIC_KEY, [handler, cls]) === true,
           };
@@ -88,6 +94,37 @@ describe('Route guard coverage (e2e)', () => {
     );
 
     expect(ungated.map((r) => `${r.controller}.${r.method}`)).toEqual([]);
+  });
+
+  // Roller i skolan: an administrator's profile writes some areas and not
+  // others, and RolesGuard can only hold a route to the areas it names. A
+  // route an administrator can write through without naming them is one
+  // every profile writes through, as far as the gateway knows; the database
+  // still refuses the write, but as a 500 halfway through instead of a 403
+  // that says why. So every such route names its areas, @Decides, or says
+  // with @AnyAdministrator why it needs neither.
+  it("names the areas of every route an administrator can write through", () => {
+    const unnamed = routes.filter(
+      (route) =>
+        !route.isPublic &&
+        Array.isArray(route.roles) &&
+        (route.roles as string[]).includes('SCHOOL_ADMIN') &&
+        !['GET', 'HEAD', 'OPTIONS'].includes(route.verb) &&
+        route.area === undefined,
+    );
+
+    expect(unnamed.map((r) => `${r.verb} ${r.controller}.${r.method}`)).toEqual([]);
+  });
+
+  it('finds the areas on the routes that write them, not a vacuous pass', () => {
+    const named = routes.filter((route) => route.area !== undefined && route.verb !== 'GET');
+    expect(named.length).toBeGreaterThan(100);
+    const of = (controller: string, method: string) =>
+      routes.find((r) => r.controller === controller && r.method === method)?.area;
+    expect(of('UsersController', 'update')).toEqual({ kind: 'area', areas: ['PERSONAL'] });
+    expect(of('TeacherEmploymentsController', 'upsert')).toEqual({ kind: 'decides' });
+    expect(of('GallringController', 'decide')).toEqual({ kind: 'decides' });
+    expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });
   });
 
   it('keeps the public surface to the health probes, the public viewer and SS12000', () => {

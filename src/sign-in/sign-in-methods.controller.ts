@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Header, Param, Put, UseGuards } from '@n
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -17,6 +18,7 @@ import { SignInMethodsService } from './sign-in-methods.service';
 @Controller('api/v1/sign-in-method')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('INTEGRATIONER')
 export class SignInMethodController {
   constructor(private readonly methods: SignInMethodsService) {}
 

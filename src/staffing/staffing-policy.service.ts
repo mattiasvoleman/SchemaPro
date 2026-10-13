@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { StaffingPolicy } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { profileDecides } from '../auth/admin-areas';
+import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -107,13 +109,31 @@ export class StaffingPolicyService {
 
     try {
       return toResponse(
-        await this.prisma.withRls(user, (tx) =>
-          tx.staffingPolicy.upsert({
+        await this.prisma.withRls(user, async (tx) => {
+          // Sharing tjänst % with the school's integrations is a decision
+          // (Roller i skolan; StaffingPolicies_sharing_is_decided holds it in
+          // the database). Anybody else keeps what is stored, and is refused
+          // only for asking to change it.
+          if (!profileDecides(user.adminProfile)) {
+            const stored = await tx.staffingPolicy.findUnique({
+              where: { schoolId },
+              select: { shareEmploymentWithIntegrations: true },
+            });
+            const current = stored?.shareEmploymentWithIntegrations ?? false;
+            if (
+              dto.shareEmploymentWithIntegrations !== undefined &&
+              dto.shareEmploymentWithIntegrations !== current
+            ) {
+              assertAdministratorMay(user, { kind: 'decides' });
+            }
+            data.shareEmploymentWithIntegrations = current;
+          }
+          return tx.staffingPolicy.upsert({
             where: { schoolId },
             create: { schoolId, ...data },
             update: data,
-          }),
-        ),
+          });
+        }),
       );
     } catch (error) {
       rethrowPrismaError(error);

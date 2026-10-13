@@ -8,7 +8,9 @@ import {
   stretchLoads,
   strongestCoveringQualification,
   targetMinutesPerWeek,
+  yearTargetMinutesPerWeek,
   type GradeSpan,
+  type LoadEmployment,
   type LoadInput,
   type LoadQualification,
   type LoadStatus,
@@ -110,6 +112,13 @@ export interface LastYearTeachers {
  * stretch by stretch, as STAFF_TEACHER_OVER_TARGET_IN_PERIOD asks it: the
  * room left is the tightest stretch's, the status the worst stretch's.
  *
+ * `showsPeriods` is whether the reader may see when and how a post changes
+ * (Roller i skolan, readsHr). Without it a changing post's room and status
+ * are the year's, as the matrix shows them, and the ranking reads that room:
+ * the tightest stretch's room would give back the post's level in it.
+ * wouldExceed is still asked stretch by stretch, because that is what the
+ * write will answer.
+ *
  * PURE: the caller reads the rows; nothing here knows a name.
  */
 export function suggestTeachers(
@@ -117,6 +126,7 @@ export function suggestTeachers(
   requirementId: string,
   staffIds: readonly string[],
   lastYear: LastYearTeachers | null = null,
+  showsPeriods = true,
 ): TeacherSuggestions {
   const requirement = input.requirements.find((row) => row.id === requirementId);
   if (!requirement) {
@@ -152,7 +162,13 @@ export function suggestTeachers(
     let remainingMinutesPerWeek: number | null;
     let wouldExceed: boolean;
     let status: LoadStatus;
-    if (changing) {
+    if (changing && !showsPeriods) {
+      const target = yearTargetMinutesPerWeek(input, changing);
+      const after = (base.get(userId) ?? 0) + charge;
+      status = loadStatus(after, target, policy.overAllocationTolerancePercent);
+      remainingMinutesPerWeek = target === null ? null : target - Math.round(after);
+      wouldExceed = exceedsAStretch(input, withoutLead, requirementId, userId, changing);
+    } else if (changing) {
       // A post that changes during the year: stretch by stretch, as the write
       // is judged (staffing-checks.ts overTargetFindingByStretch). The
       // tightest stretch is the room left; the worst is the status; and it
@@ -239,6 +255,31 @@ export function suggestTeachers(
     lastYear: lastYear ? { groupName: lastYear.groupName, yearName: lastYear.yearName } : null,
     candidates,
   };
+}
+
+/** Whether taking the row puts a changing post past the limit of a stretch it adds to. */
+function exceedsAStretch(
+  input: LoadInput,
+  withoutLead: LoadInput['requirements'],
+  requirementId: string,
+  userId: string,
+  employment: LoadEmployment,
+): boolean {
+  const tolerance = (input.policy ?? DEFAULT_LOAD_POLICY).overAllocationTolerancePercent;
+  const without = stretchLoads({ ...input, requirements: withoutLead }, employment);
+  const taking = stretchLoads(
+    {
+      ...input,
+      requirements: input.requirements.map((row) => (row.id === requirementId ? { ...row, teacherId: userId } : row)),
+    },
+    employment,
+  );
+  return taking.some(
+    (stretch, index) =>
+      stretch.weeks > 0 &&
+      stretch.counted > (without[index]?.counted ?? 0) + 1e-9 &&
+      loadStatus(stretch.counted, stretch.target, tolerance) === 'OVER',
+  );
 }
 
 /** OVER first, as the matrix sorts: the worst of a changing post's stretches is its status. */

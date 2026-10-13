@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -37,6 +38,7 @@ import { CreateFrameTimeDto, UpdateFrameTimeDto } from './dto/frame-time.dto';
 @Controller('api/v1/frame-times')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('PLANERING')
 export class FrameTimesController {
   constructor(private readonly frames: FrameTimesService) {}
 

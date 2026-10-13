@@ -64,7 +64,9 @@ import type { YearBounds } from './teaching-weeks';
  * answers — STAFF_TEACHER_OVER_TARGET_IN_PERIOD, naming the stretch's dates.
  * A row that runs only in the autumn adds nothing to the spring, so it can
  * only be refused for the autumn's figures. A teacher without periods is
- * asked exactly as before.
+ * asked exactly as before. A reader who may not see how a post changes
+ * (Roller i skolan, without HR-läs) gets the same verdict as
+ * STAFF_TEACHER_OVER_TARGET_HIDDEN, without the stretch's figures.
  *
  * PARAMS NAME A SUBJECT AND A SPAN, NEVER A PERSON. The admin who made the write
  * knows whom they assigned; the role ('TEACHER', 'CO_TEACHER', 'SUBSTITUTE')
@@ -77,13 +79,19 @@ export const STAFF_TEACHER_NOT_QUALIFIED = 'STAFF_TEACHER_NOT_QUALIFIED' as cons
 export const STAFF_TEACHER_OVER_TARGET = 'STAFF_TEACHER_OVER_TARGET' as const;
 /** The same question in one stretch of a post that changes during the year. */
 export const STAFF_TEACHER_OVER_TARGET_IN_PERIOD = 'STAFF_TEACHER_OVER_TARGET_IN_PERIOD' as const;
+/**
+ * The same verdict, for a reader who may not see how the post changes
+ * (CheckPolicy.showsPeriods): no minutes, target, limit or dates.
+ */
+export const STAFF_TEACHER_OVER_TARGET_HIDDEN = 'STAFF_TEACHER_OVER_TARGET_HIDDEN' as const;
 /** The generate pre-flight's refusal; see OptimizationProxyService. */
 export const STAFF_UNSTAFFED_REQUIREMENTS = 'STAFF_UNSTAFFED_REQUIREMENTS' as const;
 
 export type StaffingCheckCode =
   | typeof STAFF_TEACHER_NOT_QUALIFIED
   | typeof STAFF_TEACHER_OVER_TARGET
-  | typeof STAFF_TEACHER_OVER_TARGET_IN_PERIOD;
+  | typeof STAFF_TEACHER_OVER_TARGET_IN_PERIOD
+  | typeof STAFF_TEACHER_OVER_TARGET_HIDDEN;
 
 /** Which of a write's teachers a finding is about. */
 export type StaffingRole = 'TEACHER' | 'CO_TEACHER' | 'SUBSTITUTE';
@@ -110,6 +118,15 @@ export interface CheckPolicy {
   overAllocationMode: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   fullTimeTeachingMinutesPerWeek: number | null;
+  /**
+   * Whether the reader may see when and how a post changes during the year
+   * (Roller i skolan: rektor, full and HR-läs, src/staffing/hr-visibility.ts).
+   * False words a changing post's finding as STAFF_TEACHER_OVER_TARGET_HIDDEN:
+   * the same verdict, without the stretch's minutes, target, limit and dates,
+   * which would give back the post's level in that stretch. Absent reads as
+   * true: the policy alone names no reader.
+   */
+  showsPeriods?: boolean;
 }
 
 /**
@@ -254,6 +271,17 @@ export function overTargetFindingByStretch(args: {
     const before = args.before[index]?.counted ?? 0;
     if (stretch.counted <= before + 1e-9) continue;
     if (loadStatus(stretch.counted, target, tolerance) !== 'OVER') continue;
+    // A reader who may not see how the post changes gets the verdict alone
+    // (CheckPolicy.showsPeriods). The stretch is still what is judged: the
+    // rule is the same whoever writes.
+    if (args.policy.showsPeriods === false) {
+      return {
+        code: STAFF_TEACHER_OVER_TARGET_HIDDEN,
+        mode,
+        userId: args.userId,
+        params: { role: args.role, tolerance },
+      };
+    }
     return {
       code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
       mode,
@@ -546,6 +574,12 @@ export function staffingSentence(warning: StaffingWarning): string {
     return `${role} saknar behörighet i ${warning.params.subject}${span}.`;
   }
   const { minutes, target, limit, tolerance } = warning.params;
+  if (warning.code === STAFF_TEACHER_OVER_TARGET_HIDDEN) {
+    return (
+      `${role} skulle få mer än gränsen, riktmärket med ${tolerance} % tolerans. ` +
+      `Minuterna visas för rektor, en fullständig administratör och den som har HR-läs.`
+    );
+  }
   if (warning.code === STAFF_TEACHER_OVER_TARGET_IN_PERIOD) {
     return (
       `${role} skulle få ${minutes} min/v mot riktmärket ${target} min/v ` +

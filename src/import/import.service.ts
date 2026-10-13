@@ -13,6 +13,7 @@ import {
   type TeacherContractKind,
 } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { decidedTimplanConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -55,6 +56,7 @@ import type {
   ImportTimplanDto,
 } from './dto/import.dto';
 import { dutyIdentity } from '../staffing/duty-identity';
+import { readsHr } from '../staffing/hr-visibility';
 
 /**
  * Everything a timplan row states about a requirement — that is, every column
@@ -208,6 +210,11 @@ export class ImportService {
         user,
       );
     }
+
+    // A file with tjänst % writes posts: rektor's or a full administrator's
+    // (Roller i skolan). Refused whole, before anybody is added, so a file
+    // never half-lands as people without their posts.
+    assertAdministratorMay(user, { kind: 'decides' });
 
     const errors: ImportReport['errors'] = [];
     const refused = new Set<number>();
@@ -1189,6 +1196,7 @@ export class ImportService {
       }
       const checks = await RequirementImportChecks.open(tx, {
         viewer: user,
+        showsPeriods: readsHr(user),
         schoolId,
         academicYearId: dto.academicYearId,
         teacherIds: [...touchedTeacherIds],

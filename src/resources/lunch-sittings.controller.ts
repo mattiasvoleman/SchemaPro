@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -29,6 +30,7 @@ import { MoveLunchSittingDto, PlaceLunchSittingDto } from './dto/lunch-sitting.d
 @Controller('api/v1/lunch-sittings')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('SCHEMALAGGNING')
 export class LunchSittingsController {
   constructor(private readonly sittings: LunchSittingsService) {}
 

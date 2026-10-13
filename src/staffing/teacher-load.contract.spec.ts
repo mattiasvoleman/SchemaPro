@@ -3,6 +3,7 @@ import { isMixed } from '../common/lesson-lengths';
 import {
   buildTeacherLoadReport,
   countedMinutesByTeacher,
+  yearTargetMinutesPerWeek,
   type LoadInput,
   type TeacherLoadReport,
 } from './teacher-load';
@@ -123,6 +124,24 @@ describe('the load report agrees with the shared fixture', () => {
         if ((employment?.periods ?? []).length === 0) expect(t.periods).toEqual([]);
       }
     }
+  });
+
+  it("states each post's year target as the report does (yearTargetMinutesPerWeek, which a reader without HR-läs is given)", () => {
+    let changing = 0;
+    for (const c of cases) {
+      const report = buildTeacherLoadReport(c.input);
+      for (const t of report.teachers) {
+        const employment = c.input.employments.find((e) => e.userId === t.userId);
+        if (!employment) continue;
+        if ((employment.periods ?? []).length > 0) changing += 1;
+        expect({ case: c.name, userId: t.userId, target: yearTargetMinutesPerWeek(c.input, employment) }).toEqual({
+          case: c.name,
+          userId: t.userId,
+          target: t.targetMinutesPerWeek,
+        });
+      }
+    }
+    expect(changing).toBeGreaterThan(0);
   });
 
   it('reaches a split row, every week, odd weeks, co-taught and unstaffed', () => {

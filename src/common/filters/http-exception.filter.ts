@@ -10,6 +10,7 @@ import {
 import { Prisma } from '@prisma/client';
 import type { Request, Response } from 'express';
 import type { ProblemDetails } from '../interfaces/problem-details.interface';
+import { areaRefusal } from '../utils/prisma-errors';
 
 interface NormalizedError {
   status: number;
@@ -113,6 +114,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private normalize(exception: unknown): NormalizedError {
     if (exception instanceof HttpException) {
       return this.fromHttpException(exception);
+    }
+
+    // An administrator's write outside their profile, refused by the
+    // database (Roller i skolan): a 403 that says what, from any service.
+    const area = areaRefusal(exception);
+    if (area) {
+      return {
+        status: HttpStatus.FORBIDDEN,
+        title: 'Forbidden',
+        detail: area.message,
+        code: area.code,
+      };
     }
 
     if (exception instanceof Prisma.PrismaClientKnownRequestError) {

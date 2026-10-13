@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AnyAdministrator } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -15,6 +16,7 @@ import { DeviceTokenDto, RegisterDeviceDto } from './dto/devices.dto';
  */
 @Controller('api/v1')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@AnyAdministrator('the caller\'s own devices')
 export class DevicesController {
   constructor(private readonly devices: DevicesService) {}
 

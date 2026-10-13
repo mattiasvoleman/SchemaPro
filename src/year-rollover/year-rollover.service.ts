@@ -9,6 +9,7 @@ import {
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -145,6 +146,10 @@ export class YearRolloverService {
     user: AuthenticatedUser,
   ): Promise<RolloverPreview> {
     requireSchoolId(user);
+    // Carrying tjänster forward copies tjänst % and nedsättning into next
+    // year, and the preview lists who has a nedsättning: rektor's or a full
+    // administrator's (Roller i skolan). A planner rolls the year without it.
+    if (dto.carryStaffing === true) assertAdministratorMay(user, { kind: 'decides' });
     try {
       return await this.prisma.withRls(
         user,
@@ -174,6 +179,7 @@ export class YearRolloverService {
   ): Promise<RolloverResult> {
     const schoolId = requireSchoolId(user);
     const carryStaffing = dto.carryStaffing === true;
+    if (carryStaffing) assertAdministratorMay(user, { kind: 'decides' });
     try {
       const result = await this.prisma.withRls(
         user,

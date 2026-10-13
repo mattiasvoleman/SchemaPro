@@ -52,6 +52,10 @@ import { Prisma } from '@prisma/client';
  * import, the rollover or "Skapa timplansposter". See teachingBlockRefusal.
  */
 export function rethrowPrismaError(error: unknown): never {
+  const area = areaRefusal(error);
+  if (area) {
+    throw areaRefusalException(area);
+  }
   const decided = decidedTimplanRefusal(error);
   if (decided) {
     throw decidedTimplanConflict(decided.planName === null ? [] : [decided.planName]);
@@ -596,4 +600,46 @@ export function enrolmentClassKeyRefusal(error: unknown): 'NOT_THE_SCHOOLS' | 'C
   // Only the trigger writes a segment, so a refused write is a class it
   // cannot record — never a delete of a year, which cascades.
   return message === '' || message.startsWith('insert or update on table "StudentEnrollments"') ? 'NOT_THE_SCHOOLS' : null;
+}
+
+/** What the database answered an administrator's write outside their profile (Roller i skolan). */
+export interface AreaRefusal {
+  code: 'AREA_NOT_YOURS' | 'DECISION_NOT_YOURS';
+  message: string;
+}
+
+const DECISION_TOKENS = /\b(ADMINISTRATOR_IS_A_DECISION|SHARING_EMPLOYMENT_IS_A_DECISION)\b/;
+
+/**
+ * Recognises the database's refusal of an administrator's write that the
+ * profile does not hold: a trigger's AR403 (a decision taken by somebody who
+ * does not decide, or a planner writing the roster) and row security's own
+ * refusal of a WITH CHECK (42501, "new row violates row-level security"),
+ * which is what an area-checked arm answers. RolesGuard refuses the same
+ * request first when the route names its areas; this is the answer for a
+ * write the route did not foresee, so it is a 403 and never a 500. The
+ * message is the trigger's own Swedish sentence, after its token.
+ */
+export function areaRefusal(error: unknown): AreaRefusal | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const original = typeof cause?.originalCode === 'string' ? cause.originalCode : null;
+  const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+  const isArea = original === 'AR403' || (error.code === 'P2039' && error.message.includes('Code: `AR403`'));
+  if (isArea) {
+    const sentence = /\b[A-Z][A-Z0-9_]{3,}:\s*([^`]+)/.exec(text)?.[1];
+    return {
+      code: DECISION_TOKENS.test(text) ? 'DECISION_NOT_YOURS' : 'AREA_NOT_YOURS',
+      message: (sentence ?? 'Din roll får inte göra den här ändringen.').trim(),
+    };
+  }
+  if ((original === '42501' || error.message.includes('42501')) && text.includes('row-level security')) {
+    return { code: 'AREA_NOT_YOURS', message: 'Din roll får inte göra den här ändringen.' };
+  }
+  return null;
+}
+
+export function areaRefusalException(refusal: AreaRefusal): ForbiddenException {
+  return new ForbiddenException({ message: refusal.message, code: refusal.code });
 }

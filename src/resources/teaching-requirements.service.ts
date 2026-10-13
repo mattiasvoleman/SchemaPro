@@ -13,6 +13,7 @@ import {
   touchesStaffing,
 } from '../staffing/staffing-enforcement';
 import type { StaffingWarning } from '../staffing/staffing-checks';
+import { readsHr } from '../staffing/hr-visibility';
 import { isMixed } from '../common/lesson-lengths';
 import {
   CREATE_DEFAULT_SHAPE,
@@ -151,6 +152,7 @@ export class TeachingRequirementsService {
         // REFUSE throws here and nothing is written.
         const warnings = await enforceRequirementWrite(tx, {
           viewer: user,
+          showsPeriods: readsHr(user),
           schoolId,
           academicYearId: dto.academicYearId,
           requirementId: null,
@@ -297,6 +299,7 @@ export class TeachingRequirementsService {
             }
             warnings = await enforceRequirementWrite(tx, {
               viewer: user,
+              showsPeriods: readsHr(user),
               schoolId: requireSchoolId(user),
               academicYearId: stored.academicYearId,
               requirementId: id,

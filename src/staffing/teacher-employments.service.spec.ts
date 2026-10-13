@@ -99,6 +99,49 @@ describe('TeacherEmploymentsService', () => {
       expect(typeof answer[0]!.employmentPercent).toBe('number');
     });
 
+    it('leaves tjänst %, nedsättning and the note out for a planner without HR-läs, and keeps the signature', async () => {
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        storedRow({ reductionPercent: new Prisma.Decimal('20.000'), note: 'Föräldraledig 20 %' }),
+      ]);
+
+      const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      expect(hidden).toMatchObject({
+        employmentPercent: null,
+        reductionPercent: null,
+        note: null,
+        hrHidden: true,
+        signature: 'KOL',
+        contractKind: 'FERIE',
+      });
+
+      for (const principal of [
+        testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+        testUser({ adminProfile: 'REKTOR' }),
+        testUser(),
+      ]) {
+        const [shown] = await service.list(YEAR_ID, principal);
+        expect(shown).toMatchObject({ employmentPercent: 80, reductionPercent: 20, note: 'Föräldraledig 20 %' });
+        expect(shown).not.toHaveProperty('hrHidden');
+      }
+    });
+
+    it('leaves a changing post\'s periods out for a planner without HR-läs, and hands them to one with it', async () => {
+      const period = {
+        id: 'per-1', schoolId: SCHOOL_ID, employmentId: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID,
+        validFrom: new Date('2026-11-01T00:00:00.000Z'), validTo: null,
+        employmentPercent: new Prisma.Decimal('50.000'), reductionPercent: new Prisma.Decimal('0.000'),
+        teachingTargetMinutesPerWeek: null,
+        createdAt: new Date('2026-09-01T00:00:00.000Z'), updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+      };
+      tx.teacherEmployment.findMany.mockResolvedValue([storedRow({ periods: [period] })]);
+
+      const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      expect(hidden).toMatchObject({ employmentPercent: null, periods: [], hrHidden: true });
+
+      const [shown] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }));
+      expect(shown!.periods).toEqual([expect.objectContaining({ validFrom: '2026-11-01', employmentPercent: 50 })]);
+    });
+
     it('narrows a teacher to their own row in the query, not only through RLS', async () => {
       tx.teacherEmployment.findMany.mockResolvedValue([]);
 
@@ -462,6 +505,23 @@ describe('TeacherEmploymentsService', () => {
       // The update moved the grad alone: its changes do not carry the Från, the entry does.
       expect(answer.entries[1]!.changes).toEqual([{ field: 'employmentPercent', before: 80, after: 75 }]);
       expect(answer.entries[2]).not.toHaveProperty('periodFrom');
+    });
+
+    it("leaves a period's versions out for a planner without HR-läs, and the post's percentages' values", async () => {
+      const period = { id: 'per-1', employmentId: 'emp-1', validFrom: '2026-11-01', validTo: null, employmentPercent: 80, reductionPercent: 0 };
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(3, { entity: 'PERIOD', entityId: 'per-1', action: 'CREATE', before: null, after: period }),
+        logRow(2),
+        logRow(1, { entity: 'DUTY', entityId: 'duty-1', before: { minutesPerWeek: 60 }, after: { minutesPerWeek: 90 } }),
+      ]);
+      const hidden = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE' }));
+      expect(hidden.entries.map((entry) => [entry.version, entry.entity])).toEqual([
+        [2, 'EMPLOYMENT'],
+        [1, 'DUTY'],
+      ]);
+      expect(hidden.entries[0]!.changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
+      const shown = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'REKTOR' }));
+      expect(shown.entries.map((entry) => entry.entity)).toEqual(['PERIOD', 'EMPLOYMENT', 'DUTY']);
     });
 
     it('says when it left the oldest versions out', async () => {
