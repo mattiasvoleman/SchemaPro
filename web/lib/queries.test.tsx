@@ -9,6 +9,8 @@ import {
   useCrudMutations,
   useDeleteMasterLesson,
   useGroupAttendance,
+  attendanceRangeProblem,
+  GROUP_ATTENDANCE_MAX_DAYS,
   useGroupMembers,
   useGroupMemberships,
   useGroups,
@@ -764,6 +766,24 @@ describe("useGroupAttendance", () => {
     );
     expect(result.current.fetchStatus).toBe("idle");
     expect(mockApi.get).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing for a period the gateway would refuse: backwards, or over 400 days", () => {
+    const { wrapper } = createHarness();
+    for (const [from, to] of [["2026-09-30", "2026-09-01"], ["2025-01-01", "2026-02-06"]]) {
+      const { result } = renderHook(() => useGroupAttendance("g-7a", from!, to!), { wrapper });
+      expect(result.current.fetchStatus).toBe("idle");
+    }
+    expect(mockApi.get).not.toHaveBeenCalled();
+  });
+
+  it("names the period's problem at the gateway's own bounds", () => {
+    expect(attendanceRangeProblem("2026-09-01", "2026-09-01")).toBeNull();
+    expect(attendanceRangeProblem("2026-09-02", "2026-09-01")).toBe("ORDER");
+    // 400 days is the gateway's most; 401 is one too many.
+    expect(attendanceRangeProblem("2025-01-01", "2026-02-05")).toBeNull();
+    expect(attendanceRangeProblem("2025-01-01", "2026-02-06")).toBe("TOO_LONG");
+    expect(GROUP_ATTENDANCE_MAX_DAYS).toBe(400);
   });
 });
 

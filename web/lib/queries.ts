@@ -1465,6 +1465,20 @@ export interface GroupAttendanceRow {
  * at 20 000 records as the PostgREST read did. A whole class's attendance is
  * a read the läslogg records, which is why it is not PostgREST's any more.
  */
+/** The longest period the class report reads at once: the gateway's GROUP_ATTENDANCE_MAX_DAYS. */
+export const GROUP_ATTENDANCE_MAX_DAYS = 400;
+
+/**
+ * Why a class report's period cannot be read, or null when it can: one that
+ * ends before it begins, or one longer than the gateway answers (a 400 it
+ * would refuse, which the page would only show as "try again later").
+ */
+export function attendanceRangeProblem(fromDate: string, toDate: string): "ORDER" | "TOO_LONG" | null {
+  if (toDate < fromDate) return "ORDER";
+  const days = (Date.parse(`${toDate}T00:00:00Z`) - Date.parse(`${fromDate}T00:00:00Z`)) / 86_400_000;
+  return days > GROUP_ATTENDANCE_MAX_DAYS ? "TOO_LONG" : null;
+}
+
 export function useGroupAttendance(
   groupId: string | null,
   fromDate: string,
@@ -1472,7 +1486,8 @@ export function useGroupAttendance(
 ) {
   return useQuery({
     queryKey: ["groupAttendance", groupId, fromDate, toDate],
-    enabled: groupId !== null,
+    // A period the gateway would refuse is not asked: the page says why.
+    enabled: groupId !== null && attendanceRangeProblem(fromDate, toDate) === null,
     queryFn: async () =>
       (
         await api.get<{ records: GroupAttendanceRow[] }>(

@@ -33,7 +33,9 @@ vi.mock("@/lib/retention-queries", () => ({
   usePurgedBefore: () => ({ of: (kind: string) => state.purged[kind] ?? null }),
 }));
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/queries", async (importOriginal) => ({
+  attendanceRangeProblem: (await importOriginal<typeof import("@/lib/queries")>()).attendanceRangeProblem,
+  GROUP_ATTENDANCE_MAX_DAYS: 400,
   useGroups: () => ({ data: [{ id: "g-7a", name: "7A", academicYearId: "y1" }], isLoading: false, isError: false }),
   useAcademicYears: () => ({ data: [{ id: "y1", name: "2026/27", isActive: true }] }),
   usePeople: () => state.people,
@@ -103,6 +105,22 @@ describe("Rapporter › Närvaro", () => {
     expect(screen.queryByText("Klassens snitt")).not.toBeInTheDocument();
     expect(screen.queryByText("Ingen närvaro registrerad under perioden")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Exportera CSV/ })).toBeDisabled();
+  });
+
+  it("says why a period cannot be shown before asking, rather than failing it as a load error", async () => {
+    renderReport();
+    const user = await chooseClass();
+    const from = screen.getByRole("textbox", { name: "Från" });
+    await user.clear(from);
+    await user.type(from, "2099-01-01");
+    expect(await screen.findByText("Perioden börjar efter att den slutar. Välj ett Från som ligger före Till.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Närvaron kunde inte hämtas" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Klassens snitt")).not.toBeInTheDocument();
+    expect(from).toHaveAttribute("aria-describedby", "report-range-problem");
+
+    await user.clear(from);
+    await user.type(from, "2020-01-01");
+    expect(await screen.findByText("En rapport visar högst 400 dagar åt gången. Välj en kortare period.")).toBeInTheDocument();
   });
 
   it("says when the period reaches back past the school's gallring, and not otherwise", async () => {
