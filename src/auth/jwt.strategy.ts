@@ -82,7 +82,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const profile = await this.prisma.withVerifiedSubject(payload.sub, (db) =>
       db.user.findUnique({
         where: { authId: payload.sub },
-        select: { id: true, schoolId: true, role: true, isActive: true },
+        select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
       }),
     );
 
@@ -95,6 +95,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         role: profile.role as Role,
         userId: profile.id,
         schoolId: profile.schoolId,
+        // Set exactly on an administrator (CHECK Users_a_profile_is_an_administrators).
+        ...(profile.adminProfile ? { adminProfile: profile.adminProfile, hrRead: profile.hrRead } : {}),
         ...(schoolAccount ? { schoolAccount } : {}),
       };
     }

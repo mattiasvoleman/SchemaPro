@@ -24,6 +24,7 @@ import type { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
 import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
 import { readLastYearTeachersOf } from './last-year-teachers';
 import { readActiveStaffIds } from './staff-candidates';
+import { hideHr, readsHr } from './hr-visibility';
 
 /**
  * The horizons the weekly report can be asked for: the timplansposter
@@ -34,6 +35,11 @@ export const LOAD_HORIZONS = ['planned', 'scheduled'] as const;
 export type LoadHorizon = (typeof LOAD_HORIZONS)[number];
 
 export interface TeacherLoadReportResponse extends TeacherLoadReport {
+  /**
+   * True when tjänst % and nedsättning were left out for an administrator
+   * without HR-läs (hr-visibility.ts): each post's two percentages are null.
+   */
+  hrHidden?: true;
   academicYearId: string;
   horizon: LoadHorizon;
   year: YearBounds;
@@ -124,7 +130,33 @@ export class StaffingLoadService {
         ? { unstaffedRequirements: [], unqualifiedAssignments: [], subjectBottlenecks: [], bottlenecksComputed: false }
         : {}),
     };
-    if (user.role === Role.SCHOOL_ADMIN) return response;
+    if (user.role === Role.SCHOOL_ADMIN) {
+      if (readsHr(user)) return response;
+      // Tjänst % and nedsättning, and every figure read off them that would
+      // give them back (a subject's share of the tjänst, the year's
+      // reglerad tid, årsarbetstid and semestervecka), for rektor, full and
+      // HR-läs only; so too the post's stretches, which say when and how it
+      // changes. The target in minutes stays: it is what tjänstefördelning is
+      // done against.
+      return {
+        ...response,
+        hrHidden: true,
+        teachers: response.teachers.map((row) => ({
+          ...row,
+          employment: row.employment ? (hideHr(row.employment) as unknown as typeof row.employment) : null,
+          subjects: row.subjects.map((subject) => ({ ...subject, percentOfEmployment: null })),
+          periods: [],
+          annual: {
+            ...row.annual,
+            regulatedHoursPerYear: null,
+            annualHours: null,
+            unregulatedHoursPerYear: null,
+            semesterHoursPerWeek: null,
+            percentOfRegulated: null,
+          },
+        })),
+      };
+    }
 
     const own = requireUserId(user);
     return {
@@ -318,7 +350,9 @@ export class StaffingLoadService {
         : null;
       return { input: yearInput, staffIds, lastYear };
     });
-    return suggestTeachers(input, requirementId, staffIds, lastYear);
+    // Without HR-läs a changing post's room is the year's, as the report
+    // states it (suggest-teachers.ts showsPeriods).
+    return suggestTeachers(input, requirementId, staffIds, lastYear, readsHr(user));
   }
 
   private async readInput(

@@ -26,6 +26,7 @@ import {
   type EnforcedPolicy,
 } from '../staffing/staffing-enforcement';
 import { subjectFamiliarTeachers, type LastYearTeachers } from '../staffing/suggest-teachers';
+import { readsHr } from '../staffing/hr-visibility';
 import {
   DEFAULT_LOAD_POLICY,
   chargedMinutes,
@@ -37,6 +38,7 @@ import {
   stretchLoads,
   strongestCoveringQualification,
   targetMinutesPerWeek,
+  yearTargetMinutesPerWeek,
   type LoadEmployment,
   type LoadInput,
   type LoadModel,
@@ -251,6 +253,15 @@ export interface StaffingProposal {
   conflicts: ProposalConflict[];
   /** The engine's objective terms; null when the engine was not asked. */
   terms: { before: StaffTerms; after: StaffTerms } | null;
+  /**
+   * Present when the reader may not see when and how a post changes (Roller
+   * i skolan, without HR-läs): every teacher is then stated over the year,
+   * while the apply still judges a changing post per stretch, so a partial
+   * selection can be refused or warned about where the figures show room.
+   * Set for the whole answer, never per teacher: a per-teacher mark would
+   * say whose post changes.
+   */
+  hrHidden?: true;
 }
 
 export interface StaffingApplyResult {
@@ -379,6 +390,10 @@ export class StaffingProposalService {
     const state = await this.prisma.withRls(user, (tx) => this.readState(tx, user, dto.academicYearId));
     const basisSha256 = basisOf(state);
     const plan = planOf(state, dto);
+    // Whether the reader may see when and how a post changes (Roller i
+    // skolan). The plan is the same either way; only what it says differs.
+    const showsPeriods = readsHr(user);
+    const shownTarget = (teacher: TeacherPlan) => shownTargetOf(state.read.input, teacher, showsPeriods);
 
     const free = plan.rows.filter((row) => row.kind !== 'FIXED');
     const open = free.filter((row) => row.kind === 'OPEN');
@@ -411,13 +426,21 @@ export class StaffingProposalService {
         vacated: plan.rows.filter((row) => row.vacated).length,
         inconsistent: plan.rows.filter((row) => row.inconsistent).length,
         teachersSent: plan.teachers.length,
-        teachersWithTarget: plan.teachers.filter((t) => t.target !== null).length,
-        teachersWithZeroTarget: plan.teachers.filter((t) => t.target === 0).length,
-        teachersWithoutTarget: plan.teachers.filter((t) => t.target === null).length,
+        teachersWithTarget: plan.teachers.filter((t) => shownTarget(t) !== null).length,
+        teachersWithZeroTarget: plan.teachers.filter((t) => shownTarget(t) === 0).length,
+        teachersWithoutTarget: plan.teachers.filter((t) => shownTarget(t) === null).length,
       },
-      ...this.compose(state, plan, leads, unstaffed),
-      conflicts,
+      ...this.compose(state, plan, leads, unstaffed, showsPeriods),
+      // A conflict that names a changing post states its plan's stretch (the
+      // engine's STAFF_TEACHER_CAPACITY_ZERO: what it carries against the
+      // stretch's limit), which would give back the post's level in it. Left
+      // out for a reader who may not see that; the rows it would have
+      // explained still say why they stay unstaffed.
+      conflicts: showsPeriods
+        ? conflicts
+        : conflicts.filter((conflict) => !conflict.teacherIds.some((id) => plan.teacherById.get(id)?.changing)),
       terms,
+      ...(showsPeriods ? {} : { hrHidden: true as const }),
     });
 
     // Nothing to decide: every row is fixed (staffed, pinned or inconsistent).
@@ -735,7 +758,7 @@ export class StaffingProposalService {
     const schoolId = requireSchoolId(user);
     const read = await readLoadInput(tx, user, academicYearId, schoolId);
     if (!read) throw new NotFoundException('Academic year not found.');
-    const policy = await readCheckPolicy(tx, schoolId);
+    const policy = await readCheckPolicy(tx, schoolId, readsHr(user));
     const staffIds = await readActiveStaffIds(tx, academicYearId);
     const groups = await tx.studentGroup.findMany({
       where: { academicYearId, predecessorId: { not: null } },
@@ -894,22 +917,30 @@ export class StaffingProposalService {
     return { leads, unstaffed, conflicts };
   }
 
-  /** Per-teacher before → after, the changed rows with their reasons, and the unstaffed rest. */
+  /**
+   * Per-teacher before → after, the changed rows with their reasons, and the
+   * unstaffed rest. `showsPeriods` is whether the reader may see when a post
+   * changes during the year (Roller i skolan, readsHr): without it a changing
+   * post is stated as the year, its target the report's, with no stretch
+   * dates, stretches or per-stretch charges, and no row names the changing
+   * posts it excluded. The plan itself is the same for every reader.
+   */
   private compose(
     state: StaffingState,
     plan: Plan,
     leads: Map<string, string>,
     unstaffed: Map<string, StaffUnstaffedReason>,
+    showsPeriods: boolean,
   ): Pick<StaffingProposal, 'assignments' | 'teachers' | 'unstaffed'> {
     const input = state.read.input;
     const afterInput = overlay(input, plan, leads);
     const before = countedMinutesByTeacher(input);
     const after = countedMinutesByTeacher(afterInput);
-    const point = (minutes: number, teacher: TeacherPlan): TeacherLoadPoint => ({
+    const point = (minutes: number, target: number | null): TeacherLoadPoint => ({
       countedMinutesPerWeek: Math.round(minutes),
       countedExact: round2(minutes),
-      percentOfTarget: percentOfTarget(minutes, teacher.target),
-      status: loadStatus(minutes, teacher.target, plan.tolerance),
+      percentOfTarget: percentOfTarget(minutes, target),
+      status: loadStatus(minutes, target, plan.tolerance),
     });
 
     // A changing post's before and after are its planned stretch's minutes.
@@ -926,8 +957,22 @@ export class StaffingProposalService {
         after: round2(is[index]?.counted ?? 0),
       }));
     };
-    const teachers = plan.teachers.map(
-      (teacher): ProposalTeacher => ({
+    const teachers = plan.teachers.map((teacher): ProposalTeacher => {
+      if (teacher.changing && !showsPeriods) {
+        const target = shownTargetOf(input, teacher, showsPeriods);
+        const today = before.get(teacher.userId) ?? 0;
+        return {
+          userId: teacher.userId,
+          targetMinutesPerWeek: target,
+          limitMinutesPerWeek: target === null ? null : limitMinutes(target, plan.tolerance),
+          // C1 asked of the year: no target above 0, or today over the
+          // year's limit. The plan's own answer is the stretch's.
+          keepOrShed: target === null || target <= 0 || loadStatus(today, target, plan.tolerance) === 'OVER',
+          before: point(today, target),
+          after: point(after.get(teacher.userId) ?? 0, target),
+        };
+      }
+      return {
         userId: teacher.userId,
         targetMinutesPerWeek: teacher.target,
         limitMinutesPerWeek: teacher.target === null ? null : limitMinutes(teacher.target, plan.tolerance),
@@ -941,19 +986,20 @@ export class StaffingProposalService {
           : {}),
         before: point(
           teacher.changing ? stretchMinutes(input, teacher.changing) : (before.get(teacher.userId) ?? 0),
-          teacher,
+          teacher.target,
         ),
         after: point(
           teacher.changing ? stretchMinutes(afterInput, teacher.changing) : (after.get(teacher.userId) ?? 0),
-          teacher,
+          teacher.target,
         ),
-      }),
-    );
+      };
+    });
 
     // What a row charges each stretch of a changing post, in its stretches'
     // order: the dialog gives that back to each when the row is left out.
+    // Not to a reader who may not see the stretches (showsPeriods).
     const stretchCharges = (teacherId: string | null, plannedRow: RowPlan): number[] | undefined => {
-      const changing = teacherId === null ? undefined : plan.teacherById.get(teacherId)?.changing;
+      const changing = teacherId === null || !showsPeriods ? undefined : plan.teacherById.get(teacherId)?.changing;
       if (!changing) return undefined;
       return stretchLoads(
         { ...input, requirements: [{ ...plannedRow.row, teacherId: teacherId!, coTeacherId: null }], duties: [] },
@@ -1013,7 +1059,11 @@ export class StaffingProposalService {
     return { assignments, teachers, unstaffed: unstaffedRows };
 
     function excludedChangingOf(plannedRow: RowPlan, reason: StaffUnstaffedReason): Pick<ProposalUnstaffed, 'excludedChanging'> {
-      if ((reason !== 'NO_CAPACITY_LEFT' && reason !== 'NO_TEACHER_WITH_TARGET') || plannedRow.excluded.length === 0) {
+      if (
+        !showsPeriods ||
+        (reason !== 'NO_CAPACITY_LEFT' && reason !== 'NO_TEACHER_WITH_TARGET') ||
+        plannedRow.excluded.length === 0
+      ) {
         return {};
       }
       const could = plannedRow.excluded.filter(
@@ -1258,6 +1308,18 @@ export function planOf(
     rowById: new Map(rows.map((row) => [row.row.id, row])),
     pinned,
   };
+}
+
+/**
+ * The target a reader is told a teacher has: the plan's, or, for a post that
+ * changes during the year and a reader who may not see how
+ * (showsPeriods false), the year's as the load report states it — not the
+ * tightest stretch the plan is made on.
+ */
+function shownTargetOf(input: LoadInput, teacher: TeacherPlan, showsPeriods: boolean): number | null {
+  return teacher.changing && !showsPeriods
+    ? yearTargetMinutesPerWeek(input, teacher.changing.employment)
+    : teacher.target;
 }
 
 /**

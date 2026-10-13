@@ -754,10 +754,12 @@ describe('UsersService', () => {
       columns: [
         'id', 'schoolId', 'authId', 'role', 'firstName', 'lastName', 'email',
         'phone', 'isActive', 'invitedAt', 'createdAt', 'updatedAt', 'studentGroupId',
-        'deactivatedAt', 'pseudonymisedAt',
+        'deactivatedAt', 'pseudonymisedAt', 'adminProfile', 'hrRead',
       ],
       lock: 'FOR NO KEY UPDATE',
     };
+    /** The school's other active deciders, as keepADecider's locking read finds them. */
+    let otherDeciders: { id: string }[];
     /** The rows update()'s locking read can find. */
     let users: Record<string, unknown>[];
     /** The locking read of the stored role and group. */
@@ -765,15 +767,32 @@ describe('UsersService', () => {
 
     /** The row as stored, found by its own id and by nothing else; null stores none. */
     const storeUser = (row: Record<string, unknown> | null) => {
-      users = row === null ? [] : [{ id: USER_ID, ...row }];
+      users =
+        row === null
+          ? []
+          : [
+              {
+                id: USER_ID,
+                schoolId: '33333333-3333-4333-8333-333333333333',
+                isActive: true,
+                hrRead: false,
+                adminProfile: row.role === UserRole.SCHOOL_ADMIN ? 'FULL' : null,
+                ...row,
+              },
+            ];
     };
 
     beforeEach(() => {
       // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
       // and a proxy is not callable. It answers as the table would, from the
       // row a test stored.
+      otherDeciders = [{ id: 'another-decider' }];
       queryRaw = jest.fn((...call: unknown[]) =>
-        Promise.resolve(lockingRead(USERS, users, call)),
+        Promise.resolve(
+          rawSql(call).includes(`"adminProfile" IN ('FULL', 'REKTOR')`)
+            ? otherDeciders
+            : lockingRead(USERS, users, call),
+        ),
       );
       Object.assign(tx, { $queryRaw: queryRaw });
       // Every patch is judged against the row it lands on, so the stored role
@@ -836,7 +855,7 @@ describe('UsersService', () => {
       expect(writtenIn).toEqual(readIn);
       const [call] = queryRaw.mock.calls;
       expect(rawSql(call)).toMatch(
-        /SELECT "role", "studentGroupId", "isActive", "pseudonymisedAt"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+        /SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "isActive", "schoolId"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
       );
       expect(call.slice(1)).toEqual([USER_ID]);
       expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1078,9 +1097,10 @@ describe('UsersService', () => {
       tx.teacherEmployment.count.mockResolvedValue(1);
       await service.update(USER_ID, { role: UserRole.SCHOOL_ADMIN }, testUser());
       expect(tx.teacherEmployment.count).not.toHaveBeenCalled();
+      // A new administrator is a full one when the patch names no profile.
       expect(tx.user.update).toHaveBeenLastCalledWith({
         where: { id: USER_ID },
-        data: { role: UserRole.SCHOOL_ADMIN },
+        data: { role: UserRole.SCHOOL_ADMIN, adminProfile: 'FULL' },
       });
     });
 
@@ -1121,7 +1141,11 @@ describe('UsersService', () => {
         queryRaw.mockImplementation((...call: unknown[]) =>
           rawSql(call).includes(TELL)
             ? Promise.resolve([{ notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } }])
-            : Promise.resolve(lockingRead(USERS, users, call)),
+            : // Roller i skolan: demoting an administrator first locks the
+              // school's deciders, of whom another stays.
+              rawSql(call).includes('"adminProfile" IN')
+              ? Promise.resolve([{ id: USER_ID }, { id: MENTOR }])
+              : Promise.resolve(lockingRead(USERS, users, call)),
         );
         tx.user.update.mockResolvedValue({ id: USER_ID });
       });
@@ -1193,7 +1217,7 @@ describe('UsersService', () => {
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.user.findUnique).toHaveBeenCalledWith({
         where: { id: USER_ID },
-        select: { authId: true, invitedAt: true },
+        select: { authId: true, invitedAt: true, role: true, adminProfile: true, isActive: true, schoolId: true },
       });
       expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
       expect(supabaseAdmin.deleteUser).toHaveBeenCalledWith(AUTH_ID);
@@ -1291,6 +1315,198 @@ describe('UsersService', () => {
       await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
 
       expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Roller i skolan: an administrator, and anybody's role, profile and
+   * HR-läs, are rektor's or a full administrator's to change, and the school
+   * always keeps one of them. The database holds the same
+   * (Users_administrators_are_decided, section 108); these are the 403s and
+   * 409s that say so first.
+   */
+  describe('roles and profiles', () => {
+    const USERS: LockedTable = {
+      name: 'Users',
+      columns: ['role', 'studentGroupId', 'pseudonymisedAt', 'adminProfile', 'hrRead', 'isActive', 'schoolId'],
+      lock: 'FOR NO KEY UPDATE',
+    };
+    const expedition = testUser({ adminProfile: 'EXPEDITION' });
+    const rektor = testUser({ adminProfile: 'REKTOR' });
+    let stored: Record<string, unknown>;
+    let otherDeciders: { id: string }[];
+
+    beforeEach(() => {
+      stored = {
+        id: USER_ID,
+        role: UserRole.TEACHER,
+        studentGroupId: null,
+        pseudonymisedAt: null,
+        adminProfile: null,
+        hrRead: false,
+        isActive: true,
+        schoolId: SCHOOL_ID,
+      };
+      otherDeciders = [{ id: 'another-decider' }];
+      Object.assign(tx, {
+        $queryRaw: jest.fn((...call: unknown[]) =>
+          Promise.resolve(
+            rawSql(call).includes(`"adminProfile" IN ('FULL', 'REKTOR')`)
+              ? otherDeciders
+              : lockingRead(USERS, [stored], call),
+          ),
+        ),
+      });
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      tx.user.create.mockResolvedValue({ id: USER_ID });
+    });
+
+    it('lets the expedition add a teacher, and refuses it an administrator', async () => {
+      await service.create(createDto(), expedition);
+      expect(tx.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ role: UserRole.TEACHER, adminProfile: null, hrRead: false }),
+      });
+
+      tx.user.create.mockClear();
+      await expect(
+        service.create(createDto({ role: UserRole.SCHOOL_ADMIN, adminProfile: 'FULL' }), expedition),
+      ).rejects.toMatchObject({ status: 403, response: { code: 'DECISION_NOT_YOURS' } });
+      expect(tx.user.create).not.toHaveBeenCalled();
+    });
+
+    it("writes rektor's new administrator with the chosen profile, and FULL when none is named", async () => {
+      await service.create(
+        createDto({ role: UserRole.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+        rektor,
+      );
+      expect(tx.user.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({ role: UserRole.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+      });
+      await service.create(createDto({ role: UserRole.SCHOOL_ADMIN }), rektor);
+      expect(tx.user.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({ adminProfile: 'FULL', hrRead: false }),
+      });
+    });
+
+    it('refuses a profile on somebody who is not an administrator, and HR-läs where it means nothing', async () => {
+      await expect(service.create(createDto({ adminProfile: 'REKTOR' }), rektor)).rejects.toMatchObject({
+        status: 400,
+      });
+      await expect(
+        service.create(createDto({ role: UserRole.SCHOOL_ADMIN, adminProfile: 'REKTOR', hrRead: true }), rektor),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(tx.user.create).not.toHaveBeenCalled();
+    });
+
+    it("lets the expedition edit a teacher's details, but not their role", async () => {
+      await service.update(USER_ID, { phone: '070-1' }, expedition);
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
+
+      await expect(service.update(USER_ID, { role: UserRole.SCHOOL_ADMIN }, expedition)).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'DECISION_NOT_YOURS' },
+      });
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses the expedition an administrator's row, even their name", async () => {
+      stored = { ...stored, role: UserRole.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE' };
+      await expect(service.update(USER_ID, { firstName: 'Ny' }, expedition)).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it("writes rektor's change of profile and HR-läs, and only what changed", async () => {
+      stored = { ...stored, role: UserRole.SCHOOL_ADMIN, adminProfile: 'EXPEDITION', hrRead: false };
+      await service.update(USER_ID, { adminProfile: 'SCHEMALAGGARE', hrRead: true }, rektor);
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { adminProfile: 'SCHEMALAGGARE', hrRead: true },
+      });
+    });
+
+    it('takes HR-läs away when a planner becomes rektor, who reads tjänst % anyway', async () => {
+      stored = { ...stored, role: UserRole.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', hrRead: true };
+      await service.update(USER_ID, { adminProfile: 'REKTOR' }, rektor);
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { adminProfile: 'REKTOR', hrRead: false },
+      });
+    });
+
+    it('keeps one decider: refuses demoting, deactivating or removing the last, and allows it beside another', async () => {
+      stored = { ...stored, role: UserRole.SCHOOL_ADMIN, adminProfile: 'FULL' };
+      otherDeciders = [{ id: USER_ID }];
+      for (const patch of [{ adminProfile: 'EXPEDITION' as const }, { isActive: false }, { role: UserRole.TEACHER }]) {
+        await expect(service.update(USER_ID, patch, rektor)).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'LAST_DECIDER' },
+        });
+      }
+      arrangeUser({ ...stored, authId: AUTH_ID, invitedAt: null });
+      await expect(service.remove(USER_ID, rektor)).rejects.toMatchObject({ status: 409 });
+      expect(tx.user.update).not.toHaveBeenCalled();
+      expect(tx.user.delete).not.toHaveBeenCalled();
+
+      otherDeciders = [{ id: USER_ID }, { id: 'another-decider' }];
+      await service.update(USER_ID, { adminProfile: 'EXPEDITION' }, rektor);
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses the expedition an administrator's invitation and removal", async () => {
+      arrangeUser({ id: USER_ID, email: 'a@b.se', isActive: true, authId: AUTH_ID, invitedAt: null, role: 'SCHOOL_ADMIN' });
+      await expect(service.invite(USER_ID, expedition)).rejects.toMatchObject({ status: 403 });
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+      arrangeUser({ authId: AUTH_ID, invitedAt: null, role: 'SCHOOL_ADMIN', adminProfile: 'SCHEMALAGGARE', isActive: true, schoolId: SCHOOL_ID });
+      await expect(service.remove(USER_ID, expedition)).rejects.toMatchObject({ status: 403 });
+      expect(tx.user.delete).not.toHaveBeenCalled();
+    });
+
+    it("lists the school's administrators with their profile and HR-läs, for any administrator", async () => {
+      tx.user.findMany.mockResolvedValue([
+        { id: 'a1', adminProfile: 'REKTOR', hrRead: false },
+        { id: 'a2', adminProfile: 'SCHEMALAGGARE', hrRead: true },
+      ]);
+      await expect(service.administrators(expedition)).resolves.toEqual([
+        { id: 'a1', adminProfile: 'REKTOR', hrRead: false },
+        { id: 'a2', adminProfile: 'SCHEMALAGGARE', hrRead: true },
+      ]);
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { role: 'SCHOOL_ADMIN' },
+        select: { id: true, adminProfile: true, hrRead: true },
+        orderBy: { id: 'asc' },
+      });
+    });
+
+    it('lists the role history newest first, naming who changed it and nobody for a migration', async () => {
+      tx.userRoleChange.findMany.mockResolvedValue([
+        { id: 'c2', fromRole: 'SCHOOL_ADMIN', toRole: 'SCHOOL_ADMIN', fromProfile: 'FULL', toProfile: 'EXPEDITION',
+          fromHrRead: false, toHrRead: true, actorId: 'actor-1', createdAt: new Date('2026-10-25T09:00:00Z') },
+        { id: 'c1', fromRole: null, toRole: 'SCHOOL_ADMIN', fromProfile: null, toProfile: 'FULL',
+          fromHrRead: null, toHrRead: false, actorId: null, createdAt: new Date('2026-10-01T09:00:00Z') },
+      ]);
+      tx.user.findMany.mockResolvedValue([{ id: 'actor-1', firstName: 'Rita', lastName: 'Rektor' }]);
+
+      const changes = await service.roleChanges(USER_ID, expedition);
+
+      expect(tx.userRoleChange.findMany).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+      expect(changes.map((c) => [c.id, c.toProfile, c.actorName, c.createdAt])).toEqual([
+        ['c2', 'EXPEDITION', 'Rita Rektor', '2026-10-25T09:00:00.000Z'],
+        ['c1', 'FULL', null, '2026-10-01T09:00:00.000Z'],
+      ]);
+      // In the läslogg: the person and the actor it names (PEOPLE).
+      expect(recordedReads(tx)).toEqual([{ kind: 'PEOPLE', channel: null, ids: [USER_ID, 'actor-1'] }]);
+    });
+
+    it('records nothing for a person without role history', async () => {
+      tx.userRoleChange.findMany.mockResolvedValue([]);
+      await expect(service.roleChanges(USER_ID, expedition)).resolves.toEqual([]);
+      expect(recordedReads(tx)).toEqual([]);
     });
   });
 });

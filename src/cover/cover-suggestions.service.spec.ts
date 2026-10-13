@@ -3,6 +3,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CoverService } from './cover.service';
 import { basisOf, CoverSuggestionsService } from './cover-suggestions.service';
+import { yearTargetMinutesPerWeek } from '../staffing/teacher-load';
 
 jest.mock('../staffing/staffing-enforcement', () => ({
   attendanceSpan: jest.fn().mockResolvedValue({ min: 7, max: 7 }),
@@ -123,6 +124,52 @@ describe('CoverSuggestionsService', () => {
       expect(tx.teacherEmploymentPeriod.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ academicYearId: expect.any(String) }) }),
       );
+    });
+
+    it("states a changing post by the year's target to a reader without HR-läs, as the load report does (Roller i skolan)", async () => {
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([period('2026-10-12', 30)]);
+      // Two weeks' break in the spring: the year weighs teaching weeks, as the report does.
+      tx.schoolBreak.findMany.mockResolvedValue([
+        { startDate: new Date('2027-02-15T00:00:00Z'), endDate: new Date('2027-02-26T00:00:00Z'), minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false });
+      const yearOf = (closures: { startDate: string; endDate: string }[]) =>
+        yearTargetMinutesPerWeek(
+          {
+            year: { startDate: '2026-08-17', endDate: '2027-06-11' },
+            closures,
+            requirements: [],
+            duties: [],
+            policy: { fullTimeTeachingMinutesPerWeek: 900, overAllocationTolerancePercent: 10, fullTimeRegulatedHoursPerYear: 1360, workDaysPerYear: 194, qualificationMode: 'WARN' },
+          },
+          {
+            userId: S,
+            employmentPercent: 100,
+            reductionPercent: 0,
+            contractKind: 'FERIE',
+            teachingTargetMinutesPerWeek: 900,
+            signature: null,
+            periods: [{ validFrom: '2026-10-12', validTo: null, employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: 30 }],
+          },
+        )!;
+      const year = yearOf([{ startDate: '2027-02-15', endDate: '2027-02-26' }]);
+      // The year lies between the autumn's 900 and the period's 30: not the week's.
+      expect(year).toBeGreaterThan(30);
+      expect(year).toBeLessThan(900);
+      expect(year).not.toBe(yearOf([]));
+
+      const s = (await service.candidates(LESSON, planner)).candidates.find((c) => c.userId === S)!;
+      expect(s.load).toEqual({ weekMinutes: 60, targetMinutes: year });
+      // The reason's minutes are read off the year's target as well, not the week's 30.
+      expect(s.reasons.find((r) => r.code === 'UNDER_TARGET')?.params).toEqual({ minutes: year - 60 });
+      expect(s.reasons.map((r) => r.code)).not.toContain('OVER_TARGET');
+
+      // With HR-läs the week's period, as for a full administrator, and the
+      // breaks are read only for the masked reader.
+      tx.schoolBreak.findMany.mockClear();
+      const withHr = (await service.candidates(LESSON, { ...planner, hrRead: true })).candidates.find((c) => c.userId === S)!;
+      expect(withHr.load).toEqual({ weekMinutes: 60, targetMinutes: 30 });
+      expect(tx.schoolBreak.findMany).not.toHaveBeenCalled();
     });
 
     it('leaves a week to the post it began with when a period starts mid-week, as the load report does', async () => {
@@ -253,6 +300,24 @@ describe('CoverSuggestionsService', () => {
       extraGroupIds: [],
       coveringSubstituteIds: [],
     };
+
+    it("scores a changing post by the year's target for a reader without HR-läs, and by the week's for one with it (Roller i skolan)", async () => {
+      tx.$queryRaw.mockResolvedValue([pair]);
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([
+        { userId: S, validFrom: new Date('2026-10-12T00:00:00Z'), validTo: null, employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: 30 },
+      ]);
+      tx.schoolBreak.findMany.mockResolvedValue([]);
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false });
+      const reasonsOf = async (user: ReturnType<typeof testUser>) =>
+        (await service.proposal(D, [], user)).items.find((item) => item.userId === S)!.reasons;
+      const shown = (await service.candidates(LESSON, planner)).candidates.find((c) => c.userId === S)!;
+      // The same year's figure as the lesson's candidates, never the week's 30.
+      expect((await reasonsOf(planner)).find((r) => r.code === 'UNDER_TARGET')).toEqual(
+        shown.reasons.find((r) => r.code === 'UNDER_TARGET'),
+      );
+      expect((await reasonsOf(planner)).map((r) => r.code)).not.toContain('OVER_TARGET');
+      expect((await reasonsOf({ ...planner, hrRead: true })).map((r) => r.code)).toContain('OVER_TARGET');
+    });
 
     it('proposes the open lessons of the day with a basis, writing nothing', async () => {
       tx.$queryRaw.mockResolvedValue([pair]);

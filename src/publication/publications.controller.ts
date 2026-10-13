@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -37,6 +38,7 @@ import {
 @Controller('api/v1')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('PUBLICERING', 'DRIFT')
 export class PublicationsController {
   constructor(
     private readonly publications: PublicationsService,
@@ -49,6 +51,7 @@ export class PublicationsController {
   }
 
   @Put('publication-settings')
+  @Area('PUBLICERING')
   upsertSettings(
     @Body() dto: UpsertPublicationSettingsDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -87,6 +90,7 @@ export class PublicationsController {
   /** DIRECT ↔ DRAFT. To DRAFT records a BASELINE; back to DIRECT only with nothing unpublished. */
   @Post('publication-settings/mode')
   @HttpCode(HttpStatus.OK)
+  @Area('PUBLICERING')
   switchMode(
     @Body() dto: SwitchPublishModeDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -105,6 +109,7 @@ export class PublicationsController {
 
   @Post('publications/discard')
   @HttpCode(HttpStatus.OK)
+  @Area('PUBLICERING', 'SCHEMALAGGNING', 'DRIFT')
   discard(
     @Body() dto: DiscardDraftDto,
     @CurrentUser() user: AuthenticatedUser,

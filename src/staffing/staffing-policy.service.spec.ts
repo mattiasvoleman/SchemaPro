@@ -107,6 +107,25 @@ describe('StaffingPolicyService', () => {
       );
     });
 
+    it("keeps the integrations switch as stored for a planner, and refuses the planner's change of it", async () => {
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE' });
+      tx.staffingPolicy.findUnique.mockResolvedValue({ shareEmploymentWithIntegrations: true });
+      tx.staffingPolicy.upsert.mockResolvedValue(storedRow({ shareEmploymentWithIntegrations: true }));
+
+      // Saving the riktmärke without the switch does not turn sharing off.
+      await service.upsert({ fullTimeTeachingMinutesPerWeek: 1080 }, planner);
+      expect(tx.staffingPolicy.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ shareEmploymentWithIntegrations: true }) }),
+      );
+
+      tx.staffingPolicy.upsert.mockClear();
+      await expect(service.upsert({ shareEmploymentWithIntegrations: false }, planner)).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'DECISION_NOT_YOURS' },
+      });
+      expect(tx.staffingPolicy.upsert).not.toHaveBeenCalled();
+    });
+
     it('writes what the form said, and reads the answer back as numbers', async () => {
       tx.staffingPolicy.upsert.mockResolvedValue(
         storedRow({ semesterHoursPerWeek: new Prisma.Decimal('37.5'), overAllocationMode: 'REFUSE' }),

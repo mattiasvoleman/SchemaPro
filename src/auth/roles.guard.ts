@@ -6,18 +6,39 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import {
+  AREA_LABELS,
+  PROFILE_LABELS,
+  profileDecides,
+  profileWrites,
+} from './admin-areas';
+import { AREA_KEY, type AreaRequirement } from './decorators/area.decorator';
 import { ROLES_KEY } from './decorators/roles.decorator';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 
+/** The problem `code` of an administrator's write outside their profile's areas. */
+export const AREA_NOT_YOURS = 'AREA_NOT_YOURS';
+/** The problem `code` of a decision by an administrator who does not decide. */
+export const DECISION_NOT_YOURS = 'DECISION_NOT_YOURS';
+
+/** Requests that only read, and so need no area: reading is every administrator's. */
+const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 /**
- * Enforces `@Roles(...)` RBAC annotations. Must be applied *after*
+ * Enforces `@Roles(...)` RBAC annotations, and for an administrator the
+ * route's `@Area`/`@Decides` (Roller i skolan). Must be applied *after*
  * `JwtAuthGuard` (i.e. registered later in the guards chain) so that
  * `request.user` is already populated.
  *
  * If a route carries no `@Roles()` metadata the guard passes, meaning any
  * *authenticated* user may access it — fine-grained access control then falls
  * back to the PostgreSQL RLS policies.
+ *
+ * The area half answers before anything is written, with a 403 that names
+ * what the profile does not change. The database refuses the same write on
+ * its own (app.current_user_may in every administrator's write arm), so a
+ * route whose annotation is wrong fails there instead of passing.
  */
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -46,6 +67,40 @@ export class RolesGuard implements CanActivate {
       );
     }
 
+    if (user.role === Role.SCHOOL_ADMIN && !READS.has((request.method ?? '').toUpperCase())) {
+      const requirement = this.reflector.getAllAndOverride<AreaRequirement | undefined>(AREA_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (requirement) {
+        assertAdministratorMay(user, requirement);
+      }
+    }
+
     return true;
+  }
+}
+
+/** Throws the 403 for an administrator whose profile does not hold the requirement. */
+export function assertAdministratorMay(user: AuthenticatedUser, requirement: AreaRequirement): void {
+  if (requirement.kind === 'any') return;
+  const profile = user.adminProfile;
+  const named = profile ? PROFILE_LABELS[profile] : 'Din roll';
+  if (requirement.kind === 'decides') {
+    if (!profileDecides(profile)) {
+      throw new ForbiddenException({
+        message: `${named} fattar inte det här beslutet. Det gör rektor eller en fullständig administratör.`,
+        code: DECISION_NOT_YOURS,
+      });
+    }
+    return;
+  }
+  const missing = requirement.areas.find((area) => !profileWrites(profile, area));
+  if (missing) {
+    throw new ForbiddenException({
+      message: `${named} ändrar inte ${AREA_LABELS[missing].toLowerCase()}. Be rektor eller en administratör som har det området.`,
+      code: AREA_NOT_YOURS,
+      area: missing,
+    });
   }
 }

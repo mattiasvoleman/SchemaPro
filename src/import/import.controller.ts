@@ -1,6 +1,7 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -34,26 +35,31 @@ export class ImportController {
   constructor(private readonly imports: ImportService) {}
 
   @Post('teachers')
+  @Area('PERSONAL')
   importTeachers(@Body() dto: ImportTeachersDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importTeachers(dto, user);
   }
 
   @Post('students')
+  @Area('PERSONAL')
   importStudents(@Body() dto: ImportStudentsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importStudents(dto, user);
   }
 
   @Post('groups')
+  @Area('PLANERING')
   importGroups(@Body() dto: ImportGroupsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importGroups(dto, user);
   }
 
   @Post('subjects')
+  @Area('PLANERING')
   importSubjects(@Body() dto: ImportSubjectsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importSubjects(dto, user);
   }
 
   @Post('room-types')
+  @Area('PLANERING')
   importRoomTypes(
     @Body() dto: ImportRoomTypesDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -62,6 +68,7 @@ export class ImportController {
   }
 
   @Post('group-members')
+  @Area('PLANERING')
   importMemberships(
     @Body() dto: ImportMembershipsDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -75,6 +82,7 @@ export class ImportController {
    * a school keeps editing, not a set of things that exist or do not.
    */
   @Post('teacher-qualifications')
+  @Area('PLANERING')
   importTeacherQualifications(
     @Body() dto: ImportTeacherQualificationsDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -87,6 +95,7 @@ export class ImportController {
    * behörigheter; never a blocked time — see the service.
    */
   @Post('teacher-duties')
+  @Area('PLANERING')
   importTeacherDuties(
     @Body() dto: ImportTeacherDutiesDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -99,12 +108,14 @@ export class ImportController {
    * requirements import. 409 for a decided plan — see the service.
    */
   @Post('timplan')
+  @Area('PLANERING')
   importTimplan(@Body() dto: ImportTimplanDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importTimplan(dto, user);
   }
 
   /** The timplan also updates existing rows — see the service. */
   @Post('requirements')
+  @Area('PLANERING')
   importRequirements(
     @Body() dto: ImportRequirementsDto,
     @CurrentUser() user: AuthenticatedUser,

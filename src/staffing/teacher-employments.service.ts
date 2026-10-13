@@ -22,6 +22,7 @@ import type {
 } from './dto/teacher-employment.dto';
 import { diffLogEntry, type LogChange } from './employment-log-diff';
 import { postStretches } from './employment-periods';
+import { hideHr, hideHrChanges, readsHr } from './hr-visibility';
 
 /** One version of a tjänst, as the Historik card and a protokoll cite it. */
 export interface TeacherHistoryEntry {
@@ -187,7 +188,11 @@ export class TeacherEmploymentsService {
       if (found.length > 0) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
       return found;
     });
-    const entries = rows.slice(0, HISTORY_LIMIT).map((row) => ({
+    // A period's versions are left out for a reader without HR-läs, as the
+    // periods are from the post (hr-visibility.ts): when and how a post
+    // changes is HR data like the percentages.
+    const shown = readsHr(user) ? rows : rows.filter((row) => row.entity !== 'PERIOD');
+    const entries = shown.slice(0, HISTORY_LIMIT).map((row) => ({
       id: row.id,
       version: row.version,
       entity: row.entity,
@@ -195,7 +200,9 @@ export class TeacherEmploymentsService {
       action: row.action,
       actorId: row.actorId,
       createdAt: row.createdAt,
-      changes: diffLogEntry(row.entity, row.before, row.after),
+      changes: readsHr(user)
+        ? diffLogEntry(row.entity, row.before, row.after)
+        : hideHrChanges(diffLogEntry(row.entity, row.before, row.after)),
       ...(row.entity === 'PERIOD' ? { periodFrom: periodFromOf(row.action, row.before, row.after) } : {}),
     }));
     this.logger.log(`History read [user=${userId}, year=${academicYearId}, entries=${entries.length}]`);
@@ -227,7 +234,9 @@ export class TeacherEmploymentsService {
       await recordRead(tx, 'EMPLOYMENT', found.map((row) => row.userId), user.channel);
       return found;
     });
-    return rows.map(toEmploymentResponse);
+    // Tjänst % and nedsättning for rektor, full and HR-läs only (hr-visibility.ts).
+    const posts = rows.map(toEmploymentResponse);
+    return readsHr(user) ? posts : (posts.map(hideHr) as unknown as TeacherEmploymentResponse[]);
   }
 
   /**

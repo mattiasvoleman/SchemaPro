@@ -8,9 +8,11 @@ import {
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Prisma, type User, type UserRole } from '@prisma/client';
+import { Prisma, type AdminProfile, type User, type UserRole } from '@prisma/client';
+import { profileDecides } from '../auth/admin-areas';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
+import { assertAdministratorMay } from '../auth/roles.guard';
 import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -26,6 +28,47 @@ import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
 export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
+/** A change that would leave the school with nobody who decides (Roller i skolan). */
+export const LAST_DECIDER = 'LAST_DECIDER';
+
+/** The profiles HR-läs is given to: rektor and a full administrator read tjänst % anyway. */
+const HR_READ_PROFILES: readonly AdminProfile[] = ['SCHEMALAGGARE', 'EXPEDITION'];
+
+/** What only rektor or a full administrator does (app.current_user_decides). */
+const decides = (user: AuthenticatedUser): void => assertAdministratorMay(user, { kind: 'decides' });
+
+/**
+ * The profile and HR-läs a row with `role` is written with: the request's,
+ * else what the row had, else FULL for an administrator, as every
+ * administrator was before profiles. Nobody else has either. Refuses, as a
+ * 400 in Swedish, a profile on somebody who is not an administrator and
+ * HR-läs on a profile it means nothing to; the database's trigger would only
+ * have dropped them silently.
+ */
+function profileOf(
+  role: UserRole,
+  requested: { adminProfile?: AdminProfile; hrRead?: boolean },
+  current?: { adminProfile: AdminProfile | null; hrRead: boolean },
+): { adminProfile: AdminProfile | null; hrRead: boolean } {
+  if (role !== 'SCHOOL_ADMIN') {
+    if (requested.adminProfile !== undefined) {
+      throw new BadRequestException('Bara en administratör har en administratörsprofil.');
+    }
+    if (requested.hrRead === true) {
+      throw new BadRequestException('HR-läs ges en administratör som är schemaläggare eller expedition.');
+    }
+    return { adminProfile: null, hrRead: false };
+  }
+  const adminProfile = requested.adminProfile ?? current?.adminProfile ?? 'FULL';
+  const narrow = HR_READ_PROFILES.includes(adminProfile);
+  if (requested.hrRead === true && !narrow) {
+    throw new BadRequestException(
+      'HR-läs ges en schemaläggare eller en expedition. Rektor och en fullständig administratör läser tjänst % ändå.',
+    );
+  }
+  const hrRead = narrow ? (requested.hrRead ?? (current?.adminProfile === adminProfile ? current.hrRead : false)) : false;
+  return { adminProfile, hrRead };
+}
 
 /**
  * Whose post or behörighet may exist: the same two roles staff-lock.ts admits,
@@ -86,6 +129,27 @@ export interface InvitationResult {
    * address no longer signs in, and the admin is the one to say so.
    */
   loginMoved: boolean;
+}
+
+/** An administrator's profile and HR-läs, as the role chooser reads them. */
+export interface AdministratorView {
+  id: string;
+  adminProfile: AdminProfile;
+  hrRead: boolean;
+}
+
+/** One change of a person's role, profile or HR-läs, as /admin/people shows it. */
+export interface RoleChangeView {
+  id: string;
+  fromRole: UserRole | null;
+  toRole: UserRole;
+  fromProfile: AdminProfile | null;
+  toProfile: AdminProfile | null;
+  fromHrRead: boolean | null;
+  toHrRead: boolean;
+  /** Who made it; null for a migration, the seed, or a writer since removed. */
+  actorName: string | null;
+  createdAt: string;
 }
 
 /** Outcome of a bulk invitation run. */
@@ -177,6 +241,12 @@ export class UsersService {
     if (dto.studentGroupId && dto.role !== 'STUDENT') {
       throw new BadRequestException('Only students can be assigned to a student group.');
     }
+    // Making somebody an administrator is a decision (Roller i skolan); the
+    // database's Users_administrators_are_decided says the same.
+    const profile = profileOf(dto.role, dto);
+    if (dto.role === 'SCHOOL_ADMIN') {
+      decides(user);
+    }
     // Checked before anything is written: a deployment that cannot send mail
     // must not answer "created and invited" having done only the first half.
     if (dto.sendInvitation && !this.supabaseAdmin.isConfigured) {
@@ -205,6 +275,8 @@ export class UsersService {
             authId: randomUUID(),
             invitedAt: null,
             role: dto.role,
+            adminProfile: profile.adminProfile,
+            hrRead: profile.hrRead,
             firstName: dto.firstName,
             lastName: dto.lastName,
             email: dto.email,
@@ -288,11 +360,16 @@ export class UsersService {
     const target = await this.prisma.withRls(user, (tx) =>
       tx.user.findUnique({
         where: { id },
-        select: { id: true, email: true, isActive: true, authId: true, invitedAt: true },
+        select: { id: true, email: true, isActive: true, authId: true, invitedAt: true, role: true },
       }),
     );
     if (!target) {
       throw new NotFoundException('The requested record does not exist.');
+    }
+    // An administrator's login is a decider's to hand out: the invitation
+    // can move it to the address the row has now.
+    if (target.role === 'SCHOOL_ADMIN') {
+      decides(user);
     }
     if (!target.isActive) {
       throw new BadRequestException(
@@ -413,8 +490,10 @@ export class UsersService {
         // app.current_user_group_id() reads studentGroupId without looking at
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
-        const [current] = await tx.$queryRaw<Pick<User, 'role' | 'studentGroupId' | 'isActive' | 'pseudonymisedAt'>[]>`
-          SELECT "role", "studentGroupId", "isActive", "pseudonymisedAt"
+        const [current] = await tx.$queryRaw<
+          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'isActive' | 'schoolId'>[]
+        >`
+          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "isActive", "schoolId"
           FROM "Users"
           WHERE "id" = ${id}::uuid
           FOR NO KEY UPDATE
@@ -434,6 +513,23 @@ export class UsersService {
           });
         }
         const role = dto.role ?? current.role;
+        // Roller i skolan: an administrator's row, and anybody's role,
+        // profile or HR-läs, are rektor's or a full administrator's to
+        // change, as Users_administrators_are_decided holds in the database.
+        const profile = profileOf(role, dto, current);
+        if (
+          current.role === 'SCHOOL_ADMIN' ||
+          role !== current.role ||
+          profile.adminProfile !== current.adminProfile ||
+          profile.hrRead !== current.hrRead
+        ) {
+          decides(user);
+        }
+        const stillDecides =
+          role === 'SCHOOL_ADMIN' && profileDecides(profile.adminProfile) && (dto.isActive ?? current.isActive);
+        if (current.role === 'SCHOOL_ADMIN' && profileDecides(current.adminProfile) && current.isActive && !stillDecides) {
+          await keepADecider(tx, current.schoolId, id);
+        }
         const studentGroupId =
           dto.studentGroupId !== undefined ? dto.studentGroupId : current.studentGroupId;
         if (studentGroupId && role !== 'STUDENT') {
@@ -459,6 +555,8 @@ export class UsersService {
           where: { id },
           data: {
             ...(dto.role !== undefined ? { role: dto.role } : {}),
+            ...(profile.adminProfile !== current.adminProfile ? { adminProfile: profile.adminProfile } : {}),
+            ...(profile.hrRead !== current.hrRead ? { hrRead: profile.hrRead } : {}),
             ...(dto.firstName !== undefined ? { firstName: dto.firstName } : {}),
             ...(dto.lastName !== undefined ? { lastName: dto.lastName } : {}),
             ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
@@ -495,16 +593,74 @@ export class UsersService {
     }
   }
 
+  /**
+   * The school's administrators with their profile and HR-läs, for the role
+   * chooser on /admin/people. Every administrator reads it.
+   */
+  async administrators(user: AuthenticatedUser): Promise<AdministratorView[]> {
+    requireSchoolId(user);
+    const rows = await this.prisma.withRls(user, (tx) =>
+      tx.user.findMany({
+        where: { role: 'SCHOOL_ADMIN' },
+        select: { id: true, adminProfile: true, hrRead: true },
+        orderBy: { id: 'asc' },
+      }),
+    );
+    return rows.map((row) => ({ id: row.id, adminProfile: row.adminProfile ?? 'FULL', hrRead: row.hrRead }));
+  }
+
+  /**
+   * A person's changes of role, administrator profile and HR-läs, newest
+   * first, with the name of whoever made each one (null for a migration or
+   * a writer since removed). Every administrator reads it; the table is
+   * written by a trigger alone (UserRoleChanges, 20261110090000).
+   */
+  async roleChanges(id: string, user: AuthenticatedUser): Promise<RoleChangeView[]> {
+    return this.prisma.withRls(user, async (tx) => {
+      const changes = await tx.userRoleChange.findMany({
+        where: { userId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+      const actorIds = [...new Set(changes.map((c) => c.actorId).filter((a): a is string => a !== null))];
+      const actors = actorIds.length
+        ? await tx.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, firstName: true, lastName: true } })
+        : [];
+      const names = new Map(actors.map((a) => [a.id, `${a.firstName} ${a.lastName}`]));
+      // The person's roles and profiles, and who changed them by name: a read
+      // of other people's data like the register's (PEOPLE). Nothing to record
+      // for a person without history.
+      if (changes.length > 0) await recordRead(tx, 'PEOPLE', [id, ...actorIds], user.channel);
+      return changes.map((c) => ({
+        id: c.id,
+        fromRole: c.fromRole,
+        toRole: c.toRole,
+        fromProfile: c.fromProfile,
+        toProfile: c.toProfile,
+        fromHrRead: c.fromHrRead,
+        toHrRead: c.toHrRead,
+        actorName: c.actorId ? (names.get(c.actorId) ?? null) : null,
+        createdAt: c.createdAt.toISOString(),
+      }));
+    });
+  }
+
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     let authId: string | null = null;
     try {
       authId = await this.prisma.withRls(user, async (tx) => {
         const target = await tx.user.findUnique({
           where: { id },
-          select: { authId: true, invitedAt: true },
+          select: { authId: true, invitedAt: true, role: true, adminProfile: true, isActive: true, schoolId: true },
         });
         if (!target) {
           throw new NotFoundException('The requested record does not exist.');
+        }
+        if (target.role === 'SCHOOL_ADMIN') {
+          decides(user);
+          if (profileDecides(target.adminProfile) && target.isActive) {
+            await keepADecider(tx, target.schoolId, id);
+          }
         }
         // A decided lokal timplan names who recorded the decision, and the
         // record keeps that name: LocalTimplans_decidedByUserId_schoolId_fkey
@@ -721,4 +877,27 @@ function isDeciderReference(error: unknown): boolean {
     error.code === 'P2003' &&
     JSON.stringify(error.meta ?? {}).includes('LocalTimplans_decidedByUserId_schoolId_fkey')
   );
+}
+
+/**
+ * Refuses a change that would leave the school with no active rektor or full
+ * administrator, who alone can make anybody else one. Every such row is
+ * locked first, so two administrators demoting each other at once cannot
+ * both pass: the second waits, and then counts the first's change.
+ */
+async function keepADecider(tx: Prisma.TransactionClient, schoolId: string, leaving: string): Promise<void> {
+  const deciders = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Users"
+     WHERE "schoolId" = ${schoolId}::uuid AND "role" = 'SCHOOL_ADMIN'
+       AND "adminProfile" IN ('FULL', 'REKTOR') AND "isActive"
+     ORDER BY "id"
+     FOR NO KEY UPDATE
+  `;
+  if (!deciders.some((row) => row.id !== leaving)) {
+    throw new ConflictException({
+      message:
+        'Skolan behöver minst en aktiv rektor eller fullständig administratör. Ge någon annan den rollen först.',
+      code: LAST_DECIDER,
+    });
+  }
 }

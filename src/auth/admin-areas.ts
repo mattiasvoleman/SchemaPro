@@ -43,6 +43,24 @@ export const PROFILE_DECIDES: Readonly<Record<AdminProfile, boolean>> = {
   EXPEDITION: false,
 };
 
+/** The areas' names in Swedish copy, as the menu and the 403s say them. */
+export const AREA_LABELS: Readonly<Record<AdminArea, string>> = {
+  PLANERING: 'Planering',
+  SCHEMALAGGNING: 'Schemaläggning',
+  PUBLICERING: 'Publicering',
+  DRIFT: 'Drift',
+  PERSONAL: 'Personal',
+  INTEGRATIONER: 'Integrationer',
+};
+
+/** The profiles' names in Swedish copy. */
+export const PROFILE_LABELS: Readonly<Record<AdminProfile, string>> = {
+  FULL: 'Fullständig administratör',
+  REKTOR: 'Rektor',
+  SCHEMALAGGARE: 'Schemaläggare',
+  EXPEDITION: 'Expedition',
+};
+
 export function profileWrites(profile: AdminProfile | null | undefined, area: AdminArea): boolean {
   return profile != null && PROFILE_WRITES[profile].includes(area);
 }

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma, type UserRole } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
+import { assertAdministratorMay } from '../auth/roles.guard';
 import { zonedTimeToUtc } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
 import { recordRead, type AccessKind } from './access-log';
@@ -72,6 +73,10 @@ export class AccessLogService {
 
   async forPerson(query: AccessLogQueryDto, user: AuthenticatedUser): Promise<AccessLogAnswer> {
     const schoolId = requireSchoolId(user);
+    // Roller i skolan: the läslogg is dataskydd's, read by rektor and a full
+    // administrator. Row security answers anybody else an empty log; this
+    // says why instead (20261110100000).
+    assertAdministratorMay(user, { kind: 'decides' });
     if (query.from && query.to && query.from > query.to) {
       throw new BadRequestException({ message: 'Perioden börjar efter att den slutar.', code: ACCESS_LOG_RANGE_INVALID });
     }

@@ -90,6 +90,15 @@ describe('AccessLogService', () => {
     expect(recordedReads(tx)).toEqual([]);
   });
 
+  it('leaves the läslogg to those who decide: a planner or the expedition is refused before anything is read', async () => {
+    for (const adminProfile of ['SCHEMALAGGARE', 'EXPEDITION'] as const) {
+      await expect(
+        service.forPerson({ personId: PUPIL }, testUser({ adminProfile, hrRead: true })),
+      ).rejects.toMatchObject({ status: 403, response: { code: 'DECISION_NOT_YOURS' } });
+    }
+    expect(prisma.withRls).not.toHaveBeenCalled();
+  });
+
   it('refuses a period that ends before it begins, before reading anything', async () => {
     await expect(service.forPerson({ personId: PUPIL, from: '2026-10-13', to: '2026-10-01' }, testUser())).rejects.toThrow(
       BadRequestException,

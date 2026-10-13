@@ -49,6 +49,7 @@ import { PublicationModule } from '../../src/publication/publication.module';
 import { CoverModule } from '../../src/cover/cover.module';
 import { SignInModule } from '../../src/sign-in/sign-in.module';
 import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
+import { GallringModule } from '../../src/gallring/gallring.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -157,6 +158,9 @@ const FEATURE_MODULES = [
   PublicationModule,
   CoverModule,
   SchoolUnitsModule,
+  // Without JobsModule: GallringJob takes the runner as @Optional and
+  // registers nothing, so the controller is routed and no timer starts.
+  GallringModule,
   SignInModule,
 ];
 
@@ -250,11 +254,15 @@ export interface TestAppOptions {
 }
 
 export function asUser(user: Partial<AuthenticatedUser>): string {
+  // An administrator is a full one unless the spec says otherwise, as every
+  // administrator became on the day profiles arrived (20261110090000).
+  const administrator = (user.role ?? 'SCHOOL_ADMIN') === 'SCHOOL_ADMIN';
   return JSON.stringify({
     authId: '11111111-1111-4111-8111-111111111111',
     role: 'SCHOOL_ADMIN',
     userId: '22222222-2222-4222-8222-222222222222',
     schoolId: '33333333-3333-4333-8333-333333333333',
+    ...(administrator ? { adminProfile: 'FULL', hrRead: false } : {}),
     ...user,
   });
 }

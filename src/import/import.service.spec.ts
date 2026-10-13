@@ -3428,3 +3428,29 @@ describe('ImportService', () => {
     });
   });
 });
+
+/**
+ * Roller i skolan: a teacher file that states a post writes tjänst %, which
+ * is rektor's or a full administrator's. The expedition, who writes the
+ * roster, imports the people alone, and a file with posts is refused whole.
+ */
+describe('ImportService, teachers with posts', () => {
+  const withRls = jest.fn();
+  const users = { create: jest.fn() };
+  const service = new ImportService(
+    { withRls } as unknown as PrismaService,
+    users as unknown as UsersService,
+  );
+  const expedition = testUser({ adminProfile: 'EXPEDITION' });
+
+  it('refuses the file before anybody is added', async () => {
+    await expect(
+      service.importTeachers(
+        { rows: [{ firstName: 'A', lastName: 'B', email: 'a@b.se', employmentPercent: 80 }] } as never,
+        expedition,
+      ),
+    ).rejects.toMatchObject({ status: 403, response: { code: 'DECISION_NOT_YOURS' } });
+    expect(users.create).not.toHaveBeenCalled();
+    expect(withRls).not.toHaveBeenCalled();
+  });
+});

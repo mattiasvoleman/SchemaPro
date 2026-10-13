@@ -838,6 +838,19 @@ function weightedByWeeks(
 }
 
 /**
+ * A post's target for the year as the report states it (buildTeacherLoadReport):
+ * a post that changes during the year has its stretches' targets weighted by
+ * their teaching weeks, one that does not has its own. For a reader who may
+ * not see when a post changes (Roller i skolan), in place of a stretch's.
+ */
+export function yearTargetMinutesPerWeek(input: StretchInput, employment: LoadEmployment): number | null {
+  const base = targetMinutesPerWeek(employment, input.policy ?? DEFAULT_LOAD_POLICY);
+  if (!changesDuringYear(employment, input.year)) return base;
+  const year = weightedByWeeks(stretchLoads(input, employment), (stretch) => stretch.target, base);
+  return year === null ? null : Math.round(year);
+}
+
+/**
  * The worst status among the stretches that hold teaching weeks — OVER, then
  * UNDER, OK and NO_TARGET, as the matrix sorts — or null when none holds any.
  */

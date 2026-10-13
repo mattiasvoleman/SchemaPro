@@ -17,6 +17,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { Ss12000SecretKind } from '@prisma/client';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { Area } from '../../auth/decorators/area.decorator';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { Role } from '../../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
@@ -45,6 +46,7 @@ const HOUR_MS = 60 * 60 * 1000;
 @Controller('api/v1/ss12000-source')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('INTEGRATIONER')
 export class Ss12000SourceController {
   constructor(private readonly sources: Ss12000SourceService) {}
 
@@ -92,6 +94,7 @@ export class Ss12000SourceController {
 @Controller('api/v1/ss12000-sync')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('INTEGRATIONER')
 export class Ss12000SyncController {
   constructor(private readonly sync: Ss12000SyncService) {}
 
@@ -124,6 +127,7 @@ export class Ss12000SyncController {
 
   @Post('runs/:id/apply')
   @HttpCode(HttpStatus.OK)
+  @Area('INTEGRATIONER', 'PERSONAL', 'PLANERING')
   apply(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: ApplyRunDto,

@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { AdminProfile, UserRole } from '@prisma/client';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -39,6 +39,21 @@ export class CreateUserDto {
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
+
+  /**
+   * An administrator's profile (Roller i skolan). Only with role
+   * SCHOOL_ADMIN; FULL when left out, which is what an administrator was
+   * before profiles. Creating an administrator is rektor's or a full
+   * administrator's decision.
+   */
+  @IsOptional()
+  @IsEnum(AdminProfile)
+  adminProfile?: AdminProfile;
+
+  /** HR-läs for a SCHEMALAGGARE or an EXPEDITION: tjänst % and nedsättning. */
+  @IsOptional()
+  @IsBoolean()
+  hrRead?: boolean;
 
   /**
    * Send the invitation email as part of creating this person.
@@ -89,4 +104,14 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** See CreateUserDto.adminProfile. A change is a decision. */
+  @IsOptional()
+  @IsEnum(AdminProfile)
+  adminProfile?: AdminProfile;
+
+  /** See CreateUserDto.hrRead. A change is a decision. */
+  @IsOptional()
+  @IsBoolean()
+  hrRead?: boolean;
 }

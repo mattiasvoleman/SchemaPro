@@ -261,6 +261,25 @@ describe('JwtStrategy', () => {
       });
     });
 
+    it("carries an administrator's profile and HR-läs from the database, and nobody else's", async () => {
+      tx.user.findUnique.mockResolvedValue(
+        activeProfile({ role: 'SCHOOL_ADMIN', adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+      );
+      await expect(strategy.validate(payload())).resolves.toEqual({
+        authId: AUTH_ID,
+        role: 'SCHOOL_ADMIN',
+        userId: USER_ID,
+        schoolId: SCHOOL_ID,
+        adminProfile: 'SCHEMALAGGARE',
+        hrRead: true,
+      });
+
+      tx.user.findUnique.mockResolvedValue(activeProfile({ adminProfile: null, hrRead: false }));
+      const teacher = await strategy.validate(payload());
+      expect(teacher).not.toHaveProperty('adminProfile');
+      expect(teacher).not.toHaveProperty('hrRead');
+    });
+
     it('names the school account a school-account session signed in with, and nothing for a password', async () => {
       tx.user.findUnique.mockResolvedValue(activeProfile({ role: 'SCHOOL_ADMIN' }));
       const tenant = '2f6a1c3e-8b4d-4f5a-9c7e-1d2b3a4c5e6f';
@@ -303,7 +322,7 @@ describe('JwtStrategy', () => {
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
       expect(tx.user.findUnique).toHaveBeenCalledWith({
         where: { authId: AUTH_ID },
-        select: { id: true, schoolId: true, role: true, isActive: true },
+        select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
       });
     });
 

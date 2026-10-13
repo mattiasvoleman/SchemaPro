@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -72,6 +73,7 @@ function isoDate(value: string): string {
 @Controller('api/v1/teacher-absences')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('DRIFT')
 export class TeacherAbsencesController {
   constructor(private readonly absences: TeacherAbsencesService) {}
 
@@ -124,6 +126,7 @@ export class TeacherAbsencesController {
 @Controller('api/v1/teacher-absence-reasons')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('DRIFT')
 export class TeacherAbsenceReasonsController {
   constructor(private readonly settings: CoverSettingsService) {}
 
@@ -156,6 +159,7 @@ export class TeacherAbsenceReasonsController {
 @Controller('api/v1/cover')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('DRIFT')
 export class CoverController {
   constructor(
     private readonly cover: CoverService,

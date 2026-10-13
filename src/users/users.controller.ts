@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -24,6 +25,7 @@ import { CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 @Controller('api/v1/users')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('PERSONAL')
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
@@ -64,6 +66,21 @@ export class UsersController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   inviteMany(@Body() dto: InviteUsersDto, @CurrentUser() user: AuthenticatedUser) {
     return this.users.inviteMany(dto.userIds, user);
+  }
+
+  /** The school's administrators with their profile and HR-läs. */
+  @Get('administrators')
+  administrators(@CurrentUser() user: AuthenticatedUser) {
+    return this.users.administrators(user);
+  }
+
+  /** The person's role history, for every administrator to read. */
+  @Get(':id/role-changes')
+  roleChanges(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.users.roleChanges(id, user);
   }
 
   @Patch(':id')

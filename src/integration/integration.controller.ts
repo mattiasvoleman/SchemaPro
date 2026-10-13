@@ -21,6 +21,7 @@ import { Prisma } from '@prisma/client';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { RolesGuard } from '../auth/roles.guard';
@@ -43,6 +44,7 @@ import { sqlStateOf } from './ss12000-sync/errors';
 @Controller('api/v1/integration-keys')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('INTEGRATIONER')
 export class IntegrationKeysController {
   constructor(
     private readonly prisma: PrismaService,

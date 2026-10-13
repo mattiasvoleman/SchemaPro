@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area, Decides } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -45,6 +46,7 @@ import { YearRolloverService } from './year-rollover.service';
 @Controller('api/v1/academic-years')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('PLANERING')
 export class YearRolloverController {
   constructor(
     private readonly rollover: YearRolloverService,
@@ -80,6 +82,7 @@ export class YearRolloverController {
 
   @Post(':id/staffing-rollover/preview')
   @HttpCode(HttpStatus.OK)
+  @Decides()
   previewStaffingRollover(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
@@ -88,6 +91,7 @@ export class YearRolloverController {
   }
 
   @Post(':id/staffing-rollover')
+  @Decides()
   executeStaffingRollover(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: ExecuteStaffingRolloverDto,

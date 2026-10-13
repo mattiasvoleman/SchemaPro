@@ -17,6 +17,7 @@ import {
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { RequirementImportChecks } from '../staffing/staffing-enforcement';
 import { staffingSentence, type StaffingWarning } from '../staffing/staffing-checks';
+import { readsHr } from '../staffing/hr-visibility';
 import {
   assertLessonLengthFitsTheGrid,
   mergeLessonShape,
@@ -320,6 +321,7 @@ async function judgeMembers(
   ].filter((id): id is string => id !== null);
   const checks = await RequirementImportChecks.open(tx, {
     viewer: user,
+    showsPeriods: readsHr(user),
     schoolId: requireSchoolId(user),
     academicYearId: members[0]!.academicYearId,
     teacherIds,

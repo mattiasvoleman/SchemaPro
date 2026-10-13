@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Area } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -52,6 +53,7 @@ import type { AiEngineScheduleResponse } from './interfaces/ai-engine-payload.in
 @Controller('api/v1/optimization')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
+@Area('SCHEMALAGGNING', 'DRIFT')
 export class OptimizationController {
   constructor(
     private readonly proxy: OptimizationProxyService,
@@ -175,6 +177,7 @@ export class OptimizationController {
   @Post('staffing/apply')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Area('SCHEMALAGGNING', 'PLANERING')
   applyStaffing(
     @Body() dto: ApplyStaffingDto,
     @CurrentUser() user: AuthenticatedUser,

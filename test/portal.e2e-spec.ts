@@ -457,13 +457,13 @@ describe('Portal and platform surfaces (e2e)', () => {
       // counts that answer whether the role may leave staff at all.
       const USERS: LockedTable = {
         name: 'Users',
-        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId', 'deactivatedAt', 'pseudonymisedAt'],
+        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId', 'deactivatedAt', 'pseudonymisedAt', 'adminProfile', 'hrRead'],
         lock: 'FOR NO KEY UPDATE',
       };
       Object.assign(harness.tx, {
         $queryRaw: jest.fn((...call: unknown[]) =>
           Promise.resolve(
-            lockingRead(USERS, [{ id: GUARDIAN_ID, role: 'TEACHER', studentGroupId: null }], call),
+            lockingRead(USERS, [{ id: GUARDIAN_ID, role: 'TEACHER', studentGroupId: null, adminProfile: null, hrRead: false }], call),
           ),
         ),
       });

@@ -1,6 +1,8 @@
 import { subjectFamiliarTeachers, suggestTeachers } from './suggest-teachers';
 import {
   DEFAULT_LOAD_POLICY,
+  loadStatus,
+  yearTargetMinutesPerWeek,
   type LoadEmployment,
   type LoadInput,
   type LoadQualification,
@@ -208,6 +210,29 @@ describe('suggestTeachers', () => {
       wouldExceed: false,
       status: 'UNDER',
     });
+  });
+
+  it("states a changing post's room and status as the year's to a reader who may not see how it changes (Roller i skolan)", () => {
+    const spring = { validFrom: '2026-11-01', validTo: null, employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: null };
+    const year = input({
+      employments: [post(ANNA, { periods: [spring] }), post(BO)],
+      requirements: [row('target'), row('held', { teacherId: ANNA, lessonsPerWeek: 8, minutesPerLesson: 50 })],
+    });
+    const shown = suggestTeachers(year, 'target', [ANNA, BO], null, false);
+    const anna = shown.candidates.find((c) => c.userId === ANNA)!;
+    const target = yearTargetMinutesPerWeek(year, year.employments[0]!)!;
+    // The year's target lies between the stretches' 1080 and 540, and the
+    // room is that target less the year's 640, not the spring's −100.
+    expect(target).toBeGreaterThan(540);
+    expect(target).toBeLessThan(1080);
+    expect(anna.remainingMinutesPerWeek).toBe(target - 640);
+    expect(anna.status).toBe(loadStatus(640, target, 10));
+    // The write still judges the spring, and so does wouldExceed.
+    expect(anna.wouldExceed).toBe(true);
+    // A post that does not change is stated alike for every reader.
+    const bo = (showsPeriods: boolean) =>
+      suggestTeachers(year, 'target', [ANNA, BO], null, showsPeriods).candidates.find((c) => c.userId === BO);
+    expect(bo(false)).toEqual(bo(true));
   });
 
   it('never says wouldExceed for a row that charges nothing, which the write lets through', () => {

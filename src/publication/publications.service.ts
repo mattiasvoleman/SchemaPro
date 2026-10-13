@@ -18,6 +18,7 @@ import { scopeOf } from '../calendar/lesson-roster';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
 import { readCheckPolicy } from '../staffing/staffing-enforcement';
 import type { PeriodLoad } from '../staffing/teacher-load';
+import { readsHr } from '../staffing/hr-visibility';
 import { TimplanCoverageService } from '../timplan/timplan-coverage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -914,7 +915,7 @@ export class PublicationsService {
       entries: warnings.map((verdict) => ({ label: verdict.message })),
     });
 
-    const policy = await this.prisma.withRls(user, (tx) => readCheckPolicy(tx as PrismaClient, schoolId));
+    const policy = await this.prisma.withRls(user, (tx) => readCheckPolicy(tx as PrismaClient, schoolId, readsHr(user)));
     if (policy.qualificationMode === 'REFUSE' || policy.overAllocationMode === 'REFUSE') {
       // The whole load report is read to judge, and not recorded as such:
       // the check hands out only the teachers it stops on, and records those
