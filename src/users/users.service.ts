@@ -12,7 +12,11 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
-import { SupabaseAdminService, type EmailChange } from './supabase-admin.service';
+import {
+  SupabaseAdminService,
+  type EmailChange,
+  type LoginOwner,
+} from './supabase-admin.service';
 import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
@@ -148,7 +152,7 @@ export class UsersService {
 
     let invite: { authId: string; emailSent: boolean };
     try {
-      invite = await this.mintIdentity(dto.email);
+      invite = await this.mintIdentity(dto.email, created.id);
     } catch (error) {
       // The provider refused, so take the row back: "create and invite" keeps
       // its both-or-neither promise, and the admin's retry is then just
@@ -184,6 +188,15 @@ export class UsersService {
    * the same (another login already had the address), the one it left is
    * deleted.
    *
+   * Both only for a login that is the row's own: one this row's invitation
+   * created, or, created before invitations recorded that, one somebody has
+   * signed in with since the row took it (SupabaseAdminService, belongsTo).
+   * A row can also hold a login it was given by address, which can be
+   * anybody's, and the row's address is the school's to set, through SS12000
+   * too. Such a login is neither moved nor deleted: the invitation goes to
+   * the new address as it did before logins moved, and the login the row
+   * leaves is logged with the row for an operator.
+   *
    * Once the login has the row's address, moved or already there, the
    * invitation is for that login and is not resolved by address again:
    * inviteUser() reads any refusal as "already registered" and would find
@@ -215,9 +228,11 @@ export class UsersService {
     }
 
     // Somebody never invited holds a placeholder that is nobody's login.
-    const login = target.invitedAt === null ? null : target.authId;
-    if (login) {
-      const change = await this.moveLogin(login, target.email);
+    const owner: LoginOwner | null =
+      target.invitedAt === null ? null : { userId: id, since: target.invitedAt };
+    const login = owner ? target.authId : null;
+    if (login && owner) {
+      const change = await this.moveLogin(login, target.email, owner);
       if (change.outcome === 'unchanged' || change.outcome === 'changed') {
         if (!change.confirmed) {
           await this.resendInvitation(target.email);
@@ -227,11 +242,11 @@ export class UsersService {
       }
     }
 
-    const invite = await this.mintIdentity(target.email);
+    const invite = await this.mintIdentity(target.email, id);
     await this.adoptIdentity(id, invite.authId, user);
 
-    if (login && login !== invite.authId) {
-      await this.deleteLeftLogin(id, login);
+    if (login && owner && login !== invite.authId) {
+      await this.deleteLeftLogin(login, owner);
     }
 
     return { id, emailSent: invite.emailSent, loginMoved: false };
@@ -429,12 +444,16 @@ export class UsersService {
     }
   }
 
-  /** Asks the provider for the identity behind an address, minting one if needed. */
+  /**
+   * Asks the provider for the identity behind an address, minting one for
+   * row `id` if needed.
+   */
   private async mintIdentity(
     email: string,
+    id: string,
   ): Promise<{ authId: string; emailSent: boolean }> {
     try {
-      return await this.supabaseAdmin.inviteUser(email);
+      return await this.supabaseAdmin.inviteUser(email, id);
     } catch {
       this.logger.error('Supabase invite failed.'); // no PII in logs
       throw new ServiceUnavailableException(
@@ -449,11 +468,13 @@ export class UsersService {
    * Another login holding that address (`taken`) is not a failure: the
    * invitation then resolves to that login, as it did before logins moved,
    * and invite() deletes the one the row leaves. A login that is gone
-   * (`missing`) has nothing to move.
+   * (`missing`) has nothing to move, and one that is not the row's own
+   * (`foreign`) is not moved: the invitation then goes to the new address as
+   * it did before.
    */
-  private async moveLogin(authId: string, email: string): Promise<EmailChange> {
+  private async moveLogin(authId: string, email: string, owner: LoginOwner): Promise<EmailChange> {
     try {
-      return await this.supabaseAdmin.changeUserEmail(authId, email);
+      return await this.supabaseAdmin.changeUserEmail(authId, email, owner);
     } catch {
       this.logger.error('Supabase e-mail change failed.'); // no PII in logs
       throw new ServiceUnavailableException(
@@ -483,13 +504,23 @@ export class UsersService {
    * the school through it. What it still keeps is the old address and any
    * password set on it.
    *
+   * Only if it is the row's own, which the provider reads again here: a login
+   * the row was given by address is left where it is, and logged. Whose it
+   * is, is then the operator's to find out.
+   *
    * Best effort, as in remove(): the invitation went out and the row is
    * right. The pair logged on failure is what an operator deletes by hand;
    * both are opaque ids.
    */
-  private async deleteLeftLogin(id: string, authId: string): Promise<void> {
+  private async deleteLeftLogin(authId: string, owner: LoginOwner): Promise<void> {
+    const id = owner.userId;
     try {
-      await this.supabaseAdmin.deleteUser(authId);
+      const deletion = await this.supabaseAdmin.deleteOwnedUser(authId, owner);
+      if (deletion === 'foreign') {
+        this.logger.warn(
+          `The login a re-invited row moved off is not the row's own and was left [user=${id}] [authId=${authId}]`,
+        );
+      }
     } catch {
       this.logger.warn(
         `The login a re-invited row moved off was not deleted [user=${id}] [authId=${authId}]`,

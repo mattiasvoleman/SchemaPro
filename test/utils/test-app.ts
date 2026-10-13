@@ -215,6 +215,7 @@ export interface SupabaseAdminMock {
   resendInvitation: jest.Mock;
   changeUserEmail: jest.Mock;
   deleteUser: jest.Mock;
+  deleteOwnedUser: jest.Mock;
 }
 
 /** Stand-in for the outbound call to the CP-SAT service. */
@@ -279,6 +280,7 @@ export async function createTestApp(
     resendInvitation: jest.fn(async () => undefined),
     changeUserEmail: jest.fn(async () => ({ outcome: 'unchanged', confirmed: true })),
     deleteUser: jest.fn(async () => undefined),
+    deleteOwnedUser: jest.fn(async () => 'deleted'),
   };
 
   const builder: TestingModuleBuilder = Test.createTestingModule({

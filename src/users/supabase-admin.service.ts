@@ -1,12 +1,36 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type User as AuthUser } from '@supabase/supabase-js';
 import type { AppConfig, SupabaseAdminConfig } from '../config/configuration';
+
+/**
+ * The app_metadata key naming the Users row an auth user was created for
+ * (see inviteUser). app_metadata is the service role's to write: a signed-in
+ * person can rewrite their own user_metadata, but not this.
+ */
+export const CREATED_FOR_ROW = 'schemaproUserId';
+
+/** The user_metadata key carrying inviteUser()'s one-off value. */
+const INVITATION_NONCE = 'schemaproInvitation';
+
+/**
+ * The Users row a login must belong to before it is moved or deleted for
+ * that row (see belongsTo).
+ */
+export interface LoginOwner {
+  userId: string;
+  /** When the row took the login: its `invitedAt` before this invitation. */
+  since: Date;
+}
 
 /** What SupabaseAdminService.changeUserEmail did with a login. */
 export type EmailChange =
   | { outcome: 'unchanged' | 'changed'; confirmed: boolean }
-  | { outcome: 'taken' | 'missing' };
+  | { outcome: 'taken' | 'missing' | 'foreign' };
+
+/** What SupabaseAdminService.deleteOwnedUser did with a login. */
+export type OwnedUserDeletion = 'deleted' | 'missing' | 'foreign';
 
 /**
  * Thin wrapper around the Supabase Admin (GoTrue) API.
@@ -61,20 +85,38 @@ export class SupabaseAdminService {
    * failing. Reporting that honestly matters — an admin pressing "send
    * invitation" on someone who already has an account must not be told an
    * email went out when none did.
+   *
+   * A user the invitation creates is tagged with `userId`, the row it was
+   * created for (app_metadata, CREATED_FOR_ROW). A login this call resolves
+   * by address is somebody's already and is left as it is: only the row a
+   * login was made for may later move or delete it (changeUserEmail,
+   * deleteOwnedUser). A 200 does not say which happened, because GoTrue
+   * answers an address whose user has not confirmed it by sending that user
+   * the invitation again and returning it. The invitation's `data` reaches
+   * user_metadata only when GoTrue creates the user, so a one-off value sent
+   * with it and found on the user that comes back is what says this call
+   * made it.
    */
-  async inviteUser(email: string): Promise<{ authId: string; emailSent: boolean }> {
+  async inviteUser(
+    email: string,
+    userId: string,
+  ): Promise<{ authId: string; emailSent: boolean }> {
     if (!this.client) {
       throw new Error('Supabase admin client is not configured.');
     }
-    const { data, error } = await this.client.auth.admin.inviteUserByEmail(
-      email,
-      this.inviteRedirectUrl ? { redirectTo: this.inviteRedirectUrl } : {},
-    );
+    const nonce = randomUUID();
+    const { data, error } = await this.client.auth.admin.inviteUserByEmail(email, {
+      ...(this.inviteRedirectUrl ? { redirectTo: this.inviteRedirectUrl } : {}),
+      data: { [INVITATION_NONCE]: nonce },
+    });
     if (error || !data.user) {
       // 422 "already registered" → look the auth user up instead of failing.
       const existing = await this.findUserIdByEmail(email);
       if (existing) return { authId: existing, emailSent: false };
       throw new Error(`Supabase invite failed: ${error?.message ?? 'unknown error'}`);
+    }
+    if (data.user.user_metadata?.[INVITATION_NONCE] === nonce) {
+      await this.tagCreatedUser(data.user.id, userId);
     }
     return { authId: data.user.id, emailSent: true };
   }
@@ -112,13 +154,22 @@ export class SupabaseAdminService {
    * - `changed`: the user now has the address;
    * - `taken`: another auth user holds the address, and GoTrue refuses
    *   (email_exists);
-   * - `missing`: there is no such user (404).
+   * - `missing`: there is no such user (404);
+   * - `foreign`: the user is not `owner`'s own (see belongsTo), so nothing
+   *   is written. A login resolved by address can be anybody's, and the
+   *   row's address is whatever its school, or the school's SS12000 source,
+   *   says it is.
    *
    * For the first two, `confirmed` says whether the user has confirmed an
    * address (accepted an invitation, or signed in with a linked school
    * account): GoTrue sends such a user no invitation. Anything else throws.
+   *
+   * A login from before the tag that belongs to `owner` is tagged with it
+   * here, in the same write as the address, or alone when the address is
+   * already right, so that the next invitation, which restamps the row's
+   * `invitedAt`, need not find a sign-in again. That tag alone is best effort.
    */
-  async changeUserEmail(authId: string, email: string): Promise<EmailChange> {
+  async changeUserEmail(authId: string, email: string, owner: LoginOwner): Promise<EmailChange> {
     if (!this.client) {
       throw new Error('Supabase admin client is not configured.');
     }
@@ -127,12 +178,21 @@ export class SupabaseAdminService {
       if (found.error.status === 404) return { outcome: 'missing' };
       throw new Error(`Supabase user lookup failed: ${found.error.message}`);
     }
-    const confirmed = Boolean(found.data.user.email_confirmed_at);
-    if (found.data.user.email?.toLowerCase() === email.toLowerCase()) {
+    const login = found.data.user;
+    const confirmed = Boolean(login.email_confirmed_at);
+    const own = belongsTo(login, owner);
+    const tag =
+      own && login.app_metadata?.[CREATED_FOR_ROW] !== owner.userId
+        ? { app_metadata: { [CREATED_FOR_ROW]: owner.userId } }
+        : null;
+
+    if (login.email?.toLowerCase() === email.toLowerCase()) {
+      if (tag) await this.tagLogin(authId, owner.userId, tag);
       return { outcome: 'unchanged', confirmed };
     }
+    if (!own) return { outcome: 'foreign' };
 
-    const { error } = await this.client.auth.admin.updateUserById(authId, { email });
+    const { error } = await this.client.auth.admin.updateUserById(authId, { email, ...tag });
     if (!error) return { outcome: 'changed', confirmed };
     if (error.code === 'email_exists') return { outcome: 'taken' };
     if (error.status === 404) return { outcome: 'missing' };
@@ -146,6 +206,55 @@ export class SupabaseAdminService {
     if (error && error.status !== 404) {
       throw new Error(`Supabase delete failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Deletes an auth user only if it is `owner`'s own (see belongsTo), read
+   * again just before: `foreign` leaves it as it is, `missing` had nothing
+   * to delete. Anything else throws.
+   */
+  async deleteOwnedUser(authId: string, owner: LoginOwner): Promise<OwnedUserDeletion> {
+    if (!this.client) {
+      throw new Error('Supabase admin client is not configured.');
+    }
+    const found = await this.client.auth.admin.getUserById(authId);
+    if (found.error) {
+      if (found.error.status === 404) return 'missing';
+      throw new Error(`Supabase user lookup failed: ${found.error.message}`);
+    }
+    if (!belongsTo(found.data.user, owner)) return 'foreign';
+    await this.deleteUser(authId);
+    return 'deleted';
+  }
+
+  /**
+   * Tags a user this service's invitation just created with its row, and
+   * takes the one-off value off it again.
+   *
+   * Best effort: the invitation has gone out, and the login works without
+   * the tag. Untagged, it counts as the row's only once somebody signs in
+   * with it (belongsTo), and until then a new address for the row gets a
+   * login of its own. The failure is logged with the row and the login.
+   */
+  private async tagCreatedUser(authId: string, userId: string): Promise<void> {
+    await this.tagLogin(authId, userId, {
+      app_metadata: { [CREATED_FOR_ROW]: userId },
+      user_metadata: { [INVITATION_NONCE]: null },
+    });
+  }
+
+  private async tagLogin(
+    authId: string,
+    userId: string,
+    attributes: { app_metadata: object; user_metadata?: object },
+  ): Promise<void> {
+    try {
+      const { error } = await this.client!.auth.admin.updateUserById(authId, attributes);
+      if (!error) return;
+    } catch {
+      // Not tagged all the same, and the login works without it.
+    }
+    this.logger.warn(`A login was not tagged with its row [user=${userId}] [authId=${authId}]`);
   }
 
   private async findUserIdByEmail(email: string): Promise<string | null> {
@@ -166,4 +275,21 @@ export class SupabaseAdminService {
     }
     return null;
   }
+}
+
+/**
+ * Whether a login is `owner`'s own to move or delete: inviteUser() created
+ * it for that row and tagged it so. A tag naming another row means the login
+ * was made for that one.
+ *
+ * A login created before the tag existed carries none. It counts as the
+ * row's once somebody has signed in with it since the row took it: from the
+ * moment the row holds a login, a sign-in with it is a sign-in as that row's
+ * person, so the login is in use as the row's. One resolved by address and
+ * not used since is not the row's.
+ */
+function belongsTo(login: AuthUser, owner: LoginOwner): boolean {
+  const tag: unknown = login.app_metadata?.[CREATED_FOR_ROW];
+  if (tag !== undefined && tag !== null) return tag === owner.userId;
+  return login.last_sign_in_at ? new Date(login.last_sign_in_at) > owner.since : false;
 }

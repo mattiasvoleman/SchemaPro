@@ -62,6 +62,7 @@ describe('UsersService', () => {
     resendInvitation: jest.Mock;
     changeUserEmail: jest.Mock;
     deleteUser: jest.Mock;
+    deleteOwnedUser: jest.Mock;
   };
 
   beforeEach(() => {
@@ -73,6 +74,7 @@ describe('UsersService', () => {
       resendInvitation: jest.fn().mockResolvedValue(undefined),
       changeUserEmail: jest.fn().mockResolvedValue({ outcome: 'unchanged', confirmed: true }),
       deleteUser: jest.fn().mockResolvedValue(undefined),
+      deleteOwnedUser: jest.fn().mockResolvedValue('deleted'),
     };
     service = new UsersService(
       prisma as unknown as PrismaService,
@@ -142,7 +144,7 @@ describe('UsersService', () => {
       expect(tx.user.create.mock.invocationCallOrder[0]).toBeLessThan(
         supabaseAdmin.inviteUser.mock.invocationCallOrder[0],
       );
-      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se', USER_ID);
 
       const { data } = tx.user.create.mock.calls[0][0] as {
         data: { authId: string; invitedAt: Date | null };
@@ -346,7 +348,7 @@ describe('UsersService', () => {
       expect(tx.user.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: USER_ID } }),
       );
-      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se', USER_ID);
       const args = tx.user.update.mock.calls[0][0] as {
         where: { id: string };
         data: { authId: string; invitedAt: Date };
@@ -436,17 +438,21 @@ describe('UsersService', () => {
 
       expect(supabaseAdmin.changeUserEmail).not.toHaveBeenCalled();
       expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
     });
 
     describe('somebody invited before', () => {
       // An SS12000 apply can have rewritten the row's address since
       // (PERSON_EMAIL_CHANGE_INVITED); the login then still has the old one.
       const LOGIN = '44444444-4444-4444-8444-444444444444';
+      const INVITED_AT = new Date('2026-09-01T08:00:00Z');
+      /** The row the login must be the own of, and since when it holds it. */
+      const OWNER = { userId: USER_ID, since: INVITED_AT };
       const invited = () =>
         target({
           email: 'anna.ny@school.se',
           authId: LOGIN,
-          invitedAt: new Date('2026-09-01T08:00:00Z'),
+          invitedAt: INVITED_AT,
         });
       const adoptedAuthId = (): string =>
         (tx.user.update.mock.calls[0][0] as { data: { authId: string } }).data.authId;
@@ -465,13 +471,14 @@ describe('UsersService', () => {
           loginMoved: true,
         });
 
-        expect(supabaseAdmin.changeUserEmail).toHaveBeenCalledWith(LOGIN, 'anna.ny@school.se');
+        expect(supabaseAdmin.changeUserEmail).toHaveBeenCalledWith(LOGIN, 'anna.ny@school.se', OWNER);
         // The address is that login's now: nothing is resolved by address,
         // and GoTrue sends a confirmed login no invitation anyway.
         expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
         expect(supabaseAdmin.resendInvitation).not.toHaveBeenCalled();
         expect(adoptedAuthId()).toBe(LOGIN);
         expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
       });
 
       it('sends a never-accepted invitation again, to the new address', async () => {
@@ -517,7 +524,7 @@ describe('UsersService', () => {
         expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
         expect(supabaseAdmin.resendInvitation).not.toHaveBeenCalled();
         expect(adoptedAuthId()).toBe(LOGIN);
-        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
       });
 
       it('deletes the old login once the row holds the one that already had the new address', async () => {
@@ -530,14 +537,17 @@ describe('UsersService', () => {
           loginMoved: false,
         });
 
-        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se');
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
         expect(adoptedAuthId()).toBe(AUTH_ID);
-        expect(supabaseAdmin.deleteUser).toHaveBeenCalledTimes(1);
-        expect(supabaseAdmin.deleteUser).toHaveBeenCalledWith(LOGIN);
+        // Only as the row's own, which the provider reads again then: the
+        // row's invitedAt before this invitation is when it took the login.
+        expect(supabaseAdmin.deleteOwnedUser).toHaveBeenCalledTimes(1);
+        expect(supabaseAdmin.deleteOwnedUser).toHaveBeenCalledWith(LOGIN, OWNER);
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
         // Never before the row has left it: until then the old login is the
         // one the person signs in with.
         expect(tx.user.update.mock.invocationCallOrder[0]).toBeLessThan(
-          supabaseAdmin.deleteUser.mock.invocationCallOrder[0],
+          supabaseAdmin.deleteOwnedUser.mock.invocationCallOrder[0],
         );
       });
 
@@ -548,20 +558,43 @@ describe('UsersService', () => {
         tx.user.update.mockRejectedValue(knownError('P2002'));
 
         await expect(service.invite(USER_ID, testUser())).rejects.toThrow(ConflictException);
-        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
       });
 
       it('still reports the invitation when the old login cannot be deleted, and logs the pair', async () => {
         const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
         supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'taken' });
         supabaseAdmin.inviteUser.mockResolvedValue({ authId: AUTH_ID, emailSent: true });
-        supabaseAdmin.deleteUser.mockRejectedValue(new Error('gotrue down'));
+        supabaseAdmin.deleteOwnedUser.mockRejectedValue(new Error('gotrue down'));
 
         await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
           id: USER_ID,
           emailSent: true,
           loginMoved: false,
         });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('was not deleted'));
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(`[user=${USER_ID}] [authId=${LOGIN}]`));
+      });
+
+      it('neither moves nor deletes a login that is not the row\'s own, and invites the new address as before', async () => {
+        // A login the row was given by address can be anybody's, and the
+        // row's address is the school's to set, through SS12000 too.
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        supabaseAdmin.changeUserEmail.mockResolvedValue({ outcome: 'foreign' });
+        supabaseAdmin.deleteOwnedUser.mockResolvedValue('foreign');
+
+        await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+          id: USER_ID,
+          emailSent: true,
+          loginMoved: false,
+        });
+
+        expect(supabaseAdmin.resendInvitation).not.toHaveBeenCalled();
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
+        expect(adoptedAuthId()).toBe(AUTH_ID);
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        // The pair is what an operator finds the login it left by.
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('not the row\'s own'));
         expect(warn).toHaveBeenCalledWith(expect.stringContaining(`[user=${USER_ID}] [authId=${LOGIN}]`));
       });
 
@@ -570,7 +603,7 @@ describe('UsersService', () => {
 
         await service.invite(USER_ID, testUser());
 
-        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se');
+        expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna.ny@school.se', USER_ID);
         expect(adoptedAuthId()).toBe(AUTH_ID);
       });
 
@@ -585,6 +618,7 @@ describe('UsersService', () => {
         expect(supabaseAdmin.resendInvitation).not.toHaveBeenCalled();
         expect(tx.user.update).not.toHaveBeenCalled();
         expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteOwnedUser).not.toHaveBeenCalled();
       });
     });
   });
