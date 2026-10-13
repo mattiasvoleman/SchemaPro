@@ -108,6 +108,7 @@ describe('GallringJob', () => {
     const purgeKinds = calls.filter((c) => c.text.includes('app.gallring_purge(')).map((c) => c.values[1]);
     expect(purgeKinds).toEqual([
       'ATTENDANCE', 'ATTENDANCE', 'ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS',
+      'ACCESS_LOG',
     ]);
     // Every purge names the run and the batch size.
     for (const call of calls.filter((c) => c.text.includes('app.gallring_purge('))) {

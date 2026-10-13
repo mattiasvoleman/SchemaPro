@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dayOf } from '../staffing/duty-dates';
@@ -43,6 +44,18 @@ export class Ss12000Service {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * withServicePrincipal as the key that asked, when the guard knows it: the
+   * läslogg names the key of an integration's read (app.personal_data_read
+   * takes it from app.service_key_id). Without one the statement is the one
+   * it always was.
+   */
+  private asKey<T>(schoolId: string, keyId: string | undefined, fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    return keyId === undefined
+      ? this.prisma.withServicePrincipal(schoolId, fn)
+      : this.prisma.withServicePrincipal(schoolId, fn, { keyId });
+  }
+
   private page(limit?: string, offset?: string): { take: number; skip: number } {
     const take = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const skip = Math.max(Number(offset) || 0, 0);
@@ -64,9 +77,9 @@ export class Ss12000Service {
     });
   }
 
-  async persons(schoolId: string, limit?: string, offset?: string, role?: string) {
+  async persons(schoolId: string, limit?: string, offset?: string, role?: string, keyId?: string) {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+    return this.asKey(schoolId, keyId, async (tx) => {
       const where = {
         schoolId,
         ...(role ? { role: role as never } : {}),
@@ -91,6 +104,20 @@ export class Ss12000Service {
           },
         }),
       ]);
+      // The läslogg: everyone on the page (names, e-mail), and who is whose
+      // guardian for those whose relations the page carries.
+      await recordRead(tx, 'PEOPLE', users.map((user) => user.id));
+      await recordRead(
+        tx,
+        'GUARDIANS',
+        users
+          .filter((user) => user.guardianLinks.length > 0 || user.studentLinks.length > 0)
+          .flatMap((user) => [
+            user.id,
+            ...user.guardianLinks.map((link) => link.studentId),
+            ...user.studentLinks.map((link) => link.guardianId),
+          ]),
+      );
       return {
         totalCount,
         limit: take,
@@ -123,9 +150,9 @@ export class Ss12000Service {
     });
   }
 
-  async groups(schoolId: string, limit?: string, offset?: string) {
+  async groups(schoolId: string, limit?: string, offset?: string, keyId?: string) {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+    return this.asKey(schoolId, keyId, async (tx) => {
       // The active läsår's groups only. After a läsårsrullning the school
       // holds next year's classes beside this year's — "8A" twice, one of
       // them the promoted 7A with no pupils yet — and a kommun reading both
@@ -149,6 +176,7 @@ export class Ss12000Service {
           },
         }),
       ]);
+      await recordRead(tx, 'ROSTER', groups.flatMap((group) => group.members.map((member) => member.id)));
       return {
         totalCount,
         limit: take,
@@ -184,9 +212,10 @@ export class Ss12000Service {
     schoolId: string,
     limit?: string,
     offset?: string,
+    keyId?: string,
   ): Promise<{ totalCount: number; limit: number; offset: number; data: Ss12000Duty[] }> {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+    return this.asKey(schoolId, keyId, async (tx) => {
       const year = await tx.academicYear.findFirst({
         where: { schoolId, isActive: true },
         select: { id: true, startDate: true, endDate: true },
@@ -221,6 +250,7 @@ export class Ss12000Service {
               select: { userId: true, studentGroupId: true, updatedAt: true, validFrom: true, validTo: true },
               orderBy: [{ userId: 'asc' }, { studentGroupId: 'asc' }],
             });
+      await recordRead(tx, 'EMPLOYMENT', posts.map((post) => post.userId));
       const bounds = {
         startDate: year.startDate.toISOString().slice(0, 10),
         endDate: year.endDate.toISOString().slice(0, 10),
@@ -259,9 +289,9 @@ export class Ss12000Service {
   }
 
   /** Weekly master timetable as SS12000 activities. */
-  async activities(schoolId: string, limit?: string, offset?: string) {
+  async activities(schoolId: string, limit?: string, offset?: string, keyId?: string) {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+    return this.asKey(schoolId, keyId, async (tx) => {
       // Set-aside lessons are not activities: the kommun reads this as the
       // weekly timetable, and a parked lesson is on nobody's.
       const where = { schoolId, academicYear: { isActive: true }, isParked: false };
@@ -294,19 +324,24 @@ export class Ss12000Service {
       if (totalCount === 0) {
         const published = await this.publishedActivities(tx, schoolId);
         if (published !== null) {
+          const data = published.slice(skip, skip + take).map(toActivity);
+          // Pupils named on a lesson one by one: ROSTER in the läslogg.
+          await recordRead(tx, 'ROSTER', data.flatMap((activity) => activity.studentIds));
           return {
             totalCount: published.length,
             limit: take,
             offset: skip,
-            data: published.slice(skip, skip + take).map(toActivity),
+            data,
           };
         }
       }
+      const data = lessons.map(toActivity);
+      await recordRead(tx, 'ROSTER', data.flatMap((activity) => activity.studentIds));
       return {
         totalCount,
         limit: take,
         offset: skip,
-        data: lessons.map(toActivity),
+        data,
       };
     });
   }
@@ -339,12 +374,13 @@ export class Ss12000Service {
     to?: string,
     limit?: string,
     offset?: string,
+    keyId?: string,
   ) {
     if (!from || !to) {
       throw new BadRequestException('from and to (YYYY-MM-DD) are required.');
     }
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+    return this.asKey(schoolId, keyId, async (tx) => {
       const where = {
         schoolId,
         date: {
@@ -389,6 +425,7 @@ export class Ss12000Service {
               })
             ).map((row) => [row.calendarLessonId, row.masterLessonId]),
       );
+      await recordRead(tx, 'ROSTER', lessons.flatMap((lesson) => lesson.participants.map((entry) => entry.studentId)));
       return {
         totalCount,
         limit: take,

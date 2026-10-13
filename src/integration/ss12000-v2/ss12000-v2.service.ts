@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { inTurn } from './in-turn';
 import type { PrismaClient } from '@prisma/client';
+import { recordRead, type AccessKind } from '../../access-log/access-log';
 import { PrismaService } from '../../database/prisma.service';
 import { todayInZone } from '../../common/utils/time';
 import { adhocActivityId, normaliseUuid } from './ids';
@@ -47,6 +48,47 @@ export interface V2Page<T> {
 }
 
 type Obj = Record<string, unknown> & { id: string };
+
+/** What a v2 read handed out, per läslogg kind: the emitted person ids. */
+type V2Read = (items: readonly Obj[]) => Array<[AccessKind, string[]]>;
+
+/** The person ids under `key` of each entry of `list`: `[{ person: { id } }]`. */
+function refsIn(list: unknown, key: 'person' | 'student'): string[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((entry) => (entry as Record<string, { id?: unknown } | undefined>)[key]?.id)
+    .filter((id): id is string => typeof id === 'string');
+}
+
+const embedded = (item: Obj): Record<string, unknown> => (item['_embedded'] as Record<string, unknown> | undefined) ?? {};
+
+/**
+ * Persons: everyone listed (names, e-mail); with responsibles.read, who is
+ * whose guardian for each person whose relations the page carries.
+ */
+const PERSONS_READ: V2Read = (items) => [
+  ['PEOPLE', items.map((item) => item.id)],
+  [
+    'GUARDIANS',
+    items.flatMap((item) => {
+      const related = [...refsIn(item['responsibles'], 'person'), ...refsIn(embedded(item)['responsibleFor'], 'person')];
+      return related.length > 0 ? [item.id, ...related] : [];
+    }),
+  ],
+];
+/** Groups: their members. */
+const GROUPS_READ: V2Read = (items) => [['ROSTER', items.flatMap((item) => refsIn(item['groupMemberships'], 'person'))]];
+/** Duties: the person each post is, with their percentages when the school shares them. */
+const DUTIES_READ: V2Read = (items) => [
+  [
+    'EMPLOYMENT',
+    items
+      .map((item) => (item['person'] as { id?: unknown } | undefined)?.id)
+      .filter((id): id is string => typeof id === 'string'),
+  ],
+];
+/** Calendar events: the pupils named on a lesson outside its groups. */
+const EVENTS_READ: V2Read = (items) => [['ROSTER', items.flatMap((item) => refsIn(item['studentExceptions'], 'student'))]];
 
 /** A lookup body may name at most this many ids in total. */
 export const LOOKUP_MAX = 1000;
@@ -144,6 +186,31 @@ export class Ss12000V2Service {
       },
       { keyId: caller.keyId, timeoutMs: 30_000 },
     );
+  }
+
+  /**
+   * run() for a read that hands out people's data: what it returned is
+   * recorded in the läslogg as the key that asked (app.personal_data_read,
+   * in the same transaction), under the kinds `read` finds in it. The
+   * emitted person ids (Users.ss12000Id ?? Users.id) are mapped back to the
+   * Users rows they came from; a guardian the key may not see was never
+   * emitted, and so is never recorded.
+   */
+  private async runRead<T extends Obj | Obj[] | V2Page<Obj>>(
+    caller: V2Caller,
+    params: Params,
+    read: V2Read,
+    fn: (model: Model) => Promise<T>,
+  ): Promise<T> {
+    return this.run(caller, params, async (model) => {
+      const result = await fn(model);
+      const items = Array.isArray(result) ? result : 'data' in result && Array.isArray(result.data) ? result.data : [result as Obj];
+      for (const [kind, emitted] of read(items)) {
+        const userIds = emitted.map((id) => model.ids.personFrom(id.toLowerCase())).filter((id): id is string => id !== null);
+        await recordRead(model.slice.tx, kind, userIds);
+      }
+      return result;
+    });
   }
 
   private token(caller: V2Caller, operation: string, query: ParsedQuery) {
@@ -354,7 +421,7 @@ export class Ss12000V2Service {
     const expand = expands(query.params);
     this.personExpandScopes(caller, expand);
     const key = this.personSort(query.params);
-    return this.run(caller, query.params, async (model) => {
+    return this.runRead(caller, query.params, PERSONS_READ, async (model) => {
       const filter = await this.personFilter(model, query.params);
       const items = (await this.persons(model, expand)).filter(filter);
       return page(items, key, query, this.token(caller, operation, query));
@@ -367,7 +434,7 @@ export class Ss12000V2Service {
     const params = parseItemQuery('GET /persons/{id}', raw);
     const expand = expands(params);
     this.personExpandScopes(caller, expand);
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, PERSONS_READ, async (model) => {
       const found = (await this.persons(model, expand)).find((item) => item.id === wanted);
       if (!found) throw v2Errors.notFound();
       return found;
@@ -381,7 +448,7 @@ export class Ss12000V2Service {
     this.personExpandScopes(caller, expand);
     // civicNos: SchemaPro holds no personnummer, so none matches (A1.3).
     const wanted = new Set(lookupIds(body, ['ids', 'civicNos'])['ids'] ?? []);
-    return this.run(caller, params, async (model) => (await this.persons(model, expand)).filter((item) => wanted.has(item.id)));
+    return this.runRead(caller, params, PERSONS_READ, async (model) => (await this.persons(model, expand)).filter((item) => wanted.has(item.id)));
   }
 
   // ===========================================================================
@@ -478,7 +545,7 @@ export class Ss12000V2Service {
       EndDateAsc: { value: end, direction: 1 },
       EndDateDesc: { value: end, direction: -1 },
     });
-    return this.run(caller, query.params, async (model) => {
+    return this.runRead(caller, query.params, GROUPS_READ, async (model) => {
       const items = (await this.groupObjects(model, expand)).filter(this.groupFilter(model, query.params));
       return page(items, key, query, this.token(caller, operation, query));
     });
@@ -490,7 +557,7 @@ export class Ss12000V2Service {
     const params = parseItemQuery('GET /groups/{id}', raw);
     const expand = expands(params);
     if (expand.has('assignmentRoles')) need(caller, 'duties.read');
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, GROUPS_READ, async (model) => {
       const found = (await this.groupObjects(model, expand)).find((item) => item.id === wanted);
       if (!found) throw v2Errors.notFound();
       return found;
@@ -503,7 +570,7 @@ export class Ss12000V2Service {
     const expand = expands(params);
     if (expand.has('assignmentRoles')) need(caller, 'duties.read');
     const wanted = new Set(lookupIds(body, ['ids'])['ids'] ?? []);
-    return this.run(caller, params, async (model) => (await this.groupObjects(model, expand)).filter((item) => wanted.has(item.id)));
+    return this.runRead(caller, params, GROUPS_READ, async (model) => (await this.groupObjects(model, expand)).filter((item) => wanted.has(item.id)));
   }
 
   // ===========================================================================
@@ -548,7 +615,7 @@ export class Ss12000V2Service {
       StartDateAsc: { value: start, direction: 1 },
       ModifiedDesc: byModified,
     });
-    return this.run(caller, query.params, async (model) => {
+    return this.runRead(caller, query.params, DUTIES_READ, async (model) => {
       const items = (await this.dutyObjects(model, expand)).filter(this.dutyFilter(model, query.params));
       return page(items, key, query, this.token(caller, operation, query));
     });
@@ -560,7 +627,7 @@ export class Ss12000V2Service {
     const params = parseItemQuery('GET /duties/{id}', raw);
     const expand = expands(params);
     if (expand.has('person')) need(caller, 'persons.read');
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, DUTIES_READ, async (model) => {
       const found = (await this.dutyObjects(model, expand)).find((item) => item.id === wanted);
       if (!found) throw v2Errors.notFound();
       return found;
@@ -573,7 +640,7 @@ export class Ss12000V2Service {
     const expand = expands(params);
     if (expand.has('person')) need(caller, 'persons.read');
     const wanted = new Set(lookupIds(body, ['ids'])['ids'] ?? []);
-    return this.run(caller, params, async (model) => (await this.dutyObjects(model, expand)).filter((item) => wanted.has(item.id)));
+    return this.runRead(caller, params, DUTIES_READ, async (model) => (await this.dutyObjects(model, expand)).filter((item) => wanted.has(item.id)));
   }
 
   // ===========================================================================
@@ -987,7 +1054,7 @@ export class Ss12000V2Service {
       StartTimeAsc: { value: start, direction: 1 },
       StartTimeDesc: { value: start, direction: -1 },
     });
-    return this.run(caller, query.params, async (model) => {
+    return this.runRead(caller, query.params, EVENTS_READ, async (model) => {
       const lessons = await model.slice.lessons(from, to);
       const filter = this.eventFilter(model, query.params, await model.slice.teachingMembers());
       const items = (await this.events(model, lessons, expand)).filter(filter).map((entry) => entry.item);
@@ -1001,7 +1068,7 @@ export class Ss12000V2Service {
     const params = parseItemQuery('GET /calendarEvents/{id}', raw);
     const expand = expands(params);
     this.eventExpandScopes(caller, expand);
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, EVENTS_READ, async (model) => {
       const lessons = await model.slice.lessonsById([wanted]);
       const [found] = await this.eventObjects(model, lessons, expand);
       if (!found) throw v2Errors.notFound();
@@ -1020,7 +1087,7 @@ export class Ss12000V2Service {
     need(caller, 'calendarEvents.read');
     const params = parseItemQuery('POST /calendarEvents/lookup', raw);
     const ids = lookupIds(body, ['ids', 'activities', 'student', 'teacher']);
-    return this.run(caller, params, async (model) => {
+    return this.runRead(caller, params, EVENTS_READ, async (model) => {
       const wanted = new Set<string>(ids['ids'] ?? []);
       const activities = await model.slice.activities();
       const teachers = (ids['teacher'] ?? []).map((id) => model.ids.dutyFrom(id)?.userId).filter((id): id is string => !!id);

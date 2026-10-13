@@ -1,7 +1,9 @@
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
+import { channelOf } from '../access-log/access-log';
 import { IS_PUBLIC_KEY } from './decorators/public.decorator';
+import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 
 /**
  * Set on a request once this guard has authenticated it.
@@ -12,7 +14,11 @@ import { IS_PUBLIC_KEY } from './decorators/public.decorator';
  */
 const AUTHENTICATED = Symbol('JwtAuthGuard.authenticated');
 
-type MarkableRequest = { [AUTHENTICATED]?: true };
+type MarkableRequest = {
+  [AUTHENTICATED]?: true;
+  headers?: Record<string, string | string[] | undefined>;
+  user?: AuthenticatedUser;
+};
 
 /**
  * Global authentication guard. Verifies the bearer JWT for every route except
@@ -59,6 +65,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     const allowed = (await super.canActivate(context)) as boolean;
     if (allowed) {
       request[AUTHENTICATED] = true;
+      // Which client the person reads through, for the läslogg's channel.
+      // What the client says, never a permission.
+      if (request.user) request.user.channel = channelOf(request.headers);
     }
     return allowed;
   }

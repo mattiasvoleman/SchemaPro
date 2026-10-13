@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { readLoadInput, type LoadRead } from './load-input';
@@ -92,10 +93,19 @@ export class StaffingLoadService {
     }
 
     const scheduled = chosen === 'scheduled';
-    const { year, input } = await this.prisma.withRls(user, (tx) =>
-      scheduled ? this.readScheduledInput(tx, academicYearId, user) : this.readInput(tx, academicYearId, user),
-    );
-    const report = buildTeacherLoadReport(input);
+    const { year, report } = await this.prisma.withRls(user, async (tx) => {
+      const read = scheduled
+        ? await this.readScheduledInput(tx, academicYearId, user)
+        : await this.readInput(tx, academicYearId, user);
+      const built = buildTeacherLoadReport(read.input);
+      // Each teacher's post, percentages and target: EMPLOYMENT in the
+      // läslogg, in the read's transaction. Only what the response carries:
+      // a teacher is answered their own row alone (below), which is theirs.
+      if (user.role === Role.SCHOOL_ADMIN) {
+        await recordRead(tx, 'EMPLOYMENT', built.teachers.map((row) => row.userId), user.channel);
+      }
+      return { year: read.year, report: built };
+    });
 
     const response: TeacherLoadReportResponse = {
       academicYearId,
@@ -233,6 +243,9 @@ export class StaffingLoadService {
         weightOf: read.weightOf,
         own,
       });
+      // Each teacher's planned, scheduled and delivered hours: EMPLOYMENT in
+      // the läslogg (a teacher's own row is their own).
+      await recordRead(tx, 'EMPLOYMENT', reconciliation.teachers.map((row) => row.userId), user.channel);
       return {
         academicYearId: query.academicYearId,
         year,

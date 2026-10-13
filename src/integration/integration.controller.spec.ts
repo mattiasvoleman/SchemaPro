@@ -193,8 +193,9 @@ describe('Ss12000Controller', () => {
     importPersons: jest.Mock;
   };
 
-  /** A request as IntegrationKeyGuard leaves it: school id already resolved. */
-  const req = { integrationSchoolId: SCHOOL_ID } as IntegrationRequest;
+  /** A request as IntegrationKeyGuard leaves it: school and key already resolved. */
+  const KEY_ID = '9c0b4a1e-3f2d-4b8a-9e6f-0a1b2c3d4e5f';
+  const req = { integrationSchoolId: SCHOOL_ID, integrationKeyId: KEY_ID } as IntegrationRequest;
 
   beforeEach(() => {
     ss12000 = {
@@ -215,7 +216,8 @@ describe('Ss12000Controller', () => {
     expect(ss12000.organisation).toHaveBeenCalledWith(SCHOOL_ID);
   });
 
-  it('passes paging and role filters through to persons', async () => {
+  // The key goes with every read that names people, for the läslogg.
+  it('passes paging, role filters and the key through to persons', async () => {
     await controller.persons(req, '25', '50', 'TEACHER');
 
     expect(ss12000.persons).toHaveBeenCalledWith(
@@ -223,22 +225,23 @@ describe('Ss12000Controller', () => {
       '25',
       '50',
       'TEACHER',
+      KEY_ID,
     );
   });
 
-  it('passes paging through to groups', async () => {
+  it('passes paging and the key through to groups', async () => {
     await controller.groups(req, '10', '20');
 
-    expect(ss12000.groups).toHaveBeenCalledWith(SCHOOL_ID, '10', '20');
+    expect(ss12000.groups).toHaveBeenCalledWith(SCHOOL_ID, '10', '20', KEY_ID);
   });
 
-  it('passes paging through to activities', async () => {
+  it('passes paging and the key through to activities', async () => {
     await controller.activities(req, '10', '20');
 
-    expect(ss12000.activities).toHaveBeenCalledWith(SCHOOL_ID, '10', '20');
+    expect(ss12000.activities).toHaveBeenCalledWith(SCHOOL_ID, '10', '20', KEY_ID);
   });
 
-  it('passes the date window and paging through to calendarEvents', async () => {
+  it('passes the date window, paging and the key through to calendarEvents', async () => {
     await controller.calendarEvents(req, '2026-08-01', '2026-08-31', '10', '0');
 
     expect(ss12000.calendarEvents).toHaveBeenCalledWith(
@@ -247,6 +250,7 @@ describe('Ss12000Controller', () => {
       '2026-08-31',
       '10',
       '0',
+      KEY_ID,
     );
   });
 

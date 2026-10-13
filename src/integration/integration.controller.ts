@@ -284,6 +284,7 @@ export class Ss12000Controller {
       limit,
       offset,
       role,
+      req.integrationKeyId,
     );
   }
 
@@ -293,7 +294,7 @@ export class Ss12000Controller {
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
-    return this.ss12000.groups(req.integrationSchoolId as string, limit, offset);
+    return this.ss12000.groups(req.integrationSchoolId as string, limit, offset, req.integrationKeyId);
   }
 
   /**
@@ -306,7 +307,7 @@ export class Ss12000Controller {
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
-    return this.ss12000.duties(req.integrationSchoolId as string, limit, offset);
+    return this.ss12000.duties(req.integrationSchoolId as string, limit, offset, req.integrationKeyId);
   }
 
   @Get('activities')
@@ -315,7 +316,7 @@ export class Ss12000Controller {
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
-    return this.ss12000.activities(req.integrationSchoolId as string, limit, offset);
+    return this.ss12000.activities(req.integrationSchoolId as string, limit, offset, req.integrationKeyId);
   }
 
   @Get('calendarEvents')
@@ -332,6 +333,7 @@ export class Ss12000Controller {
       to,
       limit,
       offset,
+      req.integrationKeyId,
     );
   }
 

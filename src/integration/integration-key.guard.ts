@@ -10,6 +10,8 @@ import { PrismaService } from '../database/prisma.service';
 
 export interface IntegrationRequest extends Request {
   integrationSchoolId?: string;
+  /** The key that asked: the läslogg names it on the reads it makes. */
+  integrationKeyId?: string;
 }
 
 /**
@@ -48,6 +50,7 @@ export class IntegrationKeyGuard implements CanActivate {
     }
 
     request.integrationSchoolId = row.schoolId;
+    request.integrationKeyId = row.id;
     // Best-effort usage timestamp; never blocks the request.
     void this.prisma
       .withServiceKeyLookup((tx) =>

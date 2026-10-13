@@ -11,6 +11,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { Role } from '../auth/enums/role.enum';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
@@ -132,6 +133,9 @@ export class TeacherAbsencesService {
         rows.filter((row) => row.status === 'ACTIVE').map((row) => row.id),
         now,
       );
+      // When a colleague is away, and why: STAFF_ABSENCES in the läslogg. A
+      // teacher's own absences are their own (left out by the log).
+      await recordRead(tx, 'STAFF_ABSENCES', rows.map((row) => row.userId), user.channel);
       return rows.map((row) => viewOf(row, now, counts.get(row.id)));
     });
   }

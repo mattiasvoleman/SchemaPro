@@ -763,8 +763,13 @@ export function givenRolloverWorld(
         };
       }
       if (key === '$executeRaw') {
-        // An advisory lock or a set_config: recorded, and nothing to answer.
-        return async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        // An advisory lock, a set_config or the läslogg's write
+        // (access-log.ts, a Prisma.sql object): recorded, and nothing to
+        // answer. Both forms, as $queryRaw.
+        return async (first: TemplateStringsArray | { strings: readonly string[]; values: unknown[] }, ...rest: unknown[]) => {
+          const isSql = !Array.isArray(first) && 'strings' in first;
+          const strings = isSql ? (first as { strings: readonly string[] }).strings : (first as TemplateStringsArray);
+          const values = isSql ? (first as { values: unknown[] }).values : rest;
           const sql = strings.join('?').replace(/\s+/g, ' ').trim();
           calls.push({ model: '$executeRaw', method: '$executeRaw', args: null, sql, values });
           return 0;

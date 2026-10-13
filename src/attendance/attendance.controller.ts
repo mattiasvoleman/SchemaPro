@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -19,10 +20,14 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import {
   AttendanceService,
   AttendanceReportResult,
+  AttendanceSummaryResult,
+  GroupAttendanceResult,
+  LessonAttendanceResult,
   LessonRosterResult,
   ReportedAbsencesResult,
 } from './attendance.service';
 import { ReportAttendanceDto } from './dto/report-attendance.dto';
+import { AttendanceSummaryQueryDto, GroupAttendanceQueryDto } from './dto/attendance-reads.dto';
 
 /**
  * High-performance attendance ingestion endpoint.
@@ -89,5 +94,44 @@ export class AttendanceController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<LessonRosterResult> {
     return this.attendanceService.lessonRoster(lessonId, user);
+  }
+
+  /**
+   * `GET /api/v1/attendance/lessons/:lessonId/records`
+   *
+   * The marks already recorded for the lesson, as the register opens with
+   * them. The same door as the roster.
+   */
+  @Get('lessons/:lessonId/records')
+  async lessonRecords(
+    @Param('lessonId', new ParseUUIDPipe({ version: '4' })) lessonId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<LessonAttendanceResult> {
+    return this.attendanceService.lessonRecords(lessonId, user);
+  }
+
+  /**
+   * `GET /api/v1/attendance/groups/:groupId/records?from&to`
+   *
+   * A class's marks over a period, for the administrator's attendance report.
+   */
+  @Get('groups/:groupId/records')
+  @Roles(Role.SCHOOL_ADMIN)
+  async groupRecords(
+    @Param('groupId', new ParseUUIDPipe({ version: '4' })) groupId: string,
+    @Query() query: GroupAttendanceQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<GroupAttendanceResult> {
+    return this.attendanceService.groupRecords(groupId, query.from, query.to, user);
+  }
+
+  /** `GET /api/v1/attendance/summary?since`: the dashboard's figure, counts only. */
+  @Get('summary')
+  @Roles(Role.SCHOOL_ADMIN)
+  async summary(
+    @Query() query: AttendanceSummaryQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<AttendanceSummaryResult> {
+    return this.attendanceService.summary(query.since, user);
   }
 }

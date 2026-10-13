@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, type TeacherEmployment } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
+import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -97,8 +98,8 @@ export class TeacherEmploymentsService {
     if (user.role !== Role.SCHOOL_ADMIN && userId !== requireUserId(user)) {
       throw new ForbiddenException(HISTORY_OWN_ONLY);
     }
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.teacherEmploymentLog.findMany({
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const found = await tx.teacherEmploymentLog.findMany({
         where: { userId, academicYearId },
         orderBy: { version: 'desc' },
         take: HISTORY_LIMIT + 1,
@@ -113,8 +114,10 @@ export class TeacherEmploymentsService {
           actorId: true,
           createdAt: true,
         },
-      }),
-    );
+      });
+      if (found.length > 0) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
+      return found;
+    });
     const entries = rows.slice(0, HISTORY_LIMIT).map((row) => ({
       id: row.id,
       version: row.version,
@@ -146,9 +149,12 @@ export class TeacherEmploymentsService {
       user.role === Role.SCHOOL_ADMIN
         ? { academicYearId }
         : { academicYearId, userId: requireUserId(user) };
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.teacherEmployment.findMany({ where, orderBy: { userId: 'asc' } }),
-    );
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const found = await tx.teacherEmployment.findMany({ where, orderBy: { userId: 'asc' } });
+      // HR data: EMPLOYMENT in the läslogg (a teacher's own row is left out).
+      await recordRead(tx, 'EMPLOYMENT', found.map((row) => row.userId), user.channel);
+      return found;
+    });
     return rows.map(toEmploymentResponse);
   }
 
