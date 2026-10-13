@@ -608,15 +608,23 @@ For each kommun (or school) that wants it:
    address, or, for a person who should keep their Entra address, SchemaPro
    gets that address (from the school's SS12000 source, or from an operator
    as 11.7 describes, since a school admin cannot edit an invited person's
-   address) and the school invites the person again. The invitation moves
-   their existing login to the new address instead of creating a second one:
-   its password and linked school accounts go with it, and the school account
-   links to it at the next sign-in. If another login already has the new
-   address, the person is given that one and the login at the old address is
-   deleted. That delete is best effort: if it fails, the gateway logs a
-   warning naming the row and the login (`[user=…] [authId=…]`), and an
-   operator deletes that login by hand (Authentication → Users). Where the
-   school cannot send the invitation, 11.7 has an operator's manual way.
+   address) and the school invites the person again. If their existing login
+   is their own (11.7 says which logins are), the invitation moves it to the
+   new address instead of creating a second one: its password and linked
+   school accounts go with it, and the school account links to it at the
+   next sign-in. If another login already has the new address, the person is
+   given that one and their own login at the old address is deleted. That
+   delete is best effort: if it fails, the gateway logs a warning that the
+   login "was not deleted", naming the row and the login
+   (`[user=…] [authId=…]`), and an operator deletes that login by hand
+   (Authentication → Users). Only that warning names a login to delete as it
+   stands. The
+   others with the same pair (a login "not the row's own" that was left, one
+   left with "whose it is not checked", and one "not tagged with its row")
+   need the owner found first, as 11.7 describes. A login that is not their
+   own is left where it is, and the invitation goes to the new address as to
+   someone never invited. Where the school cannot send the invitation, 11.7
+   has an operator's manual way.
    Removing the person and adding them again is only for someone with no
    schedule history, since it drops them from their lessons.
 3. The school's admin saves the tenant id (Entra admin center → Overview) on
@@ -704,8 +712,8 @@ fails at Auth, before any provider.
   address; the admin's receipt says so, and the admin tells them. If another
   login already has that address, the person is given that one and the login
   at the old address is deleted, best effort as in 11.3: a failed delete is
-  logged with the row and the login, and the operator deletes that login by
-  hand.
+  logged as "was not deleted" with the row and the login, and the operator
+  deletes that login by hand.
 
   The invitation moves or deletes only the person's own login: one an
   invitation created for that person, which carries the row's id in its
@@ -713,16 +721,25 @@ fails at Auth, before any provider.
   invitations recorded it) that somebody has signed in with since the
   person was last invited, which is given the id then. Any other login is
   left where it is, for example one the row was given because its address
-  already had a login and that nobody has signed in with since, or one from
-  an invitation sent before this that nobody has used. The invitation then
-  goes to the new address as for someone never invited, and the login at
-  the old address is logged as not the row's own, with the row and the
-  login. Find out whose it is before deleting it by hand. To keep the
-  person's password and linked school accounts in that case, move the login
-  by hand as below before the admin sends the invitation, which then finds
-  it at the new address. If the id cannot be written when an invitation
-  creates a login, that is logged with the row and the login, and the login
-  counts as the person's only once they have signed in with it.
+  already had a login and that nobody has signed in with since, one from an
+  invitation sent before this that nobody has used, or the person's own
+  older login when they last signed in before the school sent their
+  invitation again (that restamps `"invitedAt"`). The invitation then goes
+  to the new address as for someone never invited, and the login at the
+  old address is logged as "not the row's own", with the row and the login.
+  Find out whose it is before deleting it by hand, and likewise for a login
+  logged with "whose it is not checked": one that could not be read again
+  just before it was to be deleted. To check a login before the admin sends
+  the invitation: it is the person's own if its
+  `app_metadata.schemaproUserId` (Authentication → Users → the user, or
+  `raw_app_meta_data` in `auth.users`) is the person's `"Users".id`, or,
+  with no `schemaproUserId`, if its `last_sign_in_at` is later than the
+  person's `"Users"."invitedAt"`. To keep the password and linked school
+  accounts of a login that is not, move it by hand as below before the
+  admin sends the invitation, which then finds it at the new address. If the id cannot be
+  written when an invitation creates a login, that is logged as "not tagged
+  with its row", with the row and the login, and the login counts as the
+  person's only once they have signed in with it.
 
   Where the school's admin cannot send the invitation, for example
   because no admin can sign in, the operator moves the login by hand
