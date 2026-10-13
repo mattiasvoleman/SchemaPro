@@ -23,7 +23,13 @@ interface SyncContextValue {
   readonly syncState: SyncState;
   /** The lesson currently being taken. Set this from the lesson picker. */
   readonly activeLesson: CalendarLesson | null;
-  readonly setActiveLesson: (lesson: CalendarLesson | null) => void;
+  /**
+   * The active lesson's pupils are the copy this phone last saved, opened
+   * because the gateway did not answer (services/roster.ts). A broadcast of
+   * the lesson replaces them with the gateway's list, and this with false.
+   */
+  readonly activeLessonFromCache: boolean;
+  readonly setActiveLesson: (lesson: CalendarLesson | null, options?: { readonly fromCache?: boolean }) => void;
   /** Request an immediate sync cycle (e.g. after queuing new records). */
   readonly triggerManualSync: () => Promise<void>;
 }
@@ -46,7 +52,12 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
     pendingCount: 0,
     problem: null,
   });
-  const [activeLesson, setActiveLesson] = useState<CalendarLesson | null>(null);
+  const [active, setActive] = useState<{ lesson: CalendarLesson; fromCache: boolean } | null>(null);
+  const setActiveLesson = useCallback(
+    (lesson: CalendarLesson | null, options?: { readonly fromCache?: boolean }): void =>
+      setActive(lesson ? { lesson, fromCache: options?.fromCache === true } : null),
+    [],
+  );
   const [isDbReady, setIsDbReady] = useState(false);
 
   const workerRef = useRef<AttendanceSyncWorker | null>(null);
@@ -80,8 +91,10 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
       (payload: CalendarLessonUpdatedPayload) => {
         // Persist to SQLite cache and refresh UI state atomically.
         void upsertCalendarLesson(payload.updatedLesson).then(() => {
-          setActiveLesson((prev) =>
-            prev?.id === payload.lessonId ? payload.updatedLesson : prev,
+          setActive((prev) =>
+            prev?.lesson.id === payload.lessonId
+              ? { lesson: payload.updatedLesson, fromCache: false }
+              : prev,
           );
         });
       },
@@ -114,7 +127,15 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
   }, []);
 
   return (
-    <SyncContext.Provider value={{ syncState, activeLesson, setActiveLesson, triggerManualSync }}>
+    <SyncContext.Provider
+      value={{
+        syncState,
+        activeLesson: active?.lesson ?? null,
+        activeLessonFromCache: active?.fromCache ?? false,
+        setActiveLesson,
+        triggerManualSync,
+      }}
+    >
       {children}
     </SyncContext.Provider>
   );

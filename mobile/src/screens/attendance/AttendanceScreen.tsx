@@ -147,7 +147,7 @@ function StudentRow({ item, onStatusChange }: StudentRowProps): React.JSX.Elemen
  *  - The sync banner reflects live connection state from SyncContext.
  */
 export function AttendanceScreen(): React.JSX.Element {
-  const { activeLesson, syncState, triggerManualSync } = useSync();
+  const { activeLesson, activeLessonFromCache, syncState, triggerManualSync } = useSync();
   const { authState } = useAuth();
   const { t } = useI18n();
   const { authenticate, isAuthenticating } = useBiometrics();
@@ -280,6 +280,9 @@ export function AttendanceScreen(): React.JSX.Element {
         <Text style={styles.headerProgress}>
           {t('attendance.recorded', { done: attendanceMap.size, total: students.length })}
         </Text>
+        {activeLessonFromCache && (
+          <Text style={styles.headerCached}>{t('attendance.cachedList')}</Text>
+        )}
       </View>
 
       {/* ── Loading overlay ────────────────────────────────────────────── */}
@@ -372,6 +375,11 @@ const styles = StyleSheet.create({
   headerProgress: {
     fontSize: 12,
     color: '#64748b',
+  },
+  headerCached: {
+    fontSize: 12,
+    color: '#f59e0b',
+    marginTop: 6,
   },
 
   // List row
