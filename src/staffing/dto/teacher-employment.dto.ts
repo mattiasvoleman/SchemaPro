@@ -11,7 +11,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
+import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
 
 /**
  * En lärares tjänst för ett läsår: tjänstgöringsgrad, nedsättning, avtal.
@@ -88,4 +90,60 @@ export class UpsertTeacherEmploymentDto {
   @IsString({ message: 'Anteckningen anges som text.' })
   @MaxLength(500, { message: 'Anteckningen kan vara högst 500 tecken.' })
   note?: string | null;
+}
+
+/**
+ * En period av tjänsten: tjänstgöringsgrad, nedsättning and own riktmärke
+ * from a date (migration 20261022120000). "80 % från 1 november."
+ *
+ * ON THE POST, NEVER ACROSS POSTS. A new period names its teacher and year in
+ * the URL, as the post does; an existing one is addressed by its id and never
+ * moves to another post or year, so neither is in the body.
+ *
+ * THE WHOLE PERIOD IS REPLACED, as the post is: what is absent is the
+ * column's default — no nedsättning, the derived riktmärke, open to the end of
+ * the year. A period states all three figures for its dates, not the ones it
+ * changes, so the period does not depend on what the post says when it is read.
+ *
+ * The bounds are the post's own, mirrored by the table's CHECKs. Från is
+ * required: a period without a start is the post itself, which the post's
+ * own PUT writes. That the dates lie inside the läsår, hold at least one
+ * whole week and overlap no other period of the post is the service's: each
+ * needs another row.
+ */
+export class UpsertTeacherEmploymentPeriodDto {
+  /** Från, YYYY-MM-DD, inclusive. */
+  @IsCalendarDate({ message: 'validFrom: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validFrom!: string;
+
+  /** Till, YYYY-MM-DD, inclusive; null or absent: the läsår's last day. */
+  @IsOptional()
+  @IsCalendarDate({ message: 'validTo: anges som ett datum som finns, ÅÅÅÅ-MM-DD.' })
+  validTo?: string | null;
+
+  /** Tjänstgöringsgrad for the period, (0, 100]. Required, as on the post. */
+  @IsNumber(
+    { maxDecimalPlaces: 3 },
+    { message: 'Tjänstgöringsgraden anges i procent med högst tre decimaler.' },
+  )
+  @IsPositive({ message: 'En tjänstgöringsgrad på 0 % är ingen tjänst — ta bort perioden eller tjänsten i stället.' })
+  @Max(100, { message: 'En tjänstgöringsgrad över 100 % är inte en tjänst.' })
+  employmentPercent!: number;
+
+  /** Nedsättning for the period, [0, employmentPercent]. Default 0. */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsNumber(
+    { maxDecimalPlaces: 3 },
+    { message: 'Nedsättningen anges i procent med högst tre decimaler.' },
+  )
+  @Min(0, { message: 'Nedsättningen kan inte vara negativ.' })
+  @Max(100, { message: 'En nedsättning över 100 % är mer än hela tjänsten.' })
+  reductionPercent?: number;
+
+  /** Own riktmärke for the period, 0..2400; null or absent: derived. */
+  @IsOptional()
+  @IsInt({ message: 'Riktmärket anges i hela minuter per vecka.' })
+  @Min(0, { message: 'Riktmärket kan inte vara negativt.' })
+  @Max(2400, { message: 'Ett riktmärke över 2400 minuter per vecka (40 timmar) är inte undervisning.' })
+  teachingTargetMinutesPerWeek?: number | null;
 }

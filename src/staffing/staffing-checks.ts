@@ -1,8 +1,10 @@
 import { ConflictException } from '@nestjs/common';
 import type { StaffingCheckMode } from '@prisma/client';
+import { changesDuringYear } from './employment-periods';
 import {
   countedMinutesByTeacher,
   loadStatus,
+  stretchLoads,
   strongestCoveringQualification,
   targetMinutesPerWeek,
   type GradeSpan,
@@ -10,6 +12,7 @@ import {
   type LoadInput,
   type LoadQualification,
   type LoadRequirement,
+  type StretchLoad,
 } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
 
@@ -53,6 +56,16 @@ import type { YearBounds } from './teaching-weeks';
  * write take them past the limit", asked as: over after, AND more after than
  * before. The same holds for a PATCH that changes nothing a load is made of.
  *
+ * A POST THAT CHANGES DURING THE YEAR IS JUDGED IN THE STRETCH THE ROW RUNS IN
+ * (migration 20261022120000). A teacher whose post has periods is asked the
+ * load question stretch by stretch (teacher-load.ts stretchLoads, the
+ * report's own arithmetic): before and after the write, in date order, and
+ * the first stretch with teaching weeks the write takes past its own limit
+ * answers — STAFF_TEACHER_OVER_TARGET_IN_PERIOD, naming the stretch's dates.
+ * A row that runs only in the autumn adds nothing to the spring, so it can
+ * only be refused for the autumn's figures. A teacher without periods is
+ * asked exactly as before.
+ *
  * PARAMS NAME A SUBJECT AND A SPAN, NEVER A PERSON. The admin who made the write
  * knows whom they assigned; the role ('TEACHER', 'CO_TEACHER', 'SUBSTITUTE')
  * says which of the row's teachers the sentence is about.
@@ -62,12 +75,15 @@ import type { YearBounds } from './teaching-weeks';
 
 export const STAFF_TEACHER_NOT_QUALIFIED = 'STAFF_TEACHER_NOT_QUALIFIED' as const;
 export const STAFF_TEACHER_OVER_TARGET = 'STAFF_TEACHER_OVER_TARGET' as const;
+/** The same question in one stretch of a post that changes during the year. */
+export const STAFF_TEACHER_OVER_TARGET_IN_PERIOD = 'STAFF_TEACHER_OVER_TARGET_IN_PERIOD' as const;
 /** The generate pre-flight's refusal; see OptimizationProxyService. */
 export const STAFF_UNSTAFFED_REQUIREMENTS = 'STAFF_UNSTAFFED_REQUIREMENTS' as const;
 
 export type StaffingCheckCode =
   | typeof STAFF_TEACHER_NOT_QUALIFIED
-  | typeof STAFF_TEACHER_OVER_TARGET;
+  | typeof STAFF_TEACHER_OVER_TARGET
+  | typeof STAFF_TEACHER_OVER_TARGET_IN_PERIOD;
 
 /** Which of a write's teachers a finding is about. */
 export type StaffingRole = 'TEACHER' | 'CO_TEACHER' | 'SUBSTITUTE';
@@ -204,6 +220,95 @@ export function overTargetFinding(args: {
 }
 
 /**
+ * Question two for a teacher whose post changes during the year: `before` and
+ * `after` are stretchLoads of their post without and with the write, stretch
+ * for stretch. The first stretch, in date order, that holds teaching weeks,
+ * has a target, and that the write takes past its limit while adding to it
+ * answers, with its own minutes, target and dates.
+ */
+export function overTargetFindingByStretch(args: {
+  policy: CheckPolicy;
+  employment: LoadEmployment;
+  userId: string;
+  role: StaffingRole;
+  before: readonly StretchLoad[];
+  after: readonly StretchLoad[];
+}): StaffingFinding | null {
+  const mode = args.policy.overAllocationMode;
+  if (mode === 'OFF') return null;
+  const tolerance = args.policy.overAllocationTolerancePercent;
+  for (const [index, stretch] of args.after.entries()) {
+    if (stretch.weeks === 0) continue;
+    const target = targetMinutesPerWeek(
+      { ...args.employment, ...stretch.stretch.figures },
+      {
+        fullTimeTeachingMinutesPerWeek: args.policy.fullTimeTeachingMinutesPerWeek,
+        overAllocationTolerancePercent: tolerance,
+        // Not read by targetMinutesPerWeek; stated so the type is whole.
+        fullTimeRegulatedHoursPerYear: 0,
+        workDaysPerYear: 0,
+        qualificationMode: args.policy.qualificationMode,
+      },
+    );
+    if (target === null) continue;
+    const before = args.before[index]?.counted ?? 0;
+    if (stretch.counted <= before + 1e-9) continue;
+    if (loadStatus(stretch.counted, target, tolerance) !== 'OVER') continue;
+    return {
+      code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
+      mode,
+      userId: args.userId,
+      params: {
+        role: args.role,
+        minutes: Math.round(stretch.counted),
+        target,
+        limit: Math.floor(target + (target * tolerance) / 100),
+        tolerance,
+        from: stretch.stretch.from,
+        to: stretch.stretch.to,
+      },
+    };
+  }
+  return null;
+}
+
+/**
+ * Question two for one teacher of a write: per stretch when their post
+ * changes during the year, otherwise over the year as always. `input` is the
+ * year before the write, `after` the same year's requirements with it.
+ */
+function overTargetOfWrite(args: {
+  policy: CheckPolicy;
+  input: LoadInput;
+  requirementsAfter: LoadRequirement[];
+  employment: LoadEmployment | null;
+  userId: string;
+  role: StaffingRole;
+  before: () => number;
+  after: () => number;
+}): StaffingFinding | null {
+  const { employment } = args;
+  if (employment !== null && changesDuringYear(employment, args.input.year)) {
+    return overTargetFindingByStretch({
+      policy: args.policy,
+      employment,
+      userId: args.userId,
+      role: args.role,
+      before: stretchLoads(args.input, employment),
+      after: stretchLoads({ ...args.input, requirements: args.requirementsAfter }, employment),
+    });
+  }
+  return overTargetFinding({
+    policy: args.policy,
+    employment,
+    userId: args.userId,
+    role: args.role,
+    before: args.before(),
+    after: args.after(),
+  });
+}
+
+/**
  * Both questions for one timplanspost write.
  *
  * `input` is the year as read BEFORE the write — an update's own row
@@ -258,13 +363,15 @@ export function judgeRequirementWrite(args: {
       if (finding) findings.push(finding);
     }
     if (needsLoad) {
-      const finding = overTargetFinding({
+      const finding = overTargetOfWrite({
         policy,
+        input,
+        requirementsAfter,
         employment: employmentByUser.get(userId) ?? null,
         userId,
         role,
-        before: countedBefore.get(userId) ?? 0,
-        after: countedAfter.get(userId) ?? 0,
+        before: () => countedBefore.get(userId) ?? 0,
+        after: () => countedAfter.get(userId) ?? 0,
       });
       if (finding) findings.push(finding);
     }
@@ -368,35 +475,51 @@ export function judgeRequirementBatch(args: {
       if (rows) rows.push(row.id);
       else gained.set(change.teacherId, [row.id]);
     }
-    const before = countedMinutesByTeacher(input);
-    const after = countedMinutesByTeacher({
-      ...input,
-      requirements: input.requirements.map((row) => {
-        const change = changeById.get(row.id);
-        return change ? { ...row, teacherId: change.teacherId } : row;
-      }),
+    const requirementsAfter = input.requirements.map((row) => {
+      const change = changeById.get(row.id);
+      return change ? { ...row, teacherId: change.teacherId } : row;
     });
     // Before the batch this undoes, when it undoes one: today with every row
     // of that batch given back the lead it had.
-    const found =
+    const requirementsFound =
       restoring.size === 0
         ? null
-        : countedMinutesByTeacher({
-            ...input,
-            requirements: input.requirements.map((row) =>
-              restoring.has(row.id) ? { ...row, teacherId: restoring.get(row.id)! } : row,
-            ),
-          });
+        : input.requirements.map((row) =>
+            restoring.has(row.id) ? { ...row, teacherId: restoring.get(row.id)! } : row,
+          );
+    const before = countedMinutesByTeacher(input);
+    const after = countedMinutesByTeacher({ ...input, requirements: requirementsAfter });
+    const found = requirementsFound ? countedMinutesByTeacher({ ...input, requirements: requirementsFound }) : null;
     const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
     for (const userId of [...gained.keys()].sort()) {
-      const finding = overTargetFinding({
-        policy,
-        employment: employmentByUser.get(userId) ?? null,
-        userId,
-        role: 'TEACHER',
-        before: Math.max(before.get(userId) ?? 0, found?.get(userId) ?? 0),
-        after: after.get(userId) ?? 0,
-      });
+      const employment = employmentByUser.get(userId) ?? null;
+      let finding: StaffingFinding | null;
+      if (employment !== null && changesDuringYear(employment, input.year)) {
+        // Per stretch, each growing past the larger of today and what the
+        // batch being undone found, as over the year below.
+        const today = stretchLoads(input, employment);
+        const then = requirementsFound ? stretchLoads({ ...input, requirements: requirementsFound }, employment) : null;
+        finding = overTargetFindingByStretch({
+          policy,
+          employment,
+          userId,
+          role: 'TEACHER',
+          before: today.map((stretch, index) => ({
+            ...stretch,
+            counted: Math.max(stretch.counted, then?.[index]?.counted ?? 0),
+          })),
+          after: stretchLoads({ ...input, requirements: requirementsAfter }, employment),
+        });
+      } else {
+        finding = overTargetFinding({
+          policy,
+          employment,
+          userId,
+          role: 'TEACHER',
+          before: Math.max(before.get(userId) ?? 0, found?.get(userId) ?? 0),
+          after: after.get(userId) ?? 0,
+        });
+      }
       if (finding) findings.push({ ...finding, requirementIds: gained.get(userId)! });
     }
   }
@@ -423,6 +546,13 @@ export function staffingSentence(warning: StaffingWarning): string {
     return `${role} saknar behörighet i ${warning.params.subject}${span}.`;
   }
   const { minutes, target, limit, tolerance } = warning.params;
+  if (warning.code === STAFF_TEACHER_OVER_TARGET_IN_PERIOD) {
+    return (
+      `${role} skulle få ${minutes} min/v mot riktmärket ${target} min/v ` +
+      `från ${warning.params.from} till och med ${warning.params.to} ` +
+      `(gränsen är ${limit} min/v med ${tolerance} % tolerans).`
+    );
+  }
   return (
     `${role} skulle få ${minutes} min/v mot riktmärket ${target} min/v ` +
     `(gränsen är ${limit} min/v med ${tolerance} % tolerans).`

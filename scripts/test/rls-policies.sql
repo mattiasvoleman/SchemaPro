@@ -12369,8 +12369,7 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'duty links: a pupil reads % link(s)', n; END IF;
 END $$;
 
--- School B's admin: their fixture uppdrag's link, made from its old column by
--- the trigger, and none of school A's.
+-- School B's admin: their fixture uppdrag's link and none of school A's.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
 DO $$
 DECLARE n bigint; mine bigint;
@@ -15224,31 +15223,28 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 90: ett uppdrags gamla engångskolumn betyder ingenting
--- (20261022090000).
+-- Section 90: ett uppdrags gamla engångskolumn är borta (20261022090000,
+-- 20261022100000).
 --
 -- 20261017090000 moved an uppdrag's times to TeacherDutySlots and kept the
 -- one-time column blockedConstraintId, its keys and its triggers for the API
--- release before it. 20261022090000 retires them. The catalogue half: no
--- trigger and no function of the column is left, no foreign key, unique
--- constraint or index names it, the constraint guard finds the duty through
--- the link alone, and a validated CHECK holds the column empty until a later
--- migration drops it. The behaviour half, as the admin: a value written to
--- the column is refused (23514) by INSERT and by UPDATE, rather than made a
--- link or silently kept; null is accepted, which is all the previous
--- release's rollover writes; and no link appears for the time named.
+-- release before it. 20261022090000 took every meaning from it and held it
+-- empty while the release that still named it ran; 20261022100000 drops it.
+-- The catalogue half: the column is gone, no trigger and no function of it is
+-- left, the constraint guard finds the duty through the link alone, and no
+-- function in app reads the name but the log's strip list. The behaviour
+-- half, as the admin: a write that names the column is refused as a column
+-- that does not exist (42703), so no writer — PostgREST included — can put a
+-- time anywhere but a link.
 -- ---------------------------------------------------------------------------
 
 DO $$
 DECLARE
   rel regclass := '"TeacherDuties"'::regclass;
-  col smallint;
   n integer;
-  def text;
 BEGIN
-  SELECT attnum INTO col FROM pg_attribute WHERE attrelid = rel AND attname = 'blockedConstraintId' AND NOT attisdropped;
-  IF col IS NULL THEN
-    RAISE EXCEPTION 'retired column: TeacherDuties has no blockedConstraintId — this section is for the release that still has it';
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = rel AND attname = 'blockedConstraintId' AND NOT attisdropped) THEN
+    RAISE EXCEPTION 'retired column: TeacherDuties still has blockedConstraintId';
   END IF;
   SELECT count(*) INTO n FROM pg_trigger
    WHERE tgrelid = rel AND NOT tgisinternal
@@ -15264,26 +15260,11 @@ BEGIN
   IF n <> 0 THEN
     RAISE EXCEPTION 'retired column: % of the old column''s trigger functions are still in app', n;
   END IF;
-  SELECT count(*) INTO n FROM pg_constraint
-   WHERE conrelid = rel AND contype IN ('f', 'u', 'p') AND col = ANY (conkey);
-  IF n <> 0 THEN
-    RAISE EXCEPTION 'retired column: % key(s) on TeacherDuties still name blockedConstraintId', n;
-  END IF;
-  SELECT count(*) INTO n FROM pg_index WHERE indrelid = rel AND col = ANY (indkey::smallint[]);
-  IF n <> 0 THEN
-    RAISE EXCEPTION 'retired column: % index(es) on TeacherDuties still cover blockedConstraintId', n;
-  END IF;
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
    WHERE s.nspname = 'app' AND p.prosrc LIKE '%blockedConstraintId%'
      AND p.proname <> 'teacher_staffing_log';
   IF n <> 0 THEN
     RAISE EXCEPTION 'retired column: % function(s) in app besides the log''s strip list still read blockedConstraintId', n;
-  END IF;
-  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c
-   WHERE c.conrelid = rel AND c.conname = 'TeacherDuties_blockedConstraintId_is_retired'
-     AND c.contype = 'c' AND c.convalidated;
-  IF def IS DISTINCT FROM 'CHECK (("blockedConstraintId" IS NULL))' THEN
-    RAISE EXCEPTION 'retired column: the CHECK holding blockedConstraintId empty is %', coalesce(def, 'missing or not validated');
   END IF;
 END $$;
 
@@ -15292,7 +15273,7 @@ SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id
 DO $$
 DECLARE
   school uuid := app.current_school_id();
-  me uuid; year uuid; c uuid; d uuid; n bigint;
+  me uuid; year uuid; c uuid;
 BEGIN
   IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
     RAISE EXCEPTION 'retired column: expected to be acting as an admin, am %', app.current_user_role();
@@ -15301,35 +15282,423 @@ BEGIN
   SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
   INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
   VALUES (school, 'TEACHER', me, 3, '15:00', '16:00', 'UNAVAILABLE', 'RLS90 APT', now()) RETURNING id INTO c;
-  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
-  VALUES (school, me, year, 'APT_KONFERENS', 'RLS90 APT', 60, now()) RETURNING id INTO d;
-
   BEGIN
-    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-    VALUES (school, me, year, 'APT_KONFERENS', 'RLS90 gammal APT', 60, c, now());
-    RAISE EXCEPTION 'retired column: an INSERT stored a value in blockedConstraintId';
-  EXCEPTION WHEN check_violation THEN NULL;
+    EXECUTE format(
+      'INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+       VALUES (%L, %L, %L, ''APT_KONFERENS'', ''RLS90 gammal APT'', 60, %L, now())', school, me, year, c);
+    RAISE EXCEPTION 'retired column: an INSERT naming blockedConstraintId was stored';
+  EXCEPTION WHEN undefined_column THEN NULL;
   END;
-  BEGIN
-    UPDATE "TeacherDuties" SET "blockedConstraintId" = c WHERE id = d;
-    RAISE EXCEPTION 'retired column: an UPDATE stored a value in blockedConstraintId';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
-  SELECT count(*) INTO n FROM "TeacherDutySlots" WHERE "availabilityConstraintId" = c;
-  IF n <> 0 THEN
-    RAISE EXCEPTION 'retired column: a write of the old column left % link(s)', n;
-  END IF;
-
-  -- Null, as the previous release's rollover writes it.
-  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
-  VALUES (school, me, year, 'RASTVAKT', 'RLS90 rullad', 20, NULL, now());
-  UPDATE "TeacherDuties" SET "blockedConstraintId" = NULL, "minutesPerWeek" = 61 WHERE id = d;
-  GET DIAGNOSTICS n = ROW_COUNT;
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'retired column: an UPDATE writing null to it changed % row(s)', n;
-  END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 91: en tjänsts perioder läses som tjänsten (20261022120000).
+--
+-- A period says what a post is from a date — "80 % från 1 november" — and is
+-- the post's HR data, so it carries the post's three arms exactly: the admin
+-- writes the school's, a TEACHER reads the periods of their OWN post and no
+-- colleague's and writes none, the service principal reads by school under
+-- the API's role alone, and nobody else reads anything. The copy-paste
+-- failure is again the one that matters — a staff arm would hand every
+-- teacher a colleague's nedsättning from January — so the teacher's read is
+-- an exact count against a colleague's period written in the same
+-- transaction, under the API's role and under PostgREST's. The tenant half
+-- counts the period the fixtures plant on school B's post.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; colleague uuid; y uuid; e_me uuid; e_col uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'post periods: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'post periods: % period(s) visible before any were written — school B''s must not show', n;
+  END IF;
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS91 år', DATE '2102-08-14', DATE '2103-06-10', false, now()) RETURNING id INTO y;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, me, y, 100, now()) RETURNING id INTO e_me;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, colleague, y, 100, now()) RETURNING id INTO e_col;
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+  VALUES (school, e_me, me, y, DATE '2102-11-01', DATE '2102-12-31', 80, now()),
+         (school, e_me, me, y, DATE '2103-01-07', NULL, 75, now()),
+         (school, e_col, colleague, y, DATE '2103-01-07', NULL, 50, now());
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  IF n <> 3 THEN RAISE EXCEPTION 'post periods: the admin reads % of the three periods they wrote', n; END IF;
+  PERFORM set_config('app.test_rls91_mine', e_me::text, true);
+  PERFORM set_config('app.test_rls91_theirs', e_col::text, true);
+  PERFORM set_config('app.test_rls91_me', me::text, true);
+  PERFORM set_config('app.test_rls91_year', y::text, true);
+END $$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+DO $$
+DECLARE
+  mine uuid := current_setting('app.test_rls91_mine')::uuid;
+  theirs uuid := current_setting('app.test_rls91_theirs')::uuid;
+  me uuid := current_setting('app.test_rls91_me')::uuid;
+  y uuid := current_setting('app.test_rls91_year')::uuid;
+  via text; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' OR app.current_user_id() <> me THEN
+    RAISE EXCEPTION 'post periods: expected the first teacher, am % (%)', app.current_user_role(), app.current_user_id();
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'post periods: running as %, not %', current_user, via; END IF;
+    SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+    IF n = 0 THEN
+      RAISE EXCEPTION 'post periods: through % a teacher cannot read their own post''s periods — the own arm is missing', via;
+    ELSIF n <> 2 THEN
+      RAISE EXCEPTION 'post periods: through % a teacher reads % period(s) where only their own two may show', via, n;
+    END IF;
+    SELECT count(*) INTO n FROM "TeacherEmploymentPeriods" WHERE "employmentId" = theirs;
+    IF n <> 0 THEN
+      RAISE EXCEPTION 'post periods: through % a teacher reads a colleague''s period', via;
+    END IF;
+    BEGIN
+      INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+      VALUES (app.current_school_id(), mine, me, y, DATE '2102-09-01', 100, now());
+      RAISE EXCEPTION 'post periods: through % a teacher gave their own post a period', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    UPDATE "TeacherEmploymentPeriods" SET "employmentPercent" = 100, "updatedAt" = now();
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'post periods: through % a teacher rewrote % period(s)', via, n; END IF;
+    DELETE FROM "TeacherEmploymentPeriods";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'post periods: through % a teacher removed % period(s)', via, n; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'post periods: expected the guardian'; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: a guardian reads % period(s)', n; END IF;
+END $$;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT' AND "authId" IS NOT NULL
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'post periods: expected a pupil, am %', app.current_user_role(); END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: a pupil reads % period(s)', n; END IF;
+END $$;
+
+-- School B's admin: their fixture post's period, none of school A's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'post periods: expected school B''s admin'; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'post periods: school B''s admin reads % period(s), expected exactly its fixture post''s one', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: school B''s admin reads % of school A''s periods', n; END IF;
+END $$;
+
+-- The service principal, user cleared: school A's three under the API's
+-- role, none of B's, no write — and nothing at all under PostgREST's.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', :'school_a', true);
+DO $$
+DECLARE n bigint; school_a uuid := app.current_service_school_id();
+BEGIN
+  IF app.current_user_id() IS NOT NULL OR school_a IS NULL THEN
+    RAISE EXCEPTION 'post periods: the service principal is not alone in force';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods" WHERE "schoolId" = school_a;
+  IF n <> 3 THEN RAISE EXCEPTION 'post periods: the service principal reads % of its school''s three periods', n; END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods" WHERE "schoolId" <> school_a;
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: the service principal leaked % period(s) of another school', n; END IF;
+  UPDATE "TeacherEmploymentPeriods" SET "employmentPercent" = 1, "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: the service principal rewrote % period(s)', n; END IF;
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  SET LOCAL ROLE app_authenticated;
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: under PostgREST''s role the service setting reads % period(s)', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 92: en period är en del av sin tjänst, och en dag har en tjänst
+-- (20261022120000).
+--
+-- The CHECKs the post has (tjänstgöringsgrad (0, 100], nedsättning inside it,
+-- riktmärke 0..2400) and Från <= Till, for every writer (23514). Two periods
+-- of one post never cover one day (EXCLUDE, 23P01): an overlap and an open
+-- Till over a later period are refused, the day after another's Till and the
+-- same dates on another post are not. The composite key keeps a period's
+-- teacher and year its post's (23503); a post deleted takes its periods, and
+-- a post moved to another teacher takes them along.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; colleague uuid; spare uuid; y uuid; y2 uuid; e uuid; e2 uuid; n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS92 år', DATE '2104-08-11', DATE '2105-06-08', false, now()) RETURNING id INTO y;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS92 år två', DATE '2105-08-10', DATE '2106-06-07', false, now()) RETURNING id INTO y2;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, me, y, 100, now()) RETURNING id INTO e;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, colleague, y, 100, now()) RETURNING id INTO e2;
+
+  -- The CHECKs. Only check_violation is caught.
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-11-01', 0, now());
+    RAISE EXCEPTION 'period integrity: a period of 0 %% was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-11-01', 100.5, now());
+    RAISE EXCEPTION 'period integrity: a period over 100 %% was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "reductionPercent", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-11-01', 60, 70, now());
+    RAISE EXCEPTION 'period integrity: a nedsättning larger than the period''s post was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "teachingTargetMinutesPerWeek", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-11-01', 80, 2401, now());
+    RAISE EXCEPTION 'period integrity: a riktmärke over 2400 was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-11-01', DATE '2104-10-31', 80, now());
+    RAISE EXCEPTION 'period integrity: a period ending before it starts was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- One day, one post: November, then December from the day after, then an
+  -- overlap and an open Till over a later period.
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+  VALUES (school, e, me, y, DATE '2104-11-01', DATE '2104-11-30', 80, now());
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+  VALUES (school, e, me, y, DATE '2104-12-01', DATE '2104-12-31', 70, now());
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-11-30', DATE '2104-12-01', 60, now());
+    RAISE EXCEPTION 'period integrity: two periods of one post share a day';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+    VALUES (school, e, me, y, DATE '2104-10-01', 60, now());
+    RAISE EXCEPTION 'period integrity: an open Till ran over a later period of the post';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherEmploymentPeriods" SET "validTo" = DATE '2104-12-15' WHERE "employmentId" = e AND "validFrom" = DATE '2104-11-01';
+    RAISE EXCEPTION 'period integrity: an UPDATE stretched a period over the next';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+  -- The same dates on another post are another post's.
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+  VALUES (school, e2, colleague, y, DATE '2104-11-01', DATE '2104-11-30', 50, now());
+
+  -- The key: a period's teacher and year are its post's.
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+    VALUES (school, e, colleague, y, DATE '2105-03-01', 80, now());
+    RAISE EXCEPTION 'period integrity: a period named another teacher than its post''s';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+    VALUES (school, e, me, y2, DATE '2105-09-01', 80, now());
+    RAISE EXCEPTION 'period integrity: a period named another year than its post''s';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  -- A post moved to another teacher (PostgREST can) takes its periods along.
+  DELETE FROM "TeacherEmployments" WHERE id = e2;
+  UPDATE "TeacherEmployments" SET "userId" = colleague WHERE id = e;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods" WHERE "employmentId" = e AND "userId" = colleague;
+  IF n <> 2 THEN RAISE EXCEPTION 'period integrity: % of the moved post''s two periods followed it', n; END IF;
+  -- And a post deleted takes them.
+  DELETE FROM "TeacherEmployments" WHERE id = e;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods" WHERE "employmentId" IN (e, e2);
+  IF n <> 0 THEN RAISE EXCEPTION 'period integrity: deleted posts left % period(s)', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 93: en periods versioner är tjänstens (20261022120000).
+--
+-- TeacherEmploymentLogs records a period as entity PERIOD through the same
+-- trigger function as the post and the uppdrag: CREATE with the period's
+-- dates and figures, UPDATE with what changed, a save that changed nothing as
+-- no version, DELETE with what it was, each by the admin. The function now
+-- reads `note` through the row's JSON (a period has none): the post's and
+-- the uppdrag's note changes are still "noteChanged", never the text. A post
+-- moved to another teacher gives each owner their own half of its periods'
+-- history, as an uppdrag moved does.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  admin uuid := app.current_user_id();
+  me uuid; colleague uuid; y uuid; e uuid; p uuid; d uuid; got text; n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS93 år', DATE '2106-08-16', DATE '2107-06-11', false, now()) RETURNING id INTO y;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, me, y, 100, now()) RETURNING id INTO e;
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+  VALUES (school, e, me, y, DATE '2106-11-01', 80, now()) RETURNING id INTO p;
+  UPDATE "TeacherEmploymentPeriods" SET "employmentPercent" = 75, "updatedAt" = now() WHERE id = p;
+  -- Saved again unchanged: no version.
+  UPDATE "TeacherEmploymentPeriods" SET "employmentPercent" = 75, "updatedAt" = now() WHERE id = p;
+  DELETE FROM "TeacherEmploymentPeriods" WHERE id = p;
+
+  SELECT string_agg(format('%s:%s:%s:%s:%s', version, entity, action,
+                           coalesce(before ->> 'employmentPercent', '-'), coalesce(after ->> 'employmentPercent', '-')),
+                    ' | ' ORDER BY version)
+    INTO got FROM "TeacherEmploymentLogs" WHERE "userId" = me AND "academicYearId" = y;
+  IF got IS DISTINCT FROM '1:EMPLOYMENT:CREATE:-:100.000 | 2:PERIOD:CREATE:-:80.000 | 3:PERIOD:UPDATE:80.000:75.000 | 4:PERIOD:DELETE:75.000:-' THEN
+    RAISE EXCEPTION 'period history: the versions are %', got;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = me AND "academicYearId" = y AND entity = 'PERIOD' AND "entityId" = p
+     AND "actorId" = admin AND COALESCE(after, before) ->> 'validFrom' = '2106-11-01'
+     AND NOT (COALESCE(after, before) ? 'schoolId') AND NOT (COALESCE(after, before) ? 'note');
+  IF n <> 3 THEN RAISE EXCEPTION 'period history: % of three versions carry the period''s dates, by the admin, without the stripped keys', n; END IF;
+
+  -- The post's note and an uppdrag's, read through the JSON now: still the
+  -- word, never the text.
+  UPDATE "TeacherEmployments" SET note = 'RLS93 hemligt', "updatedAt" = now() WHERE id = e;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, y, 'ANNAT', 'RLS93 uppdrag', 30, now()) RETURNING id INTO d;
+  UPDATE "TeacherDuties" SET note = 'RLS93 hemligt', "updatedAt" = now() WHERE id = d;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = me AND "academicYearId" = y AND action = 'UPDATE' AND entity IN ('EMPLOYMENT', 'DUTY')
+     AND (after ->> 'noteChanged')::boolean AND NOT (after::text LIKE '%RLS93 hemligt%');
+  IF n <> 2 THEN RAISE EXCEPTION 'period history: % of the post''s and the uppdrag''s note changes are noteChanged without the text', n; END IF;
+
+  -- A post moved: each owner their own half of its period's history.
+  INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+  VALUES (school, e, me, y, DATE '2107-01-07', 50, now()) RETURNING id INTO p;
+  UPDATE "TeacherEmployments" SET "userId" = colleague WHERE id = e;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "academicYearId" = y AND entity = 'PERIOD' AND "entityId" = p
+     AND ((("userId" = me) AND action = 'DELETE') OR (("userId" = colleague) AND action = 'CREATE'));
+  IF n <> 2 THEN RAISE EXCEPTION 'period history: a moved post''s period is % half/halves, expected the first owner''s DELETE and the second''s CREATE', n; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 94: periodtabellen börjar som en ny tabell ska (20261022120000).
+--
+-- Row security on, exactly the three arms with their roles (none TO PUBLIC),
+-- the grants of a table created after 20261016130000 — the API role reads and
+-- writes, PostgREST's role has no TRUNCATE, REFERENCES or TRIGGER (nor
+-- MAINTAIN on 17), anon nothing, service_role SELECT alone — the history
+-- trigger enabled on a SECURITY DEFINER function, the EXCLUDE in place, and
+-- the post key cascading both ways.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  rel regclass := '"TeacherEmploymentPeriods"'::regclass;
+  wrong text;
+  n integer;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = rel) THEN
+    RAISE EXCEPTION 'period table: row security is off';
+  END IF;
+  SELECT string_agg(format('%s %s', polname, polroles::regrole[]::text), ', ' ORDER BY polname) INTO wrong
+    FROM pg_policy WHERE polrelid = rel;
+  IF wrong IS DISTINCT FROM concat_ws(', ',
+       'teacher_employment_periods_admin_all {authenticated}',
+       'teacher_employment_periods_service_select {app_authenticated}',
+       'teacher_employment_periods_teacher_own_select {authenticated}') THEN
+    RAISE EXCEPTION 'period table: the arms are %', wrong;
+  END IF;
+  SELECT string_agg(item, ', ') INTO wrong FROM (
+    SELECT format('%s %s %s', r, priv, has_table_privilege(r, rel, priv)) AS item
+      FROM (VALUES ('app_authenticated', 'SELECT', true), ('app_authenticated', 'INSERT', true),
+                   ('app_authenticated', 'UPDATE', true), ('app_authenticated', 'DELETE', true),
+                   ('authenticated', 'TRUNCATE', false), ('authenticated', 'REFERENCES', false),
+                   ('authenticated', 'TRIGGER', false),
+                   ('service_role', 'SELECT', true), ('service_role', 'INSERT', false),
+                   ('service_role', 'UPDATE', false), ('service_role', 'DELETE', false))
+           AS t(r, priv, expected)
+     WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+       AND has_table_privilege(r, rel, priv) IS DISTINCT FROM expected
+  ) x;
+  IF wrong IS NOT NULL THEN RAISE EXCEPTION 'period table rights: %', wrong; END IF;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    EXECUTE $q$SELECT count(*) FROM (VALUES ('authenticated'), ('app_authenticated'), ('service_role')) AS t(r)
+               WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = t.r)
+                 AND has_table_privilege(t.r, '"TeacherEmploymentPeriods"'::regclass, 'MAINTAIN')$q$ INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'period table rights: % API role(s) hold MAINTAIN', n; END IF;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND has_any_column_privilege('anon', rel, 'SELECT') THEN
+    RAISE EXCEPTION 'period table rights: anon reads TeacherEmploymentPeriods';
+  END IF;
+  SELECT count(*) INTO n
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE t.tgrelid = rel AND t.tgname = 'TeacherEmploymentPeriods_log' AND t.tgenabled = 'O' AND p.prosecdef
+     AND p.proname = 'teacher_staffing_log';
+  IF n <> 1 THEN RAISE EXCEPTION 'period table: the history trigger is missing, disabled or not SECURITY DEFINER'; END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = rel AND contype = 'x' AND conname = 'TeacherEmploymentPeriods_do_not_overlap';
+  IF n <> 1 THEN RAISE EXCEPTION 'period table: the EXCLUDE constraint is missing'; END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = rel AND contype = 'f' AND conname = 'TeacherEmploymentPeriods_employment_fkey'
+     AND confrelid = '"TeacherEmployments"'::regclass AND confdeltype = 'c' AND confupdtype = 'c'
+     AND array_length(conkey, 1) = 4;
+  IF n <> 1 THEN RAISE EXCEPTION 'period table: the four-column post key is missing or does not cascade both ways'; END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- Section 120: läsloggen skrivs bara av databasen och läses bara av skolans

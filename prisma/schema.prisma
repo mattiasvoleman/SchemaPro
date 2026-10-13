@@ -197,6 +197,7 @@ model School {
   teacherDuties           TeacherDuty[]
   teacherDutySlots        TeacherDutySlot[]
   teacherEmploymentLogs   TeacherEmploymentLog[]
+  teacherEmploymentPeriods TeacherEmploymentPeriod[]
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
   academicYearTimplans    AcademicYearTimplan[]
@@ -2210,7 +2211,7 @@ model AvailabilityConstraint {
   /// 20261017090000): created and deleted by the duties service in the
   /// duty's transaction. Triggers keep it a weekly UNAVAILABLE row of the
   /// duty's own teacher and refuse a TEACHER writing it. The link table
-  /// replaced TeacherDuty.blockedConstraintId, retired by 20261022090000.
+  /// replaced TeacherDuty.blockedConstraintId (gone since 20261022100000).
   teacherDutySlot TeacherDutySlot? @relation("DutySlotConstraint")
 
   /// The target TeacherDutySlot's composite (availabilityConstraintId,
@@ -2450,12 +2451,54 @@ model TeacherEmployment {
   school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   user         User         @relation("EmploymentTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
   academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  /// The post from a date: tjänstgöringsgrad, nedsättning or riktmärke changed
+  /// for a stretch of the year (migration 20261022120000). A day no period
+  /// covers is this row's.
+  periods      TeacherEmploymentPeriod[]
 
   /// One post per teacher per year; schoolId leads so one school cannot fill
   /// another's slot, and the key doubles as the per-year listing's index.
   @@unique([schoolId, userId, academicYearId])
+  /// The target of a period's key, which keeps its owner and year the post's.
+  @@unique([id, schoolId, userId, academicYearId])
   @@index([schoolId, academicYearId])
   @@map("TeacherEmployments")
+}
+
+/// A stretch of a teacher's post with other figures: "80 % från 1 november".
+/// Overrides the base row (TeacherEmployment) on the days it covers; periods
+/// of one post never overlap (EXCLUDE), and lie inside the läsår (the service,
+/// against the year's bounds read FOR SHARE). States all three figures it
+/// carries, not only the ones that change. HR data, read exactly as the post
+/// is. See migration 20261022120000.
+model TeacherEmploymentPeriod {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String @db.Uuid
+  employmentId   String @db.Uuid
+  /// The post's own, kept so by the composite key to TeacherEmployments.
+  userId         String @db.Uuid
+  academicYearId String @db.Uuid
+  /// Från, inclusive.
+  validFrom      DateTime @db.Date
+  /// Till, inclusive; null = the läsår's last day. Not before validFrom (CHECK).
+  validTo        DateTime? @db.Date
+
+  /// (0, 100], three decimals, as on the base row.
+  employmentPercent            Decimal @db.Decimal(6, 3)
+  /// [0, employmentPercent].
+  reductionPercent             Decimal @default(0) @db.Decimal(6, 3)
+  /// Own riktmärke for the period, 0..2400; null = derived from the school's.
+  teachingTargetMinutesPerWeek Int?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school     School            @relation(fields: [schoolId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  employment TeacherEmployment @relation(fields: [employmentId, schoolId, userId, academicYearId], references: [id, schoolId, userId, academicYearId], onDelete: Cascade, onUpdate: Cascade, map: "TeacherEmploymentPeriods_employment_fkey")
+
+  @@index([schoolId, academicYearId])
+  @@index([employmentId])
+  @@map("TeacherEmploymentPeriods")
 }
 
 /// What a teacher may teach: one inclusive grade span per subject ("Ma 1-6"
@@ -2519,9 +2562,8 @@ model TeacherDuty {
   subjectId      String?         @db.Uuid
   /// Mentorskap's class. ON DELETE SET NULL of this column only.
   studentGroupId String?         @db.Uuid
-  // blockedConstraintId, the one-time column `slots` replaced, is not named
-  // here: 20261022090000 retired it (no trigger, no key, CHECK IS NULL) while
-  // the previous release still selected it, and a later migration drops it.
+  // blockedConstraintId, the one-time column `slots` replaced, was retired by
+  // 20261022090000 and dropped by 20261022100000.
   /// At most 500 characters.
   note           String?
   /// Från, inclusive; null = the läsår's first day. Inside the läsår (the
@@ -2574,6 +2616,8 @@ model TeacherDutySlot {
 enum TeacherLogEntity {
   EMPLOYMENT
   DUTY
+  /// A period of a post (migration 20261022110000).
+  PERIOD
 }
 
 /// What happened to the row: CREATE has only `after`, DELETE only `before`.

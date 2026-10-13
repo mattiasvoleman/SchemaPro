@@ -91,8 +91,9 @@ describe('TeacherEmploymentsService', () => {
       expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID },
         orderBy: { userId: 'asc' },
+        include: { periods: { orderBy: { validFrom: 'asc' } } },
       });
-      expect(answer[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 0 });
+      expect(answer[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 0, periods: [] });
       expect(typeof answer[0]!.employmentPercent).toBe('number');
     });
 
@@ -104,6 +105,7 @@ describe('TeacherEmploymentsService', () => {
       expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID, userId: ME },
         orderBy: { userId: 'asc' },
+        include: { periods: { orderBy: { validFrom: 'asc' } } },
       });
     });
 
@@ -137,6 +139,7 @@ describe('TeacherEmploymentsService', () => {
         where: KEY,
         create: { schoolId: SCHOOL_ID, userId: COLLEAGUE, academicYearId: YEAR_ID, ...data },
         update: data,
+        include: { periods: { orderBy: { validFrom: 'asc' } } },
       });
       expect(answer).toMatchObject({ userId: COLLEAGUE, employmentPercent: 80, signature: 'KOL' });
     });
@@ -244,6 +247,141 @@ describe('TeacherEmploymentsService', () => {
       await expect(
         service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 80 }, testUser()),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('periods (20261022120000)', () => {
+    const POSTS: LockedTable = {
+      name: 'TeacherEmployments',
+      columns: ['id', 'schoolId', 'userId', 'academicYearId', 'employmentPercent', 'reductionPercent'],
+      lock: 'FOR NO KEY UPDATE',
+    };
+    const YEARS: LockedTable = {
+      name: 'AcademicYears',
+      columns: ['id', 'startDate', 'endDate'],
+      lock: 'FOR SHARE',
+    };
+    const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+    let posts: Record<string, unknown>[];
+    let years: Record<string, unknown>[];
+
+    beforeEach(() => {
+      posts = [{ id: 'emp-1' }];
+      years = [{ id: YEAR_ID, startDate: day('2026-08-17'), endDate: day('2027-06-11') }];
+      // The year's bounds are read by "id" too; its row answers to the year's id.
+      queryRaw.mockImplementation((...call: unknown[]) => {
+        const sql = rawSql(call);
+        if (sql.includes('"TeacherEmployments"')) return Promise.resolve(lockingRead(POSTS, posts, call));
+        if (sql.includes('"AcademicYears"')) return Promise.resolve(lockingRead(YEARS, years, call));
+        return Promise.resolve(lockingRead(USERS, users, call));
+      });
+      tx.teacherEmployment.findUnique.mockResolvedValue({ id: 'emp-1' });
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([]);
+      tx.teacherEmploymentPeriod.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: 'period-new', ...data }),
+      );
+    });
+
+    const create = (dto: Record<string, unknown>) =>
+      service.createPeriod(COLLEAGUE, YEAR_ID, { validFrom: '2026-11-01', employmentPercent: 80, ...dto } as never, testUser());
+
+    it('locks the post, reads the year FOR SHARE, and writes the period on the post with its owner and year', async () => {
+      const answer = await create({});
+
+      expect(tx.teacherEmployment.findUnique).toHaveBeenCalledWith({ where: KEY, select: { id: true } });
+      const sql = queryRaw.mock.calls.map((call) => rawSql(call).replace(/\s+/g, ' '));
+      expect(sql[0]).toContain('FROM "TeacherEmployments" WHERE "id" = ?::uuid FOR NO KEY UPDATE');
+      expect(sql[1]).toContain('FROM "AcademicYears" WHERE "id" = ?::uuid FOR SHARE');
+      expect(tx.teacherEmploymentPeriod.create).toHaveBeenCalledWith({
+        data: {
+          schoolId: SCHOOL_ID,
+          employmentId: 'emp-1',
+          userId: COLLEAGUE,
+          academicYearId: YEAR_ID,
+          validFrom: day('2026-11-01'),
+          validTo: null,
+          employmentPercent: 80,
+          reductionPercent: 0,
+          teachingTargetMinutesPerWeek: null,
+        },
+      });
+      expect(answer).toEqual({
+        id: 'period-new',
+        employmentId: 'emp-1',
+        validFrom: '2026-11-01',
+        validTo: null,
+        employmentPercent: 80,
+        reductionPercent: 0,
+        teachingTargetMinutesPerWeek: null,
+      });
+    });
+
+    it('refuses a period on a teacher with no post that year', async () => {
+      tx.teacherEmployment.findUnique.mockResolvedValue(null);
+      await expect(create({})).rejects.toBeInstanceOf(NotFoundException);
+      expect(tx.teacherEmploymentPeriod.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses dates outside the läsår, Till before Från, and a nedsättning above the post', async () => {
+      await expect(create({ validFrom: '2026-08-10' })).rejects.toThrow('validFrom: 2026-08-10 ligger utanför läsåret');
+      await expect(create({ validTo: '2027-06-30' })).rejects.toThrow('validTo: 2027-06-30 ligger utanför läsåret');
+      await expect(create({ validTo: '2026-10-31' })).rejects.toThrow('validTo: perioden kan inte sluta');
+      await expect(create({ reductionPercent: 90 })).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.teacherEmploymentPeriod.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a period that holds no Monday of the year, since a week is the post in force on its Monday', async () => {
+      await expect(create({ validFrom: '2026-11-10', validTo: '2026-11-13' })).rejects.toThrow('innehåller ingen måndag');
+      // Tuesday to the next Monday holds one.
+      await expect(create({ validFrom: '2026-11-10', validTo: '2026-11-16' })).resolves.toMatchObject({ validFrom: '2026-11-10' });
+    });
+
+    it('answers an overlap with another period of the post with 409, naming its dates', async () => {
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([{ validFrom: day('2027-01-07'), validTo: null }]);
+      await expect(create({ validTo: '2027-01-07' })).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: 'EMPLOYMENT_PERIOD_OVERLAP',
+          message: expect.stringContaining('(2027-01-07 till 2027-06-11)'),
+        }),
+      });
+      // Ending the day before is no overlap.
+      await expect(create({ validTo: '2027-01-06' })).resolves.toBeDefined();
+      expect(tx.teacherEmploymentPeriod.findMany).toHaveBeenLastCalledWith({
+        where: { employmentId: 'emp-1' },
+        select: { validFrom: true, validTo: true },
+        orderBy: { validFrom: 'asc' },
+      });
+    });
+
+    it('rewrites a period on its own post, measured against the others but not itself', async () => {
+      tx.teacherEmploymentPeriod.findUnique.mockResolvedValue({ employmentId: 'emp-1', academicYearId: YEAR_ID });
+      tx.teacherEmploymentPeriod.update.mockResolvedValue({
+        id: 'period-1', employmentId: 'emp-1', validFrom: day('2026-11-02'), validTo: null,
+        employmentPercent: new Prisma.Decimal('75.000'), reductionPercent: new Prisma.Decimal('0.000'), teachingTargetMinutesPerWeek: null,
+      });
+      const answer = await service.updatePeriod('period-1', { validFrom: '2026-11-02', employmentPercent: 75 } as never, testUser());
+      expect(tx.teacherEmploymentPeriod.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { employmentId: 'emp-1', id: { not: 'period-1' } } }),
+      );
+      expect(answer.employmentPercent).toBe(75);
+    });
+
+    it('answers 404 for a period the caller cannot see, and removes one under its post\'s lock', async () => {
+      tx.teacherEmploymentPeriod.findUnique.mockResolvedValue(null);
+      await expect(service.removePeriod('period-x', testUser())).rejects.toBeInstanceOf(NotFoundException);
+      tx.teacherEmploymentPeriod.findUnique.mockResolvedValue({ employmentId: 'emp-1', academicYearId: YEAR_ID });
+      await service.removePeriod('period-1', testUser());
+      expect(tx.teacherEmploymentPeriod.delete).toHaveBeenCalledWith({ where: { id: 'period-1' } });
+    });
+
+    it('answers the EXCLUDE constraint as the same 409, for a writer that did not take the lock', async () => {
+      tx.teacherEmploymentPeriod.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('conflicting key value violates exclusion constraint "TeacherEmploymentPeriods_do_not_overlap"', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+      await expect(create({})).rejects.toBeInstanceOf(ConflictException);
     });
   });
 

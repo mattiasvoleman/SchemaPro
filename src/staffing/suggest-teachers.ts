@@ -1,9 +1,11 @@
+import { changesDuringYear } from './employment-periods';
 import {
   DEFAULT_LOAD_POLICY,
   QUALIFICATION_RANK,
   chargedMinutes,
   countedMinutesByTeacher,
   loadStatus,
+  stretchLoads,
   strongestCoveringQualification,
   targetMinutesPerWeek,
   type GradeSpan,
@@ -104,6 +106,9 @@ export interface LastYearTeachers {
  * wouldExceed and status come from loadStatus over countedMinutesByTeacher,
  * which is exactly the question STAFF_TEACHER_OVER_TARGET asks of the write —
  * wouldExceed only for a row that adds minutes, as the write asks only then.
+ * For a teacher whose post changes during the year the same question is asked
+ * stretch by stretch, as STAFF_TEACHER_OVER_TARGET_IN_PERIOD asks it: the
+ * room left is the tightest stretch's, the status the worst stretch's.
  *
  * PURE: the caller reads the rows; nothing here knows a name.
  */
@@ -136,12 +141,59 @@ export function suggestTeachers(
   const lastYearTeachers = new Set(lastYear?.teacherIds ?? []);
   const familiar = subjectFamiliarTeachers(input, requirementId, lastYear);
 
+  const withoutLead = input.requirements.map((row) =>
+    row.id === requirementId ? { ...row, teacherId: null } : row,
+  );
   const candidates: TeacherCandidate[] = [];
   for (const userId of new Set(staffIds)) {
     if (userId === requirement.coTeacherId) continue;
-    const target = targetMinutesPerWeek(employmentByUser.get(userId) ?? null, policy);
-    const after = (base.get(userId) ?? 0) + charge;
-    const status = loadStatus(after, target, policy.overAllocationTolerancePercent);
+    const employment = employmentByUser.get(userId) ?? null;
+    const changing = employment !== null && changesDuringYear(employment, input.year) ? employment : null;
+    let remainingMinutesPerWeek: number | null;
+    let wouldExceed: boolean;
+    let status: LoadStatus;
+    if (changing) {
+      // A post that changes during the year: stretch by stretch, as the write
+      // is judged (staffing-checks.ts overTargetFindingByStretch). The
+      // tightest stretch is the room left; the worst is the status; and it
+      // would exceed exactly when some stretch the row adds to goes over.
+      const tolerance = policy.overAllocationTolerancePercent;
+      const without = stretchLoads({ ...input, requirements: withoutLead }, changing);
+      const taking = stretchLoads(
+        {
+          ...input,
+          requirements: input.requirements.map((row) => (row.id === requirementId ? { ...row, teacherId: userId } : row)),
+        },
+        changing,
+      );
+      const judged = taking.filter((stretch) => stretch.weeks > 0);
+      const rooms = judged
+        .filter((stretch) => stretch.target !== null)
+        .map((stretch) => stretch.target! - Math.round(stretch.counted));
+      remainingMinutesPerWeek = rooms.length === 0 ? null : Math.min(...rooms);
+      wouldExceed = taking.some(
+        (stretch, index) =>
+          stretch.weeks > 0 &&
+          stretch.counted > (without[index]?.counted ?? 0) + 1e-9 &&
+          loadStatus(stretch.counted, stretch.target, tolerance) === 'OVER',
+      );
+      status = judged.reduce<LoadStatus>(
+        (worst, stretch) => {
+          const next = loadStatus(stretch.counted, stretch.target, tolerance);
+          return STATUS_RANK[next] < STATUS_RANK[worst] ? next : worst;
+        },
+        'NO_TARGET',
+      );
+    } else {
+      const target = targetMinutesPerWeek(employment, policy);
+      const after = (base.get(userId) ?? 0) + charge;
+      status = loadStatus(after, target, policy.overAllocationTolerancePercent);
+      remainingMinutesPerWeek = target === null ? null : target - Math.round(after);
+      // Only a row that adds minutes can take anybody past the limit: the
+      // over-target check asks of no other write (overTargetFinding), and a
+      // 0 % row must not warn the admin off a teacher the write lets through.
+      wouldExceed = charge > 1e-9 && status === 'OVER';
+    }
     candidates.push({
       userId,
       qualificationKind: qualificationsRecorded
@@ -155,11 +207,8 @@ export function suggestTeachers(
       ),
       taughtLastYear: lastYearTeachers.has(userId),
       currentlyAssigned: requirement.teacherId === userId,
-      remainingMinutesPerWeek: target === null ? null : target - Math.round(after),
-      // Only a row that adds minutes can take anybody past the limit: the
-      // over-target check asks of no other write (overTargetFinding), and a
-      // 0 % row must not warn the admin off a teacher the write lets through.
-      wouldExceed: charge > 1e-9 && status === 'OVER',
+      remainingMinutesPerWeek,
+      wouldExceed,
       status,
     });
   }
@@ -191,6 +240,9 @@ export function suggestTeachers(
     candidates,
   };
 }
+
+/** OVER first, as the matrix sorts: the worst of a changing post's stretches is its status. */
+const STATUS_RANK: Record<LoadStatus, number> = { OVER: 0, UNDER: 1, OK: 2, NO_TARGET: 3 };
 
 /**
  * Who "already teaches the subject" for one timplanspost: everybody who leads

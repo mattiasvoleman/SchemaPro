@@ -186,6 +186,30 @@ describe('suggestTeachers', () => {
     ]);
   });
 
+  it('judges a post that changes during the year per stretch, as the write does: the tightest room, the worst status', () => {
+    // Anna is 100 % (target 1080) until 31 October and 50 % (540) from
+    // 1 November, carrying 400 all year; the row adds 240 all year. Bo's post
+    // does not change.
+    const spring = { validFrom: '2026-11-01', validTo: null, employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: null };
+    const year = input({
+      employments: [post(ANNA, { periods: [spring] }), post(BO)],
+      requirements: [row('target'), row('held', { teacherId: ANNA, lessonsPerWeek: 8, minutesPerLesson: 50 })],
+    });
+    const anna = suggestTeachers(year, 'target', [ANNA, BO]).candidates.find((c) => c.userId === ANNA)!;
+    // 640 against 540 (limit 594) from November: over, 100 short — where the
+    // year's figure alone (640 against 1080) has room.
+    expect(anna).toMatchObject({ remainingMinutesPerWeek: -100, wouldExceed: true, status: 'OVER' });
+    // An autumn-only row adds nothing to the 50 % stretch: room is the
+    // spring's (540 − 400), nothing exceeds, and the worst stretch is the
+    // autumn's 640 against 1080, UNDER.
+    const autumn = { ...year, requirements: year.requirements.map((r) => (r.id === 'target' ? { ...r, startDate: '2026-08-17', endDate: '2026-10-30' } : r)) };
+    expect(suggestTeachers(autumn, 'target', [ANNA]).candidates[0]).toMatchObject({
+      remainingMinutesPerWeek: 140,
+      wouldExceed: false,
+      status: 'UNDER',
+    });
+  });
+
   it('never says wouldExceed for a row that charges nothing, which the write lets through', () => {
     // A resurslärare row at 0 %: Anna is already over (240 of 200), but taking
     // this row adds nothing, and the over-target check asks only of a write

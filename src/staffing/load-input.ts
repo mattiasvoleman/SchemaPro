@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import { loadWeightOf, type GradeSpan, type LoadInput, type LoadModel } from './teacher-load';
+import type { LoadPeriod } from './employment-periods';
 import type { YearBounds } from './teaching-weeks';
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
@@ -88,7 +89,21 @@ export async function readLoadInput(
       studentGroup: { select: { name: true, gradeLevel: true } },
     },
   });
-  const employments = await tx.teacherEmployment.findMany({ where: { academicYearId } });
+  const posts = await tx.teacherEmployment.findMany({ where: { academicYearId } });
+  // The posts' periods (migration 20261022120000), under the same arms as the
+  // posts: a TEACHER gets their own post's and nobody else's. Asked only of a
+  // year that has posts, so a school without any sends what it always did.
+  const periodRows =
+    posts.length > 0
+      ? await tx.teacherEmploymentPeriod.findMany({
+          where: { academicYearId },
+          orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
+        })
+      : [];
+  const employments = posts.map((post) => ({
+    ...post,
+    periods: (periodRows ?? []).filter((period) => period.employmentId === post.id),
+  }));
   const policy = await tx.staffingPolicy.findUnique({ where: { schoolId } });
   // The Faktor model's weights, read only when the school counts by factor: a
   // MINUTES school (every school until it says otherwise) sends exactly the
@@ -199,6 +214,8 @@ export async function readLoadInput(
       contractKind: row.contractKind,
       teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
       signature: row.signature,
+      // Only when there are any: a post that does not change is the object it always was.
+      ...((row.periods ?? []).length > 0 ? { periods: (row.periods ?? []).map(toLoadPeriod) } : {}),
     })),
     requirements: requirements.map((row) => ({
       id: row.id,
@@ -253,6 +270,23 @@ export async function readLoadInput(
     groupName: (groupId) => groups.get(groupId)?.name,
     loadModel,
     weightOf,
+  };
+}
+
+/** A stored period as the report and the checks read it. */
+export function toLoadPeriod(row: {
+  validFrom: Date;
+  validTo: Date | null;
+  employmentPercent: unknown;
+  reductionPercent: unknown;
+  teachingTargetMinutesPerWeek: number | null;
+}): LoadPeriod {
+  return {
+    validFrom: asDay(row.validFrom),
+    validTo: asDayOrNull(row.validTo),
+    employmentPercent: Number(row.employmentPercent),
+    reductionPercent: Number(row.reductionPercent),
+    teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
   };
 }
 

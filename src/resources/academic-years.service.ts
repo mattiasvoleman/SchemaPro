@@ -425,7 +425,25 @@ export class AcademicYearsService {
       },
     });
 
-    if (stranded === 0 && strandedBreaks === 0 && strandedDuties === 0) return;
+    /*
+     * A post's periods (20261022120000) likewise: one outside its year would
+     * cut weeks of no year out of the post, and TeacherEmploymentsService
+     * reads the bounds FOR SHARE before it writes one. A period's Från is
+     * required; an open Till reads as the year's own last day.
+     */
+    const strandedPeriods = await tx.teacherEmploymentPeriod.count({
+      where: {
+        academicYearId: id,
+        OR: [
+          { validFrom: { lt: startDate } },
+          { validFrom: { gt: endDate } },
+          { validTo: { lt: startDate } },
+          { validTo: { gt: endDate } },
+        ],
+      },
+    });
+
+    if (stranded === 0 && strandedBreaks === 0 && strandedDuties === 0 && strandedPeriods === 0) return;
 
     const asDate = (value: Date): string => value.toISOString().slice(0, 10);
     const parts: string[] = [];
@@ -439,6 +457,9 @@ export class AcademicYearsService {
     }
     if (strandedDuties > 0) {
       parts.push(`${strandedDuties} uppdrag`);
+    }
+    if (strandedPeriods > 0) {
+      parts.push(`${strandedPeriods} employment period${strandedPeriods === 1 ? '' : 's'}`);
     }
     throw new BadRequestException(
       `${parts.join(parts.length > 2 ? ', ' : ' and ')} would fall outside the new academic year ` +

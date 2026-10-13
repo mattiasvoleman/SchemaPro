@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Post,
   Put,
   Query,
   UseGuards,
@@ -19,10 +20,11 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
   TeacherEmploymentsService,
+  type TeacherEmploymentPeriodResponse,
   type TeacherEmploymentResponse,
   type TeacherHistoryResponse,
 } from './teacher-employments.service';
-import { UpsertTeacherEmploymentDto } from './dto/teacher-employment.dto';
+import { UpsertTeacherEmploymentDto, UpsertTeacherEmploymentPeriodDto } from './dto/teacher-employment.dto';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -40,6 +42,11 @@ const uuid = () => new ParseUUIDPipe({ version: '4' });
  * KEYED ON TEACHER AND YEAR, both in the URL. One row per pair, so PUT on the
  * pair is the whole write surface, as with the work rules — but per year, because
  * a tjänstgöringsgrad is renegotiated every August.
+ *
+ * PERIODS (migration 20261022120000) change the post from a date. A new one
+ * is POSTed on the post's teacher and year; an existing one is rewritten or
+ * removed by its id. Admin-only, like the post: the list hands a teacher
+ * their own post's periods with the post.
  */
 @Controller('api/v1/teacher-employments')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -78,6 +85,38 @@ export class TeacherEmploymentsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<TeacherEmploymentResponse> {
     return this.employments.upsert(userId, academicYearId, dto, user);
+  }
+
+  /** `/:userId/periods?academicYearId=` — the post from a date. */
+  @Post(':userId/periods')
+  @Roles(Role.SCHOOL_ADMIN)
+  createPeriod(
+    @Param('userId', uuid()) userId: string,
+    @Query('academicYearId', uuid()) academicYearId: string,
+    @Body() dto: UpsertTeacherEmploymentPeriodDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<TeacherEmploymentPeriodResponse> {
+    return this.employments.createPeriod(userId, academicYearId, dto, user);
+  }
+
+  @Put('periods/:periodId')
+  @Roles(Role.SCHOOL_ADMIN)
+  updatePeriod(
+    @Param('periodId', uuid()) periodId: string,
+    @Body() dto: UpsertTeacherEmploymentPeriodDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<TeacherEmploymentPeriodResponse> {
+    return this.employments.updatePeriod(periodId, dto, user);
+  }
+
+  @Delete('periods/:periodId')
+  @Roles(Role.SCHOOL_ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removePeriod(
+    @Param('periodId', uuid()) periodId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
+    await this.employments.removePeriod(periodId, user);
   }
 
   @Delete(':userId')

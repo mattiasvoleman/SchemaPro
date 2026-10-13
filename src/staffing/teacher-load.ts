@@ -4,6 +4,7 @@ import type {
   TeacherQualificationKind,
 } from '@prisma/client';
 import { weeklyMinutesOf } from '../common/lesson-lengths';
+import { changesDuringYear, postStretches, type LoadPeriod, type PostStretchDates } from './employment-periods';
 import {
   peakPerWeekByKey,
   teachingWeeks,
@@ -126,6 +127,26 @@ import {
  * are the school's figure unscaled; whether they shrink with a deltid is the
  * school's call, not this module's.
  *
+ * A POST THAT CHANGES DURING THE YEAR IS JUDGED PER STRETCH (migration
+ * 20261022120000). A post's periods — 80 % from 1 november — cut the year
+ * into stretches of whole ISO weeks (employment-periods.ts): the target
+ * applies per week, as the post in force on its Monday. Each stretch is
+ * reported with its own target, counted minutes, saldo and status
+ * (`periods`): the minutes a row charges in a stretch are its standardvecka
+ * over the stretch's weeks, the year's arithmetic with the stretch as the
+ * frame, so an undated row weighs what it weighs all year and a term course
+ * weighs its share of the stretch. The teacher's status is the WORST stretch
+ * with teaching weeks — "över mål från 1 nov" is OVER — while the year's
+ * target is the stretches' targets weighted by their teaching weeks
+ * (school-wide lov subtracted), and saldo and percentOfTarget compare the
+ * year's counted minutes with it. The annual block likewise sums the
+ * stretches: reglerad arbetstid, årsarbetstid and the semestertjänst's week
+ * are the post's percentage weighted by the weeks it held. A post with no
+ * period in the year has one stretch and every figure the one it always had
+ * (`periods: []`, computed by the code that computed it before). Subjects'
+ * percentOfEmployment stays the year-start post's: SCB asks about its
+ * mätdatum, which is the next release's reader of the periods.
+ *
  * BEHÖRIGHET IS CHECKED ONLY WHEN THE SCHOOL HAS SAID SOMETHING. A school with
  * zero qualification rows has not recorded that nobody is qualified, it has
  * recorded nothing, and flagging all 300 of its assignments would be noise that
@@ -208,6 +229,12 @@ export interface LoadEmployment {
   contractKind: TeacherContractKind;
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
+  /**
+   * The post's periods (migration 20261022120000), each overriding the three
+   * figures above on the days it covers. Absent or empty: the post is the
+   * same all year, and every figure is the one it always was.
+   */
+  periods?: readonly LoadPeriod[];
 }
 
 export interface LoadRequirement extends TeachingPeriod {
@@ -327,6 +354,36 @@ export interface TeacherAssignment {
   hoursPerYear: number;
 }
 
+/**
+ * One stretch of a post that changes during the year, judged on its own: the
+ * dates it states, the figures it carries, and the load in its weeks.
+ */
+export interface PeriodLoad {
+  /** The stretch's dates as the school stated them, yyyy-mm-dd inclusive. */
+  from: string;
+  to: string;
+  /** BASE: on the base row, between or around the periods. PERIOD: a period of the post. */
+  kind: 'BASE' | 'PERIOD';
+  /**
+   * The first and last day of the whole weeks the stretch's figures hold for
+   * (a week is the post in force on its Monday); null when it holds none.
+   */
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  employmentPercent: number;
+  reductionPercent: number;
+  /** The own riktmärke stated for the stretch; null = derived from the school's. */
+  ownTargetMinutesPerWeek: number | null;
+  targetMinutesPerWeek: number | null;
+  /** Teaching weeks of the stretch, school-wide lov subtracted, one decimal. */
+  teachingWeeks: number;
+  /** Teaching plus counted uppdrag, as a standardvecka over the stretch's weeks. */
+  countedMinutesPerWeek: number;
+  balanceMinutesPerWeek: number | null;
+  percentOfTarget: number | null;
+  status: LoadStatus;
+}
+
 export interface TeacherLoad {
   userId: string;
   employment: LoadEmployment | null;
@@ -353,7 +410,13 @@ export interface TeacherLoad {
   /** target − counted: kvar till mål when positive, över mål when negative. */
   balanceMinutesPerWeek: number | null;
   percentOfTarget: number | null;
+  /** The worst stretch's status when the post changes during the year. */
   status: LoadStatus;
+  /**
+   * The post's stretches when it changes during the year, in date order;
+   * empty when it does not, and the figures above are the whole story.
+   */
+  periods: PeriodLoad[];
   requirementCount: number;
   dutyCount: number;
   subjects: SubjectLoad[];
@@ -657,6 +720,138 @@ export function chargedMinutes(
   };
 }
 
+/** A dated period cut to a window of whole weeks; teachingWeeks clamps the rest. */
+const within = (period: TeachingPeriod, window: YearBounds): TeachingPeriod => ({
+  recurrence: period.recurrence,
+  startDate: period.startDate && period.startDate > window.startDate ? period.startDate : window.startDate,
+  endDate: period.endDate && period.endDate < window.endDate ? period.endDate : window.endDate,
+});
+
+/**
+ * standardWeekWeight with a stretch of whole weeks as the frame instead of
+ * the year: an undated row weighs its flat figure in every stretch, as it
+ * does in the year; a dated row its teaching weeks in the stretch over the
+ * stretch's teaching weeks, lov subtracted from both, by the same grade rule.
+ */
+export function stretchWeight(
+  requirement: TeachingPeriod & { gradeSpan?: GradeSpan | null },
+  year: YearBounds,
+  window: YearBounds,
+  closures: ClosedRange[],
+): number {
+  if (!requirement.startDate && !requirement.endDate) {
+    return (requirement.recurrence ?? 'ALL_WEEKS') === 'ALL_WEEKS' ? 1 : 0.5;
+  }
+  const gradeLevel = singleGrade(requirement.gradeSpan ?? null);
+  const frameWeeks = teachingWeeks(window, year, closures, gradeLevel);
+  if (frameWeeks === 0) return 0;
+  return teachingWeeks(within(requirement, window), year, closures, gradeLevel) / frameWeeks;
+}
+
+/** An uppdrag's minutes in a stretch: whole when undated, else its share of the stretch's weeks. */
+function dutyMinutesInWindow(
+  duty: Pick<LoadDuty, 'minutesPerWeek' | 'validFrom' | 'validTo'>,
+  year: YearBounds,
+  window: YearBounds,
+  closures: ClosedRange[],
+): number {
+  if (!isDated(duty)) return duty.minutesPerWeek;
+  const frameWeeks = teachingWeeks(window, year, closures, null);
+  if (frameWeeks === 0) return 0;
+  return (duty.minutesPerWeek * teachingWeeks(within(dutyPeriod(duty), window), year, closures, null)) / frameWeeks;
+}
+
+type StretchInput = Pick<LoadInput, 'year' | 'closures' | 'requirements' | 'duties' | 'policy'>;
+
+/** One teacher's counted minutes in a window of whole weeks, unrounded: chargedMinutes' roles at stretchWeight. */
+function countedInWindow(userId: string, input: StretchInput, window: YearBounds): number {
+  let counted = 0;
+  for (const requirement of input.requirements) {
+    if (requirement.teacherId !== userId && requirement.coTeacherId !== userId) continue;
+    const weight = stretchWeight(requirement, input.year, window, input.closures);
+    if (weight === 0) continue;
+    const lesson = weeklyMinutesOf(requirement) * weight;
+    if (requirement.teacherId === userId) {
+      counted += weigh((lesson * requirement.teacherLoadPercent) / 100, requirement.loadWeight);
+    }
+    if (requirement.coTeacherId === userId) {
+      counted += weigh((lesson * requirement.coTeacherLoadPercent) / 100, requirement.loadWeight);
+    }
+  }
+  for (const duty of input.duties) {
+    if (duty.userId !== userId || !duty.countsAsTeaching) continue;
+    counted += dutyMinutesInWindow(duty, input.year, window, input.closures);
+  }
+  return counted;
+}
+
+/** One stretch of a post with what the target is compared with in it, unrounded. */
+export interface StretchLoad {
+  stretch: PostStretchDates;
+  target: number | null;
+  /** Teaching plus counted uppdrag, standardvecka over the stretch's weeks. */
+  counted: number;
+  /** The stretch's teaching weeks, school-wide lov subtracted. */
+  weeks: number;
+}
+
+/**
+ * A post over the läsår, stretch by stretch (employment-periods.ts): each
+ * with its target and the employment's teacher's counted minutes in its
+ * weeks. The report's `periods`, the two write-time checks and the picker
+ * all come through here, so a stretch the matrix calls OVER is the stretch a
+ * write is refused for.
+ */
+export function stretchLoads(input: StretchInput, employment: LoadEmployment): StretchLoad[] {
+  const policy = input.policy ?? DEFAULT_LOAD_POLICY;
+  return postStretches(employment, input.year).map((stretch) => ({
+    stretch,
+    target: targetMinutesPerWeek({ ...employment, ...stretch.figures }, policy),
+    counted: stretch.window ? countedInWindow(employment.userId, input, stretch.window) : 0,
+    weeks: stretch.window ? teachingWeeks(stretch.window, input.year, input.closures, null) : 0,
+  }));
+}
+
+/**
+ * A changing post's figure for the year: each stretch's value weighted by its
+ * teaching weeks. Null when a stretch's value is null (a target the school
+ * has not set for part of the year), and `fallback` for a year with no
+ * teaching weeks at all.
+ */
+function weightedByWeeks(
+  stretches: readonly StretchLoad[],
+  valueOf: (stretch: StretchLoad) => number | null,
+  fallback: number | null,
+): number | null {
+  const weeks = stretches.reduce((sum, stretch) => sum + stretch.weeks, 0);
+  if (weeks === 0) return fallback;
+  let sum = 0;
+  for (const stretch of stretches) {
+    if (stretch.weeks === 0) continue;
+    const value = valueOf(stretch);
+    if (value === null) return null;
+    sum += value * stretch.weeks;
+  }
+  return sum / weeks;
+}
+
+/**
+ * The worst status among the stretches that hold teaching weeks — OVER, then
+ * UNDER, OK and NO_TARGET, as the matrix sorts — or null when none holds any.
+ */
+export function worstStretchStatus(
+  stretches: readonly StretchLoad[],
+  tolerancePercent: number,
+): LoadStatus | null {
+  let worst: LoadStatus | null = null;
+  for (const stretch of stretches) {
+    if (stretch.weeks === 0) continue;
+    const status = loadStatus(stretch.counted, stretch.target, tolerancePercent);
+    if (worst === null || STATUS_ORDER[status] < STATUS_ORDER[worst]) worst = status;
+  }
+  return worst;
+}
+
 interface Accumulator {
   assigned: number;
   annualMinutes: number;
@@ -857,16 +1052,36 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   let teacherMinutesPerWeek = 0;
   let dutyMinutesPerWeek = 0;
   const teachers: TeacherLoad[] = [];
+  // The year's target per teacher, as the report states it: the bottlenecks
+  // below measure room against the same figure.
+  const reportedTargets = new Map<string, number | null>();
+  const tolerance = policy.overAllocationTolerancePercent;
   for (const [userId, acc] of accumulators) {
     const employment = employmentByUser.get(userId) ?? null;
-    const target = targetMinutesPerWeek(employment, policy);
     const assigned = Math.round(acc.assigned);
     const counted = acc.assigned + acc.countedDutyMinutes;
     teacherMinutesPerWeek += acc.assigned;
     dutyMinutesPerWeek += acc.dutyMinutes;
-    const activePercent = employment
+    // A post that changes during the year is judged stretch by stretch; one
+    // that does not reads exactly the figures it always did, by the same code.
+    const stretches =
+      employment !== null && changesDuringYear(employment, year) ? stretchLoads(input, employment) : null;
+    const baseTarget = targetMinutesPerWeek(employment, policy);
+    const yearTarget = stretches
+      ? weightedByWeeks(stretches, (stretch) => stretch.target, baseTarget)
+      : baseTarget;
+    const target = yearTarget === null ? null : Math.round(yearTarget);
+    reportedTargets.set(userId, target);
+    const baseActive = employment
       ? employment.employmentPercent - employment.reductionPercent
       : null;
+    const activePercent = stretches
+      ? weightedByWeeks(
+          stretches,
+          (stretch) => stretch.stretch.figures.employmentPercent - stretch.stretch.figures.reductionPercent,
+          baseActive,
+        )
+      : baseActive;
     const regulated =
       activePercent === null ? null : (policy.fullTimeRegulatedHoursPerYear * activePercent) / 100;
     const ferie = employment !== null && employment.contractKind === 'FERIE';
@@ -910,7 +1125,9 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       countedMinutesPerWeek: Math.round(counted),
       balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
       percentOfTarget: percentOfTarget(counted, target),
-      status: loadStatus(counted, target, policy.overAllocationTolerancePercent),
+      status:
+        (stretches && worstStretchStatus(stretches, tolerance)) ?? loadStatus(counted, target, tolerance),
+      periods: (stretches ?? []).map((stretch) => periodLoad(stretch, tolerance)),
       requirementCount: acc.requirementCount,
       dutyCount: acc.dutyCount,
       subjects,
@@ -973,7 +1190,9 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       let withTarget = 0;
       let noTarget = 0;
       for (const userId of holders.get(subjectId) ?? []) {
-        const target = targetMinutesPerWeek(employmentByUser.get(userId) ?? null, policy);
+        const target = reportedTargets.has(userId)
+          ? reportedTargets.get(userId)!
+          : targetMinutesPerWeek(employmentByUser.get(userId) ?? null, policy);
         if (target === null) {
           noTarget += 1;
           continue;
@@ -1020,6 +1239,27 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       lessonMinutesPerWeek: Math.round(lessonMinutesPerWeek),
       dutyMinutesPerWeek: Math.round(dutyMinutesPerWeek),
     },
+  };
+}
+
+/** A stretch as the report hands it out: whole minutes, one-decimal weeks. */
+function periodLoad(stretch: StretchLoad, tolerancePercent: number): PeriodLoad {
+  const { figures, window } = stretch.stretch;
+  return {
+    from: stretch.stretch.from,
+    to: stretch.stretch.to,
+    kind: stretch.stretch.kind,
+    effectiveFrom: window?.startDate ?? null,
+    effectiveTo: window?.endDate ?? null,
+    employmentPercent: figures.employmentPercent,
+    reductionPercent: figures.reductionPercent,
+    ownTargetMinutesPerWeek: figures.teachingTargetMinutesPerWeek,
+    targetMinutesPerWeek: stretch.target,
+    teachingWeeks: round1(stretch.weeks),
+    countedMinutesPerWeek: Math.round(stretch.counted),
+    balanceMinutesPerWeek: stretch.target === null ? null : stretch.target - Math.round(stretch.counted),
+    percentOfTarget: percentOfTarget(stretch.counted, stretch.target),
+    status: loadStatus(stretch.counted, stretch.target, tolerancePercent),
   };
 }
 

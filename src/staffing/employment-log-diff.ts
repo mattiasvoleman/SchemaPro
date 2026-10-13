@@ -28,7 +28,7 @@
  * booleans, null); the web formats them.
  */
 
-export type LogEntity = 'EMPLOYMENT' | 'DUTY';
+export type LogEntity = 'EMPLOYMENT' | 'DUTY' | 'PERIOD';
 
 export interface LogChange {
   field: string;
@@ -43,6 +43,19 @@ export const EMPLOYMENT_FIELDS = [
   'teachingTargetMinutesPerWeek',
   'signature',
   'noteChanged',
+] as const;
+
+/**
+ * A period of the post (migration 20261022120000): its dates, then the three
+ * figures it states, in the order the Anställning card's period form lists
+ * them. Its post (employmentId) is identity, like the teacher and the year.
+ */
+export const PERIOD_FIELDS = [
+  'validFrom',
+  'validTo',
+  'employmentPercent',
+  'reductionPercent',
+  'teachingTargetMinutesPerWeek',
 ] as const;
 
 export const DUTY_FIELDS = [
@@ -63,7 +76,7 @@ export const DUTY_FIELDS = [
   'noteChanged',
 ] as const;
 
-const IDENTITY = new Set(['id', 'userId', 'academicYearId', 'schoolId', 'createdAt', 'updatedAt']);
+const IDENTITY = new Set(['id', 'userId', 'academicYearId', 'schoolId', 'createdAt', 'updatedAt', 'employmentId']);
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -73,7 +86,8 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === 
 export function diffLogEntry(entity: LogEntity, before: unknown, after: unknown): LogChange[] {
   const old = asRecord(before);
   const next = asRecord(after);
-  const known: readonly string[] = entity === 'EMPLOYMENT' ? EMPLOYMENT_FIELDS : DUTY_FIELDS;
+  const known: readonly string[] =
+    entity === 'EMPLOYMENT' ? EMPLOYMENT_FIELDS : entity === 'PERIOD' ? PERIOD_FIELDS : DUTY_FIELDS;
   const present = new Set([...Object.keys(old ?? {}), ...Object.keys(next ?? {})]);
   const unknown = [...present].filter((key) => !known.includes(key) && !IDENTITY.has(key)).sort();
   const changes: LogChange[] = [];

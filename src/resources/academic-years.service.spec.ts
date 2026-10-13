@@ -291,8 +291,9 @@ describe('AcademicYearsService', () => {
         Promise.resolve(lockingRead(YEARS, years, call)),
       );
       Object.assign(tx, { $queryRaw: queryRaw });
-      // No dated uppdrag unless a test says so (givenDuties).
+      // No dated uppdrag and no post periods unless a test says so.
       tx.teacherDuty.count.mockResolvedValue(0);
+      tx.teacherEmploymentPeriod.count.mockResolvedValue(0);
     });
 
     /** The year row as stored, found by its own id and by nothing else. */
@@ -580,6 +581,29 @@ describe('AcademicYearsService', () => {
       );
     });
 
+    it('counts a post period the new bounds leave outside (20261022120000), by this year and both its dates', async () => {
+      givenYear();
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
+      tx.teacherEmploymentPeriod.count.mockResolvedValue(1);
+
+      await expect(
+        service.update(YEAR_ID, { endDate: '2027-05-31' }, testUser()),
+      ).rejects.toThrow(stranding('1 employment period', '2026-08-17', '2027-05-31'));
+      expect(tx.teacherEmploymentPeriod.count).toHaveBeenCalledWith({
+        where: {
+          academicYearId: YEAR_ID,
+          OR: [
+            { validFrom: { lt: YEAR.startDate } },
+            { validFrom: { gt: new Date('2027-05-31T00:00:00.000Z') } },
+            { validTo: { lt: YEAR.startDate } },
+            { validTo: { gt: new Date('2027-05-31T00:00:00.000Z') } },
+          ],
+        },
+      });
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
     it('names both when a year move would strand periods and lov together', async () => {
       // Two counts rather than one total: "4 rader" tells nobody where to look,
       // and the two live on different pages.
@@ -793,6 +817,7 @@ describe('AcademicYearsService', () => {
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);
       tx.teacherDuty.count.mockResolvedValue(0);
+      tx.teacherEmploymentPeriod.count.mockResolvedValue(0);
 
       await expect(service.update(YEAR_ID, { startDate: '2027-06-11' }, testUser())).rejects.toThrow(
         new BadRequestException('startDate: läsåret fortsätter 2026/27 och måste börja efter att det slutar (2027-06-11).'),

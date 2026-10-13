@@ -677,6 +677,14 @@ MESSAGES: dict[str, str] = {
         "other {The teacher}} would carry {minutes} minutes a week against a target of "
         "{target} (the limit is {limit} with the {tolerance} % tolerance)."
     ),
+    # The same, for a post that changes during the year (gateway migration
+    # 20261022120000): judged in the stretch of the year the write takes past
+    # its limit, `from` and `to` its dates as yyyy-mm-dd.
+    "STAFF_TEACHER_OVER_TARGET_IN_PERIOD": (
+        "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
+        "other {The teacher}} would carry {minutes} minutes a week against a target of "
+        "{target} from {from} to {to} (the limit is {limit} with the {tolerance} % tolerance)."
+    ),
     # "Curriculum entry", the English the web's nav uses for a timplanspost.
     "STAFF_UNSTAFFED_REQUIREMENTS": (
         "{count, plural, one {# curriculum entry has} other {# curriculum entries have}} no "

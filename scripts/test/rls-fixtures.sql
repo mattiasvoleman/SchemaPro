@@ -259,6 +259,17 @@ JOIN "AcademicYears" y ON y."schoolId" = u."schoolId" AND y.name = 'RLS Fixture 
 WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
 ON CONFLICT ("schoolId", "userId", "academicYearId") DO NOTHING;
 
+-- A period of that post (20261022120000): section 91's tenant half counts
+-- it, and school B's admin reads it and nothing of school A's.
+INSERT INTO "TeacherEmploymentPeriods"
+  ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+SELECT e."schoolId", e.id, e."userId", e."academicYearId", y."startDate" + 14, 60, now()
+FROM "TeacherEmployments" e
+JOIN "Users" u ON u.id = e."userId"
+JOIN "AcademicYears" y ON y.id = e."academicYearId" AND y.name = 'RLS Fixture Year'
+WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
+  AND NOT EXISTS (SELECT 1 FROM "TeacherEmploymentPeriods" p WHERE p."employmentId" = e.id);
+
 INSERT INTO "TeacherSubjectQualifications"
   ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
 SELECT u."schoolId", u.id, sub.id, 1, 9, 'LEGITIMATION', now()
