@@ -97,7 +97,7 @@ import { TeachingBlocksService } from '../../src/resources/teaching-blocks.servi
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
-import { TeacherEmploymentsService } from '../../src/staffing/teacher-employments.service';
+import { TeacherEmploymentsService, rethrowPeriodError } from '../../src/staffing/teacher-employments.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 import { lockStaffRow } from '../../src/staffing/staff-lock';
 import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
@@ -1047,11 +1047,10 @@ async function runChecks(
       (error: unknown) => !(error instanceof assert.AssertionError),
     );
 
-    // The retired one-time column, written as PostgREST could still write
-    // it: its CHECK refuses a value (23514), where the dropped trigger once
-    // made it a link.
+    // The one-time column, written as PostgREST once could: it is gone
+    // (20261022100000), so the write names a column that does not exist.
     await assert.rejects(
-      direct(admin, '23514', (tx) =>
+      direct(admin, '42703', (tx) =>
         tx.$executeRaw`UPDATE "TeacherDuties" SET "blockedConstraintId" = ${theirs.id}::uuid WHERE "id" = ${duty.id}::uuid`,
       ),
       (error: unknown) => !(error instanceof assert.AssertionError),
@@ -3897,7 +3896,10 @@ async function runChecks(
           'PATCH a drag': 22,
           'PATCH a drag back beside 8A': 25,
           'place a meal': 7,
-          'give a timplanspost a teacher': 22,
+          // +1 since Tjänstens perioder (20261022120000): the year has posts,
+          // so the load read asks for their periods (one indexed SELECT); a
+          // year without a post asks nothing more.
+          'give a timplanspost a teacher': 23,
         },
         JSON.stringify(sent, null, 1),
       );
@@ -4124,6 +4126,72 @@ async function runChecks(
           await owner.query(`UPDATE "StaffingPolicies" SET "loadModel" = 'MINUTES' WHERE "schoolId" = $1`, [f3.schoolId]);
           await subjects.update(f3.ma, { loadFactor: 1 }, f3.admin);
         }
+      });
+
+      await check('(ö7) a post’s period through the real adapter (20261022120000): written under the post’s lock, its dates as days, an overlap a 409 from the service and from the EXCLUDE alike, read with the post by its teacher alone, a stretch in the report, and a version of its own', async () => {
+        const employments = new TeacherEmploymentsService(api);
+        const loads = new StaffingLoadService(api);
+        const from = f3.dayAt(7);
+        const created = await employments.createPeriod(f3.t2.id, f3.yearId, { validFrom: from, employmentPercent: 50 }, f3.admin);
+        assert.deepEqual(
+          { ...created, id: undefined, employmentId: undefined },
+          { id: undefined, employmentId: undefined, validFrom: from, validTo: null, employmentPercent: 50, reductionPercent: 0, teachingTargetMinutesPerWeek: null },
+        );
+        // The service's own overlap answer, naming the other period.
+        await assert.rejects(
+          employments.createPeriod(f3.t2.id, f3.yearId, { validFrom: f3.dayAt(30), validTo: f3.dayAt(60), employmentPercent: 60 }, f3.admin),
+          (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('EMPLOYMENT_PERIOD_OVERLAP'),
+        );
+        // A writer past the service meets the EXCLUDE: 23P01 through the
+        // adapter, the same 409 from rethrowPeriodError.
+        const overlap = await api
+          .withRls(f3.admin, (tx) =>
+            tx.teacherEmploymentPeriod.create({
+              data: {
+                schoolId: f3.schoolId,
+                employmentId: created.employmentId,
+                userId: f3.t2.id,
+                academicYearId: f3.yearId,
+                validFrom: new Date(`${f3.dayAt(30)}T00:00:00.000Z`),
+                employmentPercent: 60,
+              },
+            }),
+          )
+          .then(
+            () => null,
+            (error: unknown) => error,
+          );
+        assert.equal(sqlStateOf(overlap), '23P01', summarise(overlap));
+        assert.throws(() => rethrowPeriodError(overlap), ConflictException);
+
+        // Read with the post: by the admin, by its teacher, never by a colleague.
+        const listed = (await employments.list(f3.yearId, f3.admin)).find((post) => post.userId === f3.t2.id)!;
+        assert.deepEqual(listed.periods.map((period) => [period.validFrom, period.employmentPercent]), [[from, 50]]);
+        assert.equal((await employments.list(f3.yearId, f3.teacher(f3.t2)))[0]!.periods.length, 1);
+        const colleague = await api.withRls(f3.teacher(f3.t1), (tx) => tx.teacherEmploymentPeriod.findMany());
+        assert.deepEqual(colleague, [], 'a teacher read a colleague’s period through RLS');
+
+        // The report: the post in two stretches, the period's own target.
+        const report = await loads.load(f3.yearId, 'planned', f3.admin);
+        const t2 = report.teachers.find((teacher) => teacher.userId === f3.t2.id)!;
+        // t2's post as (ö3) left it; the period's 50 % of the riktmärke 1080.
+        const baseTarget = Math.round((1080 * (listed.employmentPercent - listed.reductionPercent)) / 100 / 5) * 5;
+        assert.deepEqual(t2.periods.map((period) => [period.kind, period.targetMinutesPerWeek]), [['BASE', baseTarget], ['PERIOD', 540]]);
+        assert.equal(t2.periods[1]!.from, from);
+
+        // Its versions, and gone again.
+        await employments.updatePeriod(created.id, { validFrom: from, employmentPercent: 60 }, f3.admin);
+        await employments.removePeriod(created.id, f3.admin);
+        const history = await employments.history(f3.t2.id, f3.yearId, f3.admin);
+        assert.deepEqual(
+          history.entries.filter((entry) => entry.entity === 'PERIOD').map((entry) => entry.action),
+          ['DELETE', 'UPDATE', 'CREATE'],
+        );
+        assert.deepEqual(
+          history.entries.find((entry) => entry.entity === 'PERIOD' && entry.action === 'UPDATE')!.changes,
+          [{ field: 'employmentPercent', before: 50, after: 60 }],
+        );
+        assert.equal((await employments.list(f3.yearId, f3.admin)).find((post) => post.userId === f3.t2.id)!.periods.length, 0);
       });
     } finally {
       // (ö6) as the owner: a school with posts, uppdrag and their history deletes whole.

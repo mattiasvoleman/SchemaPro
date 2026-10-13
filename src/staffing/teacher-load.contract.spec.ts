@@ -100,6 +100,31 @@ describe('the load report agrees with the shared fixture', () => {
     for (const t of teachers) expect(t.countedDutyPeakMinutesPerWeek).toBeLessThanOrEqual(t.dutyPeakMinutesPerWeek);
   });
 
+  it('reaches every branch of a post that changes during the year (20261022120000): a period from a Sunday and from mid-week, one ending before the year, one with no Monday, a status set by the worst stretch, and a year without a target', () => {
+    const employments = cases.flatMap((c) => c.input.employments);
+    const periods = employments.flatMap((e) => e.periods ?? []);
+    expect(periods.some((p) => p.validTo === null)).toBe(true);
+    expect(periods.some((p) => p.validTo !== null)).toBe(true);
+    expect(periods.some((p) => p.teachingTargetMinutesPerWeek !== null)).toBe(true);
+    expect(periods.some((p) => p.reductionPercent > 0)).toBe(true);
+    const teachers = cases.flatMap((c) => c.report.teachers);
+    const stretches = teachers.flatMap((t) => t.periods);
+    expect(stretches.some((p) => p.effectiveFrom === null)).toBe(true);
+    expect(stretches.some((p) => p.effectiveFrom !== null && p.effectiveFrom > p.from)).toBe(true);
+    expect(stretches.filter((p) => p.kind === 'BASE').length).toBeGreaterThan(0);
+    // The worst stretch sets the status, against a year whose saldo is positive.
+    expect(teachers.some((t) => t.status === 'OVER' && (t.balanceMinutesPerWeek ?? 0) > 0)).toBe(true);
+    expect(teachers.some((t) => t.periods.length > 0 && t.targetMinutesPerWeek === null)).toBe(true);
+    expect(teachers.some((t) => t.periods.length > 0 && t.annual.semesterHoursPerWeek !== null)).toBe(true);
+    // A post without periods reads as it always did: no stretch, the base row's target.
+    for (const c of cases) {
+      for (const t of c.report.teachers) {
+        const employment = c.input.employments.find((e) => e.userId === t.userId);
+        if ((employment?.periods ?? []).length === 0) expect(t.periods).toEqual([]);
+      }
+    }
+  });
+
   it('reaches a split row, every week, odd weeks, co-taught and unstaffed', () => {
     const split = cases.flatMap((c) => c.input.requirements).filter((r) => isMixed(r));
     expect(split.some((r) => r.recurrence === 'ALL_WEEKS' && r.teacherId !== null)).toBe(true);

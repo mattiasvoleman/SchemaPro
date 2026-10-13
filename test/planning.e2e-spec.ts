@@ -2050,10 +2050,11 @@ describe('Planning surface (e2e)', () => {
           .set('x-test-user', admin())
           .expect(200);
         expect(list.body).toHaveLength(2);
-        expect(list.body[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 0 });
+        expect(list.body[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 0, periods: [] });
         expect(harness.tx['teacherEmployment']!['findMany']).toHaveBeenCalledWith({
           where: { academicYearId: YEAR_ID },
           orderBy: { userId: 'asc' },
+          include: { periods: { orderBy: { validFrom: 'asc' } } },
         });
 
         const queryRaw = givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
@@ -2094,6 +2095,108 @@ describe('Planning surface (e2e)', () => {
         expect(harness.tx['teacherEmployment']!['findMany']).toHaveBeenCalledWith({
           where: { academicYearId: YEAR_ID, userId: TEACHER_ID },
           orderBy: { userId: 'asc' },
+          include: { periods: { orderBy: { validFrom: 'asc' } } },
+        });
+      });
+
+      describe('perioder (20261022120000)', () => {
+        const PERIOD_ID = '50505050-5050-4050-8050-505050505050';
+        const POST_ID = '20202020-2020-4020-8020-202020202020';
+        const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+        const POSTS: LockedTable = { name: 'TeacherEmployments', columns: ['id'], lock: 'FOR NO KEY UPDATE' };
+        const YEARS_SHARE: LockedTable = { name: 'AcademicYears', columns: ['id', 'startDate', 'endDate'], lock: 'FOR SHARE' };
+        const givenPostAndYear = () => {
+          const queryRaw = jest.fn((...call: unknown[]) =>
+            Promise.resolve(
+              rawSql(call).includes('"AcademicYears"')
+                ? lockingRead(YEARS_SHARE, [{ id: YEAR_ID, startDate: day('2026-08-17'), endDate: day('2027-06-11') }], call)
+                : lockingRead(POSTS, [{ id: POST_ID }], call),
+            ),
+          );
+          Object.assign(harness.tx, { $queryRaw: queryRaw });
+          return queryRaw;
+        };
+
+        it('an admin gives a colleague’s post a period from 1 November, through the whole stack', async () => {
+          const queryRaw = givenPostAndYear();
+          harness.tx['teacherEmployment']!['findUnique']!.mockResolvedValue({ id: POST_ID });
+          harness.tx['teacherEmploymentPeriod']!['findMany']!.mockResolvedValue([]);
+          harness.tx['teacherEmploymentPeriod']!['create']!.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+            Promise.resolve({ id: PERIOD_ID, ...data }),
+          );
+
+          const response = await request(http())
+            .post(`/api/v1/teacher-employments/${COLLEAGUE_ID}/periods?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .send({ validFrom: '2026-11-01', employmentPercent: 80 })
+            .expect(201);
+
+          expect(response.body).toEqual({
+            id: PERIOD_ID,
+            employmentId: POST_ID,
+            validFrom: '2026-11-01',
+            validTo: null,
+            employmentPercent: 80,
+            reductionPercent: 0,
+            teachingTargetMinutesPerWeek: null,
+          });
+          expect(queryRaw).toHaveBeenCalledTimes(2);
+        });
+
+        it('400s a date that does not exist and a period without Från, in Swedish, before the table', async () => {
+          const queryRaw = givenPostAndYear();
+          const missing = await request(http())
+            .post(`/api/v1/teacher-employments/${COLLEAGUE_ID}/periods?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .send({ employmentPercent: 80 })
+            .expect(400);
+          expect(JSON.stringify(missing.body)).toContain('validFrom');
+          const impossible = await request(http())
+            .put(`/api/v1/teacher-employments/periods/${PERIOD_ID}`)
+            .set('x-test-user', admin())
+            .send({ validFrom: '2026-02-30', employmentPercent: 80 })
+            .expect(400);
+          expect(JSON.stringify(impossible.body)).toContain('ett datum som finns');
+          expect(queryRaw).not.toHaveBeenCalled();
+          expect(harness.tx['teacherEmploymentPeriod']!['create']).not.toHaveBeenCalled();
+        });
+
+        it('403s a teacher writing any period, their own post’s included, without touching the table', async () => {
+          const queryRaw = givenPostAndYear();
+          for (const target of [COLLEAGUE_ID, TEACHER_ID]) {
+            await request(http())
+              .post(`/api/v1/teacher-employments/${target}/periods?academicYearId=${YEAR_ID}`)
+              .set('x-test-user', teacher())
+              .send({ validFrom: '2026-11-01', employmentPercent: 80 })
+              .expect(403);
+          }
+          await request(http())
+            .put(`/api/v1/teacher-employments/periods/${PERIOD_ID}`)
+            .set('x-test-user', teacher())
+            .send({ validFrom: '2026-11-01', employmentPercent: 80 })
+            .expect(403);
+          await request(http())
+            .delete(`/api/v1/teacher-employments/periods/${PERIOD_ID}`)
+            .set('x-test-user', teacher())
+            .expect(403);
+          expect(queryRaw).not.toHaveBeenCalled();
+          expect(harness.tx['teacherEmploymentPeriod']!['create']).not.toHaveBeenCalled();
+          expect(harness.tx['teacherEmploymentPeriod']!['update']).not.toHaveBeenCalled();
+          expect(harness.tx['teacherEmploymentPeriod']!['delete']).not.toHaveBeenCalled();
+        });
+
+        it('409s a period overlapping another of the post, naming its dates', async () => {
+          givenPostAndYear();
+          harness.tx['teacherEmployment']!['findUnique']!.mockResolvedValue({ id: POST_ID });
+          harness.tx['teacherEmploymentPeriod']!['findMany']!.mockResolvedValue([{ validFrom: day('2027-01-07'), validTo: null }]);
+          const response = await request(http())
+            .post(`/api/v1/teacher-employments/${COLLEAGUE_ID}/periods?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .send({ validFrom: '2026-11-01', employmentPercent: 80 })
+            .expect(409);
+          expect(response.body.code).toBe('EMPLOYMENT_PERIOD_OVERLAP');
+          expect(JSON.stringify(response.body)).toContain('2027-01-07 till 2027-06-11');
+          expect(harness.tx['teacherEmploymentPeriod']!['create']).not.toHaveBeenCalled();
         });
       });
 

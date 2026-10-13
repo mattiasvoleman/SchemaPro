@@ -5,6 +5,7 @@ import {
   DEFAULT_CHECK_POLICY,
   STAFF_TEACHER_NOT_QUALIFIED,
   STAFF_TEACHER_OVER_TARGET,
+  STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
   STAFF_UNSTAFFED_REQUIREMENTS,
   gradesParam,
   judgeRequirementBatch,
@@ -472,6 +473,103 @@ describe('judgeRequirementBatch', () => {
   });
 });
 
+describe('a post that changes during the year (20261022120000): the load question per stretch', () => {
+  // Anna's post is 100 % until 31 October and 80 % from Sunday 1 November:
+  // target 1000 and then 800 (limit 1100 and 880 at the default 10 %).
+  const changing = employment(ANNA, {
+    periods: [{ validFrom: '2026-11-01', validTo: null, employmentPercent: 80, reductionPercent: 0, teachingTargetMinutesPerWeek: null }],
+  });
+  const year = (minutes: number) =>
+    input({
+      employments: [changing],
+      requirements: [requirement({ id: 'req-held', teacherId: ANNA, lessonsPerWeek: minutes / 50, minutesPerLesson: 50 })],
+    });
+  const write = (minutes: number, dates: Partial<LoadRequirement> = {}) =>
+    judgeRequirementWrite({
+      input: year(850),
+      policy: policy(),
+      before: null,
+      after: requirement({ id: 'req-new', teacherId: ANNA, lessonsPerWeek: minutes / 50, minutesPerLesson: 50, ...dates }),
+      subjectName: 'Matematik',
+    }).filter((finding) => finding.code !== STAFF_TEACHER_NOT_QUALIFIED);
+
+  it('refuses a whole-year row for the stretch it takes over, naming the stretch, where the year alone would pass it', () => {
+    expect(write(200)).toEqual([
+      {
+        code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
+        mode: 'WARN',
+        userId: ANNA,
+        params: { role: 'TEACHER', minutes: 1050, target: 800, limit: 880, tolerance: 10, from: '2026-11-01', to: '2027-06-11' },
+      },
+    ]);
+    // The same write for a post without the period: 1050 against 1000 is within 1100.
+    expect(
+      judgeRequirementWrite({
+        input: { ...year(850), employments: [employment(ANNA)] },
+        policy: policy(),
+        before: null,
+        after: requirement({ id: 'req-new', teacherId: ANNA, lessonsPerWeek: 4, minutesPerLesson: 50 }),
+        subjectName: 'Matematik',
+      }).filter((finding) => finding.code !== STAFF_TEACHER_NOT_QUALIFIED),
+    ).toEqual([]);
+  });
+
+  it('judges a row only in the stretch it runs in: an autumn course adds nothing to the spring', () => {
+    expect(write(200, { startDate: '2026-08-17', endDate: '2026-10-30' })).toEqual([]);
+    // In the 80 % stretch the same minutes are over.
+    expect(write(200, { startDate: '2026-11-02', endDate: '2027-01-29' })[0]).toMatchObject({
+      code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
+      params: { from: '2026-11-01', to: '2027-06-11' },
+    });
+  });
+
+  it('refuses under REFUSE with the stretch in the 409, and never a write that does not add to it', () => {
+    const findings = judgeRequirementWrite({
+      input: year(850),
+      policy: policy({ overAllocationMode: 'REFUSE' }),
+      before: null,
+      after: requirement({ id: 'req-new', teacherId: ANNA, lessonsPerWeek: 4, minutesPerLesson: 50 }),
+      subjectName: 'Matematik',
+    }).filter((finding) => finding.code !== STAFF_TEACHER_NOT_QUALIFIED);
+    expect(() => settleFindings(findings)).toThrow(
+      'Läraren skulle få 1050 min/v mot riktmärket 800 min/v från 2026-11-01 till och med 2027-06-11 (gränsen är 880 min/v med 10 % tolerans).',
+    );
+    // Already over in the spring at 950, and the write takes a lesson away: no finding.
+    const over = year(950);
+    expect(
+      judgeRequirementWrite({
+        input: over,
+        policy: policy({ overAllocationMode: 'REFUSE' }),
+        before: over.requirements[0]!,
+        after: { ...over.requirements[0]!, lessonsPerWeek: 18 },
+        subjectName: 'Matematik',
+      }),
+    ).toEqual([]);
+  });
+
+  it('asks the batch the same question, per teacher, per stretch', () => {
+    const batchYear = input({
+      employments: [changing],
+      requirements: [
+        requirement({ id: 'req-held', teacherId: ANNA, lessonsPerWeek: 17, minutesPerLesson: 50 }),
+        requirement({ id: 'req-free', teacherId: null, lessonsPerWeek: 4, minutesPerLesson: 50 }),
+      ],
+    });
+    const findings = judgeRequirementBatch({
+      input: batchYear,
+      policy: policy({ qualificationMode: 'OFF' }),
+      changes: [{ requirementId: 'req-free', teacherId: ANNA }],
+    });
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
+        requirementIds: ['req-free'],
+        params: expect.objectContaining({ minutes: 1050, target: 800, from: '2026-11-01' }),
+      }),
+    ]);
+  });
+});
+
 describe('settleFindings', () => {
   const finding = (mode: 'WARN' | 'REFUSE', code: StaffingFinding['code'] = STAFF_TEACHER_NOT_QUALIFIED): StaffingFinding => ({
     code,
@@ -589,6 +687,14 @@ describe('the catalogue says what staffingSentence says', () => {
     {
       code: STAFF_TEACHER_OVER_TARGET,
       params: { role: 'CO_TEACHER', minutes: 700, target: 600, limit: 600, tolerance: 0 },
+    },
+    {
+      code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
+      params: { role: 'TEACHER', minutes: 1000, target: 865, limit: 951, tolerance: 10, from: '2026-11-01', to: '2027-06-11' },
+    },
+    {
+      code: STAFF_TEACHER_OVER_TARGET_IN_PERIOD,
+      params: { role: 'CO_TEACHER', minutes: 600, target: 540, limit: 540, tolerance: 0, from: '2027-02-01', to: '2027-03-28' },
     },
   ];
 

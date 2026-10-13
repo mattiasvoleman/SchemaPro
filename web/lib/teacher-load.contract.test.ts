@@ -70,6 +70,14 @@ describe("the load report agrees with the gateway's fixture", () => {
     expect(teachers.some((t) => (t.countedDutyPeakMinutesPerWeek ?? 0) > t.countedDutyMinutesPerWeek)).toBe(true);
   });
 
+  it("reaches a post that changes during the year: a stretch with no week, one starting after its Från, and a status set by the worst stretch", () => {
+    const teachers = cases.flatMap((entry) => entry.report.teachers);
+    const stretches = teachers.flatMap((t) => t.periods ?? []);
+    expect(stretches.some((p) => p.effectiveFrom === null)).toBe(true);
+    expect(stretches.some((p) => p.effectiveFrom !== null && p.effectiveFrom > p.from)).toBe(true);
+    expect(teachers.some((t) => t.status === "OVER" && (t.balanceMinutesPerWeek ?? 0) > 0)).toBe(true);
+  });
+
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
   });

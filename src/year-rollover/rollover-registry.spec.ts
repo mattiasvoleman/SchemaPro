@@ -237,12 +237,15 @@ describe('the rollover registry', () => {
     // are asserted beside it — skipped, not counted — so fa4a3d6's own list
     // stays pinned byte for byte. The statement tables (timplan P4) likewise,
     // the publication log and its snapshots (Publicering), the SS12000
-    // duty links (20261014100000), and an uppdrag's times (20261017090000,
-    // left behind with the uppdrag and counted, beside it in the list).
+    // duty links (20261014100000), an uppdrag's times (20261017090000,
+    // left behind with the uppdrag and counted, beside it in the list), and a
+    // post's periods (20261022120000, left behind, the carried post being the
+    // year-start one).
     const skipped = skippedModels();
     const added = [
       'TeacherDutySlot',
       'TimplanCredit',
+      'TeacherEmploymentPeriod',
       'TeacherEmploymentLog',
       'TimplanStatementPublication',
       'TimplanStatement',
@@ -261,8 +264,9 @@ describe('the rollover registry', () => {
         .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.slice(-13)).toEqual([
+    expect(skipped.slice(-14)).toEqual([
       expect.objectContaining({ model: 'TimplanCredit', counted: false }),
+      expect.objectContaining({ model: 'TeacherEmploymentPeriod', counted: false }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', counted: false }),
       expect.objectContaining({ model: 'TimplanStatementPublication', counted: false }),
       expect.objectContaining({ model: 'TimplanStatement', counted: false }),

@@ -1160,6 +1160,8 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       expect.objectContaining({ model: 'TeacherDuty', count: 1 }),
       // An uppdrag's times, left behind with it and counted (20261017090000).
       expect.objectContaining({ model: 'TeacherDutySlot', count: 1 }),
+      // A post's periods (20261022120000), left behind and never counted.
+      expect.objectContaining({ model: 'TeacherEmploymentPeriod', count: null }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', count: null }),
     ]);
     world.calls.length = 0;

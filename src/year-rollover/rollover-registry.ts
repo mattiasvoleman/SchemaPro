@@ -578,6 +578,18 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
    * new year's history itself — the trigger logs it as created, by the admin
    * who ran the rollover.
    */
+  /**
+   * A post's periods (20261022120000) are this year's changes to this year's
+   * post: the carried post is the year-start post, as the school carries it,
+   * and what a period at the year's end should mean for the next year is the
+   * next release's ("Perioder i export och rullning").
+   */
+  TeacherEmploymentPeriod: {
+    kind: 'SKIPPED',
+    reason:
+      'A period changes this year’s post from a date; the carried tjänst is the year-start post, and the new year’s ' +
+      'periods are written there when the school agrees them.',
+  },
   TeacherEmploymentLog: {
     kind: 'SKIPPED',
     reason:

@@ -1,21 +1,34 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { Prisma, type TeacherEmployment } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, type TeacherEmployment, type TeacherEmploymentPeriod } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { parseDateString } from '../common/utils/time';
+import { readYearBoundsForShare } from '../resources/academic-year-bounds';
 import { lockStaffRow } from './staff-lock';
-import type { UpsertTeacherEmploymentDto } from './dto/teacher-employment.dto';
+import type {
+  UpsertTeacherEmploymentDto,
+  UpsertTeacherEmploymentPeriodDto,
+} from './dto/teacher-employment.dto';
 import { diffLogEntry, type LogChange } from './employment-log-diff';
+import { postStretches } from './employment-periods';
 
 /** One version of a tjänst, as the Historik card and a protokoll cite it. */
 export interface TeacherHistoryEntry {
   id: string;
   /** 1, 2, 3 … per teacher and year: "Version 7". */
   version: number;
-  entity: 'EMPLOYMENT' | 'DUTY';
+  entity: 'EMPLOYMENT' | 'DUTY' | 'PERIOD';
   entityId: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE';
   /** Who wrote it; null for a migration, the seed or the database owner. */
@@ -49,15 +62,57 @@ export interface TeacherEmploymentResponse
   extends Omit<TeacherEmployment, 'employmentPercent' | 'reductionPercent'> {
   employmentPercent: number;
   reductionPercent: number;
+  /**
+   * The post from a date (migration 20261022120000), by Från. Empty for a
+   * post that is the same all year.
+   */
+  periods: TeacherEmploymentPeriodResponse[];
 }
 
-export function toEmploymentResponse(row: TeacherEmployment): TeacherEmploymentResponse {
+/** A period of a post as the client sees it: dates as yyyy-mm-dd, percentages as numbers. */
+export interface TeacherEmploymentPeriodResponse {
+  id: string;
+  employmentId: string;
+  validFrom: string;
+  validTo: string | null;
+  employmentPercent: number;
+  reductionPercent: number;
+  teachingTargetMinutesPerWeek: number | null;
+}
+
+const asDay = (value: Date): string => value.toISOString().slice(0, 10);
+
+export function toPeriodResponse(row: TeacherEmploymentPeriod): TeacherEmploymentPeriodResponse {
   return {
-    ...row,
+    id: row.id,
+    employmentId: row.employmentId,
+    validFrom: asDay(row.validFrom),
+    validTo: row.validTo === null ? null : asDay(row.validTo),
     employmentPercent: Number(row.employmentPercent),
     reductionPercent: Number(row.reductionPercent),
+    teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
   };
 }
+
+export function toEmploymentResponse(
+  row: TeacherEmployment & { periods?: TeacherEmploymentPeriod[] },
+): TeacherEmploymentResponse {
+  const { periods, ...post } = row;
+  return {
+    ...post,
+    employmentPercent: Number(row.employmentPercent),
+    reductionPercent: Number(row.reductionPercent),
+    periods: [...(periods ?? [])]
+      .sort((a, b) => a.validFrom.getTime() - b.validFrom.getTime())
+      .map(toPeriodResponse),
+  };
+}
+
+/** Every read of a post includes its periods, by Från. */
+const WITH_PERIODS = { periods: { orderBy: { validFrom: 'asc' } } } satisfies Prisma.TeacherEmploymentInclude;
+
+/** The 409 a period overlapping another of the same post answers with. */
+export const EMPLOYMENT_PERIOD_OVERLAP = 'EMPLOYMENT_PERIOD_OVERLAP';
 
 /**
  * Lärarnas tjänster: one row per teacher per läsår, upserted by the teacher
@@ -150,8 +205,10 @@ export class TeacherEmploymentsService {
         ? { academicYearId }
         : { academicYearId, userId: requireUserId(user) };
     const rows = await this.prisma.withRls(user, async (tx) => {
-      const found = await tx.teacherEmployment.findMany({ where, orderBy: { userId: 'asc' } });
-      // HR data: EMPLOYMENT in the läslogg (a teacher's own row is left out).
+      // Each post with its periods (20261022120000), in one read.
+      const found = await tx.teacherEmployment.findMany({ where, orderBy: { userId: 'asc' }, include: WITH_PERIODS });
+      // HR data: EMPLOYMENT in the läslogg (a teacher's own row is left out);
+      // a post's periods are the post's, and read with it.
       await recordRead(tx, 'EMPLOYMENT', found.map((row) => row.userId), user.channel);
       return found;
     });
@@ -178,11 +235,91 @@ export class TeacherEmploymentsService {
           where: { schoolId_userId_academicYearId: { schoolId, userId, academicYearId } },
           create: { schoolId, userId, academicYearId, ...data },
           update: data,
+          include: WITH_PERIODS,
         });
       });
       return toEmploymentResponse(row);
     } catch (error) {
       rethrowEmploymentError(error, dto, academicYearId);
+    }
+  }
+
+  /**
+   * A new period of a teacher's post for one year: "80 % från 1 november".
+   *
+   * CHECK, THEN WRITE, UNDER THE POST'S LOCK. The post row is locked FOR NO
+   * KEY UPDATE first — the lock every staffing write that asks the load
+   * question takes (staffing-enforcement.ts lockEmploymentsOf), so a period
+   * lowering the post queues behind an assignment judged against the old
+   * figure instead of interleaving with it, and two period writes on one post
+   * queue behind each other. Then the year's bounds FOR SHARE, as every
+   * writer of a dated period reads them (academic-year-bounds.ts), and the
+   * three rules that need another row: inside the läsår, at least one whole
+   * week, no overlap with another period of the post. The EXCLUDE constraint
+   * holds the last for every writer; it is checked here first so the answer
+   * names the period it overlaps.
+   */
+  async createPeriod(
+    userId: string,
+    academicYearId: string,
+    dto: UpsertTeacherEmploymentPeriodDto,
+    user: AuthenticatedUser,
+  ): Promise<TeacherEmploymentPeriodResponse> {
+    const schoolId = requireSchoolId(user);
+    const data = periodData(dto);
+    try {
+      const row = await this.prisma.withRls(user, async (tx) => {
+        const post = await tx.teacherEmployment.findUnique({
+          where: { schoolId_userId_academicYearId: { schoolId, userId, academicYearId } },
+          select: { id: true },
+        });
+        if (!post || !(await lockPost(tx, post.id))) {
+          throw new NotFoundException(
+            'Läraren har ingen tjänst det läsåret. Lägg in tjänsten först; en period ändrar en tjänst från ett datum.',
+          );
+        }
+        await assertPeriodFits(tx, post.id, academicYearId, data, null);
+        return tx.teacherEmploymentPeriod.create({
+          data: { schoolId, employmentId: post.id, userId, academicYearId, ...data },
+        });
+      });
+      this.logger.log(`Period created [user=${userId}, year=${academicYearId}, period=${row.id}]`);
+      return toPeriodResponse(row);
+    } catch (error) {
+      rethrowPeriodError(error);
+    }
+  }
+
+  /** Rewrite one period, whole, as the post is; it stays on its post. */
+  async updatePeriod(
+    periodId: string,
+    dto: UpsertTeacherEmploymentPeriodDto,
+    user: AuthenticatedUser,
+  ): Promise<TeacherEmploymentPeriodResponse> {
+    requireSchoolId(user);
+    const data = periodData(dto);
+    try {
+      const row = await this.prisma.withRls(user, async (tx) => {
+        const period = await lockPeriodPost(tx, periodId);
+        await assertPeriodFits(tx, period.employmentId, period.academicYearId, data, periodId);
+        return tx.teacherEmploymentPeriod.update({ where: { id: periodId }, data });
+      });
+      return toPeriodResponse(row);
+    } catch (error) {
+      rethrowPeriodError(error);
+    }
+  }
+
+  /** Remove one period: its days are the post's own again. */
+  async removePeriod(periodId: string, user: AuthenticatedUser): Promise<void> {
+    requireSchoolId(user);
+    try {
+      await this.prisma.withRls(user, async (tx) => {
+        await lockPeriodPost(tx, periodId);
+        await tx.teacherEmploymentPeriod.delete({ where: { id: periodId } });
+      });
+    } catch (error) {
+      rethrowPeriodError(error);
     }
   }
 
@@ -229,6 +366,147 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
     signature: dto.signature?.trim() || null,
     note: dto.note?.trim() || null,
   };
+}
+
+/** The columns a period's DTO describes, dates parsed, defaults filled in. */
+export function periodData(dto: UpsertTeacherEmploymentPeriodDto): {
+  validFrom: Date;
+  validTo: Date | null;
+  employmentPercent: number;
+  reductionPercent: number;
+  teachingTargetMinutesPerWeek: number | null;
+} {
+  const reductionPercent = dto.reductionPercent ?? 0;
+  if (reductionPercent > dto.employmentPercent) {
+    throw new BadRequestException(
+      `Nedsättningen (${reductionPercent} %) kan inte vara större än tjänstgöringsgraden (${dto.employmentPercent} %).`,
+    );
+  }
+  if (dto.validTo != null && dto.validTo < dto.validFrom) {
+    throw new BadRequestException(
+      `validTo: perioden kan inte sluta (${dto.validTo}) innan den börjar (${dto.validFrom}).`,
+    );
+  }
+  return {
+    validFrom: parseDateString(dto.validFrom),
+    validTo: dto.validTo == null ? null : parseDateString(dto.validTo),
+    employmentPercent: dto.employmentPercent,
+    reductionPercent,
+    teachingTargetMinutesPerWeek: dto.teachingTargetMinutesPerWeek ?? null,
+  };
+}
+
+/**
+ * Finds a period under RLS and locks its post FOR NO KEY UPDATE, as a new
+ * period's write does. A period the caller cannot see is a 404.
+ */
+async function lockPeriodPost(
+  tx: Prisma.TransactionClient,
+  periodId: string,
+): Promise<Pick<TeacherEmploymentPeriod, 'employmentId' | 'academicYearId'>> {
+  const period = await tx.teacherEmploymentPeriod.findUnique({
+    where: { id: periodId },
+    select: { employmentId: true, academicYearId: true },
+  });
+  if (!period || !(await lockPost(tx, period.employmentId))) throw new NotFoundException('Perioden finns inte.');
+  return period;
+}
+
+/**
+ * The post's row FOR NO KEY UPDATE, by id, as lockEmploymentsOf takes it: a
+ * plain read finds the post, this locks it. False when it is gone by then.
+ */
+async function lockPost(tx: Prisma.TransactionClient, employmentId: string): Promise<boolean> {
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "TeacherEmployments" WHERE "id" = ${employmentId}::uuid FOR NO KEY UPDATE
+  `;
+  return locked.length > 0;
+}
+
+/**
+ * The three rules a period needs another row for, under the post's lock:
+ * inside the läsår (its bounds read FOR SHARE), at least one whole week (an
+ * ISO week is the post in force on its Monday — employment-periods.ts — so a
+ * period holding no Monday of the year would change nothing), and no overlap
+ * with another period of the post. `self` is the period being rewritten.
+ */
+async function assertPeriodFits(
+  tx: Prisma.TransactionClient,
+  employmentId: string,
+  academicYearId: string,
+  data: ReturnType<typeof periodData>,
+  self: string | null,
+): Promise<void> {
+  const bounds = await readYearBoundsForShare(tx, academicYearId);
+  if (!bounds) throw new NotFoundException('Läsåret finns inte.');
+  const year = { startDate: asDay(bounds.startDate), endDate: asDay(bounds.endDate) };
+  const from = asDay(data.validFrom);
+  const to = data.validTo === null ? null : asDay(data.validTo);
+  if (from < year.startDate || from > year.endDate) {
+    throw new BadRequestException(
+      `validFrom: ${from} ligger utanför läsåret (${year.startDate} till ${year.endDate}).`,
+    );
+  }
+  if (to !== null && to > year.endDate) {
+    throw new BadRequestException(
+      `validTo: ${to} ligger utanför läsåret (${year.startDate} till ${year.endDate}). Lämna Till tomt för läsårets sista dag.`,
+    );
+  }
+  const [alone] = postStretches(
+    {
+      employmentPercent: data.employmentPercent,
+      reductionPercent: data.reductionPercent,
+      teachingTargetMinutesPerWeek: data.teachingTargetMinutesPerWeek,
+      periods: [{ ...data, validFrom: from, validTo: to }],
+    },
+    year,
+  ).filter((stretch) => stretch.kind === 'PERIOD');
+  if (!alone?.window) {
+    throw new BadRequestException(
+      `validFrom: perioden ${from}–${to ?? year.endDate} innehåller ingen måndag i läsåret. ` +
+        'Tjänsten räknas vecka för vecka, och en vecka hör till den tjänst som gäller på måndagen — ' +
+        'en period behöver minst en hel vecka.',
+    );
+  }
+  const others = await tx.teacherEmploymentPeriod.findMany({
+    where: { employmentId, ...(self ? { id: { not: self } } : {}) },
+    select: { validFrom: true, validTo: true },
+    orderBy: { validFrom: 'asc' },
+  });
+  const overlapping = others.find(
+    (other) =>
+      asDay(other.validFrom) <= (to ?? year.endDate) &&
+      (other.validTo === null || asDay(other.validTo) >= from),
+  );
+  if (overlapping) {
+    const otherTo = overlapping.validTo === null ? year.endDate : asDay(overlapping.validTo);
+    throw new ConflictException({
+      message:
+        `Perioden överlappar en annan period av tjänsten (${asDay(overlapping.validFrom)} till ${otherTo}). ` +
+        'Ändra eller ta bort den först — en dag har en tjänst.',
+      code: EMPLOYMENT_PERIOD_OVERLAP,
+    });
+  }
+}
+
+/**
+ * A period write's errors: the EXCLUDE constraint (23P01), which a writer that
+ * did not take the post's lock can still meet, as the same 409 the check above
+ * answers; everything else as every staffing write maps it.
+ */
+export function rethrowPeriodError(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    const cause = (error.meta as { driverAdapterError?: { cause?: { originalCode?: unknown; originalMessage?: unknown } } } | undefined)
+      ?.driverAdapterError?.cause;
+    const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+    if (cause?.originalCode === '23P01' || text.includes('TeacherEmploymentPeriods_do_not_overlap')) {
+      throw new ConflictException({
+        message: 'Perioden överlappar en annan period av tjänsten. Ändra eller ta bort den först — en dag har en tjänst.',
+        code: EMPLOYMENT_PERIOD_OVERLAP,
+      });
+    }
+  }
+  rethrowPrismaError(error);
 }
 
 /**
