@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -76,11 +77,29 @@ export interface TimplanCoverageResponse extends Omit<PlannedCoverage, 'verdicts
  * narrower.
  *
  * PUPIL IDS ONLY, NEVER NAMES. The response names no pupil — the web resolves
- * ids against the people it already holds — and nothing here logs one.
+ * ids against the people it already holds — and nothing here logs one. The
+ * läslogg records the ids the administrator's answer carries (TEACHING_TIME,
+ * pupilsNamedBy).
  *
  * Deactivated pupils are left out: a pupil who has left the school is not
  * under anybody's timplan.
  */
+/**
+ * The pupils a coverage answer names, for the läslogg (TEACHING_TIME): the
+ * pupil level's rows and the verdicts that name a pupil. Only the
+ * administrator's answer has either; a teacher's names no pupil, so it
+ * records nothing. Computed in the read's transaction, so the row says whom
+ * the answer named rather than every pupil it was computed from.
+ */
+export function pupilsNamedBy(coverage: {
+  pupils: ReadonlyArray<{ pupilId: string }> | null;
+  verdicts: ReadonlyArray<{ pupilId?: string }>;
+}): string[] {
+  return [...(coverage.pupils ?? []).map((pupil) => pupil.pupilId), ...coverage.verdicts.map((verdict) => verdict.pupilId)].filter(
+    (id): id is string => typeof id === 'string',
+  );
+}
+
 @Injectable()
 export class TimplanCoverageService {
   constructor(private readonly prisma: PrismaService) {}
@@ -97,11 +116,14 @@ export class TimplanCoverageService {
       );
     }
     const includePupils = user.role === Role.SCHOOL_ADMIN;
-    const input = await this.prisma.withRls(user, (tx) =>
-      readPlannedInput(tx, user, query.academicYearId, includePupils),
-    );
-    if (!input) throw new NotFoundException('Läsåret finns inte.');
-    const coverage = computePlannedCoverage(input);
+    const coverage = await this.prisma.withRls(user, async (tx) => {
+      const input = await readPlannedInput(tx, user, query.academicYearId, includePupils);
+      if (!input) return null;
+      const computed = computePlannedCoverage(input);
+      await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
+      return computed;
+    });
+    if (!coverage) throw new NotFoundException('Läsåret finns inte.');
     return {
       academicYearId: query.academicYearId,
       layer: 'planned',
@@ -210,7 +232,7 @@ export class TimplanCoverageService {
         deliveredDatesToAsk(creditRows, breaks, planned.year, asOfDate),
         source.kind === 'PUBLISHED' ? { publicationId: source.publicationId } : null,
       );
-      return computeDeliveredCoverage({
+      const computed = computeDeliveredCoverage({
         planned,
         audiences: rows.audiences,
         horizon: rows.horizon,
@@ -239,6 +261,8 @@ export class TimplanCoverageService {
         publishedDays: rows.publishedDays,
         drillGroupId: query.studentGroupId ?? null,
       });
+      await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
+      return computed;
     });
     if (!coverage) throw new NotFoundException('Läsåret finns inte.');
     return {
@@ -258,22 +282,25 @@ export class TimplanCoverageService {
   ): Promise<ScheduledCoverageResponse> {
     requireSchoolId(user);
     const includePupils = user.role === Role.SCHOOL_ADMIN;
-    const input = await this.prisma.withRls(user, (tx) =>
-      readScheduledInput(tx, user, query.academicYearId, includePupils),
-    );
-    if (!input) throw new NotFoundException('Läsåret finns inte.');
-    const { planned, lessons } = input;
-    const coverage = computeScheduledCoverage({
-      year: planned.year,
-      closures: planned.closures,
-      subjects: planned.subjects,
-      groups: planned.groups,
-      requirements: planned.requirements,
-      lessons,
-      pupils: planned.pupils,
-      includePupils,
-      drillGroupId: includePupils ? (query.studentGroupId ?? null) : null,
+    const coverage = await this.prisma.withRls(user, async (tx) => {
+      const input = await readScheduledInput(tx, user, query.academicYearId, includePupils);
+      if (!input) return null;
+      const { planned, lessons } = input;
+      const computed = computeScheduledCoverage({
+        year: planned.year,
+        closures: planned.closures,
+        subjects: planned.subjects,
+        groups: planned.groups,
+        requirements: planned.requirements,
+        lessons,
+        pupils: planned.pupils,
+        includePupils,
+        drillGroupId: includePupils ? (query.studentGroupId ?? null) : null,
+      });
+      await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
+      return computed;
     });
+    if (!coverage) throw new NotFoundException('Läsåret finns inte.');
     return {
       academicYearId: query.academicYearId,
       layer: 'scheduled',

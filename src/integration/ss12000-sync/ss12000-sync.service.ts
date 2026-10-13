@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient, type Ss12000SyncChange, type Ss12000SyncRun } from '@prisma/client';
+import { recordRead } from '../../access-log/access-log';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../../common/utils/request-context';
 import { PrismaService } from '../../database/prisma.service';
@@ -576,8 +577,10 @@ export class Ss12000SyncService {
   ): Promise<{ data: Ss12000SyncChange[]; nextCursor: number | null }> {
     const schoolId = requireSchoolId(user);
     const limit = query.limit ? Number(query.limit) : 200;
-    const rows = await this.prisma.queryWithRls(user, (db) =>
-      db.ss12000SyncChange.findMany({
+    // An interactive transaction, not a batch: the läslogg names the people
+    // the page carries, and those are known only once it is read.
+    return this.prisma.withRls(user, async (tx) => {
+      const rows = await tx.ss12000SyncChange.findMany({
         where: {
           runId,
           schoolId,
@@ -588,10 +591,14 @@ export class Ss12000SyncService {
         },
         orderBy: { seq: 'asc' },
         take: limit + 1,
-      }),
-    );
-    const data = rows.slice(0, limit);
-    return { data, nextCursor: rows.length > limit ? (data[data.length - 1]?.seq ?? null) : null };
+      });
+      const data = rows.slice(0, limit);
+      const named = peopleInChanges(data);
+      for (const kind of ['PEOPLE', 'ROSTER', 'GUARDIANS', 'EMPLOYMENT'] as const) {
+        await recordRead(tx, kind, named[kind], user.channel);
+      }
+      return { data, nextCursor: rows.length > limit ? (data[data.length - 1]?.seq ?? null) : null };
+    });
   }
 
   /**
@@ -601,15 +608,63 @@ export class Ss12000SyncService {
    */
   async provisioning(user: AuthenticatedUser) {
     const schoolId = requireSchoolId(user);
-    return this.prisma.queryWithRls(user, (db) =>
-      db.user.findMany({
+    return this.prisma.withRls(user, async (tx) => {
+      const people = await tx.user.findMany({
         where: { schoolId, ss12000Id: { not: null }, isActive: true, invitedAt: null },
         select: { id: true, role: true, firstName: true, lastName: true, email: true, studentGroup: { select: { id: true, name: true } } },
         orderBy: [{ role: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
         take: 5000,
-      }),
-    );
+      });
+      // Names, e-mail and class of everyone not yet invited (PEOPLE).
+      await recordRead(tx, 'PEOPLE', people.map((person) => person.id), user.channel);
+      return people;
+    });
   }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A Users id a change's before or after names under `key`; the JSON is the diff's, so anything else is dropped rather than failing the uuid[] cast. */
+function localIdIn(value: unknown, key: string): string | null {
+  const id = asObject(value)[key];
+  return typeof id === 'string' && UUID.test(id) ? id : null;
+}
+
+/**
+ * The people a page of a run's changes carries, per läslogg kind. A change's
+ * localId is the Users row of PERSON (names and e-mail before and after),
+ * CLASS_MEMBERSHIP and GROUP_MEMBERSHIP (a pupil's class or group: ROSTER)
+ * and RESPONSIBLE (the pupil, beside the guardian in before or after:
+ * GUARDIANS); a DUTY_LINK's holder is userLocalId (EMPLOYMENT). GROUP and
+ * ORGANISATION name nobody, and a PERSON CREATE has no Users row yet: the log
+ * names Users rows only (app.personal_data_read keeps the school's).
+ */
+export function peopleInChanges(
+  changes: ReadonlyArray<Pick<Ss12000SyncChange, 'entity' | 'localId' | 'before' | 'after'>>,
+): Record<'PEOPLE' | 'ROSTER' | 'GUARDIANS' | 'EMPLOYMENT', string[]> {
+  const named = { PEOPLE: [] as string[], ROSTER: [] as string[], GUARDIANS: [] as string[], EMPLOYMENT: [] as string[] };
+  for (const change of changes) {
+    const ids = (key: string) => [localIdIn(change.before, key), localIdIn(change.after, key)];
+    const kept = (list: Array<string | null>) => list.filter((id): id is string => id !== null);
+    switch (change.entity as ChangeEntity) {
+      case 'PERSON':
+        named.PEOPLE.push(...kept([change.localId]));
+        break;
+      case 'CLASS_MEMBERSHIP':
+      case 'GROUP_MEMBERSHIP':
+        named.ROSTER.push(...kept([change.localId]));
+        break;
+      case 'RESPONSIBLE':
+        named.GUARDIANS.push(...kept([change.localId, ...ids('guardianLocalId')]));
+        break;
+      case 'DUTY_LINK':
+        named.EMPLOYMENT.push(...kept(ids('userLocalId')));
+        break;
+      default:
+        break;
+    }
+  }
+  return named;
 }
 
 function storedOf(change: Ss12000SyncChange): StoredChange {

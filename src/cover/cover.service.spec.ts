@@ -1,5 +1,6 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { RealtimeService } from '../realtime/realtime.service';
@@ -605,8 +606,10 @@ describe('CoverService', () => {
     tx.teacherAbsence.findMany.mockResolvedValue([
       { id: ABSENCE, userId: A, startsAt: new Date('2026-10-13T22:00:00.000Z'), endsAt: new Date('2026-10-14T22:00:00.000Z') },
     ]);
-    const board = await cover.board('2026-10-14', '2026-10-14', testUser());
+    const board = await cover.board('2026-10-14', '2026-10-14', testUser({ channel: 'WEB' }));
     expect(board.summary).toEqual({ open: 1, covered: 0, cancelled: 0, handled: 0, passedOpen: 0 });
+    // Who is away, without why, recorded once with the reader's channel.
+    expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [A] }]);
     expect(board.absences).toEqual([
       { id: ABSENCE, userId: A, startsAt: '2026-10-13T22:00:00.000Z', endsAt: '2026-10-14T22:00:00.000Z' },
     ]);
@@ -614,6 +617,44 @@ describe('CoverService', () => {
       expect.objectContaining({ select: { id: true, userId: true, startsAt: true, endsAt: true } }),
     );
     expect(JSON.stringify(board)).not.toMatch(/"reason(Id)?":/);
+  });
+
+  it('the board records the absent teacher of a pair whose absence has ended too, and an empty board records nothing', async () => {
+    tx.$queryRaw.mockResolvedValue([]);
+    tx.teacherAbsence.findMany.mockResolvedValue([]);
+    await cover.board('2026-10-14', '2026-10-14', testUser());
+    expect(recordedReads(tx)).toEqual([]);
+    tx.$queryRaw.mockResolvedValue([
+      {
+        absenceId: ABSENCE,
+        absentTeacherId: B,
+        lessonId: LESSON,
+        isLive: true,
+        decisionId: null,
+        decision: null,
+        decidedAt: null,
+        removedTeachers: null,
+        date: '2026-10-14',
+        startsAt: START,
+        endsAt: END,
+        subjectId: 'subj',
+        studentGroupId: 'grp',
+        roomId: null,
+        lessonStatus: 'SCHEDULED',
+        cancelCause: null,
+        absenceStartsAt: new Date('2026-10-13T22:00:00.000Z'),
+        absenceEndsAt: new Date('2026-10-14T22:00:00.000Z'),
+        absenceStatus: 'WITHDRAWN',
+        teachers: [{ teacherId: B, role: 'LEAD' }],
+        extraGroupIds: [],
+        coveringSubstituteIds: [],
+      },
+    ]);
+    tx.teacherAbsence.findMany.mockResolvedValue([
+      { id: 'abs-2', userId: A, startsAt: new Date('2026-10-13T22:00:00.000Z'), endsAt: new Date('2026-10-14T22:00:00.000Z') },
+    ]);
+    await cover.board('2026-10-14', '2026-10-14', testUser());
+    expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: null, ids: [A, B] }]);
   });
 
   it('after the commit a failing notice is logged by count and never fails the write', async () => {

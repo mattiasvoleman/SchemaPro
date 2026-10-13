@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { CoverDecisionKind, PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
@@ -162,6 +163,15 @@ export class CoverService {
           select: { id: true, userId: true, startsAt: true, endsAt: true },
           orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
         })) ?? [];
+      // Who is away over the window, the period without the reason
+      // (STAFF_ABSENCES): the absences' people and the board's absent
+      // teachers, which an ended absence's decisions can still show.
+      await recordRead(
+        tx,
+        'STAFF_ABSENCES',
+        [...absences.map((absence) => absence.userId), ...items.map((item) => item.absentTeacherId)],
+        user.channel,
+      );
       return {
         from,
         to,

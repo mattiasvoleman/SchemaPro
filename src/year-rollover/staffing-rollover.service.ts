@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -12,6 +13,7 @@ import {
   hashStaffingCarry,
   planStaffingCarry,
   slotsOverLessons,
+  staffNamedBy,
   type ExistingStaffing,
   type StaffingCarryPlan,
   type StaffingCarryPreview,
@@ -98,6 +100,7 @@ export class StaffingRolloverService {
           // A carry into a year that is already scheduled: advice, outside the hash.
           const overLessons = slotsOverLessons(read.plan.writes, await lessonsOf(tx, targetYearId, read.plan));
           if (overLessons) problems.push(overLessons);
+          await recordRead(tx, 'EMPLOYMENT', staffNamedBy(read.plan.preview), user.channel);
           return {
             ...read.plan.preview,
             source: read.source,

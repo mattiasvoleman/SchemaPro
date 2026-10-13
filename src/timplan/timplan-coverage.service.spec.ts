@@ -7,9 +7,10 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PlannedVerdict, PlannedVerdictCode } from '../common/timplan-planned';
 import type { PrismaService } from '../database/prisma.service';
-import { TimplanCoverageService } from './timplan-coverage.service';
+import { TimplanCoverageService, pupilsNamedBy } from './timplan-coverage.service';
 import { describePlannedVerdict } from './timplan-planned-messages';
 import type { ScheduledVerdict, ScheduledVerdictCode } from '../common/timplan-scheduled';
 import { describeScheduledVerdict } from './timplan-scheduled-messages';
@@ -110,6 +111,29 @@ describe('TimplanCoverageService', () => {
       }),
     ]);
     expect(answer.groups[0]).toMatchObject({ linesWithTarget: 2, linesCovered: 1, pupilCount: 2 });
+  });
+
+  it('records the pupils the admin’s answer names as TEACHING_TIME in its transaction; a teacher’s names none and records nothing', async () => {
+    givenTheYear();
+    await service.planned({ academicYearId: YEAR_ID }, testUser({ channel: 'WEB' }));
+    // Bo is short of Spanska; Anna, judged and fine, is not named, nor is the visitor.
+    expect(recordedReads(tx)).toEqual([{ kind: 'TEACHING_TIME', channel: 'WEB', ids: [BO] }]);
+    expect(prisma.withRls).toHaveBeenCalledTimes(1);
+
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    service = new TimplanCoverageService(prisma as unknown as PrismaService);
+    givenTheYear();
+    const answer = await service.planned({ academicYearId: YEAR_ID }, testUser({ role: Role.TEACHER, channel: 'APP' }));
+    expect(answer.pupils).toBeNull();
+    expect(recordedReads(tx)).toEqual([]);
+  });
+
+  it('pupilsNamedBy: the pupil rows and the verdicts that name a pupil, nothing else', () => {
+    expect(
+      pupilsNamedBy({ pupils: [{ pupilId: ANNA }], verdicts: [{ pupilId: BO }, {}, { pupilId: ANNA }] }),
+    ).toEqual([ANNA, BO, ANNA]);
+    expect(pupilsNamedBy({ pupils: null, verdicts: [{}] })).toEqual([]);
   });
 
   it('reads only active pupils, homes by class and memberships by teaching group', async () => {
@@ -338,11 +362,20 @@ describe('TimplanCoverageService, layer 2 (schemalagt mot planerat)', () => {
   it('gives an admin every pupil of the drilled group', async () => {
     const answer = await service.scheduled(
       { academicYearId: YEAR_ID, layer: 'scheduled', studentGroupId: CLASS_ID },
-      testUser(),
+      testUser({ channel: 'WEB' }),
     );
     expect(answer.pupils).toEqual([
       expect.objectContaining({ pupilId: ANNA, lines: [expect.objectContaining({ scheduledMinutesPerWeek: 115 })] }),
     ]);
+    expect(recordedReads(tx)).toEqual([{ kind: 'TEACHING_TIME', channel: 'WEB', ids: [ANNA] }]);
+  });
+
+  it('records nothing for a teacher’s drill-down, which names no pupil', async () => {
+    await service.scheduled(
+      { academicYearId: YEAR_ID, layer: 'scheduled', studentGroupId: CLASS_ID },
+      testUser({ role: Role.TEACHER }),
+    );
+    expect(recordedReads(tx)).toEqual([]);
   });
 
   it('refuses a drill-down on layer 1, whose answer keeps its one shape', async () => {

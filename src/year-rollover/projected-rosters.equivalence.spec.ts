@@ -1,5 +1,6 @@
 import { IDS } from '../../test/utils/rollover-world';
 import { SUCCESSOR, givenSuccessorWorld, schoolAdmin, type SuccessorWorld } from '../../test/utils/successor-world';
+import { recordedReadsIn } from '../../test/utils/recorded-reads';
 import type { ConfigService } from '@nestjs/config';
 import type { HttpService } from '@nestjs/axios';
 import { CalendarLessonsService } from '../calendar/calendar-lessons.service';
@@ -63,8 +64,11 @@ async function observed<T>(read: () => Promise<T>, force?: RosterBasis): Promise
   }
 }
 
+/** What a reader wrote. The läslogg's statement (access-log.ts) is the read's own record, not a write of the world's rows. */
 const writesIn = (world: SuccessorWorld['world']) =>
-  world.calls.filter((call) => !/^(find|count|aggregate|groupBy|\$queryRaw)/.test(call.method));
+  world.calls.filter(
+    (call) => !/^(find|count|aggregate|groupBy|\$queryRaw)/.test(call.method) && recordedReadsIn([call]).length === 0,
+  );
 
 /**
  * The proof for one reader. `read` computes the reader's output for B,

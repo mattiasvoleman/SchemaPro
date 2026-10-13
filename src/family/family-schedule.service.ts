@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { asDay, dayDate, isoWeekOf, localDateOf, schoolTimezone, shiftDay } from '../cover/cover-context';
@@ -226,6 +227,14 @@ export class FamilyScheduleService {
             }),
           ])
         : [[], []];
+
+      // The week is the pupil's (SCHEDULE): their lessons, the ones they are
+      // named on alone included. Recorded for the guardian, whose only way to
+      // it this is, and for the admin who looks at what the family sees. The
+      // teachers are named only as the public viewer names them, so they are
+      // not. A summer week past the year (above) reads no lesson and writes no
+      // row.
+      await recordRead(tx, 'SCHEDULE', [child.id], user.channel);
 
       return {
         student: { id: child.id, firstName: child.firstName },

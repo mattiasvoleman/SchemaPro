@@ -22,3 +22,17 @@ export function recordedReads(tx: TxMock): RecordedRead[] {
       return { kind: kind as string, channel: (channel ?? null) as string | null, ids: ids as string[] };
     });
 }
+
+/**
+ * The same, read off a world's recorded calls (rollover-world.ts records each
+ * $executeRaw with its SQL and values), for specs that run on a world rather
+ * than the tx mock.
+ */
+export function recordedReadsIn(calls: ReadonlyArray<{ method: string; sql?: string; values?: unknown[] }>): RecordedRead[] {
+  return calls
+    .filter((call) => call.method === '$executeRaw' && (call.sql ?? '').includes('app.personal_data_read('))
+    .map((call) => {
+      const [kind, channel, ids] = call.values ?? [];
+      return { kind: kind as string, channel: (channel ?? null) as string | null, ids: ids as string[] };
+    });
+}

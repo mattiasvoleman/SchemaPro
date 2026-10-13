@@ -15,6 +15,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CreateUserDto } from './dto/user.dto';
 import { UserLookupError, type SupabaseAdminService } from './supabase-admin.service';
@@ -129,6 +130,8 @@ describe('UsersService', () => {
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
       expect(data.authId).not.toBe(AUTH_ID);
+      // The answer is what the admin just typed: no read to record.
+      expect(recordedReads(tx)).toEqual([]);
     });
 
     it('persists first and invites second, then adopts the identity', async () => {
@@ -838,6 +841,28 @@ describe('UsersService', () => {
       expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
         tx.user.update.mock.invocationCallOrder[0],
       );
+    });
+
+    it('records the patched person as PEOPLE after the write, in its transaction, whatever the body named', async () => {
+      tx.user.update.mockResolvedValue({ id: USER_ID, email: 'maja@school.se', phone: '+46701234567' });
+      const ranIn = transactionsOf(prisma);
+      const writtenIn = ranIn(tx.user.update);
+      const loggedIn = ranIn(tx.$executeRaw as jest.Mock);
+
+      await service.update(USER_ID, {}, testUser({ channel: 'OTHER' }));
+
+      // An empty body still answers with the whole row, e-mail and phone among it.
+      expect(recordedReads(tx)).toEqual([{ kind: 'PEOPLE', channel: 'OTHER', ids: [USER_ID] }]);
+      expect(loggedIn).toEqual(writtenIn);
+      expect(tx.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+        (tx.$executeRaw as jest.Mock).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('records nothing for a patch it refuses', async () => {
+      storeUser(null);
+      await expect(service.update(USER_ID, { firstName: 'Maja' }, testUser())).rejects.toBeInstanceOf(NotFoundException);
+      expect(recordedReads(tx)).toEqual([]);
     });
 
     it('passes an explicit null through to clear a field', async () => {

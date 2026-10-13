@@ -24,7 +24,15 @@
  *   lä6  "vem har läst om eleven" (AccessLogService) answers the pupil's
  *        entries with the readers' names and records its own read;
  *   lä7  a read that cannot be recorded fails: under the sync principal the
- *        writer refuses (PD403), and the read's transaction with it.
+ *        writer refuses (PD403), and the read's transaction with it;
+ *   lä8  the family's week (FamilyScheduleService) records the child as
+ *        SCHEDULE (20261026110000) for the guardian, with the app's channel;
+ *   lä9  the sync's change review, now an interactive transaction, records
+ *        a person's change as PEOPLE, a guardianship's as GUARDIANS and a
+ *        duty link's holder as EMPLOYMENT; the provisioning list records
+ *        whom it lists;
+ *   lä10 a PATCH of a person records them as PEOPLE: the answer is the whole
+ *        row, whatever the body named.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -40,7 +48,10 @@ import type { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { FamilyReadsService } from '../../src/family/family-reads.service';
+import { FamilyScheduleService } from '../../src/family/family-schedule.service';
 import { Ss12000Service } from '../../src/integration/ss12000.service';
+import { Ss12000SyncService } from '../../src/integration/ss12000-sync/ss12000-sync.service';
+import { Ss12000Outbound, Ss12000Secrets } from '../../src/integration/ss12000-sync/ss12000-sync.providers';
 import { Ss12000V2Service, type V2Caller } from '../../src/integration/ss12000-v2/ss12000-v2.service';
 import type { Scope } from '../../src/integration/ss12000-v2/scopes';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
@@ -338,6 +349,66 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
         api.withSyncPrincipal(s, (tx) => recordRead(tx, 'PEOPLE', [pupil.id])),
         (error: unknown) => /PD403|PERSONAL_DATA_READ_HAS_NO_READER/.test(String((error as { message?: string }).message ?? error)),
       );
+    });
+
+    await check('(lä8) the family\'s week records the child as SCHEDULE for the guardian, in its own transaction', async () => {
+      const sent = await statementsDuring(() => new FamilyScheduleService(api).week({ studentId: pupil.id }, asGuardian));
+      const writes = sent.filter((statement) => statement.includes('app.personal_data_read('));
+      assert.equal(writes.length, 1, `the week sent ${writes.length} log statements`);
+      assert.match(sent[sent.length - 1]!, /^COMMIT/);
+      const rows = await log(`kind = 'SCHEDULE'`);
+      assert.deepEqual(rows, [
+        { actorId: guardian.id, actorRole: 'GUARDIAN', apiKeyId: null, channel: 'APP', kind: 'SCHEDULE', subjectIds: [pupil.id] },
+      ]);
+    });
+
+    // A second administrator, so that lä2's and lä5's quarter-hour leaves these rows to be written.
+    const second = await person('SCHOOL_ADMIN', 'Admin2');
+    const asSecond: AuthenticatedUser = { authId: second.authId, role: Role.SCHOOL_ADMIN, userId: second.id, schoolId: s, channel: 'WEB' };
+
+    await check('(lä9) the sync\'s change review records each change under its kind, and the provisioning list whom it lists', async () => {
+      const source = await one<{ id: string }>(
+        `INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind") VALUES ($1, 'probe läslogg', 'https://ss12000.example.invalid', 'BEARER_TOKEN') RETURNING id`,
+        [s],
+      );
+      const run = await one<{ id: string }>(
+        `INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", trigger, mode) VALUES ($1, $2, 'MANUAL', 'FULL') RETURNING id`,
+        [s, source.id],
+      );
+      const change = (seq: number, entity: string, localId: string | null, after: object) =>
+        owner.query(
+          `INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, "localId", after, selected)
+           VALUES ($1, $2, $3, $4::"Ss12000ChangeEntity", 'UPDATE'::"Ss12000ChangeOp", $5, $6::jsonb, true)`,
+          [run.id, s, seq, entity, localId, JSON.stringify(after)],
+        );
+      await change(1, 'PERSON', pupil.id, { email: 'ny@example.invalid' });
+      await change(2, 'RESPONSIBLE', pupil.id, { guardianLocalId: guardian.id, guardianName: 'Förälder Probe' });
+      await change(3, 'DUTY_LINK', null, { userLocalId: teacher.id, dutyRole: 'Lärare' });
+      await change(4, 'GROUP', home.id, { name: 'L7' });
+      const sync = new Ss12000SyncService(api, new Ss12000Secrets(undefined), new Ss12000Outbound(undefined));
+      const sent = await statementsDuring(() => sync.listChanges(asSecond, run.id, {} as never));
+      assert.equal(sent.filter((statement) => statement.includes('app.personal_data_read(')).length, 3);
+      assert.deepEqual(
+        (await log(`"actorId" = $2`, [second.id])).map((row) => [row.kind, row.channel, row.subjectIds]),
+        [
+          ['PEOPLE', 'WEB', [pupil.id]],
+          ['GUARDIANS', 'WEB', sorted(pupil.id, guardian.id)],
+          ['EMPLOYMENT', 'WEB', [teacher.id]],
+        ],
+      );
+      // The classmate is linked (ss12000Id) and never invited: the list names them.
+      const listed = await sync.provisioning(asSecond);
+      assert.ok(listed.some((row) => row.id === classmate.id), JSON.stringify(listed));
+      const [people] = await log(`"actorId" = $2 AND kind = 'PEOPLE' AND $3::uuid = ANY("subjectIds")`, [second.id, classmate.id]);
+      assert.ok(people, 'the provisioning list did not record the classmate');
+    });
+
+    await check('(lä10) a PATCH with nothing in it records the person: the answer is the whole row', async () => {
+      const users = new UsersService(api, {} as SupabaseAdminService);
+      const answer = await users.update(teacher.id, {}, asSecond);
+      assert.equal(answer.email, `${marker}-laslogg-Lärare@example.invalid`);
+      const rows = await log(`"actorId" = $2 AND kind = 'PEOPLE' AND $3::uuid = ANY("subjectIds")`, [second.id, teacher.id]);
+      assert.deepEqual(rows.map((row) => row.subjectIds), [[teacher.id]]);
     });
   } finally {
     await sweepLasloggSchool(owner, marker);

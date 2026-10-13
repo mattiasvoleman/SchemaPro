@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../database/prisma.service';
 import { testUser } from '../../test/utils/prisma-mock';
+import { recordedReadsIn } from '../../test/utils/recorded-reads';
 import { IDS, givenRolloverWorld, prismaFor, staffingRows, type RecordedCall, type Row } from '../../test/utils/rollover-world';
 import { StaffingRolloverService } from './staffing-rollover.service';
 import { YearRolloverService } from './year-rollover.service';
@@ -43,6 +44,16 @@ describe('StaffingRolloverService — preview', () => {
     // Not a roster reader: no requirement, no pupil, no load input (C13).
     expect(world.calls.some((call) => call.model === 'teachingRequirement' || call.model === 'studentGroupMember')).toBe(false);
     expect(world.calls.some((call) => call.model === 'staffingPolicy')).toBe(false);
+  });
+
+  it('records every teacher the review names as EMPLOYMENT, a nedsättning and an own target among them, last in its transaction', async () => {
+    const { world, service, yearB } = await rolledWithoutStaffing();
+    const preview = await service.preview(yearB, { ...admin, channel: 'WEB' });
+    const reads = recordedReadsIn(world.calls);
+    expect(reads.map((read) => [read.kind, read.channel])).toEqual([['EMPLOYMENT', 'WEB']]);
+    expect([...reads[0]!.ids].sort()).toEqual([...new Set(preview.teachers.map((row) => row.userId))].sort());
+    expect(reads[0]!.ids).toEqual(expect.arrayContaining([IDS.anna, IDS.cecilia, IDS.bo]));
+    expect(world.calls[world.calls.length - 1]).toMatchObject({ method: '$executeRaw' });
   });
 
   it('404s a year RLS hides, and 409s a year nobody rolled into (the never-rolls case)', async () => {

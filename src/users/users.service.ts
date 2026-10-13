@@ -446,7 +446,7 @@ export class UsersService {
           }
         }
 
-        return tx.user.update({
+        const updated = await tx.user.update({
           where: { id },
           data: {
             ...(dto.role !== undefined ? { role: dto.role } : {}),
@@ -459,6 +459,12 @@ export class UsersService {
             ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
           },
         });
+        // The answer is the whole row, e-mail and phone among them, whatever
+        // the body named: a PATCH with an empty body would otherwise read a
+        // person unrecorded (PEOPLE). Creating answers with what its caller
+        // just typed, and is not recorded.
+        await recordRead(tx, 'PEOPLE', [updated.id], user.channel);
+        return updated;
       });
     } catch (error) {
       rethrowPrismaError(error);

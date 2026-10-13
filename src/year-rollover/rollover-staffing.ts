@@ -208,6 +208,32 @@ export interface StaffingCarryPreview {
   }[];
 }
 
+/**
+ * Everyone a staffing preview names, for the läslogg (EMPLOYMENT): the review
+ * table and every list beside it, a nedsättning or an own target among them.
+ * The preview has no name in it, but each id is a teacher's tjänst or uppdrag
+ * as it stands and as the new year would carry it.
+ */
+export function staffNamedBy(preview: StaffingCarryPreview): string[] {
+  const { employments, duties } = preview;
+  return [
+    ...preview.teachers.map((row) => row.userId),
+    ...employments.withReduction,
+    ...employments.withTargetOverride,
+    ...employments.notCarried.map((row) => row.userId),
+    ...employments.signaturesDropped.map((row) => row.userId),
+    ...duties.relabelled.map((row) => row.userId),
+    ...[
+      ...duties.groupDropped,
+      ...duties.slotDropped,
+      ...duties.fromCleared,
+      ...duties.overlapsTargetDuty,
+      ...duties.successorHasMentor,
+      ...duties.notCarried,
+    ].map((row) => row.userId),
+  ];
+}
+
 export type StaffingProblemCode =
   | 'STAFFING_MENTORSKAP_NOT_CARRIED'
   | 'STAFFING_DUTY_GROUP_DROPPED'

@@ -1,4 +1,5 @@
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import type { CoverService } from './cover.service';
 import { CoverReportsService } from './cover-reports.service';
@@ -6,6 +7,7 @@ import { CoverReportsService } from './cover-reports.service';
 const NOW = new Date('2026-10-14T05:00:00.000Z');
 const S = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const P = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const Q = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
 describe('CoverReportsService', () => {
   let tx: TxMock;
@@ -58,6 +60,8 @@ describe('CoverReportsService', () => {
       expect(answer.planned).toEqual([{ userId: S, lessons: 1, minutes: 40 }]);
       // Who covered what when; never who was away or why.
       expect(JSON.stringify(answer)).not.toMatch(/absen|reason/i);
+      // Everyone who covered or is booked to (EMPLOYMENT); nobody was away, so no STAFF_ABSENCES.
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: [S, P] }]);
     });
 
     it('a cover held by a substitute who was themself away is left out of the payroll rows and listed to check — never saying why', async () => {
@@ -103,6 +107,31 @@ describe('CoverReportsService', () => {
     });
   });
 
+  it('hours: a cover whose substitute was away is to be checked, and records that substitute as STAFF_ABSENCES too', async () => {
+    tx.academicYear.findMany.mockResolvedValue([
+      { id: 'y2', startDate: new Date('2026-08-17T00:00:00Z'), endDate: new Date('2027-06-11T00:00:00Z') },
+    ]);
+    tx.teacherEmployment.findMany.mockResolvedValue([]);
+    tx.$queryRaw.mockResolvedValueOnce([
+      { lessonId: 'l-1', userId: S, date: '2026-09-01', startsAt: new Date('2026-09-01T08:00:00Z'), endsAt: new Date('2026-09-01T09:00:00Z'), minutes: 60, subjectId: 'ma', studentGroupId: '7a', roomId: null },
+      { lessonId: 'l-2', userId: P, date: '2026-09-02', startsAt: new Date('2026-09-02T08:00:00Z'), endsAt: new Date('2026-09-02T09:00:00Z'), minutes: 60, subjectId: 'ma', studentGroupId: '7a', roomId: null },
+    ]);
+    tx.teacherAbsence.findMany.mockResolvedValue([
+      { userId: P, startsAt: new Date('2026-09-02T00:00:00Z'), endsAt: new Date('2026-09-03T00:00:00Z') },
+    ]);
+    // Booked ahead and not yet held: in `planned`, and named all the same.
+    tx.calendarLessonTeacher.findMany.mockResolvedValue([
+      { teacherId: Q, calendarLesson: { startsAt: new Date('2026-09-29T08:00:00Z'), endsAt: new Date('2026-09-29T09:00:00Z') } },
+    ]);
+    const answer = await service.hours('2026-09-01', '2026-09-30', undefined, testUser({ channel: 'WEB' }));
+    expect(answer.toCheck.map((row) => row.userId)).toEqual([P]);
+    expect(answer.planned.map((row) => row.userId)).toEqual([Q]);
+    expect(recordedReads(tx)).toEqual([
+      { kind: 'EMPLOYMENT', channel: 'WEB', ids: [S, P, Q] },
+      { kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [P] },
+    ]);
+  });
+
   it('counter: the year’s term and the week, pool members listed even at zero, most covers first', async () => {
     tx.academicYear.findFirst.mockResolvedValue({
       id: 'y2',
@@ -114,7 +143,9 @@ describe('CoverReportsService', () => {
       { teacherId: S, calendarLesson: { date: new Date('2026-10-13T00:00:00Z'), startsAt: new Date('2026-10-13T08:00:00Z'), endsAt: new Date('2026-10-13T09:00:00Z') } },
       { teacherId: S, calendarLesson: { date: new Date('2026-09-01T00:00:00Z'), startsAt: new Date('2026-09-01T08:00:00Z'), endsAt: new Date('2026-09-01T08:30:00Z') } },
     ]);
-    const answer = await service.counter('2026-10-14', testUser());
+    const answer = await service.counter('2026-10-14', testUser({ channel: 'WEB' }));
+    // Every row, a pool member at zero included: their cover under the tjänst.
+    expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [S, P] }]);
     expect(answer.rows).toEqual([
       { userId: S, kind: 'STAFF', weekLessons: 1, weekMinutes: 60, termLessons: 2, termMinutes: 90, heldTermMinutes: 90 },
       { userId: P, kind: 'POOL', weekLessons: 0, weekMinutes: 0, termLessons: 0, termMinutes: 0, heldTermMinutes: 0 },
