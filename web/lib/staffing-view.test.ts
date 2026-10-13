@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cellValue,
+  dutyMinutesOf,
   formatPercent,
   groupsInSubject,
   kpis,
@@ -188,18 +189,84 @@ describe("loadBarSegments with uppdrag", () => {
     expect(segments.duty + segments.teaching + segments.over).toBeCloseTo(1, 10);
   });
 
-  it("adds the uppdrag to the peak week too, since they have no week pattern", () => {
+  it("adds an undated uppdrag to the peak week at its own minutes, which are its toppvecka", () => {
     const segments = loadBarSegments(
       {
         assignedMinutesPerWeek: 900,
         targetMinutesPerWeek: 1080,
         dutyMinutesPerWeek: 60,
         countedDutyMinutesPerWeek: 60,
+        dutyPeakMinutesPerWeek: 60,
+        countedDutyPeakMinutesPerWeek: 60,
       },
       "peak",
       1050,
     );
     expect(segments.overMinutes).toBe(30);
+  });
+
+  it("adds a dated uppdrag to the peak week at its whole minutes, not its share of the year", () => {
+    // Mentor from January, 90 minutes: 41 over the year, 90 in March. The
+    // toppvecka used to draw 41.
+    const segments = loadBarSegments(
+      {
+        assignedMinutesPerWeek: 900,
+        targetMinutesPerWeek: 1080,
+        dutyMinutesPerWeek: 41,
+        countedDutyMinutesPerWeek: 0,
+        dutyPeakMinutesPerWeek: 90,
+        countedDutyPeakMinutesPerWeek: 0,
+      },
+      "peak",
+      960,
+    );
+    expect(segments.dutyMinutes).toBe(90);
+    expect(segments.remainingMinutes).toBe(120);
+    expect(segments.duty).toBeCloseTo(90 / 1170, 10);
+    // The standardvecka still reads the year's share.
+    expect(
+      loadBarSegments({
+        assignedMinutesPerWeek: 900,
+        targetMinutesPerWeek: 1080,
+        dutyMinutesPerWeek: 41,
+        countedDutyMinutesPerWeek: 0,
+        dutyPeakMinutesPerWeek: 90,
+        countedDutyPeakMinutesPerWeek: 0,
+      }).dutyMinutes,
+    ).toBe(41);
+  });
+
+  it("compares a counted dated uppdrag's toppvecka with the target, so a term-long resurstid is over in its weeks", () => {
+    // 1020 teaching all year, 120 min resurstid counted until jul (53 over
+    // the year), target 1080: 1140 in the autumn, which the old view read as
+    // 1073 and "kvar 7".
+    const segments = loadBarSegments(
+      {
+        assignedMinutesPerWeek: 1020,
+        targetMinutesPerWeek: 1080,
+        dutyMinutesPerWeek: 63,
+        countedDutyMinutesPerWeek: 53,
+        dutyPeakMinutesPerWeek: 120,
+        countedDutyPeakMinutesPerWeek: 120,
+      },
+      "peak",
+      1020,
+    );
+    expect(segments.countedDutyMinutes).toBe(120);
+    expect(segments.overMinutes).toBe(60);
+    expect(segments.remainingMinutes).toBe(0);
+    // The rest of the busiest uppdrag week: none, the resurstid is all of it.
+    expect(segments.dutyMinutes).toBe(0);
+  });
+
+  it("reads the standardvecka's uppdrag in the peak week when the gateway sends no peaks", () => {
+    const segments = loadBarSegments(
+      { assignedMinutesPerWeek: 900, targetMinutesPerWeek: 1080, dutyMinutesPerWeek: 41, countedDutyMinutesPerWeek: 20 },
+      "peak",
+      960,
+    );
+    expect(segments.countedDutyMinutes).toBe(20);
+    expect(segments.dutyMinutes).toBe(21);
   });
 
   it("draws no uppdrag either without a target, and still names its minutes", () => {
@@ -213,6 +280,26 @@ describe("loadBarSegments with uppdrag", () => {
     expect(segments.teaching).toBe(0);
     expect(segments.dutyMinutes).toBe(100);
     expect(segments.teachingMinutes).toBe(300);
+  });
+});
+
+describe("dutyMinutesOf", () => {
+  const figures = {
+    dutyMinutesPerWeek: 63,
+    countedDutyMinutesPerWeek: 53,
+    dutyPeakMinutesPerWeek: 120,
+    countedDutyPeakMinutesPerWeek: 100,
+  };
+  it("reads the standardvecka's figures in the standard week and the peaks in the toppvecka", () => {
+    expect(dutyMinutesOf(figures, "standard")).toEqual({ all: 63, counted: 53 });
+    expect(dutyMinutesOf(figures, "peak")).toEqual({ all: 120, counted: 100 });
+  });
+  it("falls back part by part to the standardvecka for a report without peaks", () => {
+    expect(dutyMinutesOf({ dutyMinutesPerWeek: 63, countedDutyMinutesPerWeek: 53, dutyPeakMinutesPerWeek: 120 }, "peak")).toEqual({
+      all: 120,
+      counted: 53,
+    });
+    expect(dutyMinutesOf({}, "peak")).toEqual({ all: 0, counted: 0 });
   });
 });
 

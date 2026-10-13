@@ -40,7 +40,8 @@ import type { TeacherLoad } from "@/lib/teacher-load";
  * UPPDRAG (Fas 2). An uppdrag that does not count toward the target is the
  * first, dark segment, outside the comparison; one that counts is inside the
  * teaching segment, because the report's status already reads it — and the
- * sentence says "varav N min uppdrag" so the reader knows. See
+ * sentence says "varav N min uppdrag" so the reader knows. In the toppvecka
+ * the uppdrag are their own toppvecka, as the matrix's column beside it. See
  * loadBarSegments for the arithmetic.
  */
 export function LoadBar({
@@ -52,7 +53,15 @@ export function LoadBar({
     TeacherLoad,
     "assignedMinutesPerWeek" | "targetMinutesPerWeek" | "peakMinutesPerWeek" | "percentOfTarget"
   > &
-    Partial<Pick<TeacherLoad, "dutyMinutesPerWeek" | "countedDutyMinutesPerWeek">>;
+    Partial<
+      Pick<
+        TeacherLoad,
+        | "dutyMinutesPerWeek"
+        | "countedDutyMinutesPerWeek"
+        | "dutyPeakMinutesPerWeek"
+        | "countedDutyPeakMinutesPerWeek"
+      >
+    >;
   week?: WeekView;
   className?: string;
 }) {

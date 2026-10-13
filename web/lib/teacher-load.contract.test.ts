@@ -64,6 +64,12 @@ describe("the load report agrees with the gateway's fixture", () => {
     expect(new Set(teachers.map((t) => t.annual.contractKind))).toEqual(new Set(["FERIE", "SEMESTER", null]));
   });
 
+  it("reaches the dated uppdrag's toppvecka, all of them and the counted ones, above their standardvecka", () => {
+    const teachers = cases.flatMap((entry) => entry.report.teachers);
+    expect(teachers.some((t) => (t.dutyPeakMinutesPerWeek ?? 0) > t.dutyMinutesPerWeek)).toBe(true);
+    expect(teachers.some((t) => (t.countedDutyPeakMinutesPerWeek ?? 0) > t.countedDutyMinutesPerWeek)).toBe(true);
+  });
+
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
   });

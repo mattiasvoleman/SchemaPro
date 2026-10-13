@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import {
   cellValue,
+  dutyMinutesOf,
   formatPercent,
   groupsInSubject,
   matrixColumns,
@@ -81,6 +82,9 @@ export function StaffingMatrix({
 
   const teaching = (teacher: TeacherLoad) =>
     week === "peak" ? teacher.peakMinutesPerWeek : teacher.assignedMinutesPerWeek;
+  // The uppdrag in the same week as the teaching beside them: the toppvecka
+  // reads their own peak, where a dated uppdrag weighs its whole minutes.
+  const duties = (teacher: TeacherLoad) => dutyMinutesOf(teacher, week);
 
   const balanceText = (teacher: TeacherLoad) => {
     if (teacher.balanceMinutesPerWeek === null) return "—";
@@ -141,7 +145,7 @@ export function StaffingMatrix({
                   : t("teachingHeader")}
             </th>
             <th scope="col" className="sticky right-64 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
-              {t("dutyHeader")}
+              {week === "peak" ? t("dutyPeakHeader") : t("dutyHeader")}
             </th>
             <th scope="col" className="sticky right-44 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right text-xs font-medium text-muted-foreground">
               {t("balanceHeader")}
@@ -210,17 +214,17 @@ export function StaffingMatrix({
                 <td
                   className="sticky right-64 z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground"
                   title={
-                    teacher.countedDutyMinutesPerWeek > 0
-                      ? t("dutyCellCounted", { minutes: teacher.countedDutyMinutesPerWeek })
+                    duties(teacher).counted > 0
+                      ? t("dutyCellCounted", { minutes: duties(teacher).counted })
                       : undefined
                   }
                 >
-                  {teacher.dutyMinutesPerWeek > 0 ? (
+                  {duties(teacher).all > 0 ? (
                     <>
-                      {teacher.dutyMinutesPerWeek}
-                      {teacher.countedDutyMinutesPerWeek > 0 ? (
+                      {duties(teacher).all}
+                      {duties(teacher).counted > 0 ? (
                         <span className="sr-only">
-                          {` (${t("dutyCellCounted", { minutes: teacher.countedDutyMinutesPerWeek })})`}
+                          {` (${t("dutyCellCounted", { minutes: duties(teacher).counted })})`}
                         </span>
                       ) : null}
                     </>
