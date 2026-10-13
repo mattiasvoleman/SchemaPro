@@ -93,6 +93,14 @@ export interface AnonymousRequirement {
    * Monday in the weeks it runs, and the engine, which has no weeks, is told so.
    */
   lockedDays?: DayOfWeek[];
+  /**
+   * Parallella block: the anonymous id of the block this timplanspost runs in,
+   * shared by every member. The engine starts the k-th lesson of each member
+   * with the k-th of the others. Sent only on a member of a block with two or
+   * more members to place and none locked (parallel-blocks.ts), so a school
+   * without blocks sends the payload it always sent.
+   */
+  blockId?: string;
   /** Active-student headcount — an aggregate used for room-capacity checks. */
   studentGroupSize: number;
   /** When set, lessons for this requirement may only use rooms of this type. */
@@ -450,7 +458,11 @@ export type ConflictCategory =
   | 'TIMEOUT_PROBE'
   // A timplanspost's ämnesfördelning — at most N a day, not on consecutive
   // days — is one of the rules that cannot all hold.
-  | 'SUBJECT_DISTRIBUTION';
+  | 'SUBJECT_DISTRIBUTION'
+  // A parallel block (språkval, elevens val) cannot have its lessons at the
+  // same times, or is refused before the model: members that differ, share a
+  // teacher or pupils, or are partly locked.
+  | 'TEACHING_BLOCK';
 
 export interface AiEngineConflictDetail {
   category: ConflictCategory;

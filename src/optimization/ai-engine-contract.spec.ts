@@ -108,8 +108,6 @@ const REQUIREMENT_FIELDS_MIXED = [...REQUIREMENT_FIELDS, 'lessonLengths'].sort()
  * A requirement held to an ämnesfördelning carries its rule and the weekdays
  * of its locked lessons besides; one without a rule never does, so a school
  * that has written none sends the payload it always sent.
- * optimization-engine/tests/test_optimize.py's `_field_names(AnonymousRequirement)`
- * must equal THIS set: the engine declares every optional field either way.
  */
 const REQUIREMENT_FIELDS_DISTRIBUTED = [
   ...REQUIREMENT_FIELDS_MIXED,
@@ -117,6 +115,14 @@ const REQUIREMENT_FIELDS_DISTRIBUTED = [
   'maxLessonsPerDay',
   'minDaysBetween',
 ].sort();
+
+/**
+ * A member of a parallel block with two or more members to place carries the
+ * block's anonymous id besides; a row in no block never does.
+ * optimization-engine/tests/test_optimize.py's `_field_names(AnonymousRequirement)`
+ * must equal THIS set: the engine declares every optional field either way.
+ */
+const REQUIREMENT_FIELDS_BLOCKED = [...REQUIREMENT_FIELDS_DISTRIBUTED, 'blockId'].sort();
 
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
@@ -171,10 +177,15 @@ const RULES_FIELDS = [
 describe('AI engine wire contract', () => {
   /** The tx of the most recent buildPayload, for assertions about the QUERIES. */
   let lastTx: ReturnType<typeof createTxMock>;
+  /** What the most recent buildPayload's run answered, and whether it called the engine. */
+  let lastResult: Awaited<ReturnType<OptimizationProxyService['triggerScheduling']>>;
+  let lastPost: jest.Mock;
 
   const buildPayload = async (
     requirementOverrides: Record<string, unknown> = {},
     preservedLessons: Record<string, unknown>[] = [],
+    moreRequirements: Record<string, unknown>[] = [],
+    configure: (tx: ReturnType<typeof createTxMock>) => void = () => undefined,
   ): Promise<Record<string, unknown>> => {
     const tx = createTxMock();
     lastTx = tx;
@@ -227,6 +238,7 @@ describe('AI engine wire contract', () => {
         subject: { requiredRoomTypeId: null },
         ...requirementOverrides,
       },
+      ...moreRequirements,
     ]);
     // One teacher's arbetstid, with the lunch trio whole and the night set, so
     // every field of the shape reaches the payload.
@@ -361,14 +373,33 @@ describe('AI engine wire contract', () => {
     const config = {
       getOrThrow: () => ({ url: 'http://engine', apiKey: 'k', timeoutMs: 1000 }),
     };
+    configure(tx);
 
-    await new OptimizationProxyService(
+    lastPost = http.post;
+    lastResult = await new OptimizationProxyService(
       prisma as never,
       http as never,
       config as never,
     ).triggerScheduling('year-1', testUser());
 
     return sent;
+  };
+
+  /** A second timplanspost for the block cases: Franska för g2, one lesson. */
+  const member = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'r2',
+    subjectId: 's2',
+    studentGroupId: 'g2',
+    teacherId: 't2',
+    coTeacherId: null,
+    lessonsPerWeek: 1,
+    minutesPerLesson: 60,
+    lessonLengths: [],
+    subject: { requiredRoomTypeId: null },
+    ...overrides,
+  });
+  const named = (tx: ReturnType<typeof createTxMock>) => {
+    tx['teachingBlock']!['findMany']!.mockResolvedValue([{ id: 'b1', name: 'Språkval åk 7' }]);
   };
 
   it('sends exactly the top-level fields the engine declares', async () => {
@@ -468,6 +499,103 @@ describe('AI engine wire contract', () => {
     const payload = await buildPayload();
     const requirements = payload['requirements'] as Array<Record<string, unknown>>;
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
+  });
+
+  it('sends every member of a block the block’s one anonymous id, and nothing else new', async () => {
+    const payload = await buildPayload({ blockId: 'b1' }, [], [member({ blockId: 'b1' })], named);
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+
+    expect(requirements).toHaveLength(2);
+    expect(Object.keys(requirements[0]!).sort()).toEqual(
+      REQUIREMENT_FIELDS_BLOCKED.filter(
+        (field) => !['lessonLengths', 'lockedDays', 'maxLessonsPerDay', 'minDaysBetween'].includes(field),
+      ),
+    );
+    expect(requirements[0]!['blockId']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(requirements[1]!['blockId']).toBe(requirements[0]!['blockId']);
+  });
+
+  it('sends a block of one member no block, and asks for no block name when no row has one', async () => {
+    const alone = await buildPayload({ blockId: 'b1' }, [], [member()], named);
+    for (const requirement of alone['requirements'] as Array<Record<string, unknown>>) {
+      expect(Object.keys(requirement).sort()).toEqual(REQUIREMENT_FIELDS);
+    }
+
+    await buildPayload();
+    expect(lastTx['teachingBlock']!['findMany']).not.toHaveBeenCalled();
+  });
+
+  it('refuses a partly locked block before the engine, by the block’s name and its rows', async () => {
+    // Språkval åk 7: r1's one lesson is locked every week, r2's is still to
+    // place. The block cannot be held together around the lock.
+    await buildPayload(
+      { blockId: 'b1' },
+      [
+        {
+          id: 'ml-locked',
+          subjectId: 's1',
+          studentGroupId: 'g1',
+          teacherId: 't1',
+          coTeacherId: null,
+          roomId: null,
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T09:00:00.000Z'),
+          endTime: new Date('1970-01-01T10:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          extraGroups: [],
+          participants: [],
+        },
+      ],
+      [member({ blockId: 'b1', recurrence: 'ALL_WEEKS', startDate: null, endDate: null })],
+      named,
+    );
+
+    expect(lastPost).not.toHaveBeenCalled();
+    expect(lastResult.status).toBe('INFEASIBLE');
+    expect(lastResult.lessons).toEqual([]);
+    expect(lastResult.conflicts?.summaryCode).toBe('BLOCK_PARTLY_LOCKED_SUMMARY');
+    expect(lastResult.conflicts?.summaryParams).toEqual({ count: 1 });
+    const [detail] = lastResult.conflicts!.conflicts;
+    expect(detail).toMatchObject({
+      category: 'TEACHING_BLOCK',
+      code: 'BLOCK_PARTLY_LOCKED',
+      params: { block: 'Språkval åk 7', locked: 1 },
+      resourceIds: ['b1'],
+      resourceNames: ['Språkval åk 7'],
+    });
+    // Both rows, by the ids the payload gave them, as every refusal carries them.
+    expect(detail!.requirementIds).toHaveLength(2);
+    expect(detail!.message).toContain('Språkval åk 7 has 1 lesson locked');
+    expect(lastTx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
+  });
+
+  it('places a block whose every lesson is locked as the school locked it, and refuses nothing', async () => {
+    const locked = (groupId: string, subjectId: string) => ({
+      id: `ml-${groupId}`,
+      subjectId,
+      studentGroupId: groupId,
+      teacherId: null,
+      coTeacherId: null,
+      roomId: null,
+      dayOfWeek: 1,
+      startTime: new Date('1970-01-01T09:00:00.000Z'),
+      endTime: new Date('1970-01-01T10:00:00.000Z'),
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      extraGroups: [],
+      participants: [],
+    });
+    await buildPayload(
+      { blockId: 'b1', recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+      [locked('g1', 's1'), locked('g2', 's2')],
+      [member({ blockId: 'b1', recurrence: 'ALL_WEEKS', startDate: null, endDate: null })],
+      named,
+    );
+
+    expect(lastResult.conflicts).toBeNull();
   });
 
   it('sends a split requirement the same fields and its lengths', async () => {
