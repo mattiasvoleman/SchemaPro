@@ -8,11 +8,20 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import { enforceRequirementWrite } from '../staffing/staffing-enforcement';
 import {
   REQUIREMENT_IN_ANOTHER_BLOCK,
   TEACHING_BLOCK_NAME_TAKEN,
   TeachingBlocksService,
 } from './teaching-blocks.service';
+
+// The staffing judge, replaced so a test can say what it answers; what it
+// decides is staffing-enforcement.spec.ts's.
+jest.mock('../staffing/staffing-enforcement', () => ({
+  ...jest.requireActual('../staffing/staffing-enforcement'),
+  enforceRequirementWrite: jest.fn(),
+}));
+const judge = enforceRequirementWrite as jest.MockedFunction<typeof enforceRequirementWrite>;
 
 const YEAR = '11111111-1111-4111-8111-111111111111';
 const OTHER_YEAR = '22222222-2222-4222-8222-222222222222';
@@ -244,7 +253,75 @@ describe('TeachingBlocksService', () => {
     });
   });
 
-  it('deletes the block and leaves the rows to the key', async () => {
+  describe('the block\'s lessons', () => {
+    const member = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      academicYearId: YEAR,
+      subjectId: `s-${id}`,
+      studentGroupId: `g-${id}`,
+      teacherId: null,
+      coTeacherId: null,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      ...extra,
+    });
+
+    beforeEach(() => {
+      tx.$queryRaw = jest.fn().mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Språkval åk 7' }]);
+      judge.mockReset().mockResolvedValue([]);
+      tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
+        'lessonsPerWeek' in select
+          ? [member(TY, { teacherId: 't-anna' }), member(FR)]
+          : [{ id: TY }, { id: FR }],
+      );
+    });
+
+    it('judges every member\'s teachers and writes every member in one UPDATE', async () => {
+      judge.mockResolvedValueOnce([{ code: 'STAFF_TEACHER_OVER_TARGET', params: { role: 'TEACHER' } } as never]);
+
+      const block = await service.update(BLOCK, { lessonsPerWeek: 3, minutesPerLesson: 40 }, admin);
+
+      expect(judge).toHaveBeenCalledTimes(2);
+      expect(judge.mock.calls[0]![1]).toMatchObject({
+        requirementId: TY,
+        before: { teacherId: 't-anna', coTeacherId: null },
+        patch: { lessonsPerWeek: 3, minutesPerLesson: 40, lessonLengths: [] },
+      });
+      expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
+        [{ where: { blockId: BLOCK }, data: { lessonsPerWeek: 3, minutesPerLesson: 40 } }],
+      ]);
+      expect(block.warnings).toEqual([{ code: 'STAFF_TEACHER_OVER_TARGET', params: { role: 'TEACHER' } }]);
+    });
+
+    it('writes nothing when the staffing policy refuses one member', async () => {
+      judge.mockResolvedValueOnce([]).mockRejectedValueOnce(new ConflictException('över mål'));
+
+      await expect(service.update(BLOCK, { lessonsPerWeek: 4 }, admin)).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a length off the grid before the database, and a block with no posts', async () => {
+      await expect(service.update(BLOCK, { minutesPerLesson: 42 }, admin)).rejects.toThrow(
+        '42 minuter går inte att lägga på schemat',
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+
+      tx.teachingRequirement.findMany.mockResolvedValue([]);
+      await expect(service.update(BLOCK, { lessonsPerWeek: 3 }, admin)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('answers a rename without touching the lessons, and without warnings', async () => {
+      tx.teachingBlock.update.mockResolvedValue({ id: BLOCK, academicYearId: YEAR, name: 'Språkval 7' });
+
+      const block = await service.update(BLOCK, { name: 'Språkval 7' }, admin);
+
+      expect(judge).not.toHaveBeenCalled();
+      expect(block).not.toHaveProperty('warnings');
+    });
+  });
+
+    it('deletes the block and leaves the rows to the key', async () => {
     await service.remove(BLOCK, admin);
 
     expect(tx.teachingBlock.delete).toHaveBeenCalledWith({ where: { id: BLOCK } });
