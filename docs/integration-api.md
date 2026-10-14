@@ -232,7 +232,7 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
 |---|---|
 | Person, PersonReference | the source's id when an admin linked the person (`Users.ss12000Id`), else SchemaPro's |
 | Group, GroupReference | the source's id when linked (`StudentGroups.ss12000Id`), else SchemaPro's |
-| Organisation | the source's skolenhet id when exactly one is chosen (organisationType `Skolenhet`, with its `schoolUnitCode`); with several, the school's own id as a `Skola`; with none, the school's own id as a `Skolenhet` |
+| Organisation | one `Skolenhet` per skolenhet the school has (SchoolUnits, set up under Klasser or created by the consumer from the source): the source's id once the unit is linked, else the unit's own. A school without units is emitted itself, as before units: the source's skolenhet id when exactly one is chosen (organisationType `Skolenhet`, with its `schoolUnitCode`); with several, the school's own id as a `Skola`; with none, the school's own id as a `Skolenhet`. The sync turns the chosen skolenheter into units |
 | Duty, DutyReference | the teacher's earliest live teaching-role duty at the source for the active year (`Ss12000DutyLinks`), else the post's id (`TeacherEmployments.id`, as v1). A teacher with a source duty and no post is referenced by that duty id in activities and events, but `/duties` serves posts only. A teacher with neither is left out |
 | Activity | the master lesson's id. An ad-hoc lesson's own Activity has a UUIDv5 (SchemaPro namespace, name `adhoc-activity:<lesson id>`) and never the lesson's id |
 | CalendarEvent, Room, Syllabus | SchemaPro's own |
@@ -247,14 +247,32 @@ consumer saw an object under SchemaPro's id buries the old id in
 Only an S1 property is ever written, and an optional one only when SchemaPro
 holds a value for it.
 
-**Organisations** (`organisations.read`): `id`, `meta`, `displayName`
-(Schools.name), `organisationType`, `schoolUnitCode`, `schoolTypes` (the
-active year's timplans: GRUNDSKOLA→`GR`, its årskurs 0 →`FKLASS`,
-ANPASSAD_GRUNDSKOLA_AMNEN→`GRS`, ANPASSAD_GRUNDSKOLA_AMNESOMRADEN→`TR`,
-SPECIALSKOLA→`SP`, SAMESKOLA→`SAM`; 2.1.0 still names grundsärskola and
-träningsskola). `schoolTypes` is written on a `Skolenhet` only, as S1 says
-("Anges endast för organisationselement typen Skolenhet"), never on the
-`Skola` several skolenheter make.
+**Organisations** (`organisations.read`): one `Skolenhet` per unit. `id`,
+`meta`, `displayName` (the unit's name, or Schools.name for a school without
+units), `organisationType`, `schoolUnitCode` (the unit's eight-digit
+skolenhetskod, when set), `schoolTypes`: the unit's own skolformer (the
+source's, once linked), or, for a unit that lists none and for a school
+without units, the active year's timplans for the årskurser it holds:
+GRUNDSKOLA→`GR`, its årskurs 0 →`FKLASS`, ANPASSAD_GRUNDSKOLA_AMNEN→`GRS`,
+ANPASSAD_GRUNDSKOLA_AMNESOMRADEN→`TR`, SPECIALSKOLA→`SP`, SAMESKOLA→`SAM`
+(2.1.0 still names grundsärskola and träningsskola). `schoolTypes` is written
+on a `Skolenhet` only, as S1 says, never on the `Skola` a school without units
+that chose several skolenheter is emitted as. A unit's `meta.modified` is the
+later of its own change and the school's (a timplan's skolform, the school's
+name). `parentOrganisation`, `organisationCode` and
+`municipalityCode` are not held.
+
+Which unit something belongs to: a class (and its pupils' `enroledAt`, its
+activities' `organisation`, its lessons for the `organisation` filter) is the
+unit whose årskurser hold its årskurs; a group without an årskurs, a room's
+`owner`, and an årskurs no unit holds are the first unit's (lowest first
+årskurs). A Duty's `dutyAt` is the unit of the teacher's mentor classes when
+they are one unit's, else the first unit. The `organisation` and
+`relationship.organisation` filters match each object's own unit. When a
+unit is added, removed, relinked or changed, or a class changes årskurs in a
+school with two or more units, every object naming an organisation gets a
+new `meta.modified`, and an id no longer emitted (the school's own, when its
+first unit arrives) is listed by `/deletedEntities`.
 
 **Persons** (`persons.read`; guardians need `responsibles.read`): active users.
 `givenName`, `familyName`, and `emails` with one entry: `Skola elev` for a
@@ -542,6 +560,8 @@ record is parsed.
 | Klass `groupMemberships` active on T | `Users.studentGroupId` | through the role-guarded write; P4's trigger records the move (dated the school's today) |
 | Undervisning `groupMemberships` | `StudentGroupMembers` | added, never removed |
 | `Duty.id` | `Ss12000DutyLinks` | no HR figure; an ended duty gets `endedAt` |
+| a chosen `Organisation` of type `Skolenhet` | `SchoolUnits` (`ss12000Id`, name, `code`, `schoolTypes`) | matched by id, else LINKed to the one unlinked unit with the same skolenhetskod (or, without a code, the same name), else CREATEd; the source owns the name, a valid eight-digit code and the skolformer SchemaPro holds; never automatic |
+| active enrolments' `schoolYear` at the skolenhet | the unit's årskurs span | a FULL run only: set where the unit has none, widened to hold them, never narrowed; deselected after a local edit |
 | `securityMarking` ≠ Ingen | — | every change for the person deselected, never automatic, not stored; any value other than `Ingen` (another Unicode form, case, an unknown value) counts as protected |
 
 Without a stored id, a LINK by email is proposed only for exactly one active
@@ -556,6 +576,19 @@ link, a duty link — carries only the source's id, and the apply resolves it on
 through a row linked before the apply or linked or created in it. When the admin
 deselects a LINK ("not the same person"), the row the address matched gets
 nothing; the dependants are skipped with `SS12000_DEPENDENCY_NOT_APPLIED`.
+
+Skolenheter: a code that is not eight digits is `SCHOOL_UNIT_CODE_INVALID`
+and is not written; one another unit of the school holds is
+`SCHOOL_UNIT_CODE_TAKEN`; a span that would share an årskurs with another unit
+is `SCHOOL_UNIT_SPAN_OVERLAP`; a skolform outside the seven SchemaPro holds
+(`FKLASS`, `FTH`, `GR`, `GRS`, `TR`, `SP`, `SAM`) is
+`SCHOOL_UNIT_TYPES_UNSUPPORTED`; a chosen organisation of another type is
+`ORGANISATION_NOT_SKOLENHET`; a linked unit the source no longer reads is
+`SCHOOL_UNIT_NOT_CHOSEN` and stays. With two or more units a class is the
+unit's whose span holds its årskurs, so a class the source's group puts in
+another unit is `GROUP_UNIT_MISMATCH`: the span or the class's årskurs is not
+what the source says. No unit is written by the nightly run: the sync
+principal reads `SchoolUnits` and has no arm to write it.
 
 A record the parser refuses (`INVALID_RECORD`) is not an absence. A linked
 person whose record was refused is `PERSON_RECORD_INVALID`, and while any person
@@ -803,7 +836,10 @@ and ends only its own subscriptions. `20261014130000` added SELECT arms for
 the service principal on `StudentEnrollments`, `StudentGroupMembers`,
 `AcademicYearTimplans`, `LocalTimplans`, `Ss12000DutyLinks`,
 `Ss12000EntityVersions` and `Ss12000Tombstones`: what v2 emits, of its own
-school only. **There is no service arm on `Ss12000Sources`**, since an arm
+school only. `20261031090000` added `school_units_service_select` on
+`SchoolUnits` (TO app_authenticated, as every arm there: the admin's FOR ALL
+and the sync principal's SELECT); RLS suite §130–133 and probe se1–se6 hold
+them. **There is no service arm on `Ss12000Sources`**, since an arm
 cannot restrict columns and the source's row holds its base and token URLs.
 `app.ss12000_provider_identity()` hands the principal the organisation ids and
 skolenhetskoder only. Versions and tombstones are written by triggers alone;
