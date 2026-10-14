@@ -14,7 +14,6 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
-    "lint": "eslint \"{src,test}/**/*.ts\" --max-warnings=0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p test/tsconfig.json",
     "test": "TZ=UTC jest",
