@@ -1,0 +1,26 @@
+- main:
+  - heading "Ledighetsansökningar" [level=1]
+  - paragraph: Besluta om vårdnadshavarnas ledighetsansökningar
+  - tablist "Visa ansökningar":
+    - tab "Väntar" [selected]
+    - tab "Beviljad"
+    - tab "Avslagen"
+  - region "Väntar på beslut":
+    - heading "Väntar på beslut" [level=2]
+    - list:
+      - listitem:
+        - paragraph: Ines Vik 21–<datum>
+        - paragraph: Resa
+        - paragraph: Ansökt av Tom Vik · <datum>
+        - text: Kommentar till vårdnadshavaren , Ines Vik, 21–<datum> (valfritt)
+        - textbox "Kommentar till vårdnadshavaren , Ines Vik, 21–<datum> (valfritt)"
+        - button "Bevilja Ines Vik, 21–<datum>": Bevilja
+        - button "Avslå Ines Vik, 21–<datum>": Avslå
+      - listitem:
+        - paragraph: Ella Nord 4–<datum>
+        - paragraph: Familjeresa till mormor
+        - paragraph: Ansökt av Sara Nord · <datum>
+        - text: Kommentar till vårdnadshavaren , Ella Nord, 4–<datum> (valfritt)
+        - textbox "Kommentar till vårdnadshavaren , Ella Nord, 4–<datum> (valfritt)"
+        - button "Bevilja Ella Nord, 4–<datum>": Bevilja
+        - button "Avslå Ella Nord, 4–<datum>": Avslå

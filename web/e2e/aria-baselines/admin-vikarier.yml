@@ -1,0 +1,87 @@
+- main:
+  - heading "Vikarietavla" [level=1]
+  - paragraph: Alla lektioner som behöver vikarie, per dag och vecka
+  - button "Fördela dagen" [disabled]
+  - tablist "Visa":
+    - tab "Dag" [selected]
+    - tab "Vecka"
+  - button "Föregående"
+  - text: Datum
+  - textbox "Datum":
+    - /placeholder: åååå-mm-dd
+    - text: <datum>
+  - button "Öppna kalender för Datum"
+  - button "Nästa"
+  - button "Idag"
+  - text: onsdag <datum>
+  - term: Behöver vikarie
+  - definition: "0"
+  - term: Med vikarie
+  - definition: "0"
+  - term: Inställda
+  - definition: "1"
+  - term: Hanterade på annat sätt
+  - definition: "1"
+  - term: Passerade utan beslut
+  - definition: "0"
+  - table "Lektioner som behöver vikarie, med frånvarande lärare, läge, vikarie och beslut":
+    - caption: Lektioner som behöver vikarie, med frånvarande lärare, läge, vikarie och beslut
+    - rowgroup:
+      - row "Välj Tid Klass Ämne Sal Frånvarande Status Vikarie Åtgärder":
+        - columnheader "Välj"
+        - columnheader "Tid"
+        - columnheader "Klass"
+        - columnheader "Ämne"
+        - columnheader "Sal"
+        - columnheader "Frånvarande"
+        - columnheader "Status"
+        - columnheader "Vikarie"
+        - columnheader "Åtgärder"
+    - rowgroup:
+      - 'row "Välj Anna Lind: 10:40–11:40 · Svenska · 7A 10:40–11:40 7A Svenska Sal 101 Anna Lind Inställd Aktivitet (prao, friluftsdag, studiedag) —"':
+        - 'cell "Välj Anna Lind: 10:40–11:40 · Svenska · 7A"':
+          - 'checkbox "Välj Anna Lind: 10:40–11:40 · Svenska · 7A"'
+        - cell "10:40–11:40"
+        - cell "7A"
+        - cell "Svenska"
+        - cell "Sal 101"
+        - cell "Anna Lind"
+        - cell "Inställd Aktivitet (prao, friluftsdag, studiedag)"
+        - cell "—"
+        - cell
+      - 'row "Välj Bo Ek: 13:00–14:00 · Matematik · 7A 13:00–14:00 7A Matematik Sal 101 Bo Ek Självstudier under tillsyn — Ångra Bo Ek: 13:00–14:00 · Matematik · 7A"':
+        - 'cell "Välj Bo Ek: 13:00–14:00 · Matematik · 7A"':
+          - 'checkbox "Välj Bo Ek: 13:00–14:00 · Matematik · 7A"'
+        - cell "13:00–14:00"
+        - cell "7A"
+        - cell "Matematik"
+        - cell "Sal 101"
+        - cell "Bo Ek"
+        - cell "Självstudier under tillsyn"
+        - cell "—"
+        - 'cell "Ångra Bo Ek: 13:00–14:00 · Matematik · 7A"':
+          - 'button "Ångra Bo Ek: 13:00–14:00 · Matematik · 7A"': Ångra
+  - region "Vikarieräknare":
+    - heading "Vikarieräknare" [level=2]
+    - text: Vikariepass per person den här veckan och terminen. Fler pass flyttar ner personen i förslagen.
+    - paragraph: "Veckans vikariepass: 2 lektioner, 120 min"
+    - table "Vikarieräknare":
+      - caption: Vikarieräknare
+      - rowgroup:
+        - row "Namn Vecka Termin":
+          - columnheader "Namn"
+          - columnheader "Vecka"
+          - columnheader "Termin"
+      - rowgroup:
+        - row "Anna Lind 1 1":
+          - cell "Anna Lind"
+          - cell "1"
+          - cell "1"
+        - row "Eva Holm 1 1":
+          - cell "Eva Holm"
+          - cell "1"
+          - cell "1"
+        - row "David Berg 0 1":
+          - cell "David Berg"
+          - cell "0"
+          - cell "1"

@@ -1,0 +1,46 @@
+- main:
+  - heading "Min närvaro" [level=1]
+  - paragraph: Din närvarohistorik
+  - status: Närvaro före <datum> är gallrad enligt skolans beslut.
+  - term: Närvarograd
+  - definition: 100 %
+  - definition: 6 av 6 registrerade lektioner
+  - 'table "Din närvaro per lektion: dag, tid, ämne och status"':
+    - caption: "Din närvaro per lektion: dag, tid, ämne och status"
+    - rowgroup:
+      - row "Datum Tid Ämne Status":
+        - columnheader "Datum"
+        - columnheader "Tid"
+        - columnheader "Ämne"
+        - columnheader "Status"
+    - rowgroup:
+      - row "ons <datum> 13:00–14:00 Matematik Närvarande":
+        - cell "ons <datum>"
+        - cell "13:00–14:00"
+        - cell "Matematik"
+        - cell "Närvarande"
+      - row "tis <datum> 09:25–10:25 Biologi Närvarande":
+        - cell "tis <datum>"
+        - cell "09:25–10:25"
+        - cell "Biologi"
+        - cell "Närvarande"
+      - row "tis <datum> 08:10–09:10 Engelska Närvarande":
+        - cell "tis <datum>"
+        - cell "08:10–09:10"
+        - cell "Engelska"
+        - cell "Närvarande"
+      - row "mån <datum> 13:00–14:00 Idrott och hälsa Närvarande":
+        - cell "mån <datum>"
+        - cell "13:00–14:00"
+        - cell "Idrott och hälsa"
+        - cell "Närvarande"
+      - row "mån <datum> 09:25–10:25 Matematik Närvarande":
+        - cell "mån <datum>"
+        - cell "09:25–10:25"
+        - cell "Matematik"
+        - cell "Närvarande"
+      - row "mån <datum> 08:10–09:10 Svenska Närvarande":
+        - cell "mån <datum>"
+        - cell "08:10–09:10"
+        - cell "Svenska"
+        - cell "Närvarande"

@@ -1,5 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
+import { GROUPS } from "./stub/fixtures/world";
 
 /**
  * WCAG 2.1 AA gate (§2: "100% compliance at AA level").
@@ -12,9 +14,11 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 /**
- * Public routes; everything under (app) requires a Supabase session. So does
- * /no-profile: without one the proxy sends it to /login, so its own text is
- * tested in app/[locale]/(auth)/no-profile/page.test.tsx instead.
+ * Public routes. Everything under (app) is in a11y-app.spec.ts, signed in.
+ * /no-profile needs a session without a profile row, and the proxy sends it
+ * to /login otherwise, so its own text is tested in
+ * app/[locale]/(auth)/no-profile/page.test.tsx instead. Schemavisaren reads
+ * its week from the backend stub (e2e/stub/fixtures/gateway-public.ts).
  */
 const ROUTES = [
   { path: "/sv/login", name: "login (sv)" },
@@ -26,6 +30,11 @@ const ROUTES = [
   // reason sits above the form.
   { path: "/sv/login?sso=no-account", name: "login with a school-account refusal (sv)" },
   { path: "/en/login?sso=other-organisation", name: "login with a school-account refusal (en)" },
+  { path: "/sv/tillganglighet", name: "tillgänglighetsredogörelse (sv)" },
+  { path: "/en/tillganglighet", name: "tillgänglighetsredogörelse (en)" },
+  { path: `/v/${SHARE_TOKEN}`, name: "Schemavisaren, the list of classes" },
+  { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`, name: "Schemavisaren, a class's week" },
+  { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}&lang=en`, name: "Schemavisaren, a class's week (en)" },
 ];
 
 const WCAG_AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
@@ -64,15 +73,15 @@ test.describe("dark theme", () => {
   test.use({ colorScheme: "dark" });
 
   // Contrast regressions land in exactly one theme far more often than both.
-  test("login page has no WCAG 2.1 AA violations in dark mode", async ({
-    page,
-  }) => {
-    await page.goto("/sv/login");
-    await page.waitForLoadState("networkidle");
+  for (const path of ["/sv/login", "/sv/tillganglighet", `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`]) {
+    test(`${path} has no WCAG 2.1 AA violations in dark mode`, async ({ page }) => {
+      await page.goto(path);
+      await page.waitForLoadState("networkidle");
 
-    const { violations } = await scan(page);
-    expect(violations, format(violations)).toEqual([]);
-  });
+      const { violations } = await scan(page);
+      expect(violations, format(violations)).toEqual([]);
+    });
+  }
 });
 
 test.describe("keyboard access", () => {
@@ -165,7 +174,7 @@ test.describe("keyboard access", () => {
     // path would strand keyboard and screen-reader users.
     await page.keyboard.press("Enter");
 
-    // The placeholder Supabase project rejects the credentials; what matters is
+    // The backend stub (e2e/stub) rejects every password; what matters is
     // that the attempt happened at all, so wait for the request to settle.
     await page.waitForLoadState("networkidle");
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();

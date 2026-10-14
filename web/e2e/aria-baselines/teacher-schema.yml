@@ -1,0 +1,18 @@
+- main:
+  - heading "Mitt schema" [level=1]
+  - paragraph: Dina lektioner vecka för vecka, också de du tar som vikarie
+  - button "Föregående vecka"
+  - text: Vecka <n>
+  - button "Nästa vecka"
+  - button "Denna vecka" [disabled]
+  - text: Mån <datum> Tis <datum> Ons <datum> Tor <datum> Fre <datum> 09:00 10:00 11:00 12:00 13:00 14:00 15:00 Förmiddagsrast
+  - button "Måndag 08:10–09:10, Svenska 7A Sal 101"
+  - button "Måndag 10:40–11:40, Svenska 7B Sal 102"
+  - text: Förmiddagsrast
+  - button "Tisdag 08:10–09:10, Engelska 7A Sal 101"
+  - text: Förmiddagsrast
+  - button "Onsdag 10:40–11:40, Inställd, Svenska 7A Sal 101"
+  - text: Förmiddagsrast
+  - button "Torsdag 08:10–08:40, Mentorstid 7A · Sal 101"
+  - button "Torsdag 09:25–10:25, Matematik 9A · Vikarie Sal 201"
+  - text: Förmiddagsrast

@@ -1,0 +1,53 @@
+- link "Hoppa till innehållet":
+  - /url: "#main"
+- complementary:
+  - text: SchemaPro Exempelskolan
+  - navigation "Huvudmeny":
+    - list:
+      - listitem:
+        - link "Mina barn":
+          - /url: /sv/guardian
+  - link "Tillgänglighetsredogörelse":
+    - /url: /sv/tillganglighet
+- banner:
+  - button "Språk"
+  - button "Tema"
+  - button "Notiser, 1 oläst"
+  - button "Sara Nord": SN
+- main:
+  - heading "Notiser" [level=1]
+  - paragraph: Välj vad som skickas till dig utanför SchemaPro
+  - region "E-post och push":
+    - heading "E-post och push" [level=2]
+    - text: Det du slår av skickas inte som e-post eller push. Notisen finns ändå kvar här i SchemaPro.
+    - list:
+      - listitem:
+        - text: Inställda lektioner
+        - switch "Inställda lektioner" [checked]
+      - listitem:
+        - text: Sammanfattningar av avbokningar
+        - switch "Sammanfattningar av avbokningar"
+      - listitem:
+        - text: Lektioner som blir av igen
+        - switch "Lektioner som blir av igen" [checked]
+      - listitem:
+        - text: Lektioner med vikarie
+        - switch "Lektioner med vikarie" [checked]
+      - listitem:
+        - text: Självstudier
+        - switch "Självstudier" [checked]
+      - listitem:
+        - text: Byte av sal
+        - switch "Byte av sal" [checked]
+      - listitem:
+        - text: Ändringar i schemat
+        - switch "Ändringar i schemat" [checked]
+      - listitem:
+        - text: Beslut om ledighet
+        - switch "Beslut om ledighet" [checked]
+      - listitem:
+        - text: Oanmäld frånvaro
+        - paragraph: Skickas alltid. Skolan ska meddela vårdnadshavare samma dag när en elev är borta utan anmälan.
+        - switch "Oanmäld frånvaro" [checked] [disabled]
+- region "Meddelanden alt+T"
+- alert

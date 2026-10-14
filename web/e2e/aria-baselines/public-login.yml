@@ -1,0 +1,15 @@
+- text: SchemaPro AI-driven schemaläggning & närvaro
+- main:
+  - heading "Välkommen tillbaka" [level=1]
+  - text: Logga in på ditt skolkonto E-post
+  - textbox "E-post"
+  - text: Lösenord
+  - link "Glömt lösenordet?":
+    - /url: /sv/forgot-password
+  - textbox "Lösenord"
+  - button "Logga in"
+  - button "Logga in med skolkonto"
+- contentinfo:
+  - link "Tillgänglighetsredogörelse":
+    - /url: /sv/tillganglighet
+- alert

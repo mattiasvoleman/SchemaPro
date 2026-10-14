@@ -1,0 +1,258 @@
+- main:
+  - heading "Personer" [level=1]
+  - paragraph: Lärare, elever och administratörer
+  - button "Bjud in 1 ej inbjudna"
+  - button "Exportera CSV"
+  - button "Importera CSV"
+  - button "Lägg till person"
+  - tablist "Roll":
+    - tab "Alla" [selected]
+    - tab "Elev"
+    - tab "Lärare"
+    - tab "Administratör"
+    - tab "Vårdnadshavare"
+  - text: Sök på namn, e-post eller klass
+  - searchbox "Sök på namn, e-post eller klass"
+  - table "Skolans personer med e-post, roll, klass, status och inbjudan. Varje namn kan fällas ut med klass, grupper och tjänst.":
+    - caption: Skolans personer med e-post, roll, klass, status och inbjudan. Varje namn kan fällas ut med klass, grupper och tjänst.
+    - rowgroup:
+      - row "Namn E-post Roll Klass Status Inbjudan Åtgärder":
+        - columnheader "Namn"
+        - columnheader "E-post"
+        - columnheader "Roll"
+        - columnheader "Klass"
+        - columnheader "Status"
+        - columnheader "Inbjudan"
+        - columnheader "Åtgärder"
+    - rowgroup:
+      - row "David Berg david.berg@exempelskolan.example Lärare — Aktiv Inbjuden Redigera David Berg Ändra arbetstid för David Berg Skicka inbjudan igen till David Berg Ta bort David Berg":
+        - cell "David Berg":
+          - button "David Berg"
+        - cell "david.berg@exempelskolan.example"
+        - cell "Lärare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera David Berg Ändra arbetstid för David Berg Skicka inbjudan igen till David Berg Ta bort David Berg":
+          - button "Redigera David Berg"
+          - button "Ändra arbetstid för David Berg"
+          - button "Skicka inbjudan igen till David Berg"
+          - button "Ta bort David Berg"
+      - row "Klara Dal klara.5@elev.exempelskolan.example Elev 7B Aktiv Inbjuden Redigera Klara Dal Vårdnadshavare för Klara Dal Skicka inbjudan igen till Klara Dal Ta bort Klara Dal":
+        - cell "Klara Dal":
+          - button "Klara Dal"
+        - cell "klara.5@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "7B"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Klara Dal Vårdnadshavare för Klara Dal Skicka inbjudan igen till Klara Dal Ta bort Klara Dal":
+          - button "Redigera Klara Dal"
+          - button "Vårdnadshavare för Klara Dal"
+          - button "Skicka inbjudan igen till Klara Dal"
+          - button "Ta bort Klara Dal"
+      - row "Bo Ek bo.ek@exempelskolan.example Lärare — Aktiv Inbjuden Redigera Bo Ek Ändra arbetstid för Bo Ek Skicka inbjudan igen till Bo Ek Ta bort Bo Ek":
+        - cell "Bo Ek":
+          - button "Bo Ek"
+        - cell "bo.ek@exempelskolan.example"
+        - cell "Lärare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Bo Ek Ändra arbetstid för Bo Ek Skicka inbjudan igen till Bo Ek Ta bort Bo Ek":
+          - button "Redigera Bo Ek"
+          - button "Ändra arbetstid för Bo Ek"
+          - button "Skicka inbjudan igen till Bo Ek"
+          - button "Ta bort Bo Ek"
+      - row "Olivia Fors olivia.9@elev.exempelskolan.example Elev 9A Aktiv Inbjuden Redigera Olivia Fors Vårdnadshavare för Olivia Fors Skicka inbjudan igen till Olivia Fors Ta bort Olivia Fors":
+        - cell "Olivia Fors":
+          - button "Olivia Fors"
+        - cell "olivia.9@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "9A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Olivia Fors Vårdnadshavare för Olivia Fors Skicka inbjudan igen till Olivia Fors Ta bort Olivia Fors":
+          - button "Redigera Olivia Fors"
+          - button "Vårdnadshavare för Olivia Fors"
+          - button "Skicka inbjudan igen till Olivia Fors"
+          - button "Ta bort Olivia Fors"
+      - row "Eva Holm eva.holm@exempelskolan.example Lärare — Aktiv Ej inbjuden Redigera Eva Holm Ändra arbetstid för Eva Holm Skicka inbjudan till Eva Holm Ta bort Eva Holm":
+        - cell "Eva Holm":
+          - button "Eva Holm"
+        - cell "eva.holm@exempelskolan.example"
+        - cell "Lärare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Ej inbjuden"
+        - cell "Redigera Eva Holm Ändra arbetstid för Eva Holm Skicka inbjudan till Eva Holm Ta bort Eva Holm":
+          - button "Redigera Eva Holm"
+          - button "Ändra arbetstid för Eva Holm"
+          - button "Skicka inbjudan till Eva Holm"
+          - button "Ta bort Eva Holm"
+      - row "Anna Lind anna.lind@exempelskolan.example Lärare — Aktiv Inbjuden Redigera Anna Lind Ändra arbetstid för Anna Lind Skicka inbjudan igen till Anna Lind Ta bort Anna Lind":
+        - cell "Anna Lind":
+          - button "Anna Lind"
+        - cell "anna.lind@exempelskolan.example"
+        - cell "Lärare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Anna Lind Ändra arbetstid för Anna Lind Skicka inbjudan igen till Anna Lind Ta bort Anna Lind":
+          - button "Redigera Anna Lind"
+          - button "Ändra arbetstid för Anna Lind"
+          - button "Skicka inbjudan igen till Anna Lind"
+          - button "Ta bort Anna Lind"
+      - row "Maja Lund maja.7@elev.exempelskolan.example Elev 8A Aktiv Inbjuden Redigera Maja Lund Vårdnadshavare för Maja Lund Skicka inbjudan igen till Maja Lund Ta bort Maja Lund":
+        - cell "Maja Lund":
+          - button "Maja Lund"
+        - cell "maja.7@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "8A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Maja Lund Vårdnadshavare för Maja Lund Skicka inbjudan igen till Maja Lund Ta bort Maja Lund":
+          - button "Redigera Maja Lund"
+          - button "Vårdnadshavare för Maja Lund"
+          - button "Skicka inbjudan igen till Maja Lund"
+          - button "Ta bort Maja Lund"
+      - row "Leo Mo leo.6@elev.exempelskolan.example Elev 7B Aktiv Inbjuden Redigera Leo Mo Vårdnadshavare för Leo Mo Skicka inbjudan igen till Leo Mo Ta bort Leo Mo":
+        - cell "Leo Mo":
+          - button "Leo Mo"
+        - cell "leo.6@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "7B"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Leo Mo Vårdnadshavare för Leo Mo Skicka inbjudan igen till Leo Mo Ta bort Leo Mo":
+          - button "Redigera Leo Mo"
+          - button "Vårdnadshavare för Leo Mo"
+          - button "Skicka inbjudan igen till Leo Mo"
+          - button "Ta bort Leo Mo"
+      - row "Ella Nord elev.ella@exempelskolan.example Elev 7A Aktiv Inbjuden Redigera Ella Nord Vårdnadshavare för Ella Nord Skicka inbjudan igen till Ella Nord Ta bort Ella Nord":
+        - cell "Ella Nord":
+          - button "Ella Nord"
+        - cell "elev.ella@exempelskolan.example"
+        - cell "Elev"
+        - cell "7A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Ella Nord Vårdnadshavare för Ella Nord Skicka inbjudan igen till Ella Nord Ta bort Ella Nord":
+          - button "Redigera Ella Nord"
+          - button "Vårdnadshavare för Ella Nord"
+          - button "Skicka inbjudan igen till Ella Nord"
+          - button "Ta bort Ella Nord"
+      - row "Hugo Nord hugo.2@elev.exempelskolan.example Elev 9A Aktiv Inbjuden Redigera Hugo Nord Vårdnadshavare för Hugo Nord Skicka inbjudan igen till Hugo Nord Ta bort Hugo Nord":
+        - cell "Hugo Nord":
+          - button "Hugo Nord"
+        - cell "hugo.2@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "9A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Hugo Nord Vårdnadshavare för Hugo Nord Skicka inbjudan igen till Hugo Nord Ta bort Hugo Nord":
+          - button "Redigera Hugo Nord"
+          - button "Vårdnadshavare för Hugo Nord"
+          - button "Skicka inbjudan igen till Hugo Nord"
+          - button "Ta bort Hugo Nord"
+      - row "Sara Nord vardnadshavare@exempelskolan.example Vårdnadshavare — Aktiv Inbjuden Redigera Sara Nord Skicka inbjudan igen till Sara Nord Ta bort Sara Nord":
+        - cell "Sara Nord":
+          - button "Sara Nord"
+        - cell "vardnadshavare@exempelskolan.example"
+        - cell "Vårdnadshavare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Sara Nord Skicka inbjudan igen till Sara Nord Ta bort Sara Nord":
+          - button "Redigera Sara Nord"
+          - button "Skicka inbjudan igen till Sara Nord"
+          - button "Ta bort Sara Nord"
+      - row "Rut Rektorsson rektor@exempelskolan.example Administratör — Aktiv Inbjuden Redigera Rut Rektorsson Ändra arbetstid för Rut Rektorsson Skicka inbjudan igen till Rut Rektorsson Ta bort Rut Rektorsson":
+        - cell "Rut Rektorsson":
+          - button "Rut Rektorsson"
+        - cell "rektor@exempelskolan.example"
+        - cell "Administratör"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Rut Rektorsson Ändra arbetstid för Rut Rektorsson Skicka inbjudan igen till Rut Rektorsson Ta bort Rut Rektorsson":
+          - button "Redigera Rut Rektorsson"
+          - button "Ändra arbetstid för Rut Rektorsson"
+          - button "Skicka inbjudan igen till Rut Rektorsson"
+          - button "Ta bort Rut Rektorsson"
+      - row "Jamal Sjö jamal.4@elev.exempelskolan.example Elev 7A Aktiv Inbjuden Redigera Jamal Sjö Vårdnadshavare för Jamal Sjö Skicka inbjudan igen till Jamal Sjö Ta bort Jamal Sjö":
+        - cell "Jamal Sjö":
+          - button "Jamal Sjö"
+        - cell "jamal.4@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "7A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Jamal Sjö Vårdnadshavare för Jamal Sjö Skicka inbjudan igen till Jamal Sjö Ta bort Jamal Sjö":
+          - button "Redigera Jamal Sjö"
+          - button "Vårdnadshavare för Jamal Sjö"
+          - button "Skicka inbjudan igen till Jamal Sjö"
+          - button "Ta bort Jamal Sjö"
+      - row "Filip Strand filip.strand@exempelskolan.example Lärare — Inaktiv Inbjuden Redigera Filip Strand Ändra arbetstid för Filip Strand Ta bort Filip Strand":
+        - cell "Filip Strand":
+          - button "Filip Strand"
+        - cell "filip.strand@exempelskolan.example"
+        - cell "Lärare"
+        - cell "—"
+        - cell "Inaktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Filip Strand Ändra arbetstid för Filip Strand Ta bort Filip Strand":
+          - button "Redigera Filip Strand"
+          - button "Ändra arbetstid för Filip Strand"
+          - button "Ta bort Filip Strand"
+      - row "Noah Ström noah.8@elev.exempelskolan.example Elev 8A Aktiv Inbjuden Redigera Noah Ström Vårdnadshavare för Noah Ström Skicka inbjudan igen till Noah Ström Ta bort Noah Ström":
+        - cell "Noah Ström":
+          - button "Noah Ström"
+        - cell "noah.8@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "8A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Noah Ström Vårdnadshavare för Noah Ström Skicka inbjudan igen till Noah Ström Ta bort Noah Ström":
+          - button "Redigera Noah Ström"
+          - button "Vårdnadshavare för Noah Ström"
+          - button "Skicka inbjudan igen till Noah Ström"
+          - button "Ta bort Noah Ström"
+      - row "Ines Vik ines.3@elev.exempelskolan.example Elev 7A Aktiv Inbjuden Redigera Ines Vik Vårdnadshavare för Ines Vik Skicka inbjudan igen till Ines Vik Ta bort Ines Vik":
+        - cell "Ines Vik":
+          - button "Ines Vik"
+        - cell "ines.3@elev.exempelskolan.example"
+        - cell "Elev"
+        - cell "7A"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Ines Vik Vårdnadshavare för Ines Vik Skicka inbjudan igen till Ines Vik Ta bort Ines Vik":
+          - button "Redigera Ines Vik"
+          - button "Vårdnadshavare för Ines Vik"
+          - button "Skicka inbjudan igen till Ines Vik"
+          - button "Ta bort Ines Vik"
+      - row "Tom Vik tom.vik@exempelskolan.example Vårdnadshavare — Aktiv Inbjuden Redigera Tom Vik Skicka inbjudan igen till Tom Vik Ta bort Tom Vik":
+        - cell "Tom Vik":
+          - button "Tom Vik"
+        - cell "tom.vik@exempelskolan.example"
+        - cell "Vårdnadshavare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Tom Vik Skicka inbjudan igen till Tom Vik Ta bort Tom Vik":
+          - button "Redigera Tom Vik"
+          - button "Skicka inbjudan igen till Tom Vik"
+          - button "Ta bort Tom Vik"
+      - row "Cecilia Ås cecilia.as@exempelskolan.example Lärare — Aktiv Inbjuden Redigera Cecilia Ås Ändra arbetstid för Cecilia Ås Skicka inbjudan igen till Cecilia Ås Ta bort Cecilia Ås":
+        - cell "Cecilia Ås":
+          - button "Cecilia Ås"
+        - cell "cecilia.as@exempelskolan.example"
+        - cell "Lärare"
+        - cell "—"
+        - cell "Aktiv"
+        - cell "Inbjuden"
+        - cell "Redigera Cecilia Ås Ändra arbetstid för Cecilia Ås Skicka inbjudan igen till Cecilia Ås Ta bort Cecilia Ås":
+          - button "Redigera Cecilia Ås"
+          - button "Ändra arbetstid för Cecilia Ås"
+          - button "Skicka inbjudan igen till Cecilia Ås"
+          - button "Ta bort Cecilia Ås"

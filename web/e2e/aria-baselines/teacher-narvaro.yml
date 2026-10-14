@@ -1,0 +1,45 @@
+- main:
+  - link "Till dagens lektioner":
+    - /url: /sv/teacher/attendance
+  - heading "Svenska" [level=1]
+  - paragraph: måndag <datum> · 08:10–09:10
+  - text: <datum> registrerade
+  - region "Elever":
+    - heading "Elever" [level=2]
+    - text: 3 elever
+    - button "Markera alla närvarande"
+    - list:
+      - listitem:
+        - text: Ella Nord
+        - radiogroup "Ella Nord":
+          - radio "Närvarande" [checked]
+          - text: Närvarande
+          - radio "Sen"
+          - text: Sen
+          - radio "Frånvarande"
+          - text: Frånvarande
+          - radio "Anmäld frånvaro"
+          - text: Anmäld frånvaro
+      - listitem:
+        - text: Jamal Sjö Anmäld frånvarande
+        - radiogroup "Jamal Sjö":
+          - radio "Närvarande"
+          - text: Närvarande
+          - radio "Sen"
+          - text: Sen
+          - radio "Frånvarande" [checked]
+          - text: Frånvarande
+          - radio "Anmäld frånvaro"
+          - text: Anmäld frånvaro
+      - listitem:
+        - text: Ines Vik
+        - radiogroup "Ines Vik":
+          - radio "Närvarande" [checked]
+          - text: Närvarande
+          - radio "Sen"
+          - text: Sen
+          - radio "Frånvarande"
+          - text: Frånvarande
+          - radio "Anmäld frånvaro"
+          - text: Anmäld frånvaro
+  - button "Spara närvaro"
