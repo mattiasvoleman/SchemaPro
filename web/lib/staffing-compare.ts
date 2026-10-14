@@ -24,6 +24,13 @@ export interface YearFigures {
   employmentSteps: number[];
   /** Nedsättning % on the läsår's first day; 0 without a post. */
   reductionPercent: number;
+  /**
+   * The post over the year, stretch by stretch: "grad/nedsättning" to three
+   * decimals, each change once. What the CHANGED class compares, so a post
+   * that halves in January, or gets a nedsättning from it, is a change even
+   * where the year starts the same. [] without a post.
+   */
+  postSteps: string[];
   /** Teaching plus counted uppdrag, standardvecka — what the target is compared with. */
   countedMinutesPerWeek: number;
   percentOfTarget: number | null;
@@ -44,13 +51,22 @@ export interface ComparisonRow {
   change: ComparisonChange;
 }
 
+const thousandths = (value: number) => String(Math.round(value * 1000));
+
 function figures(load: TeacherLoad): YearFigures {
   const start = postAtStart(load);
+  const stretches = (load.periods?.length ?? 0) > 0 ? load.periods! : start ? [start] : [];
   const steps = (load.periods?.length ?? 0) > 0 ? percentSteps(load.periods!) : start ? [start.employmentPercent] : [];
+  const postSteps: string[] = [];
+  for (const stretch of stretches) {
+    const step = `${thousandths(stretch.employmentPercent)}/${thousandths(stretch.reductionPercent)}`;
+    if (postSteps[postSteps.length - 1] !== step) postSteps.push(step);
+  }
   return {
     employmentPercent: start?.employmentPercent ?? null,
     employmentSteps: steps,
     reductionPercent: start?.reductionPercent ?? 0,
+    postSteps,
     countedMinutesPerWeek: load.countedMinutesPerWeek,
     percentOfTarget: load.percentOfTarget,
   };
@@ -63,8 +79,10 @@ const samePercent = (a: number | null, b: number | null) =>
 /**
  * The two years' teachers side by side, sorted by userId (the page sorts by
  * name, which only it can resolve). A teacher is CHANGED when the post, the
- * nedsättning or the counted minutes moved; a percent of target that moved
- * only because the school's riktmärke did is not a change of the teacher's.
+ * nedsättning or the counted minutes moved — the post and the nedsättning
+ * over the whole year, stretch by stretch, not only where it starts; a
+ * percent of target that moved only because the school's riktmärke did is
+ * not a change of the teacher's.
  */
 export function compareYears(
   thisYear: readonly TeacherLoad[],
@@ -89,9 +107,7 @@ export function compareYears(
     else if (!current) change = "LEFT";
     else
       change =
-        countedDelta !== 0 || !samePercent(current.employmentPercent, previous.employmentPercent) || reductionChanged
-          ? "CHANGED"
-          : "SAME";
+        countedDelta !== 0 || current.postSteps.join(" ") !== previous.postSteps.join(" ") ? "CHANGED" : "SAME";
     return { userId, lastYear: previous, thisYear: current, countedDelta, employmentDelta, reductionChanged, change };
   });
 }

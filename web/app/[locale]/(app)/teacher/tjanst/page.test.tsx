@@ -208,6 +208,41 @@ describe("Min tjänst", () => {
     expect(items[2]).toHaveTextContent("staffing.periodNoWeek");
     expect(items[3]).toHaveTextContent("staffing.periodNoTeachingWeek");
     expect(items[3]).not.toHaveTextContent("statusUNDER");
+    // The Anställning line: the post on the läsår's first day, and said so.
+    expect(screen.getByText("myStaffing.employmentAtStart(100|staffing.contractFERIE)")).toBeInTheDocument();
+  });
+
+  it("states a post whose period covers the whole year by the period, not by the base row it never holds", () => {
+    state.load = {
+      ...state.load,
+      data: {
+        teachers: [
+          row({
+            periods: [
+              {
+                from: "2026-08-17",
+                to: "2027-06-11",
+                kind: "PERIOD",
+                effectiveFrom: "2026-08-17",
+                effectiveTo: "2027-06-11",
+                employmentPercent: 60,
+                reductionPercent: 10,
+                ownTargetMinutesPerWeek: null,
+                targetMinutesPerWeek: 590,
+                teachingWeeks: 38,
+                countedMinutesPerWeek: 500,
+                balanceMinutesPerWeek: 90,
+                percentOfTarget: 84.7,
+                status: "UNDER",
+              },
+            ],
+          }),
+        ],
+      },
+    };
+    render(<MyStaffingPage />);
+    expect(screen.getByText("myStaffing.employmentAtStartReduction(60|10|staffing.contractFERIE)")).toBeInTheDocument();
+    expect(screen.queryByText(/employmentSummary\(100/)).toBeNull();
   });
 
   it("draws no period list for a post that is the same all year", () => {

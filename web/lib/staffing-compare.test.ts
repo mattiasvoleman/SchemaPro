@@ -66,6 +66,23 @@ describe("compareYears", () => {
     expect(row!.lastYear).toMatchObject({ employmentPercent: 100, employmentSteps: [100] });
     expect(row!.employmentDelta).toBe(0);
     expect(row!.reductionChanged).toBe(false);
+    // The year starts the same, but the post halves in January: a change, so "Visa bara ändrade" keeps it.
+    expect(row!.change).toBe("CHANGED");
+  });
+
+  it("calls a nedsättning from January a change, and the same changing post in both years none", () => {
+    const stretch = (from: string, to: string, employmentPercent: number, reductionPercent = 0) =>
+      ({ from, to, employmentPercent, reductionPercent }) as NonNullable<TeacherLoad["periods"]>[number];
+    const unionTime = load("t-b", {
+      periods: [stretch("2026-08-17", "2027-01-10", 100), stretch("2027-01-11", "2027-06-11", 100, 20)],
+    });
+    expect(compareYears([unionTime], [load("t-b")])[0]!.change).toBe("CHANGED");
+    const halving = (from: string, to: string, spring: string) =>
+      load("t-b", { periods: [stretch(from, to, 100), stretch(spring, "2027-06-11", 50)] });
+    expect(
+      compareYears([halving("2026-08-17", "2027-01-10", "2027-01-11")], [halving("2025-08-18", "2026-01-11", "2026-01-12")])[0]!
+        .change,
+    ).toBe("SAME");
   });
 
   it("subtracts this year from last: counted minutes and tjänst %", () => {
@@ -83,6 +100,7 @@ describe("compareYears", () => {
       employmentPercent: 80,
       employmentSteps: [80],
       reductionPercent: 0,
+      postSteps: ["80000/0"],
       countedMinutesPerWeek: 840,
       percentOfTarget: 88.9,
     });

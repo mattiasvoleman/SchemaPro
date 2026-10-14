@@ -142,4 +142,13 @@ describe("EmploymentPeriods", () => {
     await user.click(within(dialog).getByRole("button", { name: "removePeriodConfirm" }));
     expect(removePeriod).toHaveBeenCalledWith("p-nov");
   });
+
+  it("offers no removal while a period's form is open, so no form is left saving to a deleted period", async () => {
+    const user = userEvent.setup();
+    renderPeriods(post([november]));
+    await user.click(screen.getByRole("button", { name: "editPeriod(2026-11-01)" }));
+    expect(screen.getByRole("button", { name: "removePeriod(2026-11-01)" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    expect(screen.getByRole("button", { name: "removePeriod(2026-11-01)" })).toBeEnabled();
+  });
 });

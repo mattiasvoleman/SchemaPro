@@ -325,7 +325,8 @@ export function Uppdragsbeskrivning({
         )}
         {periods.length > 0 ? (
           <>
-            <p>{t("postPeriodsIntro")}</p>
+            {/* "Målet ovan är ett snitt" only where there is a target above. */}
+            <p>{load.targetMinutesPerWeek === null ? t("postPeriodsIntroNoTarget") : t("postPeriodsIntro")}</p>
             <table className="w-full border-collapse">
               <caption className="sr-only">{t("postPeriodsCaption")}</caption>
               <thead>

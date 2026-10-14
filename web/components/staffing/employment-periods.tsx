@@ -210,11 +210,15 @@ export function EmploymentPeriods({ teacher, academicYearId, year, employment, p
                     >
                       <Pencil />
                     </Button>
+                    {/* Like the pencil, closed while a form is open: a period
+                        removed under its own form would leave one that saves
+                        to a deleted id. */}
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => setRemoving(period)}
                       aria-label={t("removePeriod", { from: period.validFrom })}
+                      disabled={editing !== null}
                     >
                       <Trash2 aria-hidden="true" />
                     </Button>
