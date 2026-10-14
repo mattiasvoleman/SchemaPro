@@ -856,6 +856,73 @@ BEGIN
     (l, now() - interval '20 minutes', t126, 'TEACHER', 'WEB', 'ATTENDANCE', ARRAY[p124], 1);
 END $$;
 
+-- The läslogg school's staff and timplan rows (20261028090000, sections 128
+-- and 129): a post, an uppdrag and an absence for each teacher (122 and
+-- 126), a time for 122's uppdrag and a cover of 122's absence on 122's
+-- lesson, a published statement for both pupils, and an SS12000 run with
+-- one change about pupil 123. The posts' and uppdrag's history is the log
+-- trigger's; the class history is the class trigger's, from the pupils'
+-- home class. Planted once.
+DO $$
+DECLARE
+  l uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-laslogg-school');
+  t122 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122');
+  t126 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000126');
+  p123 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000123');
+  p124 uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000124');
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  y uuid; lesson uuid; slot uuid; duty uuid; absence uuid; pub uuid; src uuid; run uuid;
+BEGIN
+  IF l IS NULL OR t122 IS NULL OR t126 IS NULL OR p123 IS NULL OR p124 IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the läslogg school lacks its teachers or pupils for the staff rows';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "TeacherEmployments" WHERE "schoolId" = l) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = l;
+  SELECT c.id INTO lesson FROM "CalendarLessons" c
+    JOIN "CalendarLessonTeachers" t ON t."calendarLessonId" = c.id AND t."teacherId" = t122
+   WHERE c."schoolId" = l;
+
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", note, "updatedAt") VALUES
+    (l, t122, y, 100, NULL, now()),
+    (l, t126, y, 80, 'Läslogg: tjänstledig på fredagar', now());
+
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (l, 'TEACHER', t122, 2, '15:00', '17:00', 'UNAVAILABLE', 'Läslogg: APT', now()) RETURNING id INTO slot;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (l, t122, y, 'APT_KONFERENS', 'Läslogg APT', 120, now()) RETURNING id INTO duty;
+  INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (l, duty, slot);
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (l, t126, y, 'APT_KONFERENS', 'Läslogg APT', 120, now());
+
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (l, t122, today::timestamptz, today::timestamptz + interval '1 day') RETURNING id INTO absence;
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (l, t126, today::timestamptz + interval '2 days', today::timestamptz + interval '3 days');
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision)
+  VALUES (l, absence, lesson, t122, 'CANCELLED');
+
+  INSERT INTO "TimplanStatementPublications" ("schoolId", "academicYearId", "asOfDate", "pupils")
+  VALUES (l, y, today, 2) RETURNING id INTO pub;
+  INSERT INTO "TimplanStatements"
+    ("schoolId", "publicationId", "academicYearId", "asOfDate", "studentId", stage, "subjectCode", "versionCode",
+     "distributionPublished", "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours", "projectedHours",
+     status, "projectedStatus", complete)
+  SELECT l, pub, y, today, pupil, 'HOG', 'MA', 'SFS2023:945/B1', true, 7, 9, 400, 403, 100, 403, 'UNRECORDED', 'UNRECORDED', false
+    FROM unnest(ARRAY[p123, p124]) pupil;
+
+  INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind", "tokenUrl", "clientId", "organisationIds")
+  VALUES (l, 'Läslogg', 'https://api.ist.example/ss12000v2-api/source/SE00100/v2.0', 'OAUTH2_CLIENT_CREDENTIALS',
+          'https://skolid.example/connect/token', 'laslogg', ARRAY['aaaaaaaa-0000-4000-8000-000000000128']::uuid[])
+  RETURNING id INTO src;
+  INSERT INTO "Ss12000SyncRuns" ("schoolId", "sourceId", "trigger", "mode") VALUES (l, src, 'MANUAL', 'FULL') RETURNING id INTO run;
+  INSERT INTO "Ss12000SyncChanges" ("runId", "schoolId", seq, entity, op, "externalId", "localId", "before", "after", selected)
+  VALUES (run, l, 0, 'PERSON', 'UPDATE', 'bbbbbbbb-0000-4000-8000-000000000128', p123,
+          '{"lastName": "Elev"}', '{"lastName": "Elevsdotter"}', true);
+  UPDATE "Ss12000SyncRuns" SET status = 'DIFF_READY', "basisHash" = repeat('c', 64), "fetchedAt" = now() WHERE id = run;
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

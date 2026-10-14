@@ -30,6 +30,15 @@ const PERSONAL = [
   'LeaveRequests',
   'GuardianStudents',
   'StudentGroupMembers',
+  // 20261028090000: the staff and timplan tables the gateway records.
+  'TeacherAbsences',
+  'TeacherAbsenceCovers',
+  'TeacherEmployments',
+  'TeacherEmploymentLogs',
+  'TeacherDuties',
+  'StudentEnrollments',
+  'TimplanStatements',
+  'Ss12000SyncChanges',
 ] as const;
 
 // `student:Users!fk(…)`, `Users(…)`: an embedded table in a select string.

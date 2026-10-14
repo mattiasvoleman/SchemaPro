@@ -378,7 +378,13 @@ Walk the full product loop once, in order:
   be in the database before the API that writes them: an unknown kind is
   22P02 and fails the read. What is deliberately not recorded (the timetable
   layer, pushes, notices, a create's echo) is listed with the reason in
-  `src/access-log/access-log.ts`.
+  `src/access-log/access-log.ts`. 20261028090000 closes the tables those
+  reads come from as the closing migration closed the six: directly,
+  `authenticated` keeps a teacher's own post, uppdrag, history, absences
+  and covers and a pupil's own class history and statement, and the rest
+  (staff absences, posts, uppdrag, class histories, statements, the sync's
+  changes) is read through the gateway. No client reads these tables
+  directly, so it waits for no release, only for the closing migration.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

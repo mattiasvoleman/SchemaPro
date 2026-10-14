@@ -3,11 +3,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /*
- * The läslogg: every read of another person's row in these six tables goes through the gateway,
- * which records who read what. A migration then takes PostgREST's `authenticated` role off other
- * people's rows in them, so a direct read that slips back into the web would not leak anything —
- * it would come back empty, and the page would show a school without pupils, or a class without
- * attendance, as if that were the data. No type and no other test sees that; this one does.
+ * The läslogg: every read of another person's row in these tables goes through the gateway,
+ * which records who read what. Two migrations then take PostgREST's `authenticated` role off other
+ * people's rows in them (20261026100000 the first six, 20261028090000 the staff and timplan
+ * tables), so a direct read that slips back into the web would not leak anything — it would come
+ * back empty, and the page would show a school without pupils, a class without attendance or a
+ * staff without posts, as if that were the data. No type and no other test sees that; this one does.
  *
  * Two direct reads stay, both of the caller's own row: lib/auth.ts reads the session's profile by
  * its authId, and useStudentAttendance a pupil's own records by studentId, which its one page
@@ -22,6 +23,14 @@ const TABLES = [
   "LeaveRequests",
   "GuardianStudents",
   "StudentGroupMembers",
+  "TeacherAbsences",
+  "TeacherAbsenceCovers",
+  "TeacherEmployments",
+  "TeacherEmploymentLogs",
+  "TeacherDuties",
+  "StudentEnrollments",
+  "TimplanStatements",
+  "Ss12000SyncChanges",
 ];
 const NAMES = TABLES.join("|");
 
@@ -115,6 +124,7 @@ describe("the läslogg's tables are read through the gateway", () => {
       'selectAll<Person>(\n  "Users",\n  "id, firstName",\n  "lastName",\n)',
       '.select("studentId, student:Users!AttendanceRecords_studentId_fkey!inner(studentGroupId)")',
       '.select("id, members:StudentGroupMembers(studentId)")',
+      'supabase.from("TeacherEmployments").select("userId, employmentPercent")',
     ];
     expect(forms.map((form) => readsIn("x.ts", form).map((read) => read.table))).toEqual([
       ["LeaveRequests"],
@@ -122,12 +132,14 @@ describe("the läslogg's tables are read through the gateway", () => {
       ["Users"],
       ["Users"],
       ["StudentGroupMembers"],
+      ["TeacherEmployments"],
     ]);
-    // A table whose name merely starts like one of the six is not one of them.
+    // A table whose name merely starts like one of these is not one of them.
     expect(readsIn("x.ts", 'supabase.from("UsersArchive")')).toEqual([]);
+    expect(readsIn("x.ts", 'supabase.from("TeacherDutySlots")')).toEqual([]);
   });
 
-  it("no web source reads another person's row in the six tables from PostgREST", () => {
+  it("no web source reads another person's row in the läslogg's tables from PostgREST", () => {
     const direct = allSources()
       .flatMap(({ file, text }) => readsIn(file, text))
       .filter((read) => !isOwnRowRead(read))
