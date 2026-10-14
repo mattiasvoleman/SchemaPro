@@ -807,6 +807,30 @@ describe('StaffingProposalService.propose', () => {
         });
       });
 
+      it('names the post it excluded where the row ends without a teacher, instead of saying only that nobody had room', async () => {
+        // Behörigheter respected, and Anna the only one holding Ma: the spring-only Ma 8A has no one it may go to.
+        const qualifiedAnna = () => {
+          const rows = springOnly();
+          rows['teacherSubjectQualification'] = [
+            { userId: ANNA, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+          ];
+          return rows;
+        };
+        const { service } = setup(qualifiedAnna());
+        const proposal = await service.propose(ask({ respectQualifications: true }), admin());
+        expect(proposal.unstaffed.find((row) => row.requirementId === R_MA8)).toMatchObject({
+          reason: 'NO_CAPACITY_LEFT',
+          excludedChanging: [ANNA],
+        });
+        // An undated row it was not offered for want of a behörighet names nobody.
+        expect(proposal.unstaffed.find((row) => row.requirementId === R_SV8)?.excludedChanging).toBeUndefined();
+        // The same year with Anna's post the same all year: she takes it, and nothing is excluded.
+        const steady = qualifiedAnna();
+        steady['teacherEmploymentPeriod'] = [];
+        const again = await setup(steady).service.propose(ask({ respectQualifications: true }), admin());
+        expect(again.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
+      });
+
       it('refuses (502) an answer that gives it to such a post anyway, though it would fit, and asks nothing more', async () => {
         // One lesson a week: 180 + 60 fits the spring, so only the exclusion refuses it.
         const small = springOnly();

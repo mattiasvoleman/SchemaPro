@@ -771,6 +771,16 @@ function ProposalResult({
                 {t("minutes", { minutes: number.format(row.chargeMinutesPerWeek) })}
                 {" — "}
                 {row.onlyCoTeacherQualified ? t("reasonOnlyCoTeacher") : t(`reason_${row.reason}`)}
+                {/* Room is not why these were left out: a dated row never goes
+                    to a post that changes during the year. */}
+                {(row.excludedChanging?.length ?? 0) > 0 ? (
+                  <span className="block text-xs text-muted-foreground">
+                    {t("excludedChanging", {
+                      count: row.excludedChanging!.length,
+                      names: row.excludedChanging!.map(teacherName).join(", "),
+                    })}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>

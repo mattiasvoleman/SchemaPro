@@ -444,6 +444,25 @@ describe("StaffingProposalDialog", () => {
         screen.getByText("t-dan: Har redan 990 min/v mot gränsen 990 min/v, så ingen fler timplanspost ryms."),
       ).toBeInTheDocument();
     });
+
+    it("names a post that changes during the year beside a dated row it was never offered, so 'no room' is not the whole story", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({
+          unstaffed: base.unstaffed.map((row) =>
+            row.requirementId === "r-mu-7a" ? { ...row, excludedChanging: ["t-anna"] } : row,
+          ),
+        }),
+      );
+      renderDialog();
+      await computeProposal(user);
+      expect(
+        screen.getByText(
+          "Anna Berg föreslås inte: tjänsten ändras under läsåret, och en post med datum ges aldrig en sådan tjänst i förslaget, vilket utrymme den än har. Bemanna posten för hand; skrivningen prövas mot varje period.",
+        ),
+      ).toBeInTheDocument();
+    });
   });
 
   describe("the selection", () => {
