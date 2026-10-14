@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { NOW } from "./stub/fixtures/calendar";
-import { AUTH_COOKIE, PEOPLE, sessionCookieValue, STUB_ORIGIN, type Persona } from "./stub/sessions";
+import { AUTH_COOKIE, PEOPLE, sessionCookieValue, STUB_ORIGIN, type Persona, type SignedInPerson } from "./stub/sessions";
 
 /**
  * Stops the browser's clock at the fixture school's now (this week's
@@ -17,10 +17,15 @@ export async function freezeClock(page: Page) {
  * Supabase session cookie the app reads on the server and in the browser.
  */
 export async function signIn(context: BrowserContext, persona: Persona, baseURL: string) {
+  await signInAs(context, PEOPLE[persona], baseURL);
+}
+
+/** The same for any signed-in person the stub knows, ORPHAN included. */
+export async function signInAs(context: BrowserContext, person: SignedInPerson, baseURL: string) {
   await context.addCookies([
     {
       name: AUTH_COOKIE,
-      value: sessionCookieValue(PEOPLE[persona]),
+      value: sessionCookieValue(person),
       url: baseURL,
       sameSite: "Lax",
     },

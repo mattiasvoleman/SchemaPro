@@ -152,3 +152,35 @@ describe("DropdownMenu", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
+
+describe("DropdownMenu, open, and the page behind it", () => {
+  function Page({ modal }: { modal?: boolean }) {
+    return (
+      <main>
+        <a href="/elsewhere">Elsewhere</a>
+        <DropdownMenu modal={modal}>
+          <DropdownMenuTrigger>Open</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>One</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </main>
+    );
+  }
+
+  it("leaves the page visible to assistive tech", async () => {
+    render(<Page />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open" }));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    // Radix's modal mode put aria-hidden on everything outside the menu while
+    // its links stayed focusable (axe aria-hidden-focus); a menu is not modal.
+    expect(screen.getByRole("link", { name: "Elsewhere" }).closest("[aria-hidden='true']")).toBeNull();
+  });
+
+  it("is still modal when a caller asks for it", async () => {
+    render(<Page modal />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open", hidden: true }));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Elsewhere", hidden: true }).closest("[aria-hidden='true']")).not.toBeNull();
+  });
+});

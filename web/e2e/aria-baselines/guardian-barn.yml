@@ -73,7 +73,7 @@
     - list:
       - listitem:
         - text: Ella Nord Väntar
-        - paragraph: 4–<datum>
+        - paragraph: <datum>–<datum>
         - paragraph: Familjeresa till mormor
       - listitem:
         - text: Hugo Nord Beviljad
@@ -91,60 +91,60 @@
           - columnheader "Planerat för stadiet"
           - columnheader "Timplanen"
       - rowgroup:
-        - row "Bild 0 h 71,1 h 100 h":
+        - row "Bild 0 h 69,7 h 100 h":
           - rowheader "Bild"
           - cell "0 h"
-          - cell "71,1 h"
+          - cell "69,7 h"
           - cell "100 h"
-        - row "Engelska 8 h 226,3 h 200 h":
+        - row "Engelska 8 h 221,7 h 200 h":
           - rowheader "Engelska"
           - cell "8 h"
-          - cell "226,3 h"
+          - cell "221,7 h"
           - cell "200 h"
         - row "Hem- och konsumentkunskap 0 h 0 h 90 h":
           - rowheader "Hem- och konsumentkunskap"
           - cell "0 h"
           - cell "0 h"
           - cell "90 h"
-        - row "Idrott och hälsa 13 h 281,3 h 280 h":
+        - row "Idrott och hälsa 13 h 275,5 h 280 h":
           - rowheader "Idrott och hälsa"
           - cell "13 h"
-          - cell "281,3 h"
+          - cell "275,5 h"
           - cell "280 h"
-        - row "Språkval 0 h 265,1 h 272 h":
+        - row "Språkval 0 h 259,7 h 272 h":
           - rowheader "Språkval"
           - cell "0 h"
-          - cell "265,1 h"
+          - cell "259,7 h"
           - cell "272 h"
-        - row "Matematik 16 h 407,4 h 400 h":
+        - row "Matematik 16 h 399 h 400 h":
           - rowheader "Matematik"
           - cell "16 h"
-          - cell "407,4 h"
+          - cell "399 h"
           - cell "400 h"
         - row "Musik 0 h 0 h 80 h":
           - rowheader "Musik"
           - cell "0 h"
           - cell "0 h"
           - cell "80 h"
-        - row "Naturorienterande ämnen 8 h 135,8 h 289 h":
+        - row "Naturorienterande ämnen 8 h 133 h 289 h":
           - rowheader "Naturorienterande ämnen"
           - cell "8 h"
-          - cell "135,8 h"
+          - cell "133 h"
           - cell "289 h"
         - row "Slöjd 0 h 0 h 140 h":
           - rowheader "Slöjd"
           - cell "0 h"
           - cell "0 h"
           - cell "140 h"
-        - row "Samhällsorienterande ämnen 0 h 74,4 h 405 h":
+        - row "Samhällsorienterande ämnen 0 h 72,8 h 405 h":
           - rowheader "Samhällsorienterande ämnen"
           - cell "0 h"
-          - cell "74,4 h"
+          - cell "72,8 h"
           - cell "405 h"
-        - row "Svenska eller svenska som andraspråk 18 h 326,6 h 290 h":
+        - row "Svenska eller svenska som andraspråk 18 h 319,8 h 290 h":
           - rowheader "Svenska eller svenska som andraspråk"
           - cell "18 h"
-          - cell "326,6 h"
+          - cell "319,8 h"
           - cell "290 h"
         - row "Teknik 0 h 0 h 88 h":
           - rowheader "Teknik"
@@ -183,10 +183,10 @@
           - rowheader "Språkval"
           - cell "0 h"
           - cell "0 h"
-        - row "Matematik 8 h 116,4 h":
+        - row "Matematik 8 h 114 h":
           - rowheader "Matematik"
           - cell "8 h"
-          - cell "116,4 h"
+          - cell "114 h"
         - row "Musik 0 h 0 h":
           - rowheader "Musik"
           - cell "0 h"

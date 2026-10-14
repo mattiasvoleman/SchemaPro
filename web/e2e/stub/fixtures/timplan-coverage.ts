@@ -18,7 +18,6 @@ import {
   CREDITS,
   DECIDED_PLAN,
   PLANS,
-  teachingWeeksBetween,
   YEAR_TIMPLANS,
   YEAR_WEEKS,
 } from "./timplan-plans";
@@ -406,7 +405,9 @@ export function plannedCoverage(academicYearId: string): TimplanCoverageResponse
  * åk 8 or 9 has years SchemaPro never saw and is not.
  */
 const AS_OF = THIS_MONDAY < YEAR_START ? YEAR_START : THIS_MONDAY > YEAR_END ? YEAR_END : THIS_MONDAY;
-const HELD_WEEKS = teachingWeeksBetween(YEAR_START, AS_OF);
+// Eight weeks into the läsår, every week the suite runs: "Hittills" is in the
+// accessibility-tree baselines, and counted from YEAR_START it grew weekly.
+const HELD_WEEKS = 8;
 const HOG = [7, 8, 9];
 
 const topCodeOf = (subjectId: string | null) => {

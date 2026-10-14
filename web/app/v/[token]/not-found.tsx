@@ -19,6 +19,15 @@ export default function ViewerNotFound() {
         <h2 className="text-lg font-semibold">{en.publicViewer.notFoundTitle}</h2>
         <p>{en.publicViewer.notFoundBody}</p>
       </div>
+      <p className="text-xs">
+        <a href="/sv/tillganglighet" className="underline underline-offset-4">
+          {sv.publicViewer.accessibility}
+        </a>
+        {" · "}
+        <a href="/en/tillganglighet" lang="en" className="underline underline-offset-4">
+          {en.publicViewer.accessibility}
+        </a>
+      </p>
     </main>
   );
 }

@@ -2,7 +2,7 @@
 
 {Huvudmannens namn} står bakom SchemaPro, skolans tjänst för schema, närvaro och frånvaro. Vi vill att så många som möjligt ska kunna använda tjänsten. Den här redogörelsen beskriver hur SchemaPro uppfyller lagen om tillgänglighet till digital offentlig service, vilka tillgänglighetsproblem vi känner till och hur du kan rapportera brister till oss så att vi kan åtgärda dem.
 
-Redogörelsen gäller webbtjänsten SchemaPro: inloggningen och alla sidor för skolans administratörer, lärare, elever och vårdnadshavare. Den gäller inte SchemaPros mobilapp, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.
+Redogörelsen gäller webbtjänsten SchemaPro: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, och Schemavisaren, där skolan delar sitt publicerade schema med en länk. Den gäller inte SchemaPros mobilapp, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.
 
 ## Hur tillgänglig är tjänsten?
 
@@ -12,14 +12,14 @@ Vi är medvetna om att delar av tjänsten inte är helt tillgängliga. Se avsnit
 
 Om du behöver innehåll från SchemaPro som inte är tillgängligt för dig kan du kontakta oss:
 
-- E-post: {e-postadress}
+- E-post: [{e-postadress}](mailto:{e-postadress})
 - Telefon: {telefonnummer}
 
 Vi svarar normalt inom {antal} arbetsdagar.
 
 ## Rapportera brister i tjänstens tillgänglighet
 
-Vi strävar hela tiden efter att förbättra tjänstens tillgänglighet. Om du upptäcker problem som inte beskrivs på den här sidan, eller om du anser att vi inte uppfyller lagens krav, meddela oss så att vi får veta att problemet finns: {e-postadress eller länk till formulär}.
+Vi strävar hela tiden efter att förbättra tjänstens tillgänglighet. Om du upptäcker problem som inte beskrivs på den här sidan, eller om du anser att vi inte uppfyller lagens krav, meddela oss så att vi får veta att problemet finns: [{e-postadress}](mailto:{e-postadress}).
 
 ## Tillsyn
 
@@ -46,11 +46,11 @@ Vi känner inte till något innehåll i SchemaPro som är undantaget från lagen
 
 Vi har gjort en självskattning (intern testning) av SchemaPro:
 
-- Automatisk granskning med verktyget axe mot WCAG 2.1 nivå A och AA, på varje sida i tjänsten och som var och en av rollerna administratör, lärare, elev och vårdnadshavare, i ljust och mörkt tema och i dator- och mobilbredd. Granskningen körs vid varje ändring av tjänsten. Den granskar sidorna som de ser ut när de har laddats. Dialogrutor och menyer som öppnas med ett klick granskas inte automatiskt, utom huvudmenyn på mobil och notismenyn. De ingår i skärmläsartestet, som återstår.
+- Automatisk granskning med verktyget axe mot WCAG 2.1 nivå A och AA av varje sida i tjänsten: inloggningen, alla sidor för administratörer, lärare, elever och vårdnadshavare (som var och en av rollerna), Schemavisaren och den här redogörelsen, i dator- och mobilbredd och i ljust och mörkt tema (Schemavisaren har bara det ljusa). Granskningen körs vid varje ändring av tjänsten. Den granskar sidorna som de ser ut när de har laddats, och dessutom huvudmenyn på mobil och notismenyn öppna. Andra dialogrutor och menyer som öppnas med ett klick granskas inte automatiskt; de ingår i skärmläsartestet, som återstår.
 - Granskning av vad hjälpmedel får veta om de viktigaste sidorna (namn, roller, rubriker och meddelanden), med sparade jämförelser som visar varje ändring.
 - Tester av tangentbordsanvändning, synligt fokus och kontrast för inloggningen och schemaläggningen.
 - Ett manus för testet med skärmläsare, med vad som ska höras i varje steg för de fyra rollerna. Själva testet återstår (se ovan).
 
-Senaste bedömningen gjordes den 13 oktober 2026.
+Senaste bedömningen gjordes den 14 oktober 2026.
 
-Redogörelsen uppdaterades senast den 13 oktober 2026.
+Redogörelsen uppdaterades senast den 14 oktober 2026.

@@ -208,6 +208,9 @@ On Vercel: import the repo, set the **root directory to `web/`**, and add:
 | `NEXT_PUBLIC_API_BASE_URL` | the API origin, e.g. `https://api.yourschool.example` |
 | `PUBLIC_VIEWER_PROXY_KEY` | optional; the API's value (above). Read at runtime by the server, never sent to a browser |
 | `PUBLIC_VIEWER_API_BASE_URL` | optional; the API origin as the web **server** reaches it (a private network address), when that differs from `NEXT_PUBLIC_API_BASE_URL` |
+| `ACCESSIBILITY_ORGANISATION` | the huvudman that stands behind the service, as the tillgänglighetsredogörelse (`/sv/tillganglighet`) names it, e.g. the kommun's name |
+| `ACCESSIBILITY_EMAIL`, `ACCESSIBILITY_PHONE` | where to ask for inaccessible content and report shortcomings. Until at least one is set, the statement says its contact details are missing, which lagen (2018:1937) does not accept for a live service |
+| `ACCESSIBILITY_RESPONSE_DAYS` | optional; working days to an answer, e.g. `5` |
 
 Verify: visiting `/` redirects to `/sv/login`; the language switcher flips to
 English; `/sv/admin` redirects to login when signed out; `/v/x` answers

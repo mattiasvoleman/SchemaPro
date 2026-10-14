@@ -84,6 +84,15 @@ describe("/v/[token]", () => {
     expect(grid.querySelectorAll("ol")).toHaveLength(1);
   });
 
+  it("links the tillgänglighetsredogörelse in the page's language, for a visitor with no account", async () => {
+    respond(200, WEEK);
+    await renderPage();
+    expect(screen.getByRole("link", { name: "Tillgänglighetsredogörelse" })).toHaveAttribute("href", "/sv/tillganglighet");
+    respond(200, WEEK);
+    await renderPage({ lang: "en" });
+    expect(screen.getByRole("link", { name: "Accessibility statement" })).toHaveAttribute("href", "/en/tillganglighet");
+  });
+
   it("asks the gateway with no cache, forwarding only the edge's address beside the proxy key", async () => {
     respond(200, WEEK);
     await renderPage({ date: "2026-10-12", target: "not-a-uuid" });

@@ -15,7 +15,7 @@ import type {
   TeacherRole,
 } from "../../../lib/cover-types";
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
-import { addDays, mondayOf, NOW, stockholmInstant } from "./calendar";
+import { addDays, mondayOf, NOW, stockholmInstant, THIS_MONDAY } from "./calendar";
 import {
   ABSENCE_LIST,
   COVER_LESSON_TEACHERS,
@@ -29,7 +29,7 @@ import {
   type StoredAbsence,
 } from "./cover-world";
 import { SUBSTITUTE_POOL } from "./school-days";
-import { byId, GROUP_LIST, MASTER_LESSONS, REQUIREMENTS, SUBJECT_LIST, TEACHER_LIST, YEAR } from "./world";
+import { byId, GROUP_LIST, MASTER_LESSONS, REQUIREMENTS, SUBJECT_LIST, TEACHER_LIST } from "./world";
 
 /**
  * Vikarieplanering's reads (src/cover/cover.controller.ts): the absence
@@ -224,15 +224,17 @@ const kindOf = (userId: string): CoverPersonKind =>
     ? "POOL"
     : "STAFF";
 
-/** cover-context.ts termOf: the autumn or spring half of the läsår the date is in. */
-function termOf(date: string): { from: string; to: string } {
-  const year = date.slice(0, 4);
-  const autumn = date.slice(5) >= "08-01";
-  const half = autumn ? { from: `${year}-08-01`, to: `${year}-12-31` } : { from: `${year}-01-01`, to: `${year}-07-31` };
-  if (date < YEAR.startDate || date > YEAR.endDate) return half;
-  return autumn
-    ? { from: YEAR.startDate > half.from ? YEAR.startDate : half.from, to: half.to }
-    : { from: half.from, to: YEAR.endDate < half.to ? YEAR.endDate : half.to };
+/**
+ * The term the counter counts, for the fixture school: begun six weeks
+ * before this week and running past it, whatever the date. The gateway's
+ * termOf (cover-context.ts) takes the autumn or spring half of the läsår,
+ * which in a term's first weeks and in January left Cecilia's cover from
+ * four weeks back out of "Termin" — and the cover board's accessibility-tree
+ * baseline with it. The school is always mid-term here, as it is always
+ * eight weeks into the läsår (timplan-coverage.ts).
+ */
+function termOf(_date: string): { from: string; to: string } {
+  return { from: addDays(THIS_MONDAY, -42), to: addDays(THIS_MONDAY, 84) };
 }
 
 /** cover-reports.service.ts counter: covers in the date's ISO week and term, the pool listed with none. */

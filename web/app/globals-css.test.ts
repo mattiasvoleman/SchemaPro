@@ -139,9 +139,11 @@ describe.each([
     },
   );
 
-  // SC 1.4.3: a destructive Button's and Badge's label on its fill.
-  it("keeps the destructive label at 4.5:1 on its fill", () => {
+  // SC 1.4.3: a destructive Button's and Badge's label on its fill, at rest
+  // and under the pointer.
+  it("keeps the destructive label at 4.5:1 on its fill, at rest and on hover", () => {
     expect(contrast(t["destructive-foreground"]!, t["destructive"]!)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(t["destructive-foreground"]!, t["destructive-hover"]!)).toBeGreaterThanOrEqual(4.5);
   });
 });
 
@@ -160,6 +162,7 @@ describe("globals.css contrast, as its comments state it", () => {
     expect(at(light, "muted-foreground", "muted")).toBe("4.94");
     expect(at(light, "muted-foreground", "background")).toBe("5.43");
     expect(at(light, "muted-foreground", "accent")).toBe("4.70");
+    expect(at(light, "destructive-foreground", "destructive-hover")).toBe("5.83");
   });
 
   it("dark", () => {
@@ -173,5 +176,6 @@ describe("globals.css contrast, as its comments state it", () => {
     expect(at(dark, "primary-foreground", "primary")).toBe("5.12");
     expect(at(dark, "primary-foreground", "primary-hover")).toBe("6.27");
     expect(at(dark, "destructive-foreground", "destructive")).toBe("4.88");
+    expect(at(dark, "destructive-foreground", "destructive-hover")).toBe("5.84");
   });
 });

@@ -1,24 +1,20 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { DESKTOP, PHONE, scanBothSchemes, setScheme } from "./axe";
+import { signInAs } from "./signed-in";
 import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
 import { GROUPS } from "./stub/fixtures/world";
+import { ORPHAN } from "./stub/sessions";
 
 /**
- * WCAG 2.1 AA gate (§2: "100% compliance at AA level").
+ * WCAG 2.1 AA gate (§2: "100% compliance at AA level"), for the pages a
+ * visitor sees without a school's session. Everything under (app) is in
+ * a11y-app.spec.ts, signed in as each role.
  *
- * axe-core is the automated half of that claim — it catches contrast, naming,
- * landmark and ARIA defects deterministically. It does not, and cannot, prove
- * full AA conformance: keyboard traps, focus order, and meaningful alt text
- * still need a manual pass. Treat a green run as "no automated violations",
- * which is what CI can honestly enforce.
- */
-
-/**
- * Public routes. Everything under (app) is in a11y-app.spec.ts, signed in.
- * /no-profile needs a session without a profile row, and the proxy sends it
- * to /login otherwise, so its own text is tested in
- * app/[locale]/(auth)/no-profile/page.test.tsx instead. Schemavisaren reads
- * its week from the backend stub (e2e/stub/fixtures/gateway-public.ts).
+ * Every page is scanned the way the tillgänglighetsredogörelse says: at
+ * desktop and phone width, in the light and the dark theme. Schemavisaren has
+ * one look of its own (no theme), so its two scans see the same page.
+ * Schemavisaren reads its week from the backend stub
+ * (e2e/stub/fixtures/gateway-public.ts).
  */
 const ROUTES = [
   { path: "/sv/login", name: "login (sv)" },
@@ -32,57 +28,42 @@ const ROUTES = [
   { path: "/en/login?sso=other-organisation", name: "login with a school-account refusal (en)" },
   { path: "/sv/tillganglighet", name: "tillgänglighetsredogörelse (sv)" },
   { path: "/en/tillganglighet", name: "tillgänglighetsredogörelse (en)" },
-  { path: `/v/${SHARE_TOKEN}`, name: "Schemavisaren, the list of classes" },
-  { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`, name: "Schemavisaren, a class's week" },
-  { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}&lang=en`, name: "Schemavisaren, a class's week (en)" },
+  { path: `/v/${SHARE_TOKEN}`, name: "Schemavisaren, the list of classes", themed: false },
+  { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`, name: "Schemavisaren, a class's week", themed: false },
+  { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}&lang=en`, name: "Schemavisaren, a class's week (en)", themed: false },
+  { path: `/v/${"x".repeat(43)}`, name: "Schemavisaren, a link that does not resolve", themed: false },
 ];
 
-const WCAG_AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
-
-const scan = (page: Page) =>
-  new AxeBuilder({ page })
-    .withTags(WCAG_AA_TAGS)
-    // next-themes writes the theme class after hydration; the injected
-    // <script> it uses has no accessible role and is not part of the UI.
-    .exclude("next-route-announcer")
-    .analyze();
-
-/** Renders axe output as something a reviewer can act on without the HTML report. */
-const format = (
-  violations: Awaited<ReturnType<typeof scan>>["violations"],
-): string =>
-  violations
-    .map(
-      (v) =>
-        `[${v.impact ?? "unknown"}] ${v.id}: ${v.help}\n` +
-        v.nodes.map((n) => `    ${n.target.join(" ")}`).join("\n"),
-    )
-    .join("\n");
+/** Both widths, both schemes; a reload at phone width, so the page lays itself out there. */
+async function scanEveryWay(page: Page, path: string, themed: boolean): Promise<string> {
+  await page.setViewportSize(DESKTOP);
+  await setScheme(page, "light", false);
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+  const reports = await scanBothSchemes(page, "desktop", themed);
+  await page.setViewportSize(PHONE);
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  reports.push(...(await scanBothSchemes(page, "mobile", themed)));
+  return reports.join("\n");
+}
 
 for (const route of ROUTES) {
   test(`${route.name} has no WCAG 2.1 AA violations`, async ({ page }) => {
-    await page.goto(route.path);
-    await page.waitForLoadState("networkidle");
-
-    const { violations } = await scan(page);
-    expect(violations, format(violations)).toEqual([]);
+    expect(await scanEveryWay(page, route.path, route.themed ?? true), "WCAG 2.1 AA violations").toBe("");
   });
 }
 
-test.describe("dark theme", () => {
-  test.use({ colorScheme: "dark" });
-
-  // Contrast regressions land in exactly one theme far more often than both.
-  for (const path of ["/sv/login", "/sv/tillganglighet", `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`]) {
-    test(`${path} has no WCAG 2.1 AA violations in dark mode`, async ({ page }) => {
-      await page.goto(path);
-      await page.waitForLoadState("networkidle");
-
-      const { violations } = await scan(page);
-      expect(violations, format(violations)).toEqual([]);
-    });
-  }
-});
+// Reached only signed in without a school: the (app) layout sends such a
+// session here, and the proxy sends anyone without a session to /login.
+for (const locale of ["sv", "en"]) {
+  test(`/${locale}/no-profile has no WCAG 2.1 AA violations`, async ({ page, context, baseURL }) => {
+    await signInAs(context, ORPHAN, baseURL!);
+    await page.goto(`/${locale}/admin`);
+    await expect(page).toHaveURL(new RegExp(`/${locale}/no-profile$`));
+    expect(await scanEveryWay(page, `/${locale}/no-profile`, true), "WCAG 2.1 AA violations").toBe("");
+  });
+}
 
 test.describe("keyboard access", () => {
   test("login form controls are reachable by Tab, in source order", async ({

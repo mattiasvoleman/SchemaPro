@@ -9,8 +9,7 @@ import type {
 } from "../../../lib/timplan-queries";
 import type { YearTimplanRow } from "../../../lib/year-timplan-queries";
 import { KIND, uid } from "../sessions";
-import { addDays, AUTUMN_YEAR, isoWeekday, NEXT_YEAR_NAME, stockholmInstant, TODAY, YEAR_END, YEAR_START } from "./calendar";
-import { SCHOOL_BREAKS } from "./school-days";
+import { addDays, isoWeekday, NEXT_YEAR_NAME, stockholmInstant, TODAY, YEAR_START } from "./calendar";
 import { BILAGA_1, NATIONAL_NAME, PARENT_OF } from "./timplan-national";
 import { ADMIN, GROUPS, NEXT_YEAR, SCHOOL, SUBJECT_LIST, SUBJECTS, YEAR } from "./world";
 
@@ -27,19 +26,12 @@ export const ALTERNATIVE_CODES = ["SV_SVA", "M2"];
 
 // --- Teaching weeks ------------------------------------------------------------
 
-/** Weekdays in [from, to) outside every lov and studiedag, divided by five. */
-export function teachingWeeksBetween(from: string, to: string): number {
-  let days = 0;
-  for (let date = from; date < to; date = addDays(date, 1)) {
-    if (isoWeekday(date) > 5) continue;
-    if (SCHOOL_BREAKS.some((entry) => entry.startDate <= date && date <= entry.endDate)) continue;
-    days++;
-  }
-  return days / 5;
-}
-
-/** The läsår's teaching weeks, which the gateway turns minutes per week into hours with. */
-export const YEAR_WEEKS = teachingWeeksBetween(YEAR_START, addDays(YEAR_END, 1));
+/**
+ * A läsår of 38 teaching weeks, whatever year the suite runs in. Counted from
+ * the calendar it was a little different every August, and the hours on the
+ * pages, held in accessibility-tree baselines, with it.
+ */
+export const YEAR_WEEKS = 38;
 
 /** The first weekday on or after `date`. */
 export const weekdayFrom = (date: string) => (isoWeekday(date) > 5 ? addDays(date, 8 - isoWeekday(date)) : date);
@@ -143,7 +135,9 @@ export const CREDITS: TimplanCredit[] = [
   {
     id: uid(KIND.misc, 7301),
     academicYearId: YEAR.id,
-    date: weekdayFrom(`${AUTUMN_YEAR}-09-17`),
+    // Relative to today, so it is always in the past: on a fixed date it
+    // moved from "ahead" to "credited" in the middle of the term.
+    date: weekdayFrom(addDays(TODAY, -28)),
     minutes: 300,
     subjectId: SUBJECTS.idh.id,
     studentGroupId: null,
@@ -155,7 +149,7 @@ export const CREDITS: TimplanCredit[] = [
   {
     id: uid(KIND.misc, 7302),
     academicYearId: YEAR.id,
-    date: weekdayFrom(`${AUTUMN_YEAR}-10-08`),
+    date: weekdayFrom(addDays(TODAY, -14)),
     minutes: 120,
     subjectId: SUBJECTS.sv.id,
     studentGroupId: GROUPS.g7A.id,

@@ -14,6 +14,7 @@ colors:
   accent-foreground: "hsl(243 75% 40%)"
   destructive: "hsl(0 72% 51%)"
   destructive-foreground: "hsl(0 0% 100%)"
+  destructive-hover: "hsl(0 72% 45%)"
   success: "hsl(152 60% 36%)"
   success-strong: "hsl(152 65% 24%)"
   warning: "hsl(38 92% 50%)"
@@ -124,6 +125,8 @@ components:
     textColor: "{colors.destructive-foreground}"
     rounded: "{rounded.md}"
     height: "36px"
+  button-destructive-hover:
+    backgroundColor: "{colors.destructive-hover}"
   button-sm:
     padding: "0 12px"
     height: "32px"
@@ -235,7 +238,7 @@ A cool neutral ground (hue 240) with one blue-violet accent (hue 243) and three 
 - **Indigo Wash** (`accent`, `accent-foreground`): the hover fill of outline and ghost buttons; the sidebar uses its own pair (`sidebar-accent`, `sidebar-accent-foreground`) for the active and hovered nav item.
 
 ### Secondary
-- **Signal Red** (`destructive`): the destructive Button, the solid destructive Badge, the destructive Notice's 5% tint, 40% edge and its OctagonX icon, form error text. In dark the fill is lighter (58%), so its ink is a near-black red (`0 80% 6%`, 4.88:1) as `success` has, not white (4.04:1).
+- **Signal Red** (`destructive`): the destructive Button, the solid destructive Badge, the destructive Notice's 5% tint, 40% edge and its OctagonX icon, form error text. In dark the fill is lighter (58%), so its ink is a near-black red (`0 80% 6%`, 4.88:1) as `success` has, not white (4.04:1). Its hover is a solid `destructive-hover` (45% light, 64% dark; 5.83:1 and 5.84:1), not `destructive/90`, which let the surface through.
 - **Ledger Green** (`success`, `success-strong`): the base shade tints (Badge 15%, Notice 10%, done Stepper step 10%); the strong shade is the ink and icon colour on light grounds (5.7:1). In dark mode strong equals base.
 - **Amber Signal** (`warning`, `warning-strong`, `warning-foreground`): the base shade tints (Badge 15%, Notice 10%, edge 50%); `warning-strong` (4.2:1) is the warning icon; `warning-foreground` is the warning Badge's ink in light (dark uses `warning` itself).
 
