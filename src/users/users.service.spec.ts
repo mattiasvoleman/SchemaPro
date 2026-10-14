@@ -836,7 +836,7 @@ describe('UsersService', () => {
       expect(writtenIn).toEqual(readIn);
       const [call] = queryRaw.mock.calls;
       expect(rawSql(call)).toMatch(
-        /SELECT "role", "studentGroupId", "pseudonymisedAt"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+        /SELECT "role", "studentGroupId", "isActive", "pseudonymisedAt"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
       );
       expect(call.slice(1)).toEqual([USER_ID]);
       expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1129,12 +1129,12 @@ describe('UsersService', () => {
       const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
 
       it.each([
-        ['a class move', UserRole.STUDENT, { studentGroupId: GROUP_ID }],
-        ['leaving the class', UserRole.STUDENT, { studentGroupId: null }],
-        ['a reactivation', UserRole.TEACHER, { isActive: true }],
-        ['a role change', UserRole.SCHOOL_ADMIN, { role: UserRole.TEACHER }],
+        ['a class move', { role: UserRole.STUDENT, studentGroupId: null, isActive: true }, { studentGroupId: GROUP_ID }],
+        ['leaving the class', { role: UserRole.STUDENT, studentGroupId: GROUP_ID, isActive: true }, { studentGroupId: null }],
+        ['a reactivation', { role: UserRole.TEACHER, studentGroupId: null, isActive: false }, { isActive: true }],
+        ['a role change', { role: UserRole.SCHOOL_ADMIN, studentGroupId: null, isActive: true }, { role: UserRole.TEACHER }],
       ])('tells the mentors after %s, in the PATCH’s transaction', async (_what, stored, dto) => {
-        storeUser({ role: stored, studentGroupId: null, pseudonymisedAt: null });
+        storeUser({ ...stored, pseudonymisedAt: null });
         const ranIn = transactionsOf(prisma);
         const toldIn = ranIn(queryRaw);
         const writtenIn = ranIn(tx.user.update);
@@ -1153,6 +1153,20 @@ describe('UsersService', () => {
 
       it('asks nothing of a PATCH that moves no mentor: names, phone', async () => {
         await service.update(USER_ID, { firstName: 'Maja', lastName: 'Ek', phone: null }, testUser());
+        expect(told()).toEqual([]);
+        expect(deliver).not.toHaveBeenCalled();
+      });
+
+      // The People page sends role and class with every save: a name fix
+      // there must not run the catch-up, which would re-send a notice
+      // gallring removed for a request still pending.
+      it('asks nothing of a save that sends the role, class and isActive it already has', async () => {
+        storeUser({ role: UserRole.STUDENT, studentGroupId: GROUP_ID, isActive: true, pseudonymisedAt: null });
+        await service.update(
+          USER_ID,
+          { firstName: 'Maja', role: UserRole.STUDENT, studentGroupId: GROUP_ID, isActive: true },
+          testUser(),
+        );
         expect(told()).toEqual([]);
         expect(deliver).not.toHaveBeenCalled();
       });

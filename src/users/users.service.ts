@@ -413,8 +413,8 @@ export class UsersService {
         // app.current_user_group_id() reads studentGroupId without looking at
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
-        const [current] = await tx.$queryRaw<Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt'>[]>`
-          SELECT "role", "studentGroupId", "pseudonymisedAt"
+        const [current] = await tx.$queryRaw<Pick<User, 'role' | 'studentGroupId' | 'isActive' | 'pseudonymisedAt'>[]>`
+          SELECT "role", "studentGroupId", "isActive", "pseudonymisedAt"
           FROM "Users"
           WHERE "id" = ${id}::uuid
           FOR NO KEY UPDATE
@@ -473,12 +473,14 @@ export class UsersService {
         // reactivation or a role change may give a mentor a pending leave
         // request they were never told of (Mentorns ledighetsbeslut). One
         // catch-up in this transaction tells them, as the uppdrag's own
-        // writes do.
-        if (
-          this.notifications &&
-          user.schoolId &&
-          (dto.studentGroupId !== undefined || dto.isActive !== undefined || dto.role !== undefined)
-        ) {
+        // writes do. Only a value that changes asks: the People page sends
+        // role and class with every save, and a catch-up re-sends a notice
+        // gallring has removed for a request still pending.
+        const moved =
+          (dto.studentGroupId !== undefined && dto.studentGroupId !== current.studentGroupId) ||
+          (dto.isActive !== undefined && dto.isActive !== current.isActive) ||
+          (dto.role !== undefined && dto.role !== current.role);
+        if (this.notifications && user.schoolId && moved) {
           await tellNewMentors(this.notifications, tx, user.schoolId);
         }
         // The answer is the whole row, e-mail and phone among them, whatever
