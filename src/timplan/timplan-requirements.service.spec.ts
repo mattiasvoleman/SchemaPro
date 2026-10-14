@@ -215,7 +215,17 @@ describe('TimplanRequirementsService', () => {
           where: { academicYearId: YEAR_ID, name: { in: ['Språkval åk 7'] } },
           select: {
             name: true,
-            requirements: { select: { studentGroup: { select: { name: true, gradeLevel: true } } } },
+            requirements: {
+              select: {
+                lessonsPerWeek: true,
+                minutesPerLesson: true,
+                lessonLengths: true,
+                recurrence: true,
+                startDate: true,
+                endDate: true,
+                studentGroup: { select: { name: true, gradeLevel: true } },
+              },
+            },
           },
         });
         expect(tx.teachingBlock.upsert).not.toHaveBeenCalled();
@@ -223,15 +233,59 @@ describe('TimplanRequirementsService', () => {
       },
     );
 
+    // A member of the year's "Språkval åk 7" as the pre-check reads it: the
+    // proposal's 2 × 60 on all weeks unless the case says otherwise.
+    const held = (name: string, gradeLevel: number | null, extra: Record<string, unknown> = {}) => ({
+      lessonsPerWeek: 2,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      studentGroup: { name, gradeLevel },
+      ...extra,
+    });
+
+    it.each([true, false])(
+      'refuses a block of that name whose posts have other lessons, naming both, preview and apply alike (dryRun %s)',
+      async (dryRun) => {
+        tx.teachingBlock.findMany.mockResolvedValue([
+          {
+            name: 'Språkval åk 7',
+            requirements: [held('Fr7', 7, { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] })],
+          },
+        ]);
+
+        const refusal = await service.generate(PLAN_ID, languages(dryRun), testUser()).catch((error) => error);
+
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect(refusal.getResponse()).toMatchObject({
+          code: 'LANGUAGE_BLOCK_HAS_OTHER_LESSONS',
+          message: expect.stringContaining(
+            'Blocket "Språkval åk 7" har lektionerna 1 × 80 + 1 × 40, och språkvalets nya poster skulle få 2 × 60.',
+          ),
+        });
+        expect(tx.teachingBlock.upsert).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.createManyAndReturn).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuses a block of that name whose posts have weeks of their own', async () => {
+      tx.teachingBlock.findMany.mockResolvedValue([
+        { name: 'Språkval åk 7', requirements: [held('Fr7', 7, { recurrence: 'ODD_WEEKS' })] },
+      ]);
+
+      const refusal = await service.generate(PLAN_ID, languages(true), testUser()).catch((error) => error);
+
+      expect(refusal.getResponse()).toMatchObject({
+        code: 'LANGUAGE_BLOCK_HAS_OTHER_LESSONS',
+        message: expect.stringContaining('måste ha samma veckor'),
+      });
+    });
+
     it('joins a block of that name whose posts are in its årskurs, or in groups without one', async () => {
       tx.teachingBlock.findMany.mockResolvedValue([
-        {
-          name: 'Språkval åk 7',
-          requirements: [
-            { studentGroup: { name: 'Fr7', gradeLevel: 7 } },
-            { studentGroup: { name: 'Sp-grupp', gradeLevel: null } },
-          ],
-        },
+        { name: 'Språkval åk 7', requirements: [held('Fr7', 7), held('Sp-grupp', null)] },
       ]);
 
       await service.generate(PLAN_ID, languages(false), testUser());
