@@ -564,6 +564,60 @@ describe("GenerateDialog: språkval as a block", () => {
     expect(await screen.findByText("resultBlocks(Språkval åk 7)")).toBeInTheDocument();
   });
 
+  it("counts the classes' rows and the språkval rows apart: a language group is no class", async () => {
+    const user = userEvent.setup();
+    renderWithPlan();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await user.selectOptions(await screen.findByLabelText("languageLabel(Tyska|7)"), "g-ty7");
+    await user.selectOptions(screen.getByLabelText("languageLabel(Spanska|7)"), "g-sp7");
+    await user.click(screen.getByRole("button", { name: "preview" }));
+
+    await screen.findByRole("row", { name: /Ty7/ });
+    // Two rows on one class, and two on two språkval groups — not four rows on three classes.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "summary(2|1|1|grade(7)) summaryLanguages(2|2|Språkval åk 7)",
+    );
+  });
+
+  it("says nothing of Gör enhetlig for a block's split rows, which offer none, but keeps the split footer", async () => {
+    state.generate.mutateAsync = vi.fn(async (body: GenerateBody & { planId: string }) => {
+      const base = answer(body, [{ subjectId: "s-ma", subjectName: "Matematik", target: 180 }]);
+      return {
+        ...base,
+        rows: [
+          ...base.rows,
+          {
+            studentGroupId: "g-ty7",
+            groupName: "Ty7",
+            subjectId: "s-de",
+            subjectName: "Tyska",
+            gradeLevel: 7,
+            targetMinutesPerWeek: 120,
+            lessonsPerWeek: 2,
+            minutesPerLesson: 80,
+            lessonLengths: [80, 40],
+            plannedMinutesPerWeek: 120,
+            surplusMinutesPerWeek: 0,
+            overridden: false,
+            capped: false,
+            blockName: "Språkval åk 7",
+          },
+        ],
+        blocks: [{ name: "Språkval åk 7", gradeLevel: 7 }],
+      };
+    });
+    const user = userEvent.setup();
+    renderWithPlan();
+    await user.click(screen.getByLabelText("splitLabel"));
+    await user.click(screen.getByRole("button", { name: "preview" }));
+
+    const tyska = await screen.findByRole("row", { name: /Ty7/ });
+    expect(within(tyska).getByText("1 × 80 + 1 × 40")).toBeInTheDocument();
+    expect(within(tyska).queryByRole("button")).toBeNull();
+    expect(screen.queryByText(/^splitNote/)).toBeNull();
+    expect(screen.getByText("surplusHintSplit")).toBeInTheDocument();
+  });
+
   it("sends no languageGroups while no group is chosen", async () => {
     const user = userEvent.setup();
     renderWithPlan();

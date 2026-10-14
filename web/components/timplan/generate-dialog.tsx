@@ -46,7 +46,10 @@
 // lessons the generator places at the same times. Those rows have one shape —
 // the line's — so they offer no edit, and a changed choice throws the preview
 // away like a changed length. With no group chosen the request carries no
-// `languageGroups`, and M2 is skipped on the classes as it always was.
+// `languageGroups`, and M2 is skipped on the classes as it always was. The
+// summary counts the classes' rows and the språkval rows apart — a language
+// group is no class — and the note about split rows counts only rows that
+// offer "Gör enhetlig", which a block's rows do not.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -176,7 +179,10 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
       ? preview
       : null;
   const overrides = current ? overridesFrom(current.rows, edits) : null;
-  const classCount = current ? new Set(current.rows.map((row) => row.studentGroupId)).size : 0;
+  // A block's rows are on språkval groups, not on classes.
+  const classCount = current
+    ? new Set(current.rows.filter((row) => !row.blockName).map((row) => row.studentGroupId)).size
+    : 0;
 
   const fail = (caught: unknown) =>
     setError(caught instanceof Error && caught.message ? caught.message : tCommon("error"));
@@ -440,10 +446,12 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
   const t = useTranslations("timplan.generate");
 
   // Rows whose shape SPLIT changed and the admin has not made uniform: what
-  // the note counts and what the footer's sentence describes.
-  const changedRows = preview.rows.filter(
-    (row) => remainderChanged(row, length) && !edits.has(rowKey(row)),
-  ).length;
+  // the footer's sentence describes. The note counts only those that offer
+  // "Gör enhetlig", which a block's rows, of the line's one shape, do not.
+  const splitRows = preview.rows.filter((row) => remainderChanged(row, length) && !edits.has(rowKey(row)));
+  const changedRows = splitRows.filter((row) => !row.blockName).length;
+  const classRows = preview.rows.filter((row) => !row.blockName).length;
+  const languageRows = preview.rows.filter((row) => row.blockName);
 
   // "Gör enhetlig" and "Dela upp igen" each unmount the button pressed. Focus
   // goes to what replaced it in the same row — the lessons field, or the
@@ -471,11 +479,18 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
         {preview.rows.length === 0
           ? t("nothingToCreate", { skipped: preview.skipped.length })
           : t("summary", {
-              rows: preview.rows.length,
+              rows: classRows,
               classes: classCount,
               skipped: existingCount(preview),
               grades: preview.gradeLevels.map((value) => grade(t, value)).join(", "),
             })}
+        {languageRows.length > 0
+          ? ` ${t("summaryLanguages", {
+              rows: languageRows.length,
+              groups: new Set(languageRows.map((row) => row.studentGroupId)).size,
+              blocks: [...new Set(languageRows.map((row) => row.blockName))].join(", "),
+            })}`
+          : null}
       </p>
       {changedRows > 0 ? (
         <p className="text-sm text-foreground">{t("splitNote", { count: changedRows })}</p>
@@ -616,7 +631,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
         </details>
       ) : null}
       <p className="text-xs text-muted-foreground">
-        {t(changedRows > 0 ? "surplusHintSplit" : "surplusHint")}
+        {t(splitRows.length > 0 ? "surplusHintSplit" : "surplusHint")}
       </p>
     </div>
   );
