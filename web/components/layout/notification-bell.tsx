@@ -30,7 +30,8 @@ interface NotificationRow {
     | "LESSON_COVER_WITHDRAWN"
     | "LESSON_REINSTATED"
     | "LESSON_SUPERVISED_STUDY"
-    | "CANCELLATION_DIGEST";
+    | "CANCELLATION_DIGEST"
+    | "LEAVE_REQUESTED";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -91,11 +92,23 @@ export function NotificationBell() {
           subject: str("subjectName"),
           date: str("date"),
         });
-      case "LEAVE_DECIDED":
-        return t(
-          str("status") === "APPROVED" ? "leaveApproved" : "leaveRejected",
-          { student: str("studentName"), from: str("startDate"), to: str("endDate") },
-        );
+      case "LEAVE_DECIDED": {
+        // A mentor's decision says so (20261023091000); an older notice has no decidedAs.
+        const approved = str("status") === "APPROVED";
+        const byMentor = meta.decidedAs === "MENTOR";
+        const key = byMentor
+          ? approved ? "leaveApprovedByMentor" : "leaveRejectedByMentor"
+          : approved ? "leaveApproved" : "leaveRejected";
+        return t(key, { student: str("studentName"), from: str("startDate"), to: str("endDate") });
+      }
+      case "LEAVE_REQUESTED":
+        // To the mentor who decides it: the pupil and the days, never the reason.
+        return t("leaveRequested", {
+          student: str("studentName"),
+          from: str("startDate"),
+          to: str("endDate"),
+          days: Number(meta.schoolDays ?? 0),
+        });
       case "LESSON_CANCELLED":
         return t("lessonCancelled", {
           subject: str("subjectName"),

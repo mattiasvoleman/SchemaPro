@@ -200,12 +200,15 @@ describe("AppShell navigation", () => {
     expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
     expect(link("nav.myStaffing")).toHaveAttribute("href", "/teacher/tjanst");
     expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
+    // The mentor's leave inbox (20261023091000), whether or not the school delegates.
+    expect(link("nav.myLeave")).toHaveAttribute("href", "/teacher/ledighet");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "nav.coverBoard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(5);
+    expect(navLinks()).toHaveLength(6);
 
   });
 

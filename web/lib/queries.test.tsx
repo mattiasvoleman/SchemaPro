@@ -57,6 +57,7 @@ import {
   useLeaveRequests,
   useMyChildren,
 } from "./guardian-queries";
+import { useLeaveInboxActions } from "./leave-queries";
 
 // ---------------------------------------------------------------------------
 // Module mocks. Reads of the school's own tables go through the Supabase
@@ -911,7 +912,7 @@ describe("useLeaveRequests", () => {
     expect(supabaseMocks.from).not.toHaveBeenCalled();
   });
 
-  it("narrows to a status and keys the cache on it", async () => {
+  it("narrows to a status and keys the cache on it, with the role each decision was made in", async () => {
     const rows = [
       {
         id: "lr-1",
@@ -920,20 +921,21 @@ describe("useLeaveRequests", () => {
         startDate: "2026-11-02",
         endDate: "2026-11-06",
         reason: "Resa",
-        status: "PENDING",
-        decidedById: null,
-        decidedAt: null,
+        status: "APPROVED",
+        decidedById: "t-anna",
+        decidedAt: "2026-10-13T08:00:00.000Z",
         decisionNote: null,
         createdAt: "2026-10-12T08:00:00.000Z",
+        decidedAs: "MENTOR",
       },
     ];
     mockApi.get.mockResolvedValue(rows);
     const { queryClient, wrapper } = createHarness();
-    const { result } = renderHook(() => useLeaveRequests("PENDING"), { wrapper });
+    const { result } = renderHook(() => useLeaveRequests("APPROVED"), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/leave-requests?status=PENDING");
-    expect(queryClient.getQueryData(["leaveRequests", "PENDING"])).toEqual(rows);
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/leave-requests?status=APPROVED");
+    expect(queryClient.getQueryData(["leaveRequests", "APPROVED"])).toEqual(rows);
   });
 });
 
@@ -1593,12 +1595,15 @@ describe("useLeaveRequestActions", () => {
       await result.current.request.mutateAsync(body);
     });
     expect(mockApi.post).toHaveBeenCalledWith("/api/v1/leave-requests", body);
-    expect(invalidatedKeys(harness)).toEqual([["leaveRequests"], ["absenceReports"]]);
+    // The inboxes too: a request the mentor decides lands in theirs at once.
+    expect(invalidatedKeys(harness)).toEqual([["leaveRequests"], ["absenceReports"], ["leaveInbox"]]);
   });
+});
 
+describe("useLeaveInboxActions", () => {
   it("decide patches /decide and omits the note when not provided", async () => {
     const harness = createHarness();
-    const { result } = renderHook(() => useLeaveRequestActions(), {
+    const { result } = renderHook(() => useLeaveInboxActions(), {
       wrapper: harness.wrapper,
     });
 
@@ -1621,8 +1626,49 @@ describe("useLeaveRequestActions", () => {
       note: "ok",
     });
     expect(invalidatedKeys(harness)).toEqual([
+      ["leaveInbox"],
       ["leaveRequests"],
       ["absenceReports"],
+      ["leaveInbox"],
+      ["leaveRequests"],
+      ["absenceReports"],
+    ]);
+  });
+
+  it("refer patches /refer, and a new delegation refreshes the delegation and every inbox", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useLeaveInboxActions(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.refer.mutateAsync("lr-1");
+    });
+    expect(mockApi.patch).toHaveBeenCalledWith("/api/v1/leave-requests/lr-1/refer");
+
+    await act(async () => {
+      await result.current.delegate.mutateAsync({ mentorMaxSchoolDays: 3, reference: "Dnr 12" });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/leave-delegation", { mentorMaxSchoolDays: 3, reference: "Dnr 12" });
+    expect(invalidatedKeys(harness).slice(-2)).toEqual([["leaveDelegation"], ["leaveInbox"]]);
+  });
+
+  it("reads every inbox again after a decision or a referral that lost the race, not only after one that won", async () => {
+    mockApi.patch.mockRejectedValue(new ApiError(409, "Leave request is already decided.", "LEAVE_REQUEST_DECIDED"));
+    const harness = createHarness();
+    const { result } = renderHook(() => useLeaveInboxActions(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await expect(result.current.decide.mutateAsync({ id: "lr-1", status: "APPROVED" })).rejects.toBeInstanceOf(ApiError);
+      await expect(result.current.refer.mutateAsync("lr-1")).rejects.toBeInstanceOf(ApiError);
+    });
+    expect(invalidatedKeys(harness)).toEqual([
+      ["leaveInbox"],
+      ["leaveRequests"],
+      ["absenceReports"],
+      ["leaveInbox"],
       ["leaveRequests"],
       ["absenceReports"],
     ]);

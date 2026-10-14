@@ -311,6 +311,26 @@ describe("NotificationBell inbox", () => {
             endDate: "2026-09-04",
           },
         }),
+        notif({
+          type: "LEAVE_DECIDED",
+          meta: {
+            status: "APPROVED",
+            studentName: "Alma Berg",
+            startDate: "2026-09-07",
+            endDate: "2026-09-08",
+            decidedAs: "MENTOR",
+          },
+        }),
+        notif({
+          type: "LEAVE_REQUESTED",
+          meta: {
+            leaveRequestId: "lr-1",
+            studentName: "Alma Berg",
+            startDate: "2026-09-10",
+            endDate: "2026-09-11",
+            schoolDays: 2,
+          },
+        }),
         notif({ type: "LESSON_CANCELLED", meta: { subjectName: "Maths", startsAt } }),
         notif({ type: "LESSON_SUBSTITUTE", meta: { subjectName: "Maths", startsAt } }),
         notif({ type: "LESSON_ROOM_CHANGED", meta: { subjectName: "Maths", startsAt } }),
@@ -335,6 +355,12 @@ describe("NotificationBell inbox", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText("leaveRejected(student=Alma Berg|from=2026-09-03|to=2026-09-04)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("leaveApprovedByMentor(student=Alma Berg|from=2026-09-07|to=2026-09-08)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("leaveRequested(student=Alma Berg|from=2026-09-10|to=2026-09-11|days=2)"),
     ).toBeInTheDocument();
     expect(screen.getByText(`lessonCancelled(subject=Maths|when=${when})`)).toBeInTheDocument();
     expect(screen.getByText(`lessonSubstitute(subject=Maths|when=${when})`)).toBeInTheDocument();

@@ -467,6 +467,11 @@ export default function GuardianPage() {
                     {spanText(leave.startDate, leave.endDate)}
                   </p>
                   <p className="truncate text-muted-foreground">{leave.reason}</p>
+                  {leave.status !== "PENDING" && leave.decidedAs ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t(leave.decidedAs === "MENTOR" ? "decidedByMentor" : "decidedByRektor")}
+                    </p>
+                  ) : null}
                   {leave.decisionNote ? (
                     <p className="text-xs text-muted-foreground">
                       {t("decisionNote")}: {leave.decisionNote}

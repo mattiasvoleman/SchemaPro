@@ -561,6 +561,8 @@ export interface LeaveRequest {
   decidedById: string | null;
   decidedAt: string | null;
   decisionNote: string | null;
+  /** MENTOR or ADMIN once decided (20261023091000); null before, and for older decisions. */
+  decidedAs: "MENTOR" | "ADMIN" | null;
   createdAt: string;
 }
 

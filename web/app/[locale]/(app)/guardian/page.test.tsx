@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   /** The guardian id each render asked useMyChildren for. */
   childrenAskedFor: [] as (string | null)[],
   reports: [] as Record<string, unknown>[],
+  leaves: [] as Record<string, unknown>[],
 }));
 
 vi.mock("@/components/profile-context", () => ({
@@ -45,7 +46,7 @@ vi.mock("@/lib/guardian-queries", () => ({
     return { data: state.children, isLoading: false };
   },
   useAbsenceReports: () => ({ data: state.reports }),
-  useLeaveRequests: () => ({ data: [] }),
+  useLeaveRequests: () => ({ data: state.leaves }),
   useAbsenceReportActions: () => ({ report: { isPending: false }, remove: { isPending: false } }),
   useLeaveRequestActions: () => ({ request: { isPending: false } }),
 }));
@@ -73,11 +74,42 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.reports = [];
   state.childrenAskedFor = [];
+  state.leaves = [];
   state.role = "GUARDIAN";
   state.children = [
     { linkId: "l-1", id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
     { linkId: "l-2", id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true, studentGroupId: "g-7a" },
   ];
+});
+
+describe("the guardian's leave requests", () => {
+  const leave = (id: string, status: string, decidedAs: string | null) => ({
+    id,
+    studentId: "c-1",
+    requestedById: "g-1",
+    startDate: "2026-10-19",
+    endDate: "2026-10-21",
+    reason: `Resa ${id}`,
+    status,
+    decidedById: null,
+    decidedAt: null,
+    decisionNote: null,
+    decidedAs,
+    createdAt: "2026-10-10T08:00:00.000Z",
+  });
+
+  it("says who decided: the mentor or rektor, and nothing while it waits or for an older decision", async () => {
+    state.leaves = [
+      leave("l-mentor", "APPROVED", "MENTOR"),
+      leave("l-rektor", "REJECTED", "ADMIN"),
+      leave("l-old", "APPROVED", null),
+      leave("l-pending", "PENDING", null),
+    ];
+    render(<GuardianPage />);
+    expect(await screen.findByText("Resa l-mentor")).toBeInTheDocument();
+    expect(screen.getAllByText("guardian.decidedByMentor")).toHaveLength(1);
+    expect(screen.getAllByText("guardian.decidedByRektor")).toHaveLength(1);
+  });
 });
 
 describe("the guardian's Undervisningstid cards", () => {

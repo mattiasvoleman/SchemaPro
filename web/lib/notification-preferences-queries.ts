@@ -29,7 +29,8 @@ export type NotificationTypeName =
   | "LESSON_COVER_WITHDRAWN"
   | "LESSON_REINSTATED"
   | "LESSON_SUPERVISED_STUDY"
-  | "CANCELLATION_DIGEST";
+  | "CANCELLATION_DIGEST"
+  | "LEAVE_REQUESTED";
 
 export interface NotificationPreference {
   type: NotificationTypeName;

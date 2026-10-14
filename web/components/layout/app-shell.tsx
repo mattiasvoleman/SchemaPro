@@ -182,6 +182,10 @@ const TEACHER_NAV: NavSection[] = [
       // Mina vikariepass and Min frånvaro: the admin's Lärarfrånvaro icon,
       // the same subject from the teacher's side.
       { labelKey: "myCover", href: "/teacher/franvaro", icon: UserX },
+      // Ledighet: the requests the teacher decides as a pupil's mentor
+      // (20261023091000). The admin's Ledighetsansökningar icon, already in
+      // the shell: the same inbox from the mentor's side.
+      { labelKey: "myLeave", href: "/teacher/ledighet", icon: ClipboardCheck },
     ],
 
   },
