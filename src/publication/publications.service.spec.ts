@@ -267,6 +267,58 @@ describe('PublicationsService (DIRECT)', () => {
     expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: ['tea'] }]);
   });
 
+  it('names the worst period of a post that changes during the year, and the year for one that does not', async () => {
+    tx.staffingPolicy.findUnique.mockResolvedValue({
+      qualificationMode: 'WARN',
+      overAllocationMode: 'REFUSE',
+      overAllocationTolerancePercent: 10,
+      fullTimeTeachingMinutesPerWeek: null,
+      unstaffedGeneration: 'ALLOW',
+    });
+    const stretch = (from: string, to: string, extra: Record<string, unknown>) => ({
+      from,
+      to,
+      kind: 'PERIOD',
+      effectiveFrom: from,
+      effectiveTo: to,
+      teachingWeeks: 10,
+      targetMinutesPerWeek: 600,
+      countedMinutesPerWeek: 600,
+      balanceMinutesPerWeek: 0,
+      status: 'OK',
+      ...extra,
+    });
+    load.load.mockResolvedValue({
+      unqualifiedAssignments: [],
+      teachers: [
+        {
+          userId: 'tea',
+          status: 'OVER',
+          countedMinutesPerWeek: 640,
+          targetMinutesPerWeek: 620,
+          periods: [
+            stretch('2026-08-17', '2026-11-01', { kind: 'BASE' }),
+            stretch('2026-11-02', '2026-12-20', { targetMinutesPerWeek: 300, countedMinutesPerWeek: 360, balanceMinutesPerWeek: -60, status: 'OVER' }),
+            // Jullov: all lov, judged by nothing, whatever its own status says.
+            stretch('2026-12-21', '2027-01-10', { teachingWeeks: 0, targetMinutesPerWeek: 100, balanceMinutesPerWeek: -500, status: 'OVER' }),
+            stretch('2027-01-11', '2027-06-11', { targetMinutesPerWeek: 300, countedMinutesPerWeek: 340, balanceMinutesPerWeek: -40, status: 'OVER' }),
+          ],
+        },
+        { userId: 'bo', status: 'OVER', countedMinutesPerWeek: 700, targetMinutesPerWeek: 600, periods: [] },
+      ],
+    });
+    tx.user.findMany.mockResolvedValue([
+      { id: 'tea', firstName: 'Anna', lastName: 'Ek' },
+      { id: 'bo', firstName: 'Bo', lastName: 'Alm' },
+    ]);
+    const preview = await service.preview({ academicYearId: YEAR_ID }, testUser());
+    const gate = preview.gates.find((entry) => entry.code === 'PUB_STAFFING_REFUSE')!;
+    expect(gate.items.map((item: { label: string }) => item.label)).toEqual([
+      'Anna Ek över mål 2026-11-02–2026-12-20: 360 av 300 min/vecka',
+      'Bo Alm över mål: 700 av 600 min/vecka',
+    ]);
+  });
+
   it('does not ask for the load report when no staffing check refuses', async () => {
     await service.preview({ academicYearId: YEAR_ID }, testUser());
     expect(load.load).not.toHaveBeenCalled();

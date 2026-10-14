@@ -35,6 +35,19 @@ export interface TeacherHistoryEntry {
   actorId: string | null;
   createdAt: Date;
   changes: LogChange[];
+  /**
+   * A PERIOD version's Från — the period's after the write, before it for a
+   * delete — so an update that moved only the figures still says which
+   * period it was. Absent for the other entities.
+   */
+  periodFrom?: string | null;
+}
+
+/** The Från of the period a PERIOD version is about, from the row's own JSON. */
+function periodFromOf(action: string, before: unknown, after: unknown): string | null {
+  const row = action === 'DELETE' ? before : after;
+  const value = row && typeof row === 'object' ? (row as Record<string, unknown>)['validFrom'] : null;
+  return typeof value === 'string' && value !== '' ? value.slice(0, 10) : null;
 }
 
 export interface TeacherHistoryResponse {
@@ -182,6 +195,7 @@ export class TeacherEmploymentsService {
       actorId: row.actorId,
       createdAt: row.createdAt,
       changes: diffLogEntry(row.entity, row.before, row.after),
+      ...(row.entity === 'PERIOD' ? { periodFrom: periodFromOf(row.action, row.before, row.after) } : {}),
     }));
     this.logger.log(`History read [user=${userId}, year=${academicYearId}, entries=${entries.length}]`);
     return { entries, truncated: rows.length > HISTORY_LIMIT };

@@ -17,6 +17,7 @@ import type { PublishScheduleDto } from '../calendar/dto/publish-schedule.dto';
 import { scopeOf } from '../calendar/lesson-roster';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
 import { readCheckPolicy } from '../staffing/staffing-enforcement';
+import type { PeriodLoad } from '../staffing/teacher-load';
 import { TimplanCoverageService } from '../timplan/timplan-coverage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -928,15 +929,37 @@ export class PublicationsService {
             teacherId: row.userId,
             requirementId: row.requirementId,
           })),
-          ...over.map((row) => ({
-            label: `${nameOf.get(row.userId) ?? '?'} över mål: ${row.countedMinutesPerWeek} av ${row.targetMinutesPerWeek ?? '?'} min/vecka`,
-            teacherId: row.userId,
-          })),
+          ...over.map((row) => {
+            // A post that changes during the year is OVER by its worst
+            // stretch: the sentence names that one, not the year's average.
+            const stretch = worstOverStretch(row.periods ?? []);
+            const name = nameOf.get(row.userId) ?? '?';
+            return {
+              label: stretch
+                ? `${name} över mål ${stretch.from}–${stretch.to}: ${stretch.countedMinutesPerWeek} av ${stretch.targetMinutesPerWeek ?? '?'} min/vecka`
+                : `${name} över mål: ${row.countedMinutesPerWeek} av ${row.targetMinutesPerWeek ?? '?'} min/vecka`,
+              teacherId: row.userId,
+            };
+          }),
         ],
       });
     }
     return findings;
   }
+}
+
+/**
+ * The stretch a post that changes during the year is most over in: the
+ * lowest saldo among the stretches judged OVER — a stretch with no taught
+ * week is judged by nothing. Null for a post the same all year.
+ */
+function worstOverStretch(periods: readonly PeriodLoad[]): PeriodLoad | null {
+  let worst: PeriodLoad | null = null;
+  for (const period of periods) {
+    if (period.effectiveFrom === null || period.teachingWeeks === 0 || period.status !== 'OVER') continue;
+    if (worst === null || (period.balanceMinutesPerWeek ?? 0) < (worst.balanceMinutesPerWeek ?? 0)) worst = period;
+  }
+  return worst;
 }
 
 /** What one attempt reads before it judges or writes. */
