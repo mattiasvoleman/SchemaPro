@@ -39,6 +39,7 @@ import { YearRolloverModule } from './year-rollover/year-rollover.module';
 import { CoverModule } from './cover/cover.module';
 import { GallringModule } from './gallring/gallring.module';
 import { AccessLogModule } from './access-log/access-log.module';
+import { SchoolUnitsModule } from './school-units/school-units.module';
 import { SignInModule } from './sign-in/sign-in.module';
 import type { ThrottleConfig } from './config/configuration';
 
@@ -131,6 +132,7 @@ import type { ThrottleConfig } from './config/configuration';
     CoverModule,
     GallringModule,
     AccessLogModule,
+    SchoolUnitsModule,
     SignInModule,
   ],
 

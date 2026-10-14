@@ -125,6 +125,56 @@ describe('Resource CRUD (e2e)', () => {
     });
   });
 
+  describe('school units', () => {
+    const UNIT_ID = '20000000-0000-4000-8000-0000000000f6';
+    const unit = { id: UNIT_ID, name: 'Norra F–6', code: '11111111', schoolTypes: ['GR'], gradeFrom: 0, gradeTo: 6, ss12000Id: null };
+
+    it('lists, creates, updates and removes the caller school\'s units as its admin', async () => {
+      const server = harness.app.getHttpServer();
+      harness.tx['schoolUnit']!['findMany']!.mockResolvedValue([unit]);
+      const listed = await request(server).get('/api/v1/school-units').set('x-test-user', asUser({})).expect(200);
+      expect(listed.body).toEqual([{ id: UNIT_ID, name: 'Norra F–6', code: '11111111', schoolTypes: ['GR'], gradeFrom: 0, gradeTo: 6, fromSource: false }]);
+
+      harness.tx['schoolUnit']!['findMany']!.mockResolvedValue([]);
+      harness.tx['schoolUnit']!['create']!.mockResolvedValue(unit);
+      await request(server)
+        .post('/api/v1/school-units')
+        .set('x-test-user', asUser({}))
+        .send({ name: 'Norra F–6', code: '1111 1111', schoolTypes: ['GR'], gradeFrom: 0, gradeTo: 6 })
+        .expect(201);
+      const created = harness.tx['schoolUnit']!['create']!.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+      // The school from the JWT principal, the code as eight digits.
+      expect(created.data).toMatchObject({ schoolId: SCHOOL_ID, code: '11111111' });
+
+      harness.tx['schoolUnit']!['findFirst']!.mockResolvedValue(unit);
+      harness.tx['schoolUnit']!['update']!.mockResolvedValue({ ...unit, gradeTo: 5 });
+      const patched = await request(server).patch(`/api/v1/school-units/${UNIT_ID}`).set('x-test-user', asUser({})).send({ gradeTo: 5 }).expect(200);
+      expect(patched.body).toMatchObject({ gradeTo: 5 });
+
+      harness.tx['schoolUnit']!['deleteMany']!.mockResolvedValue({ count: 1 });
+      await request(server).delete(`/api/v1/school-units/${UNIT_ID}`).set('x-test-user', asUser({})).expect(204);
+    });
+
+    it('refuses a skolform it does not know, a grade past 10 and a field it does not take', async () => {
+      const server = harness.app.getHttpServer();
+      for (const body of [{ name: 'X', schoolTypes: ['GY'] }, { name: 'X', gradeFrom: 0, gradeTo: 11 }, { name: 'X', schoolId: SCHOOL_ID }]) {
+        await request(server).post('/api/v1/school-units').set('x-test-user', asUser({})).send(body).expect(400);
+      }
+      expect(harness.tx['schoolUnit']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('is the administrator\'s alone', async () => {
+      for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN']) {
+        await request(harness.app.getHttpServer()).get('/api/v1/school-units').set('x-test-user', asUser({ role: role as never })).expect(403);
+        await request(harness.app.getHttpServer())
+          .post('/api/v1/school-units')
+          .set('x-test-user', asUser({ role: role as never }))
+          .send({ name: 'X' })
+          .expect(403);
+      }
+    });
+  });
+
   describe('calendar publish', () => {
     it('requires SCHOOL_ADMIN', async () => {
       await request(harness.app.getHttpServer())

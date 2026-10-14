@@ -48,6 +48,7 @@ import { YearRolloverModule } from '../../src/year-rollover/year-rollover.module
 import { PublicationModule } from '../../src/publication/publication.module';
 import { CoverModule } from '../../src/cover/cover.module';
 import { SignInModule } from '../../src/sign-in/sign-in.module';
+import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -155,6 +156,7 @@ const FEATURE_MODULES = [
   YearRolloverModule,
   PublicationModule,
   CoverModule,
+  SchoolUnitsModule,
   SignInModule,
 ];
 
