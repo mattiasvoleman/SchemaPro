@@ -243,7 +243,7 @@ export class TeacherEmploymentsService {
     const data = employmentData(dto);
 
     try {
-      const row = await this.prisma.withRls(user, async (tx) => {
+      return await this.prisma.withRls(user, async (tx) => {
         await lockStaffRow(tx, userId, 'tjänst');
         const saved = await tx.teacherEmployment.upsert({
           where: { schoolId_userId_academicYearId: { schoolId, userId, academicYearId } },
@@ -255,10 +255,10 @@ export class TeacherEmploymentsService {
         // periods, which the caller did not: a read of them, recorded as the
         // post's reads are (EMPLOYMENT), in the write's own transaction. A
         // post without periods answers only what was sent, a write's echo.
-        if (saved.periods.length > 0) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
-        return saved;
+        const answer = toEmploymentResponse(saved);
+        if (answer.periods.length > 0) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
+        return answer;
       });
-      return toEmploymentResponse(row);
     } catch (error) {
       rethrowEmploymentError(error, dto, academicYearId);
     }
