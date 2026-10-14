@@ -836,6 +836,54 @@ describe('StaffingProposalService.propose', () => {
       await expect(service.propose(ask(), admin())).rejects.toMatchObject({ status: 502 });
       expect(sent()).toHaveLength(1);
     });
+    describe('whose room is unknown for part of the year', () => {
+      /**
+       * No school riktmärke; Anna's own 600 on the base row, and "80 % från
+       * 2 november" saved without a riktmärke of its own — the form starts it
+       * blank. From November her room is unknown.
+       */
+      const unknownFromNovember = (withPeriod = true) => {
+        const rows = schoolRows();
+        rows['staffingPolicy']![0]!['fullTimeTeachingMinutesPerWeek'] = null;
+        rows['teacherEmployment']!.find((row) => row['userId'] === ANNA)!['teachingTargetMinutesPerWeek'] = 600;
+        // Bo's own 300, so somebody has room and the engine is asked.
+        rows['teacherEmployment']!.find((row) => row['userId'] === BO)!['teachingTargetMinutesPerWeek'] = 300;
+        rows['teacherEmploymentPeriod'] = withPeriod
+          ? [periodOf(ANNA, { validFrom: day('2026-11-02'), employmentPercent: new Prisma.Decimal('80.000') })]
+          : [];
+        return rows;
+      };
+
+      it('keeps every row the post leads where it is, as for a post without a target — never shed', async () => {
+        const rows = unknownFromNovember();
+        const { service, sent } = setup(rows);
+        const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+        const payload = sent()[0]!;
+        const anna = payload.teachers[0]!;
+        expect(sentRow(payload, R_MA7, rows)).toMatchObject({ fixed: true, currentTeacherId: anna.id });
+        expect(anna).toMatchObject({ targetTenths: null, limitTenths: null, fixedTenths: 1800 });
+        expect(proposal.teachers.find((t) => t.userId === ANNA)).toMatchObject({ keepOrShed: true, targetMinutesPerWeek: null });
+        expect(proposal.assignments.filter((a) => a.fromTeacherId === ANNA)).toEqual([]);
+        // The same post without the period: her own 600 is known room, and her row may move.
+        const steadyRows = unknownFromNovember(false);
+        const steady = setup(steadyRows);
+        await steady.service.propose(ask({ onlyUnstaffed: false }), admin());
+        expect(sentRow(steady.sent()[0]!, R_MA7, steadyRows)).toMatchObject({ fixed: false });
+      });
+
+      it('reads a post by its periods, not its base row: no base target, but a period with one all year, is known room', async () => {
+        const rows = schoolRows();
+        rows['staffingPolicy']![0]!['fullTimeTeachingMinutesPerWeek'] = null;
+        rows['teacherEmploymentPeriod'] = [
+          periodOf(ANNA, { validFrom: day('2026-08-17'), employmentPercent: new Prisma.Decimal('50.000'), teachingTargetMinutesPerWeek: 300 }),
+        ];
+        const { service, sent } = setup(rows);
+        await service.propose(ask({ onlyUnstaffed: false }), admin());
+        const payload = sent()[0]!;
+        expect(sentRow(payload, R_MA7, rows)).toMatchObject({ fixed: false, currentTeacherId: payload.teachers[0]!.id });
+        expect(payload.teachers[0]).toMatchObject({ targetTenths: 3000 });
+      });
+    });
   });
 
   describe('refuses (502) an answer outside the question asked', () => {

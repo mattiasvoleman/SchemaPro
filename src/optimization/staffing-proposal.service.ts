@@ -1022,6 +1022,18 @@ export function planOf(
   const targetOf = new Map(
     staffIds.map((userId) => [userId, targetMinutesPerWeek(employmentByUser.get(userId) ?? null, loadPolicy)]),
   );
+  // Whose room is unknown. For a post the same all year, a post with no
+  // target. For a changing post, one whose plan has no target: a stretch with
+  // teaching weeks and no target (a period saved without its own riktmärke,
+  // at a school without one), or no stretch with teaching weeks at all — the
+  // rule changingTeacherPlan plans it by. The base row's target says nothing
+  // about such a post: it may hold for no week of the year.
+  const roomUnknown = new Set(
+    staffIds.filter((userId) => {
+      const employment = changingPost.get(userId);
+      return employment ? changingTargetUnknown(input, employment) : targetOf.get(userId) === null;
+    }),
+  );
 
   const rows = [...input.requirements].sort((a, b) => compareIds(a.id, b.id)).map((row): RowPlan => {
     const inconsistent = row.teacherId !== null && row.teacherId === row.coTeacherId;
@@ -1030,8 +1042,9 @@ export function planOf(
     // from it: as keep-or-shed rows, balance on the receivers always beat
     // keepCurrent, and with "bara obemannade" off such a teacher lost every
     // row they had. A target of 0 is a known room of nothing — a full
-    // nedsättning — and its rows stay movable.
-    const untargetedLead = row.teacherId !== null && staff.has(row.teacherId) && targetOf.get(row.teacherId) === null;
+    // nedsättning — and its rows stay movable. A changing post counts by its
+    // stretches (roomUnknown above).
+    const untargetedLead = row.teacherId !== null && staff.has(row.teacherId) && roomUnknown.has(row.teacherId);
     // A dated row led by a changing post stays: see changingPost above.
     const datedOfChanging = isDatedRow(row) && row.teacherId !== null && changingPost.has(row.teacherId);
     const free =
@@ -1125,14 +1138,27 @@ export function planOf(
 }
 
 /**
+ * Whether a changing post's room is unknown: a stretch with teaching weeks
+ * has no target, or no stretch has teaching weeks. changingTeacherPlan then
+ * plans it without a target, and planOf keeps every row it leads where it is
+ * (untargetedLead), as for a post without a target.
+ */
+function changingTargetUnknown(input: LoadInput, employment: LoadEmployment): boolean {
+  const judged = stretchLoads(input, employment).filter((stretch) => stretch.weeks > 0);
+  return judged.length === 0 || judged.some((stretch) => stretch.target === null);
+}
+
+/**
  * A post that changes during the year, planned on its TIGHTEST stretch: the
  * stretch with teaching weeks whose limit leaves the least room over what it
  * already carries without the free rows. Every row the plan lets this teacher
  * gain or lose is undated (planOf), and an undated row charges the same in
  * every stretch, so keeping the tightest stretch inside its limit keeps every
  * stretch inside its own — the question enforcement asks the apply. A stretch
- * with teaching weeks and no target makes the room unknown, and the teacher
- * keeps what they have, as a post without a target does.
+ * with teaching weeks and no target makes the room unknown
+ * (changingTargetUnknown): the teacher is sent without one, and planOf has
+ * already fixed every row they lead, so they keep what they have, as a post
+ * without a target does.
  */
 function changingTeacherPlan(
   userId: string,
