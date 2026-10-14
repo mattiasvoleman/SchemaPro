@@ -355,13 +355,13 @@ export class ImportRequirementRowDto {
   @IsInt()
   @Min(0)
   @Max(60)
-  minutesBefore?: number;
+  minutesBefore?: number | null;
 
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(60)
-  minutesAfter?: number;
+  minutesAfter?: number | null;
 
   /** Lead teacher by email; empty column = no teacher assigned yet. */
   @IsOptional()
