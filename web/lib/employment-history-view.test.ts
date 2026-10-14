@@ -165,9 +165,11 @@ describe("historyLines", () => {
     expect(periodLabelOf({ ...created, action: "DELETE", changes: [{ field: "validFrom", before: "2026-11-01", after: null }] })).toBe(
       "2026-11-01",
     );
-    expect(
-      periodLabelOf(entry({ entity: "PERIOD", action: "UPDATE", changes: [{ field: "employmentPercent", before: 80, after: 75 }] })),
-    ).toBeNull();
+    // An update that moved only the grad: named by the Från the gateway sends beside it…
+    const figuresOnly = entry({ entity: "PERIOD", action: "UPDATE", changes: [{ field: "employmentPercent", before: 80, after: 75 }] });
+    expect(periodLabelOf({ ...figuresOnly, periodFrom: "2026-11-01" })).toBe("2026-11-01");
+    // …and by none from a gateway that does not send it yet.
+    expect(periodLabelOf(figuresOnly)).toBeNull();
     expect(periodLabelOf(entry({ entity: "DUTY", changes: [{ field: "validFrom", before: null, after: "2026-11-01" }] }))).toBeNull();
   });
 

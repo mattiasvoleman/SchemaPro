@@ -125,12 +125,15 @@ export function dutyLabelOf(entry: HistoryEntry): string | null {
 }
 
 /**
- * Which period of the post a version is about, by its Från — every CREATE
- * and DELETE carries it, an UPDATE when the Från itself moved (it says the
- * new one). Null otherwise; the card then names the kind alone.
+ * Which period of the post a version is about, by its Från: the gateway's
+ * periodFrom, which every PERIOD version carries — an update that moved only
+ * the figures too. From a gateway before that field, the changes: every
+ * CREATE and DELETE carries the Från, an UPDATE when the Från itself moved
+ * (the new one). Null otherwise; the card then names the kind alone.
  */
 export function periodLabelOf(entry: HistoryEntry): string | null {
   if (entry.entity !== "PERIOD") return null;
+  if (typeof entry.periodFrom === "string" && entry.periodFrom !== "") return entry.periodFrom.slice(0, 10);
   const from = entry.changes.find((change) => change.field === "validFrom");
   const value = from ? (entry.action === "DELETE" ? from.before : from.after) : null;
   return typeof value === "string" && value !== "" ? value.slice(0, 10) : null;

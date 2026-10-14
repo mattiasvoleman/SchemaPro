@@ -27,6 +27,11 @@ export interface HistoryEntry {
   actorId: string | null;
   createdAt: string;
   changes: HistoryChange[];
+  /**
+   * A PERIOD version's Från, also for an update that moved only the figures.
+   * Absent from a gateway before this field, and for the other entities.
+   */
+  periodFrom?: string | null;
 }
 
 export interface HistoryResponse {

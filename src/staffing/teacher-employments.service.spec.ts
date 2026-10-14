@@ -448,6 +448,20 @@ describe('TeacherEmploymentsService', () => {
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
+    it('names the period a PERIOD version is about, by its Från, also when only its figures changed', async () => {
+      const period = { id: 'per-1', employmentId: 'emp-1', validFrom: '2026-11-01', validTo: null, employmentPercent: 80, reductionPercent: 0 };
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(3, { entity: 'PERIOD', entityId: 'per-1', action: 'DELETE', before: { ...period, employmentPercent: 75 }, after: null }),
+        logRow(2, { entity: 'PERIOD', entityId: 'per-1', before: period, after: { ...period, employmentPercent: 75 } }),
+        logRow(1),
+      ]);
+      const answer = await service.history(COLLEAGUE, YEAR_ID, testUser());
+      expect(answer.entries.map((entry) => entry.periodFrom)).toEqual(['2026-11-01', '2026-11-01', undefined]);
+      // The update moved the grad alone: its changes do not carry the Från, the entry does.
+      expect(answer.entries[1]!.changes).toEqual([{ field: 'employmentPercent', before: 80, after: 75 }]);
+      expect(answer.entries[2]).not.toHaveProperty('periodFrom');
+    });
+
     it('says when it left the oldest versions out', async () => {
       tx.teacherEmploymentLog.findMany.mockResolvedValue(Array.from({ length: 201 }, (_, i) => logRow(201 - i)));
       const answer = await service.history(COLLEAGUE, YEAR_ID, testUser());
