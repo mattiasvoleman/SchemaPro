@@ -369,7 +369,9 @@ describe('the roster-reader inventory', () => {
     it('is exactly the routes that answer R6’s 409 (the decision, written out)', () => {
       // Some answer it only when they compute a basis: a timplanspost or an
       // import when the staffing checks run, a vikarie when behörighet is
-      // asked. StaffingLoadController.unstaffed reads the load input like
+      // asked. A parallel block's lessons (TeachingBlocksController.update)
+      // are judged member by member as a timplanspost's are, so a lesson edit
+      // of a block answers it where the post's own PATCH would. StaffingLoadController.unstaffed reads the load input like
       // the report it is opened from, and .delivered (staffing Fas 3) reads
       // it for the planned column of the reconciliation. The staffing
       // proposal (Fas 4) reads it for every row's grade span, in propose and
@@ -414,6 +416,7 @@ describe('the roster-reader inventory', () => {
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',
         'StaffingLoadController.unstaffed',
+        'TeachingBlocksController.update',
         'TeachingRequirementsController.create',
         'TeachingRequirementsController.update',
         'TimplanCoverageController.get',
