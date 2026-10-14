@@ -320,9 +320,11 @@ export class PublicationsService {
    * back: the gates, and the materialiser's own counts (in DRAFT also what the
    * draft moves, adopts and removes). Nothing is written but one läslogg row:
    * the teachers a REFUSE staffing check stops on, whom the preview names as
-   * a publish would (EMPLOYMENT, externalFindings). The timplan coverage and
-   * the load report it judges by are not recorded, since it hands out none
-   * of their pupils or figures.
+   * a publish would (EMPLOYMENT, externalFindings). The load report is read
+   * whole to judge and not recorded as such: the only figures of it the
+   * preview hands out are those teachers' minutes, recorded with their names.
+   * The timplan coverage hands out group lines and verdicts that name no
+   * pupil, and is not recorded.
    */
   async preview(dto: PublicationRangeDto, user: AuthenticatedUser): Promise<PublicationPreview> {
     const schoolId = requireSchoolId(user);
