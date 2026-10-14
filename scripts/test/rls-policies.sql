@@ -18365,3 +18365,460 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 130: skolenheterna nås bara genom API:t: skolans administratör
+-- skriver dem, tjänsten och synken läser dem (SchoolUnits, 20261031090000).
+--
+-- The catalogue: row security on; exactly three arms, all TO
+-- app_authenticated (admin ALL, service SELECT, sync SELECT); PostgREST's
+-- authenticated and anon hold nothing on the table; service_role SELECT and
+-- nothing else; app_authenticated SELECT, INSERT, UPDATE and DELETE and no
+-- TRUNCATE, REFERENCES or TRIGGER; no API role holds MAINTAIN on 17. The
+-- trigger functions are executable by no API role, and the triggers that hold
+-- the school's lock, the spans, the ss12000Id and the provider's tracking are
+-- in place; the span check runs as the writer.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r text;
+  p text;
+  n bigint;
+  fn text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"SchoolUnits"'::regclass) THEN
+    RAISE EXCEPTION 'school units: row security is off';
+  END IF;
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'SchoolUnits';
+  IF n <> 3
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolUnits' AND policyname = 'school_units_admin_all'
+                      AND cmd = 'ALL' AND roles = '{app_authenticated}')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolUnits' AND policyname = 'school_units_service_select'
+                      AND cmd = 'SELECT' AND roles = '{app_authenticated}')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'SchoolUnits' AND policyname = 'school_units_sync_select'
+                      AND cmd = 'SELECT' AND roles = '{app_authenticated}') THEN
+    RAISE EXCEPTION 'school units: the arms are not the admin''s, the service''s and the sync''s, TO app_authenticated';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege(r, '"SchoolUnits"', p) THEN RAISE EXCEPTION 'school units: % holds %', r, p; END IF;
+    END LOOP;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('service_role', '"SchoolUnits"', p) THEN RAISE EXCEPTION 'school units: service_role holds %', p; END IF;
+    END LOOP;
+  END IF;
+  FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+    IF NOT has_table_privilege('app_authenticated', '"SchoolUnits"', p) THEN RAISE EXCEPTION 'school units: the API lacks %', p; END IF;
+  END LOOP;
+  FOREACH p IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', '"SchoolUnits"', p) THEN RAISE EXCEPTION 'school units: the API holds %', p; END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_table_privilege(r, '"SchoolUnits"', 'MAINTAIN') THEN RAISE EXCEPTION 'school units: % holds MAINTAIN', r; END IF;
+    END LOOP;
+  END IF;
+  FOREACH fn IN ARRAY ARRAY[
+    'app.school_unit_spans_do_not_overlap()', 'app.school_units_take_school_lock()',
+    'app.ss12000_school_organisation_id(uuid)', 'app.ss12000_organisation_ids(uuid)',
+    'app.ss12000_school_units_moved(uuid, uuid[])', 'app.ss12000_v_school_units()', 'app.ss12000_v_group_grades()'
+  ] LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'school units: % may execute %', r, fn; END IF;
+    END LOOP;
+  END LOOP;
+  SELECT count(*) INTO n FROM pg_trigger
+   WHERE NOT tgisinternal AND (
+         (tgrelid = '"SchoolUnits"'::regclass AND tgname IN (
+            'SchoolUnits_lock_the_school', 'SchoolUnits_spans_do_not_overlap',
+            'SchoolUnits_ss12000Id_on_insert', 'SchoolUnits_ss12000Id_on_update',
+            'SchoolUnits_ss12000_versions_ins', 'SchoolUnits_ss12000_versions_upd', 'SchoolUnits_ss12000_versions_del'))
+      OR (tgrelid = '"StudentGroups"'::regclass AND tgname = 'StudentGroups_ss12000_units_upd'));
+  IF n <> 8 THEN RAISE EXCEPTION 'school units: % of the eight triggers are in place', n; END IF;
+  -- The span check reads as the writer, so a write aimed at another school
+  -- cannot make it read (and name) that school's units.
+  IF (SELECT prosecdef FROM pg_proc WHERE oid = 'app.school_unit_spans_do_not_overlap()'::regprocedure) THEN
+    RAISE EXCEPTION 'school units: the span check runs as its owner';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 131: skolans administratör läser och skriver sina skolenheter och
+-- ingen annans; lärare, elev och vårdnadshavare når dem inte, och PostgREST:s
+-- roll inte ens administratörens; tjänsten och synken läser sin skolas och
+-- skriver ingen (20261031090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- The split school's id, read as its own admin: no one else may read it.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000134')::text, true);
+SELECT set_config('app.test_su_delad', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+SELECT set_config('app.test_su_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_su_other', :'school_a', true);
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  IF current_setting('app.test_su_school', true) IS NULL OR current_setting('app.test_su_school') = '' THEN
+    RAISE EXCEPTION 'school units: the fixture admin has no school';
+  END IF;
+  SELECT count(*) INTO n FROM "SchoolUnits";
+  IF n <> 0 THEN RAISE EXCEPTION 'school units: the admin reads % units of other schools', n; END IF;
+  INSERT INTO "SchoolUnits" ("schoolId", name, code, "schoolTypes", "gradeFrom", "gradeTo") VALUES
+    (app.current_school_id(), 'SE F–6', '13131313', '{FKLASS,GR}', 0, 6),
+    (app.current_school_id(), 'SE 7–9', '13131314', '{GR}', 7, 9);
+  UPDATE "SchoolUnits" SET name = 'SE 7–9 (Norr)' WHERE code = '13131314';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'school units: the admin updated % of their own units', n; END IF;
+  SELECT count(*) INTO n FROM "SchoolUnits";
+  IF n <> 2 THEN RAISE EXCEPTION 'school units: the admin reads % units, not their own two', n; END IF;
+  -- Another school's unit, by its code: not seen, not changed, not removed.
+  UPDATE "SchoolUnits" SET name = 'x' WHERE code = '31313131';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'school units: the admin updated another school''s unit'; END IF;
+  DELETE FROM "SchoolUnits" WHERE code = '32323232';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'school units: the admin removed another school''s unit'; END IF;
+  BEGIN
+    INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (current_setting('app.test_su_other')::uuid, 'Inte min');
+    RAISE EXCEPTION 'school units: the admin wrote a unit into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "SchoolUnits" SET "schoolId" = current_setting('app.test_su_other')::uuid WHERE code = '13131313';
+    RAISE EXCEPTION 'school units: the admin moved a unit into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Into a school whose F–6 overlaps it: refused by the arm, never answered
+  -- by a span check that read the other school's units (SU409 would name one).
+  BEGIN
+    UPDATE "SchoolUnits" SET "schoolId" = current_setting('app.test_su_delad')::uuid WHERE code = '13131313';
+    RAISE EXCEPTION 'school units: the admin moved a unit into the split school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (current_setting('app.test_su_delad')::uuid, 'Inte min', 3, 4);
+    RAISE EXCEPTION 'school units: the admin wrote a unit into the split school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- PostgREST's role, with the same admin's claims: nothing at all.
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'school units: could not act as authenticated'; END IF;
+  BEGIN
+    PERFORM 1 FROM "SchoolUnits";
+    RAISE EXCEPTION 'school units: PostgREST''s role reads the units';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+DO $$
+DECLARE
+  who text;
+  n bigint;
+BEGIN
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000131', '00000000-0000-4000-8000-000000000132', '00000000-0000-4000-8000-000000000133'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "SchoolUnits";
+    IF n <> 0 THEN RAISE EXCEPTION 'school units: % (%) reads % units', who, app.current_user_role(), n; END IF;
+    UPDATE "SchoolUnits" SET name = 'x';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'school units: % updated % units', who, n; END IF;
+    DELETE FROM "SchoolUnits";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'school units: % removed % units', who, n; END IF;
+    BEGIN
+      INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (app.current_school_id(), 'Lärarens');
+      RAISE EXCEPTION 'school units: % created a unit', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+
+  -- The service principal and the sync principal of the school: read, never write.
+  FOREACH who IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(who, current_setting('app.test_su_school'), true);
+    SELECT count(*) INTO n FROM "SchoolUnits";
+    IF n <> 2 THEN RAISE EXCEPTION 'school units: % reads % units, not the school''s two', who, n; END IF;
+    UPDATE "SchoolUnits" SET name = 'x';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'school units: % updated % units', who, n; END IF;
+    DELETE FROM "SchoolUnits";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'school units: % removed % units', who, n; END IF;
+    BEGIN
+      INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (current_setting('app.test_su_school')::uuid, 'Tjänstens');
+      RAISE EXCEPTION 'school units: % created a unit', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    -- Only an admin links a unit to the source: the guard answers before the arms do.
+    BEGIN
+      INSERT INTO "SchoolUnits" ("schoolId", name, "ss12000Id")
+      VALUES (current_setting('app.test_su_school')::uuid, 'Länkad', 'aaaaaaaa-0000-4000-8000-000000000133');
+      RAISE EXCEPTION 'school units: % linked a unit to the source', who;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+    -- The apply's lock: for a principal without an UPDATE arm it locks nothing.
+    SELECT count(*) INTO n FROM (SELECT 1 FROM "SchoolUnits" FOR NO KEY UPDATE) locked;
+    IF n <> 0 THEN RAISE EXCEPTION 'school units: % locked % units', who, n; END IF;
+    PERFORM set_config(who, '', true);
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 132: två skolenheter i en skola har aldrig samma årskurs eller
+-- samma kod, en kod är åtta siffror, och ett spann är båda ändarna eller
+-- ingen (20261031090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_school_id();
+  b uuid;
+  state text;
+BEGIN
+  INSERT INTO "SchoolUnits" ("schoolId", name, code, "gradeFrom", "gradeTo") VALUES (me, 'A', '13131313', 0, 6);
+  BEGIN
+    INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'B', 5, 9);
+    RAISE EXCEPTION 'school units: two units hold årskurs 5 and 6';
+  EXCEPTION WHEN SQLSTATE 'SU409' THEN NULL;
+  END;
+  INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'B', 7, 9) RETURNING id INTO b;
+  BEGIN
+    UPDATE "SchoolUnits" SET "gradeFrom" = 6 WHERE id = b;
+    RAISE EXCEPTION 'school units: a unit was moved onto another''s årskurs';
+  EXCEPTION WHEN SQLSTATE 'SU409' THEN NULL;
+  END;
+  -- One årskurs, the other unit's last: both ends count.
+  BEGIN
+    INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'Nian', 9, 9);
+    RAISE EXCEPTION 'school units: a one-grade unit took another''s last årskurs';
+  EXCEPTION WHEN SQLSTATE 'SU409' THEN NULL;
+  END;
+  -- A unit without a span (a fritidshem) beside them is no overlap.
+  INSERT INTO "SchoolUnits" ("schoolId", name, "schoolTypes") VALUES (me, 'Fritids', '{FTH}');
+  FOREACH state IN ARRAY ARRAY['half span', 'backwards', 'eleventh', 'short code', 'letters', 'blank name', 'tab name', 'nbsp name', 'long name', 'null type'] LOOP
+    BEGIN
+      CASE state
+        WHEN 'half span' THEN UPDATE "SchoolUnits" SET "gradeFrom" = NULL WHERE id = b;
+        WHEN 'backwards' THEN INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'C', 10, 10), (me, 'D', 9, 8);
+        WHEN 'eleventh' THEN UPDATE "SchoolUnits" SET "gradeTo" = 11 WHERE id = b;
+        WHEN 'short code' THEN INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'E', '1234567');
+        WHEN 'letters' THEN INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'E', '1234567a');
+        WHEN 'blank name' THEN INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, '   ');
+        WHEN 'tab name' THEN INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, E'\t\n');
+        WHEN 'nbsp name' THEN INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, chr(160) || chr(12288));
+        WHEN 'long name' THEN INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, repeat('x', 301));
+        WHEN 'null type' THEN INSERT INTO "SchoolUnits" ("schoolId", name, "schoolTypes") VALUES (me, 'F', ARRAY['GR', NULL]::"SchoolUnitType"[]);
+      END CASE;
+      RAISE EXCEPTION 'school units: % was written', state;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  BEGIN
+    INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'G', '13131313');
+    RAISE EXCEPTION 'school units: two units of a school share a code';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  -- 300 characters, the longest displayName the sync reads, is a name.
+  INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, repeat('x', 300));
+  -- Another school's code is no concern of this one (and a refusal would tell it the code exists).
+  INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'H', '31313131');
+  -- The admin links a unit to the source.
+  UPDATE "SchoolUnits" SET "ss12000Id" = 'aaaaaaaa-0000-4000-8000-000000000131' WHERE id = b;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 133: leverantören följer skolenheterna: den första begraver
+-- skolans egen Organisation, en borttagen begraver sin, och skolenheterna,
+-- eleverna, klasserna och tjänsterna flyttas när en skolenhet ändras eller en
+-- klass byter årskurs i en delad skola (20261031090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+SELECT set_config('app.test_su_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_su_pupil', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000132')::text, true);
+DO $$
+DECLARE
+  me uuid := current_setting('app.test_su_school')::uuid;
+  pupil uuid := current_setting('app.test_su_pupil')::uuid;
+  legacy uuid := 'aaaaaaaa-0000-4000-8000-000000000130';
+  moved uuid := 'aaaaaaaa-0000-4000-8000-000000000139';
+  unit uuid;
+  n bigint;
+  seen boolean;
+BEGIN
+  -- What the provider has recorded, read as the school's service principal.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  IF EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = legacy) THEN
+    RAISE EXCEPTION 'school units: the source''s skolenhet is buried before any unit';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Person' AND "entityId" = pupil AND xid = pg_current_xact_id()) THEN
+    RAISE EXCEPTION 'school units: the pupil moved before anything happened';
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+  INSERT INTO "SchoolUnits" ("schoolId", name, code, "gradeFrom", "gradeTo") VALUES (me, 'SE F–9', '13131313', 0, 9) RETURNING id INTO unit;
+
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = legacy) THEN
+    RAISE EXCEPTION 'school units: the first unit left the school''s own Organisation unburied';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Organisation' AND "entityId" = unit AND xid = pg_current_xact_id()) THEN
+    RAISE EXCEPTION 'school units: the unit has no version';
+  END IF;
+  SELECT count(*) INTO n FROM "Ss12000EntityVersions"
+   WHERE xid = pg_current_xact_id()
+     AND ((resource = 'Person' AND "entityId" = pupil)
+       OR (resource = 'Group' AND "entityId" = (SELECT "studentGroupId" FROM "Users" WHERE id = pupil)));
+  IF n <> 2 THEN RAISE EXCEPTION 'school units: the pupil and the class did not move with the first unit (%)', n; END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+
+  -- With a unit, the source's chosen skolenhet names nothing emitted: a new
+  -- choice buries and unburies nothing, not even the school's own id chosen
+  -- again after none was.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+  UPDATE "Ss12000Sources" SET "organisationIds" = ARRAY[]::uuid[] WHERE "schoolId" = me;
+  UPDATE "Ss12000Sources" SET "organisationIds" = ARRAY[legacy] WHERE "schoolId" = me;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = legacy) THEN
+    RAISE EXCEPTION 'school units: choosing the source''s skolenhet again unburied an Organisation no longer emitted';
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+  UPDATE "Ss12000Sources" SET "organisationIds" = ARRAY[moved] WHERE "schoolId" = me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'school units: the admin could not choose another skolenhet'; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = legacy)
+     OR EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = moved) THEN
+    RAISE EXCEPTION 'school units: a new choice at the source moved an Organisation while units are emitted';
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+
+  -- Linked, the unit is emitted under the source's id: its own is buried.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+  UPDATE "SchoolUnits" SET "ss12000Id" = moved WHERE id = unit;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = unit) THEN
+    RAISE EXCEPTION 'school units: a relinked unit left its own id unburied';
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+
+  -- The last unit gone, the school is its own Organisation again, under the
+  -- source's id it now chooses.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+  DELETE FROM "SchoolUnits" WHERE id = unit;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  SELECT EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" = moved) INTO seen;
+  IF seen THEN RAISE EXCEPTION 'school units: the school''s Organisation stayed buried after its last unit went'; END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+END $$;
+ROLLBACK;
+
+-- The common round trip: the first unit buries the school's own
+-- Organisation, removing one of two units buries that unit's id and nothing
+-- else, and removing the last unburies the school's own again.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_school_id();
+  legacy uuid := 'aaaaaaaa-0000-4000-8000-000000000130';
+  a uuid;
+  b uuid;
+  buried uuid[];
+BEGIN
+  INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'SE A', 0, 6) RETURNING id INTO a;
+  INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'SE B', 7, 9) RETURNING id INTO b;
+  DELETE FROM "SchoolUnits" WHERE id = b;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  buried := ARRAY(SELECT "emittedId" FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" IN (legacy, a, b) ORDER BY 1);
+  IF buried IS DISTINCT FROM ARRAY(SELECT x FROM unnest(ARRAY[legacy, b]) x ORDER BY 1) THEN
+    RAISE EXCEPTION 'school units: with A left, the buried Organisations are % (expected the school''s own and B''s)', buried;
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+  DELETE FROM "SchoolUnits" WHERE id = a;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  buried := ARRAY(SELECT "emittedId" FROM "Ss12000Tombstones" WHERE resource = 'Organisation' AND "emittedId" IN (legacy, a, b) ORDER BY 1);
+  IF buried IS DISTINCT FROM ARRAY(SELECT x FROM unnest(ARRAY[a, b]) x ORDER BY 1) THEN
+    RAISE EXCEPTION 'school units: with no unit left, the buried Organisations are % (expected A''s and B''s, the school''s own live again)', buried;
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+END $$;
+ROLLBACK;
+
+-- A class changing årskurs in a school split into units may land in another
+-- unit, so every object naming an organisation moves (the units' versions
+-- show it; the pupil moves anyway, through StudentEnrollments' gradeLevel);
+-- in a school without units nothing organisation-wide moves.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000134')::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_school_id();
+  pupil uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000135');
+  klass uuid := (SELECT "studentGroupId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000135');
+  n bigint;
+BEGIN
+  IF klass IS NULL THEN RAISE EXCEPTION 'school units: the split school''s pupil has no class'; END IF;
+  UPDATE "StudentGroups" SET "gradeLevel" = 7 WHERE id = klass;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  SELECT count(*) INTO n FROM "Ss12000EntityVersions"
+   WHERE xid = pg_current_xact_id() AND resource = 'Organisation'
+     AND ("entityId" = me OR "entityId" IN (SELECT id FROM "SchoolUnits"));
+  IF n <> 3 THEN RAISE EXCEPTION 'school units: 6A moved to årskurs 7 and % of the school and its two units moved', n; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE xid = pg_current_xact_id() AND resource = 'Person' AND "entityId" = pupil) THEN
+    RAISE EXCEPTION 'school units: 6A moved to årskurs 7 and its pupil did not move';
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000130')::text, true);
+DO $$
+DECLARE
+  me uuid := app.current_school_id();
+  pupil uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000132');
+  klass uuid := (SELECT "studentGroupId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000132');
+BEGIN
+  UPDATE "StudentGroups" SET "gradeLevel" = 8 WHERE id = klass;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', me::text, true);
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE xid = pg_current_xact_id() AND resource = 'Group' AND "entityId" = klass) THEN
+    RAISE EXCEPTION 'school units: the class changing årskurs did not move itself';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE xid = pg_current_xact_id() AND resource = 'Organisation') THEN
+    RAISE EXCEPTION 'school units: a class changing årskurs in a school without units moved the Organisation';
+  END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+END $$;
+ROLLBACK;

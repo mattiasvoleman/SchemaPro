@@ -163,6 +163,7 @@ model School {
   roomTypes               RoomType[]
   subjects                Subject[]
   academicYears           AcademicYear[]
+  schoolUnits             SchoolUnit[]
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingBlocks          TeachingBlock[]
@@ -1259,6 +1260,49 @@ enum StudentGroupKind {
   CLASS
   /// A teaching group cutting across classes (Ma71, språkval En74).
   TEACHING_GROUP
+}
+
+/// A skolform as S1 SchoolTypesEnum spells it, of the seven a
+/// grundskola-shaped school has (TR is anpassad grundskola, ämnesområden).
+enum SchoolUnitType {
+  FKLASS
+  FTH
+  GR
+  GRS
+  TR
+  SP
+  SAM
+}
+
+/// A skolenhet: Skolverket's unit, the one SCB's Pedagogisk personal and an
+/// SS12000 Organisation of type Skolenhet count by. A school has none (as
+/// before), one, or several, and a class belongs to the unit whose årskurs
+/// span holds its gradeLevel — spans never overlap within a school (trigger,
+/// SU409). One rule in src/school-units/school-unit-map.ts and
+/// web/lib/school-units.ts; see migration 20261031090000.
+model SchoolUnit {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String           @db.Uuid
+  /// 1..200 characters, not blank.
+  name        String
+  /// The skolenhetskod: exactly eight digits, or null until entered. Unique
+  /// per school where set (partial index SchoolUnits_schoolId_code_key).
+  code        String?
+  schoolTypes SchoolUnitType[] @default([])
+  /// 0..10, both or neither; 0 = förskoleklass.
+  gradeFrom   Int?
+  gradeTo     Int?
+  /// The source's Organisation id once an admin linked the unit; written only
+  /// by an admin. Unique per school where set (SchoolUnits_schoolId_ss12000Id_key).
+  ss12000Id   String?          @db.Uuid
+  createdAt   DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([id, schoolId])
+  @@index([schoolId])
+  @@map("SchoolUnits")
 }
 
 model StudentGroup {
