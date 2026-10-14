@@ -9162,16 +9162,18 @@ END $$;
 ROLLBACK;
 
 -- 28g: the catalogue of every migration's guard, re-asserted — USING and
--- WITH CHECK alike, a permissive arm for authenticated, and no arm but the
--- admin's, a TEACHER's own (current_user_id) or the two catalogue arms.
--- Then the grants and the helpers' EXECUTE.
+-- WITH CHECK alike, a permissive arm for authenticated or for the API's role
+-- alone (the admin's arms on TeacherAbsences and TeacherAbsenceCovers since
+-- 20261028090000, which section 128 pins), and no arm but the admin's, a
+-- TEACHER's own (current_user_id) or the two catalogue arms. Then the grants
+-- and the helpers' EXECUTE.
 DO $$
 DECLARE bad text; api_role text; fn text;
 BEGIN
   SELECT string_agg(tablename || '.' || policyname, ', ' ORDER BY tablename, policyname) INTO bad
     FROM (
       SELECT p.tablename, p.policyname,
-             (p.roles = '{authenticated}'::name[] AND p.permissive = 'PERMISSIVE') AS shaped,
+             (p.roles IN ('{authenticated}'::name[], '{app_authenticated}'::name[]) AND p.permissive = 'PERMISSIVE') AS shaped,
              ARRAY_REMOVE(ARRAY[
                CASE WHEN p.cmd <> 'INSERT' THEN coalesce(p.qual, '') END,
                CASE WHEN p.cmd IN ('INSERT', 'UPDATE', 'ALL') THEN coalesce(p.with_check, p.qual, '') END
@@ -15886,6 +15888,265 @@ BEGIN
   SELECT count(*) INTO n FROM "CalendarLessons" l
     JOIN "StudentGroupMembers" m ON m."studentGroupId" = l."studentGroupId";
   IF n < 1 THEN RAISE EXCEPTION 'direct reads: the pupil no longer reads their teaching group''s lesson'; END IF;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 128: PostgREST:s roll läser bara sin egen tjänst, frånvaro,
+-- klasshistorik och undervisningstid (20261028090000).
+--
+-- The catalogue, as 126 for the six tables. On TeacherAbsences,
+-- TeacherAbsenceCovers, TeacherEmployments, TeacherEmploymentLogs,
+-- TeacherDuties, StudentEnrollments, TimplanStatements and
+-- Ss12000SyncChanges, the arms that show rows to authenticated are exactly
+-- the seven own-row arms, and each is anchored on the reader in the row's
+-- own person column, with no OR or NOT to widen it. The eleven arms the
+-- migration moved are the API's role's alone (28g lets a cover arm be
+-- either role; this says which). Exactly one policy on another table reads
+-- the eight as the reader: TeacherDutySlots' teacher arm, through the
+-- teacher's own uppdrag, which 129 runs. A new one would read narrowed rows
+-- as the reader, so it fails here and is weighed. And every function a
+-- signed-in user may execute that reads the eight tables is SECURITY
+-- DEFINER, for 126's reason.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  tables text[] := ARRAY['TeacherAbsences', 'TeacherAbsenceCovers', 'TeacherEmployments', 'TeacherEmploymentLogs',
+                         'TeacherDuties', 'StudentEnrollments', 'TimplanStatements', 'Ss12000SyncChanges'];
+  got text;
+  want text := 'StudentEnrollments.student_enrollments_student_select TeacherAbsenceCovers.teacher_absence_covers_own_select '
+            || 'TeacherAbsences.teacher_absences_own_select TeacherDuties.teacher_duties_teacher_own_select '
+            || 'TeacherEmploymentLogs.teacher_employment_logs_teacher_own_select '
+            || 'TeacherEmployments.teacher_employments_teacher_own_select TimplanStatements.timplan_statements_student_select';
+  bad text;
+BEGIN
+  SELECT string_agg(tablename || '.' || policyname, ' ' ORDER BY tablename, policyname) INTO got
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND tablename = ANY (tables)
+     AND cmd IN ('SELECT', 'ALL')
+     AND roles && ARRAY['authenticated', 'public']::name[];
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION 'direct reads: authenticated reads the staff and timplan tables through %, not only the own-row arms', got;
+  END IF;
+
+  SELECT string_agg(p.tablename || '.' || p.policyname, ', ' ORDER BY p.tablename) INTO bad
+    FROM pg_policies p
+    JOIN (VALUES ('StudentEnrollments', 'student_enrollments_student_select', 'studentId'),
+                 ('TimplanStatements', 'timplan_statements_student_select', 'studentId'),
+                 ('TeacherAbsences', 'teacher_absences_own_select', 'userId'),
+                 ('TeacherAbsenceCovers', 'teacher_absence_covers_own_select', 'absentTeacherId'),
+                 ('TeacherEmployments', 'teacher_employments_teacher_own_select', 'userId'),
+                 ('TeacherEmploymentLogs', 'teacher_employment_logs_teacher_own_select', 'userId'),
+                 ('TeacherDuties', 'teacher_duties_teacher_own_select', 'userId')) AS own(tbl, pol, col)
+      ON p.schemaname = 'public' AND p.tablename = own.tbl AND p.policyname = own.pol
+   WHERE p.qual NOT LIKE '%("' || own.col || '" = ( SELECT app.current_user_id() AS current_user_id))%'
+      OR p.qual LIKE '% OR %'
+      OR p.qual LIKE '%NOT %';
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'direct reads: % no longer reads only the reader''s own rows', bad; END IF;
+
+  SELECT string_agg(m.tbl || '.' || m.pol || coalesce(' TO ' || p.roles::text, ' is gone'), ', ') INTO bad
+    FROM (VALUES ('TeacherAbsences', 'teacher_absences_admin_all'),
+                 ('TeacherAbsenceCovers', 'teacher_absence_covers_admin_all'),
+                 ('TeacherEmployments', 'teacher_employments_admin_all'),
+                 ('TeacherEmploymentLogs', 'teacher_employment_logs_admin_select'),
+                 ('TeacherDuties', 'teacher_duties_admin_all'),
+                 ('StudentEnrollments', 'student_enrollments_admin_select'),
+                 ('StudentEnrollments', 'student_enrollments_staff_select'),
+                 ('StudentEnrollments', 'student_enrollments_guardian_select'),
+                 ('TimplanStatements', 'timplan_statements_admin_all'),
+                 ('TimplanStatements', 'timplan_statements_guardian_select'),
+                 ('Ss12000SyncChanges', 'ss12000_sync_changes_admin_select')) AS m(tbl, pol)
+    LEFT JOIN pg_policies p ON p.schemaname = 'public' AND p.tablename = m.tbl AND p.policyname = m.pol
+   WHERE p.roles IS DISTINCT FROM '{app_authenticated}'::name[];
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'direct reads: the gateway''s arms are not the API''s role''s alone: %', bad; END IF;
+
+  SELECT string_agg(p.tablename || '.' || p.policyname, ', ' ORDER BY p.tablename, p.policyname) INTO got
+    FROM pg_policies p
+   WHERE p.roles && ARRAY['authenticated', 'public']::name[]
+     AND EXISTS (SELECT 1 FROM unnest(tables) t
+                  WHERE t <> p.tablename
+                    AND (coalesce(p.qual, '') || ' ' || coalesce(p.with_check, '')) LIKE '%"' || t || '"%');
+  IF got IS DISTINCT FROM 'TeacherDutySlots.teacher_duty_slots_teacher_own_select' THEN
+    RAISE EXCEPTION 'direct reads: the policies that read the staff and timplan tables as the reader are %, not TeacherDutySlots'' teacher arm alone', got;
+  END IF;
+
+  SELECT string_agg(n.nspname || '.' || p.proname, ', ') INTO bad
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname IN ('public', 'app', 'sign_in', 'auth')
+     AND NOT p.prosecdef
+     AND p.prosrc ~ ('"(' || array_to_string(tables, '|') || ')"')
+     AND (has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') AND has_function_privilege('anon', p.oid, 'EXECUTE')));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'direct reads: % reads the staff and timplan tables as its caller and a signed-in user may call it', bad;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 129: som PostgREST:s roll läser var och en sin egen tjänst,
+-- frånvaro, klasshistorik och undervisningstid och inget annat; som API:ts
+-- roll det de alltid har läst.
+--
+-- In the läslogg school, each person in turn, first as authenticated and
+-- then as app_authenticated, against the fixtures' staff and timplan rows.
+-- The admin reads none of the eight tables directly and the school's rows
+-- through the API's role. The FOR ALL arm took its writes along: directly
+-- the admin's new uppdrag is refused, and a direct UPDATE of the sync's
+-- change meets no row, since the write arm that stayed reads its rows under
+-- the SELECT arms. Teacher 122 reads their own post, uppdrag, history,
+-- absence and cover either way and nothing of 126's, the pupils' class
+-- history only through the API, and their own uppdrag's time directly
+-- (teacher_duty_slots_teacher_own_select reads TeacherDuties as the
+-- reader). The guardian reads their child's class history and statement
+-- only through the API, the pupil their own either way.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+DO $$
+DECLARE
+  via text;
+  c bigint[];
+  seen text;
+  colleague uuid;
+  year uuid;
+  n bigint;
+BEGIN
+  SET LOCAL ROLE app_authenticated;
+  SELECT id INTO colleague FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000126';
+  SELECT id INTO year FROM "AcademicYears";
+  IF colleague IS NULL OR year IS NULL THEN RAISE EXCEPTION 'direct reads: the läslogg school lacks teacher 126 or its year'; END IF;
+
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'direct reads: could not act as %', via; END IF;
+    c := ARRAY[(SELECT count(*) FROM "TeacherAbsences"), (SELECT count(*) FROM "TeacherAbsenceCovers"),
+               (SELECT count(*) FROM "TeacherEmployments"), (SELECT count(*) FROM "TeacherEmploymentLogs"),
+               (SELECT count(*) FROM "TeacherDuties"), (SELECT count(*) FROM "StudentEnrollments"),
+               (SELECT count(*) FROM "TimplanStatements"), (SELECT count(*) FROM "Ss12000SyncChanges")];
+    seen := format('absences %s, covers %s, posts %s, history %s, uppdrag %s, class history %s, statements %s, sync changes %s',
+                   VARIADIC c::text[]);
+    IF via = 'authenticated' AND c <> ARRAY[0, 0, 0, 0, 0, 0, 0, 0]::bigint[] THEN
+      RAISE EXCEPTION 'direct reads: the admin reads %, directly', seen;
+    END IF;
+    IF via = 'app_authenticated'
+       AND EXISTS (SELECT 1 FROM unnest(c, ARRAY[2, 1, 2, 2, 2, 2, 2, 1]) AS x(got, least) WHERE got < least) THEN
+      RAISE EXCEPTION 'direct reads: the admin reads only %, through the API', seen;
+    END IF;
+
+    BEGIN
+      INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+      VALUES (app.current_school_id(), colleague, year, 'ANNAT', 'Läslogg 129 ' || via, 30, now());
+      IF via = 'authenticated' THEN RAISE EXCEPTION 'direct reads: the admin wrote an uppdrag directly'; END IF;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF via = 'app_authenticated' THEN RAISE EXCEPTION 'direct reads: the admin could not write an uppdrag through the API'; END IF;
+    END;
+
+    UPDATE "Ss12000SyncChanges" SET selected = selected WHERE seq = 0;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF (via = 'authenticated' AND n <> 0) OR (via = 'app_authenticated' AND n <> 1) THEN
+      RAISE EXCEPTION 'direct reads: the admin''s update of the sync''s change met % row(s) as %', n, via;
+    END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000122')::text, true);
+DO $$
+DECLARE
+  via text;
+  me uuid;
+  own bigint[];
+  others bigint;
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'direct reads: could not act as %', via; END IF;
+    me := app.current_user_id();
+    own := ARRAY[(SELECT count(*) FROM "TeacherAbsences" WHERE "userId" = me),
+                 (SELECT count(*) FROM "TeacherAbsenceCovers" WHERE "absentTeacherId" = me),
+                 (SELECT count(*) FROM "TeacherEmployments" WHERE "userId" = me),
+                 (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "userId" = me),
+                 (SELECT count(*) FROM "TeacherDuties" WHERE "userId" = me)];
+    IF EXISTS (SELECT 1 FROM unnest(own) AS x(got) WHERE got < 1) THEN
+      RAISE EXCEPTION 'direct reads: as % a teacher reads only % of their own absence, cover, post, history and uppdrag', via, own;
+    END IF;
+    SELECT (SELECT count(*) FROM "TeacherAbsences" WHERE "userId" <> me)
+         + (SELECT count(*) FROM "TeacherAbsenceCovers" WHERE "absentTeacherId" <> me)
+         + (SELECT count(*) FROM "TeacherEmployments" WHERE "userId" <> me)
+         + (SELECT count(*) FROM "TeacherEmploymentLogs" WHERE "userId" <> me)
+         + (SELECT count(*) FROM "TeacherDuties" WHERE "userId" <> me)
+         + (SELECT count(*) FROM "TimplanStatements") + (SELECT count(*) FROM "Ss12000SyncChanges") INTO others;
+    IF others <> 0 THEN RAISE EXCEPTION 'direct reads: as % a teacher reads % staff or timplan rows of others', via, others; END IF;
+    SELECT count(*) INTO n FROM "StudentEnrollments";
+    IF via = 'authenticated' AND n <> 0 THEN RAISE EXCEPTION 'direct reads: a teacher reads % pupils'' class history directly', n; END IF;
+    IF via = 'app_authenticated' AND n < 2 THEN RAISE EXCEPTION 'direct reads: a teacher reads % pupils'' class history through the API', n; END IF;
+    -- teacher_duty_slots_teacher_own_select reads TeacherDuties as the teacher.
+    SELECT count(*) INTO n FROM "TeacherDutySlots";
+    IF n <> 1 THEN RAISE EXCEPTION 'direct reads: as % a teacher reads % times of their own uppdrag, not one', via, n; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000125')::text, true);
+DO $$
+DECLARE
+  via text;
+  child uuid;
+  c bigint[];
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'direct reads: could not act as %', via; END IF;
+    SELECT "studentId" INTO child FROM "GuardianStudents";
+    IF child IS NULL THEN RAISE EXCEPTION 'direct reads: the guardian lost their own link as %', via; END IF;
+    c := ARRAY[(SELECT count(*) FROM "StudentEnrollments" WHERE "studentId" = child),
+               (SELECT count(*) FROM "TimplanStatements" WHERE "studentId" = child)];
+    IF via = 'authenticated' AND c <> ARRAY[0, 0]::bigint[] THEN
+      RAISE EXCEPTION 'direct reads: the guardian reads % of their child''s class history and statement directly', c;
+    END IF;
+    IF via = 'app_authenticated' AND c <> ARRAY[1, 1]::bigint[] THEN
+      RAISE EXCEPTION 'direct reads: the guardian reads % of their child''s class history and statement through the API', c;
+    END IF;
+    SELECT (SELECT count(*) FROM "StudentEnrollments" WHERE "studentId" <> child)
+         + (SELECT count(*) FROM "TimplanStatements" WHERE "studentId" <> child)
+         + (SELECT count(*) FROM "TeacherAbsences") + (SELECT count(*) FROM "TeacherAbsenceCovers")
+         + (SELECT count(*) FROM "TeacherEmployments") + (SELECT count(*) FROM "TeacherEmploymentLogs")
+         + (SELECT count(*) FROM "TeacherDuties") + (SELECT count(*) FROM "Ss12000SyncChanges") INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'direct reads: as % the guardian reads % rows of others', via, n; END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000123')::text, true);
+DO $$
+DECLARE
+  via text;
+  me uuid;
+  c bigint[];
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'direct reads: could not act as %', via; END IF;
+    me := app.current_user_id();
+    c := ARRAY[(SELECT count(*) FROM "StudentEnrollments" WHERE "studentId" = me),
+               (SELECT count(*) FROM "TimplanStatements" WHERE "studentId" = me)];
+    IF c <> ARRAY[1, 1]::bigint[] THEN
+      RAISE EXCEPTION 'direct reads: as % the pupil reads % of their own class history and statement', via, c;
+    END IF;
+    SELECT (SELECT count(*) FROM "StudentEnrollments" WHERE "studentId" <> me)
+         + (SELECT count(*) FROM "TimplanStatements" WHERE "studentId" <> me)
+         + (SELECT count(*) FROM "TeacherAbsences") + (SELECT count(*) FROM "TeacherAbsenceCovers")
+         + (SELECT count(*) FROM "TeacherEmployments") + (SELECT count(*) FROM "TeacherEmploymentLogs")
+         + (SELECT count(*) FROM "TeacherDuties") + (SELECT count(*) FROM "Ss12000SyncChanges") INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'direct reads: as % the pupil reads % rows of others', via, n; END IF;
+  END LOOP;
   SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
