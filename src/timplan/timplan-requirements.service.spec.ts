@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import {
   createPrismaMock,
   createTxMock,
@@ -187,6 +187,57 @@ describe('TimplanRequirementsService', () => {
       expect(tx.teachingBlock.upsert.mock.invocationCallOrder[0]).toBeLessThan(
         tx.teachingRequirement.createManyAndReturn.mock.invocationCallOrder[0]!,
       );
+    });
+
+    it.each([true, false])(
+      'refuses a block of that name holding another årskurs\' posts, preview and apply alike (dryRun %s)',
+      async (dryRun) => {
+        tx.teachingBlock.findMany.mockResolvedValue([
+          {
+            name: 'Språkval åk 7',
+            requirements: [
+              { studentGroup: { name: 'Ty8', gradeLevel: 8 } },
+              { studentGroup: { name: 'Ma7 grupp 1', gradeLevel: 7 } },
+              { studentGroup: { name: 'Fr8', gradeLevel: 8 } },
+              { studentGroup: { name: 'Elevens val', gradeLevel: null } },
+            ],
+          },
+        ]);
+
+        const refusal = await service.generate(PLAN_ID, languages(dryRun), testUser()).catch((error) => error);
+
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect(refusal.getResponse()).toMatchObject({
+          code: 'LANGUAGE_BLOCK_IN_OTHER_GRADE',
+          message: expect.stringContaining('"Språkval åk 7", och det håller poster i en annan årskurs (Fr8, Ty8)'),
+        });
+        expect(tx.teachingBlock.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID, name: { in: ['Språkval åk 7'] } },
+          select: {
+            name: true,
+            requirements: { select: { studentGroup: { select: { name: true, gradeLevel: true } } } },
+          },
+        });
+        expect(tx.teachingBlock.upsert).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.createManyAndReturn).not.toHaveBeenCalled();
+      },
+    );
+
+    it('joins a block of that name whose posts are in its årskurs, or in groups without one', async () => {
+      tx.teachingBlock.findMany.mockResolvedValue([
+        {
+          name: 'Språkval åk 7',
+          requirements: [
+            { studentGroup: { name: 'Fr7', gradeLevel: 7 } },
+            { studentGroup: { name: 'Sp-grupp', gradeLevel: null } },
+          ],
+        },
+      ]);
+
+      await service.generate(PLAN_ID, languages(false), testUser());
+
+      expect(tx.teachingBlock.upsert).toHaveBeenCalledTimes(1);
+      expect(tx.teachingRequirement.createManyAndReturn).toHaveBeenCalledTimes(1);
     });
 
     it('refuses a group that is no teaching group of the year, naming the row', async () => {
