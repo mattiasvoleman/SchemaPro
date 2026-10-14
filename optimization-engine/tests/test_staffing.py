@@ -125,6 +125,7 @@ class School:
         co: str | None = None,
         eligible: list[str] | None = None,
         last_year: list[str] = (),  # type: ignore[assignment]
+        excluded: list[str] = (),  # type: ignore[assignment]
     ) -> str:
         set_id = None
         if eligible:
@@ -143,6 +144,8 @@ class School:
             "coTeacherId": self.id(co) if co else None,
             "eligibilitySetId": set_id,
             "lastYearTeacherIds": [self.id(t) for t in last_year],
+            # Only when it names somebody, as the gateway sends it.
+            **({"excludedTeacherIds": [self.id(t) for t in excluded]} if excluded else {}),
         })
         return label
 
@@ -220,7 +223,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends_and_reads() -> None
     assert _field_names(AnonymousStaffRequirement) == {
         "id", "subjectId", "studentGroupId", "chargeTenths", "lessonMinutes",
         "minGradeLevel", "maxGradeLevel", "fixed", "currentTeacherId", "coTeacherId",
-        "eligibilitySetId", "lastYearTeacherIds",
+        "eligibilitySetId", "lastYearTeacherIds", "excludedTeacherIds",
     }
     assert _field_names(StaffResponse) == {
         "requestId", "status", "unstaffedProven", "assignments", "unstaffed", "conflicts",
@@ -241,14 +244,34 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends_and_reads() -> None
     }
 
 
+def test_a_row_without_an_exclusion_is_the_row_an_older_gateway_sends() -> None:
+    """excludedTeacherIds is optional, and the gateway sends it only when it
+    names somebody. A row without it excludes nobody, so the field is
+    additive: a gateway that predates it, or a school without a post that
+    changes during the year, sends what this engine always took."""
+    payload = _continuity().payload()
+    assert all("excludedTeacherIds" not in row for row in payload["requirements"])
+    request = StaffRequest.model_validate(payload)
+    assert all(row.excluded_teacher_ids == [] for row in request.requirements)
+    schema = AnonymousStaffRequirement.model_json_schema(by_alias=True)
+    assert "excludedTeacherIds" in schema["properties"]
+    assert "excludedTeacherIds" not in schema["required"]
+
+
 def _random_school(
     seed: int,
     *,
     teachers: int = 6,
     rows: int = 12,
     targets: tuple[int | None, ...] = (None, 0, 300, 400, 600),
+    exclusions: bool = False,
 ) -> School:
-    """A small school with every kind of row and teacher, chosen at random."""
+    """A small school with every kind of row and teacher, chosen at random.
+
+    With `exclusions`, each row also excludes up to two teachers — its lead
+    and its co-teacher among them, as chance has it. Drawn after everything
+    else, so a seed without them is the school it always was.
+    """
     rng = random.Random(seed)
     school = School(respect=rng.random() < 0.5)
     staff = [
@@ -272,6 +295,7 @@ def _random_school(
             co=None if co == current else co,
             eligible=rng.sample(staff, rng.randint(0, len(staff))),
             last_year=rng.sample(staff, rng.randint(0, 1)),
+            excluded=rng.sample(staff, rng.randint(0, 2)) if exclusions else (),
         )
     return school
 
@@ -404,6 +428,131 @@ def test_a_kept_row_is_never_unstaffed_even_with_nobody_qualified_holding_it() -
     assert answer.leads == {"Kept": "K"}
     assert answer.reasons == {}
     assert answer.response.terms.after.unqualified_assignments == 1
+
+
+@pytest.mark.parametrize("respect", [True, False])
+def test_an_excluded_teacher_is_never_newly_given_the_row(respect: bool) -> None:
+    """X is everything the objective likes for R — in its set, last year's
+    teacher, already in the class, the most room — and R excludes X.
+    Without respect the set is only a preference; the exclusion is not."""
+    def school(exclude: bool) -> School:
+        built = School(respect=respect)
+        built.teacher("X", target=600)
+        built.teacher("Y", target=600, fixed=500)
+        built.row("Fixed", fixed=True, current="X", eligible=["X"])
+        built.row("R", eligible=["X", "Y"], last_year=["X"], excluded=["X"] if exclude else [])
+        return built
+
+    assert school(exclude=False).solve().leads == {"R": "X"}
+
+    excluded = school(exclude=True)
+    problem = _problem(excluded)
+    x, y = 0, 1
+    assert problem.domain[1] == (y,)
+    assert greedy(problem).answer[1] == y
+    with pytest.raises(SolverBuildError, match="a teacher it excludes"):
+        check(problem, [None, x])
+    assert excluded.solve().leads == {"R": "Y"}
+
+
+@pytest.mark.parametrize("respect", [True, False])
+def test_a_row_only_an_excluded_teacher_could_take_has_no_room_and_no_line(respect: bool) -> None:
+    """X holds a covering behörighet, has a target and all the room there is,
+    and the row excludes X. "Ingen aktiv lärare är behörig" would be false,
+    and "not reached" would blame a search that was never allowed to use X:
+    the row has no room for anybody who may take it, and no line names it."""
+    def school(exclude: bool) -> School:
+        built = School(respect=respect)
+        built.teacher("X", target=600)
+        built.row("R", eligible=["X"], excluded=["X"] if exclude else [])
+        return built
+
+    plain = _problem(school(exclude=False))
+    assert unstaffed_reason(plain, 0, answer_loads(plain, status_quo(plain))) == "NOT_REACHED"
+
+    excluded = school(exclude=True)
+    problem = _problem(excluded)
+    assert problem.domain[0] == ()
+    assert unstaffed_reason(problem, 0, answer_loads(problem, status_quo(problem))) == (
+        "NO_CAPACITY_LEFT"
+    )
+    answer = excluded.solve()
+    assert answer.leads == {}
+    assert answer.reasons == {"R": "NO_CAPACITY_LEFT"}
+    assert answer.codes() == []
+
+
+def test_a_kept_rows_lead_keeps_it_though_the_row_excludes_them() -> None:
+    """The exclusion binds new placements only, as the set does under
+    respect, so keeping every row as it is stays an answer. The gateway
+    never sends this: a dated row a changing post leads goes as fixed."""
+    school = School()
+    school.teacher("K", target=600)
+    school.row("Kept", current="K", eligible=["K"], excluded=["K"])
+    problem = _problem(school)
+    assert problem.domain[0] == (0,)
+    assert candidate_counts(problem) == {0: 1}
+    check(problem, status_quo(problem))
+    assert school.solve().leads == {"Kept": "K"}
+
+
+def test_a_teacher_with_room_only_for_a_row_they_are_excluded_from_is_full() -> None:
+    """T has 50 minutes of room. The 10-minute row would fit, but it excludes
+    T; the 60-minute one does not fit. No further curriculum entry fits T,
+    and the line says so — it did not while the exclusion was ignored."""
+    def school(exclude: bool) -> School:
+        built = School(tolerance=0)
+        built.teacher("T", target=100, fixed=50)
+        built.row("Small", group="7A", minutes=10, eligible=["T"], excluded=["T"] if exclude else [])
+        built.row("Big", group="7B", minutes=60, eligible=["T"])
+        return built
+
+    assert "STAFF_TEACHER_CAPACITY_ZERO" not in school(exclude=False).solve().codes()
+    answer = school(exclude=True).solve()
+    [line] = [c for c in answer.response.conflicts if c.code == "STAFF_TEACHER_CAPACITY_ZERO"]
+    assert line.params == {"fixedMinutes": 50, "limitMinutes": 100}
+    assert answer.reasons == {"Small": "NO_CAPACITY_LEFT", "Big": "NO_CAPACITY_LEFT"}
+
+
+def test_a_subject_short_once_its_excluded_teacher_is_left_out_is_named() -> None:
+    """X has room for both Ma rows but R1 excludes X, and Y alone has 100
+    minutes for the 120 the two need between them. Counting X's room for R1
+    hid the shortage; leaving it out names it (the brute force below shows
+    the bound still holds with exclusions)."""
+    def school(exclude: bool) -> School:
+        built = School(tolerance=0)
+        built.teacher("X", target=600)
+        built.teacher("Y", target=100)
+        built.row("R1", group="7A", eligible=["X", "Y"], excluded=["X"] if exclude else [])
+        built.row("R2", group="7B", eligible=["Y"])
+        return built
+
+    assert "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT" not in school(exclude=False).solve().codes()
+    [line] = [
+        c for c in school(exclude=True).solve().response.conflicts
+        if c.code == "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT"
+    ]
+    assert (line.params["demandedMinutes"], line.params["shortMinutes"]) == (120, 20)
+
+
+def test_with_random_exclusions_no_answer_newly_gives_an_excluded_teacher_a_row() -> None:
+    """The domains, the greedy, both stages and the canonical pass, on small
+    schools whose rows exclude teachers at random — their leads and
+    co-teachers among them."""
+    settings = _settings(STAFF_SOLVER_MAX_TIME_SECONDS=2.0)
+    binding = 0
+    for seed in range(80):
+        school = _random_school(seed, exclusions=True)
+        problem = _problem(school)
+        for row in problem.free:
+            newly = problem.excluded[row] - {problem.current.get(row)}
+            assert not newly & set(problem.domain[row]), seed
+            binding += len(newly)
+        check(problem, status_quo(problem))
+        check(problem, greedy(problem).answer)
+        response = StaffingSolver(settings).solve(school.request())
+        check(problem, _assignment(problem, response))  # refuses an excluded teacher
+    assert binding > 0, "no fixture excluded anybody"
 
 
 def test_the_status_quo_is_always_feasible_and_infeasible_never_happens() -> None:
@@ -787,9 +936,11 @@ def test_the_capacity_verdict_is_a_lower_bound_the_best_answer_respects() -> Non
     """Brute force on small schools: no answer at all leaves less of the
     subject unstaffed than the verdict says will be."""
     lines_seen = 0
-    for seed in range(60):
+    for seed, exclusions in itertools.product(range(60), (False, True)):
         # Targets small enough that a subject runs out.
-        school = _random_school(seed, teachers=4, rows=6, targets=(None, 60, 100, 150))
+        school = _random_school(
+            seed, teachers=4, rows=6, targets=(None, 60, 100, 150), exclusions=exclusions,
+        )
         problem = _problem(school)
         for line in verdicts(problem):
             if line.code != "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT":
@@ -814,17 +965,19 @@ def test_every_broken_answer_is_a_build_error_not_a_proposal() -> None:
     school.teacher("K")  # keep-or-shed
     school.teacher("Q", target=100)
     school.teacher("C", target=600)
+    school.teacher("X", target=600)
     school.row("Kept", group="7A", current="K", eligible=["Q"])
     school.row("Open", group="7B", co="C", eligible=["Q"])
-    school.row("Other", group="7C", eligible=["Q"])
+    school.row("Other", group="7C", eligible=["Q", "X"], excluded=["X"])
     problem = _problem(school)
-    k, q, c = 0, 1, 2
+    k, q, c, x = 0, 1, 2, 3
 
     broken = {
         "left kept row": [None, None, None],
         "co-teacher its lead": [k, c, None],
         "keep-or-shed teacher": [k, k, None],
         "unqualified teacher": [k, None, c],
+        "a teacher it excludes": [k, None, x],
         "over their limit": [k, q, q],
     }
     check(problem, [k, q, None])
@@ -928,8 +1081,8 @@ def test_the_size_guard_refuses_before_anything_is_built(
 def test_the_size_estimate_counts_each_rows_candidates_exactly() -> None:
     """Counted by bisection over the teachers' room, never by building the
     domains — that walk is what the guard exists to refuse."""
-    for seed in range(80):
-        school = _random_school(seed)
+    for seed, exclusions in itertools.product(range(80), (False, True)):
+        school = _random_school(seed, exclusions=exclusions)
         problem = _problem(school)
         assert candidate_counts(problem) == {
             row: len(domain) for row, domain in problem.domain.items()
@@ -989,6 +1142,10 @@ def _relabelled(school: School) -> School:
                             "coTeacherId", "eligibilitySetId")
             },
             "lastYearTeacherIds": [mapping[t] for t in r["lastYearTeacherIds"]],
+            **(
+                {"excludedTeacherIds": [mapping[t] for t in r["excludedTeacherIds"]]}
+                if "excludedTeacherIds" in r else {}
+            ),
         }
         for r in school.rows
     ]
@@ -1000,8 +1157,8 @@ def _relabelled(school: School) -> School:
 
 
 def test_the_model_is_byte_identical_however_often_and_under_whatever_ids() -> None:
-    for seed in range(20):
-        school = _random_school(seed)
+    for seed, exclusions in itertools.product(range(20), (False, True)):
+        school = _random_school(seed, exclusions=exclusions)
         protos = []
         for candidate in (school, school, _relabelled(school)):
             problem = _problem(candidate)
@@ -1047,6 +1204,10 @@ def _relabelled_payload(payload: dict) -> tuple[dict, dict[str, str]]:
                                 "coTeacherId", "eligibilitySetId")
                 },
                 "lastYearTeacherIds": [fresh(t) for t in r["lastYearTeacherIds"]],
+                **(
+                    {"excludedTeacherIds": [fresh(t) for t in r["excludedTeacherIds"]]}
+                    if "excludedTeacherIds" in r else {}
+                ),
             }
             for r in payload["requirements"]
         ],
@@ -1173,7 +1334,8 @@ def test_the_route_answers_with_the_key_and_refuses_without(client: TestClient) 
      "a set nobody sent", "a limit under the target", "half a band", "a weight over 100",
      "a floor over the target", "the same row twice", "the same set twice",
      "a set naming a stranger", "a set naming one teacher twice",
-     "last year's teacher twice", "years upside down"],
+     "last year's teacher twice", "an exclusion naming a stranger",
+     "an exclusion naming one teacher twice", "years upside down"],
 )
 def test_a_malformed_staffing_request_is_a_422(client: TestClient, breakage: str) -> None:
     payload = _continuity().payload()
@@ -1210,6 +1372,10 @@ def test_a_malformed_staffing_request_is_a_422(client: TestClient, breakage: str
         members.append(members[0])
     elif breakage == "last year's teacher twice":
         row["lastYearTeacherIds"] = row["lastYearTeacherIds"] * 2
+    elif breakage == "an exclusion naming a stranger":
+        row["excludedTeacherIds"] = [str(uuid4())]
+    elif breakage == "an exclusion naming one teacher twice":
+        row["excludedTeacherIds"] = [teacher["id"], teacher["id"]]
     else:
         row["minGradeLevel"], row["maxGradeLevel"] = 9, 7
 

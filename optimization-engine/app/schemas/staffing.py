@@ -168,6 +168,17 @@ class AnonymousStaffRequirement(CamelModel):
     `charge_tenths` is what the row costs its lead, ×10, rounded up.
     `lesson_minutes` is the row's weekly teaching time for its class — what a
     row left unstaffed costs the pupils, used only to rank the unstaffed.
+
+    `excluded_teacher_ids` are teachers the row is never newly given,
+    whatever their qualification or room: the gateway's word that the row
+    does not fit them, for a reason the engine cannot see. Today that is a
+    dated row and a post that changes during the year. The row's charge is
+    its average over the year, the post is held to each of its periods, and
+    in the period a dated row runs it charges more than its average. Like
+    the eligibility set under respect it binds new placements only, so
+    keeping every row as it is stays feasible. Optional, and sent only when
+    it names somebody, so a request that names nobody is the request the
+    engine took before the field existed.
     """
 
     id: UUID4
@@ -186,6 +197,9 @@ class AnonymousStaffRequirement(CamelModel):
     last_year_teacher_ids: list[UUID4] = Field(
         default_factory=list, alias="lastYearTeacherIds", max_length=20,
     )
+    excluded_teacher_ids: list[UUID4] = Field(
+        default_factory=list, alias="excludedTeacherIds", max_length=1000,
+    )
 
     @model_validator(mode="after")
     def validate_row(self) -> AnonymousStaffRequirement:
@@ -196,6 +210,9 @@ class AnonymousStaffRequirement(CamelModel):
             raise ValueError(msg)
         if len(set(self.last_year_teacher_ids)) != len(self.last_year_teacher_ids):
             msg = "lastYearTeacherIds names a teacher twice."
+            raise ValueError(msg)
+        if len(set(self.excluded_teacher_ids)) != len(self.excluded_teacher_ids):
+            msg = "excludedTeacherIds names a teacher twice."
             raise ValueError(msg)
         if (
             self.min_grade_level is not None
@@ -246,7 +263,10 @@ class StaffRequest(CamelModel):
                 msg = f"Eligibility set {entry.id} names a teacher that is not in teachers."
                 raise ValueError(msg)
         for row in self.requirements:
-            named = [row.current_teacher_id, row.co_teacher_id, *row.last_year_teacher_ids]
+            named = [
+                row.current_teacher_id, row.co_teacher_id, *row.last_year_teacher_ids,
+                *row.excluded_teacher_ids,
+            ]
             if any(teacher is not None and teacher not in teacher_ids for teacher in named):
                 msg = f"Requirement {row.id} names a teacher that is not in teachers."
                 raise ValueError(msg)
