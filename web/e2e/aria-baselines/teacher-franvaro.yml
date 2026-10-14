@@ -1,0 +1,19 @@
+- main:
+  - heading "Vikariepass och frånvaro" [level=1]
+  - paragraph: Dina kommande vikariepass och din egen frånvaro
+  - button "Anmäl frånvaro"
+  - region "Mina vikariepass":
+    - heading "Mina vikariepass" [level=2]
+    - list:
+      - listitem: tors <datum> 09:25–10:25 Matematik 9A Sal 201
+  - region "Min frånvaro":
+    - heading "Min frånvaro" [level=2]
+    - text: Du kan anmäla frånvaro från och med i dag, avsluta den i förtid och återkalla en anmälan innan den börjar.
+    - list:
+      - listitem:
+        - text: ons <datum> Kompetensutveckling 1 ordnade på annat sätt
+        - button "Avsluta i förtid ons <datum>": Avsluta i förtid
+      - listitem:
+        - text: mån <datum> 12:00–16:30 Facklig verksamhet
+        - button "Återkalla mån <datum> 12:00–16:30": Återkalla
+    - paragraph: Orsaken ser bara du och skolledningen. Kollegor, elever och vårdnadshavare ser bara att lektionen har en vikarie eller är inställd.

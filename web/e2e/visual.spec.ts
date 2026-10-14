@@ -69,7 +69,7 @@ test.describe("component states", () => {
     await page.goto("/en/login");
     await settle(page);
 
-    // Bad credentials against the placeholder Supabase project fail closed,
+    // Bad credentials against the backend stub (e2e/stub) fail closed,
     // which is exactly the error surface worth pinning.
     await page.getByLabel(/email/i).fill("nobody@example.com");
     await page.getByLabel(/password/i).fill("wrong-password");

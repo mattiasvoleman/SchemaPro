@@ -1,0 +1,24 @@
+- heading "Översikt" [level=1]
+- region "Snabbåtgärder":
+  - heading "Snabbåtgärder" [level=2]
+  - list:
+    - listitem:
+      - link "Kör skolinställningar Lägg till ämnen, salar, klasser och lärare":
+        - /url: /sv/admin/setup
+        - text: Kör skolinställningar
+        - paragraph: Lägg till ämnen, salar, klasser och lärare
+    - listitem:
+      - link "Lägg upp timplanen Minuter per vecka i varje ämne och årskurs, mot de nationella timmarna":
+        - /url: /sv/admin/timplan
+        - text: Lägg upp timplanen
+        - paragraph: Minuter per vecka i varje ämne och årskurs, mot de nationella timmarna
+    - listitem:
+      - link "Generera schema Låt AI-motorn bygga schemat":
+        - /url: /sv/admin/generate
+        - text: Generera schema
+        - paragraph: Låt AI-motorn bygga schemat
+    - listitem:
+      - link "Granska & publicera Gör grundschemat till en levande kalender":
+        - /url: /sv/admin/timetable
+        - text: Granska & publicera
+        - paragraph: Gör grundschemat till en levande kalender

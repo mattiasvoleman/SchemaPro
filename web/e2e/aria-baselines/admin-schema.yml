@@ -1,0 +1,40 @@
+- main:
+  - heading "Grundschema" [level=1]
+  - paragraph: Den återkommande veckomallen som AI-motorn tagit fram
+  - group "Läsår att planera":
+    - button "<läsår> (aktivt)" [pressed]
+    - button "<läsår> (nästa, inte aktiverat)"
+  - button "Lägg till lektion"
+  - button "Versioner"
+  - button "Fler åtgärder"
+  - button "Publicera till kalender"
+  - 'button "Utkast: 3 ändringar ej publicerade"'
+  - button "Ångra" [disabled]
+  - button "Gör om" [disabled]
+  - button "Grupper": Alla grupper
+  - button "Lärare": Alla lärare
+  - button "Salar": Alla salar
+  - combobox "Vy": Kombinerad vy
+  - button "Lektionstid"
+  - text: "12 lektioner / vecka Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval. Med tangentbordet: piltangenterna flyttar en lektion 15 minuter eller en dag, Enter öppnar den och skift-Enter väljer den. Mån Tis Ons Tor Fre 09:00 10:00 11:00 12:00 13:00 14:00 15:00"
+  - button "Måndag 08:10–09:10, Svenska 7A · A. Lind Sal 101"
+  - button "Måndag 09:25–10:25, Matematik 7A · B. Ek Sal 101"
+  - button "Måndag 10:40–11:40, Svenska 7B · A. Lind Sal 102"
+  - button "Måndag 13:00–14:00, Idrott och hälsa 7A · D. Berg Idrottshallen"
+  - button "Tisdag 08:10–09:10, Engelska 7A · A. Lind Sal 101"
+  - button "Tisdag 08:10–09:10, Historia 8A · E. Holm Sal 201"
+  - button "Tisdag 09:25–10:25, Biologi 7A · C. Ås NO-salen"
+  - button "Tisdag 13:00–14:00, Matematik 7B · B. Ek Sal 102"
+  - button "Onsdag 10:40–11:40, Svenska 7A · A. Lind Sal 101"
+  - button "Onsdag 13:00–14:00, Matematik 7A · B. Ek Sal 101"
+  - button "Torsdag 08:10–08:40, Mentorstid 7A · A. Lind · Sal 101"
+  - button "Torsdag 09:25–10:25, Matematik 9A · B. Ek Sal 201"
+  - region "Parkering":
+    - heading "Parkering" [level=2]
+    - paragraph: Dra en lektion hit för att lyfta ut den tillfälligt — till exempel för att byta plats på två. En parkerad lektion upptar ingen tid, publiceras inte och skickas inte till solvern. Dra tillbaka den till schemat, eller sätt tillbaka den där den stod.
+    - list:
+      - listitem:
+        - button "Dra Bild · 8A · Bildsalen till schemat": Bild · 8A · Bildsalenfrån Fredag 10:40–12:00
+        - button "Sätt tillbaka"
+  - 'link "Nästa steg: Luckor och håltimmar"':
+    - /url: /sv/admin/gaps

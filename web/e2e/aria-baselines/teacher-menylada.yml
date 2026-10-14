@@ -1,0 +1,23 @@
+- dialog "Huvudmeny":
+  - complementary:
+    - button "Stäng"
+    - text: SchemaPro Exempelskolan
+    - navigation "Huvudmeny":
+      - list:
+        - listitem:
+          - link "Mitt schema":
+            - /url: /sv/teacher
+        - listitem:
+          - link "Närvaro":
+            - /url: /sv/teacher/attendance
+        - listitem:
+          - link "Boka lokal":
+            - /url: /sv/teacher/rooms
+        - listitem:
+          - link "Min tjänst":
+            - /url: /sv/teacher/tjanst
+        - listitem:
+          - link "Vikariepass och frånvaro":
+            - /url: /sv/teacher/franvaro
+    - link "Tillgänglighetsredogörelse":
+      - /url: /sv/tillganglighet

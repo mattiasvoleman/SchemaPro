@@ -1,0 +1,216 @@
+- main:
+  - heading "Mina barn" [level=1]
+  - paragraph: Se schemat, anmäl frånvaro och ansök om ledighet för dina barn
+  - region "Schema för Ella":
+    - heading "Schema för Ella" [level=2]
+    - text: Veckan som skolan har publicerat, med skolans tider.
+    - tablist "Visa":
+      - tab "I dag" [selected]
+      - tab "Vecka"
+    - group "Välj barn":
+      - button "Ella" [pressed]
+      - button "Hugo"
+    - region "Onsdag <datum>":
+      - heading "Onsdag <datum>" [level=3]
+      - list:
+        - listitem: 09:10–09:25 Förmiddagsrast
+        - listitem: 10:40–11:40 Svenska Inställd Sal 101
+        - listitem: 11:40–12:10 Lunch
+        - listitem: 13:00–14:00 Matematik Vikarie Sal 101
+  - region "Anmäl frånvaro":
+    - heading "Anmäl frånvaro" [level=2]
+    - text: Skolan och berörda lärare ser anmälan direkt. Barn
+    - combobox "Barn":
+      - option "Ella Nord" [selected]
+      - option "Hugo Nord"
+    - text: Datum
+    - textbox "Datum":
+      - /placeholder: åååå-mm-dd
+      - text: <datum>
+    - button "Öppna kalender för Datum"
+    - text: Orsak
+    - combobox "Orsak":
+      - option "Sjuk" [selected]
+      - option "Läkarbesök"
+      - option "Övrigt"
+    - text: Heldag
+    - switch "Heldag" [checked]
+    - text: Anteckning (valfritt)
+    - textbox "Anteckning (valfritt)"
+    - button "Anmäl frånvaro"
+  - region "Anmäld frånvaro":
+    - heading "Anmäld frånvaro" [level=2]
+    - list:
+      - listitem:
+        - paragraph: Ella Nord
+        - text: fre <datum> · 13:00–15:00 Läkarbesök
+        - button "Ta bort anmälan för Ella Nord, fre <datum>"
+      - listitem:
+        - paragraph: Hugo Nord
+        - text: ons <datum> · Heldag Sjuk
+        - button "Ta bort anmälan för Hugo Nord, ons <datum>"
+  - region "Ansök om ledighet":
+    - heading "Ansök om ledighet" [level=2]
+    - text: Ledighetsansökningar beslutas av skolans administration. Barn
+    - combobox "Barn":
+      - option "Ella Nord" [selected]
+      - option "Hugo Nord"
+    - text: Från
+    - textbox "Från":
+      - /placeholder: åååå-mm-dd
+      - text: <datum>
+    - button "Öppna kalender för Från"
+    - text: Till
+    - textbox "Till":
+      - /placeholder: åååå-mm-dd
+      - text: <datum>
+    - button "Öppna kalender för Till"
+    - text: Anledning
+    - textbox "Anledning"
+    - button "Skicka ansökan" [disabled]
+  - region "Ledighetsansökningar":
+    - heading "Ledighetsansökningar" [level=2]
+    - list:
+      - listitem:
+        - text: Ella Nord Väntar
+        - paragraph: 4–<datum>
+        - paragraph: Familjeresa till mormor
+      - listitem:
+        - text: Hugo Nord Beviljad
+        - paragraph: <datum>
+        - paragraph: Uppkörning för moped
+  - region "Undervisningstid – Ella":
+    - heading "Undervisningstid – Ella" [level=2]
+    - text: Uppdaterad <datum>
+    - heading "Högstadiet, åk 7–9" [level=3]
+    - table:
+      - rowgroup:
+        - row "Ämne Hittills Planerat för stadiet Timplanen":
+          - columnheader "Ämne"
+          - columnheader "Hittills"
+          - columnheader "Planerat för stadiet"
+          - columnheader "Timplanen"
+      - rowgroup:
+        - row "Bild 0 h 71,1 h 100 h":
+          - rowheader "Bild"
+          - cell "0 h"
+          - cell "71,1 h"
+          - cell "100 h"
+        - row "Engelska 8 h 226,3 h 200 h":
+          - rowheader "Engelska"
+          - cell "8 h"
+          - cell "226,3 h"
+          - cell "200 h"
+        - row "Hem- och konsumentkunskap 0 h 0 h 90 h":
+          - rowheader "Hem- och konsumentkunskap"
+          - cell "0 h"
+          - cell "0 h"
+          - cell "90 h"
+        - row "Idrott och hälsa 13 h 281,3 h 280 h":
+          - rowheader "Idrott och hälsa"
+          - cell "13 h"
+          - cell "281,3 h"
+          - cell "280 h"
+        - row "Språkval 0 h 265,1 h 272 h":
+          - rowheader "Språkval"
+          - cell "0 h"
+          - cell "265,1 h"
+          - cell "272 h"
+        - row "Matematik 16 h 407,4 h 400 h":
+          - rowheader "Matematik"
+          - cell "16 h"
+          - cell "407,4 h"
+          - cell "400 h"
+        - row "Musik 0 h 0 h 80 h":
+          - rowheader "Musik"
+          - cell "0 h"
+          - cell "0 h"
+          - cell "80 h"
+        - row "Naturorienterande ämnen 8 h 135,8 h 289 h":
+          - rowheader "Naturorienterande ämnen"
+          - cell "8 h"
+          - cell "135,8 h"
+          - cell "289 h"
+        - row "Slöjd 0 h 0 h 140 h":
+          - rowheader "Slöjd"
+          - cell "0 h"
+          - cell "0 h"
+          - cell "140 h"
+        - row "Samhällsorienterande ämnen 0 h 74,4 h 405 h":
+          - rowheader "Samhällsorienterande ämnen"
+          - cell "0 h"
+          - cell "74,4 h"
+          - cell "405 h"
+        - row "Svenska eller svenska som andraspråk 18 h 326,6 h 290 h":
+          - rowheader "Svenska eller svenska som andraspråk"
+          - cell "18 h"
+          - cell "326,6 h"
+          - cell "290 h"
+        - row "Teknik 0 h 0 h 88 h":
+          - rowheader "Teknik"
+          - cell "0 h"
+          - cell "0 h"
+          - cell "88 h"
+    - paragraph: Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger. Timplanens timmar är SchemaPros referensdata (SFS <år>:945 B1).
+  - region "Undervisningstid – Hugo":
+    - heading "Undervisningstid – Hugo" [level=2]
+    - text: Uppdaterad <datum>
+    - heading "Högstadiet, åk 7–9" [level=3]
+    - table:
+      - rowgroup:
+        - row "Ämne Sedan <datum> Planerat åk 9":
+          - columnheader "Ämne"
+          - columnheader "Sedan <datum>"
+          - columnheader "Planerat åk 9"
+      - rowgroup:
+        - row "Bild 0 h 0 h":
+          - rowheader "Bild"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Engelska 0 h 0 h":
+          - rowheader "Engelska"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Hem- och konsumentkunskap 0 h 0 h":
+          - rowheader "Hem- och konsumentkunskap"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Idrott och hälsa 5 h 0 h":
+          - rowheader "Idrott och hälsa"
+          - cell "5 h"
+          - cell "0 h"
+        - row "Språkval 0 h 0 h":
+          - rowheader "Språkval"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Matematik 8 h 116,4 h":
+          - rowheader "Matematik"
+          - cell "8 h"
+          - cell "116,4 h"
+        - row "Musik 0 h 0 h":
+          - rowheader "Musik"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Naturorienterande ämnen 0 h 0 h":
+          - rowheader "Naturorienterande ämnen"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Slöjd 0 h 0 h":
+          - rowheader "Slöjd"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Samhällsorienterande ämnen 0 h 0 h":
+          - rowheader "Samhällsorienterande ämnen"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Svenska eller svenska som andraspråk 0 h 0 h":
+          - rowheader "Svenska eller svenska som andraspråk"
+          - cell "0 h"
+          - cell "0 h"
+        - row "Teknik 0 h 0 h":
+          - rowheader "Teknik"
+          - cell "0 h"
+          - cell "0 h"
+    - paragraph: Åk 7 och 8 ingår inte i siffrorna, eftersom tiden inte finns registrerad i SchemaPro.
+    - paragraph: Timplanens timmar gäller hela stadiet och visas när alla årskurser i stadiet finns i SchemaPro.
+    - paragraph: Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger. Timplanens timmar är SchemaPros referensdata (SFS <år>:945 B1).

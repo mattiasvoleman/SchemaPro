@@ -1,0 +1,11 @@
+- menu "Notiser, 1 oläst":
+  - text: Notiser
+  - menuitem "Markera alla som lästa"
+  - menuitem "Oläst. Svenska den <datum> 10:40:00 ställdes in. <datum> 07:30:00":
+    - text: Oläst.
+    - paragraph: Svenska den <datum> 10:40:00 ställdes in.
+    - paragraph: <datum> 07:30:00
+  - menuitem "Ledighet för Hugo Nord (<datum> – <datum>) beviljades. <datum> 07:30:00":
+    - paragraph: Ledighet för Hugo Nord (<datum> – <datum>) beviljades.
+    - paragraph: <datum> 07:30:00
+  - menuitem "Välj vad som skickas till dig"
