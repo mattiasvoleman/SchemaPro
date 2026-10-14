@@ -32,7 +32,10 @@
  *        duty link's holder as EMPLOYMENT; the provisioning list records
  *        whom it lists;
  *   lä10 a PATCH of a person records them as PEOPLE: the answer is the whole
- *        row, whatever the body named.
+ *        row, whatever the body named;
+ *   lä11 an integration's calendar events filtered to a pupil (S1's student)
+ *        record the pupil as SCHEDULE: the page is their timetable, though it
+ *        names them nowhere.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -409,6 +412,29 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
       assert.equal(answer.email, `${marker}-laslogg-Lärare@example.invalid`);
       const rows = await log(`"actorId" = $2 AND kind = 'PEOPLE' AND $3::uuid = ANY("subjectIds")`, [second.id, teacher.id]);
       assert.deepEqual(rows.map((row) => row.subjectIds), [[teacher.id]]);
+    });
+
+    await check('(lä11) an integration\'s calendar events filtered to a pupil record the pupil as SCHEDULE', async () => {
+      const eventsKey = await one<{ id: string }>(
+        `INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes) VALUES ($1, 'probe läslogg kalender', $2, $3::text[]) RETURNING id`,
+        [s, `${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`, '{calendarEvents.read}'],
+      );
+      const caller: V2Caller = { schoolId: s, keyId: eventsKey.id, scopes: new Set(['calendarEvents.read'] as Scope[]) };
+      const window = {
+        'startTime.onOrAfter': new Date(Date.now() - 2 * 86_400_000).toISOString(),
+        'startTime.onOrBefore': new Date(Date.now() + 2 * 86_400_000).toISOString(),
+      };
+      const v2 = new Ss12000V2Service(api);
+      // A teacher's filter is the timetable: nothing.
+      await v2.listCalendarEvents(caller, { ...window, teacher: randomUUID() });
+      assert.deepEqual(await log(`"apiKeyId" = $2`, [eventsKey.id]), []);
+      const page = await v2.listCalendarEvents(caller, { ...window, student: pupil.id });
+      assert.ok(page.data.length > 0, 'the pupil had no lesson in the window');
+      assert.ok(!JSON.stringify(page).includes(pupil.id), 'the page named the pupil, so this proves nothing about the filter');
+      assert.deepEqual(
+        (await log(`"apiKeyId" = $2`, [eventsKey.id])).map((row) => [row.kind, row.channel, row.subjectIds]),
+        [['SCHEDULE', 'INTEGRATION', [pupil.id]]],
+      );
     });
   } finally {
     await sweepLasloggSchool(owner, marker);

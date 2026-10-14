@@ -16,7 +16,8 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   EMPLOYMENT               tjänst and anställning
  *   STAFF_ABSENCES           when a member of staff is away, and why
  *   ACCESS_LOG               the log itself, read about a person
- *   SCHEDULE                 one pupil's week, as the family sees it (20261026110000)
+ *   SCHEDULE                 one pupil's timetable: the family's week, and an
+ *                            SS12000 v2 read filtered to the pupil (20261026110000)
  *   TEACHING_TIME            undervisningstid per pupil: timplan coverage and
  *                            the pupil's statement (20261026110000)
  *

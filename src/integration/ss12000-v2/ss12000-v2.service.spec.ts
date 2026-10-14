@@ -1,4 +1,5 @@
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
+import { recordedReads } from '../../../test/utils/recorded-reads';
 import { ALL_V2_SCOPES, ProviderWorld, W } from '../../../test/utils/ss12000-provider-world';
 import type { PrismaService } from '../../database/prisma.service';
 import { adhocActivityId } from './ids';
@@ -259,6 +260,39 @@ describe('activities', () => {
     const bare = await service.getActivity(caller(['activities.read']), W.m1, { expandReferenceNames: 'true' });
     expect(JSON.stringify(bare)).not.toContain('displayName":"7A');
     expect(bare['syllabus']).toEqual({ id: W.ma });
+  });
+});
+
+describe('the läslogg of a read filtered to a pupil', () => {
+  // The answer is the pupil's timetable, though the page names them only
+  // where they stand outside the groups: SCHEDULE about them (forPupils).
+  const run = async (read: (service: Ss12000V2Service) => Promise<unknown>) => {
+    const world = new ProviderWorld();
+    const tx = createTxMock();
+    world.install(tx);
+    await read(new Ss12000V2Service(createPrismaMock(tx) as unknown as PrismaService));
+    return recordedReads(tx).filter((entry) => entry.kind === 'SCHEDULE');
+  };
+  const pupil = [{ kind: 'SCHEDULE', channel: null, ids: [W.p4] }];
+
+  it('activities by member, and their lookup by members', async () => {
+    expect(await run((service) => service.listActivities(caller(), { member: W.p4 }))).toEqual(pupil);
+    expect(await run((service) => service.lookupActivities(caller(), { members: [W.p4] }, {}))).toEqual(pupil);
+  });
+
+  it('calendar events by student, and their lookup by student', async () => {
+    expect(await run((service) => service.listCalendarEvents(caller(), { ...WINDOW, student: W.p4 }))).toEqual(pupil);
+    expect(await run((service) => service.lookupCalendarEvents(caller(), { student: [W.p4] }, {}))).toEqual(pupil);
+  });
+
+  it('nothing for a teacher filter, the unfiltered list, or a pupil with nothing in the window', async () => {
+    expect(await run((service) => service.listCalendarEvents(caller(), { ...WINDOW, teacher: W.emp1 }))).toEqual([]);
+    expect(await run((service) => service.listActivities(caller(), {}))).toEqual([]);
+    expect(
+      await run((service) =>
+        service.listCalendarEvents(caller(), { 'startTime.onOrAfter': '2026-12-01T00:00:00Z', 'startTime.onOrBefore': '2026-12-02T00:00:00Z', student: W.p4 }),
+      ),
+    ).toEqual([]);
   });
 });
 
