@@ -163,6 +163,15 @@ export interface ProposalUnstaffed {
   reason: StaffUnstaffedReason;
   /** NO_QUALIFIED_TEACHER where the row's own co-teacher is the only one qualified. */
   onlyCoTeacherQualified: boolean;
+  /**
+   * NO_CAPACITY_LEFT on a dated row: the posts that change during the year
+   * which could otherwise have taken it — a target above 0, and under
+   * respect a covering behörighet — and which the row excludes whatever
+   * their room (planOf). The engine counts them as candidates without room;
+   * this says why, so the dialog does not claim only that nobody has room.
+   * Absent when there are none.
+   */
+  excludedChanging?: string[];
 }
 
 export interface ProposalConflict {
@@ -935,11 +944,23 @@ export class StaffingProposalService {
           reason,
           onlyCoTeacherQualified:
             reason === 'NO_QUALIFIED_TEACHER' && plannedRow.co !== null && plannedRow.eligible.includes(plannedRow.co),
+          ...excludedChangingOf(plannedRow, reason),
         },
       ];
     });
 
     return { assignments, teachers, unstaffed: unstaffedRows };
+
+    function excludedChangingOf(plannedRow: RowPlan, reason: StaffUnstaffedReason): Pick<ProposalUnstaffed, 'excludedChanging'> {
+      if (reason !== 'NO_CAPACITY_LEFT' || plannedRow.excluded.length === 0) return {};
+      const could = plannedRow.excluded.filter(
+        (id) =>
+          id !== plannedRow.co &&
+          (plan.teacherById.get(id)?.target ?? 0) > 0 &&
+          (!plan.respect || plannedRow.eligible.includes(id)),
+      );
+      return could.length > 0 ? { excludedChanging: could } : {};
+    }
   }
 }
 

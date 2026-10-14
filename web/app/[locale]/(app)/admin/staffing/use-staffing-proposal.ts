@@ -110,6 +110,11 @@ export interface ProposalUnstaffed {
   chargeMinutesPerWeek: number;
   reason: StaffUnstaffedReason;
   onlyCoTeacherQualified: boolean;
+  /**
+   * NO_CAPACITY_LEFT on a dated row: the posts that change during the year
+   * which could otherwise have taken it, and which a dated row never gets.
+   */
+  excludedChanging?: string[];
 }
 
 export interface ProposalConflict {
