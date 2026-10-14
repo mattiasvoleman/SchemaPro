@@ -4,7 +4,6 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
-import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from './academic-year-bounds';
 import {
@@ -17,6 +16,7 @@ import type { StaffingWarning } from '../staffing/staffing-checks';
 import { isMixed } from '../common/lesson-lengths';
 import {
   CREATE_DEFAULT_SHAPE,
+  assertLessonLengthFitsTheGrid,
   mergeLessonShape,
   touchesLessonShape,
 } from './lesson-shape-merge';
@@ -475,13 +475,7 @@ export class TeachingRequirementsService {
    * the nearest lengths that work, and a decorator cannot.
    */
   private assertLessonLengthFitsTheGrid(minutes: number | undefined): void {
-    if (minutes === undefined || fitsTheGrid(minutes)) return;
-    const below = Math.floor(minutes / SLOT_MINUTES) * SLOT_MINUTES;
-    const above = below + SLOT_MINUTES;
-    throw new BadRequestException(
-      `${minutes} minuter går inte att lägga på schemat, som räknar i hela ` +
-        `${SLOT_MINUTES}-minutersintervall. Närmast är ${below} eller ${above} minuter.`,
-    );
+    assertLessonLengthFitsTheGrid(minutes);
   }
 
   private assertPeriodFitsYear(

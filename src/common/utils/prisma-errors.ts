@@ -143,15 +143,18 @@ export function teachingBlockRefusal(error: unknown): TeachingBlockRefusal | nul
 /**
  * The 409 for a write that would leave a block's timplansposter with different
  * lessons or weeks. The block's lessons are placed at the same times, so every
- * member has the same lessons per week, lengths and weeks; the sentence says
- * how to get there — the row out of the block first, or every member alike.
+ * member has the same lessons per week, lengths and weeks; the sentence names
+ * the two ways there are: the block's own lessons, changed for every member
+ * at once (PATCH /teaching-blocks/:id, the Block panel's "Ändra lektioner"),
+ * or the post taken out of the block first.
  */
 export function blockMembersDifferConflict(refusal: TeachingBlockRefusal): ConflictException {
   const which = refusal.blockName === null ? 'ett block' : `blocket "${refusal.blockName}"`;
   return new ConflictException({
     message:
       `Timplansposterna i ${which} läggs på samma tider och måste ha samma antal lektioner, ` +
-      'samma längder och samma veckor. Ta posten ur blocket först, eller ändra alla poster i blocket likadant.',
+      'samma längder och samma veckor. Ändra lektionerna för hela blocket under Block på Timplansposter, ' +
+      'eller ta posten ur blocket först.',
     code: BLOCK_MEMBERS_DIFFER,
     ...(refusal.teachingBlockId !== null ? { teachingBlockId: refusal.teachingBlockId } : {}),
   });

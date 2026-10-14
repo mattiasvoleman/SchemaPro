@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import {
   MAX_DISTINCT_LENGTHS,
   canonicalShape,
@@ -163,4 +164,19 @@ export function mergeLessonShape(before: LessonShape, patch: LessonShapePatch): 
     throw new BadRequestException({ message: resolved.message, code: resolved.code });
   }
   return resolved;
+}
+
+/**
+ * A length the schedule cannot hold, refused with the two nearest that it can:
+ * the solver counts in SLOT_MINUTES. Shared by every writer of a lesson length
+ * that answers the school directly (a timplanspost, a block's lessons).
+ */
+export function assertLessonLengthFitsTheGrid(minutes: number | undefined): void {
+  if (minutes === undefined || fitsTheGrid(minutes)) return;
+  const below = Math.floor(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+  const above = below + SLOT_MINUTES;
+  throw new BadRequestException(
+    `${minutes} minuter går inte att lägga på schemat, som räknar i hela ` +
+      `${SLOT_MINUTES}-minutersintervall. Närmast är ${below} eller ${above} minuter.`,
+  );
 }
