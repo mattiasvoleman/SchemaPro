@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { LOCAL_TIMPLAN_MAX_ENTRIES } from '../timplan/dto/local-timplan.dto';
 import {
@@ -30,6 +31,8 @@ import {
   unknownNationalCodeMessage,
 } from '../resources/national-codes';
 import { UsersService } from '../users/users.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   RequirementImportChecks,
   SAME_TEACHER_TWICE_IN_FILE,
@@ -115,9 +118,15 @@ type StoredRequirementValues = Required<RequirementValues>;
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
 
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it an uppdrag file tells no mentor of the leave
+   * requests its MENTORSKAP gives them (Nest always injects it).
+   */
   constructor(
     private readonly prisma: PrismaService,
     private readonly users: UsersService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   /**
@@ -466,6 +475,12 @@ export class ImportService {
    * pupil while their file uploads would otherwise end up holding uppdrag the
    * demotion guard counted as zero. One locking read for the whole file, not
    * one per row.
+   *
+   * A MENTORSKAP row written makes its teacher a mentor of the class, and so
+   * may give them the pupils' pending leave requests (Mentorns
+   * ledighetsbeslut). Once the rows are written, in the upload's transaction,
+   * the mentors it has given a request are told, once each, as
+   * TeacherDutiesService does for one uppdrag: one catch-up for the file.
    */
   async importTeacherDuties(
     dto: ImportTeacherDutiesDto,
@@ -550,6 +565,7 @@ export class ImportService {
       }
 
       const seenAtRow = new Map<string, number>();
+      let mentorshipWritten = false;
       for (const [index, row] of dto.rows.entries()) {
         const rowNumber = index + 1;
 
@@ -651,6 +667,7 @@ export class ImportService {
             },
           });
           report.created += 1;
+          if (row.kind === 'MENTORSKAP') mentorshipWritten = true;
           continue;
         }
         // Dates by timestamp: Prisma hands back a fresh Date per read.
@@ -667,8 +684,10 @@ export class ImportService {
         }
         await tx.teacherDuty.update({ where: { id: current.id }, data: values });
         report.updated += 1;
+        if (row.kind === 'MENTORSKAP') mentorshipWritten = true;
       }
 
+      if (mentorshipWritten && this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
       return report;
     });
   }

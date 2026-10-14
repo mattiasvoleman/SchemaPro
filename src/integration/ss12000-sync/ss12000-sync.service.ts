@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient, type Ss12000SyncChange, type Ss12000SyncRun } from '@prisma/client';
@@ -11,6 +12,8 @@ import { recordRead } from '../../access-log/access-log';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../../common/utils/request-context';
 import { PrismaService } from '../../database/prisma.service';
+import { tellNewMentors } from '../../family/leave-notices';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { applyChanges, type StoredChange } from './apply';
 import { Ss12000Client, type ClientStats } from './client';
 import { connectionOf, localDate, openSecrets, readSealed } from './connection';
@@ -33,6 +36,12 @@ export const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const APPLY_TIMEOUT_MS = 120_000;
 
 const NOTES: ReadonlySet<ChangeOp> = new Set(['CONFLICT', 'INFO']);
+/**
+ * The applied changes that may give a mentor a pending leave request
+ * (Mentorns ledighetsbeslut): a pupil's class move, and a reactivation, of a
+ * pupil or a teacher, which a relink also is (apply.ts sets isActive).
+ */
+const MOVES_A_MENTOR: ReadonlySet<string> = new Set(['CLASS_MEMBERSHIP:MOVE', 'PERSON:REACTIVATE', 'PERSON:RELINK']);
 
 export type RunView = Ss12000SyncRun;
 
@@ -67,10 +76,16 @@ export class Ss12000SyncService {
   private readonly logger = new Logger(Ss12000SyncService.name);
   private readonly inFlight = new Set<Promise<void>>();
 
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it an admin's apply tells no mentor (Nest
+   * always injects it).
+   */
   constructor(
     private readonly prisma: PrismaService,
     private readonly secrets: Ss12000Secrets,
     private readonly outbound: Ss12000Outbound,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   /** Resolves once every run started in the background has finished (tests, shutdown). */
@@ -482,6 +497,19 @@ export class Ss12000SyncService {
             }
           }
           await this.markApplied(tx, schoolId, outcome.applied);
+          // A class move or a reactivation may give a mentor a pending leave
+          // request (app.leave_mentors reads the pupil's class and the
+          // teacher's isActive): the admin's apply tells them, once each, as
+          // an uppdrag's own write does. The night's auto-apply runs as the
+          // sync principal, which app.leave_requests_tell_new_mentors answers
+          // with nothing; its moves are told at the school's next catch-up.
+          const appliedIds = new Set(outcome.applied);
+          if (
+            this.notifications &&
+            chosen.some((change) => appliedIds.has(change.id) && MOVES_A_MENTOR.has(`${change.entity}:${change.op}`))
+          ) {
+            await tellNewMentors(this.notifications, tx, schoolId);
+          }
           const errors = [...asArray(run.errors), ...outcome.skipped.map(({ code, entity, externalId }) => ({ code, entity, externalId }))].slice(0, 200);
           const updated = await tx.ss12000SyncRun.update({
             where: { id: runId },

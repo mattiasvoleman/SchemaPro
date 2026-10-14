@@ -8,6 +8,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { StudentGroupsService } from './student-groups.service';
 import type {
   CreateStudentGroupDto,
@@ -501,6 +502,43 @@ describe('StudentGroupsService — teaching-group members', () => {
         expect.objectContaining({ where: { studentGroupId: GROUP_ID } }),
       );
       expect(prisma.withRls).toHaveBeenCalled();
+    });
+  });
+
+  // A lov spanning årskurser closes a pupil's day by the årskurs of their
+  // class (app.leave_school_days).
+  describe('the leave requests an årskurs gives a mentor (Mentorns ledighetsbeslut)', () => {
+    const TELL = 'app.leave_requests_tell_new_mentors()';
+    const MENTOR = '77777777-7777-4777-8777-777777777777';
+    const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const NOTICE_ROW = { notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } };
+    let deliver: jest.Mock;
+    let queryRaw: jest.Mock;
+
+    beforeEach(() => {
+      deliver = jest.fn();
+      service = new StudentGroupsService(prisma as unknown as PrismaService, { deliver } as unknown as NotificationsService);
+      queryRaw = jest.fn(() => Promise.resolve([NOTICE_ROW]));
+      Object.assign(tx, { $queryRaw: queryRaw });
+      tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID, schoolId: SCHOOL_ID });
+    });
+
+    const told = () => queryRaw.mock.calls.filter((call) => String((call[0] as string[]).join('?')).includes(TELL));
+
+    it('tells the mentors after a new årskurs, in its transaction', async () => {
+      await service.update(GROUP_ID, { gradeLevel: 8 }, testUser());
+      expect(told()).toHaveLength(1);
+      expect(queryRaw.mock.invocationCallOrder[0]!).toBeGreaterThan(tx.studentGroup.update.mock.invocationCallOrder[0]!);
+      expect(deliver).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ schoolId: SCHOOL_ID, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
+      );
+    });
+
+    it('asks nothing of a rename', async () => {
+      await service.update(GROUP_ID, { name: '7B' }, testUser());
+      expect(told()).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
     });
   });
 });

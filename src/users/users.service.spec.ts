@@ -17,6 +17,7 @@ import {
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import type { CreateUserDto } from './dto/user.dto';
 import { UserLookupError, type SupabaseAdminService } from './supabase-admin.service';
 import { UsersService } from './users.service';
@@ -1099,6 +1100,68 @@ describe('UsersService', () => {
       await expect(
         service.update(USER_ID, { firstName: 'X' }, testUser()),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    // A pupil's class says who their mentors are, and a teacher's role and
+    // isActive whether they are one (app.leave_mentors): such a PATCH may give
+    // a mentor a pending leave request nobody told them of.
+    describe('the leave requests a class move gives a mentor (Mentorns ledighetsbeslut)', () => {
+      const TELL = 'app.leave_requests_tell_new_mentors()';
+      const MENTOR = '77777777-7777-4777-8777-777777777777';
+      const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+      let deliver: jest.Mock;
+
+      beforeEach(() => {
+        deliver = jest.fn();
+        service = new UsersService(
+          prisma as unknown as PrismaService,
+          supabaseAdmin as unknown as SupabaseAdminService,
+          { deliver } as unknown as NotificationsService,
+        );
+        queryRaw.mockImplementation((...call: unknown[]) =>
+          rawSql(call).includes(TELL)
+            ? Promise.resolve([{ notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } }])
+            : Promise.resolve(lockingRead(USERS, users, call)),
+        );
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+      });
+
+      const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
+
+      it.each([
+        ['a class move', UserRole.STUDENT, { studentGroupId: GROUP_ID }],
+        ['leaving the class', UserRole.STUDENT, { studentGroupId: null }],
+        ['a reactivation', UserRole.TEACHER, { isActive: true }],
+        ['a role change', UserRole.SCHOOL_ADMIN, { role: UserRole.TEACHER }],
+      ])('tells the mentors after %s, in the PATCH’s transaction', async (_what, stored, dto) => {
+        storeUser({ role: stored, studentGroupId: null, pseudonymisedAt: null });
+        const ranIn = transactionsOf(prisma);
+        const toldIn = ranIn(queryRaw);
+        const writtenIn = ranIn(tx.user.update);
+
+        await service.update(USER_ID, dto, testUser());
+
+        expect(told()).toHaveLength(1);
+        const at = queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+        expect(at).toBeGreaterThan(tx.user.update.mock.invocationCallOrder[0]!);
+        expect(new Set([...toldIn, ...writtenIn]).size).toBe(1);
+        expect(deliver).toHaveBeenCalledWith(
+          tx,
+          expect.objectContaining({ schoolId: SCHOOL_ID, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
+        );
+      });
+
+      it('asks nothing of a PATCH that moves no mentor: names, phone', async () => {
+        await service.update(USER_ID, { firstName: 'Maja', lastName: 'Ek', phone: null }, testUser());
+        expect(told()).toEqual([]);
+        expect(deliver).not.toHaveBeenCalled();
+      });
+
+      it('asks nothing when the move is refused', async () => {
+        storeUser({ role: UserRole.TEACHER, studentGroupId: null, pseudonymisedAt: null });
+        await expect(service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser())).rejects.toThrow(BadRequestException);
+        expect(told()).toEqual([]);
+      });
     });
   });
 

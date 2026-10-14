@@ -5,12 +5,15 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma, type User, type UserRole } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import {
@@ -115,9 +118,15 @@ export interface BulkInvitationReport {
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it a class move tells no mentor of the leave
+   * requests it gives them (Nest always injects it).
+   */
   constructor(
     private readonly prisma: PrismaService,
     private readonly supabaseAdmin: SupabaseAdminService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   /**
@@ -459,6 +468,19 @@ export class UsersService {
             ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
           },
         });
+        // A pupil's class says who their mentors are, and a teacher's role
+        // and isActive whether they are one (app.leave_mentors): a move, a
+        // reactivation or a role change may give a mentor a pending leave
+        // request they were never told of (Mentorns ledighetsbeslut). One
+        // catch-up in this transaction tells them, as the uppdrag's own
+        // writes do.
+        if (
+          this.notifications &&
+          user.schoolId &&
+          (dto.studentGroupId !== undefined || dto.isActive !== undefined || dto.role !== undefined)
+        ) {
+          await tellNewMentors(this.notifications, tx, user.schoolId);
+        }
         // The answer is the whole row, e-mail and phone among them, whatever
         // the body named: a PATCH with an empty body would otherwise read a
         // person unrecorded (PEOPLE). Creating answers with what its caller

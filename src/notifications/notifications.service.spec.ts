@@ -428,8 +428,9 @@ describe('NotificationsService', () => {
   });
 
   describe('deliver', () => {
-    // app.leave_request_notify (20261023091000) writes a guardian's
-    // LEAVE_REQUESTED notices to the mentors itself; deliver hands them on.
+    // The database writes the LEAVE_REQUESTED notices to the mentors itself
+    // (20261023091000: the LeaveRequests_tell_mentors trigger and
+    // app.leave_requests_tell_new_mentors); deliver hands them on.
     const entry = (overrides: Record<string, unknown> = {}) => ({
       schoolId: SCHOOL_ID,
       type: 'LEAVE_REQUESTED' as const,

@@ -102,9 +102,13 @@ describe('CSV import (e2e)', () => {
 
     it('imports uppdrag for the dialog’s year, resolving teacher by email, group by name and subject by code', async () => {
       harness.tx['user']!['findMany']!.mockResolvedValue([{ id: 'u-karin', email: 'karin.ek@example.com' }]);
-      Object.assign(harness.tx, {
-        $queryRaw: jest.fn(() => Promise.resolve([{ id: 'u-karin', role: 'TEACHER' }])),
-      });
+      // The teachers' lock, and the leave notices the MENTORSKAP owes
+      // (Mentorns ledighetsbeslut): none here.
+      const TELL = 'app.leave_requests_tell_new_mentors()';
+      const queryRaw = jest.fn((strings: readonly string[]) =>
+        Promise.resolve(strings.join('?').includes(TELL) ? [] : [{ id: 'u-karin', role: 'TEACHER' }]),
+      );
+      Object.assign(harness.tx, { $queryRaw: queryRaw });
       harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: 'sub-ma', name: 'Matematik', code: 'MA' }]);
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, name: '7B' }]);
       harness.tx['teacherDuty']!['findMany']!.mockResolvedValue([]);
@@ -146,6 +150,9 @@ describe('CSV import (e2e)', () => {
           validTo: null,
           note: null,
         });
+        // Nest hands the import its NotificationsService, so the MENTORSKAP
+        // asks once which mentors it gives a pending request.
+        expect(queryRaw.mock.calls.filter(([strings]) => strings.join('?').includes(TELL))).toHaveLength(1);
 
         // A slot is not something a file can say.
         await post(harness, 'teacher-duties')

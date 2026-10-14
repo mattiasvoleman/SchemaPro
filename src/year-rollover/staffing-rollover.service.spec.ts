@@ -1,6 +1,7 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { testUser } from '../../test/utils/prisma-mock';
 import { recordedReadsIn } from '../../test/utils/recorded-reads';
 import { IDS, givenRolloverWorld, prismaFor, staffingRows, type RecordedCall, type Row } from '../../test/utils/rollover-world';
@@ -207,5 +208,59 @@ describe('StaffingRolloverService — execute', () => {
       response: expect.objectContaining({ code: 'STAFFING_ROLLOVER_NO_PREDECESSOR' }),
     });
     expect(world.calls.filter((call) => call.model === '$queryRaw')).toHaveLength(1);
+  });
+});
+
+describe('StaffingRolloverService — the leave requests a carried MENTORSKAP gives (Mentorns ledighetsbeslut)', () => {
+  const TELL = 'app.leave_requests_tell_new_mentors()';
+  const MENTOR_NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+  const LEAVE_ID = '88888888-8888-4888-8888-888888888888';
+
+  /** The carry as Nest builds it, with the notifications, into a year rolled without tjänster. */
+  async function carrying(rows = staffingRows()) {
+    const context = await rolledWithoutStaffing(rows);
+    const deliver = jest.fn();
+    const service = new StaffingRolloverService(context.prisma as unknown as PrismaService, { deliver } as unknown as NotificationsService);
+    const answer = context.world.queryRaw;
+    context.world.queryRaw = (sql, values) =>
+      sql.includes(TELL)
+        ? [{ notificationId: MENTOR_NOTICE, userId: IDS.anna, email: null, meta: { leaveRequestId: LEAVE_ID, schoolDays: 1 } }]
+        : answer(sql, values);
+    return { ...context, service, deliver };
+  }
+  const told = (calls: RecordedCall[]) => calls.filter((call) => call.model === '$queryRaw' && call.sql!.includes(TELL));
+
+  it('tells the mentors once after the uppdrag are written, in the carry’s transaction: the target may already hold its pupils', async () => {
+    const { world, service, deliver, yearB } = await carrying();
+    const preview = await service.preview(yearB, admin);
+    world.calls.length = 0;
+    await service.execute(yearB, preview.planHash, admin);
+    const tells = told(world.calls);
+    expect(tells).toHaveLength(1);
+    expect(world.calls.indexOf(tells[0]!)).toBeGreaterThan(
+      world.calls.findIndex((call) => call.model === 'teacherDuty' && call.method === 'createMany'),
+    );
+    expect(deliver).toHaveBeenCalledWith(
+      world.tx,
+      expect.objectContaining({ type: 'LEAVE_REQUESTED', recipients: [{ userId: IDS.anna, notificationId: MENTOR_NOTICE }] }),
+    );
+
+    deliver.mockClear();
+    const again = await service.preview(yearB, admin);
+    world.calls.length = 0;
+    expect((await service.execute(yearB, again.planHash, admin)).counts.duties).toBe(0);
+    expect(told(world.calls)).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing of a carry that writes no MENTORSKAP', async () => {
+    const rows = staffingRows();
+    rows['teacherDuty'] = rows['teacherDuty']!.filter((row) => row['kind'] !== 'MENTORSKAP');
+    const { world, service, deliver, yearB } = await carrying(rows);
+    const preview = await service.preview(yearB, admin);
+    world.calls.length = 0;
+    expect((await service.execute(yearB, preview.planHash, admin)).counts.duties).toBeGreaterThan(0);
+    expect(told(world.calls)).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
   });
 });

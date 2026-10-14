@@ -4,11 +4,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { todayInZone } from '../common/utils/time';
@@ -102,12 +105,39 @@ export interface ActivationResult {
  * Every refusal is a code the web translates, with a Swedish message that
  * names the year, the group or the lov. Logs carry ids and counts, never a
  * pupil's or a teacher's name.
+ *
+ * BOTH TELL THE MENTORS THEY GIVE A REQUEST (Mentorns ledighetsbeslut). A
+ * pupil's mentor is a MENTORSKAP uppdrag on the class their class history
+ * (StudentEnrollments) names on the request's days, and the mentor decides
+ * when the request's skoldagar are within the delegation.
+ *   * The rollover's MENTORSKAP give nobody a request: they sit on classes
+ *     it creates in its own transaction, a history row names a class of its
+ *     own year and is written only when a pupil's class changes, and the
+ *     rollover moves no pupil (registry: User AT_ACTIVATION). What the
+ *     rollover does change is the skoldagar (app.leave_school_days): a
+ *     weekday after the last läsår counts until the next läsår exists, and
+ *     from then only that year's days count, less its lov. A request
+ *     reaching past the old year's end, over the summer, can so come within
+ *     the delegation, and its mentor in the old year then decides it. So
+ *     the rollover tells, once its year and lov are written.
+ *   * The activation moves the pupils in, and their new mentors decide the
+ *     requests in the new year's dates from then. So it tells once it has
+ *     moved anybody.
+ * Once each per request, in the write's own transaction.
  */
 @Injectable()
 export class YearRolloverService {
   private readonly logger = new Logger(YearRolloverService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it neither the rollover nor the activation
+   * tells a mentor (Nest always injects it).
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
 
   async previewRollover(
     sourceYearId: string,
@@ -172,6 +202,7 @@ export class YearRolloverService {
           if (plan.planHash !== dto.planHash) throw rolloverStale(carryStaffing);
 
           const applied = await applyRollover(tx, schoolId, plan.writes);
+          if (this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
           return {
             academicYear: {
               id: applied.targetYearId,
@@ -313,6 +344,9 @@ export class YearRolloverService {
             });
             if (move.toGroupId !== null) moved += count;
           }
+          // The class history follows the moves in the same statements, so
+          // the catch-up reads every pupil in their new class.
+          if (moved > 0 && this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
           return {
             year: { id: yearId, name: plan.year.name, isActive: true as const },
             moved,

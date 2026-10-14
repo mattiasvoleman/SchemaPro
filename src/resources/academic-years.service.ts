@@ -1,7 +1,9 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Optional } from '@nestjs/common';
 import { Prisma, type AcademicYear, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
@@ -21,9 +23,26 @@ export const YEAR_HAS_HOME_PUPILS = 'YEAR_HAS_HOME_PUPILS';
 /** A created year, with the årskurser it follows a timplan in from the start. */
 export type CreatedAcademicYear = AcademicYear & { timplans: YearTimplanRow[] };
 
+/**
+ * A läsår bounds both halves of who decides a pending leave request
+ * (Mentorns ledighetsbeslut): its dates bound the year's MENTORSKAP
+ * (app.leave_mentors), and a weekday counts as a skoldag inside a läsår, or
+ * after the last one until the next exists (app.leave_school_days). So a
+ * year created, deleted, or one whose dates move, may give a mentor a
+ * request, and each tells the mentors it gives one, once each, in its own
+ * transaction.
+ */
 @Injectable()
 export class AcademicYearsService {
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it a läsår tells no mentor of the leave requests
+   * it gives them (Nest always injects it).
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
 
   /**
    * A new läsår, and its timplan per årskurs: every grade the school's newest
@@ -70,6 +89,7 @@ export class AcademicYearsService {
           },
         });
         const timplans = await attachDefaultTimplans(tx, schoolId, year.id);
+        if (this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
         return { ...year, timplans };
       });
     } catch (error) {
@@ -115,7 +135,7 @@ export class AcademicYearsService {
           });
         }
 
-        return tx.academicYear.update({
+        const year = await tx.academicYear.update({
           where: { id },
           data: {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -128,6 +148,10 @@ export class AcademicYearsService {
             ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
           },
         });
+        if (this.notifications && (dto.startDate !== undefined || dto.endDate !== undefined)) {
+          await tellNewMentors(this.notifications, tx, schoolId);
+        }
+        return year;
       });
     } catch (error) {
       rethrowPrismaError(error);
@@ -177,6 +201,7 @@ export class AcademicYearsService {
           });
         }
         await tx.academicYear.delete({ where: { id } });
+        if (this.notifications && user.schoolId) await tellNewMentors(this.notifications, tx, user.schoolId);
       });
     } catch (error) {
       rethrowPrismaError(error);

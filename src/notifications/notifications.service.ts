@@ -117,11 +117,15 @@ export class NotificationsService {
   /**
    * Hands notices already written in `tx` to the delivery after the commit,
    * as notifyUsers does with its own rows. For the one writer that is not
-   * notifyUsers: app.leave_request_notify (20261023091000), which writes a
-   * guardian's or a pupil's LEAVE_REQUESTED notice to the mentors because
-   * the filer may neither insert a teacher's notification nor read a
-   * teacher's address. The e-mail goes only when it is configured, and
-   * nothing goes outside a withRls transaction.
+   * notifyUsers: the database's LEAVE_REQUESTED notices to the mentors
+   * (20261023091000). The LeaveRequests_tell_mentors trigger writes them for
+   * every new request (app.leave_tell_mentors), because the filer may neither
+   * insert a teacher's notification nor read a teacher's address, and
+   * app.leave_requests_tell_new_mentors for a staff write that has since
+   * given a mentor a pending request. app.leave_request_notices and that
+   * catch-up hand the rows back with the addresses (family/leave-notices.ts).
+   * The e-mail goes only when it is configured, and nothing goes outside a
+   * withRls transaction.
    */
   deliver(tx: PrismaClient, entry: OutboxEntry): void {
     if (entry.recipients.length === 0) return;

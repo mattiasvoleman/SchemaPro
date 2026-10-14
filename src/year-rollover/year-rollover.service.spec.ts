@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { testUser } from '../../test/utils/prisma-mock';
 import { recordedReadsIn } from '../../test/utils/recorded-reads';
 import {
@@ -1426,5 +1427,72 @@ describe('YearRolloverService — activation', () => {
     await expect(
       service.previewActivation('99999999-9999-4999-8999-999999999999', admin, AFTER),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('YearRolloverService — the leave requests a rolled MENTORSKAP gives (Mentorns ledighetsbeslut)', () => {
+  const TELL = 'app.leave_requests_tell_new_mentors()';
+  const MENTOR_NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+  const LEAVE_ID = '88888888-8888-4888-8888-888888888888';
+  const AFTER = { today: '2027-06-14' };
+
+  /** Rolled with tjänster and uppdrag, by a service built as Nest builds it: with the notifications. */
+  async function rolledWithMentors() {
+    const world = givenRolloverWorld(staffingRows());
+    const deliver = jest.fn();
+    const service = new YearRolloverService(
+      prismaFor(world) as unknown as PrismaService,
+      { deliver } as unknown as NotificationsService,
+    );
+    const answer = world.queryRaw;
+    world.queryRaw = (sql, values) =>
+      sql.includes(TELL)
+        ? [{ notificationId: MENTOR_NOTICE, userId: IDS.anna, email: null, meta: { leaveRequestId: LEAVE_ID, schoolDays: 1 } }]
+        : answer(sql, values);
+    const { result } = await previewAndExecute(world, service, { ...OPTIONS, carryStaffing: true });
+    return { world, service, deliver, rolloverCalls: [...world.calls], yearB: result.academicYear.id };
+  }
+  const told = (calls: RecordedCall[]) => calls.filter((call) => call.model === '$queryRaw' && call.sql!.includes(TELL));
+
+  it('the rollover tells the mentors once its year and lov are written, which change the skoldagar; its MENTORSKAP sits on a class nobody is in yet', async () => {
+    const { world, deliver, rolloverCalls, yearB } = await rolledWithMentors();
+    const tells = told(rolloverCalls);
+    expect(tells).toHaveLength(1);
+    const lastWrite = rolloverCalls.map((call) => /^create/.test(call.method)).lastIndexOf(true);
+    expect(rolloverCalls.indexOf(tells[0]!)).toBeGreaterThan(lastWrite);
+    expect(deliver).toHaveBeenCalledWith(
+      world.tx,
+      expect.objectContaining({ type: 'LEAVE_REQUESTED', recipients: [{ userId: IDS.anna, notificationId: MENTOR_NOTICE }] }),
+    );
+    // What the rollover's own MENTORSKAP gives: nothing, until the activation.
+    const b8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === '8A')!['id'];
+    expect(world.rows['teacherDuty']!.find((row) => row['academicYearId'] === yearB && row['kind'] === 'MENTORSKAP')).toMatchObject({
+      userId: IDS.anna,
+      studentGroupId: b8a,
+    });
+    expect(world.rows['user']!.filter((user) => user['studentGroupId'] === b8a)).toEqual([]);
+  });
+
+  it('tells the mentors once the activation has moved the pupils, in its transaction, and asks nothing of a run that moves nobody', async () => {
+    const { world, service, deliver, yearB } = await rolledWithMentors();
+    deliver.mockClear();
+    const preview = await service.previewActivation(yearB, admin, AFTER);
+    world.calls.length = 0;
+    expect((await service.executeActivation(yearB, { planHash: preview.planHash }, admin, AFTER)).moved).toBe(3);
+    const tells = told(world.calls);
+    expect(tells).toHaveLength(1);
+    const lastMove = world.calls.map((call) => call.model === 'user' && call.method === 'updateMany').lastIndexOf(true);
+    expect(world.calls.indexOf(tells[0]!)).toBeGreaterThan(lastMove);
+    expect(deliver).toHaveBeenCalledWith(
+      world.tx,
+      expect.objectContaining({ type: 'LEAVE_REQUESTED', recipients: [{ userId: IDS.anna, notificationId: MENTOR_NOTICE }] }),
+    );
+
+    deliver.mockClear();
+    const again = await service.previewActivation(yearB, admin, AFTER);
+    world.calls.length = 0;
+    expect((await service.executeActivation(yearB, { planHash: again.planHash }, admin, AFTER)).moved).toBe(0);
+    expect(told(world.calls)).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
   });
 });
