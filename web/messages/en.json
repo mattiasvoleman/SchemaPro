@@ -594,12 +594,18 @@
       "posts": "Entries in the block ({count, plural, =0 {none chosen} one {# chosen} other {# chosen}})",
       "filter": "Search entries",
       "inOther": "In the block {name}",
-      "postsHint": "The entries must have the same number of lessons, the same lengths and the same weeks. An entry in another block is taken out of it first.",
+      "postsHint": "The entries must have the same number of lessons, the same lengths and the same weeks when they are put in the block; after that, Change lessons changes the whole block's lessons. An entry in another block can be chosen once it is taken out of it.",
       "save": "Save block",
       "warnOne": "A block needs at least two entries for anything to be placed together.",
       "warnTeacher": "{first} and {second} have the same teacher, who cannot teach both at once. The generator refuses the block.",
       "warnGroup": "{first} and {second} are the same group, and the same pupils cannot be in both at once. The generator refuses the block.",
-      "memberNotice": "The entry is in a parallel block. Its lessons and weeks are the whole block's: take it out of the block under Blocks to change them here."
+      "memberNotice": "The entry is in a parallel block, and its lessons and weeks are the whole block's. Change the whole block's lessons with Change lessons under Blocks, or take the entry out of the block to change them here alone.",
+      "lessons": "Change lessons",
+      "lessonsNamed": "Change the lessons of the block {name}",
+      "lessonsTitle": "Lessons in {name}",
+      "lessonsDescription": "{count, plural, one {The block's entry gets} other {The block's # entries get}} these lessons at once, so they are still placed at the same times. Each entry's teachers are checked against the staffing as when an entry is changed.",
+      "lessonsSave": "Save lessons",
+      "lessonsSaved": "The lessons of the block {name} were saved."
     }
   },
   "timplan": {

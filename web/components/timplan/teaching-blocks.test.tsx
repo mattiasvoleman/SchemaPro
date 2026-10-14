@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type { TeachingBlock, TeachingRequirement } from "@/lib/types";
 import { BlocksHost, blockWarnings, type WarningText } from "./teaching-blocks";
 
@@ -18,6 +19,7 @@ const state = vi.hoisted(() => ({
   remove: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
+  warning: vi.fn(),
 }));
 
 vi.mock("@/utils/supabase/client", () => ({
@@ -36,11 +38,15 @@ vi.mock("@/lib/queries", () => ({
     remove: { mutateAsync: state.remove, isPending: false },
   }),
 }));
-vi.mock("sonner", () => ({ toast: { success: state.success, error: state.error } }));
+vi.mock("sonner", () => ({ toast: { success: state.success, error: state.error, warning: state.warning } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
-  useTranslations: () => (key: string, values?: Record<string, unknown>) =>
-    values ? `${key}(${Object.values(values).join("|")})` : key,
+  useTranslations: () =>
+    Object.assign(
+      (key: string, values?: Record<string, unknown>) =>
+        values ? `${key}(${Object.values(values).join("|")})` : key,
+      { has: () => true },
+    ),
 }));
 
 const YEAR = "y-1";
@@ -88,7 +94,7 @@ function show(requirements: TeachingRequirement[]) {
 
 beforeEach(() => {
   state.blocks = [{ id: "b-sv", academicYearId: YEAR, name: "Språkval åk 7" }];
-  for (const mock of [state.create, state.update, state.remove, state.error, state.success]) {
+  for (const mock of [state.create, state.update, state.remove, state.error, state.success, state.warning]) {
     mock.mockReset().mockResolvedValue(undefined);
   }
 });
@@ -173,6 +179,77 @@ describe("BlocksHost", () => {
 
     expect(state.error).toHaveBeenCalledWith("Timplansposterna i blocket \"Språkval åk 7\" läggs på samma tider …");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  describe("Ändra lektioner", () => {
+    const members = [
+      row("r-ty", "g-ty", "s-ty", { blockId: "b-sv", lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }),
+      row("r-fr", "g-fr", "s-fr", { blockId: "b-sv", lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }),
+    ];
+
+    it("opens on the block's lengths and sends the whole shape, once, for the block", async () => {
+      state.update.mockResolvedValue({ id: "b-sv", warnings: [] });
+      show(members);
+
+      await userEvent.click(await screen.findByRole("button", { name: "lessonsNamed(Språkval åk 7)" }));
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toHaveTextContent("lessonsDescription(2)");
+      expect(within(dialog).getByLabelText("lengthLessons(1)")).toHaveValue(1);
+      expect(within(dialog).getByLabelText("lengthMinutes(1)")).toHaveValue(80);
+      // Back to one length: three lessons of 60 for every member.
+      await userEvent.click(within(dialog).getByRole("button", { name: /removeLength/ }));
+      await userEvent.clear(within(dialog).getByLabelText("lessonsPerWeek"));
+      await userEvent.type(within(dialog).getByLabelText("lessonsPerWeek"), "3");
+      await userEvent.clear(within(dialog).getByLabelText("minutesPerLesson"));
+      await userEvent.type(within(dialog).getByLabelText("minutesPerLesson"), "60");
+      await userEvent.click(within(dialog).getByRole("button", { name: "lessonsSave" }));
+
+      expect(state.update.mock.calls).toEqual([
+        [{ id: "b-sv", lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] }],
+      ]);
+      expect(state.success).toHaveBeenCalledWith("lessonsSaved(Språkval åk 7)");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("waits on lengths that cannot be stored", async () => {
+      show(members);
+
+      await userEvent.click(await screen.findByRole("button", { name: "lessonsNamed(Språkval åk 7)" }));
+      const dialog = screen.getByRole("dialog");
+      await userEvent.clear(within(dialog).getByLabelText("lengthLessons(1)"));
+
+      expect(within(dialog).getByRole("button", { name: "lessonsSave" })).toBeDisabled();
+    });
+
+    it("says the staffing policy's warnings after saving, and its refusal in the dialog", async () => {
+      state.update.mockResolvedValueOnce({
+        id: "b-sv",
+        warnings: [{ code: "STAFF_TEACHER_OVER_TARGET", params: { minutes: 1200 } }],
+      });
+      show(members);
+
+      await userEvent.click(await screen.findByRole("button", { name: "lessonsNamed(Språkval åk 7)" }));
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "lessonsSave" }));
+      expect(state.warning).toHaveBeenCalledWith("lessonsSaved(Språkval åk 7)", {
+        description: "STAFF_TEACHER_OVER_TARGET(1200)",
+        duration: 12_000,
+      });
+
+      state.update.mockRejectedValueOnce(
+        new ApiError(409, "Över mål", "STAFF_TEACHER_OVER_TARGET", { minutes: 1300 }),
+      );
+      await userEvent.click(await screen.findByRole("button", { name: "lessonsNamed(Språkval åk 7)" }));
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "lessonsSave" }));
+      expect(screen.getByRole("dialog")).toHaveTextContent("refusedTitle STAFF_TEACHER_OVER_TARGET(1300)");
+      expect(state.error).not.toHaveBeenCalled();
+    });
+
+    it("is not offered for a block without posts", async () => {
+      show([row("r-ma", "g-7a", "s-ma")]);
+
+      await screen.findByRole("heading", { name: "Språkval åk 7" });
+      expect(screen.queryByRole("button", { name: "lessonsNamed(Språkval åk 7)" })).not.toBeInTheDocument();
+    });
   });
 
   it("removes a block after asking, by its name", async () => {
