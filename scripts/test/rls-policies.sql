@@ -16163,3 +16163,1261 @@ BEGIN
   SET LOCAL ROLE app_authenticated;
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 95: rektors beslut om delegering (LeaveDelegationDecisions,
+-- 20261023091000).
+--
+-- Rektor lets the mentor decide a leave request of at most N skoldagar,
+-- 1 to 10; no row, or a row with NULL, is no delegation, and the admin
+-- decides everything. The table is the history: a row is stamped with who
+-- recorded it and when, and is never changed or removed by the API's role.
+-- The ledighet school's admin records it, its staff read it, and nobody else
+-- reaches it, through either role. The school is rls-fixtures.sql's
+-- "rls-ledighet", with fixed dates in läsår 2095/96.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- 95a: the admin records a delegation, stamped with themselves, and every
+-- bound is refused from the side it refuses.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE d record; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'delegation: expected the ledighet school''s admin'; END IF;
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", reference)
+  VALUES (app.current_school_id(), 3, 'Dnr 2095:12');
+  SELECT * INTO d FROM "LeaveDelegationDecisions" WHERE "schoolId" = app.current_school_id();
+  IF d."mentorMaxSchoolDays" IS DISTINCT FROM 3 OR d.reference IS DISTINCT FROM 'Dnr 2095:12' THEN
+    RAISE EXCEPTION 'delegation: the admin reads back % / %', d."mentorMaxSchoolDays", d.reference;
+  END IF;
+  IF d."decidedById" IS DISTINCT FROM app.current_user_id() THEN RAISE EXCEPTION 'delegation: the decision is not stamped with the admin'; END IF;
+  IF d."decidedAt" < now() OR d."decidedAt" > clock_timestamp() THEN RAISE EXCEPTION 'delegation: decidedAt % is not the moment of the insert', d."decidedAt"; END IF;
+
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), NULL);
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 1);
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 10);
+  SELECT count(*) INTO n FROM "LeaveDelegationDecisions" WHERE "schoolId" = app.current_school_id();
+  IF n <> 4 THEN RAISE EXCEPTION 'delegation: the history holds % decisions, not 4', n; END IF;
+
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 11);
+    RAISE EXCEPTION 'delegation: eleven skoldagar were recorded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 0);
+    RAISE EXCEPTION 'delegation: zero skoldagar were recorded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", reference) VALUES (app.current_school_id(), 3, '');
+    RAISE EXCEPTION 'delegation: an empty reference was recorded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", reference) VALUES (app.current_school_id(), 3, repeat('x', 201));
+    RAISE EXCEPTION 'delegation: a reference of 201 characters was recorded';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", "decidedById") VALUES (app.current_school_id(), 3, app.current_user_id());
+    RAISE EXCEPTION 'delegation: the API wrote decidedById itself';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", "decidedAt") VALUES (app.current_school_id(), 3, now() - interval '1 year');
+    RAISE EXCEPTION 'delegation: the API backdated a decision';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveDelegationDecisions" SET "mentorMaxSchoolDays" = 5;
+    RAISE EXCEPTION 'delegation: the API changed a decision';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "LeaveDelegationDecisions";
+    RAISE EXCEPTION 'delegation: the API removed a decision';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays")
+    SELECT s.id, 3 FROM (SELECT gen_random_uuid() AS id) s;
+    RAISE EXCEPTION 'delegation: the admin recorded a decision for a school that is not theirs';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+END $$;
+
+-- 95b: the school's teachers read the decisions and record none; the
+-- guardian and the pupil read none and record none.
+DO $$
+DECLARE sub text; n bigint;
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000951', '00000000-0000-4000-8000-000000000954'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'delegation: % is not a TEACHER', sub; END IF;
+    SELECT count(*) INTO n FROM "LeaveDelegationDecisions";
+    IF n <> 4 THEN RAISE EXCEPTION 'delegation: teacher % reads % of the school''s four decisions', sub, n; END IF;
+    BEGIN
+      INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 10);
+      RAISE EXCEPTION 'delegation: teacher % recorded a delegation', sub;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000955', '00000000-0000-4000-8000-000000000957'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    IF app.current_user_role() NOT IN ('GUARDIAN', 'STUDENT') THEN RAISE EXCEPTION 'delegation: % is neither guardian nor pupil', sub; END IF;
+    SELECT count(*) INTO n FROM "LeaveDelegationDecisions";
+    IF n <> 0 THEN RAISE EXCEPTION 'delegation: % reads % decision(s)', app.current_user_role(), n; END IF;
+    BEGIN
+      INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 10);
+      RAISE EXCEPTION 'delegation: a % recorded a delegation', app.current_user_role();
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
+-- 95c: school A's admin reads none of the ledighet school's decisions and
+-- records none for it.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "LeaveDelegationDecisions";
+  IF n <> 0 THEN RAISE EXCEPTION 'delegation: another school''s admin reads % decision(s)', n; END IF;
+END $$;
+SELECT set_config('app.test_rls95_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE other uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  other := app.current_school_id();
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls95_admin_a'))::text, true);
+  IF app.current_school_id() = other THEN RAISE EXCEPTION 'delegation: the two admins share a school'; END IF;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (other, 10);
+    RAISE EXCEPTION 'delegation: another school''s admin recorded a delegation for the ledighet school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- 95d: PostgREST's role holds nothing on the table: the admin's own Supabase
+-- session neither reads nor records a delegation.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM 1 FROM "LeaveDelegationDecisions";
+    RAISE EXCEPTION 'delegation: PostgREST''s role read the decisions';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 10);
+    RAISE EXCEPTION 'delegation: PostgREST''s role recorded a delegation';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+-- 95e: the catalogue. Two arms, both the API's; the grants are SELECT and
+-- the insert of three columns for the API, SELECT alone for service_role,
+-- nothing for PostgREST's role or anon; the triggers are in place.
+DO $$
+DECLARE arms text; r text;
+BEGIN
+  SELECT string_agg(policyname || ':' || cmd || ':' || array_to_string(roles, '+'), ',' ORDER BY policyname) INTO arms
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveDelegationDecisions';
+  IF arms IS DISTINCT FROM 'leave_delegation_decisions_admin_insert:INSERT:app_authenticated,leave_delegation_decisions_staff_select:SELECT:app_authenticated' THEN
+    RAISE EXCEPTION 'delegation: the arms are %', arms;
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"LeaveDelegationDecisions"'::regclass) THEN
+    RAISE EXCEPTION 'delegation: row security is off';
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'SELECT')
+     OR has_table_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'INSERT')
+     OR has_table_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'UPDATE')
+     OR has_table_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'DELETE')
+     OR has_table_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'TRUNCATE')
+     OR NOT has_column_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'mentorMaxSchoolDays', 'INSERT')
+     OR has_column_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'decidedById', 'INSERT')
+     OR has_column_privilege('app_authenticated', '"LeaveDelegationDecisions"', 'decidedAt', 'INSERT') THEN
+    RAISE EXCEPTION 'delegation: the API''s grants are not SELECT and the insert of three columns';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+       AND has_any_column_privilege(r, '"LeaveDelegationDecisions"', 'SELECT, INSERT, UPDATE, REFERENCES') THEN
+      RAISE EXCEPTION 'delegation: % holds a privilege on the table', r;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
+     AND (has_table_privilege('service_role', '"LeaveDelegationDecisions"', 'INSERT')
+          OR has_table_privilege('service_role', '"LeaveDelegationDecisions"', 'UPDATE')
+          OR has_table_privilege('service_role', '"LeaveDelegationDecisions"', 'DELETE')
+          OR has_table_privilege('service_role', '"LeaveDelegationDecisions"', 'TRUNCATE')) THEN
+    RAISE EXCEPTION 'delegation: service_role writes the table';
+  END IF;
+  IF (SELECT string_agg(tgname, ',' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = '"LeaveDelegationDecisions"'::regclass AND NOT tgisinternal)
+     IS DISTINCT FROM 'LeaveDelegationDecisions_append_only,LeaveDelegationDecisions_no_truncate,LeaveDelegationDecisions_stamped' THEN
+    RAISE EXCEPTION 'delegation: the triggers are not the three';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 96: mentorns arm (LeaveRequests, 20261023091000).
+--
+-- With rektor's delegation at 3 skoldagar, a TEACHER reads and decides
+-- exactly the pending requests that are theirs: the pupil's class on the
+-- request's dates (StudentEnrollments) holds their MENTORSKAP uppdrag on a day
+-- it runs, and the request has at most three skoldagar, counted without
+-- weekends and lov. They read their own decisions afterwards and nothing
+-- else: not a request over the limit, not another class's, not a co-mentor's
+-- decision, not one passed on to rektor, and nothing through PostgREST's
+-- role. Two mentors of one class may both decide; the first decision wins.
+--
+-- The requests, all Ella's (9A) unless said:
+--   kort      2096-01-09 – 01-11, three skoldagar: Anna's (Bertil's uppdrag
+--             ended on 2095-12-20)
+--   lang      2096-01-09 – 01-12, four: the admin's
+--   sportlov  2096-02-17 – 02-27, eleven days but two skoldagar: Anna's
+--   prao      2096-03-05 – 03-13, prao för åk 9 the first week: two, Anna's
+--   jul       2095-12-19 – 12-20, two: Anna's and Bertil's
+--   nioB      Gustav's (9B), one: Cecilia's
+--   nioC      Frida's (9C), one: Erik, 9C's mentor, has left, so the admin's
+-- plus the fixture's Gustav request "rls fixture tidigare", Cecilia's.
+-- Section 96 also asks app.leave_request_taken, the gateway's 409.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+-- 96a: the admin records the delegation and files the requests.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  gustav uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957');
+  frida uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958');
+  r record;
+  filed uuid;
+BEGIN
+  IF ella IS NULL OR gustav IS NULL OR frida IS NULL THEN RAISE EXCEPTION 'mentor: the ledighet school lacks its pupils'; END IF;
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 3);
+  FOR r IN SELECT * FROM (VALUES
+      ('kort', ella, DATE '2096-01-09', DATE '2096-01-11'),
+      ('lang', ella, DATE '2096-01-09', DATE '2096-01-12'),
+      ('sportlov', ella, DATE '2096-02-17', DATE '2096-02-27'),
+      ('prao', ella, DATE '2096-03-05', DATE '2096-03-13'),
+      ('jul', ella, DATE '2095-12-19', DATE '2095-12-20'),
+      ('nioB', gustav, DATE '2096-01-09', DATE '2096-01-09'),
+      ('nioC', frida, DATE '2096-01-09', DATE '2096-01-09')) AS v(label, pupil, from_day, to_day)
+  LOOP
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (school, r.pupil, me, r.from_day, r.to_day, 'rls96 ' || r.label) RETURNING "LeaveRequests".id INTO filed;
+    PERFORM set_config('app.test_rls96_' || r.label, filed::text, true);
+  END LOOP;
+  PERFORM set_config('app.test_rls96_anna', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951'), true);
+  PERFORM set_config('app.test_rls96_bertil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000952'), true);
+END $$;
+
+CREATE FUNCTION pg_temp.rls96_reads(sub text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+  SELECT coalesce(string_agg(reason, ',' ORDER BY reason COLLATE "C"), '') INTO got
+    FROM "LeaveRequests" WHERE reason LIKE 'rls%';
+  RETURN got;
+END $$;
+
+-- 96b: who reads which, with the reason, through the API's role; and
+-- through PostgREST's role, nobody.
+DO $$
+DECLARE got text;
+BEGIN
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls96 jul,rls96 kort,rls96 prao,rls96 sportlov' THEN RAISE EXCEPTION 'mentor: Anna reads %', got; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000952');
+  IF got IS DISTINCT FROM 'rls96 jul' THEN RAISE EXCEPTION 'mentor: Bertil, whose uppdrag ended at jul, reads %', got; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000953');
+  IF got IS DISTINCT FROM 'rls fixture tidigare,rls96 nioB' THEN RAISE EXCEPTION 'mentor: Cecilia reads %', got; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000954');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'mentor: David, who mentors nobody, reads %', got; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000950');
+  IF got IS DISTINCT FROM 'rls fixture tidigare,rls96 jul,rls96 kort,rls96 lang,rls96 nioB,rls96 nioC,rls96 prao,rls96 sportlov' THEN
+    RAISE EXCEPTION 'mentor: the admin reads %', got;
+  END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE got text;
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'mentor: expected PostgREST''s role'; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'mentor: through PostgREST''s role Anna reads %', got; END IF;
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls96_prao')::uuid;
+  IF FOUND THEN RAISE EXCEPTION 'mentor: through PostgREST''s role Anna decided a request'; END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+-- 96c: Anna decides "jul" as mentor; Bertil, its other mentor, then finds
+-- nothing to decide and reads it no more. Anna reads her decision.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  UPDATE "LeaveRequests"
+     SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now(), "decisionNote" = 'Beviljas'
+   WHERE id = current_setting('app.test_rls96_jul')::uuid AND status = 'PENDING';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'mentor: Anna''s decision updated % row(s)', n; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000952')::text, true);
+DO $$
+DECLARE n bigint; got text;
+BEGIN
+  UPDATE "LeaveRequests"
+     SET status = 'REJECTED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls96_jul')::uuid AND status = 'PENDING';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: the second mentor''s decision overwrote the first'; END IF;
+  UPDATE "LeaveRequests"
+     SET status = 'REJECTED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls96_jul')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: the second mentor changed a decided request without asking for PENDING'; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000952');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'mentor: Bertil reads % after Anna decided', got; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls96 jul,rls96 kort,rls96 prao,rls96 sportlov' THEN RAISE EXCEPTION 'mentor: after deciding, Anna reads %', got; END IF;
+  IF (SELECT "decisionNote" FROM "LeaveRequests" WHERE id = current_setting('app.test_rls96_jul')::uuid) IS DISTINCT FROM 'Beviljas' THEN
+    RAISE EXCEPTION 'mentor: Anna does not read her decision';
+  END IF;
+END $$;
+
+-- 96c, as the gateway answers a decision it does not find: a 409 when the
+-- request was the mentor's and is no longer (app.leave_request_taken), a 404
+-- otherwise. Bertil is told that "jul" was decided and Anna that "lang" is
+-- rektor's; nobody is told anything of a request that is still theirs, of a
+-- pupil they do not mentor on its dates, or as anything but a TEACHER.
+CREATE FUNCTION pg_temp.rls96_taken(sub text, label text) RETURNS boolean LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+  RETURN app.leave_request_taken(current_setting('app.test_rls96_' || label)::uuid);
+END $$;
+DO $$
+BEGIN
+  IF NOT pg_temp.rls96_taken('00000000-0000-4000-8000-000000000952', 'jul') THEN
+    RAISE EXCEPTION 'taken: Bertil is not told that "jul" was decided';
+  END IF;
+  IF NOT pg_temp.rls96_taken('00000000-0000-4000-8000-000000000951', 'lang') THEN
+    RAISE EXCEPTION 'taken: Anna is not told that "lang" is rektor''s';
+  END IF;
+  IF pg_temp.rls96_taken('00000000-0000-4000-8000-000000000951', 'kort') THEN
+    RAISE EXCEPTION 'taken: Anna is told that "kort", still hers, is taken';
+  END IF;
+  IF pg_temp.rls96_taken('00000000-0000-4000-8000-000000000952', 'kort') THEN
+    RAISE EXCEPTION 'taken: Bertil, whose uppdrag ended, is told of "kort"';
+  END IF;
+  IF pg_temp.rls96_taken('00000000-0000-4000-8000-000000000951', 'nioB') THEN
+    RAISE EXCEPTION 'taken: Anna is told of another class''s request';
+  END IF;
+  IF pg_temp.rls96_taken('00000000-0000-4000-8000-000000000954', 'jul') THEN
+    RAISE EXCEPTION 'taken: David, who mentors nobody, is told of "jul"';
+  END IF;
+  IF pg_temp.rls96_taken('00000000-0000-4000-8000-000000000950', 'lang') THEN
+    RAISE EXCEPTION 'taken: the admin is told of "lang"';
+  END IF;
+  IF pg_temp.rls96_taken('00000000-0000-4000-8000-000000000955', 'jul') THEN
+    RAISE EXCEPTION 'taken: the guardian is told of "jul"';
+  END IF;
+END $$;
+
+-- 96d: what Anna may not do, each from the side it refuses.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+DECLARE
+  n bigint;
+  kort uuid := current_setting('app.test_rls96_kort')::uuid;
+  bertil uuid := current_setting('app.test_rls96_bertil')::uuid;
+BEGIN
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE id IN (current_setting('app.test_rls96_lang')::uuid, current_setting('app.test_rls96_nioB')::uuid,
+                current_setting('app.test_rls96_nioC')::uuid);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: Anna decided % request(s) over the limit or of another class', n; END IF;
+  UPDATE "LeaveRequests" SET "decisionNote" = 'ändrad' WHERE id = current_setting('app.test_rls96_jul')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: Anna changed her decision after it was made'; END IF;
+  DELETE FROM "LeaveRequests" WHERE id = kort;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: Anna removed a request'; END IF;
+
+  -- The decision's shape is the update arm's WITH CHECK alone: no WHERE, so
+  -- no SELECT arm judges the new row (an UPDATE that reads a column has its
+  -- new row checked against them too, which would refuse these for another
+  -- reason). Each reaches Anna's three pending requests and is refused whole.
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'ADMIN', "decidedById" = app.current_user_id(), "decidedAt" = now();
+    RAISE EXCEPTION 'mentor: Anna decided as ADMIN';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = NULL, "decidedById" = app.current_user_id(), "decidedAt" = now();
+    RAISE EXCEPTION 'mentor: Anna decided without saying in which role';
+  EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = bertil, "decidedAt" = now();
+    RAISE EXCEPTION 'mentor: Anna decided in Bertil''s name';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = NULL;
+    RAISE EXCEPTION 'mentor: Anna decided with no time of decision';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now(),
+           "referredAt" = now(), "referredById" = app.current_user_id();
+    RAISE EXCEPTION 'mentor: Anna decided a request and passed it on at once';
+  EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'PENDING', "decisionNote" = 'ändrad';
+    RAISE EXCEPTION 'mentor: the update arm changed a pending request without deciding it';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- Passing a request on is app.leave_request_refer's (96e), never the arm's.
+  BEGIN
+    UPDATE "LeaveRequests" SET "referredAt" = now(), "referredById" = app.current_user_id();
+    RAISE EXCEPTION 'mentor: the update arm passed a request on';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET "referredAt" = now(), "referredById" = bertil;
+    RAISE EXCEPTION 'mentor: Anna passed a request on in Bertil''s name';
+  EXCEPTION WHEN insufficient_privilege OR check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now(),
+           "endDate" = "startDate";
+    RAISE EXCEPTION 'mentor: Anna moved a request''s dates while deciding it';
+  EXCEPTION WHEN SQLSTATE 'LV409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now(),
+           reason = 'något annat';
+    RAISE EXCEPTION 'mentor: Anna rewrote a request''s reason while deciding it';
+  EXCEPTION WHEN SQLSTATE 'LV409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    SELECT "schoolId", "studentId", app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls96 mentorns egen'
+      FROM "LeaveRequests" WHERE id = kort;
+    RAISE EXCEPTION 'mentor: Anna filed a request';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- 96e: Anna passes "kort" on to rektor (app.leave_request_refer). It leaves
+-- her: she neither reads nor decides it, and the admin reads who passed it
+-- on. Nobody passes on a request that is not theirs to decide, and a request
+-- passes on once.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000952')::text, true);
+DO $$
+BEGIN
+  IF app.leave_request_refer(current_setting('app.test_rls96_kort')::uuid) THEN
+    RAISE EXCEPTION 'mentor: Bertil, whose uppdrag had ended, passed "kort" on';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+DECLARE n bigint; got text; kort uuid := current_setting('app.test_rls96_kort')::uuid;
+BEGIN
+  IF app.leave_request_refer(current_setting('app.test_rls96_nioB')::uuid) THEN RAISE EXCEPTION 'mentor: Anna passed another class''s request on'; END IF;
+  IF app.leave_request_refer(current_setting('app.test_rls96_lang')::uuid) THEN RAISE EXCEPTION 'mentor: Anna passed on a request over the limit'; END IF;
+  IF app.leave_request_refer(current_setting('app.test_rls96_jul')::uuid) THEN RAISE EXCEPTION 'mentor: Anna passed on a request already decided'; END IF;
+  IF NOT app.leave_request_refer(kort) THEN RAISE EXCEPTION 'mentor: Anna could not pass "kort" on'; END IF;
+  IF app.leave_request_refer(kort) THEN RAISE EXCEPTION 'mentor: "kort" was passed on twice'; END IF;
+  got := pg_temp.rls96_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls96 jul,rls96 prao,rls96 sportlov' THEN RAISE EXCEPTION 'mentor: after passing it on, Anna reads %', got; END IF;
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now() WHERE id = kort;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: Anna decided a request she had passed on'; END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  IF (SELECT "referredById" FROM "LeaveRequests" WHERE id = kort) IS DISTINCT FROM current_setting('app.test_rls96_anna')::uuid THEN
+    RAISE EXCEPTION 'mentor: the admin does not read who passed the request on';
+  END IF;
+END $$;
+
+-- 96f: the guardian reads the mentor's decision and its role through the
+-- API's role, and so does the pupil. Through PostgREST's role the guardian
+-- reads none of their child's requests since 20261026100000: the family
+-- reads them through the gateway, which writes the read to the läslogg.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000955')::text, true);
+DO $$
+DECLARE decided record; n bigint;
+BEGIN
+  SELECT status, "decidedAs", "decidedById" INTO decided FROM "LeaveRequests" WHERE id = current_setting('app.test_rls96_jul')::uuid;
+  IF decided.status IS DISTINCT FROM 'APPROVED' OR decided."decidedAs" IS DISTINCT FROM 'MENTOR'
+     OR decided."decidedById" IS DISTINCT FROM current_setting('app.test_rls96_anna')::uuid THEN
+    RAISE EXCEPTION 'mentor: the guardian reads % / % / %', decided.status, decided."decidedAs", decided."decidedById";
+  END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'mentor: expected PostgREST''s role'; END IF;
+  SELECT count(*) INTO n FROM "LeaveRequests" WHERE reason LIKE 'rls96 %';
+  IF n <> 0 THEN RAISE EXCEPTION 'mentor: through PostgREST''s role the guardian reads % of the requests', n; END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000956')::text, true);
+DO $$
+BEGIN
+  IF (SELECT "decidedAs" FROM "LeaveRequests" WHERE id = current_setting('app.test_rls96_jul')::uuid) IS DISTINCT FROM 'MENTOR' THEN
+    RAISE EXCEPTION 'mentor: the pupil does not read that the mentor decided';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 97: personaldatan avgör vem som läser (LeaveRequests,
+-- 20261023091000).
+--
+-- Who reads and decides a pending request is asked of the uppdrag, the
+-- pupil's class and rektor's delegation as they are now, never stored. So
+-- each of these moves the requests with it, and nothing else does: an
+-- uppdrag's Till moved or the uppdrag removed, a new delegation, the next
+-- läsår's mentorship (as the rollover writes it), the pupil moved to another
+-- class, the mentor deactivated. Each case starts from the same requests and
+-- is undone at a savepoint. The rollover through the real services, with
+-- the pupils' activation, is the adapter probe's (probe-leave.ts).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  gustav uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957');
+  r record;
+  filed uuid;
+BEGIN
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 3);
+  FOR r IN SELECT * FROM (VALUES
+      ('kort', ella, DATE '2096-01-09', DATE '2096-01-11'),
+      ('lang', ella, DATE '2096-01-09', DATE '2096-01-12'),
+      ('jul', ella, DATE '2095-12-19', DATE '2095-12-20'),
+      ('nasta', ella, DATE '2096-09-10', DATE '2096-09-11'),
+      ('nioB', gustav, DATE '2096-01-09', DATE '2096-01-09')) AS v(label, pupil, from_day, to_day)
+  LOOP
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (school, r.pupil, me, r.from_day, r.to_day, 'rls97 ' || r.label) RETURNING "LeaveRequests".id INTO filed;
+    PERFORM set_config('app.test_rls97_' || r.label, filed::text, true);
+  END LOOP;
+  PERFORM set_config('app.test_rls97_anna_duty', (SELECT d.id::text FROM "TeacherDuties" d JOIN "Users" u ON u.id = d."userId"
+                                                    WHERE u."authId" = '00000000-0000-4000-8000-000000000951'), true);
+  PERFORM set_config('app.test_rls97_bertil_duty', (SELECT d.id::text FROM "TeacherDuties" d JOIN "Users" u ON u.id = d."userId"
+                                                      WHERE u."authId" = '00000000-0000-4000-8000-000000000952'), true);
+  PERFORM set_config('app.test_rls97_anna', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951'), true);
+  PERFORM set_config('app.test_rls97_bertil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000952'), true);
+  PERFORM set_config('app.test_rls97_9a', (SELECT "studentGroupId"::text FROM "Users" WHERE id = ella), true);
+  PERFORM set_config('app.test_rls97_ella', ella::text, true);
+  PERFORM set_config('app.test_rls97_gustav', gustav::text, true);
+END $$;
+
+CREATE FUNCTION pg_temp.rls97_reads(sub text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+  SELECT coalesce(string_agg(reason, ',' ORDER BY reason COLLATE "C"), '') INTO got
+    FROM "LeaveRequests" WHERE reason LIKE 'rls97 %';
+  RETURN got;
+END $$;
+-- The admin's view of who decides a request: its deciding mentors, sorted.
+CREATE FUNCTION pg_temp.rls97_deciders(label text) RETURNS uuid[] LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  RETURN (SELECT f."decidingMentorIds" FROM app.leave_request_facts(ARRAY[current_setting('app.test_rls97_' || label)::uuid]) f);
+END $$;
+CREATE FUNCTION pg_temp.rls97_admin() RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+$$;
+
+-- 97a: the baseline every case below moves from.
+DO $$
+DECLARE got text;
+BEGIN
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls97 jul,rls97 kort' THEN RAISE EXCEPTION 'hr: at the start Anna reads %', got; END IF;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000952');
+  IF got IS DISTINCT FROM 'rls97 jul' THEN RAISE EXCEPTION 'hr: at the start Bertil reads %', got; END IF;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000953');
+  IF got IS DISTINCT FROM 'rls97 nioB' THEN RAISE EXCEPTION 'hr: at the start Cecilia reads %', got; END IF;
+  IF pg_temp.rls97_deciders('nasta') IS DISTINCT FROM '{}'::uuid[] THEN
+    RAISE EXCEPTION 'hr: a request in a läsår no uppdrag covers has a mentor to decide it';
+  END IF;
+END $$;
+SAVEPOINT rls97;
+
+-- 97b: Anna's uppdrag ends on 2096-01-08; Bertil's runs on after jul.
+DO $$
+DECLARE got text; n bigint;
+BEGIN
+  PERFORM pg_temp.rls97_admin();
+  UPDATE "TeacherDuties" SET "validTo" = DATE '2096-01-08' WHERE id = current_setting('app.test_rls97_anna_duty')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'hr: the admin could not move Anna''s Till'; END IF;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls97 jul' THEN RAISE EXCEPTION 'hr: with her uppdrag ending before it, Anna reads %', got; END IF;
+  IF pg_temp.rls97_deciders('kort') IS DISTINCT FROM '{}'::uuid[] THEN RAISE EXCEPTION 'hr: "kort" still has a mentor to decide it'; END IF;
+  PERFORM pg_temp.rls97_admin();
+  UPDATE "TeacherDuties" SET "validTo" = NULL WHERE id = current_setting('app.test_rls97_bertil_duty')::uuid;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000952');
+  IF got IS DISTINCT FROM 'rls97 jul,rls97 kort' THEN RAISE EXCEPTION 'hr: with his uppdrag running on, Bertil reads %', got; END IF;
+  IF pg_temp.rls97_deciders('kort') IS DISTINCT FROM ARRAY[current_setting('app.test_rls97_bertil')::uuid] THEN
+    RAISE EXCEPTION 'hr: "kort" is not Bertil''s to decide';
+  END IF;
+END $$;
+ROLLBACK TO SAVEPOINT rls97;
+
+-- 97c: Anna's uppdrag removed.
+DO $$
+DECLARE got text;
+BEGIN
+  PERFORM pg_temp.rls97_admin();
+  DELETE FROM "TeacherDuties" WHERE id = current_setting('app.test_rls97_anna_duty')::uuid;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'hr: with no uppdrag Anna reads %', got; END IF;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000952');
+  IF got IS DISTINCT FROM 'rls97 jul' THEN RAISE EXCEPTION 'hr: Bertil reads %', got; END IF;
+END $$;
+ROLLBACK TO SAVEPOINT rls97;
+
+-- 97d: a new delegation moves every pending request at once.
+DO $$
+DECLARE got text;
+BEGIN
+  PERFORM pg_temp.rls97_admin();
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), NULL);
+  IF pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951') <> '' OR pg_temp.rls97_reads('00000000-0000-4000-8000-000000000953') <> '' THEN
+    RAISE EXCEPTION 'hr: with no delegation a mentor reads a request';
+  END IF;
+  PERFORM pg_temp.rls97_admin();
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 4);
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls97 jul,rls97 kort,rls97 lang' THEN RAISE EXCEPTION 'hr: at four skoldagar Anna reads %', got; END IF;
+  PERFORM pg_temp.rls97_admin();
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (app.current_school_id(), 1);
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'hr: at one skoldag Anna reads %', got; END IF;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000953');
+  IF got IS DISTINCT FROM 'rls97 nioB' THEN RAISE EXCEPTION 'hr: at one skoldag Cecilia reads %', got; END IF;
+END $$;
+ROLLBACK TO SAVEPOINT rls97;
+
+-- 97e: next läsår's mentorship, as the rollover writes it, on the successor
+-- of 9A. It reaches no request of 2095/96, and the request of 2096/97 is
+-- not Anna's while Ella's class in 2096/97 is not recorded.
+DO $$
+DECLARE got text; school uuid; next_year uuid; next_9a uuid;
+BEGIN
+  PERFORM pg_temp.rls97_admin();
+  school := app.current_school_id();
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'Ledighet 2096/97', DATE '2096-08-13', DATE '2097-06-11', false, now()) RETURNING id INTO next_year;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, next_year, '9A', 9, now()) RETURNING id INTO next_9a;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (school, current_setting('app.test_rls97_anna')::uuid, next_year, 'MENTORSKAP', 'Mentor 9A', 60, next_9a, now());
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls97 jul,rls97 kort' THEN RAISE EXCEPTION 'hr: with next year''s uppdrag beside this year''s, Anna reads %', got; END IF;
+  PERFORM pg_temp.rls97_admin();
+  DELETE FROM "TeacherDuties" WHERE id = current_setting('app.test_rls97_anna_duty')::uuid;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'hr: next year''s uppdrag alone gives Anna %', got; END IF;
+END $$;
+ROLLBACK TO SAVEPOINT rls97;
+
+-- 97f: Gustav moved into 9A: his request is Anna's and no longer Cecilia's.
+DO $$
+DECLARE got text;
+BEGIN
+  PERFORM pg_temp.rls97_admin();
+  UPDATE "Users" SET "studentGroupId" = current_setting('app.test_rls97_9a')::uuid
+   WHERE id = current_setting('app.test_rls97_gustav')::uuid;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000951');
+  IF got IS DISTINCT FROM 'rls97 jul,rls97 kort,rls97 nioB' THEN RAISE EXCEPTION 'hr: with Gustav in 9A, Anna reads %', got; END IF;
+  got := pg_temp.rls97_reads('00000000-0000-4000-8000-000000000953');
+  IF got IS DISTINCT FROM '' THEN RAISE EXCEPTION 'hr: with Gustav moved away, Cecilia reads %', got; END IF;
+END $$;
+ROLLBACK TO SAVEPOINT rls97;
+
+-- 97g: Anna deactivated: her requests are the admin's, or Bertil's where
+-- his uppdrag runs.
+DO $$
+BEGIN
+  PERFORM pg_temp.rls97_admin();
+  UPDATE "Users" SET "isActive" = false WHERE id = current_setting('app.test_rls97_anna')::uuid;
+  IF pg_temp.rls97_deciders('kort') IS DISTINCT FROM '{}'::uuid[] THEN RAISE EXCEPTION 'hr: a deactivated mentor still decides "kort"'; END IF;
+  IF pg_temp.rls97_deciders('jul') IS DISTINCT FROM ARRAY[current_setting('app.test_rls97_bertil')::uuid] THEN
+    RAISE EXCEPTION 'hr: with Anna gone, "jul" is not Bertil''s alone';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 98: mentorns frånvaro, notisen och ansökans fakta
+-- (20261023091000).
+--
+--   * absence_reports_mentor_leave_insert: the approving mentor files the
+--     leave's full-day absence, OTHER with "Approved leave", in their own
+--     name, for the pupil and days of a request they approved as mentor, and
+--     nothing else; they still read no report.
+--   * The notice from the row: LeaveRequests_tell_mentors writes a new
+--     request's LEAVE_REQUESTED notice to its deciding mentors, once each,
+--     with no reason; app.leave_request_notices hands it to the filer's
+--     transaction, app.leave_requests_tell_new_mentors catches up for staff.
+--   * app.leave_request_facts: skoldagar, limit, mentors and the pupil's
+--     läsår, for the requests the caller reads as admin or mentor.
+--   * The five internal functions are the owner's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  filed uuid;
+BEGIN
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 3);
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, ella, me, DATE '2096-01-09', DATE '2096-01-11', 'rls98 kort') RETURNING "LeaveRequests".id INTO filed;
+  PERFORM set_config('app.test_rls98_kort', filed::text, true);
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, ella, me, DATE '2095-12-19', DATE '2095-12-20', 'rls98 jul') RETURNING "LeaveRequests".id INTO filed;
+  PERFORM set_config('app.test_rls98_jul', filed::text, true);
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, ella, me, DATE '2096-01-30', DATE '2096-01-30', 'rls98 rektors') RETURNING "LeaveRequests".id INTO filed;
+  PERFORM set_config('app.test_rls98_rektors', filed::text, true);
+  PERFORM set_config('app.test_rls98_ella', ella::text, true);
+  PERFORM set_config('app.test_rls98_gustav', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957'), true);
+  PERFORM set_config('app.test_rls98_frida', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958'), true);
+  PERFORM set_config('app.test_rls98_anna', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951'), true);
+  PERFORM set_config('app.test_rls98_bertil', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000952'), true);
+  PERFORM set_config('app.test_rls98_cecilia', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000953'), true);
+  PERFORM set_config('app.test_rls98_fixture', (SELECT id::text FROM "LeaveRequests" WHERE reason = 'rls fixture tidigare'), true);
+END $$;
+
+-- 98a: Anna approves "kort" and files its three days; every other absence
+-- is refused from the side it refuses.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+DECLARE
+  n bigint;
+  ella uuid := current_setting('app.test_rls98_ella')::uuid;
+  gustav uuid := current_setting('app.test_rls98_gustav')::uuid;
+  bertil uuid := current_setting('app.test_rls98_bertil')::uuid;
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  bad record;
+BEGIN
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = me, "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls98_kort')::uuid AND status = 'PENDING';
+  UPDATE "LeaveRequests" SET status = 'REJECTED', "decidedAs" = 'MENTOR', "decidedById" = me, "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls98_jul')::uuid AND status = 'PENDING';
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  SELECT school, ella, me, d::date, 'OTHER', 'Approved leave'
+    FROM generate_series(DATE '2096-01-09', DATE '2096-01-11', interval '1 day') AS g(d);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 3 THEN RAISE EXCEPTION 'absence: the mentor filed % of the leave''s three days', n; END IF;
+
+  FOR bad IN SELECT * FROM (VALUES
+      ('a day after the leave', ella, me, DATE '2096-01-12', 'OTHER', 'Approved leave', NULL::time, NULL::time),
+      ('another pupil', gustav, me, DATE '2096-01-09', 'OTHER', 'Approved leave', NULL, NULL),
+      ('another type', ella, me, DATE '2096-01-09', 'SICK', 'Approved leave', NULL, NULL),
+      ('a note of their own', ella, me, DATE '2096-01-09', 'OTHER', 'Ledig för resa', NULL, NULL),
+      ('a part of the day', ella, me, DATE '2096-01-09', 'OTHER', 'Approved leave', TIME '08:00', TIME '09:00'),
+      ('in Bertil''s name', ella, bertil, DATE '2096-01-09', 'OTHER', 'Approved leave', NULL, NULL),
+      ('a day of the rejected request', ella, me, DATE '2095-12-19', 'OTHER', 'Approved leave', NULL, NULL))
+    AS v(label, pupil, reporter, day, kind, note, starts, ends)
+  LOOP
+    BEGIN
+      INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note, "startTime", "endTime")
+      VALUES (school, bad.pupil, bad.reporter, bad.day, bad.kind::"AbsenceReportType", bad.note, bad.starts, bad.ends);
+      RAISE EXCEPTION 'absence: the mentor filed %', bad.label;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SELECT count(*) INTO n FROM "AbsenceReports";
+  IF n <> 0 THEN RAISE EXCEPTION 'absence: the mentor reads % report(s)', n; END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (app.current_school_id(), current_setting('app.test_rls98_ella')::uuid, app.current_user_id(), DATE '2096-01-10', 'OTHER', 'Approved leave');
+  RAISE EXCEPTION 'absence: through PostgREST''s role the mentor filed the leave''s absence';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SET LOCAL ROLE app_authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000952')::text, true);
+DO $$
+BEGIN
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (app.current_school_id(), current_setting('app.test_rls98_ella')::uuid, app.current_user_id(), DATE '2096-01-10', 'OTHER', 'Approved leave');
+  RAISE EXCEPTION 'absence: a mentor who did not decide filed the leave''s absence';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "AbsenceReports"
+   WHERE "studentId" = current_setting('app.test_rls98_ella')::uuid AND "reportedById" = current_setting('app.test_rls98_anna')::uuid
+     AND type = 'OTHER' AND note = 'Approved leave' AND "startTime" IS NULL;
+  IF n <> 3 THEN RAISE EXCEPTION 'absence: the admin reads % of the mentor''s three days', n; END IF;
+END $$;
+
+-- 98b: the notice, written from the row. The guardian files a two-day
+-- request and the trigger tells Anna, once, with no reason; nobody is told of
+-- a request over the limit or of a pupil with no mentor. The filer reads back
+-- what this transaction wrote about their own request
+-- (app.leave_request_notices), and nothing of anybody else's. A request filed
+-- before the delegation is told by the staff catch-up
+-- (app.leave_requests_tell_new_mentors), once; a family's call of it tells
+-- nobody.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000955')::text, true);
+DO $$
+DECLARE
+  ella uuid := current_setting('app.test_rls98_ella')::uuid;
+  frida uuid := current_setting('app.test_rls98_frida')::uuid;
+  ny uuid; lang uuid; utan uuid; n bigint; told record;
+BEGIN
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), ella, app.current_user_id(), DATE '2096-01-16', DATE '2096-01-17', 'rls98 ny') RETURNING id INTO ny;
+  PERFORM set_config('app.test_rls98_ny', ny::text, true);
+  SELECT count(*) INTO n FROM app.leave_request_notices(ny);
+  IF n <> 1 THEN RAISE EXCEPTION 'notice: the two-day request told % mentor(s), not Anna alone', n; END IF;
+  SELECT * INTO told FROM app.leave_request_notices(ny);
+  IF told."userId" IS DISTINCT FROM current_setting('app.test_rls98_anna')::uuid OR told.email IS DISTINCT FROM 'ledighet-anna@example.invalid' THEN
+    RAISE EXCEPTION 'notice: the two-day request told % <%>', told."userId", told.email;
+  END IF;
+
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), ella, app.current_user_id(), DATE '2096-01-16', DATE '2096-01-20', 'rls98 lång') RETURNING id INTO lang;
+  PERFORM set_config('app.test_rls98_lang', lang::text, true);
+  SELECT count(*) INTO n FROM app.leave_request_notices(lang);
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: a request over the limit told % mentor(s)', n; END IF;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), frida, app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls98 nioC') RETURNING id INTO utan;
+  PERFORM set_config('app.test_rls98_nioC', utan::text, true);
+  SELECT count(*) INTO n FROM app.leave_request_notices(utan);
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: a pupil with no mentor told % mentor(s)', n; END IF;
+  -- Pending, one skoldag and Anna's to decide: the trigger told her when the
+  -- admin filed it, and that is the admin's to read back, not the guardian's.
+  SELECT count(*) INTO n FROM app.leave_request_notices(current_setting('app.test_rls98_rektors')::uuid);
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: the guardian read back the notice of the admin''s request'; END IF;
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: the guardian''s catch-up told % mentor(s)', n; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000957')::text, true);
+DO $$
+DECLARE n bigint; own uuid; told record;
+BEGIN
+  -- Filed in the fixture's transaction, before any delegation.
+  SELECT count(*) INTO n FROM app.leave_request_notices(current_setting('app.test_rls98_fixture')::uuid);
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: the pupil read back % notice(s) of an earlier transaction', n; END IF;
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: the pupil''s catch-up told % mentor(s)', n; END IF;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), app.current_user_id(), app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls98 gustav') RETURNING id INTO own;
+  PERFORM set_config('app.test_rls98_gustav_own', own::text, true);
+  SELECT * INTO told FROM app.leave_request_notices(own);
+  IF told."userId" IS DISTINCT FROM current_setting('app.test_rls98_cecilia')::uuid OR told.email IS DISTINCT FROM 'ledighet-cecilia@example.invalid' THEN
+    RAISE EXCEPTION 'notice: the pupil''s own request told % <%>', told."userId", told.email;
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+DECLARE notice record; n bigint; who uuid; about text; mail text;
+BEGIN
+  SELECT count(*) INTO n FROM app.leave_request_notices(current_setting('app.test_rls98_ny')::uuid);
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: the mentor read back a guardian''s notice'; END IF;
+  -- The catch-up, as a member of staff: Gustav's earlier request still owes
+  -- Cecilia her notice; every request filed since told its mentors at once.
+  WITH caught AS (SELECT * FROM app.leave_requests_tell_new_mentors())
+  SELECT count(*), min("userId"::text)::uuid, min(meta ->> 'leaveRequestId'), min(email) INTO n, who, about, mail FROM caught;
+  IF n <> 1 OR who IS DISTINCT FROM current_setting('app.test_rls98_cecilia')::uuid
+     OR about IS DISTINCT FROM current_setting('app.test_rls98_fixture') OR mail IS DISTINCT FROM 'ledighet-cecilia@example.invalid' THEN
+    RAISE EXCEPTION 'notice: the catch-up told % mentor(s), % about % <%>', n, who, about, mail;
+  END IF;
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'notice: a second catch-up told % mentor(s) again', n; END IF;
+
+  -- Anna was told of each request hers to decide, once: "kort", "jul" and
+  -- "rektors" as the admin filed them, "ny" as the guardian did.
+  IF (SELECT array_agg(meta ->> 'leaveRequestId' ORDER BY meta ->> 'leaveRequestId') FROM "Notifications" WHERE type = 'LEAVE_REQUESTED')
+     IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[current_setting('app.test_rls98_kort'), current_setting('app.test_rls98_jul'),
+                                                                  current_setting('app.test_rls98_rektors'), current_setting('app.test_rls98_ny')]) AS x) THEN
+    RAISE EXCEPTION 'notice: Anna was told of %',
+      (SELECT array_agg(meta ->> 'leaveRequestId') FROM "Notifications" WHERE type = 'LEAVE_REQUESTED');
+  END IF;
+  SELECT * INTO notice FROM "Notifications" WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = current_setting('app.test_rls98_ny');
+  IF notice."userId" IS DISTINCT FROM app.current_user_id()
+     OR notice.meta ->> 'studentName' IS DISTINCT FROM 'Ella Elev'
+     OR notice.meta ->> 'startDate' IS DISTINCT FROM '2096-01-16'
+     OR notice.meta ->> 'endDate' IS DISTINCT FROM '2096-01-17'
+     OR (notice.meta ->> 'schoolDays')::int IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'notice: Anna''s notice reads %', notice.meta;
+  END IF;
+  IF (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(notice.meta) AS k)
+     IS DISTINCT FROM ARRAY['endDate', 'leaveRequestId', 'schoolDays', 'startDate', 'studentName'] THEN
+    RAISE EXCEPTION 'notice: the notice carries %', notice.meta;
+  END IF;
+  IF (SELECT reason FROM "LeaveRequests" WHERE id = current_setting('app.test_rls98_ny')::uuid) IS DISTINCT FROM 'rls98 ny' THEN
+    RAISE EXCEPTION 'notice: the mentor who was told cannot read the request';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000952')::text, true);
+DO $$
+BEGIN
+  -- Bertil's uppdrag ended before "ny"; "jul" is his to decide with Anna.
+  IF (SELECT array_agg(meta ->> 'leaveRequestId') FROM "Notifications" WHERE type = 'LEAVE_REQUESTED')
+     IS DISTINCT FROM ARRAY[current_setting('app.test_rls98_jul')] THEN
+    RAISE EXCEPTION 'notice: Bertil was told of %', (SELECT array_agg(meta ->> 'leaveRequestId') FROM "Notifications" WHERE type = 'LEAVE_REQUESTED');
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000955')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM app.leave_request_notices(current_setting('app.test_rls98_ny')::uuid);
+    RAISE EXCEPTION 'notice: PostgREST''s role may read a notice back';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.leave_requests_tell_new_mentors();
+    RAISE EXCEPTION 'notice: PostgREST''s role may run the catch-up';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
+-- 98c: the facts, as the admin reads them, as Anna reads them, and as
+-- nobody else reads them.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  anna uuid := current_setting('app.test_rls98_anna')::uuid;
+  bertil uuid := current_setting('app.test_rls98_bertil')::uuid;
+  f record;
+  all_ids uuid[];
+BEGIN
+  SELECT array_agg(id) INTO all_ids FROM "LeaveRequests" WHERE reason LIKE 'rls98 %' OR reason = 'rls fixture tidigare';
+  PERFORM set_config('app.test_rls98_all', all_ids::text, true);
+
+  SELECT * INTO f FROM app.leave_request_facts(ARRAY[current_setting('app.test_rls98_ny')::uuid]);
+  IF f."schoolDays" IS DISTINCT FROM 2 OR f."mentorLimit" IS DISTINCT FROM 3
+     OR f."mentorIds" IS DISTINCT FROM ARRAY[anna] OR f."decidingMentorIds" IS DISTINCT FROM ARRAY[anna]
+     OR f."yearName" IS DISTINCT FROM 'Ledighet 2095/96' OR f."yearStart" IS DISTINCT FROM DATE '2095-08-15' OR f."yearEnd" IS DISTINCT FROM DATE '2096-06-12'
+     OR f."yearApprovedDays" IS DISTINCT FROM 3 OR f."yearApprovedRequests" IS DISTINCT FROM 1 OR f."yearPendingRequests" IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'facts: "ny" reads %', row_to_json(f);
+  END IF;
+  SELECT * INTO f FROM app.leave_request_facts(ARRAY[current_setting('app.test_rls98_lang')::uuid]);
+  IF f."schoolDays" IS DISTINCT FROM 5 OR f."decidingMentorIds" IS DISTINCT FROM '{}'::uuid[] OR f."mentorIds" IS DISTINCT FROM ARRAY[anna] THEN
+    RAISE EXCEPTION 'facts: "lång" reads %', row_to_json(f);
+  END IF;
+  SELECT * INTO f FROM app.leave_request_facts(ARRAY[current_setting('app.test_rls98_nioC')::uuid]);
+  IF f."mentorIds" IS DISTINCT FROM '{}'::uuid[] OR f."decidingMentorIds" IS DISTINCT FROM '{}'::uuid[] THEN
+    RAISE EXCEPTION 'facts: Frida, whose mentor has left, reads %', row_to_json(f);
+  END IF;
+  SELECT * INTO f FROM app.leave_request_facts(ARRAY[current_setting('app.test_rls98_jul')::uuid]);
+  IF f."decidingMentorIds" IS DISTINCT FROM '{}'::uuid[]
+     OR f."mentorIds" IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[anna, bertil]) x) THEN
+    RAISE EXCEPTION 'facts: the decided "jul" reads %', row_to_json(f);
+  END IF;
+  IF (SELECT count(*) FROM app.leave_request_facts(all_ids)) <> cardinality(all_ids) THEN
+    RAISE EXCEPTION 'facts: the admin reads facts of fewer than the school''s requests';
+  END IF;
+END $$;
+DO $$
+DECLARE sub text; got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+  SELECT string_agg(r.reason, ',' ORDER BY r.reason COLLATE "C") INTO got
+    FROM app.leave_request_facts(current_setting('app.test_rls98_all')::uuid[]) f
+    JOIN "LeaveRequests" r ON r.id = f."requestId";
+  IF got IS DISTINCT FROM 'rls98 jul,rls98 kort,rls98 ny,rls98 rektors' THEN RAISE EXCEPTION 'facts: Anna reads the facts of %', got; END IF;
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000954', '00000000-0000-4000-8000-000000000955', '00000000-0000-4000-8000-000000000956'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    IF EXISTS (SELECT 1 FROM app.leave_request_facts(current_setting('app.test_rls98_all')::uuid[])) THEN
+      RAISE EXCEPTION 'facts: % reads the facts of a request', app.current_user_role();
+    END IF;
+  END LOOP;
+END $$;
+
+-- 98d: the internal functions are the owner's: the API's role runs none.
+DO $$
+DECLARE fn text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY[
+    'SELECT app.leave_mentor_limit(app.current_school_id())',
+    'SELECT count(*) FROM app.leave_school_days(app.current_school_id(), app.current_user_id(), DATE ''2096-01-09'', DATE ''2096-01-11'')',
+    'SELECT count(*) FROM app.leave_mentors(app.current_school_id(), app.current_user_id(), DATE ''2096-01-09'', DATE ''2096-01-11'')',
+    'SELECT count(*) FROM app.leave_deciding_mentors(app.current_school_id(), app.current_user_id(), DATE ''2096-01-09'', DATE ''2096-01-11'')',
+    'SELECT count(*) FROM app.leave_tell_mentors(app.current_school_id(), NULL)'
+  ] LOOP
+    BEGIN
+      EXECUTE fn;
+      RAISE EXCEPTION 'internal: the API ran %', fn;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 99: armarna, funktionerna och kontrollerna som de är skrivna
+-- (20261023091000).
+--
+-- app.leave_request_facts states the select arms' test a second time, so
+-- 99a asks both for every teacher and the admin over the same requests and
+-- requires the same answer. Then the insert arms (no request filed as
+-- already passed on), the table's CHECKs and trigger, and the functions'
+-- catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid := app.current_user_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  gustav uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957');
+  frida uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958');
+  r record;
+  filed uuid;
+BEGIN
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 3);
+  FOR r IN SELECT * FROM (VALUES
+      ('kort', ella, DATE '2096-01-09', DATE '2096-01-11'),
+      ('lang', ella, DATE '2096-01-09', DATE '2096-01-12'),
+      ('jul', ella, DATE '2095-12-19', DATE '2095-12-20'),
+      ('vidare', ella, DATE '2096-01-30', DATE '2096-01-30'),
+      ('nioB', gustav, DATE '2096-01-09', DATE '2096-01-09'),
+      ('nioC', frida, DATE '2096-01-09', DATE '2096-01-09')) AS v(label, pupil, from_day, to_day)
+  LOOP
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    VALUES (school, r.pupil, me, r.from_day, r.to_day, 'rls99 ' || r.label) RETURNING "LeaveRequests".id INTO filed;
+    PERFORM set_config('app.test_rls99_' || r.label, filed::text, true);
+  END LOOP;
+  PERFORM set_config('app.test_rls99_anna', (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951'), true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+BEGIN
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls99_jul')::uuid;
+  IF NOT app.leave_request_refer(current_setting('app.test_rls99_vidare')::uuid) THEN RAISE EXCEPTION 'equivalence: Anna could not pass "vidare" on'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+BEGIN
+  PERFORM set_config('app.test_rls99_all', (SELECT array_agg(id)::text FROM "LeaveRequests"), true);
+END $$;
+
+-- 99a: for each of the school's teachers and its admin, the rows the select
+-- arms give are the rows the facts answer for.
+DO $$
+DECLARE sub text; arms text; facts text;
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000950', '00000000-0000-4000-8000-000000000951',
+                             '00000000-0000-4000-8000-000000000952', '00000000-0000-4000-8000-000000000953',
+                             '00000000-0000-4000-8000-000000000954'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    SELECT coalesce(string_agg(id::text, ',' ORDER BY id), '') INTO arms FROM "LeaveRequests";
+    SELECT coalesce(string_agg("requestId"::text, ',' ORDER BY "requestId"), '') INTO facts
+      FROM app.leave_request_facts(current_setting('app.test_rls99_all')::uuid[]);
+    IF arms IS DISTINCT FROM facts THEN
+      RAISE EXCEPTION 'equivalence: for %, the arms give {%} and the facts {%}', sub, arms, facts;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+  IF (SELECT count(*) FROM "LeaveRequests") <> 2 THEN RAISE EXCEPTION 'equivalence: Anna''s case proves less than it says'; END IF;
+END $$;
+
+-- 99b: neither insert arm files a request already passed on.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000955')::text, true);
+DO $$
+DECLARE via text; ella uuid := (SELECT "studentId" FROM "GuardianStudents" gs JOIN "Users" u ON u.id = gs."studentId"
+                                 WHERE u."authId" = '00000000-0000-4000-8000-000000000956');
+BEGIN
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    BEGIN
+      INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "referredAt")
+      VALUES (app.current_school_id(), ella, app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls99 förbi mentorn', now());
+      RAISE EXCEPTION 'insert: as %, the guardian filed a request already passed on', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "referredById")
+      VALUES (app.current_school_id(), ella, app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls99 förbi mentorn', app.current_user_id());
+      RAISE EXCEPTION 'insert: as %, the guardian filed a request with a referrer', via;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+END $$;
+SET LOCAL ROLE app_authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000957')::text, true);
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "referredAt")
+    VALUES (app.current_school_id(), app.current_user_id(), app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls99 förbi mentorn', now());
+    RAISE EXCEPTION 'insert: the pupil filed a request already passed on';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason, "referredById")
+    VALUES (app.current_school_id(), app.current_user_id(), app.current_user_id(), DATE '2096-01-16', DATE '2096-01-16', 'rls99 förbi mentorn', app.current_user_id());
+    RAISE EXCEPTION 'insert: the pupil filed a request with a referrer';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+-- 99c: the table's CHECKs and trigger, against the admin, whose arm writes
+-- every column.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+BEGIN
+  BEGIN
+    UPDATE "LeaveRequests" SET "decidedAs" = 'ADMIN' WHERE id = current_setting('app.test_rls99_kort')::uuid;
+    RAISE EXCEPTION 'check: a pending request carries a decider''s role';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'MENTOR', "decidedById" = current_setting('app.test_rls99_anna')::uuid, "decidedAt" = now()
+     WHERE id = current_setting('app.test_rls99_vidare')::uuid;
+    RAISE EXCEPTION 'check: a request passed on to rektor was decided as MENTOR';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET "referredById" = current_setting('app.test_rls99_anna')::uuid WHERE id = current_setting('app.test_rls99_kort')::uuid;
+    RAISE EXCEPTION 'check: a referrer without a time';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET "startDate" = DATE '2096-01-08' WHERE id = current_setting('app.test_rls99_kort')::uuid;
+    RAISE EXCEPTION 'trigger: the admin moved a request''s dates';
+  EXCEPTION WHEN SQLSTATE 'LV409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LeaveRequests" SET "studentId" = (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957')
+     WHERE id = current_setting('app.test_rls99_kort')::uuid;
+    RAISE EXCEPTION 'trigger: the admin moved a request to another pupil';
+  EXCEPTION WHEN SQLSTATE 'LV409' THEN NULL;
+  END;
+  UPDATE "LeaveRequests" SET status = 'APPROVED', "decidedAs" = 'ADMIN', "decidedById" = app.current_user_id(), "decidedAt" = now()
+   WHERE id = current_setting('app.test_rls99_vidare')::uuid;
+  IF NOT FOUND THEN RAISE EXCEPTION 'check: rektor could not decide a request passed on'; END IF;
+
+  -- A request ends on or after its first day and spans at most a year: 366
+  -- days with the last, as from the 1st of January of a leap year to its
+  -- 31st of December. The gateway's body says the same (CreateLeaveRequestDto).
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    SELECT app.current_school_id(), u.id, app.current_user_id(), DATE '2096-01-17', DATE '2096-01-16', 'rls99 baklänges'
+      FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000956';
+    RAISE EXCEPTION 'check: a request ends before it starts';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+    SELECT app.current_school_id(), u.id, app.current_user_id(), DATE '2096-01-01', DATE '2097-01-01', 'rls99 för lång'
+      FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000956';
+    RAISE EXCEPTION 'check: a request spans 367 days';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  SELECT app.current_school_id(), u.id, app.current_user_id(), DATE '2096-01-01', DATE '2096-12-31', 'rls99 ett år'
+    FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000956';
+  IF NOT FOUND THEN RAISE EXCEPTION 'check: a request of a whole leap year was refused'; END IF;
+END $$;
+
+-- 99d: the functions as written: the gateway's six are SECURITY DEFINER
+-- with a pinned search_path and the API's alone; the five internal ones and
+-- the dates' trigger function run as their caller, the notice's trigger
+-- function as its owner, and none is anybody's to call.
+DO $$
+DECLARE fn text; r text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['app.leave_mine_to_decide(uuid, uuid, date, date)', 'app.leave_request_refer(uuid)',
+                            'app.leave_request_facts(uuid[])', 'app.leave_request_notices(uuid)',
+                            'app.leave_requests_tell_new_mentors()', 'app.leave_request_taken(uuid)'] LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'functions: % is not SECURITY DEFINER', fn; END IF;
+    IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                       FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
+      RAISE EXCEPTION 'functions: % has no pinned search_path (%)', fn, (SELECT proconfig FROM pg_proc WHERE oid = fn::regprocedure);
+    END IF;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'functions: the API may not call %', fn; END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'functions: % may call %', r, fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.leave_mentor_limit(uuid)', 'app.leave_school_days(uuid, uuid, date, date)',
+                            'app.leave_mentors(uuid, uuid, date, date)', 'app.leave_deciding_mentors(uuid, uuid, date, date)',
+                            'app.leave_tell_mentors(uuid, uuid)', 'app.leave_requests_request_is_fixed()'] LOOP
+    IF (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'functions: % runs as its owner', fn; END IF;
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'functions: % may call %', r, fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  -- The notice's trigger writes a teacher's notification for whoever files:
+  -- its owner's, with a pinned search_path, and nobody's to call.
+  fn := 'app.leave_requests_tell_mentors()';
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'functions: % runs as its caller', fn; END IF;
+  IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                     FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
+    RAISE EXCEPTION 'functions: % has no pinned search_path', fn;
+  END IF;
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'functions: % may call %', r, fn;
+    END IF;
+  END LOOP;
+  IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'app' AND p.proname LIKE 'leave\_%' AND has_function_privilege('app_authenticated', p.oid, 'EXECUTE')) <> 6 THEN
+    RAISE EXCEPTION 'functions: the API runs a leave function beyond its six';
+  END IF;
+  IF (SELECT string_agg(conname || (CASE WHEN convalidated THEN '' ELSE ' (not valid)' END), ',' ORDER BY conname) FROM pg_constraint
+       WHERE conrelid = '"LeaveRequests"'::regclass AND contype = 'c')
+     IS DISTINCT FROM 'LeaveRequests_a_referral_has_a_time,LeaveRequests_a_role_decided,LeaveRequests_a_year_at_most' THEN
+    RAISE EXCEPTION 'check: the CHECKs on LeaveRequests are not the three, validated';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_request_is_fixed' AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'trigger: LeaveRequests_request_is_fixed is not in place';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_tell_mentors' AND tgenabled = 'O'
+                    AND tgfoid = 'app.leave_requests_tell_mentors()'::regprocedure) THEN
+    RAISE EXCEPTION 'trigger: LeaveRequests_tell_mentors is not in place';
+  END IF;
+END $$;
+ROLLBACK;

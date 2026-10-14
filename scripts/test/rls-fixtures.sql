@@ -923,6 +923,81 @@ BEGIN
   UPDATE "Ss12000SyncRuns" SET status = 'DIFF_READY', "basisHash" = repeat('c', 64), "fetchedAt" = now() WHERE id = run;
 END $$;
 
+-- Mentorns ledighetsbeslut (20261023091000, RLS sections 95–99): a school of
+-- its own, with fixed dates in läsår 2095/96 so no section depends on today.
+-- 9A has two mentors, Anna for the whole year and Bertil until the jullov;
+-- 9B has Cecilia; 9C's only mentor, Erik, has left (inactive), so 9C's pupils
+-- have no mentor. David holds no mentorskap. The guardian's children are Ella
+-- (9A) and Frida (9C); Gustav (9B) signs in himself. Sportlov is v.8, the
+-- jullov runs 2095-12-21 to 2096-01-06, and åk 9 has prao in v.10. No
+-- delegation is recorded: the sections record their own and roll it back.
+-- Planted once.
+DO $$
+DECLARE
+  l uuid; y uuid; g9a uuid; g9b uuid; g9c uuid;
+  admin uuid; anna uuid; bertil uuid; cecilia uuid; erik uuid; guardian uuid; ella uuid; frida uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-ledighet') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Ledighet', 'rls-ledighet', 'Europe/Stockholm', now())
+  RETURNING id INTO l;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (l, 'Ledighet 2095/96', '2095-08-15', '2096-06-12', false, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (l, y, '9A', 9, now()) RETURNING id INTO g9a;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (l, y, '9B', 9, now()) RETURNING id INTO g9b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (l, y, '9C', 9, now()) RETURNING id INTO g9c;
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, "startDate", "endDate", "updatedAt") VALUES
+    (l, y, 'Jullov', '2095-12-21', '2096-01-06', now()),
+    (l, y, 'Sportlov', '2096-02-20', '2096-02-24', now());
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, "startDate", "endDate", "minGradeLevel", "maxGradeLevel", "updatedAt") VALUES
+    (l, y, 'Prao åk 9', '2096-03-05', '2096-03-09', 9, 9, now());
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-rektor@example.invalid', 'Rut', 'Rektor', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000950', true, now())
+    RETURNING id INTO admin;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-anna@example.invalid', 'Anna', 'Mentor', 'TEACHER', '00000000-0000-4000-8000-000000000951', true, now())
+    RETURNING id INTO anna;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-bertil@example.invalid', 'Bertil', 'Mentor', 'TEACHER', '00000000-0000-4000-8000-000000000952', true, now())
+    RETURNING id INTO bertil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-cecilia@example.invalid', 'Cecilia', 'Mentor', 'TEACHER', '00000000-0000-4000-8000-000000000953', true, now())
+    RETURNING id INTO cecilia;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-david@example.invalid', 'David', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000954', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-erik@example.invalid', 'Erik', 'Slutad', 'TEACHER', '00000000-0000-4000-8000-000000000959', true, now())
+    RETURNING id INTO erik;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (l, 'ledighet-guardian@example.invalid', 'Vera', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000000955', true, now())
+    RETURNING id INTO guardian;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (l, 'ledighet-ella@example.invalid', 'Ella', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000956', true, g9a, now())
+    RETURNING id INTO ella;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (l, 'ledighet-gustav@example.invalid', 'Gustav', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000957', true, g9b, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt") VALUES
+    (l, 'ledighet-frida@example.invalid', 'Frida', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000958', true, g9c, now())
+    RETURNING id INTO frida;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (l, guardian, ella), (l, guardian, frida);
+
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "validTo", "updatedAt") VALUES
+    (l, anna, y, 'MENTORSKAP', 'Mentor 9A', 60, g9a, NULL, now()),
+    (l, bertil, y, 'MENTORSKAP', 'Mentor 9A', 60, g9a, '2095-12-20', now()),
+    (l, cecilia, y, 'MENTORSKAP', 'Mentor 9B', 60, g9b, NULL, now()),
+    (l, erik, y, 'MENTORSKAP', 'Mentor 9C', 60, g9c, NULL, now());
+  UPDATE "Users" SET "isActive" = false, "updatedAt" = now() WHERE id = erik;
+
+  -- Gustav's own request, filed in this earlier transaction while the
+  -- school delegated nothing, so its trigger told nobody: section 98 asserts
+  -- that the staff catch-up tells its mentor once.
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  SELECT l, u.id, u.id, '2096-01-23', '2096-01-23', 'rls fixture tidigare'
+    FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000957';
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
