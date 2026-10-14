@@ -36,6 +36,15 @@ describe('judgeBlocks', () => {
     });
   });
 
+  it('treats a lock on a block of one member as any post\'s lock: neither sent nor refused', () => {
+    const alone = [{ id: 'ty', blockId: 'b' }, { id: 'sv', blockId: null }];
+
+    expect(judgeBlocks(alone, remaining({ ty: 1, sv: 3 }), locked({ ty: 1 }))).toEqual({
+      sent: new Set(),
+      partlyLocked: [],
+    });
+  });
+
   it('sends a block of one member nothing', () => {
     expect(
       judgeBlocks([{ id: 'ty', blockId: 'b' }, { id: 'sv' }], remaining({ ty: 2, sv: 3 }), locked({})).sent,

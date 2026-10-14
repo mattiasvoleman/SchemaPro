@@ -43,6 +43,9 @@ export interface BlockJudgement {
 /**
  * Judge every block of the year over all its members.
  *
+ *  - One member: no block. Nothing is held to it, so a lock on it is any
+ *    post's lock (it cancels demand as it always did), and it is neither
+ *    sent nor refused — the payload is the one a school without blocks sends.
  *  - Nothing left to place in any member: not sent, not refused.
  *  - A lesson locked anywhere in the block while a member has lessons left:
  *    refused as partly locked. EVERY preserved lesson of a member counts, not
@@ -50,9 +53,8 @@ export interface BlockJudgement {
  *    locked odd weeks is still on its Monday in the weeks it runs, and the
  *    engine, which has no weeks, would place the block beside it).
  *  - Otherwise every member has its whole demand, which the database holds
- *    equal across the block (TB409), and a block of two or more is sent. One
- *    member alone constrains nothing and is sent without the key, so the
- *    payload is the one a school without blocks sends.
+ *    equal across the block (TB409), and a block of two or more members with
+ *    lessons to place is sent.
  */
 export function judgeBlocks(
   rows: readonly BlockRow[],
@@ -69,6 +71,7 @@ export function judgeBlocks(
   const sent = new Set<string>();
   const partlyLocked: PartlyLockedBlock[] = [];
   for (const [blockId, memberIds] of membersOf) {
+    if (memberIds.length < 2) continue;
     const toPlace = memberIds.filter((id) => remainingOf(id) > 0);
     if (toPlace.length === 0) continue;
     const locked = memberIds.reduce((sum, id) => sum + lockedOf(id), 0);
