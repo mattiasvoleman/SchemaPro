@@ -25,6 +25,10 @@
 // PATCH that the gateway writes over every member in one statement. Each
 // member's teachers are judged by the staffing policy as the cell dialog's
 // save is: a REFUSE is the same notice in the dialog, a WARN the same toast.
+// The dialog covers several posts, so each sentence starts with the post it
+// is about, from the requirementId the gateway sends with it. The save moves
+// teachers' minutes, so it refreshes what the cell dialog's candidate badges
+// read, as that dialog's own save does.
 //
 // WHAT IT SAYS BEFORE THE GENERATOR DOES. Two things the generator refuses by
 // name can be seen from the page's own rows, and each block says them as soon
@@ -44,7 +48,8 @@ import { useCrudMutations } from "@/lib/queries";
 import { lengthPartsOf } from "@/lib/lesson-lengths";
 import { draftPartsOf, shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
 import type { MessageLookup } from "@/lib/engine-message";
-import { refusalText, savedToast, staffingRefusal } from "@/lib/staffing-warnings";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import { refusalText, staffingRefusal, warningText } from "@/lib/staffing-warnings";
 import type { StaffingWarning, TeachingBlock, TeachingRequirement } from "@/lib/types";
 import { EXTRA_ROW_GRID, LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
@@ -152,6 +157,9 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
   const { create, update, remove } = useCrudMutations<BlockBody>("/api/v1/teaching-blocks", [
     ["teachingBlocks", academicYearId],
     ["requirements", academicYearId],
+    [...STAFFING_KEYS.load],
+    [...STAFFING_KEYS.unstaffed],
+    [...STAFFING_KEYS.suggestions],
   ]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [filter, setFilter] = useState("");
@@ -230,6 +238,12 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
     setLessonsRefusal(null);
     setLessons({ block, first: head!, extra });
   };
+  // "Tyska för Ty7: ", for a sentence about one member; nothing for an id the
+  // page does not hold (an older gateway sends none).
+  const postOf = (requirementId: unknown) => {
+    const post = requirements.find((requirement) => requirement.id === requirementId);
+    return post ? `${label(post)}: ` : "";
+  };
   // Always the whole shape, lessonLengths [] for a uniform one: the explicit
   // "make it uniform" (lesson-shape-merge.ts), right whatever the members were.
   const lessonsShape = lessons ? shapeFromDraft([lessons.first, ...lessons.extra]).shape : null;
@@ -238,13 +252,21 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
     try {
       const saved = await update.mutateAsync({ id: lessons.block.id, ...lessonsShape });
       // Read defensively, as the cell dialog reads a post's warnings.
-      const warnings = (saved as { warnings?: StaffingWarning[] } | null)?.warnings;
-      savedToast(tEngine, t("lessonsSaved", { name: lessons.block.name }), warnings);
+      const warnings = (saved as { warnings?: (StaffingWarning & { requirementId?: string })[] } | null)?.warnings ?? [];
+      const title = t("lessonsSaved", { name: lessons.block.name });
+      // savedToast's two shapes, each sentence after the post it is about.
+      if (warnings.length === 0) toast.success(title);
+      else {
+        toast.warning(title, {
+          description: warnings.map((warning) => `${postOf(warning.requirementId)}${warningText(tEngine, warning)}`).join(" "),
+          duration: 12_000,
+        });
+      }
       setLessons(null);
     } catch (error) {
       const refused = staffingRefusal(error);
       if (refused) {
-        setLessonsRefusal(refusalText(tEngine, refused));
+        setLessonsRefusal(`${postOf(refused.params.requirementId)}${refusalText(tEngine, refused)}`);
         return;
       }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
