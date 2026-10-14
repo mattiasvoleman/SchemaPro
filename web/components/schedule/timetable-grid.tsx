@@ -268,7 +268,32 @@ function TimetableGridInner({
   className,
 }: TimetableGridInnerProps) {
   const t = useTranslations("common");
+  const tDays = useTranslations("days");
+  const tStatus = useTranslations("lessonStatus");
   const bodyRef = useRef<HTMLDivElement>(null);
+  /*
+   * The lesson an arrow key just moved, so focus can follow it. A move to
+   * another day lands in another column, React mounts a new button there,
+   * and focus fell to <body>: the keyboard user was thrown out of the grid
+   * after every move. Followed only while focus is lost, and for ten
+   * seconds — a move the gateway refused never arrives, and an old one must
+   * not pull focus back later.
+   */
+  const refocusRef = useRef<{ id: string; until: number } | null>(null);
+  useEffect(() => {
+    const pending = refocusRef.current;
+    if (!pending) return;
+    if (Date.now() > pending.until) {
+      refocusRef.current = null;
+      return;
+    }
+    const button = bodyRef.current?.querySelector<HTMLElement>(`[data-lesson-id="${CSS.escape(pending.id)}"]`);
+    if (!button || button === document.activeElement) return;
+    if (document.activeElement === null || document.activeElement === document.body) {
+      button.focus();
+      refocusRef.current = null;
+    }
+  });
   const dragRef = useRef<DragState | null>(null);
   const ghostRef = useRef<GhostState | null>(null);
   const [ghost, setGhost] = useState<GhostState | null>(null);
@@ -736,6 +761,7 @@ function TimetableGridInner({
       onInvalidDrop?.(lesson.id, change);
       return;
     }
+    refocusRef.current = { id: lesson.id, until: Date.now() + 10_000 };
     onLessonChange(lesson.id, change);
   };
 
@@ -785,7 +811,14 @@ function TimetableGridInner({
                   isToday && "bg-accent/60",
                 )}
               >
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {/* Today's label in the accent's own ink: muted on the accent
+                    tint measured 4.42:1, under AA for text this small. */}
+                <div
+                  className={cn(
+                    "text-xs font-semibold uppercase tracking-wide",
+                    isToday ? "text-accent-foreground" : "text-muted-foreground",
+                  )}
+                >
                   {t(DAY_KEYS[i] as string)}
                 </div>
                 {date ? (
@@ -968,10 +1001,15 @@ function TimetableGridInner({
                   const selected = selectedIds?.has(lesson.id) ?? false;
                   const widthPct = 100 / lesson.laneCount;
                   const isDragSource = draggingId === lesson.id;
+                  // Muted ink on the subject's tint measured 4.1–4.4:1; the
+                  // foreground at 80 % keeps the step below the title and
+                  // clears AA on any tint. A cancelled lesson has no tint.
+                  const factInk = lesson.cancelled ? "text-muted-foreground" : "text-foreground/80";
                   return (
                     <button
                       key={lesson.id}
                       type="button"
+                      data-lesson-id={lesson.id}
                       onClick={
                         // In editable mode clicks are resolved on pointerup
                         // (drag vs click); otherwise plain click-to-open.
@@ -1018,7 +1056,13 @@ function TimetableGridInner({
                           ? "cursor-pointer hover:shadow-md"
                           : "cursor-default",
                         editable && "touch-none",
-                        lesson.cancelled && "opacity-45 line-through",
+                        /*
+                         * A cancelled lesson keeps full-strength text: struck
+                         * through, untinted, its edge dashed. Faded to 45 % it
+                         * measured 1.7:1, and what was cancelled is exactly
+                         * what a pupil has to be able to read.
+                         */
+                        lesson.cancelled && "border border-dashed border-l-4 line-through",
                         // The destructive token rather than a raw red: one
                         // colour for "this clashes" across the app, and one
                         // that holds 3:1 against the card in both themes.
@@ -1045,15 +1089,28 @@ function TimetableGridInner({
                         height: `${height}px`,
                         left: `calc(${lesson.lane * widthPct}% + 3px)`,
                         width: `calc(${widthPct}% - 6px)`,
-                        backgroundColor: `${lesson.color}1a`,
+                        backgroundColor: lesson.cancelled ? "transparent" : `${lesson.color}1a`,
                         borderLeftColor: lesson.color,
                       }}
                     >
+                      {/*
+                        When, and whether at all, for a screen reader: the eye
+                        reads the day off the column, the time off the axis
+                        and a cancellation off the strike-through, and without
+                        this Monday's Svenska 7A and Wednesday's cancelled one
+                        had the same name.
+                      */}
+                      <span className="sr-only">
+                        {tDays(String(lesson.dayOfWeek))} {clockOf(lesson.startMinutes)}–{clockOf(lesson.endMinutes)},{" "}
+                        {lesson.cancelled ? `${tStatus("CANCELLED")}, ` : null}
+                      </span>
                       <div className="flex items-start justify-between gap-1">
-                        <div
-                          className="truncate font-semibold"
-                          style={{ color: lesson.color }}
-                        >
+                        {/*
+                          The subject's colour is the edge and the tint, never
+                          the ink: a school picks any colour, and green on its
+                          own tint measured 2.95:1.
+                        */}
+                        <div className={cn("truncate font-semibold", lesson.cancelled ? "text-muted-foreground" : "text-foreground")}>
                           {lesson.title}
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
@@ -1097,21 +1154,21 @@ function TimetableGridInner({
                       {stacked ? (
                         <>
                           {lesson.subtitle ? (
-                            <div className="truncate text-muted-foreground">
+                            <div className={cn("truncate", factInk)}>
                               {lesson.subtitle}
                             </div>
                           ) : null}
                           {lesson.room ? (
-                            <div className="truncate text-muted-foreground">{lesson.room}</div>
+                            <div className={cn("truncate", factInk)}>{lesson.room}</div>
                           ) : null}
                           {lesson.recurrenceNote ? (
-                            <div className="truncate font-medium uppercase tracking-wide text-[9px] text-muted-foreground">
+                            <div className={cn("truncate font-medium uppercase tracking-wide text-[9px]", factInk)}>
                               {lesson.recurrenceNote}
                             </div>
                           ) : null}
                         </>
                       ) : linesThatFit >= 2 && facts.length > 0 ? (
-                        <div className="truncate text-muted-foreground">
+                        <div className={cn("truncate", factInk)}>
                           {facts.join(" · ")}
                         </div>
                       ) : facts.length > 0 ? (

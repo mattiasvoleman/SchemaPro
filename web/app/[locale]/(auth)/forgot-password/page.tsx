@@ -23,7 +23,10 @@ export default async function ForgotPasswordPage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t("resetTitle")}</CardTitle>
+        <CardTitle>
+          {/* The page's one heading; the h1 takes the title's look. */}
+          <h1>{t("resetTitle")}</h1>
+        </CardTitle>
         <CardDescription>{t("resetSubtitle")}</CardDescription>
       </CardHeader>
       <CardContent>

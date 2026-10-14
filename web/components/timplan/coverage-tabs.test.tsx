@@ -149,7 +149,7 @@ describe("CoverageScheduledTab", () => {
 
   it("keeps the tables' sr-only sentences inside their scroll boxes, so a phone scrolls the matrix and not the page", async () => {
     // An sr-only sentence is position: absolute. With no positioned ancestor
-    // inside the overflow-x-auto box it is laid out against the page, and the
+    // inside the scroll box (TableScroll) it is laid out against the page, and the
     // columns past a 390 px screen widened /admin/timplan/tackning to 624 px.
     state.scheduled[""] = scheduledCase(TWO_GROUPS).response;
     state.scheduled["00000000-0000-4000-8000-000000000157"] = scheduledCase(DRILLED).response;
@@ -158,7 +158,7 @@ describe("CoverageScheduledTab", () => {
     await user.click(screen.getByRole("button", { name: /^7A/ }));
     const tables = screen.getAllByRole("table");
     expect(tables.length).toBeGreaterThan(1);
-    for (const table of tables) expect(table.closest(".overflow-x-auto")).toHaveClass("relative");
+    for (const table of tables) expect(table.closest(".overflow-auto, .overflow-x-auto")).toHaveClass("relative");
   });
 
   it("shows a teacher no pupil column and asks for no pupil drill-down", async () => {
@@ -264,7 +264,7 @@ describe("CoverageDeliveredTab", () => {
     state.delivered[""] = DELIVERED_OVERVIEW;
     render(<CoverageDeliveredTab {...props(subjects)} />);
     for (const table of screen.getAllByRole("table")) {
-      expect(table.closest(".overflow-x-auto")).toHaveClass("relative");
+      expect(table.closest(".overflow-auto, .overflow-x-auto")).toHaveClass("relative");
     }
   });
 

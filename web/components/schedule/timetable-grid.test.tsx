@@ -271,7 +271,8 @@ describe("TimetableGrid time axis and vertical placement", () => {
       // facts are still there for a reader who is listening, and on the
       // tooltip for one who is not.
       const short = screen.getAllByRole("button", { name: /Math/ })[2]!;
-      expect(short.querySelector(".sr-only")?.textContent).toBe("7A · A1 · PERIOD");
+      // The last sr-only span; the first says the lesson's day and time.
+      expect([...short.querySelectorAll(".sr-only")].at(-1)?.textContent).toBe("7A · A1 · PERIOD");
       expect(
         [...short.querySelectorAll("div")].some(
           (row) => row.textContent === "7A · A1 · PERIOD",
@@ -448,8 +449,8 @@ describe("TimetableGrid overlap lanes", () => {
 });
 
 describe("TimetableGrid lesson appearance", () => {
-  it("derives the tint, accent border and title color from the subject color", () => {
-    render(<TimetableGrid lessons={[makeLesson({ color: "#6366f1" })]} />);
+  it("derives the tint and the accent border from the subject color, and writes the title in the foreground", () => {
+    render(<TimetableGrid lessons={[makeLesson({ color: "#6366f1", room: "Room 214" })]} />);
 
     const button = screen.getByRole("button", { name: /Math/ });
     // #6366f1 + "1a" alpha suffix for the tint.
@@ -457,7 +458,11 @@ describe("TimetableGrid lesson appearance", () => {
       backgroundColor: "rgba(99, 102, 241, 0.1)",
       borderLeftColor: "#6366f1",
     });
-    expect(screen.getByText("Math")).toHaveStyle({ color: "#6366f1" });
+    // Never the subject's colour as ink: a school picks any colour, and some
+    // fail AA on their own tint (green 2.95:1).
+    expect(screen.getByText("Math")).toHaveClass("text-foreground");
+    expect(screen.getByText("Math").getAttribute("style") ?? "").not.toContain("color");
+    expect(screen.getByText("Room 214")).toHaveClass("text-foreground/80");
   });
 
   it("renders subtitle and room lines when present", () => {
@@ -469,12 +474,18 @@ describe("TimetableGrid lesson appearance", () => {
     expect(screen.getByText("Room 214")).toBeInTheDocument();
   });
 
-  it("strikes through and fades cancelled lessons", () => {
-    render(<TimetableGrid lessons={[makeLesson({ cancelled: true })]} />);
+  it("strikes through cancelled lessons at full strength, untinted and dashed", () => {
+    render(<TimetableGrid lessons={[makeLesson({ cancelled: true, room: "Room 214" })]} />);
 
     const button = screen.getByRole("button", { name: /Math/ });
-    expect(button).toHaveClass("line-through");
-    expect(button).toHaveClass("opacity-45");
+    expect(button).toHaveClass("line-through", "border-dashed");
+    // Said, not only struck through: the mock translator returns the key.
+    expect(button).toHaveAccessibleName(/^1 09:00–10:00, CANCELLED, Math/);
+    // Faded to 45 % the text measured 1.7:1; it has to be readable.
+    expect(button.className).not.toMatch(/\bopacity-/);
+    expect(button).toHaveStyle({ backgroundColor: "rgba(0, 0, 0, 0)" });
+    expect(screen.getByText("Math")).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("Room 214")).toHaveClass("text-muted-foreground");
   });
 
   it("marks conflicted lessons with a red ring and warning icon", () => {
@@ -878,6 +889,56 @@ describe("TimetableGrid keyboard editing", () => {
     onLessonChange.mockClear();
     fireEvent.keyDown(button, { key: "ArrowLeft" });
     expect(onLessonChange).not.toHaveBeenCalled();
+  });
+
+  it("names each lesson with its day and time, which the eye reads off the column and the axis", () => {
+    render(
+      <TimetableGrid
+        lessons={[makeLesson(), makeLesson({ id: "math-wed", dayOfWeek: 3, startMinutes: 640, endMinutes: 700 })]}
+      />,
+    );
+    // The mock translator returns the key: "1" is Måndag, "3" Onsdag.
+    expect(screen.getByRole("button", { name: /^1 09:00–10:00, Math/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^3 10:40–11:40, Math/ })).toBeInTheDocument();
+  });
+
+  it("keeps focus on a lesson an arrow key moved to another day, once it is redrawn there", () => {
+    const onLessonChange = vi.fn();
+    const { rerender } = render(
+      <TimetableGrid lessons={[makeLesson()]} editable onLessonChange={onLessonChange} />,
+    );
+    const before = screen.getByRole("button", { name: /Math/ });
+    before.focus();
+    fireEvent.keyDown(before, { key: "ArrowRight" });
+    expect(onLessonChange).toHaveBeenCalled();
+
+    // The page saves and refetches; the lesson comes back in Tuesday's
+    // column, a new button, and focus would otherwise be left on <body>.
+    rerender(
+      <TimetableGrid lessons={[makeLesson({ dayOfWeek: 2 })]} editable onLessonChange={onLessonChange} />,
+    );
+    const after = screen.getByRole("button", { name: /^2 09:00–10:00, Math/ });
+    expect(after).not.toBe(before);
+    expect(after).toHaveFocus();
+  });
+
+  it("does not pull focus to a moved lesson the person has already left", () => {
+    const onLessonChange = vi.fn();
+    const { rerender } = render(
+      <>
+        <TimetableGrid lessons={[makeLesson()]} editable onLessonChange={onLessonChange} />
+        <input aria-label="elsewhere" />
+      </>,
+    );
+    fireEvent.keyDown(screen.getByRole("button", { name: /Math/ }), { key: "ArrowRight" });
+    screen.getByRole("textbox", { name: "elsewhere" }).focus();
+    rerender(
+      <>
+        <TimetableGrid lessons={[makeLesson({ dayOfWeek: 2 })]} editable onLessonChange={onLessonChange} />
+        <input aria-label="elsewhere" />
+      </>,
+    );
+    expect(screen.getByRole("textbox", { name: "elsewhere" })).toHaveFocus();
   });
 
   it("suppresses no-op moves at the top and bottom of the day", () => {

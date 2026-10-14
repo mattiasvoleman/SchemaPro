@@ -71,6 +71,19 @@ describe("/v/[token]", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reads the grid day by day: each day's heading, then that day's lessons, and no empty list", async () => {
+    respond(200, WEEK);
+    const { container } = await renderPage();
+    // The grid is the second rendering of the week (the first is the phone list).
+    const grid = container.querySelector("div.md\\:grid")!;
+    const order = [...grid.querySelectorAll("h2, ol, p")].map((node) =>
+      node.tagName === "H2" ? `h2 ${node.id}` : node.tagName === "OL" ? `ol ${node.getAttribute("aria-labelledby")}` : "p",
+    );
+    // Monday has lessons; Tuesday has none and says so instead of an empty list.
+    expect(order.slice(0, 4)).toEqual(["h2 day-2026-10-12", "ol day-2026-10-12", "h2 day-2026-10-13", "p"]);
+    expect(grid.querySelectorAll("ol")).toHaveLength(1);
+  });
+
   it("asks the gateway with no cache, forwarding only the edge's address beside the proxy key", async () => {
     respond(200, WEEK);
     await renderPage({ date: "2026-10-12", target: "not-a-uuid" });

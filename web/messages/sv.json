@@ -83,7 +83,8 @@
     "skipToContent": "Hoppa till innehållet",
     "refetchFailedHint": "Det som visas är det som senast hämtades, och det kan ha ändrats sedan dess. Ladda om sidan innan du ändrar något.",
     "confirmLoadFailed": "Bekräftelsen kunde inte öppnas. Inget är ändrat – försök igen.",
-    "formLoadFailed": "Formuläret kunde inte öppnas. Inget är ändrat – försök igen."
+    "formLoadFailed": "Formuläret kunde inte öppnas. Inget är ändrat – försök igen.",
+    "toasts": "Meddelanden"
   },
   "days": {
     "1": "Måndag",
@@ -136,6 +137,7 @@
     "newPassword": "Nytt lösenord",
     "updatePassword": "Uppdatera lösenord",
     "passwordUpdated": "Lösenordet är uppdaterat. Du kan nu logga in.",
+    "noProfileTitle": "Kontot är inte kopplat till någon skola",
     "noProfile": "Ditt konto är inte kopplat till någon skola ännu. Kontakta din administratör.",
     "or": "eller",
     "schoolAccount": "Logga in med skolkonto",
@@ -1197,7 +1199,7 @@
     "undone": "Ändringen ångrades",
     "redone": "Ändringen gjordes om",
     "conflictCount": "{count, plural, =1 {1 konflikt} other {# konflikter}}",
-    "dragHint": "Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval.",
+    "dragHint": "Dra lektioner för att flytta, dra i nederkanten för att ändra längd, klicka på en tom lucka för att lägga till, skift-klicka för flerval. Med tangentbordet: piltangenterna flyttar en lektion 15 minuter eller en dag, Enter öppnar den och skift-Enter väljer den.",
     "versions": "Versioner",
     "versionsTitle": "Schemaversioner",
     "versionsBody": "Spara namngivna ögonblicksbilder av schemat och återställ när som helst. En säkerhetskopia tas automatiskt före varje återställning.",
@@ -1786,6 +1788,7 @@
   },
   "notifications": {
     "title": "Notiser",
+    "titleUnread": "Notiser, {count, plural, one {# oläst} other {# olästa}}",
     "empty": "Inga notiser ännu.",
     "markAllRead": "Markera alla som lästa",
     "absenceUnreported": "{student} markerades frånvarande från {subject} den {date} utan föranmälan.",
@@ -1807,7 +1810,8 @@
     "settingsLink": "Välj vad som skickas till dig",
     "leaveRequested": "Ny ledighetsansökan för {student} ({from} – {to}, {days, plural, one {# skoldag} other {# skoldagar}}) väntar på ditt beslut.",
     "leaveApprovedByMentor": "Ledighet för {student} ({from} – {to}) beviljades av mentorn.",
-    "leaveRejectedByMentor": "Ledighet för {student} ({from} – {to}) avslogs av mentorn."
+    "leaveRejectedByMentor": "Ledighet för {student} ({from} – {to}) avslogs av mentorn.",
+    "unreadMarker": "Oläst."
   },
   "integrations": {
     "title": "Integrationer",
@@ -4816,5 +4820,11 @@
     "rejectBody": "Familjen får beskedet, med din kommentar om du har skrivit en. Ett beslut kan inte ändras efteråt.",
     "referTitle": "Skicka ansökan för {name} till rektor?",
     "referBody": "Rektor beslutar om den i stället. Du ser den inte här efteråt och kan inte besluta om den."
+  },
+  "accessibilityStatement": {
+    "title": "Tillgänglighetsredogörelse",
+    "link": "Tillgänglighetsredogörelse",
+    "languageNote": "Redogörelsen finns bara på svenska.",
+    "toApp": "Till SchemaPro"
   }
 }

@@ -1,4 +1,5 @@
 import { NextIntlClientProvider } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { redirect } from "@/i18n/navigation";
 import { getSession } from "@/lib/auth";
 import { AppShell } from "@/components/layout/app-shell";
@@ -27,6 +28,7 @@ export default async function AppLayout({
   }
 
   const { profile, school } = session;
+  const t = await getTranslations("common");
 
   // AppProviders (react-query + sonner) and NextIntlClientProvider are mounted
   // here rather than in the root layout so the unauthenticated routes do not
@@ -34,7 +36,7 @@ export default async function AppLayout({
   // the app; see [locale]/layout.tsx.
   return (
     <NextIntlClientProvider>
-      <AppProviders>
+      <AppProviders toastLabel={t("toasts")}>
         <ProfileProvider profile={profile} school={school}>
           <AppShell
             role={profile.role}

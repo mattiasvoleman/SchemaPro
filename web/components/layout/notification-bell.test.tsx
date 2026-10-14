@@ -156,7 +156,7 @@ function renderBell() {
 // (including the trigger), so hidden: true keeps the bell reachable in both
 // states.
 const bellButton = () =>
-  screen.getByRole("button", { name: "title", hidden: true });
+  screen.getByRole("button", { name: /^title/, hidden: true });
 
 beforeEach(() => {
   seq = 0;
@@ -207,6 +207,8 @@ describe("NotificationBell badge", () => {
     await waitFor(() =>
       expect(within(bellButton()).getByText("3")).toBeInTheDocument(),
     );
+    // The badge is aria-hidden; the button's name is what a screen reader says.
+    expect(bellButton()).toHaveAccessibleName("titleUnread(count=3)");
   });
 
   it("caps the badge at 9+ past nine unread", async () => {
@@ -218,6 +220,8 @@ describe("NotificationBell badge", () => {
     await waitFor(() =>
       expect(within(bellButton()).getByText("9+")).toBeInTheDocument(),
     );
+    // The eye gets 9+, the name the real number.
+    expect(bellButton()).toHaveAccessibleName("titleUnread(count=12)");
   });
 
   it("shows no badge and the empty state when the query fails", async () => {
@@ -279,7 +283,7 @@ describe("NotificationBell inbox", () => {
 
     expect(screen.getByText("empty")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "markAllRead" }),
+      screen.queryByRole("menuitem", { name: "markAllRead" }),
     ).not.toBeInTheDocument();
   });
 
@@ -483,12 +487,27 @@ describe("NotificationBell inbox", () => {
     await waitFor(() => expect(argsFor("select")).toHaveLength(1));
     await user.click(bellButton());
 
-    // Read state has no accessible handle (purely visual tint), so the row
-    // container's class is the only observable signal.
     const unreadRow = screen.getByText("scheduleChanged(subject=Unread)").parentElement!;
     const readRow = screen.getByText("scheduleChanged(subject=Read)").parentElement!;
     expect(unreadRow).toHaveClass("bg-accent/40");
     expect(readRow).not.toHaveClass("bg-accent/40");
+    // Not by the tint alone: unread is said, and set in a heavier weight.
+    expect(unreadRow).toHaveAccessibleName(/^unreadMarker scheduleChanged\(subject=Unread\)/);
+    expect(readRow).not.toHaveAccessibleName(/unreadMarker/);
+    expect(screen.getByText("scheduleChanged(subject=Unread)")).toHaveClass("font-medium");
+  });
+
+  it("puts every notice within the menu's arrow keys, as a menu item", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(ok([notif({ meta: { subjectName: "Ett" } }), notif({ meta: { subjectName: "Två" } })]));
+    renderBell();
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    // A paragraph in a Radix menu is skipped by the arrow keys; an item is not.
+    const items = screen.getAllByRole("menuitem").map((item) => item.textContent ?? "");
+    expect(items.some((text) => text.includes("scheduleChanged(subject=Ett)"))).toBe(true);
+    expect(items.some((text) => text.includes("scheduleChanged(subject=Två)"))).toBe(true);
   });
 });
 
@@ -511,7 +530,7 @@ describe("NotificationBell mark all read", () => {
       expect(within(bellButton()).getByText("2")).toBeInTheDocument(),
     );
     await user.click(bellButton());
-    await user.click(screen.getByRole("button", { name: "markAllRead" }));
+    await user.click(screen.getByRole("menuitem", { name: "markAllRead" }));
 
     await waitFor(() =>
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["notifications"] }),
@@ -533,7 +552,7 @@ describe("NotificationBell mark all read", () => {
     await waitFor(() => {
       expect(within(bellButton()).queryByText("2")).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "markAllRead" }),
+        screen.queryByRole("menuitem", { name: "markAllRead" }),
       ).not.toBeInTheDocument();
     });
     expect(argsFor("select")).toHaveLength(2);
@@ -549,7 +568,7 @@ describe("NotificationBell mark all read", () => {
       expect(within(bellButton()).getByText("1")).toBeInTheDocument(),
     );
     await user.click(bellButton());
-    await user.click(screen.getByRole("button", { name: "markAllRead" }));
+    await user.click(screen.getByRole("menuitem", { name: "markAllRead" }));
 
     await waitFor(() => expect(argsFor("update")).toHaveLength(1));
     // Let the rejected mutation settle before asserting nothing was refreshed.

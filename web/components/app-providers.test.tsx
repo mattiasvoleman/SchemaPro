@@ -7,11 +7,12 @@ import { AppProviders } from "./app-providers";
 // test pins the configuration AppProviders passes it without rendering the
 // real portal machinery.
 vi.mock("sonner", () => ({
-  Toaster: (props: { richColors?: boolean; position?: string }) => (
+  Toaster: (props: { richColors?: boolean; position?: string; containerAriaLabel?: string }) => (
     <div
       data-testid="toaster"
       data-position={props.position}
       data-rich-colors={String(props.richColors)}
+      data-label={props.containerAriaLabel}
     />
   ),
 }));
@@ -30,7 +31,7 @@ beforeEach(() => {
 describe("AppProviders", () => {
   it("renders children and mounts the toaster bottom-right with rich colors", () => {
     render(
-      <AppProviders>
+      <AppProviders toastLabel="Meddelanden">
         <p>authenticated page</p>
       </AppProviders>,
     );
@@ -38,12 +39,14 @@ describe("AppProviders", () => {
     expect(screen.getByText("authenticated page")).toBeInTheDocument();
     const toaster = screen.getByTestId("toaster");
     expect(toaster).toHaveAttribute("data-position", "bottom-right");
+    // The live region is named in the page's language, not sonner's English.
+    expect(toaster).toHaveAttribute("data-label", "Meddelanden");
     expect(toaster).toHaveAttribute("data-rich-colors", "true");
   });
 
   it("provides a query client with the documented defaults", () => {
     render(
-      <AppProviders>
+      <AppProviders toastLabel="Meddelanden">
         <ClientProbe />
       </AppProviders>,
     );
@@ -57,12 +60,12 @@ describe("AppProviders", () => {
 
   it("keeps the same query client instance across re-renders (cache survives)", () => {
     const { rerender } = render(
-      <AppProviders>
+      <AppProviders toastLabel="Meddelanden">
         <ClientProbe />
       </AppProviders>,
     );
     rerender(
-      <AppProviders>
+      <AppProviders toastLabel="Meddelanden">
         <ClientProbe />
       </AppProviders>,
     );

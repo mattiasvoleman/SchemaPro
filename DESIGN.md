@@ -9,7 +9,7 @@ colors:
   primary-foreground: "hsl(0 0% 100%)"
   primary-hover: "hsl(243 75% 63%)"
   muted: "hsl(240 5% 96%)"
-  muted-foreground: "hsl(240 4% 46%)"
+  muted-foreground: "hsl(240 4% 43%)"
   accent: "hsl(243 75% 96%)"
   accent-foreground: "hsl(243 75% 40%)"
   destructive: "hsl(0 72% 51%)"
@@ -235,7 +235,7 @@ A cool neutral ground (hue 240) with one blue-violet accent (hue 243) and three 
 - **Indigo Wash** (`accent`, `accent-foreground`): the hover fill of outline and ghost buttons; the sidebar uses its own pair (`sidebar-accent`, `sidebar-accent-foreground`) for the active and hovered nav item.
 
 ### Secondary
-- **Signal Red** (`destructive`): the destructive Button, the solid destructive Badge, the destructive Notice's 5% tint, 40% edge and its OctagonX icon, form error text.
+- **Signal Red** (`destructive`): the destructive Button, the solid destructive Badge, the destructive Notice's 5% tint, 40% edge and its OctagonX icon, form error text. In dark the fill is lighter (58%), so its ink is a near-black red (`0 80% 6%`, 4.88:1) as `success` has, not white (4.04:1).
 - **Ledger Green** (`success`, `success-strong`): the base shade tints (Badge 15%, Notice 10%, done Stepper step 10%); the strong shade is the ink and icon colour on light grounds (5.7:1). In dark mode strong equals base.
 - **Amber Signal** (`warning`, `warning-strong`, `warning-foreground`): the base shade tints (Badge 15%, Notice 10%, edge 50%); `warning-strong` (4.2:1) is the warning icon; `warning-foreground` is the warning Badge's ink in light (dark uses `warning` itself).
 
@@ -243,7 +243,7 @@ A cool neutral ground (hue 240) with one blue-violet accent (hue 243) and three 
 - **Paper** (`background`, `card`): page and card surface; identical in light, card is a step up (8% vs 5% lightness) in dark.
 - **Ink** (`foreground`): all running text, Notice text in every tone, table cells.
 - **Fog** (`muted`, also `secondary`): neutral Notice fill, Tabs track, skeletons, empty-state icon disc, group rows at 40%, table row hover at 50%.
-- **Slate Text** (`muted-foreground`): subtitles, descriptions, hints, table heads, KPI labels, decorative icons. 4.83:1, AA, not AAA.
+- **Slate Text** (`muted-foreground`): subtitles, descriptions, hints, table heads, KPI labels, decorative icons, inactive tabs. 5.43:1 on white and 4.94:1 on `muted` (it was 4.83 and 4.40 at 46%, under AA on its own surface), AA, not AAA.
 - **Hairline** (`border`, `input`): every card, table and tile edge and the outline Button's edge. `input` measures 1.27:1 on white and 1.40:1 on the dark page, `border` 1.27:1 and 1.23:1 on card, so both are decoration and never the only sign that a control is there.
 - **Field Edge** (`input-strong`): the edge of every text field, select and textarea: Input, Textarea, SelectTrigger, NativeSelect, DateField (box and calendar button) and the timplan grid's cells. Also the track of an unchecked Switch, whose thumb is `background`, so it stands out from the track by the same ratio (and by 6.18:1 / 5.12:1 on the checked `primary` track). SC 1.4.11 asks 3:1 of it on every surface a control sits on: light 3.49:1 on background and card, 3.35:1 on sidebar, 3.18:1 on muted; dark 3.80, 3.59, 3.68 and 3.07:1. `web/app/globals-css.test.ts` computes these from the tokens.
 - **Sidebar Mist** (`sidebar`, `sidebar-foreground`, `sidebar-border`): the fixed navigation column.

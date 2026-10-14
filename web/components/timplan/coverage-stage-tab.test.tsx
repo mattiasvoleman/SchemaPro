@@ -187,7 +187,7 @@ describe("CoverageStageTab", () => {
 
   it("keeps the tables' sr-only sentences inside their scroll boxes, so a phone scrolls the matrix and not the page", async () => {
     // An sr-only sentence is position: absolute. With no positioned ancestor
-    // inside the overflow-x-auto box it is laid out against the page, and the
+    // inside the scroll box (TableScroll) it is laid out against the page, and the
     // columns past a 390 px screen widened /admin/timplan/tackning to 624 px.
     const { overview, drill } = responses();
     state.stages[""] = overview;
@@ -197,7 +197,7 @@ describe("CoverageStageTab", () => {
     await user.click(within(screen.getByRole("region", { name: /stageTitle\(MELLAN\)/ })).getByRole("button", { name: /^6A/ }));
     const tables = screen.getAllByRole("table");
     expect(tables.length).toBeGreaterThan(1);
-    for (const table of tables) expect(table.closest(".overflow-x-auto")).toHaveClass("relative");
+    for (const table of tables) expect(table.closest(".overflow-auto, .overflow-x-auto")).toHaveClass("relative");
   });
 
   it("drills into a class with its own request, paints it from its pupils, and lists those with a warning", async () => {

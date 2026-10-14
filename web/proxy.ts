@@ -5,7 +5,9 @@ import { updateSession } from "@/utils/supabase/middleware";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
-const PUBLIC_PATHS = ["/login", "/forgot-password", "/update-password", "/auth"];
+// /tillganglighet: the tillgänglighetsredogörelse, which Digg says nobody
+// should have to sign in to read.
+const PUBLIC_PATHS = ["/login", "/forgot-password", "/update-password", "/auth", "/tillganglighet"];
 
 // Next.js 16 renamed the root "middleware" convention to "proxy".
 export async function proxy(request: NextRequest) {

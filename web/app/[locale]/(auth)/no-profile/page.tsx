@@ -34,6 +34,8 @@ export default async function NoProfilePage() {
   return (
     <Card>
       <CardContent className="flex flex-col items-center gap-4 pt-6 text-center">
+        {/* For a screen reader moving by heading; the icon and the text are the page for the eye. */}
+        <h1 className="sr-only">{t("noProfileTitle")}</h1>
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-warning/15">
           <ShieldAlert className="h-6 w-6 text-warning" />
         </div>

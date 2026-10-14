@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Check, CheckCheck, Loader2 } from "lucide-react";
@@ -81,33 +81,22 @@ export default function LessonAttendancePage({
   const { data: subjects } = useSubjects();
   const report = useReportAttendance();
 
-  const [statuses, setStatuses] = useState<Record<string, AttendanceStatus>>({});
+  // What the teacher has chosen on this page.
+  const [chosen, setChosen] = useState<Record<string, AttendanceStatus>>({});
 
-  // Pre-fill reported-absent students as EXCUSED (teacher can override).
-  useEffect(() => {
-    if (reportedAbsent.size === 0) return;
-    setStatuses((current) => {
-      const next = { ...current };
-      for (const studentId of reportedAbsent) {
-        if (!(studentId in next)) next[studentId] = "EXCUSED";
-      }
-      return next;
-    });
-  }, [reportedAbsent]);
-
-  // Seed local state from existing records once loaded.
-  useEffect(() => {
-    if (!existingRecords) return;
-    setStatuses((current) => {
-      const next = { ...current };
-      for (const record of existingRecords) {
-        if (!(record.studentId in next)) {
-          next[record.studentId] = record.status;
-        }
-      }
-      return next;
-    });
-  }, [existingRecords]);
+  /**
+   * Each pupil's status: an absence reported in advance pre-fills EXCUSED, a
+   * stored record replaces that, and what the teacher chooses here replaces
+   * both. Derived, not seeded: two effects that each filled only the pupils
+   * still missing let whichever read answered first win, so a pupil with a
+   * stored ABSENT and a report opened as one or the other by network timing.
+   */
+  const statuses = useMemo(() => {
+    const known: Record<string, AttendanceStatus> = {};
+    for (const studentId of reportedAbsent) known[studentId] = "EXCUSED";
+    for (const record of existingRecords ?? []) known[record.studentId] = record.status;
+    return { ...known, ...chosen };
+  }, [reportedAbsent, existingRecords, chosen]);
 
   const subject = useMemo(
     () => subjects?.find((candidate) => candidate.id === lesson?.subjectId),
@@ -123,7 +112,7 @@ export default function LessonAttendancePage({
     for (const student of students ?? []) {
       next[student.id] = "PRESENT";
     }
-    setStatuses(next);
+    setChosen(next);
   };
 
   const submit = async () => {
@@ -268,7 +257,7 @@ export default function LessonAttendancePage({
                           value={status}
                           checked={chosen}
                           onChange={() =>
-                            setStatuses((previous) => ({ ...previous, [student.id]: status }))
+                            setChosen((previous) => ({ ...previous, [student.id]: status }))
                           }
                           className="sr-only"
                         />

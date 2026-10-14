@@ -39,6 +39,13 @@ describe("proxy", () => {
     expect(english.headers.get("x-middleware-request-x-viewer-lang")).toBe("en");
   });
 
+  it("lets a visitor without a session read the tillgänglighetsredogörelse, in either language", async () => {
+    for (const path of ["/sv/tillganglighet", "/en/tillganglighet"]) {
+      const response = await proxy(new NextRequest(`https://schema.example.se${path}`));
+      expect(response.headers.get("location")).toBeNull();
+    }
+  });
+
   it("still sends a visitor without a session from an app page to the login", async () => {
     const response = await proxy(new NextRequest("https://schema.example.se/sv/admin/publishing"));
     expect(updateSession).toHaveBeenCalled();

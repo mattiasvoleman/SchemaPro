@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 /** The Mål mode's tones, as the planned tab and the timetable panel paint them. */
 const TONE: Record<ScheduleTone, string> = {
@@ -348,7 +349,7 @@ function ScheduledDrillDown({
         </span>
       </div>
 
-      <div className="relative overflow-x-auto">
+      <TableScroll>
         <table className="w-full text-sm">
           <caption className="sr-only">{t("linesCaption", { group: name })}</caption>
           <thead>
@@ -429,7 +430,7 @@ function ScheduledDrillDown({
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {pupilLevel ? (
         <div className="space-y-2">

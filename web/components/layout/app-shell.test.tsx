@@ -393,14 +393,18 @@ describe("AppShell mobile drawer", () => {
     const drawer = screen.getByRole("dialog");
     const close = within(drawer).getByRole("button", { name: "common.close" });
     const only = within(drawer).getByRole("link", { name: "nav.myChildren" });
+    // Below the menu, the tillgänglighetsredogörelse: the drawer's last stop.
+    const statement = within(drawer).getByRole("link", { name: "accessibilityStatement.link" });
     expect(close).toHaveFocus();
 
     await user.tab();
     expect(only).toHaveFocus();
     await user.tab();
+    expect(statement).toHaveFocus();
+    await user.tab();
     expect(close).toHaveFocus();
     await user.tab({ shift: true });
-    expect(only).toHaveFocus();
+    expect(statement).toHaveFocus();
   });
 
   it("opens a second sidebar and closes via the close button", async () => {
