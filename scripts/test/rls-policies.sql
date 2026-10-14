@@ -11211,15 +11211,21 @@ END $$;
 SET LOCAL ROLE app_authenticated;
 
 -- 32f: the catalogue. Exactly these arms; the pupil's own insert is section
--- 34's, and the mentor's decision on the roadmap adds its own here, as a
--- decision, not as a staff-wide read.
+-- 34's, and the mentor's two (20261023091000) are a decision, not a
+-- staff-wide read: sections 95 to 99 assert them, and here only that they
+-- exist and are the API's alone. With no delegation recorded, as in this
+-- section, the mentor above reads nothing through them.
 DO $$
 DECLARE arms text;
 BEGIN
   SELECT string_agg(policyname, ',' ORDER BY policyname) INTO arms
     FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveRequests';
-  IF arms IS DISTINCT FROM 'leave_requests_admin_all,leave_requests_guardian_insert,leave_requests_guardian_select,leave_requests_student_insert,leave_requests_student_select' THEN
+  IF arms IS DISTINCT FROM 'leave_requests_admin_all,leave_requests_guardian_insert,leave_requests_guardian_select,leave_requests_mentor_select,leave_requests_mentor_update,leave_requests_student_insert,leave_requests_student_select' THEN
     RAISE EXCEPTION 'leave: the arms on LeaveRequests are %', arms;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'LeaveRequests'
+              AND policyname LIKE 'leave\_requests\_mentor\_%' AND roles <> '{app_authenticated}'::name[]) THEN
+    RAISE EXCEPTION 'leave: a mentor arm on LeaveRequests reaches beyond the API''s role';
   END IF;
 END $$;
 ROLLBACK;
@@ -11409,15 +11415,22 @@ BEGIN
 END $$;
 
 -- 33g: the catalogue. Exactly these arms, and a function that answers three
--- columns, runs as its owner and is the API's alone.
+-- columns, runs as its owner and is the API's alone. The approving mentor's
+-- insert (20261023091000) writes and reads nothing here; section 98 asserts
+-- it, and here only that it is the API's alone.
 DO $$
 DECLARE arms text; fn text := 'app.reported_absences(date)'; r text;
 BEGIN
   SELECT string_agg(policyname, ',' ORDER BY policyname) INTO arms
     FROM pg_policies WHERE schemaname = 'public' AND tablename = 'AbsenceReports';
   IF arms IS DISTINCT FROM 'absence_reports_admin_all,absence_reports_guardian_insert,absence_reports_guardian_select,'
+                           'absence_reports_mentor_leave_insert,'
                            'absence_reports_reporter_delete,absence_reports_student_insert,absence_reports_student_select' THEN
     RAISE EXCEPTION 'absence: the arms on AbsenceReports are %', arms;
+  END IF;
+  IF (SELECT roles FROM pg_policies WHERE schemaname = 'public' AND tablename = 'AbsenceReports'
+       AND policyname = 'absence_reports_mentor_leave_insert') IS DISTINCT FROM '{app_authenticated}'::name[] THEN
+    RAISE EXCEPTION 'absence: the mentor''s insert reaches beyond the API''s role';
   END IF;
   IF pg_get_function_result(fn::regprocedure) IS DISTINCT FROM
      'TABLE("studentId" uuid, "startTime" time without time zone, "endTime" time without time zone)' THEN

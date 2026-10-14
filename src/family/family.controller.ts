@@ -23,9 +23,9 @@ import {
   type AbsenceReportView,
   type ChildView,
   type GuardianLinkView,
-  type LeaveRequestView,
 } from './family-reads.service';
 import { FamilyScheduleService, type FamilySchedule } from './family-schedule.service';
+import { LeaveService, type LeaveRequestView } from './leave.service';
 import { FamilyScheduleQueryDto } from './dto/family-schedule.dto';
 import { AbsenceReportsQueryDto, GuardianLinksQueryDto, LeaveRequestsQueryDto } from './dto/family-reads.dto';
 import {
@@ -33,6 +33,7 @@ import {
   CreateGuardianLinkDto,
   CreateLeaveRequestDto,
   DecideLeaveRequestDto,
+  RecordLeaveDelegationDto,
 } from './dto/family.dto';
 
 /**
@@ -40,8 +41,10 @@ import {
  * child's schedule for the family. Every read of them passes through here
  * too (Läslogg): a guardian's children, the absence reports and leave
  * requests a caller may see, and a pupil's guardians each name other people,
- * so each response is recorded in the read log (FamilyReadsService). The
- * schedule needs the teacher labels only a SECURITY DEFINER function may give.
+ * so each response is recorded in the read log. The leave requests are
+ * LeaveService's, for families and staff alike: the mentor's arms are the
+ * API's alone (20261023091000). The schedule needs the teacher labels only a
+ * SECURITY DEFINER function may give.
  */
 @Controller('api/v1')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -50,6 +53,7 @@ export class FamilyController {
     private readonly family: FamilyService,
     private readonly schedule: FamilyScheduleService,
     private readonly reads: FamilyReadsService,
+    private readonly leave: LeaveService,
   ) {}
 
   /** The signed-in guardian's linked pupils: names and whether they are active, no contact details. */
@@ -130,14 +134,21 @@ export class FamilyController {
     return this.family.removeAbsenceReport(id, user);
   }
 
-  /** The leave requests row security shows the caller, with their reasons. */
+  /**
+   * The leave requests row security shows the caller, with their reasons. A
+   * guardian reads their children's, a pupil their own, the admin the
+   * school's and a mentor those theirs to decide or decided by them; for the
+   * admin and the mentor each comes with its skoldagar, who decides it now
+   * and the pupil's leave so far this läsår. Every response is recorded in
+   * the read log.
+   */
   @Get('leave-requests')
-  @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN)
-  leaveRequests(
+  @Roles(Role.GUARDIAN, Role.STUDENT, Role.SCHOOL_ADMIN, Role.TEACHER)
+  listLeaveRequests(
     @Query() query: LeaveRequestsQueryDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<LeaveRequestView[]> {
-    return this.reads.leaveRequests(query, user);
+    return this.leave.listLeaveRequests(query, user);
   }
 
   @Post('leave-requests')
@@ -147,16 +158,43 @@ export class FamilyController {
     @Body() dto: CreateLeaveRequestDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.family.createLeaveRequest(dto, user);
+    return this.leave.createLeaveRequest(dto, user);
   }
 
+  /** Rektor decides any request; a TEACHER only one theirs to decide as the pupil's mentor. */
   @Patch('leave-requests/:id/decide')
-  @Roles(Role.SCHOOL_ADMIN)
+  @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
   decideLeaveRequest(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: DecideLeaveRequestDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.family.decideLeaveRequest(id, dto, user);
+    return this.leave.decideLeaveRequest(id, dto, user);
+  }
+
+  /** The deciding mentor passes a request on to rektor. */
+  @Patch('leave-requests/:id/refer')
+  @Roles(Role.TEACHER)
+  referLeaveRequest(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leave.referLeaveRequest(id, user);
+  }
+
+  /** Rektor's delegation in force, and its history. */
+  @Get('leave-delegation')
+  @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+  getLeaveDelegation(@CurrentUser() user: AuthenticatedUser) {
+    return this.leave.getDelegation(user);
+  }
+
+  @Post('leave-delegation')
+  @Roles(Role.SCHOOL_ADMIN)
+  recordLeaveDelegation(
+    @Body() dto: RecordLeaveDelegationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.leave.recordDelegation(dto, user);
   }
 }

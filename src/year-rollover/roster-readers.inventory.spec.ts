@@ -67,6 +67,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'who attends a lesson, for every caller: the attendance check and the register’s list (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
+  'src/family/leave.service.ts': {
+    basis: 'CURRENT',
+    why: 'the class name shown beside a pupil in the leave inboxes, as the pupil is placed now; who decides is the class history’s (app.leave_mentors), not this',
+  },
   'src/integration/ss12000-sync/local-slice.ts': {
     basis: 'CURRENT',
     why: 'the SS12000 sync compares the source with the rows as they are and writes against them; nothing is written into a year that is not active',
@@ -108,6 +112,8 @@ const ENROLLED: Record<string, string> = {
     'stage totals: the active year’s pupils (their open segments) and every year they sat in, window by window; no roster basis is asked',
   'src/family/family-schedule.service.ts':
     'one child’s segments over one week: a lesson matched only through the home class is shown on the days the history names that class',
+  'src/family/school-days.ts':
+    'one pupil’s segments over one leave request: the årskurs of each day, so a lov or studiedag for that årskurs gets no absence (app.leave_school_days, its SQL twin, reads the same)',
   'src/integration/ss12000-v2/slice.ts':
     'SS12000 Group.groupMemberships (a class’s segments, S1’s inclusive endDate) and Person.enrolments (the unbroken chain’s start): who sat where, as recorded, for the active and past years',
 };

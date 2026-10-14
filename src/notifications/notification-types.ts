@@ -10,8 +10,10 @@ import type { NotificationKind } from './notifications.service';
  * their room bookings. The lesson notices include the three of Notiser som
  * når fram: an avbokning's digest, a lesson that goes ahead as planned after
  * all, and självstudier — each to the lesson's roster, its guardians and the
- * teachers concerned. TEACHER_ABSENCE_REPORTED is in nobody's list: it never
- * leaves the inbox, so a switch for it would do nothing.
+ * teachers concerned. A teacher also hears of a leave request that is theirs
+ * to decide as the pupil's mentor (LEAVE_REQUESTED, Mentorns ledighetsbeslut);
+ * an admin is told of none, as before. TEACHER_ABSENCE_REPORTED is in nobody's
+ * list: it never leaves the inbox, so a switch for it would do nothing.
  */
 
 export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
@@ -27,6 +29,7 @@ export const NOTIFICATION_TYPES: readonly NotificationKind[] = [
   'LESSON_REINSTATED',
   'LESSON_SUPERVISED_STUDY',
   'CANCELLATION_DIGEST',
+  'LEAVE_REQUESTED',
 ];
 
 type ChoosingRole = 'GUARDIAN' | 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN';
@@ -56,7 +59,7 @@ const LESSONS: readonly NotificationKind[] = [
 export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = {
   GUARDIAN: [...LESSONS, 'LEAVE_DECIDED', 'ABSENCE_UNREPORTED'],
   STUDENT: [...LESSONS, 'LEAVE_DECIDED'],
-  TEACHER: STAFF,
+  TEACHER: [...STAFF, 'LEAVE_REQUESTED'],
   SCHOOL_ADMIN: STAFF,
 };
 

@@ -7,11 +7,14 @@ import { RolesGuard } from '../auth/roles.guard';
 import { FamilyController } from './family.controller';
 import type { FamilyService } from './family.service';
 import type { FamilyScheduleService } from './family-schedule.service';
+import type { FamilyReadsService } from './family-reads.service';
+import type { LeaveService } from './leave.service';
 import type {
   CreateAbsenceReportDto,
   CreateGuardianLinkDto,
   CreateLeaveRequestDto,
   DecideLeaveRequestDto,
+  RecordLeaveDelegationDto,
 } from './dto/family.dto';
 
 const LINK_ID = '66666666-6666-4666-8666-666666666666';
@@ -24,8 +27,14 @@ describe('FamilyController', () => {
     removeLink: jest.Mock;
     createAbsenceReport: jest.Mock;
     removeAbsenceReport: jest.Mock;
+  };
+  let leave: {
+    listLeaveRequests: jest.Mock;
     createLeaveRequest: jest.Mock;
     decideLeaveRequest: jest.Mock;
+    referLeaveRequest: jest.Mock;
+    getDelegation: jest.Mock;
+    recordDelegation: jest.Mock;
   };
   let schedule: { week: jest.Mock };
   let controller: FamilyController;
@@ -37,15 +46,23 @@ describe('FamilyController', () => {
       removeLink: jest.fn().mockResolvedValue({ id: LINK_ID }),
       createAbsenceReport: jest.fn().mockResolvedValue({ id: REPORT_ID }),
       removeAbsenceReport: jest.fn().mockResolvedValue({ id: REPORT_ID }),
+    };
+    leave = {
+      listLeaveRequests: jest.fn().mockResolvedValue([]),
       createLeaveRequest: jest.fn().mockResolvedValue({ id: REQUEST_ID }),
       decideLeaveRequest: jest
         .fn()
-        .mockResolvedValue({ id: REQUEST_ID, status: 'APPROVED', absenceDays: 2 }),
+        .mockResolvedValue({ id: REQUEST_ID, status: 'APPROVED', decidedAs: 'ADMIN', absenceDays: 2 }),
+      referLeaveRequest: jest.fn().mockResolvedValue({ id: REQUEST_ID, referred: true }),
+      getDelegation: jest.fn().mockResolvedValue({ current: null, history: [] }),
+      recordDelegation: jest.fn().mockResolvedValue({ mentorMaxSchoolDays: 3 }),
     };
     schedule = { week: jest.fn().mockResolvedValue({ lessons: [] }) };
     controller = new FamilyController(
       family as unknown as FamilyService,
       schedule as unknown as FamilyScheduleService,
+      {} as unknown as FamilyReadsService,
+      leave as unknown as LeaveService,
     );
   });
 
@@ -100,7 +117,7 @@ describe('FamilyController', () => {
       await expect(controller.createLeaveRequest(dto, user)).resolves.toEqual({
         id: REQUEST_ID,
       });
-      expect(family.createLeaveRequest).toHaveBeenCalledWith(dto, user);
+      expect(leave.createLeaveRequest).toHaveBeenCalledWith(dto, user);
     });
 
     it('decideLeaveRequest passes id, DTO and principal in order', async () => {
@@ -108,12 +125,25 @@ describe('FamilyController', () => {
 
       await expect(
         controller.decideLeaveRequest(REQUEST_ID, dto, user),
-      ).resolves.toEqual({ id: REQUEST_ID, status: 'APPROVED', absenceDays: 2 });
-      expect(family.decideLeaveRequest).toHaveBeenCalledWith(
+      ).resolves.toEqual({ id: REQUEST_ID, status: 'APPROVED', decidedAs: 'ADMIN', absenceDays: 2 });
+      expect(leave.decideLeaveRequest).toHaveBeenCalledWith(
         REQUEST_ID,
         dto,
         user,
       );
+    });
+
+    it('the inbox, the referral and the delegation reach LeaveService unchanged', async () => {
+      const query = { status: 'PENDING' as const };
+      await expect(controller.listLeaveRequests(query, user)).resolves.toEqual([]);
+      expect(leave.listLeaveRequests).toHaveBeenCalledWith(query, user);
+      await expect(controller.referLeaveRequest(REQUEST_ID, user)).resolves.toEqual({ id: REQUEST_ID, referred: true });
+      expect(leave.referLeaveRequest).toHaveBeenCalledWith(REQUEST_ID, user);
+      await expect(controller.getLeaveDelegation(user)).resolves.toEqual({ current: null, history: [] });
+      expect(leave.getDelegation).toHaveBeenCalledWith(user);
+      const dto: RecordLeaveDelegationDto = { mentorMaxSchoolDays: 3, reference: 'Dnr 12' };
+      await controller.recordLeaveDelegation(dto, user);
+      expect(leave.recordDelegation).toHaveBeenCalledWith(dto, user);
     });
 
     it('propagates service failures instead of swallowing them', async () => {
@@ -169,10 +199,36 @@ describe('FamilyController', () => {
       ]);
     });
 
-    it('restricts leave decisions to school admins', () => {
+    it('lets rektor and the mentor decide: no family member, and never a pupil', () => {
+      // A TEACHER passes the guard; RLS then finds them only a request that
+      // is theirs to decide (leave_requests_mentor_update, 20261023091000).
       expect(rolesOf(FamilyController.prototype.decideLeaveRequest)).toEqual([
         Role.SCHOOL_ADMIN,
+        Role.TEACHER,
       ]);
+    });
+
+    it('reads leave requests through one route for the family, rektor and the mentor', () => {
+      // LeaveService answers each role its own: the family their own, rektor
+      // the school's, the mentor what is theirs to decide (and log it so).
+      expect(rolesOf(FamilyController.prototype.listLeaveRequests)).toEqual([
+        Role.GUARDIAN,
+        Role.STUDENT,
+        Role.SCHOOL_ADMIN,
+        Role.TEACHER,
+      ]);
+    });
+
+    it('lets only a mentor pass a request on to rektor', () => {
+      expect(rolesOf(FamilyController.prototype.referLeaveRequest)).toEqual([Role.TEACHER]);
+    });
+
+    it('lets the school’s staff read rektor’s delegation and only rektor record one', () => {
+      expect(rolesOf(FamilyController.prototype.getLeaveDelegation)).toEqual([
+        Role.SCHOOL_ADMIN,
+        Role.TEACHER,
+      ]);
+      expect(rolesOf(FamilyController.prototype.recordLeaveDelegation)).toEqual([Role.SCHOOL_ADMIN]);
     });
 
     it('opens the child schedule to guardians and admins, not pupils or teachers', () => {

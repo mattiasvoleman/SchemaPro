@@ -3,12 +3,15 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
-import type { Prisma, TeacherDuty } from '@prisma/client';
+import type { Prisma, PrismaClient, TeacherDuty } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { SLOT_MINUTES, minutesOf } from '../common/solver-grid';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
@@ -211,7 +214,25 @@ export { DUTY_SLOT_REASON };
  */
 @Injectable()
 export class TeacherDutiesService {
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * NotificationsService is optional so the services and scripts that build
+   * this one by hand keep working; without it a MENTORSKAP write tells no
+   * mentor of the leave requests it gives them (Nest always injects it).
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
+
+  /**
+   * A MENTORSKAP uppdrag decides who is a pupil's mentor, and so who decides
+   * the school's pending leave requests (Mentorns ledighetsbeslut). Once one
+   * is written, the mentors it has given a request to are told, once each.
+   */
+  private async afterMentorship(tx: PrismaClient, schoolId: string, kind: string): Promise<void> {
+    if (kind !== 'MENTORSKAP' || !this.notifications) return;
+    await tellNewMentors(this.notifications, tx, schoolId);
+  }
 
   async list(
     academicYearId: string,
@@ -278,6 +299,7 @@ export class TeacherDutiesService {
           select: { id: true },
         });
         await addSlots(tx, schoolId, duty.id, dto.userId, slots);
+        await this.afterMentorship(tx, schoolId, dto.kind);
         return tx.teacherDuty.findUniqueOrThrow({ where: { id: duty.id }, include: WITH_SLOT_TIMES });
       });
       return toResponse(row);
@@ -318,7 +340,7 @@ export class TeacherDutiesService {
         if (slots) await replaceSlots(tx, schoolId, current, slots);
 
         const label = dto.label !== undefined ? dto.label.trim() : current.label;
-        return tx.teacherDuty.update({
+        const updated = await tx.teacherDuty.update({
           where: { id },
           data: {
             ...(dto.kind !== undefined ? { kind: dto.kind } : {}),
@@ -335,6 +357,8 @@ export class TeacherDutiesService {
           },
           include: WITH_SLOT_TIMES,
         });
+        await this.afterMentorship(tx, schoolId, updated.kind);
+        return updated;
       });
       return toResponse(row);
     } catch (error) {

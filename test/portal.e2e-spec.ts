@@ -158,6 +158,81 @@ describe('Portal and platform surfaces (e2e)', () => {
         .expect(403);
     });
 
+    it('refuses, at the body, a request that ends before it starts or covers more than a year', async () => {
+      // LeaveRequests_a_year_at_most holds the database to the same bound
+      // (20261023091000); the body says it first, before any transaction.
+      const filed = (startDate: string, endDate: string) =>
+        request(http())
+          .post('/api/v1/leave-requests')
+          .set('x-test-user', guardian())
+          .send({ studentId: STUDENT_ID, startDate, endDate, reason: 'Familjeresa' });
+
+      await filed('2027-03-02', '2027-03-01').expect(400);
+      await filed('2027-01-01', '2028-01-02').expect(400);
+      expect(harness.tx['leaveRequest']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('lets a mentor reach the inbox, the decision and the referral, which RLS narrows, and never rektor’s delegation', async () => {
+      // The mentor's arms are the API's (20261023091000): the route lets a
+      // TEACHER in, and a request that is not theirs to decide is one their
+      // transaction does not find.
+      harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue(null);
+      await request(http())
+        .patch(`/api/v1/leave-requests/${RECORD_ID}/decide`)
+        .set('x-test-user', teacher())
+        .send({ status: 'APPROVED' })
+        .expect(404);
+      await request(http()).patch(`/api/v1/leave-requests/${RECORD_ID}/refer`).set('x-test-user', teacher()).expect(404);
+      harness.tx['leaveRequest']!['findMany']!.mockResolvedValue([]);
+      await request(http())
+        .get('/api/v1/leave-requests?status=PENDING')
+        .set('x-test-user', teacher())
+        .expect(200, []);
+      await request(http()).get('/api/v1/leave-requests?status=CANCELLED').set('x-test-user', teacher()).expect(400);
+      await request(http()).get('/api/v1/leave-delegation').set('x-test-user', teacher()).expect(200, { current: null, history: [] });
+      await request(http())
+        .post('/api/v1/leave-delegation')
+        .set('x-test-user', teacher())
+        .send({ mentorMaxSchoolDays: 10 })
+        .expect(403);
+    });
+
+    it('keeps the referral and the delegation from families, and the referral from rektor', async () => {
+      const pupil = asUser({ role: 'STUDENT' as never, userId: STUDENT_ID, schoolId: SCHOOL_ID });
+      // A family reads its own requests on the same route, without the facts
+      // (LeaveService.listLeaveRequests).
+      harness.tx['leaveRequest']!['findMany']!.mockResolvedValue([]);
+      for (const principal of [guardian(), pupil]) {
+        await request(http()).get('/api/v1/leave-requests').set('x-test-user', principal).expect(200, []);
+        await request(http()).patch(`/api/v1/leave-requests/${RECORD_ID}/refer`).set('x-test-user', principal).expect(403);
+        await request(http()).get('/api/v1/leave-delegation').set('x-test-user', principal).expect(403);
+        await request(http())
+          .post('/api/v1/leave-delegation')
+          .set('x-test-user', principal)
+          .send({ mentorMaxSchoolDays: 3 })
+          .expect(403);
+      }
+      // Rektor decides a request outright; passing it on is the mentor's.
+      await request(http()).patch(`/api/v1/leave-requests/${RECORD_ID}/refer`).set('x-test-user', admin()).expect(403);
+      expect(harness.tx['leaveRequest']!['findUnique']).not.toHaveBeenCalled();
+    });
+
+    it('lets rektor record a delegation of 1 to 10 skoldagar, or none, and nothing else', async () => {
+      harness.tx['leaveDelegationDecision']!['create']!.mockResolvedValue({
+        mentorMaxSchoolDays: 3,
+        reference: null,
+        decidedAt: new Date('2026-10-13T08:00:00.000Z'),
+        decidedById: null,
+      });
+      for (const body of [{ mentorMaxSchoolDays: 3 }, { mentorMaxSchoolDays: null }, { mentorMaxSchoolDays: 10, reference: 'Dnr 2026:4' }]) {
+        await request(http()).post('/api/v1/leave-delegation').set('x-test-user', admin()).send(body).expect(201);
+      }
+      for (const body of [{}, { mentorMaxSchoolDays: 0 }, { mentorMaxSchoolDays: 11 }, { mentorMaxSchoolDays: 2.5 }, { mentorMaxSchoolDays: '3' }, { mentorMaxSchoolDays: 3, reference: '   ' }]) {
+        await request(http()).post('/api/v1/leave-delegation').set('x-test-user', admin()).send(body).expect(400);
+      }
+      expect(harness.tx['leaveDelegationDecision']!['create']).toHaveBeenCalledTimes(3);
+    });
+
     it('keeps guardian links an admin-only operation', async () => {
       for (const principal of [guardian(), teacher()]) {
         await request(http())
