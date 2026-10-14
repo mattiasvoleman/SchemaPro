@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { lengthPartsOf, type LessonShape } from '../common/lesson-lengths';
 import type { GenerateRequirementsDto } from './dto/generate-requirements.dto';
 import {
   alternativeLineOf,
@@ -15,6 +16,14 @@ import {
 
 /** The problem `code` of a språkval block whose name another årskurs' posts hold. */
 export const LANGUAGE_BLOCK_IN_OTHER_GRADE = 'LANGUAGE_BLOCK_IN_OTHER_GRADE';
+/** The problem `code` of a språkval block whose posts have other lessons or weeks. */
+export const LANGUAGE_BLOCK_HAS_OTHER_LESSONS = 'LANGUAGE_BLOCK_HAS_OTHER_LESSONS';
+
+/** "2 × 60", "1 × 80 + 1 × 40": a row's lessons as the dialogs write them. */
+const lessonsText = (row: LessonShape): string =>
+  lengthPartsOf(row)
+    .map((part) => `${part.count} × ${part.minutes}`)
+    .join(' + ');
 
 export interface GeneratedRow extends ProposedRow {
   /** The created requirement; absent in a preview. */
@@ -60,9 +69,7 @@ export interface GenerateRequirementsResponse {
  * language's row, and each årskurs' rows go into the block "Språkval åk g" —
  * the year's block of that name, or a new one. The block is written before
  * the rows, which name it in the same INSERT, so the block trigger judges the
- * block as it stands with all of them in it: a block the school already filled
- * with rows of other lessons refuses the apply as a whole (409
- * BLOCK_MEMBERS_DIFFER), and nothing is written.
+ * block as it stands with all of them in it.
  *
  * A NAME IS NOT AN ÅRSKURS. "Språkval åk 7" can already hold another årskurs'
  * posts — a block carried at its årskurs by the rollover keeps its name, and a
@@ -75,6 +82,12 @@ export interface GenerateRequirementsResponse {
  * such a block from meeting this name with last year's cohort in it, by
  * naming a carried block after its pupils' årskurs, or after last year when
  * that is unknown (planBlocks in rollover-plan.ts).
+ *
+ * NOR IS A NAME A SHAPE. A block of that name whose posts have other lessons
+ * or weeks than the new rows would have them refused by the trigger at the
+ * apply. The preview says so first, and the apply the same way, before any
+ * write (409 LANGUAGE_BLOCK_HAS_OTHER_LESSONS, with both lessons named): the
+ * preview is where the school can still choose another length.
  *
  * No teacher is set, so the staffing policy's checks have nothing to judge;
  * no period is set, so the year's bounds need no FOR SHARE read. A draft plan
@@ -181,7 +194,17 @@ export class TimplanRequirementsService {
             where: { academicYearId: dto.academicYearId, name: { in: proposal.blocks.map((block) => block.name) } },
             select: {
               name: true,
-              requirements: { select: { studentGroup: { select: { name: true, gradeLevel: true } } } },
+              requirements: {
+                select: {
+                  lessonsPerWeek: true,
+                  minutesPerLesson: true,
+                  lessonLengths: true,
+                  recurrence: true,
+                  startDate: true,
+                  endDate: true,
+                  studentGroup: { select: { name: true, gradeLevel: true } },
+                },
+              },
             },
           });
           for (const block of proposal.blocks) {
@@ -201,6 +224,37 @@ export class TimplanRequirementsService {
                   `årskurs (${others.join(', ')}). Språkvalet i åk ${block.gradeLevel} läggs inte i det. ` +
                   'Byt namn på det blocket under Block på Timplansposter, och skapa sedan timplansposterna igen.',
                 code: LANGUAGE_BLOCK_IN_OTHER_GRADE,
+              });
+            }
+            // The columns the block trigger compares, against the rows this
+            // call would add to the block: one shape, the line's, all weeks.
+            const member = held?.requirements[0];
+            const posted = proposal.rows.find((row) => row.blockName === block.name);
+            if (!member || !posted) continue;
+            const lengths = posted.lessonLengths ?? [];
+            const sameLessons =
+              member.lessonsPerWeek === posted.lessonsPerWeek &&
+              member.minutesPerLesson === posted.minutesPerLesson &&
+              member.lessonLengths.length === lengths.length &&
+              member.lessonLengths.every((minutes, index) => minutes === lengths[index]);
+            const sameWeeks = member.recurrence === 'ALL_WEEKS' && member.startDate === null && member.endDate === null;
+            if (!sameLessons) {
+              throw new ConflictException({
+                message:
+                  `Blocket "${block.name}" har lektionerna ${lessonsText(member)}, och språkvalets nya poster ` +
+                  `skulle få ${lessonsText(posted)}. Posterna i ett block läggs på samma tider och måste ha ` +
+                  `samma lektioner. Ändra blockets lektioner till ${lessonsText(posted)} med Ändra lektioner ` +
+                  'under Block på Timplansposter, eller välj en lektionslängd som ger blockets lektioner.',
+                code: LANGUAGE_BLOCK_HAS_OTHER_LESSONS,
+              });
+            }
+            if (!sameWeeks) {
+              throw new ConflictException({
+                message:
+                  `Blockets "${block.name}" poster gäller bara en del av läsåret eller udda eller jämna ` +
+                  'veckor, och språkvalets nya poster skulle gälla alla veckor. Posterna i ett block måste ' +
+                  'ha samma veckor. Byt namn på det blocket under Block på Timplansposter, så skapas ett nytt.',
+                code: LANGUAGE_BLOCK_HAS_OTHER_LESSONS,
               });
             }
           }
