@@ -3007,7 +3007,7 @@
       "minutesPercent": "{minutes} min/wk · {percent} %",
       "keepOrShed": "Keeps or gives up only their own entries",
       "keepsNoTarget": "Has no target and keeps their entries",
-      "excludedChanging": "{names} {count, plural, one {is} other {are}} not proposed: {count, plural, one {the post changes} other {the posts change}} during the school year, and the proposal never gives a dated entry to such a post, whatever its room. Staff the entry by hand; the write is judged against each period.",
+      "excludedChanging": "{names} {count, plural, one {is not proposed: the post changes} other {are not proposed: the posts change}} during the school year, and the proposal never gives a dated entry to such a post, whatever its room. Staff the entry by hand; the write is judged against each period.",
       "plannedOnPeriod": "Planned on {from}–{to}, the period where the post has the least room",
       "tooMany": "The proposal would weigh {teachers} teachers and {rows} curriculum entries, but the engine takes at most {limitTeachers} teachers and {limitRows} entries at a time. Keep the entries that are settled as they are and try again.",
       "tooManyRequests": "You have computed many proposals in a short time. Wait a minute and try again.",
