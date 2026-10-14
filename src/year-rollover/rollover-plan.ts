@@ -601,7 +601,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       requirementStats.carried++;
     }
   }
-  writes.blocks = planBlocks(source, writes.requirements, groupById);
+  writes.blocks = planBlocks(source, writes, groupById);
   if (requirementStats.oddEvenRows > 0 && crossesIsoWeek53(sourceBounds.startDate, target.startDate)) {
     problems.push({ code: 'ISO_WEEK_53_CROSSED', blocking: false, params: { rows: requirementStats.oddEvenRows } });
   }
@@ -883,11 +883,15 @@ export function hashWrites(writes: RolloverWrites): string {
  *
  * A block follows its rows, as the rows follow their groups. The rows carried
  * to the successor groups make one copy, named as the groups are promoted:
- * promoteName() at the årskurs every member's group carries, so "Språkval åk
- * 7" over Ty7, Fr7 and Sp7 becomes "Språkval åk 8"; members in different
- * årskurser, or in groups with none, keep the name. The rows carried to the
- * intake twins make a second copy under the source's own name, as the twins
- * keep theirs. A copy holding no carried row is not written.
+ * promoteName() at the årskurs the carried rows' groups have, when every one
+ * of them moves to a successor one årskurs up, so "Språkval åk 7" over Ty7,
+ * Fr7 and Sp7 becomes "Språkval åk 8". Otherwise the name is kept: members in
+ * different årskurser, in groups with none, or one carried at its årskurs
+ * (CARRY) — "åk 8" over a group still in åk 7 would say the wrong year. Only
+ * the rows carried count, and the successor's årskurs is the one resolved for
+ * the new year, not this year's plus one. The rows carried to the intake
+ * twins make a second copy under the source's own name, as the twins keep
+ * theirs. A copy holding no carried row is not written.
  *
  * The rows' lessons and weeks are carried as they are and their periods by
  * one rule, so a block whose rows agreed agrees in the new year as well, and
@@ -899,21 +903,26 @@ export function hashWrites(writes: RolloverWrites): string {
  */
 function planBlocks(
   source: RolloverSource,
-  rows: RolloverWrites['requirements'],
+  writes: Pick<RolloverWrites, 'requirements' | 'groups'>,
   groupById: ReadonlyMap<string, SourceGroup>,
 ): RolloverWrites['blocks'] {
   if (source.blocks.length === 0) return [];
+  const rows = writes.requirements;
   const used = new Set(rows.flatMap((row) => (row.blockKey ? [row.blockKey] : [])));
+  const nextGrade = new Map(writes.groups.map((group) => [group.key, group.gradeLevel]));
   const copies = source.blocks.flatMap((block) => {
     const sides: { key: string; sourceBlockId: string; name: string; intake: boolean }[] = [];
     if (used.has(block.id)) {
-      const grades = new Set(
-        source.requirements
-          .filter((requirement) => requirement.blockId === block.id)
-          .map((requirement) => groupById.get(requirement.studentGroupId)?.gradeLevel ?? null),
-      );
-      const [grade] = [...grades];
-      const name = grades.size === 1 && grade !== null && grade !== undefined ? promoteName(block.name, grade).name : block.name;
+      // A successor row's groupKey is its source group's id.
+      const moves = rows
+        .filter((row) => row.blockKey === block.id)
+        .map((row) => ({
+          from: groupById.get(row.groupKey)?.gradeLevel ?? null,
+          to: nextGrade.get(row.groupKey) ?? null,
+        }));
+      const from = moves[0]?.from ?? null;
+      const promoted = from !== null && moves.every((move) => move.from === from && move.to === from + 1);
+      const name = promoted ? promoteName(block.name, from).name : block.name;
       sides.push({ key: block.id, sourceBlockId: block.id, name, intake: false });
     }
     if (used.has(intakeKey(block.id))) {

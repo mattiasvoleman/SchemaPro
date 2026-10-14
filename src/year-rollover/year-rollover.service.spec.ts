@@ -793,12 +793,18 @@ describe('YearRolloverService — rollover execute', () => {
 
   it('carries a block with its rows: the successor copy promoted, the intake copy under its own name, a taken name numbered', async () => {
     const rows = withBlock(defaultRolloverRows());
-    // A second block, over 8A's and 9A's Matematik: årskurser that differ, so
-    // its name is kept — the very name the first block is promoted to.
+    // A second block, over 7A's and 8A's Matematik: carried into åk 8 and åk
+    // 9, årskurser that differ, so its name is kept — the very name the first
+    // block is promoted to. Its intake copy (7A's twin) keeps it too.
     const other = '00000000-0000-4000-8000-0000000000b2';
     rows['teachingBlock']!.push({ id: other, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 8' });
     for (const requirement of rows['teachingRequirement']!) {
-      if ([IDS.g8a, IDS.g9a].includes(requirement['studentGroupId'] as string)) requirement['blockId'] = other;
+      if (
+        [IDS.g7a, IDS.g8a].includes(requirement['studentGroupId'] as string) &&
+        requirement['subjectId'] === IDS.ma
+      ) {
+        requirement['blockId'] = other;
+      }
     }
     const { world, service } = setup(rows);
     const { result } = await previewAndExecute(world, service, {
@@ -822,8 +828,46 @@ describe('YearRolloverService — rollover execute', () => {
     expect(blocks).toEqual([
       ['Språkval åk 7', ['Svenska för 7A']],
       ['Språkval åk 8', ['Matematik för Ma8 grupp 1', 'Svenska för 8A']],
-      ['Språkval åk 8 (2)', ['Matematik för 9A']],
+      ['Språkval åk 8 (2)', ['Matematik för 8A', 'Matematik för 9A']],
+      ['Språkval åk 8 (3)', ['Matematik för 7A']],
     ]);
+  });
+
+  it('names the block by the rows it carries: a member that graduates leaves it', async () => {
+    const rows = defaultRolloverRows();
+    rows['teachingBlock'] = [{ id: BLOCK_ID, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 8' }];
+    for (const requirement of rows['teachingRequirement']!) {
+      if ([IDS.g8a, IDS.g9a].includes(requirement['studentGroupId'] as string)) requirement['blockId'] = BLOCK_ID;
+    }
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, OPTIONS);
+    const target = result.academicYear.id;
+
+    // 9A graduates; what is carried is 8A's row, into åk 9.
+    expect(
+      world.rows['teachingBlock']!.filter((row) => row['academicYearId'] === target).map((row) => row['name']),
+    ).toEqual(['Språkval åk 9']);
+  });
+
+  it('keeps the block\'s name when a member is carried at its årskurs', async () => {
+    const { world, service } = setup(withBlock(defaultRolloverRows()));
+    const { result } = await previewAndExecute(world, service, {
+      ...OPTIONS,
+      groups: [{ sourceGroupId: IDS.gMa7, outcome: 'CARRY' }],
+    });
+    const target = result.academicYear.id;
+    const groupName = (id: unknown) => world.rows['studentGroup']!.find((group) => group['id'] === id)!['name'];
+    const [block, ...others] = world.rows['teachingBlock']!.filter((row) => row['academicYearId'] === target);
+
+    expect(others).toEqual([]);
+    // Ma7 grupp 1 is still åk 7 and 8A is åk 8: neither name would be true.
+    expect(block!['name']).toBe('Språkval åk 7');
+    expect(
+      world.rows['teachingRequirement']!
+        .filter((requirement) => requirement['blockId'] === block!['id'])
+        .map((requirement) => groupName(requirement['studentGroupId']))
+        .sort(),
+    ).toEqual(['8A', 'Ma7 grupp 1']);
   });
 
     it('refuses a stale preview with 409 before any write', async () => {
