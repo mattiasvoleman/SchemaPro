@@ -73,6 +73,7 @@ export function mayWithdraw(absence: Absence, now: number): boolean {
 export default function TeacherCoverPage() {
   const t = useTranslations("teacherCover");
   const tReasons = useTranslations("absenceReasons");
+  const tCommon = useTranslations("common");
   // A reason gallring took reads "Gallrad", not "Ej angiven" (ABSENCE_REASONS).
   const purgedReasons = usePurgedBefore().of("ABSENCE_REASONS");
   const locale = useLocale();
@@ -205,14 +206,25 @@ export default function TeacherCoverPage() {
                 {selfReport ? (
                   <span className="ml-auto flex gap-2">
                     {absence.phase === "ONGOING" ? (
-                      <Button size="sm" variant="outline" onClick={() => open(() => setEnding(absence))}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => open(() => setEnding(absence))}
+                        aria-label={tCommon("actionNamed", { action: t("end"), name: absencePeriodText(absence, locale) })}
+                      >
                         {t("end")}
                       </Button>
                     ) : null}
                     {/* A neutral trigger: the withdraw dialog is the
-                        confirmation, and carries the red. */}
+                        confirmation, and carries the red. Named with its
+                        period: two "Återkalla" told a screen reader nothing. */}
                     {mayWithdraw(absence, now) ? (
-                      <Button size="sm" variant="outline" onClick={() => open(() => setWithdrawing(absence))}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => open(() => setWithdrawing(absence))}
+                        aria-label={tCommon("actionNamed", { action: t("withdraw"), name: absencePeriodText(absence, locale) })}
+                      >
                         {t("withdraw")}
                       </Button>
                     ) : null}

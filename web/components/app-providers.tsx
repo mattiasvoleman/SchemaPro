@@ -14,7 +14,17 @@ import { Toaster } from "sonner";
  *
  * Anything needed by an unauthenticated page belongs in `Providers` instead.
  */
-export function AppProviders({ children }: { children: React.ReactNode }) {
+export function AppProviders({
+  children,
+  toastLabel,
+}: {
+  children: React.ReactNode;
+  /**
+   * The name of the toasts' live region. Sonner's own is "Notifications",
+   * English on a Swedish page and the same word as the bell beside it.
+   */
+  toastLabel: string;
+}) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -31,7 +41,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      <Toaster richColors position="bottom-right" />
+      <Toaster richColors position="bottom-right" containerAriaLabel={toastLabel} />
     </QueryClientProvider>
   );
 }

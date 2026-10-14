@@ -273,7 +273,9 @@ export default function DayPlannerPage() {
             {lessons.map((lesson) => (
               <TableRow
                 key={lesson.id}
-                className={lesson.status === "CANCELLED" ? "opacity-60" : undefined}
+                // Muted ink, not a fade: at 60 % opacity the row's "Inställd"
+                // badge measured 2.69:1, the one word the row is about.
+                className={lesson.status === "CANCELLED" ? "text-muted-foreground" : undefined}
               >
                 <TableCell className="whitespace-nowrap tabular-nums">{timeText(lesson)}</TableCell>
                 <TableCell className="font-medium">

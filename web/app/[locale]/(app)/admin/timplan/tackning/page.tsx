@@ -83,6 +83,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 /** Hours to the tenth with a decimal comma, as the matrix prints them. */
 const hoursText = (hours: number): string => {
@@ -618,7 +619,7 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
       ) : null}
 
       {/* relative: holds the sr-only cells in this scroll box (see the matrix). */}
-      <div className="relative overflow-x-auto">
+      <TableScroll>
         <table className="w-full text-sm">
           <caption className="sr-only">{t("linesCaption", { group: row.name })}</caption>
           <thead>
@@ -682,7 +683,7 @@ function ClassDrillDown({ row, planName, pupilLevel, gradeName, groupName, subje
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {pupilLevel ? (
         <div className="space-y-2">

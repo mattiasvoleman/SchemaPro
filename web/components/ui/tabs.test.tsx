@@ -104,4 +104,27 @@ describe("Tabs", () => {
     expect(screen.queryByText("Settings view")).not.toBeInTheDocument();
     expect(screen.getByText("Week view")).toBeInTheDocument();
   });
+
+  it("points each tab at its panel when the panels are rendered", () => {
+    render(<ScheduleTabs />);
+
+    // Radix renders every panel's element, the inactive ones empty and hidden.
+    for (const tab of screen.getAllByRole("tab")) {
+      const id = tab.getAttribute("aria-controls");
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id!)).not.toBeNull();
+    }
+  });
+
+  it("gives a view switcher with no panels no dangling aria-controls", () => {
+    render(
+      <Tabs defaultValue="today">
+        <TabsList aria-label="Visa">
+          <TabsTrigger value="today">Idag</TabsTrigger>
+          <TabsTrigger value="week">Vecka</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+    for (const tab of screen.getAllByRole("tab")) expect(tab).not.toHaveAttribute("aria-controls");
+  });
 });

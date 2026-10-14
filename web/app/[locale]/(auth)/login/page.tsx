@@ -73,7 +73,10 @@ export default async function LoginPage({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t("signInTitle")}</CardTitle>
+        <CardTitle>
+          {/* The page's one heading; the h1 takes the title's look. */}
+          <h1>{t("signInTitle")}</h1>
+        </CardTitle>
         <CardDescription>{t("signInSubtitle")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

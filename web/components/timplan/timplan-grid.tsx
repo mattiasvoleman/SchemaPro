@@ -286,8 +286,8 @@ export function TimplanGrid({
           <tbody>
             <tr className="bg-muted/30">
               <th colSpan={span + 1} scope="rowgroup" className="px-3 py-1 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("notCountedHeading")}
-                <span className="ml-2 font-normal normal-case tracking-normal">{t("notCountedHint")}</span>
+                {t("notCountedHeading")}{" "}
+                <span className="ml-1 font-normal normal-case tracking-normal">{t("notCountedHint")}</span>
               </th>
             </tr>
             {notCounted.map((subject) => renderRow(subject, false))}

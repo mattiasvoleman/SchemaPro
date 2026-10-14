@@ -149,14 +149,15 @@ describe("/teacher/franvaro", () => {
     renderPage();
     expect(await screen.findByText("Skolledningen registrerar frånvaro. Hör av dig till dem som vanligt.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Anmäl frånvaro/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Avsluta i förtid" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Avsluta i förtid/ })).not.toBeInTheDocument();
   });
 
   it("offers report and end early when the school allows it, and the report form starts today", async () => {
     answer(true);
     const user = userEvent.setup();
     renderPage();
-    expect(await screen.findByRole("button", { name: "Avsluta i förtid" })).toBeInTheDocument();
+    // Named with the absence's period, so two rows' buttons are not one name.
+    expect(await screen.findByRole("button", { name: /^Avsluta i förtid \S/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Anmäl frånvaro/ }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/utan orsak/)).toBeInTheDocument();
@@ -169,7 +170,7 @@ describe("/teacher/franvaro", () => {
     post.mockRejectedValue(new ApiError(409, "…", "ABSENCE_HAS_DECISIONS", { count: 2 }));
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole("button", { name: "Avsluta i förtid" }));
+    await user.click(await screen.findByRole("button", { name: /^Avsluta i förtid/ }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Avsluta" }));
     await waitFor(() =>

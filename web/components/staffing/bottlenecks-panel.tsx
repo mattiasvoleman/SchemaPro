@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import type { TeacherLoadReport } from "@/lib/teacher-load";
 import { Badge } from "@/components/ui/badge";
 import { SectionCard } from "@/components/ui/section-card";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 /**
  * "Ämnesflaskhalsar" — Untis' Fach-Engpässe, as two numbers per subject.
@@ -34,7 +35,7 @@ export function BottlenecksPanel({
       ) : report.subjectBottlenecks.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("bottlenecksEmpty")}</p>
       ) : (
-        <div className="overflow-x-auto">
+        <TableScroll>
           <table className="w-full text-sm">
             <caption className="sr-only">{t("bottlenecksCaption")}</caption>
             <thead>
@@ -92,7 +93,7 @@ export function BottlenecksPanel({
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </SectionCard>
   );

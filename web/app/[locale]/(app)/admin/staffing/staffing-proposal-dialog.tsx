@@ -42,6 +42,7 @@ import {
   type StaffingProposal,
   type StaffWeights,
 } from "./use-staffing-proposal";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 /**
  * How long the applied toast, and with it Ångra, stays up — the room
@@ -596,7 +597,7 @@ function ProposalResult({
           <h3 id="proposal-rows" className="text-sm font-semibold">
             {t("rowsTitle")}
           </h3>
-          <div className="overflow-x-auto">
+          <TableScroll>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
@@ -681,7 +682,7 @@ function ProposalResult({
                 })}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         </section>
       ) : null}
 
@@ -706,7 +707,7 @@ function ProposalResult({
           {shown.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("teachersNoneChanged")}</p>
           ) : (
-            <div className="overflow-x-auto">
+            <TableScroll>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-muted-foreground">
@@ -747,7 +748,7 @@ function ProposalResult({
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
           )}
         </section>
       ) : null}

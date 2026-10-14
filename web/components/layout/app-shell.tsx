@@ -237,6 +237,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1
 export function AppShell({ role, userName, email, schoolName, children }: AppShellProps) {
   const t = useTranslations("nav");
   const tCommon = useTranslations("common");
+  const tStatement = useTranslations("accessibilityStatement");
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const sections = navForRole(role);
@@ -340,6 +341,17 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
           );
         })}
       </nav>
+
+      {/* The tillgänglighetsredogörelse, from every page, as Digg asks. */}
+      <div className="border-t border-sidebar-border px-5 py-3">
+        <Link
+          href="/tillganglighet"
+          onClick={() => setMobileOpen(false)}
+          className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          {tStatement("link")}
+        </Link>
+      </div>
     </div>
   );
 

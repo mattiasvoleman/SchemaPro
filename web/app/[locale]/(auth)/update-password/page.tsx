@@ -17,7 +17,10 @@ export default async function UpdatePasswordPage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t("updatePasswordTitle")}</CardTitle>
+        <CardTitle>
+          {/* The page's one heading; the h1 takes the title's look. */}
+          <h1>{t("updatePasswordTitle")}</h1>
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <UpdatePasswordForm

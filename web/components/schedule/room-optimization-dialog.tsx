@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 /** The gateway's code for "the schedule moved since the proposal was read". */
 const STALE = "ROOM_PROPOSAL_STALE";
@@ -329,7 +330,7 @@ export function RoomOptimizationDialog({
               <p className="text-sm font-medium">{t("moves", { count: proposal.changes.length })}</p>
             )}
 
-            <div className="overflow-x-auto">
+            <TableScroll>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-muted-foreground">
@@ -377,7 +378,7 @@ export function RoomOptimizationDialog({
                   ) : null}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
 
             {improved.length > 0 ? (
               <div className="space-y-1">

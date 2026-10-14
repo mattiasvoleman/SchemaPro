@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import sv from "@/messages/sv.json";
@@ -14,7 +15,11 @@ import LessonAttendancePage from "./page";
  * the lesson list that led here was read, and reloading never helps.
  */
 
-const roster = vi.hoisted(() => ({ error: null as unknown }));
+const roster = vi.hoisted(() => ({
+  error: null as unknown,
+  /** When set, the roster answers with these pupils instead of failing. */
+  students: null as null | Array<{ id: string; firstName: string; lastName: string; studentGroupId: string | null }>,
+}));
 /**
  * One object per hook for the whole file: the page seeds its state from these
  * in effects, so a fresh array on every render would render it forever.
@@ -35,8 +40,8 @@ const answers = vi.hoisted(() => ({
       note: null,
     },
   },
-  attendance: { data: [], isError: false },
-  reported: { data: { studentIds: [] } },
+  attendance: { data: [] as unknown[] | undefined, isError: false },
+  reported: { data: { studentIds: [] as string[] } },
   subjects: { data: [{ id: "s-ma", name: "Matematik" }] },
   report: { mutate: () => undefined, isPending: false },
 }));
@@ -49,7 +54,10 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
   // isNotOnLesson is the real one: the page and the hook share it.
   ...(await importOriginal<typeof import("@/lib/queries")>()),
   useLesson: () => answers.lesson,
-  useLessonRoster: () => ({ data: undefined, isLoading: false, isError: true, error: roster.error }),
+  useLessonRoster: () =>
+    roster.students
+      ? { data: roster.students, isLoading: false, isError: false, error: null }
+      : { data: undefined, isLoading: false, isError: true, error: roster.error },
   useLessonAttendance: () => answers.attendance,
   useLessonReportedAbsences: () => answers.reported,
   useSubjects: () => answers.subjects,
@@ -78,6 +86,9 @@ function renderPage() {
 
 beforeEach(() => {
   roster.error = null;
+  roster.students = null;
+  answers.attendance = { data: [], isError: false };
+  answers.reported = { data: { studentIds: [] } };
 });
 
 describe("/teacher/attendance/[lessonId] when the list cannot be shown", () => {
@@ -107,5 +118,42 @@ describe("/teacher/attendance/[lessonId] when the list cannot be shown", () => {
     renderPage();
 
     expect(await screen.findByText("Elevlistan kunde inte hämtas")).toBeInTheDocument();
+  });
+});
+
+describe("/teacher/attendance/[lessonId], what each pupil opens as", () => {
+  const JAMAL = { id: "p-jamal", firstName: "Jamal", lastName: "Sjö", studentGroupId: "g-7a" };
+  const ELLA = { id: "p-ella", firstName: "Ella", lastName: "Nord", studentGroupId: "g-7a" };
+  const group = (name: string) => screen.getByRole("radiogroup", { name });
+
+  it("opens a pupil with a stored record as stored, though a report answered first", () => {
+    roster.students = [JAMAL, ELLA];
+    // The reported absences answer before the stored records do.
+    answers.attendance = { data: undefined, isError: false };
+    answers.reported = { data: { studentIds: [JAMAL.id, ELLA.id] } };
+    const view = renderPage();
+    expect(within(group("Jamal Sjö")).getByRole("radio", { name: "Anmäld frånvaro" })).toBeChecked();
+
+    answers.attendance = { data: [{ id: "r-1", calendarLessonId: "l-1", studentId: JAMAL.id, status: "ABSENT", recordedAt: null, note: null }], isError: false };
+    view.rerender(
+      <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+        <Suspense fallback={null}>
+          <LessonAttendancePage params={params} />
+        </Suspense>
+      </NextIntlClientProvider>,
+    );
+
+    // Jamal's stored ABSENT wins over the pre-fill; Ella, with no record, keeps it.
+    expect(within(group("Jamal Sjö")).getByRole("radio", { name: "Frånvarande" })).toBeChecked();
+    expect(within(group("Ella Nord")).getByRole("radio", { name: "Anmäld frånvaro" })).toBeChecked();
+  });
+
+  it("keeps what the teacher chose over both", async () => {
+    roster.students = [JAMAL];
+    answers.reported = { data: { studentIds: [JAMAL.id] } };
+    answers.attendance = { data: [{ id: "r-1", calendarLessonId: "l-1", studentId: JAMAL.id, status: "ABSENT", recordedAt: null, note: null }], isError: false };
+    renderPage();
+    await userEvent.setup().click(within(group("Jamal Sjö")).getByRole("radio", { name: "Sen" }));
+    expect(within(group("Jamal Sjö")).getByRole("radio", { name: "Sen" })).toBeChecked();
   });
 });

@@ -67,8 +67,8 @@ export default function RoomBookingsPage() {
       id: booking.id,
       title: (
         <>
-          {room}
-          <span className="ml-2 font-normal text-muted-foreground">{booking.title}</span>
+          {room}{" "}
+          <span className="ml-1 font-normal text-muted-foreground">{booking.title}</span>
         </>
       ),
       name: `${room}, ${period}`,

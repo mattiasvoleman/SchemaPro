@@ -106,7 +106,7 @@
         "role": "secondary",
         "displayName": "Signal Red Ink",
         "canonical": "hsl(0 0% 100%)",
-        "dark": "hsl(0 0% 100%)",
+        "dark": "hsl(0 80% 6%)",
         "tonalRamp": [
           "hsl(0 0% 15%)",
           "hsl(0 0% 25%)",
@@ -271,7 +271,7 @@
       "muted-foreground": {
         "role": "neutral",
         "displayName": "Slate Text",
-        "canonical": "hsl(240 4% 46%)",
+        "canonical": "hsl(240 4% 43%)",
         "dark": "hsl(240 5% 60%)",
         "tonalRamp": [
           "hsl(240 4% 15%)",

@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { createTranslator } from "next-intl";
@@ -287,17 +288,14 @@ function WeekView({
         className="hidden rounded-md border text-xs md:grid print:grid print:text-[9px]"
         style={{ gridTemplateColumns: `3rem repeat(${days.length}, minmax(0, 1fr))` }}
       >
-        <div className="border-b" />
-        {days.map((day) => (
-          <h2
-            key={`h-${day.date}`}
-            id={`day-${day.date}`}
-            className="min-w-0 truncate border-b border-l px-2 py-1 text-sm font-semibold print:text-[10px]"
-          >
-            {dayName(day.date)} <span className="font-normal">{short(day.date)}</span>
-          </h2>
-        ))}
-        <div className="relative h-[40rem] print:h-[145mm]" aria-hidden>
+        {/*
+          Every cell is placed by hand, so the source can go day by day — a
+          day's heading, then its column — while the picture keeps the
+          headings in one row. Auto-placed, all five headings came first and
+          a screen reader moving by heading met each with nothing under it.
+        */}
+        <div className="border-b" style={{ gridRow: 1, gridColumn: 1 }} />
+        <div className="relative h-[40rem] print:h-[145mm]" style={{ gridRow: 2, gridColumn: 1 }} aria-hidden>
           {hours.slice(0, -1).map((hour) => (
             <span
               key={hour}
@@ -308,67 +306,77 @@ function WeekView({
             </span>
           ))}
         </div>
-        {days.map((day) => {
+        {days.map((day, dayIndex) => {
           const lessons = layoutClusters(timed(day.lessons));
           return (
-            <div key={day.date} className="relative h-[40rem] border-l print:h-[145mm]">
-              {hours.slice(1, -1).map((hour) => (
-                <div
-                  key={hour}
-                  className="absolute inset-x-0 border-t border-dashed border-neutral-200"
-                  style={{ top: `${placement({ start: `${hour}:00`, end: `${hour}:00` }, span).top}%` }}
-                  aria-hidden
-                />
-              ))}
-              {(day.meals ?? []).map((meal) => {
-                const at = placement(meal, span);
-                return (
+            <Fragment key={day.date}>
+              <h2
+                id={`day-${day.date}`}
+                className="min-w-0 truncate border-b border-l px-2 py-1 text-sm font-semibold print:text-[10px]"
+                style={{ gridRow: 1, gridColumn: dayIndex + 2 }}
+              >
+                {dayName(day.date)} <span className="font-normal">{short(day.date)}</span>
+              </h2>
+              <div className="relative h-[40rem] border-l print:h-[145mm]" style={{ gridRow: 2, gridColumn: dayIndex + 2 }}>
+                {hours.slice(1, -1).map((hour) => (
                   <div
-                    key={`meal-${meal.start}`}
-                    className="viewer-block absolute inset-x-0 border-y border-dashed border-amber-300 bg-amber-50 px-1"
-                    style={{ top: `${at.top}%`, height: `${at.height}%` }}
-                  >
-                    {t("meal")} {meal.start}–{meal.end}
-                  </div>
-                );
-              })}
-              {lessons.length === 0 ? (
-                <p className="sr-only">
-                  {dayName(day.date)} {short(day.date)}: {t("noLessons")}
-                </p>
-              ) : null}
-              <ol aria-labelledby={`day-${day.date}`}>
-                {lessons.map((lesson, index) => {
-                  const at = placement(lesson, span);
-                  const text = lessonText(lesson, t, document);
+                    key={hour}
+                    className="absolute inset-x-0 border-t border-dashed border-neutral-200"
+                    style={{ top: `${placement({ start: `${hour}:00`, end: `${hour}:00` }, span).top}%` }}
+                    aria-hidden
+                  />
+                ))}
+                {(day.meals ?? []).map((meal) => {
+                  const at = placement(meal, span);
                   return (
-                    <li
-                      key={`${lesson.start}-${index}`}
-                      className={`viewer-block absolute overflow-hidden rounded border px-1 py-0.5 leading-tight ${
-                        lesson.busy
-                          ? "border-neutral-300 bg-neutral-200 italic"
-                          : lesson.cancelled
-                            ? "border-neutral-300 bg-neutral-50 text-neutral-600"
-                            : "border-indigo-200 bg-indigo-50"
-                      }`}
-                      style={{
-                        top: `${at.top}%`,
-                        height: `${at.height}%`,
-                        left: `${(lesson.lane * 100) / lesson.laneCount}%`,
-                        width: `${100 / lesson.laneCount}%`,
-                      }}
+                    <div
+                      key={`meal-${meal.start}`}
+                      className="viewer-block absolute inset-x-0 border-y border-dashed border-amber-300 bg-amber-50 px-1"
+                      style={{ top: `${at.top}%`, height: `${at.height}%` }}
                     >
-                      <span className="block tabular-nums">
-                        {lesson.start}–{lesson.end}
-                        {lesson.cancelled ? <strong> · {t("cancelled")}</strong> : null}
-                      </span>
-                      <span className={`block font-semibold ${lesson.cancelled ? "line-through" : ""}`}>{text.main}</span>
-                      {text.detail ? <span className="block">{text.detail}</span> : null}
-                    </li>
+                      {t("meal")} {meal.start}–{meal.end}
+                    </div>
                   );
                 })}
-              </ol>
-            </div>
+                {lessons.length === 0 ? (
+                  <p className="sr-only">
+                    {dayName(day.date)} {short(day.date)}: {t("noLessons")}
+                  </p>
+                ) : (
+                  <ol aria-labelledby={`day-${day.date}`}>
+                    {lessons.map((lesson, index) => {
+                      const at = placement(lesson, span);
+                      const text = lessonText(lesson, t, document);
+                      return (
+                        <li
+                          key={`${lesson.start}-${index}`}
+                          className={`viewer-block absolute overflow-hidden rounded border px-1 py-0.5 leading-tight ${
+                            lesson.busy
+                              ? "border-neutral-300 bg-neutral-200 italic"
+                              : lesson.cancelled
+                                ? "border-neutral-300 bg-neutral-50 text-neutral-600"
+                                : "border-indigo-200 bg-indigo-50"
+                          }`}
+                          style={{
+                            top: `${at.top}%`,
+                            height: `${at.height}%`,
+                            left: `${(lesson.lane * 100) / lesson.laneCount}%`,
+                            width: `${100 / lesson.laneCount}%`,
+                          }}
+                        >
+                          <span className="block tabular-nums">
+                            {lesson.start}–{lesson.end}
+                            {lesson.cancelled ? <strong> · {t("cancelled")}</strong> : null}
+                          </span>
+                          <span className={`block font-semibold ${lesson.cancelled ? "line-through" : ""}`}>{text.main}</span>
+                          {text.detail ? <span className="block">{text.detail}</span> : null}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            </Fragment>
           );
         })}
       </div>

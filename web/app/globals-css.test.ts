@@ -128,6 +128,21 @@ describe.each([
     expect(contrast(t["primary-foreground"]!, t["primary"]!)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(t["primary-foreground"]!, t["primary-hover"]!)).toBeGreaterThanOrEqual(4.5);
   });
+
+  // SC 1.4.3: muted ink on every surface it is written on — muted itself
+  // too, which an inactive tab and a table's group header are (axe found
+  // 4.40:1 there in light on the signed-in pages).
+  it.each(["background", "card", "popover", "muted", "sidebar", "accent"])(
+    "keeps muted text at 4.5:1 on %s",
+    (surface) => {
+      expect(contrast(t["muted-foreground"]!, t[surface]!)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  // SC 1.4.3: a destructive Button's and Badge's label on its fill.
+  it("keeps the destructive label at 4.5:1 on its fill", () => {
+    expect(contrast(t["destructive-foreground"]!, t["destructive"]!)).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 // The ratios written beside the tokens, so a comment cannot drift from its token.
@@ -142,6 +157,9 @@ describe("globals.css contrast, as its comments state it", () => {
     expect(at(light, "background", "primary")).toBe("6.18");
     expect(at(light, "primary-foreground", "primary")).toBe("6.18");
     expect(at(light, "primary-foreground", "primary-hover")).toBe("5.09");
+    expect(at(light, "muted-foreground", "muted")).toBe("4.94");
+    expect(at(light, "muted-foreground", "background")).toBe("5.43");
+    expect(at(light, "muted-foreground", "accent")).toBe("4.70");
   });
 
   it("dark", () => {
@@ -154,5 +172,6 @@ describe("globals.css contrast, as its comments state it", () => {
     expect(at(dark, "background", "primary")).toBe("5.12");
     expect(at(dark, "primary-foreground", "primary")).toBe("5.12");
     expect(at(dark, "primary-foreground", "primary-hover")).toBe("6.27");
+    expect(at(dark, "destructive-foreground", "destructive")).toBe("4.88");
   });
 });

@@ -67,6 +67,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CohortNotice, versionText } from "@/components/timplan/cohort-notice";
 import type { CoverageTabProps } from "@/components/timplan/coverage-scheduled-tab";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 const WARN = "bg-warning/15 text-warning-foreground dark:text-warning";
 
@@ -473,13 +474,13 @@ function ClassStageTable({ row, subjectName }: { row: ClassStageSummary; subject
   return (
     <div className="space-y-1">
       <h3 className="text-sm font-semibold">
-        {t("stageTitle", { stage: row.stage })}
-        <span className="ml-2 font-normal text-muted-foreground">
+        {t("stageTitle", { stage: row.stage })}{" "}
+        <span className="ml-1 font-normal text-muted-foreground">
           {t("recordedPupils", { complete: row.completePupils, pupils: row.pupils })}
           {row.backfilledPupils > 0 ? ` · ${t("backfilledPupils", { count: row.backfilledPupils })}` : ""}
         </span>
       </h3>
-      <div className="relative overflow-x-auto">
+      <TableScroll>
         <table className="w-full text-sm">
           <caption className="sr-only">{t("drillCaption", { stage: row.stage })}</caption>
           <thead>
@@ -515,7 +516,7 @@ function ClassStageTable({ row, subjectName }: { row: ClassStageSummary; subject
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
     </div>
   );
 }
@@ -535,8 +536,8 @@ function PupilItem({ pupil, name, subjectName, gradeName }: PupilProps) {
   return (
     <li className={cn("rounded-md border px-3 py-2 text-sm", hasWarning(pupil) && "border-warning/60")}>
       <p className="font-medium">
-        {name}
-        <span className="ml-2 font-normal text-muted-foreground">
+        {name}{" "}
+        <span className="ml-1 font-normal text-muted-foreground">
           {pupil.cohortStartHT === null
             ? t("cohortUnknown")
             : t("cohort", { regime: pupil.regime, ht: String(pupil.cohortStartHT) })}

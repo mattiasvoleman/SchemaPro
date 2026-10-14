@@ -21,7 +21,8 @@ function titleOf(request: LeaveInboxRequest, period: string): React.ReactNode {
     <>
       {request.student.name}
       {request.student.className ? <span className="font-normal"> ({request.student.className})</span> : null}
-      <span className="ml-2 font-normal tabular-nums text-muted-foreground">{period}</span>
+      {/* A real space: the margin alone read "Ines Vik (7A)20–24 okt" aloud. */}{" "}
+      <span className="ml-1 font-normal tabular-nums text-muted-foreground">{period}</span>
     </>
   );
 }

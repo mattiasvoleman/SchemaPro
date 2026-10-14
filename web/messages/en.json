@@ -83,7 +83,8 @@
     "skipToContent": "Skip to content",
     "refetchFailedHint": "What you see is what was last fetched, and it may have changed since. Reload the page before you change anything.",
     "confirmLoadFailed": "The confirmation could not be opened. Nothing has changed – try again.",
-    "formLoadFailed": "The form could not be opened. Nothing has changed – try again."
+    "formLoadFailed": "The form could not be opened. Nothing has changed – try again.",
+    "toasts": "Messages"
   },
   "days": {
     "1": "Monday",
@@ -136,6 +137,7 @@
     "newPassword": "New password",
     "updatePassword": "Update password",
     "passwordUpdated": "Password updated. You can now sign in.",
+    "noProfileTitle": "This account is not linked to a school",
     "noProfile": "Your account is not linked to any school yet. Contact your administrator.",
     "or": "or",
     "schoolAccount": "Sign in with school account",
@@ -1197,7 +1199,7 @@
     "undone": "Change undone",
     "redone": "Change redone",
     "conflictCount": "{count, plural, =1 {1 conflict} other {# conflicts}}",
-    "dragHint": "Drag lessons to move, drag the bottom edge to resize, click an empty slot to add, shift-click to multi-select.",
+    "dragHint": "Drag lessons to move, drag the bottom edge to resize, click an empty slot to add, shift-click to multi-select. By keyboard: the arrow keys move a lesson 15 minutes or a day, Enter opens it and Shift-Enter selects it.",
     "versions": "Versions",
     "versionsTitle": "Schedule versions",
     "versionsBody": "Save named snapshots of the timetable and roll back at any time. A safety snapshot is taken automatically before every restore.",
@@ -1786,6 +1788,7 @@
   },
   "notifications": {
     "title": "Notifications",
+    "titleUnread": "Notifications, {count} unread",
     "empty": "No notifications yet.",
     "markAllRead": "Mark all read",
     "absenceUnreported": "{student} was marked absent from {subject} on {date} without a prior report.",
@@ -1807,7 +1810,8 @@
     "settingsLink": "Choose what is sent to you",
     "leaveRequested": "A new leave request for {student} ({from} – {to}, {days, plural, one {# school day} other {# school days}}) is waiting for your decision.",
     "leaveApprovedByMentor": "Leave for {student} ({from} – {to}) was approved by the mentor.",
-    "leaveRejectedByMentor": "Leave for {student} ({from} – {to}) was rejected by the mentor."
+    "leaveRejectedByMentor": "Leave for {student} ({from} – {to}) was rejected by the mentor.",
+    "unreadMarker": "Unread."
   },
   "integrations": {
     "title": "Integrations",
@@ -4816,5 +4820,11 @@
     "rejectBody": "The family is told, with your comment if you wrote one. A decision cannot be changed afterwards.",
     "referTitle": "Pass the request for {name} on to the principal?",
     "referBody": "The principal decides on it instead. You will not see it here afterwards and cannot decide on it."
+  },
+  "accessibilityStatement": {
+    "title": "Accessibility statement",
+    "link": "Accessibility statement",
+    "languageNote": "This accessibility statement is published in Swedish, the language Swedish law requires it in.",
+    "toApp": "Go to SchemaPro"
   }
 }

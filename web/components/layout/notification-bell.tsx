@@ -172,11 +172,22 @@ export function NotificationBell() {
 
   return (
     <DropdownMenu>
+      {/* The name carries the count: the badge is drawn for the eye, and an
+          aria-label replaces the button's content, so a screen reader heard
+          "Notiser" with three unread waiting. */}
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" aria-label={t("title")}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          aria-label={unread > 0 ? t("titleUnread", { count: unread }) : t("title")}
+        >
           <Bell />
           {unread > 0 ? (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground">
+            <span
+              aria-hidden="true"
+              className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground"
+            >
               {unread > 9 ? "9+" : unread}
             </span>
           ) : null}
@@ -185,17 +196,22 @@ export function NotificationBell() {
       <DropdownMenuContent align="end" className="w-96 p-0">
         <div className="flex items-center justify-between border-b px-3 py-2">
           <span className="text-sm font-semibold">{t("title")}</span>
+          {/* Menu items, all of it: in a Radix menu the arrow keys move
+              between items only, so a button or a paragraph in it was out of
+              reach for a keyboard and a screen reader in focus mode. Choosing
+              one keeps the menu open — the notices are what it is for. */}
           {unread > 0 ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              onClick={() => markAllRead.mutate()}
+            <DropdownMenuItem
+              className="h-7 gap-1.5 text-xs font-medium"
               disabled={markAllRead.isPending}
+              onSelect={(event) => {
+                event.preventDefault();
+                markAllRead.mutate();
+              }}
             >
               <CheckCheck className="h-3.5 w-3.5" />
               {t("markAllRead")}
-            </Button>
+            </DropdownMenuItem>
           ) : null}
         </div>
         <div className="max-h-96 overflow-y-auto">
@@ -205,18 +221,21 @@ export function NotificationBell() {
             </p>
           ) : (
             (notifications ?? []).map((entry) => (
-              <div
+              <DropdownMenuItem
                 key={entry.id}
+                onSelect={(event) => event.preventDefault()}
                 className={cn(
-                  "border-b px-3 py-2.5 text-sm last:border-b-0",
+                  "block rounded-none border-b px-3 py-2.5 text-sm last:border-b-0",
                   entry.readAt === null && "bg-accent/40",
                 )}
               >
-                <p>{render(entry)}</p>
+                {/* Unread said in words and in weight, not by the tint alone. */}
+                {entry.readAt === null ? <span className="sr-only">{t("unreadMarker")}</span> : null}
+                <p className={entry.readAt === null ? "font-medium" : undefined}>{render(entry)}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {new Date(entry.createdAt).toLocaleString()}
                 </p>
-              </div>
+              </DropdownMenuItem>
             ))
           )}
         </div>

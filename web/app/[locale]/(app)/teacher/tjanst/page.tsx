@@ -58,6 +58,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 export default function MyStaffingPage() {
   const t = useTranslations("myStaffing");
@@ -225,7 +226,7 @@ export default function MyStaffingPage() {
 
       <SectionCard id="tjanst-teaching" title={t("teachingTitle")}>
         {row && row.subjects.length > 0 ? (
-          <div className="overflow-x-auto">
+          <TableScroll>
             <table className="w-full text-sm">
               <caption className="sr-only">{t("teachingCaption")}</caption>
               <thead>
@@ -262,7 +263,7 @@ export default function MyStaffingPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         ) : (
           <p className="text-sm text-muted-foreground">{t("noTeaching")}</p>
         )}

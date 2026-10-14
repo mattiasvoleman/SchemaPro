@@ -23,7 +23,10 @@
     --secondary: 240 5% 96%;
     --secondary-foreground: 240 6% 10%;
     --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
+    /* 43%, not 46%: at 46 the muted ink measured 4.40:1 on --muted itself —
+       an inactive tab, a timplan group header — under AA. Now 4.94:1 on
+       muted, 5.43:1 on white and 4.70:1 on the accent tint. */
+    --muted-foreground: 240 4% 43%;
     --accent: 243 75% 96%;
     --accent-foreground: 243 75% 40%;
     --destructive: 0 72% 51%;
@@ -87,7 +90,9 @@
     --accent: 243 40% 20%;
     --accent-foreground: 243 85% 82%;
     --destructive: 0 72% 58%;
-    --destructive-foreground: 0 0% 100%;
+    /* Dark ink on the fill, as --success-foreground: white on this red, light
+       enough to read as text on the dark page, measured 4.04:1; this 4.88:1. */
+    --destructive-foreground: 0 80% 6%;
     --success: 152 55% 45%;
     --success-foreground: 152 80% 8%;
     --success-strong: 152 55% 45%;

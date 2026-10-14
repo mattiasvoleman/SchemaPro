@@ -43,6 +43,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { api } from "@/lib/api";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
+import { TableScroll } from "@/components/ui/table-scroll";
 
 /** One subject of the stage, as the gateway's TeachingTimeLine. */
 export interface TeachingTimeLine {
@@ -145,7 +146,7 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
             <h3 className="text-sm font-semibold">
               {t("stage", { stage: stage.stage, from: stage.gradesFrom, to: stage.gradesTo })}
             </h3>
-            <div className="overflow-x-auto">
+            <TableScroll>
               <table className="w-full">
                 <thead>
                   <tr className="border-b text-left text-xs text-muted-foreground">
@@ -174,7 +175,7 @@ export function TeachingTimeCard({ studentId, childName }: { studentId: string; 
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
             {assumedUntil !== null ? (
               <p className="text-xs text-muted-foreground">{t("backfilled", { date: day(assumedUntil) })}</p>
             ) : null}
