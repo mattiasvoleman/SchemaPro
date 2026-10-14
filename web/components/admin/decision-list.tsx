@@ -12,11 +12,14 @@
  * twice, so a no cannot be taken back — and only the request being decided
  * waits. The page keeps its own mutation and toast (Ledighetsansökningar
  * says how many absence days an approval wrote).
+ *
+ * A third action may sit beside the two: the mentor's "Skicka till rektor"
+ * (/teacher/ledighet). It cannot be taken back either, so it asks first too.
  */
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Check, Loader2, X } from "lucide-react";
+import { Check, Forward, Loader2, X } from "lucide-react";
 import type { StatusVariant } from "@/lib/status-variants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,18 +61,26 @@ export interface DecisionListProps {
   deciding: string | null;
   /** Sends the decision; the page says the outcome in a toast. The note is undefined when blank. */
   onDecide: (id: string, decision: Decision, note: string | undefined) => Promise<unknown>;
+  /** A third action on an open row, asked first: its label, its question and what it sends. */
+  extra?: {
+    label: string;
+    confirm: (request: DecisionRequest) => { title: string; body: string };
+    onAct: (id: string) => Promise<unknown>;
+  };
 }
 
 /** A SectionCard of requests, each decided on its own row. */
-export function DecisionList({ id, title, requests, labels, rejectCopy, deciding, onDecide }: DecisionListProps) {
+export function DecisionList({ id, title, requests, labels, rejectCopy, deciding, onDecide, extra }: DecisionListProps) {
   const tCommon = useTranslations("common");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [rejecting, setRejecting] = useState<DecisionRequest | null>(null);
+  const [acting, setActing] = useState<DecisionRequest | null>(null);
 
   const noteOf = (requestId: string) => notes[requestId]?.trim() || undefined;
   const named = (action: string, request: DecisionRequest) =>
     tCommon("actionNamed", { action, name: request.name });
   const copy = rejecting ? rejectCopy(rejecting) : null;
+  const extraCopy = acting && extra ? extra.confirm(acting) : null;
 
   return (
     <SectionCard id={id} title={title}>
@@ -109,7 +120,7 @@ export function DecisionList({ id, title, requests, labels, rejectCopy, deciding
                       onChange={(event) => setNotes((current) => ({ ...current, [request.id]: event.target.value }))}
                     />
                   </FormField>
-                  <div className="flex gap-2 sm:justify-end">
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
                     <Button
                       size="sm"
                       aria-label={named(labels.approve, request)}
@@ -130,6 +141,18 @@ export function DecisionList({ id, title, requests, labels, rejectCopy, deciding
                       <X />
                       {labels.reject}
                     </Button>
+                    {extra ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={named(extra.label, request)}
+                        onClick={() => setActing(request)}
+                        disabled={busy}
+                      >
+                        <Forward />
+                        {extra.label}
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               ) : (
@@ -157,6 +180,26 @@ export function DecisionList({ id, title, requests, labels, rejectCopy, deciding
           setRejecting(null);
         }}
       />
+
+      {extra ? (
+        <ConfirmDialog
+          open={acting !== null}
+          onOpenChange={(open) => {
+            if (!open) setActing(null);
+          }}
+          title={extraCopy?.title ?? ""}
+          description={extraCopy?.body}
+          confirmLabel={extra.label}
+          // Passing a request on is not a no: rektor still decides it.
+          destructive={false}
+          loading={acting !== null && deciding === acting.id}
+          onConfirm={async () => {
+            if (!acting) return;
+            await extra.onAct(acting.id);
+            setActing(null);
+          }}
+        />
+      ) : null}
     </SectionCard>
   );
 }

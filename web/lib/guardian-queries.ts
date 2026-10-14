@@ -104,7 +104,12 @@ export function useAbsenceReportActions() {
   return { report, remove };
 }
 
-/** Leave requests the caller may see (guardian: children; pupil: self; admin: all), newest first. */
+/**
+ * Leave requests the caller may see (guardian: children; pupil: self), newest
+ * first, each with the role its decision was made in (decidedAs). The same
+ * route answers rektor's and the mentor's inboxes with more on every row
+ * (lib/leave-queries.ts); the dashboard reads the fields it always has.
+ */
 export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED") {
   return useQuery({
     queryKey: [...GUARDIAN_KEYS.leaveRequests, status ?? null],
@@ -120,6 +125,7 @@ export function useLeaveRequestActions() {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: GUARDIAN_KEYS.leaveRequests });
     void queryClient.invalidateQueries({ queryKey: GUARDIAN_KEYS.absenceReports });
+    void queryClient.invalidateQueries({ queryKey: GUARDIAN_KEYS.leaveInbox });
   };
   const request = useMutation({
     mutationFn: (body: {
@@ -130,10 +136,5 @@ export function useLeaveRequestActions() {
     }) => api.post("/api/v1/leave-requests", body),
     onSuccess: invalidate,
   });
-  const decide = useMutation({
-    mutationFn: ({ id, status, note }: { id: string; status: "APPROVED" | "REJECTED"; note?: string }) =>
-      api.patch(`/api/v1/leave-requests/${id}/decide`, { status, ...(note ? { note } : {}) }),
-    onSuccess: invalidate,
-  });
-  return { request, decide };
+  return { request };
 }

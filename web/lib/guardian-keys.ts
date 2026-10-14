@@ -16,4 +16,7 @@ export const GUARDIAN_KEYS = {
   myChildren: ["myChildren"],
   absenceReports: ["absenceReports"],
   leaveRequests: ["leaveRequests"],
+  /** The gateway's leave inboxes, the admin's and the mentor's (lib/leave-queries.ts). */
+  leaveInbox: ["leaveInbox"],
+  leaveDelegation: ["leaveDelegation"],
 } as const;
