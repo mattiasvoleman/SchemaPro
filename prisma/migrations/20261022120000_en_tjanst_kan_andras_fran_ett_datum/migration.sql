@@ -53,14 +53,20 @@
 -- moved: each owner gets their own half). Plus schoolId to Schools, as every
 -- child table has.
 --
--- ## Row-level security: the post's arms, exactly
+-- ## Row-level security: the post's arms, read only through the API
 --
 -- A period says what a post is from a date, which is the post's HR data, so
--- it is read exactly as the post is (20261006100000, 20261016100000):
+-- it is read by the same people as the post (20261006100000,
+-- 20261016100000) — and, like the six tables 20261026100000 closed to
+-- PostgREST, another person's period only through the gateway, which writes
+-- the read in the läslogg:
 --
---   * teacher_employment_periods_admin_all: the school's admin, FOR ALL.
+--   * teacher_employment_periods_admin_all: the school's admin, FOR ALL,
+--     under the API's own role (app_authenticated). PostgREST's authenticated
+--     has no arm that shows it a colleague's period, and none that writes one.
 --   * teacher_employment_periods_teacher_own_select: a TEACHER reads the
---     periods of their own post and no colleague's.
+--     periods of their own post and no colleague's, also directly: it is the
+--     one arm TO authenticated (RLS section 94).
 --   * teacher_employment_periods_service_select: the service principal reads
 --     by school, under the API's own role, as teacher_employments_service_select
 --     does since 20261016100000. Whether an integration may see a post at all
@@ -225,11 +231,6 @@ CREATE TRIGGER "TeacherEmploymentPeriods_log"
 
 ALTER TABLE "TeacherEmploymentPeriods" ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "teacher_employment_periods_admin_all" ON "TeacherEmploymentPeriods"
-    FOR ALL TO "authenticated"
-    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
-
 CREATE POLICY "teacher_employment_periods_teacher_own_select" ON "TeacherEmploymentPeriods"
     FOR SELECT TO "authenticated"
     USING (
@@ -238,13 +239,18 @@ CREATE POLICY "teacher_employment_periods_teacher_own_select" ON "TeacherEmploym
         AND "userId" = (select app.current_user_id())
     );
 
--- The service arm and the API role's grants, guarded like every grant to that
--- role (20260930120000): it exists in production and in the compose database,
--- not in every database a migration meets. Without it there is no service
--- principal, and no arm: never one TO PUBLIC (RLS section 37).
+-- The admin's arm, the service arm and the API role's grants, guarded like
+-- every grant to that role (20260930120000): it exists in production and in
+-- the compose database, not in every database a migration meets. Without it
+-- there is no API to read through, and no arm: never one TO PUBLIC (RLS
+-- section 37), and never the admin's TO authenticated (section 94).
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
+    EXECUTE 'CREATE POLICY "teacher_employment_periods_admin_all" ON "TeacherEmploymentPeriods"
+                 FOR ALL TO "app_authenticated"
+                 USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = ''SCHOOL_ADMIN'')
+                 WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = ''SCHOOL_ADMIN'')';
     EXECUTE 'CREATE POLICY "teacher_employment_periods_service_select" ON "TeacherEmploymentPeriods"
                  FOR SELECT TO "app_authenticated"
                  USING ("schoolId" = app.current_service_school_id())';
