@@ -1,6 +1,6 @@
 import { getAccessToken, getSupabase } from './supabase';
 import { ApiError } from './api';
-import { fetchLeaveRequests, requestLeave } from './leaveRequests';
+import { deciderOf, fetchLeaveRequests, requestLeave } from './leaveRequests';
 
 jest.mock('./supabase', () => ({ getAccessToken: jest.fn(), getSupabase: jest.fn() }));
 
@@ -36,6 +36,7 @@ const leave = (id: string, createdAt: string) => ({
   decidedAt: null,
   decisionNote: null,
   createdAt,
+  decidedAs: null,
 });
 
 beforeEach(() => {
@@ -63,6 +64,14 @@ describe('fetchLeaveRequests', () => {
     expect(shown.map((row) => row.id)).toEqual(rows.slice(0, 50).map((row) => row.id));
     expect(shown[0]).toEqual(rows[0]);
     expect(getSupabase).not.toHaveBeenCalled();
+  });
+
+  it('hands the screen the role each decision was made in', async () => {
+    const decided = { ...leave('decided', '2026-10-13T08:00:00.000Z'), status: 'APPROVED', decidedAs: 'MENTOR' };
+    fetchMock.mockResolvedValue(answer(200, [decided]));
+    const [row] = await fetchLeaveRequests();
+    expect(row).toMatchObject({ id: 'decided', status: 'APPROVED', decidedAs: 'MENTOR' });
+    expect(deciderOf(row!)).toBe('MENTOR');
   });
 
   it('shows a short answer whole', async () => {
@@ -108,5 +117,14 @@ describe('requestLeave', () => {
     await expect(
       requestLeave({ studentId: CHILD, startDate: '2026-11-06', endDate: '2026-11-02', reason: 'Familjeresa' }),
     ).rejects.toMatchObject({ name: 'ApiError', status: 400, message: 'endDate must not be before startDate.' });
+  });
+});
+
+describe('deciderOf', () => {
+  it('says who decided only for a decided request with a recorded role', () => {
+    expect(deciderOf({ status: 'APPROVED', decidedAs: 'MENTOR' })).toBe('MENTOR');
+    expect(deciderOf({ status: 'REJECTED', decidedAs: 'ADMIN' })).toBe('ADMIN');
+    expect(deciderOf({ status: 'APPROVED', decidedAs: null })).toBeNull();
+    expect(deciderOf({ status: 'PENDING', decidedAs: null })).toBeNull();
   });
 });

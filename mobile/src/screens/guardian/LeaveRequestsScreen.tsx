@@ -12,7 +12,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { fetchChildren } from '../../services/children';
-import { fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
+import { deciderOf, fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import type { ChildRow, LeaveRequestRow, LeaveRequestStatus } from '../../types';
@@ -81,7 +81,8 @@ export function LeaveRequestsScreen(): React.JSX.Element {
     try {
       // No status: a new request is undecided, and the school decides it. The
       // gateway takes the school from the child and the requester from the
-      // session.
+      // session, and the pupil's mentor is told when the school's delegation
+      // gives it to them to decide.
       await requestLeave({ studentId: selectedChild, startDate, endDate, reason });
       setReason('');
       Alert.alert(t('leave.alertTitle'), t('leave.submitted'));
@@ -185,6 +186,11 @@ export function LeaveRequestsScreen(): React.JSX.Element {
               {`${leave.startDate.slice(0, 10)} – ${leave.endDate.slice(0, 10)}`}
             </Text>
             <Text style={styles.leaveReason}>{leave.reason}</Text>
+            {deciderOf(leave) ? (
+              <Text style={styles.leaveNote}>
+                {t(deciderOf(leave) === 'MENTOR' ? 'leave.decidedByMentor' : 'leave.decidedByRektor')}
+              </Text>
+            ) : null}
             {leave.decisionNote ? (
               <Text style={styles.leaveNote}>{t('leave.note', { note: leave.decisionNote })}</Text>
             ) : null}
