@@ -71,11 +71,13 @@ export type ColumnRule =
    */
   | 'MAP_BLOCK'
   /**
-   * A parallel block's name, promoted as its rows' groups are: promoteName()
-   * at the årskurs every member's group carries ("Språkval åk 7" → "Språkval
-   * åk 8"); the source's name for the intake twins' copy, or when the members
-   * are in different årskurser; and " (2)", " (3)" … after a name another
-   * carried block already took.
+   * A parallel block's name, promoted as its rows' cohorts are: promoteName()
+   * when every carried row's group, or for one without an årskurs the pupils
+   * carried with it, moves one årskurs up ("Språkval åk 7" → "Språkval åk
+   * 8"); the source's name for the intake twins' copy, or when the members
+   * are in different årskurser; the source year's name after it when the
+   * cohort's årskurs is unknown ("Språkval åk 7 (2026/27)"); and " (2)",
+   * " (3)" … after a name another carried block already took.
    */
   | 'PROMOTE_BLOCK_NAME'
   /** The source row's own id: the predecessor link. */

@@ -71,7 +71,10 @@ export interface GenerateRequirementsResponse {
  * on a group of another årskurs refuses the preview and the apply alike (409
  * LANGUAGE_BLOCK_IN_OTHER_GRADE), naming the groups, before anything is
  * written. A group without an årskurs, as a teaching group often is, says
- * nothing either way and refuses nothing.
+ * nothing either way and refuses nothing here; the rollover is what keeps
+ * such a block from meeting this name with last year's cohort in it, by
+ * naming a carried block after its pupils' årskurs, or after last year when
+ * that is unknown (planBlocks in rollover-plan.ts).
  *
  * No teacher is set, so the staffing policy's checks have nothing to judge;
  * no period is set, so the year's bounds need no FOR SHARE read. A draft plan
