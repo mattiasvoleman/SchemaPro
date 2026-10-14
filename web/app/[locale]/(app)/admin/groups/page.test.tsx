@@ -100,6 +100,15 @@ vi.mock("@/lib/queries", () => ({
   },
 }));
 
+/** The classes the page hands the skolenheter card (tested on its own, school-units-card.test.tsx). */
+const unitCard = vi.hoisted(() => ({ classes: [] as Array<{ name: string }> }));
+vi.mock("./school-units-card", () => ({
+  SchoolUnitsCard: ({ classes }: { classes: Array<{ name: string }> }) => {
+    unitCard.classes = classes;
+    return null;
+  },
+}));
+
 vi.mock("@/components/import/csv-import-dialog", () => ({
   CsvImportDialog: () => null,
 }));
@@ -140,6 +149,11 @@ describe("Groups page", () => {
     membersState.data = [];
     membersState.isLoading = false;
     membersState.isError = false;
+  });
+
+  it("hands the skolenheter card this year's classes, not next year's or a teaching group", () => {
+    render(<GroupsPage />);
+    expect(unitCard.classes.map((group) => group.name)).toEqual(["7A"]);
   });
 
   it("makes next year's projected class lists stale with every group write", () => {

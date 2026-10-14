@@ -1614,7 +1614,10 @@
           "GRADE_OUT_OF_SCOPE": "Årskurs {grade} ligger utanför underlaget (förskoleklass till åk 9); raden saknar verksamhetstyp.",
           "FORM_WITHOUT_CODE": "Årskurs {grade} följer en timplan för {form}, som SCB:s lista över verksamhetstyper saknar kod för; raden saknar verksamhetstyp.",
           "GRADE_WITHOUT_TIMPLAN": "Årskurs {grade} har ingen timplan för läsåret och redovisas som grundskola.",
-          "ALL_LEFT_OUT": "{name}: undervisningen på en rad har ingen SCB-kolumn. Ange ämnen för hand."
+          "ALL_LEFT_OUT": "{name}: undervisningen på en rad har ingen SCB-kolumn. Ange ämnen för hand.",
+          "NO_SCHOOL_UNIT": "Skolan har ingen skolenhet i SchemaPro, så SkolenhetsKod är tom och SkolenhetNamn är skolans namn. Lägg till skolenheterna under Klasser.",
+          "UNIT_WITHOUT_CODE": "Skolenheten {unit} har ingen skolenhetskod, så SkolenhetsKod är tom på dess rader. Ange koden under Klasser.",
+          "GRADE_WITHOUT_UNIT": "Årskurs {grade} ligger i ingen skolenhets årskurser och redovisas under {unit}."
         }
       },
       "loadFailedHint": "Avstämningen visar inga siffror förrän servern har svarat. Ingen planering, inget schema och ingen genomförd tid har ändrats – försök igen om en stund."
@@ -2128,7 +2131,15 @@
           "ENROLMENT_ENDED": "Inskrivningen har upphört",
           "NO_ACTIVE_CHILD": "Inget barn med aktiv inskrivning kvar",
           "ABSENT_FROM_SOURCE": "Finns inte längre i registret"
-        }
+        },
+        "unitSpan": "Årskurs {span}",
+        "unitSpanCode": "Årskurs {span} · skolenhetskod {code}",
+        "unitCodeChange": "Skolenhetskod {from} → {to}",
+        "unitSpanChange": "Årskurs {from} → {to}",
+        "unitTypes": "Skolformer: {types}",
+        "unitOverlap": "Årskurs {span} ligger redan i {other}",
+        "unitCodeHolder": "Skolenhetskod {code} finns redan på {holder}",
+        "unitMismatch": "Årskurs {grade}: {local} här, {source} i registret"
       },
       "changesLoadFailed": "Ändringarna kunde inte hämtas"
     },
@@ -2207,7 +2218,14 @@
       "MEMBERSHIP_ENDED_AT_SOURCE": "Medlemskapet har upphört i registret. En synk tar aldrig bort det; ta bort det för hand om det ska bort.",
       "RESPONSIBLE_NOT_PROVISIONED": "Vårdnadshavaren finns inte i SchemaPro.",
       "RESPONSIBLE_ENDED_AT_SOURCE": "Registret anger inte längre vårdnadshavaren för barnet. En synk tar aldrig bort kopplingen.",
-      "ORGANISATION_NAME_DIFFERS": "Skolenheten heter något annat i registret. Skolans namn i SchemaPro ändras inte."
+      "ORGANISATION_NAME_DIFFERS": "Skolenheten heter något annat i registret. Skolans namn i SchemaPro ändras inte.",
+      "ORGANISATION_NOT_SKOLENHET": "Organisationen är ingen skolenhet i registret och blir ingen skolenhet i SchemaPro.",
+      "SCHOOL_UNIT_TYPES_UNSUPPORTED": "Registret anger skolformer som SchemaPro inte har; de skrivs inte.",
+      "SCHOOL_UNIT_CODE_INVALID": "Skolenhetskoden i registret är inte åtta siffror och skrivs inte.",
+      "SCHOOL_UNIT_CODE_TAKEN": "En annan skolenhet i SchemaPro har redan skolenhetskoden.",
+      "SCHOOL_UNIT_SPAN_OVERLAP": "Årskurserna skulle ligga i två skolenheter. Ändra skolenheternas årskurser under Klasser.",
+      "SCHOOL_UNIT_NOT_CHOSEN": "Skolenheten är kopplad men inte längre vald. Den står kvar i SchemaPro.",
+      "GROUP_UNIT_MISMATCH": "Klassens årskurs lägger den i en annan skolenhet än registret gör. Ändra skolenheternas årskurser eller klassens årskurs."
     },
     "errors": {
       "SS12000_SOURCE_NOT_FOUND": "Skolan har inget källsystem ännu.",
@@ -4882,5 +4900,64 @@
     "link": "Tillgänglighetsredogörelse",
     "languageNote": "Redogörelsen finns bara på svenska.",
     "toApp": "Till SchemaPro"
+  },
+  "schoolUnits": {
+    "title": "Skolenheter",
+    "description": "Skolverkets skolenheter som skolan består av. Har skolan en skolenhet hör alla klasser till den. Har den flera hör en klass till den vars årskurser rymmer klassens årskurs, och en klass utan årskurs till den första. Skolenhetskoden står i SCB-underlaget och i det SS12000 som SchemaPro lämnar ut.",
+    "add": "Lägg till skolenhet",
+    "addTitle": "Ny skolenhet",
+    "editTitle": "Redigera {name}",
+    "dialogHint": "Namn och skolenhetskod står i Skolverkets skolenhetsregister.",
+    "fromSourceHint": "Namn, kod och skolformer kommer från elevregistret och ändras där. Årskurserna bestämmer skolan.",
+    "fromSource": "Från elevregistret",
+    "loadFailed": "Skolenheterna kunde inte hämtas.",
+    "loadFailedHint": "Inget är ändrat. Ladda om sidan, och hjälper det inte, kontakta den som driftar SchemaPro.",
+    "empty": "Inga skolenheter ännu. Utan skolenhet räknas skolan som en enda: SkolenhetsKod lämnas tom i SCB-underlaget, och skolan själv lämnas ut som skolenhet i SS12000.",
+    "caption": "Skolans skolenheter, med årets klasser i varje",
+    "columns": {
+      "name": "Skolenhet",
+      "code": "Skolenhetskod",
+      "types": "Skolformer",
+      "span": "Årskurser",
+      "classes": "Klasser i år"
+    },
+    "span": "{from}–{to}",
+    "types": {
+      "FKLASS": "Förskoleklass",
+      "FTH": "Fritidshem",
+      "GR": "Grundskola",
+      "GRS": "Anpassad grundskola",
+      "TR": "Anpassad grundskola, ämnesområden",
+      "SP": "Specialskola",
+      "SAM": "Sameskola"
+    },
+    "fields": {
+      "name": "Namn",
+      "code": "Skolenhetskod",
+      "codeHint": "Åtta siffror, som i skolenhetsregistret.",
+      "types": "Skolformer",
+      "gradeFrom": "Första årskurs",
+      "gradeTo": "Sista årskurs",
+      "noSpan": "Ingen"
+    },
+    "spanHint": "Två skolenheter kan inte ha samma årskurs. Har skolan flera skolenheter får en enhet utan årskurser, som ett fritidshem, inga klasser.",
+    "overlap": "Årskurserna ligger redan i {name}.",
+    "outsideTitle": "Klasser utan skolenhet",
+    "outside": "{classes} har en årskurs som ingen skolenhet har och räknas därför till {unit}. Ändra skolenheternas årskurser om klasserna hör till en annan.",
+    "saved": "{name} sparades.",
+    "created": "{name} lades till.",
+    "deleted": "{name} togs bort.",
+    "deleteTitle": "Ta bort {name}?",
+    "deleteBody": "Klasserna i skolenhetens årskurser hör sedan till skolans första skolenhet, eller till ingen om det var den sista.",
+    "deleteFromSource": "Skolenheten kommer från elevregistret. Nästa synk föreslår den igen så länge den är vald under Integrationer.",
+    "errors": {
+      "nameMissing": "Ange skolenhetens namn.",
+      "SCHOOL_UNIT_CODE_INVALID": "En skolenhetskod är åtta siffror.",
+      "SCHOOL_UNIT_CODE_TAKEN": "En annan skolenhet har redan den koden.",
+      "SCHOOL_UNIT_SPAN_OVERLAP": "Årskurserna ligger redan i en annan skolenhet.",
+      "SCHOOL_UNIT_SPAN_INVALID": "Ange både första och sista årskurs.",
+      "SCHOOL_UNIT_FROM_SOURCE": "Namn, kod och skolformer kommer från elevregistret och ändras där."
+    },
+    "saveFailed": "Skolenheten sparades inte"
   }
 }

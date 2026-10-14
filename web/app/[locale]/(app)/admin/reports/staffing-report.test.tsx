@@ -280,6 +280,9 @@ describe("Rapporter › Tjänstefördelning", () => {
       if (path.startsWith("/api/v1/teacher-duties")) return [{ userId: "t-anna", kind: "FORSTELARARE" }];
       if (path.endsWith("/timplans")) return [{ gradeLevel: 7, localTimplanId: "p1", planName: "G", planStatus: "DECIDED" }];
       if (path === "/api/v1/local-timplans") return [{ id: "p1", schoolForm: "GRUNDSKOLA" }];
+      if (path === "/api/v1/school-units") {
+        return [{ id: "u1", name: "Norra skolan", code: "12345678", schoolTypes: ["GR"], gradeFrom: 0, gradeTo: 9, fromSource: false }];
+      }
       throw new Error(path);
     });
     render(<StaffingReport />);
@@ -290,6 +293,8 @@ describe("Rapporter › Tjänstefördelning", () => {
     const [filename, csv] = download.mock.calls[0] as [string, string];
     expect(filename).toBe("scb-pedagogisk-personal-underlag-2026-27.csv");
     expect(csv.split("\r\n")[0]).toMatch(/^﻿System;Datum;Version;SkolenhetsKod;PersonNr;PersonNamn;/);
+    // The skolenhet's code, from GET /api/v1/school-units asked on the click.
+    expect(csv.split("\r\n")[1]!.split(";")[3]).toBe("12345678");
     // What SchemaPro cannot fill is listed beside the button, never silently.
     expect(await screen.findByText("scb.notice.FORSTELARARE(Anna Öberg)")).toBeInTheDocument();
     expect(screen.getByText(/^scbNoticesTitle\(/).textContent).toBe("scbNoticesTitle(3)");

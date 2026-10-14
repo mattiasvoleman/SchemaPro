@@ -338,6 +338,8 @@ describe("SCB Pedagogisk personal, underlag", () => {
     { id: "s-est", nationalCode: "EST", code: "EST", name: "Estetisk verksamhet" },
     { id: "s-sl", nationalCode: "SL", code: "SL", name: "Slöjd" },
   ];
+  // One skolenhet, F–9: the common case.
+  const NORRA = { id: "u-norra", name: "Norra skolan", code: "12345678", gradeFrom: 0, gradeTo: 9 };
   const grundskola = new Map<number, SchoolForm>(
     [1, 2, 3, 4, 5, 6, 7, 8, 9].map((grade) => [grade, "GRUNDSKOLA"]),
   );
@@ -351,12 +353,13 @@ describe("SCB Pedagogisk personal, underlag", () => {
     schoolFormByGrade: grundskola,
     personOf,
     adminIds: new Set(),
+    units: [NORRA],
     ...overrides,
   });
   const col = (name: string) => SCB_PEDPERS_2026.columns.findIndex(([column]) => column === name);
   const rowsOf = (csv: string) => linesOf(csv).slice(1).map((line) => line.split(";"));
 
-  it("writes SCB's variable names as the header and fills what SchemaPro knows, never PersonNr or SkolenhetsKod", () => {
+  it("writes SCB's variable names as the header and fills what SchemaPro knows, never PersonNr", () => {
     const { csv, notices } = scbUnderlag(
       input({
         load: [
@@ -376,7 +379,8 @@ describe("SCB Pedagogisk personal, underlag", () => {
     expect(row).toHaveLength(80);
     expect(row![col("System")]).toBe("SchemaPro");
     expect(row![col("Datum")]).toBe("2026-10-09");
-    expect(row![col("SkolenhetsKod")]).toBe("");
+    expect(row![col("SkolenhetsKod")]).toBe("12345678");
+    expect(row![col("SkolenhetNamn")]).toBe("Norra skolan");
     expect(row![col("PersonNr")]).toBe("");
     expect(row![col("AnstForm")]).toBe("");
     expect(row![col("PersonNamn")]).toBe("Anna Öberg");
@@ -573,5 +577,84 @@ describe("SCB Pedagogisk personal, underlag", () => {
     );
     expect(rowsOf(csv).map((row) => row[col("Verksamhetstyp")])).toEqual(["5", ""]);
     expect(notices.map((entry) => entry.code)).toEqual(["NOT_HT2026", "FORM_WITHOUT_CODE", "GRADE_WITHOUT_TIMPLAN"]);
+  });
+
+  describe("skolenheter", () => {
+    const F6 = { id: "u-f6", name: "Norra F–6", code: "11111111", gradeFrom: 0, gradeTo: 6 };
+    const U79 = { id: "u-79", name: "Norra 7–9", code: "22222222", gradeFrom: 7, gradeTo: 9 };
+    const split = teacher("t-anna", {
+      assignments: [
+        assignment({ subjectId: "s-ma", groupName: "6A", gradeSpan: { min: 6, max: 6 }, timeMinutesPerWeek: 300 }),
+        assignment({ subjectId: "s-ma", groupName: "7A", gradeSpan: { min: 7, max: 7 }, timeMinutesPerWeek: 300 }),
+      ],
+    });
+
+    it("writes one row per skolenhet a teacher teaches in, each with its code and name", () => {
+      const { csv, notices } = scbUnderlag(input({ units: [U79, F6], load: [split] }));
+      const rows = rowsOf(csv);
+      expect(rows.map((row) => [row[col("SkolenhetsKod")], row[col("SkolenhetNamn")], row[col("Verksamhetstyp")], row[col("OmfLarare")]])).toEqual([
+        ["11111111", "Norra F–6", "5", "50"],
+        ["22222222", "Norra 7–9", "6", "50"],
+      ]);
+      expect(notices).toEqual([]);
+    });
+
+    it("splits a group across two units by its grades", () => {
+      const { csv } = scbUnderlag(
+        input({ units: [F6, U79], load: [teacher("t-anna", { assignments: [assignment({ gradeSpan: { min: 6, max: 7 }, timeMinutesPerWeek: 600 })] })] }),
+      );
+      expect(rowsOf(csv).map((row) => [row[col("SkolenhetsKod")], row[col("OmfLarare")]])).toEqual([
+        ["11111111", "50"],
+        ["22222222", "50"],
+      ]);
+    });
+
+    it("says so when the school has no unit, a unit has no code, or a grade lies in no unit's span", () => {
+      const none = scbUnderlag(input({ units: [], load: [split] }));
+      expect(rowsOf(none.csv).map((row) => [row[col("SkolenhetsKod")], row[col("SkolenhetNamn")]])).toEqual([
+        ["", "Norra skolan"],
+        ["", "Norra skolan"],
+      ]);
+      expect(none.notices).toContainEqual({ code: "NO_SCHOOL_UNIT", params: {} });
+
+      const noCode = scbUnderlag(input({ units: [{ ...F6, code: null }, U79], load: [split] }));
+      expect(rowsOf(noCode.csv)[0]![col("SkolenhetsKod")]).toBe("");
+      expect(noCode.notices).toEqual([{ code: "UNIT_WITHOUT_CODE", params: { unit: "Norra F–6" } }]);
+
+      // 7–9 only from 8: grade 7 lies in no span and falls to the first unit.
+      const gap = scbUnderlag(input({ units: [F6, { ...U79, gradeFrom: 8 }], load: [split] }));
+      expect(gap.notices).toEqual([{ code: "GRADE_WITHOUT_UNIT", params: { grade: 7, unit: "Norra F–6" } }]);
+      expect(rowsOf(gap.csv).map((row) => row[col("SkolenhetsKod")])).toEqual(["11111111", "11111111"]);
+    });
+
+    it("merges a share that rounds to nothing into its own unit's row, not another unit's", () => {
+      // 7A (7–9) is the largest row; 3A's few minutes of Engelska (F–6, åk 1–3)
+      // round to no share and belong with 6A, the other F–6 row.
+      const { csv } = scbUnderlag(
+        input({
+          units: [F6, U79],
+          load: [
+            teacher("t-anna", {
+              assignments: [
+                assignment({ subjectId: "s-ma", groupName: "7A", gradeSpan: { min: 7, max: 7 }, timeMinutesPerWeek: 600 }),
+                assignment({ subjectId: "s-ma", groupName: "6A", gradeSpan: { min: 6, max: 6 }, timeMinutesPerWeek: 200 }),
+                assignment({ subjectId: "s-en", subjectName: "Engelska", groupName: "3A", gradeSpan: { min: 3, max: 3 }, timeMinutesPerWeek: 4 }),
+              ],
+            }),
+          ],
+        }),
+      );
+      expect(
+        rowsOf(csv).map((row) => [row[col("SkolenhetsKod")], row[col("Verksamhetstyp")], row[col("OmfMatematik")], row[col("OmfEngelska")]]),
+      ).toEqual([
+        ["11111111", "5", "98", "2"],
+        ["22222222", "6", "100", ""],
+      ]);
+    });
+
+    it("puts a post with no planned teaching in the first unit", () => {
+      const { csv } = scbUnderlag(input({ units: [U79, F6], load: [teacher("t-anna", { assignments: [] })] }));
+      expect(rowsOf(csv)[0]![col("SkolenhetsKod")]).toBe("11111111");
+    });
   });
 });

@@ -27,6 +27,7 @@
 import { serializeCsv } from "@/lib/csv-export";
 import { postOn } from "@/lib/employment-periods";
 import { isJudged } from "@/lib/period-view";
+import { compareUnits, gradeOutsideUnits, unitForGrade, type SchoolUnit } from "@/lib/school-units";
 import { compareSwedish } from "@/lib/sorting";
 import {
   qualificationValidInYear,
@@ -566,7 +567,10 @@ export type ScbNoticeCode =
   | "GRADE_OUT_OF_SCOPE"
   | "FORM_WITHOUT_CODE"
   | "GRADE_WITHOUT_TIMPLAN"
-  | "ALL_LEFT_OUT";
+  | "ALL_LEFT_OUT"
+  | "NO_SCHOOL_UNIT"
+  | "UNIT_WITHOUT_CODE"
+  | "GRADE_WITHOUT_UNIT";
 
 export interface ScbNotice {
   code: ScbNoticeCode;
@@ -588,9 +592,19 @@ export interface ScbInput {
   personOf: PersonOf;
   /** SCHOOL_ADMIN users: a post of theirs is reported as Lärare, with a notice. */
   adminIds: ReadonlySet<string>;
+  /**
+   * The school's skolenheter (GET /api/v1/school-units). A row is one
+   * person, one skolenhet and one verksamhetstyp, as SCB counts: teaching is
+   * placed by its grades (web/lib/school-units.ts), a row with no grade in
+   * the first unit. None: one row set as before, SkolenhetsKod empty and
+   * SkolenhetNamn the school's, with a notice.
+   */
+  units: readonly Pick<SchoolUnit, "id" | "name" | "code" | "gradeFrom" | "gradeTo">[];
 }
 
 interface StageBucket {
+  /** The skolenhet's id, or "" when the school has none. */
+  unit: string;
   type: Verksamhetstyp;
   /** Every minute of teaching on the stage, mapped or not: OmfLarare's weight. */
   minutes: number;
@@ -638,6 +652,17 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
     notice({ code: "NOT_HT2026", params: { version: SCB_PEDPERS_2026.specVersionDate } });
   }
   const subjectOf = new Map(input.subjects.map((subject) => [subject.id, subject]));
+  const units = [...input.units].sort(compareUnits);
+  const unitById = new Map(units.map((unit) => [unit.id, unit]));
+  if (units.length === 0) notice({ code: "NO_SCHOOL_UNIT", params: {} });
+  /** The unit a grade's teaching is reported under ("" without units), naming a grade no span holds. */
+  const unitOf = (grade: number | null): string => {
+    const unit = unitForGrade(units, grade);
+    if (!unit) return "";
+    if (grade !== null && gradeOutsideUnits(units, grade)) notice({ code: "GRADE_WITHOUT_UNIT", params: { grade, unit: unit.name } });
+    return unit.id;
+  };
+  const unitOrder = (id: string) => units.findIndex((unit) => unit.id === id);
   const columns = SCB_PEDPERS_2026.columns.map(([name]) => name);
   const blank = (): Record<string, string> => Object.fromEntries(columns.map((name) => [name, ""]));
 
@@ -668,12 +693,13 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
     // Teaching per stage, in UNWEIGHTED undervisningstid (C11): SCB's
     // ämnesomfattning is how the teacher's teaching TIME is divided, so a
     // FACTOR school's weights stay out of it.
-    const buckets = new Map<Verksamhetstyp, StageBucket>();
-    const bucketOf = (type: Verksamhetstyp): StageBucket => {
-      let bucket = buckets.get(type);
+    const buckets = new Map<string, StageBucket>();
+    const bucketOf = (unit: string, type: Verksamhetstyp): StageBucket => {
+      const key = `${unit}|${type}`;
+      let bucket = buckets.get(key);
       if (!bucket) {
-        bucket = { type, minutes: 0, byColumn: new Map() };
-        buckets.set(type, bucket);
+        bucket = { unit, type, minutes: 0, byColumn: new Map() };
+        buckets.set(key, bucket);
       }
       return bucket;
     };
@@ -683,21 +709,22 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
       const subject = subjectOf.get(assignment.subjectId);
       const column = subject ? scbColumnOf(subject) : null;
       const label = `${assignment.subjectName} ${assignment.groupName}`;
-      let shares: { type: Verksamhetstyp; minutes: number }[];
+      let shares: { unit: string; type: Verksamhetstyp; minutes: number }[];
       if (assignment.gradeSpan === null) {
         notice({ code: "NO_SPAN", params: { name, line: label } });
-        shares = [{ type: "", minutes }];
+        shares = [{ unit: unitOf(null), type: "", minutes }];
       } else {
-        // A group spanning stages (6–7) is split by its grades in each.
+        // A group spanning stages (6–7), or skolenheter (F–6 and 7–9), is
+        // split by its grades in each.
         const grades = gradesOf(assignment.gradeSpan);
         shares = grades.map((grade) => {
           const stage = stageOf(grade, input.schoolFormByGrade);
           if (stage.notice) notice(stage.notice);
-          return { type: stage.type, minutes: minutes / grades.length };
+          return { unit: unitOf(grade), type: stage.type, minutes: minutes / grades.length };
         });
       }
       for (const share of shares) {
-        const bucket = bucketOf(share.type);
+        const bucket = bucketOf(share.unit, share.type);
         bucket.minutes += share.minutes;
         if (column !== null && share.type !== "1" && scbColumnApplies(column, share.type)) {
           bucket.byColumn.set(column, (bucket.byColumn.get(column) ?? 0) + share.minutes);
@@ -718,27 +745,31 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
     if (input.adminIds.has(row.userId)) notice({ code: "ADMIN", params: { name } });
     if (omf === null) notice({ code: "NO_POST", params: { name } });
 
-    const base = (type: Verksamhetstyp) => {
+    const base = (unitId: string, type: Verksamhetstyp) => {
       const record = blank();
+      const unit = unitById.get(unitId);
+      if (unit && unit.code === null) notice({ code: "UNIT_WITHOUT_CODE", params: { unit: unit.name } });
       record.System = SCB_SYSTEM;
       record.Datum = input.exportDate;
       record.Version = SCB_SYSTEM_VERSION;
+      record.SkolenhetsKod = unit?.code ?? "";
       record.PersonNamn = name;
       record.Verksamhetstyp = type;
-      record.SkolenhetNamn = input.schoolName;
+      record.SkolenhetNamn = unit?.name ?? input.schoolName;
       return record;
     };
 
-    const stages = STAGE_ORDER.map((type) => buckets.get(type)).filter(
-      (bucket): bucket is StageBucket => bucket !== undefined && bucket.minutes > 0,
-    );
+    // Unit by unit (in the units' order), stage by stage within each.
+    const stages = [...buckets.values()]
+      .filter((bucket) => bucket.minutes > 0)
+      .sort((a, b) => unitOrder(a.unit) - unitOrder(b.unit) || STAGE_ORDER.indexOf(a.type) - STAGE_ORDER.indexOf(b.type));
 
     if (omf !== null && omf <= 0) {
       // Helt nedsatt: SCB reports a tjänstledig with the post held before
       // the leave and wants no subjects for them (AnstForm L).
       notice({ code: "FULL_LEAVE", params: { name } });
       const largest = [...stages].sort((a, b) => b.minutes - a.minutes)[0];
-      const record = base(largest?.type ?? "");
+      const record = base(largest?.unit ?? unitOf(null), largest?.type ?? "");
       record.OmfLarare = String(Math.round(employment!.employmentPercent));
       out.push(columns.map((column) => record[column] ?? ""));
       continue;
@@ -750,7 +781,7 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
       // row is kept — the tjänst is real — and named, so the count above the
       // file is never "nothing to check" for a row SCB would refuse.
       if (omf !== null && omf > 0) notice({ code: "NO_TEACHING", params: { name } });
-      const record = base("");
+      const record = base(unitOf(null), "");
       record.OmfLarare = omf === null ? "" : String(Math.round(omf));
       record.Undervisning = "N";
       out.push(columns.map((column) => record[column] ?? ""));
@@ -758,16 +789,28 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
     }
 
     // OmfLarare over the stage rows by their teaching minutes; a row whose
-    // share rounds to 0 is merged into the largest (SCB wants subjects on
+    // share rounds to 0 is merged into the largest row of its own skolenhet,
+    // or the largest row when its unit has no other (SCB wants subjects on
     // every row with OmfLarare > 0, and a 0 row is noise).
     let rows = stages.map((bucket) => ({ ...bucket, byColumn: new Map(bucket.byColumn) }));
     let omfShares =
       omf === null ? rows.map(() => null) : largestRemainder(rows.map((bucket) => bucket.minutes), Math.round(omf));
     if (omf !== null && rows.length > 1 && omfShares.some((share) => share === 0)) {
-      const largest = rows.reduce((best, bucket, index) => (bucket.minutes > rows[best]!.minutes ? index : best), 0);
-      const keep = rows[largest]!;
+      const kept = rows.map((_, index) => omfShares[index] !== 0);
+      const largestOf = (unit: string | null): number | null =>
+        rows.reduce<number | null>(
+          (best, bucket, index) =>
+            kept[index] && (unit === null || bucket.unit === unit) && (best === null || bucket.minutes > rows[best]!.minutes)
+              ? index
+              : best,
+          null,
+        );
+      if (!kept.some(Boolean)) {
+        kept[rows.reduce((best, bucket, index) => (bucket.minutes > rows[best]!.minutes ? index : best), 0)] = true;
+      }
       rows.forEach((bucket, index) => {
-        if (index === largest || omfShares[index] !== 0) return;
+        if (kept[index]) return;
+        const keep = rows[largestOf(bucket.unit) ?? largestOf(null)!]!;
         keep.minutes += bucket.minutes;
         for (const [column, minutes] of bucket.byColumn) {
           if (scbColumnApplies(column, keep.type)) {
@@ -775,12 +818,12 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
           }
         }
       });
-      rows = rows.filter((_, index) => index === largest || omfShares[index] !== 0);
+      rows = rows.filter((_, index) => kept[index]);
       omfShares = largestRemainder(rows.map((bucket) => bucket.minutes), Math.round(omf));
     }
 
     rows.forEach((bucket, index) => {
-      const record = base(bucket.type);
+      const record = base(bucket.unit, bucket.type);
       const share = omfShares[index];
       record.OmfLarare = share === null || share === undefined ? "" : String(share);
       if (bucket.type !== "1") {
