@@ -66,6 +66,8 @@ describe('TeacherEmploymentsService', () => {
     note: null,
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    // Every read and write includes the post's periods (WITH_PERIODS).
+    periods: [],
     ...overrides,
   });
 
