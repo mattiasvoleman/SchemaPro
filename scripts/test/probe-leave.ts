@@ -35,6 +35,26 @@
  *       nobody, and the delegation recorded after it tells both mentors,
  *       once; a MENTORSKAP written through TeacherDutiesService tells its
  *       teacher of every pending request it gives them;
+ *   lk  an uppdrag file (ImportService) writing a MENTORSKAP tells its
+ *       teacher of the pending request he was not yet told of, once; the
+ *       same file again tells nobody;
+ *   ll  in a school of its own, a request over the summer and one for next
+ *       läsår's dates, both filed before the rollover. The rollover with
+ *       tjänster creates the next läsår, so the summer stops counting: the
+ *       first comes within the delegation, and the mentor is told of it at
+ *       the rollover. The MENTORSKAP it carries onto next year's class gives
+ *       nobody the second, since no pupil is in that class yet; the
+ *       activation moves the pupil in and tells the mentor once, and a
+ *       second activation tells nobody;
+ *   lm  the same, rolled without tjänster and activated: the activation
+ *       tells nobody of the second, and the carry (StaffingRolloverService)
+ *       into the activated year tells the mentor once;
+ *   ln  Gustav in 7B, which has no mentor, files for himself and nobody
+ *       is told; the admin moves him into 7A through the real UsersService
+ *       and both its mentors are told once; a PATCH of his name, and the
+ *       move back, tell nobody;
+ *   lo  a lov written through SchoolBreaksService shortens a request of
+ *       four skoldagar to three: both mentors are told of it, once;
  *   lj  the year: a request of more than 366 days is refused by the gateway
  *       (400) and by LeaveRequests_a_year_at_most, and app.leave_school_days
  *       counts no further than a year from its first day;
@@ -57,9 +77,15 @@ import { readSchoolDayBasis, schoolDaysOf, type SchoolDayBreak, type SchoolDayEn
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import type { OutboxEntry } from '../../src/notifications/notification-outbox';
 import { NotificationsService } from '../../src/notifications/notifications.service';
+import { ImportService } from '../../src/import/import.service';
+import { SchoolBreaksService } from '../../src/resources/school-breaks.service';
 import { mentorsOf } from '../../src/staffing/duty-dates';
 import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
 import { TeacherEmploymentsService } from '../../src/staffing/teacher-employments.service';
+import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
+import { UsersService } from '../../src/users/users.service';
+import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
+import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 type Person = { id: string; authId: string };
@@ -83,7 +109,9 @@ export function leaveSlug(marker: string): string {
 }
 
 export async function sweepLeaveSchool(owner: Client, marker: string): Promise<void> {
-  await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1, $2)`, [leaveSlug(marker), `${leaveSlug(marker)}-fall`]);
+  await owner.query(`DELETE FROM "Schools" WHERE slug = ANY($1::text[])`, [
+    ['', '-fall', '-rull', '-tjanst'].map((suffix) => `${leaveSlug(marker)}${suffix}`),
+  ]);
 }
 
 /** A held decision: the service's transaction parks after its body until released. */
@@ -504,6 +532,199 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
     assert.deepEqual(toldDavid, davids, 'the new mentor was told of other requests than his inbox shows');
     assert.deepEqual(delivered.flatMap((candidate) => candidate.recipients.map((r) => r.userId)), davids.map(() => david.id));
     await duties.remove(davidDuty.id, admin);
+  });
+
+  // ---------------------------------------------------------------------
+  // (lk) the uppdrag file
+  // ---------------------------------------------------------------------
+  const told = (calls: OutboxEntry[]) => calls.map((entry) => [entry.meta['leaveRequestId'], entry.recipients.map((r) => r.userId)]);
+  await check('(lk) an uppdrag file giving David a MENTORSKAP on 7A tells him of the request he was not told of, once, and the same file again tells nobody', async () => {
+    const late = await file(addDays(M, 50), addDays(M, 50), 'Probe: före filen');
+    assert.deepEqual(await toldOf(late.id), [anna.id, bertil.id].sort());
+    const imports = new ImportService(api, {} as UsersService, notifications);
+    const upload = {
+      academicYearId: year.id,
+      columns: ['teacherEmail', 'kind', 'label', 'minutesPerWeek', 'groupName'] as never,
+      rows: [{ teacherEmail: `${marker}-ledighet-david@example.invalid`, kind: 'MENTORSKAP' as const, label: 'Mentor 7A', minutesPerWeek: 60, groupName: '7A' }],
+    };
+    delivered.length = 0;
+    assert.deepEqual(await imports.importTeacherDuties(upload, admin), { created: 1, updated: 0, skipped: 0, errors: [] });
+    assert.deepEqual(await toldOf(late.id), [anna.id, bertil.id, david.id].sort());
+    // Every earlier request was told to David with his uppdrag in (li).
+    assert.deepEqual(told(delivered), [[late.id, [david.id]]]);
+    delivered.length = 0;
+    assert.equal((await imports.importTeacherDuties(upload, admin)).skipped, 1);
+    assert.deepEqual(told(delivered), [], 'the same file again told a mentor');
+    const [imported] = (await owner.query<{ id: string }>(`SELECT id FROM "TeacherDuties" WHERE "userId" = $1`, [david.id])).rows;
+    await duties.remove(imported!.id, admin);
+  });
+
+  // ---------------------------------------------------------------------
+  // (ll), (lm) the rollover's MENTORSKAP, in schools of their own
+  // ---------------------------------------------------------------------
+  const toldAbout = async (requestId: string) =>
+    (
+      await owner.query<{ userId: string }>(
+        `SELECT "userId" FROM "Notifications" WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = $1 ORDER BY "userId"`,
+        [requestId],
+      )
+    ).rows.map((row) => row.userId);
+  // A läsår that ends in three weeks, Ella in its 7A, Anna her mentor with a
+  // post, three skoldagar delegated, and two of Vera's requests filed before
+  // the läsår is rolled: twelve days from the old year's second-last day,
+  // whose days after it count until a next läsår exists, and a day of next
+  // läsår. The activation runs as if the old year had ended (the gateway's
+  // `today`); the database's clock stays at today, so the class history
+  // enters next year's class on its first day (the trigger's "a year that has
+  // not begun").
+  const rolledSchool = async (suffix: string, carryStaffing: boolean) => {
+    const id = (
+      await one<{ id: string }>(
+        `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+        [`${marker} ledighet ${suffix}`, `${leaveSlug(marker)}-${suffix}`],
+      )
+    ).id;
+    const oldEnd = addDays(today, 20);
+    const source = await one<{ id: string }>(
+      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+       VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+      [id, `${marker} ${suffix} 1`, addDays(today, -30), oldEnd],
+    );
+    const class7a = (
+      await one<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES ($1, $2, '7A', 7, now()) RETURNING id`,
+        [id, source.id],
+      )
+    ).id;
+    const member = (role: string, key: string, first: string, groupId: string | null = null) =>
+      one<Person>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+         VALUES ($1, $2, $3, 'Probe', $4::"UserRole", gen_random_uuid(), true, $5, now()) RETURNING id, "authId"`,
+        [id, `${marker}-ledighet-${suffix}-${key}@example.invalid`, first, role, groupId],
+      );
+    const head = await member('SCHOOL_ADMIN', 'rektor', 'Rut');
+    const mentor = await member('TEACHER', 'anna', 'Anna');
+    const parent = await member('GUARDIAN', 'vera', 'Vera');
+    const pupil = await member('STUDENT', 'ella', 'Ella', class7a);
+    await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [id, parent.id, pupil.id]);
+    const of = (who: Person, role: Role): AuthenticatedUser => ({ authId: who.authId, userId: who.id, schoolId: id, role });
+    const headUser = of(head, Role.SCHOOL_ADMIN);
+    await employments.upsert(mentor.id, source.id, { employmentPercent: 100, signature: 'ANME' }, headUser);
+    await duties.create(
+      { userId: mentor.id, academicYearId: source.id, kind: 'MENTORSKAP', label: 'Mentor 7A', minutesPerWeek: 60, studentGroupId: class7a },
+      headUser,
+    );
+    await leave.recordDelegation({ mentorMaxSchoolDays: 3, reference: `${marker} ${suffix}` }, headUser);
+
+    const start = mondayOf(addDays(oldEnd, 60));
+    const day = addDays(start, 15);
+    const summer = await leave.createLeaveRequest(
+      { studentId: pupil.id, startDate: addDays(oldEnd, -1), endDate: addDays(oldEnd, 10), reason: 'Probe: över sommaren' },
+      of(parent, Role.GUARDIAN),
+    );
+    const request = await leave.createLeaveRequest(
+      { studentId: pupil.id, startDate: day, endDate: day, reason: 'Probe: nästa läsår' },
+      of(parent, Role.GUARDIAN),
+    );
+    const toldBefore = [...(await toldAbout(summer.id)), ...(await toldAbout(request.id))];
+    const rollover = new YearRolloverService(api, notifications);
+    const options = { name: `${marker} ${suffix} 2`, startDate: start, endDate: addDays(start, 300), graduatingGradeLevel: 9, carryStaffing };
+    const preview = await rollover.previewRollover(source.id, options, headUser);
+    assert.equal(preview.blocking, false, JSON.stringify(preview.problems));
+    delivered.length = 0;
+    const target = (await rollover.executeRollover(source.id, { ...options, planHash: preview.planHash }, headUser)).academicYear.id;
+    const toldAtRollover = told(delivered);
+    delivered.length = 0;
+    const activate = async () => {
+      const after = { today: addDays(oldEnd, 1) };
+      const plan = await rollover.previewActivation(target, headUser, after);
+      return rollover.executeActivation(target, { planHash: plan.planHash }, headUser, after);
+    };
+    const pending = async () => (await inbox(of(mentor, Role.TEACHER), 'PENDING')).map((row) => row.id);
+    return { target, headUser, mentor, summer, request, toldBefore, toldAtRollover, activate, pending };
+  };
+
+  await check('(ll) the rollover tells Anna of the request over the summer, and its MENTORSKAP on next year’s 8A of nothing; the activation moves Ella in and tells Anna once', async () => {
+    const rolled = await rolledSchool('rull', true);
+    assert.deepEqual(rolled.toldBefore, [], 'a request over the limit, or of next läsår, told a mentor when filed');
+    assert.deepEqual(rolled.toldAtRollover, [[rolled.summer.id, [rolled.mentor.id]]]);
+    assert.deepEqual(await toldAbout(rolled.summer.id), [rolled.mentor.id]);
+    const carried = (
+      await owner.query<{ userId: string; name: string }>(
+        `SELECT t."userId", g.name FROM "TeacherDuties" t JOIN "StudentGroups" g ON g.id = t."studentGroupId"
+          WHERE t."academicYearId" = $1 AND t.kind = 'MENTORSKAP'`,
+        [rolled.target],
+      )
+    ).rows;
+    assert.deepEqual(carried, [{ userId: rolled.mentor.id, name: '8A' }]);
+    assert.deepEqual(await toldAbout(rolled.request.id), [], 'the carried MENTORSKAP told a mentor with nobody in the class');
+    assert.ok(!(await rolled.pending()).includes(rolled.request.id), 'the carried uppdrag gave Anna the request with nobody in the class');
+
+    assert.equal((await rolled.activate()).moved, 1);
+    assert.deepEqual(await toldAbout(rolled.request.id), [rolled.mentor.id]);
+    assert.deepEqual(told(delivered), [[rolled.request.id, [rolled.mentor.id]]]);
+    assert.ok((await rolled.pending()).includes(rolled.request.id), 'Anna is told of a request she does not read');
+    delivered.length = 0;
+    assert.equal((await rolled.activate()).moved, 0);
+    assert.deepEqual(told(delivered), [], 'an activation that moved nobody told a mentor');
+  });
+
+  await check('(lm) rolled without tjänster, the activation tells nobody; the carry into the activated year gives Anna her MENTORSKAP where Ella sits, and tells her once', async () => {
+    const rolled = await rolledSchool('tjanst', false);
+    assert.deepEqual(rolled.toldAtRollover, [[rolled.summer.id, [rolled.mentor.id]]]);
+    assert.equal((await rolled.activate()).moved, 1);
+    assert.deepEqual(told(delivered), [], 'the activation told a mentor of a class with no MENTORSKAP');
+    assert.deepEqual(await toldAbout(rolled.request.id), [], 'a class with no MENTORSKAP told a mentor');
+    assert.ok(!(await rolled.pending()).includes(rolled.request.id));
+
+    const carry = new StaffingRolloverService(api, notifications);
+    const preview = await carry.preview(rolled.target, rolled.headUser);
+    assert.equal((await carry.execute(rolled.target, preview.planHash, rolled.headUser)).counts.duties, 1);
+    assert.deepEqual(await toldAbout(rolled.request.id), [rolled.mentor.id]);
+    assert.deepEqual(told(delivered), [[rolled.request.id, [rolled.mentor.id]]]);
+    assert.ok((await rolled.pending()).includes(rolled.request.id), 'Anna is told of a request she does not read');
+  });
+
+  // ---------------------------------------------------------------------
+  // (ln) a class move through Personer
+  // ---------------------------------------------------------------------
+  await check('(ln) Gustav’s own request in 7B tells nobody; the admin’s move of him into 7A tells Anna and Bertil once, and a name PATCH or the move back tells nobody', async () => {
+    const people = new UsersService(api, {} as SupabaseAdminService, notifications);
+    delivered.length = 0;
+    const own = await file(addDays(M, 51), addDays(M, 51), 'Probe: i 7B', as(gustav, Role.STUDENT), gustav);
+    assert.deepEqual(await toldOf(own.id), [], 'a request with no mentor told somebody');
+    assert.equal(delivered.length, 0);
+
+    await people.update(gustav.id, { studentGroupId: g7a }, admin);
+    assert.deepEqual(await toldOf(own.id), [anna.id, bertil.id].sort());
+    assert.deepEqual(told(delivered), [[own.id, [anna.id, bertil.id].sort()]]);
+    assert.ok((await inbox(annaUser, 'PENDING')).some((row) => row.id === own.id), 'Anna is told of a request she does not read');
+
+    delivered.length = 0;
+    await people.update(gustav.id, { firstName: 'Gustaf' }, admin);
+    await people.update(gustav.id, { studentGroupId: g7b }, admin);
+    assert.deepEqual(told(delivered), [], 'a PATCH that gave no mentor a request told one');
+    assert.deepEqual(await toldOf(own.id), [anna.id, bertil.id].sort());
+    await leave.decideLeaveRequest(own.id, { status: 'REJECTED' }, admin);
+  });
+
+  // ---------------------------------------------------------------------
+  // (lo) a lov
+  // ---------------------------------------------------------------------
+  await check('(lo) a lov written through SchoolBreaksService shortens a request of four skoldagar to three, and both mentors are told of it, once', async () => {
+    const breaks = new SchoolBreaksService(api, notifications);
+    const week = addDays(M, 56);
+    const shortened = await file(week, addDays(week, 3), 'Probe: före lovet');
+    assert.deepEqual(await toldOf(shortened.id), [], 'a request over the limit told a mentor');
+    delivered.length = 0;
+    const lov = await breaks.create({ academicYearId: year.id, name: 'Probe: studiedag', startDate: week, endDate: week }, admin);
+    assert.deepEqual(await toldOf(shortened.id), [anna.id, bertil.id].sort());
+    assert.deepEqual(told(delivered), [[shortened.id, [anna.id, bertil.id].sort()]]);
+    delivered.length = 0;
+    await breaks.update(lov.id, { name: 'Probe: studiedag och APT' }, admin);
+    assert.deepEqual(told(delivered), [], 'a renamed lov told a mentor');
+    await breaks.remove(lov.id, admin);
+    await leave.decideLeaveRequest(shortened.id, { status: 'REJECTED' }, admin);
   });
 
   // ---------------------------------------------------------------------

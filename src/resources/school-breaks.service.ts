@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { Prisma, type SchoolBreak } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString, todayInZone } from '../common/utils/time';
@@ -41,9 +43,26 @@ export type SchoolBreakWriteResult = SchoolBreakResponse & {
   removedCalendarLessons: number;
 };
 
+/**
+ * A lov closes the pupils' days it covers, so a lov written may bring a
+ * pending leave request within the delegation, and its mentor then decides
+ * it (app.leave_school_days, Mentorns ledighetsbeslut). A create, and an
+ * update of the dates or the årskurser, therefore tell the mentors they give
+ * a request, once each, in their own transaction. A delete only opens days
+ * again: a request it lengthens goes from a mentor to rektor and gives
+ * nobody one.
+ */
 @Injectable()
 export class SchoolBreaksService {
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it a lov tells no mentor of the leave requests
+   * it gives them (Nest always injects it).
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
 
   /**
    * The year's breaks, earliest first.
@@ -108,10 +127,9 @@ export class SchoolBreaksService {
           },
         });
 
-        return {
-          ...this.toResponse(created),
-          removedCalendarLessons: await this.removeLessonsInside(tx, created, schoolId),
-        };
+        const removedCalendarLessons = await this.removeLessonsInside(tx, created, schoolId);
+        if (this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
+        return { ...this.toResponse(created), removedCalendarLessons };
       });
     } catch (error) {
       rethrowPrismaError(error);
@@ -204,17 +222,21 @@ export class SchoolBreaksService {
         // The row Prisma hands back, not a merge of dto and `existing`: the
         // purge must run against what the table now holds, and one of those
         // two is a reconstruction that can drift from it.
-        return {
-          ...this.toResponse(updated),
-          removedCalendarLessons: await this.removeLessonsInside(
-            tx,
-            updated,
-            // The row's own school, not the caller's: the same value under RLS,
-            // and taking it from the row keeps the purge measured against what
-            // the table holds rather than against the request.
-            updated.schoolId,
-          ),
-        };
+        const removedCalendarLessons = await this.removeLessonsInside(
+          tx,
+          updated,
+          // The row's own school, not the caller's: the same value under RLS,
+          // and taking it from the row keeps the purge measured against what
+          // the table holds rather than against the request.
+          updated.schoolId,
+        );
+        const daysMove =
+          startDate !== undefined ||
+          endDate !== undefined ||
+          dto.minGradeLevel !== undefined ||
+          dto.maxGradeLevel !== undefined;
+        if (this.notifications && daysMove) await tellNewMentors(this.notifications, tx, updated.schoolId);
+        return { ...this.toResponse(updated), removedCalendarLessons };
       });
     } catch (error) {
       rethrowPrismaError(error);

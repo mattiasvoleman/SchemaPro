@@ -1,8 +1,10 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { tellNewMentors } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { toWallClock } from '../common/utils/time';
@@ -76,12 +78,27 @@ interface CarryRead {
  * HR STAYS HR. SCHOOL_ADMIN only (the controller); the preview carries ids,
  * kinds, labels and counts the admin already reads. It never reaches
  * rostersOfYear (roster-readers.inventory.spec.ts holds the route list).
+ *
+ * A CARRIED MENTORSKAP CAN GIVE A LEAVE REQUEST AT ONCE (Mentorns
+ * ledighetsbeslut). Unlike the rollover's own carry, this one may run after
+ * the target's activation, when its classes already hold their pupils: the
+ * carried mentor then decides their pending requests in the target's dates.
+ * So a carry that writes a MENTORSKAP tells the mentors it has given a
+ * request, once each, in its own transaction.
  */
 @Injectable()
 export class StaffingRolloverService {
   private readonly logger = new Logger(StaffingRolloverService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it a carry tells no mentor (Nest always
+   * injects it).
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
 
   async preview(targetYearId: string, user: AuthenticatedUser): Promise<StaffingRolloverPreview> {
     requireSchoolId(user);
@@ -147,6 +164,9 @@ export class StaffingRolloverService {
             if (!id) throw new Error(`Staffing carry: no group of the target continues ${key}.`);
             return id;
           });
+          if (this.notifications && read.plan.writes.duties.some((duty) => duty.kind === 'MENTORSKAP')) {
+            await tellNewMentors(this.notifications, tx, schoolId);
+          }
           return { targetYearId, counts, planHash: read.planHash, sourceYearId: read.source.id };
         },
         { timeoutMs: CARRY_TIMEOUT_MS },

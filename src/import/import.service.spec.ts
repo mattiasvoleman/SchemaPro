@@ -14,6 +14,7 @@ import {
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import { givenStaffingWorld, type StaffingWorld } from '../../test/utils/staffing-world';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { Prisma } from '@prisma/client';
 import type {
   ImportRequirementRowDto,
@@ -3261,6 +3262,65 @@ describe('ImportService', () => {
       const report = await run([row()]);
       expect(queryRaw).not.toHaveBeenCalled();
       expect(report.errors).toHaveLength(1);
+    });
+
+    describe('the leave requests a MENTORSKAP gives (Mentorns ledighetsbeslut)', () => {
+      const TELL = 'app.leave_requests_tell_new_mentors()';
+      const MENTOR_NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+      const LEAVE_ID = '88888888-8888-4888-8888-888888888888';
+      let deliver: jest.Mock;
+
+      beforeEach(() => {
+        deliver = jest.fn();
+        service = new ImportService(
+          prisma as unknown as PrismaService,
+          users as unknown as UsersService,
+          { deliver } as unknown as NotificationsService,
+        );
+        const locking = queryRaw.getMockImplementation()!;
+        queryRaw.mockImplementation((...call: unknown[]) =>
+          rawSql(call).includes(TELL)
+            ? Promise.resolve([
+                { notificationId: MENTOR_NOTICE, userId: KARIN, email: null, meta: { leaveRequestId: LEAVE_ID, schoolDays: 2 } },
+              ])
+            : locking(...call),
+        );
+      });
+
+      const toldMentors = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
+      const toldAt = () => queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+
+      it('tells the mentors once for the whole file, after its last write, in the upload’s transaction', async () => {
+        const report = await run([
+          row(),
+          row({ teacherEmail: 'bo@example.com', label: 'Mentor 7A bis' }),
+          row({ kind: 'RASTVAKT', label: 'Rastvakt', groupName: null }),
+        ]);
+        expect(report.created).toBe(3);
+        expect(toldMentors()).toHaveLength(1);
+        expect(prisma.withRls).toHaveBeenCalledTimes(1);
+        expect(toldAt()).toBeGreaterThan(Math.max(...tx.teacherDuty.create.mock.invocationCallOrder));
+        expect(deliver).toHaveBeenCalledWith(
+          tx,
+          expect.objectContaining({ type: 'LEAVE_REQUESTED', recipients: [{ userId: KARIN, notificationId: MENTOR_NOTICE }] }),
+        );
+      });
+
+      it('tells them after a MENTORSKAP the file changes', async () => {
+        arrangeRows(tx.teacherDuty.findMany, [stored()]);
+        expect(await run([row({ minutesPerWeek: 90 })])).toMatchObject({ updated: 1 });
+        expect(toldMentors()).toHaveLength(1);
+        expect(toldAt()).toBeGreaterThan(tx.teacherDuty.update.mock.invocationCallOrder[0]!);
+      });
+
+      it('asks nothing of a file that writes no MENTORSKAP: another kind, a MENTORSKAP as stored, or one in error', async () => {
+        await run([row({ kind: 'RASTVAKT', label: 'Rastvakt', groupName: null })]);
+        arrangeRows(tx.teacherDuty.findMany, [stored()]);
+        expect(await run([row()])).toMatchObject({ skipped: 1 });
+        expect((await run([row({ label: 'Mentor 9Z', groupName: '9Z' })])).errors).toHaveLength(1);
+        expect(toldMentors()).toEqual([]);
+        expect(deliver).not.toHaveBeenCalled();
+      });
     });
 
     it('403s a principal with no school before touching the database', async () => {

@@ -14,6 +14,7 @@ import {
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { SchoolBreaksService } from './school-breaks.service';
 import type {
   CreateSchoolBreakDto,
@@ -1002,6 +1003,58 @@ describe('SchoolBreaksService', () => {
       await expect(service.remove(BREAK_ID, testUser())).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  // A lov closes the pupils' days it covers (app.leave_school_days): a lov
+  // written may bring a pending leave request within the mentor's delegation.
+  describe('the leave requests a lov gives a mentor (Mentorns ledighetsbeslut)', () => {
+    const TELL = 'app.leave_requests_tell_new_mentors()';
+    const MENTOR = '77777777-7777-4777-8777-777777777777';
+    const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const NOTICE_ROW = { notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } };
+    let deliver: jest.Mock;
+
+    beforeEach(() => {
+      deliver = jest.fn();
+      service = new SchoolBreaksService(prisma as unknown as PrismaService, { deliver } as unknown as NotificationsService);
+      queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes(TELL) ? [NOTICE_ROW] : lockingRead(YEARS, years, call)),
+      );
+      givenYear();
+      tx.schoolBreak.create.mockResolvedValue(storedBreak());
+      tx.schoolBreak.findUnique.mockImplementation(byId(BREAK_ID, storedBreak()));
+      tx.schoolBreak.update.mockResolvedValue(storedBreak());
+    });
+
+    const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
+    const toldAt = () => queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+
+    it('tells the mentors after a new lov, in its transaction', async () => {
+      await service.create(dto(), testUser());
+      expect(told()).toHaveLength(1);
+      expect(toldAt()).toBeGreaterThan(tx.schoolBreak.create.mock.invocationCallOrder[0]!);
+      expect(deliver).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ schoolId: SCHOOL_ID, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
+      );
+    });
+
+    it.each<[string, UpdateSchoolBreakDto]>([
+      ['its start', { startDate: '2027-02-23' }],
+      ['its end', { endDate: '2027-02-25' }],
+      ['its årskurser', { minGradeLevel: 7, maxGradeLevel: 9 }],
+    ])('tells them after a move of %s', async (_what, patch) => {
+      await service.update(BREAK_ID, patch, testUser());
+      expect(told()).toHaveLength(1);
+      expect(toldAt()).toBeGreaterThan(tx.schoolBreak.update.mock.invocationCallOrder[0]!);
+    });
+
+    it('asks nothing of a rename, a new kind or a delete: none of them shortens a request', async () => {
+      await service.update(BREAK_ID, { name: 'Vinterlov', kind: 'STAFF_DAY' }, testUser());
+      await service.remove(BREAK_ID, testUser());
+      expect(told()).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
     });
   });
 });

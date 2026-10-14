@@ -14,6 +14,7 @@ import {
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { AcademicYearsService } from './academic-years.service';
 import type {
   CreateAcademicYearDto,
@@ -823,6 +824,72 @@ describe('AcademicYearsService', () => {
       await expect(service.remove(YEAR_ID, testUser())).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  // A läsår bounds its MENTORSKAP and decides which weekdays are skoldagar
+  // (app.leave_mentors, app.leave_school_days).
+  describe('the leave requests a läsår gives a mentor (Mentorns ledighetsbeslut)', () => {
+    const TELL = 'app.leave_requests_tell_new_mentors()';
+    const MENTOR = '77777777-7777-4777-8777-777777777777';
+    const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const NOTICE_ROW = { notificationId: NOTICE, userId: MENTOR, email: null, meta: { leaveRequestId: 'r1', schoolDays: 2 } };
+    let deliver: jest.Mock;
+    let queryRaw: jest.Mock;
+
+    beforeEach(() => {
+      deliver = jest.fn();
+      service = new AcademicYearsService(prisma as unknown as PrismaService, { deliver } as unknown as NotificationsService);
+      const LOCKED: LockedTable = {
+        name: 'AcademicYears',
+        columns: ['id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'createdAt', 'updatedAt'],
+        lock: 'FOR NO KEY UPDATE',
+      };
+      const stored = [{ id: YEAR_ID, schoolId: SCHOOL_ID, name: '2026/2027', isActive: false, ...YEAR }];
+      queryRaw = jest.fn((...call: unknown[]) =>
+        Promise.resolve(rawSql(call).includes(TELL) ? [NOTICE_ROW] : lockingRead(LOCKED, stored, call)),
+      );
+      Object.assign(tx, { $queryRaw: queryRaw });
+      tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
+      tx.teacherDuty.count.mockResolvedValue(0);
+    });
+
+    const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
+    const toldAt = () => queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+
+    it('tells the mentors after a new läsår, in its transaction: the summer before it stops counting', async () => {
+      await service.create(dto(), testUser());
+      expect(told()).toHaveLength(1);
+      expect(toldAt()).toBeGreaterThan(tx.academicYear.create.mock.invocationCallOrder[0]!);
+      expect(deliver).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ schoolId: SCHOOL_ID, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
+      );
+    });
+
+    it.each([
+      ['its start', { startDate: '2026-08-18' }],
+      ['its end', { endDate: '2027-06-11' }],
+    ])('tells them after a move of %s', async (_what, patch) => {
+      await service.update(YEAR_ID, patch, testUser());
+      expect(told()).toHaveLength(1);
+      expect(toldAt()).toBeGreaterThan(tx.academicYear.update.mock.invocationCallOrder[0]!);
+    });
+
+    it('tells them after a delete, which takes its days out of every request', async () => {
+      tx.user.count.mockResolvedValue(0);
+      await service.remove(YEAR_ID, testUser());
+      expect(told()).toHaveLength(1);
+      expect(toldAt()).toBeGreaterThan(tx.academicYear.delete.mock.invocationCallOrder[0]!);
+    });
+
+    it('asks nothing of a rename or a flag', async () => {
+      await service.update(YEAR_ID, { name: 'Läsår 26/27', isActive: false }, testUser());
+      expect(told()).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
     });
   });
 });
