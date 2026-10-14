@@ -13,6 +13,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
+import { changesDuringYear } from '../staffing/employment-periods';
 import { readLoadInput, type LoadRead } from '../staffing/load-input';
 import { lastYearKey, readLastYearTeachers } from '../staffing/last-year-teachers';
 import { readActiveStaffIds } from '../staffing/staff-candidates';
@@ -33,8 +34,10 @@ import {
   loadStatus,
   percentOfTarget,
   qualificationCovers,
+  stretchLoads,
   strongestCoveringQualification,
   targetMinutesPerWeek,
+  type LoadEmployment,
   type LoadInput,
   type LoadModel,
   type LoadQualification,
@@ -122,6 +125,12 @@ export interface ProposalTeacher {
    * only their own rows, and gets nothing new.
    */
   keepOrShed: boolean;
+  /**
+   * A post that changes during the year (20261022120000) is planned on its
+   * tightest stretch: these are its dates, and target, limit, before and
+   * after are that stretch's. Absent for a post that is the same all year.
+   */
+  period?: { from: string; to: string };
   before: TeacherLoadPoint;
   after: TeacherLoadPoint;
 }
@@ -259,6 +268,16 @@ interface TeacherPlan {
   /** fixedTenths + the kept rows they lead today. */
   currentTenths: number;
   keepOrShed: boolean;
+  /**
+   * A post that changes during the year: the post, and the index and dates
+   * of the stretch it is planned on (planOf). Absent for one that does not.
+   */
+  changing?: { employment: LoadEmployment; index: number; from: string; to: string };
+  /**
+   * A changing post held where it is on the second ask (heldChanging): sent
+   * with no target, so it keeps or sheds and gains nothing.
+   */
+  held?: boolean;
 }
 
 interface Plan {
@@ -320,7 +339,7 @@ export class StaffingProposalService {
     const requestId = randomUUID();
     const state = await this.prisma.withRls(user, (tx) => this.readState(tx, user, dto.academicYearId));
     const basisSha256 = basisOf(state);
-    const plan = planOf(state, dto);
+    let plan = planOf(state, dto);
 
     const free = plan.rows.filter((row) => row.kind !== 'FIXED');
     const open = free.filter((row) => row.kind === 'OPEN');
@@ -403,9 +422,9 @@ export class StaffingProposalService {
         params: { variables, limit: MODEL_VARIABLE_LIMIT },
       });
 
-    const { payload, maps } = anonymise(requestId, plan, dto.weights);
-    const teachersSent = payload.teachers.length;
-    const rowsSent = payload.requirements.length;
+    const first = anonymise(requestId, plan, dto.weights);
+    const teachersSent = first.payload.teachers.length;
+    const rowsSent = first.payload.requirements.length;
     if (teachersSent > MAX_TEACHERS || rowsSent > MAX_REQUIREMENTS) {
       throw new BadRequestException({
         message:
@@ -421,25 +440,45 @@ export class StaffingProposalService {
         },
       });
     }
-    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_STAFF_BODY_BYTES) throw tooLarge();
+    if (Buffer.byteLength(JSON.stringify(first.payload), 'utf8') > MAX_STAFF_BODY_BYTES) throw tooLarge();
 
-    let response: StaffResponse;
-    try {
-      response = await this.proxy.callAiEngine<StaffResponse>(STAFF_PATH, payload, emptyAnonMaps());
-    } catch (error) {
-      // An engine without the route — an older deploy — answers 404 (or 405)
-      // with "Not Found", which forwarded as it is reads exactly like the
-      // year's own 404. Named, so the page can say "not yet" instead (C4).
-      if (error instanceof HttpException && [404, 405].includes(error.getStatus())) {
-        throw new ServiceUnavailableException({
-          message: 'Motorn kan ännu inte föreslå bemanning. Försök igen om en stund.',
-          code: STAFF_ENGINE_UNAVAILABLE,
-        });
+    const solve = async (payload: StaffRequest): Promise<StaffResponse> => {
+      try {
+        return await this.proxy.callAiEngine<StaffResponse>(STAFF_PATH, payload, emptyAnonMaps());
+      } catch (error) {
+        // An engine without the route — an older deploy — answers 404 (or 405)
+        // with "Not Found", which forwarded as it is reads exactly like the
+        // year's own 404. Named, so the page can say "not yet" instead (C4).
+        if (error instanceof HttpException && [404, 405].includes(error.getStatus())) {
+          throw new ServiceUnavailableException({
+            message: 'Motorn kan ännu inte föreslå bemanning. Försök igen om en stund.',
+            code: STAFF_ENGINE_UNAVAILABLE,
+          });
+        }
+        throw error;
       }
-      throw error;
-    }
+    };
 
-    const realised = this.realise(response, state, plan, maps);
+    let response = await solve(first.payload);
+    let realised = this.realise(response, state, plan, first.maps);
+    if (realised.overrun.length > 0) {
+      // A post that changes during the year is planned on its tightest
+      // stretch with each row's charge over the year (planOf). A row whose
+      // weeks fall unevenly — a dated one, offered without behörigheter as a
+      // preference only, or odd weeks — can charge one stretch more than
+      // that, and the answer would take the post past a period's limit: the
+      // apply's 409. The engine answered the question it was asked, so this
+      // is no 502. It is asked once more with every changing post held where
+      // it is. Held, they gain nothing, so the second answer cannot do it.
+      this.logger.log(
+        `Staffing proposal [requestId=${requestId}] takes ${realised.overrun.length} changing post(s) past a period; asking again with them held`,
+      );
+      plan = heldChanging(plan);
+      const second = anonymise(randomUUID(), plan, dto.weights);
+      response = await solve(second.payload);
+      realised = this.realise(response, state, plan, second.maps);
+      if (realised.overrun.length > 0) throw realised.bad('a held changing post grows past a period');
+    }
     this.logger.log(
       `Staffing proposal [requestId=${requestId}, status=${response.status}, teachers=${plan.teachers.length}, ` +
         `rows=${plan.rows.length}, free=${free.length}, staffed=${realised.leads.size}, unstaffed=${realised.unstaffed.size}, ` +
@@ -711,7 +750,14 @@ export class StaffingProposalService {
     state: StaffingState,
     plan: Plan,
     maps: StaffAnonMaps,
-  ): { leads: Map<string, string>; unstaffed: Map<string, StaffUnstaffedReason>; conflicts: ProposalConflict[] } {
+  ): {
+    leads: Map<string, string>;
+    unstaffed: Map<string, StaffUnstaffedReason>;
+    conflicts: ProposalConflict[];
+    /** The changing posts the answer takes past a period's limit (propose asks again). */
+    overrun: string[];
+    bad: (what: string) => HttpException;
+  } {
     const bad = (what: string): HttpException => {
       this.logger.error(`Rejected a staffing proposal: ${what}`);
       return new HttpException(
@@ -764,9 +810,20 @@ export class StaffingProposalService {
     // The recount the write will be judged by: nobody whose minutes grow may
     // end OVER (enforcement's question, with its rounding).
     const input = state.read.input;
+    const afterInput = overlay(input, plan, leads);
     const before = countedMinutesByTeacher(input);
-    const after = countedMinutesByTeacher(overlay(input, plan, leads));
+    const after = countedMinutesByTeacher(afterInput);
+    const overrun: string[] = [];
     for (const teacher of plan.teachers) {
+      if (teacher.changing) {
+        // A post that changes during the year: every stretch with teaching
+        // weeks, as overTargetFindingByStretch asks the apply. Not refused
+        // here: propose asks again with the post held (see there).
+        if (growsPastAStretch(input, afterInput, teacher.changing.employment, plan.tolerance)) {
+          overrun.push(teacher.userId);
+        }
+        continue;
+      }
       const was = before.get(teacher.userId) ?? 0;
       const is = after.get(teacher.userId) ?? 0;
       if (is > was + 1e-9 && loadStatus(is, teacher.target, plan.tolerance) === 'OVER') {
@@ -814,7 +871,7 @@ export class StaffingProposalService {
       };
     });
 
-    return { leads, unstaffed, conflicts };
+    return { leads, unstaffed, conflicts, overrun, bad };
   }
 
   /** Per-teacher before → after, the changed rows with their reasons, and the unstaffed rest. */
@@ -835,14 +892,24 @@ export class StaffingProposalService {
       status: loadStatus(minutes, teacher.target, plan.tolerance),
     });
 
+    // A changing post's before and after are its planned stretch's minutes.
+    const stretchMinutes = (from: LoadInput, changing: NonNullable<TeacherPlan['changing']>) =>
+      stretchLoads(from, changing.employment)[changing.index]?.counted ?? 0;
     const teachers = plan.teachers.map(
       (teacher): ProposalTeacher => ({
         userId: teacher.userId,
         targetMinutesPerWeek: teacher.target,
         limitMinutesPerWeek: teacher.target === null ? null : limitMinutes(teacher.target, plan.tolerance),
         keepOrShed: teacher.keepOrShed,
-        before: point(before.get(teacher.userId) ?? 0, teacher),
-        after: point(after.get(teacher.userId) ?? 0, teacher),
+        ...(teacher.changing ? { period: { from: teacher.changing.from, to: teacher.changing.to } } : {}),
+        before: point(
+          teacher.changing ? stretchMinutes(input, teacher.changing) : (before.get(teacher.userId) ?? 0),
+          teacher,
+        ),
+        after: point(
+          teacher.changing ? stretchMinutes(afterInput, teacher.changing) : (after.get(teacher.userId) ?? 0),
+          teacher,
+        ),
       }),
     );
 
@@ -956,6 +1023,18 @@ export function planOf(
   }
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
+  // Posts that change during the year (20261022120000). The engine counts a
+  // year's standardvecka; such a post is held to each stretch. So the plan
+  // keeps every row such a teacher can gain or lose undated — a dated row
+  // they lead stays where it is, and they are offered none — because an
+  // undated row charges the same minutes in every stretch, and then the
+  // tightest stretch is the one constraint that holds them all (below).
+  const changingPost = new Map<string, LoadEmployment>();
+  for (const userId of staffIds) {
+    const employment = employmentByUser.get(userId);
+    if (employment && changesDuringYear(employment, input.year)) changingPost.set(userId, employment);
+  }
+  const isDatedRow = (row: LoadRequirement) => Boolean(row.startDate) || Boolean(row.endDate);
   const targetOf = new Map(
     staffIds.map((userId) => [userId, targetMinutesPerWeek(employmentByUser.get(userId) ?? null, loadPolicy)]),
   );
@@ -969,9 +1048,12 @@ export function planOf(
     // row they had. A target of 0 is a known room of nothing — a full
     // nedsättning — and its rows stay movable.
     const untargetedLead = row.teacherId !== null && staff.has(row.teacherId) && targetOf.get(row.teacherId) === null;
+    // A dated row led by a changing post stays: see changingPost above.
+    const datedOfChanging = isDatedRow(row) && row.teacherId !== null && changingPost.has(row.teacherId);
     const free =
       !inconsistent &&
       !untargetedLead &&
+      !datedOfChanging &&
       !pinnedAsked.has(row.id) &&
       (!dto.onlyUnstaffed || row.teacherId === null || !staff.has(row.teacherId));
     const current = !inconsistent && row.teacherId !== null && staff.has(row.teacherId) ? row.teacherId : null;
@@ -987,7 +1069,7 @@ export function planOf(
               .map((qualification) => qualification.userId),
           )
         : subjectFamiliarTeachers(input, row.id, state.lastYear.get(row.id) ?? null);
-      eligible = staffIds.filter((id) => holders.has(id));
+      eligible = staffIds.filter((id) => holders.has(id) && !(isDatedRow(row) && changingPost.has(id)));
       const taught = new Set(state.lastYear.get(row.id)?.teacherIds ?? []);
       lastYear = staffIds.filter((id) => taught.has(id)).slice(0, MAX_LAST_YEAR);
     }
@@ -1016,7 +1098,13 @@ export function planOf(
   for (const row of rows) {
     if (row.kind === 'KEPT') keptTenths.set(row.current!, (keptTenths.get(row.current!) ?? 0) + row.chargeTenths);
   }
+  const fixedInput: LoadInput = {
+    ...input,
+    requirements: input.requirements.map((row) => (freeIds.has(row.id) ? { ...row, teacherId: null } : row)),
+  };
   const teachers = staffIds.map((userId): TeacherPlan => {
+    const employment = changingPost.get(userId);
+    if (employment) return changingTeacherPlan(userId, employment, fixedInput, keptTenths.get(userId) ?? 0, tolerance);
     const target = targetOf.get(userId) ?? null;
     const fixedTenths = Math.min(MAX_FIXED_TENTHS, toTenthsUp(fixed.get(userId) ?? 0));
     const currentTenths = fixedTenths + (keptTenths.get(userId) ?? 0);
@@ -1047,6 +1135,90 @@ export function planOf(
     rowById: new Map(rows.map((row) => [row.row.id, row])),
     pinned,
   };
+}
+
+/**
+ * A post that changes during the year, planned on its TIGHTEST stretch: the
+ * stretch with teaching weeks whose limit leaves the least room over what it
+ * already carries without the free rows. Every row the plan lets this teacher
+ * gain or lose is undated (planOf), and an undated row charges the same in
+ * every stretch, so keeping the tightest stretch inside its limit keeps every
+ * stretch inside its own — the question enforcement asks the apply. A stretch
+ * with teaching weeks and no target makes the room unknown, and the teacher
+ * keeps what they have, as a post without a target does.
+ */
+function changingTeacherPlan(
+  userId: string,
+  employment: LoadEmployment,
+  fixedInput: LoadInput,
+  keptTenths: number,
+  tolerance: number,
+): TeacherPlan {
+  const stretches = stretchLoads(fixedInput, employment);
+  let chosen: { index: number; target: number | null; fixedTenths: number; room: number } | null = null;
+  for (const [index, stretch] of stretches.entries()) {
+    if (stretch.weeks === 0) continue;
+    const fixedTenths = Math.min(MAX_FIXED_TENTHS, toTenthsUp(stretch.counted));
+    if (stretch.target === null) {
+      chosen = { index, target: null, fixedTenths, room: -Infinity };
+      break;
+    }
+    const room = limitTenthsOf(stretch.target, tolerance) - fixedTenths;
+    if (chosen === null || room < chosen.room) chosen = { index, target: stretch.target, fixedTenths, room };
+  }
+  const index = chosen?.index ?? 0;
+  const target = chosen ? chosen.target : null;
+  const fixedTenths = chosen?.fixedTenths ?? 0;
+  const currentTenths = fixedTenths + keptTenths;
+  const limitTenths = target === null ? null : limitTenthsOf(target, tolerance);
+  return {
+    userId,
+    target,
+    targetTenths: target === null ? null : 10 * target,
+    limitTenths,
+    floorTenths: target === null ? null : floorTenthsOf(target, tolerance),
+    fixedTenths,
+    currentTenths,
+    keepOrShed: target === null || target <= 0 || currentTenths > limitTenths!,
+    changing: {
+      employment,
+      index,
+      from: stretches[index]?.stretch.from ?? fixedInput.year.startDate,
+      to: stretches[index]?.stretch.to ?? fixedInput.year.endDate,
+    },
+  };
+}
+
+/**
+ * Whether the batch takes a changing post past the limit of a stretch it adds
+ * to: the realise guard's question for such a teacher, the same as
+ * overTargetFindingByStretch's.
+ */
+function growsPastAStretch(
+  before: LoadInput,
+  after: LoadInput,
+  employment: LoadEmployment,
+  tolerance: number,
+): boolean {
+  const was = stretchLoads(before, employment);
+  return stretchLoads(after, employment).some(
+    (stretch, index) =>
+      stretch.weeks > 0 &&
+      stretch.counted > (was[index]?.counted ?? 0) + 1e-9 &&
+      loadStatus(stretch.counted, stretch.target, tolerance) === 'OVER',
+  );
+}
+
+/**
+ * The plan with every post that changes during the year held where it is:
+ * keep-or-shed, gaining nothing. Propose's second ask, when the first answer
+ * took such a post past a period (see there).
+ */
+function heldChanging(plan: Plan): Plan {
+  const teachers = plan.teachers.map((teacher) =>
+    teacher.changing ? { ...teacher, keepOrShed: true, held: true } : teacher,
+  );
+  return { ...plan, teachers, teacherById: new Map(teachers.map((teacher) => [teacher.userId, teacher])) };
 }
 
 /** realId -> anonymous id, one map per id space, minted per request. */
@@ -1084,11 +1256,13 @@ export function anonymise(
     return id;
   };
 
+  // A held post (heldChanging) goes as one without a target: the engine
+  // then lets it keep or shed and gives it nothing.
   const teachers: AnonymousStaffTeacher[] = plan.teachers.map((row) => ({
     id: anon(maps.teachers, row.userId),
-    targetTenths: row.targetTenths,
-    limitTenths: row.limitTenths,
-    floorTenths: row.floorTenths,
+    targetTenths: row.held ? null : row.targetTenths,
+    limitTenths: row.held ? null : row.limitTenths,
+    floorTenths: row.held ? null : row.floorTenths,
     fixedTenths: row.fixedTenths,
   }));
 
@@ -1216,8 +1390,28 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
         row.loadWeight ?? 1,
         state.lastYear.get(row.id)?.teacherIds ?? null,
       ]),
+    // A post's periods (20261022120000) only when it has any, so the basis of
+    // a school without them is the digest it always was.
     employments: input.employments
-      .map((row) => [row.userId, row.employmentPercent, row.reductionPercent, row.teachingTargetMinutesPerWeek])
+      .map((row) => [
+        row.userId,
+        row.employmentPercent,
+        row.reductionPercent,
+        row.teachingTargetMinutesPerWeek,
+        ...((row.periods ?? []).length > 0
+          ? [
+              [...(row.periods ?? [])]
+                .sort((a, b) => compareIds(a.validFrom, b.validFrom))
+                .map((period) => [
+                  period.validFrom,
+                  period.validTo,
+                  period.employmentPercent,
+                  period.reductionPercent,
+                  period.teachingTargetMinutesPerWeek,
+                ]),
+            ]
+          : []),
+      ])
       .sort(byFirst),
     countedDuties: [...counted.entries()].sort((a, b) => compareIds(a[0], b[0])),
     qualifications: input.qualifications

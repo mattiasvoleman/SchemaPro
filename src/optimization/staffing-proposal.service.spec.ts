@@ -88,6 +88,27 @@ const post = (userId: string, extra: Row = {}): Row => ({
   ...extra,
 });
 
+/** A period of a post (20261022120000): by default 50 % from Monday 11 January to the year's end. */
+const periodOf = (userId: string, extra: Row = {}): Row => ({
+  id: `f4000000-0000-4000-8000-${userId.slice(-12)}`,
+  schoolId: SCHOOL,
+  employmentId: `f3000000-0000-4000-8000-${userId.slice(-12)}`,
+  userId,
+  academicYearId: YEAR,
+  validFrom: day('2027-01-11'),
+  validTo: null,
+  employmentPercent: new Prisma.Decimal('50.000'),
+  reductionPercent: new Prisma.Decimal('0.000'),
+  teachingTargetMinutesPerWeek: null,
+  ...extra,
+});
+
+/** Anna goes down to 50 % for the spring: 300 a week, limit 330, from 11 January. */
+const withAnnaHalfInSpring = (rows: Record<string, Row[]> = schoolRows()): Record<string, Row[]> => {
+  rows['teacherEmploymentPeriod'] = [periodOf(ANNA)];
+  return rows;
+};
+
 /**
  * Anna leads Ma 7A (120); Eva, who has left, leads Sv 7A; Ma 8A and Sv 8A are
  * open, Sv 8A with Bo as its co-teacher; an odd-week row nobody teaches; and
@@ -682,6 +703,115 @@ describe('StaffingProposalService.propose', () => {
     expect(JSON.stringify(proposal.conflicts)).not.toMatch(/Bo|bo@|Anna/);
   });
 
+  describe('a post that changes during the year', () => {
+    it('is planned on its tightest period: Anna at 50 % from 11 January takes one row, not the two the autumn has room for', async () => {
+      const { service, sent } = setup(withAnnaHalfInSpring());
+      const proposal = await service.propose(ask(), admin());
+      // Spring: 300, limit 330, with 180 already (Ma 7A and both halves of the odd row).
+      expect(sent()[0]!.teachers[0]).toMatchObject({
+        targetTenths: 3000,
+        limitTenths: limitTenthsOf(300, 10),
+        floorTenths: floorTenthsOf(300, 10),
+        fixedTenths: 1800,
+      });
+      expect(proposal.assignments.filter((a) => a.toTeacherId === ANNA).map((a) => a.requirementId)).toEqual([R_SV7]);
+      expect(proposal.teachers.find((t) => t.userId === ANNA)).toMatchObject({
+        period: { from: '2027-01-11', to: '2027-06-11' },
+        targetMinutesPerWeek: 300,
+        limitMinutesPerWeek: 330,
+        before: { countedMinutesPerWeek: 180 },
+        after: { countedMinutesPerWeek: 300, status: 'OK' },
+      });
+      // The answer fit every period: one ask. A post the same all year has no period.
+      expect(sent()).toHaveLength(1);
+      expect(proposal.teachers.find((t) => t.userId === BO)!.period).toBeUndefined();
+    });
+
+    it('leaves a dated row such a post leads where it is, and offers it no dated row', async () => {
+      const dated = (rows: Record<string, Row[]>) => {
+        const list = rows['teachingRequirement']!;
+        list.find((row) => row['id'] === R_MA7)!['endDate'] = day('2027-01-08');
+        list.find((row) => row['id'] === R_MA8)!['startDate'] = day('2027-01-11');
+        rows['teacherSubjectQualification'] = [ANNA, REKTOR].map((userId) => ({
+          userId,
+          subjectId: MA,
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          kind: 'LEGITIMATION',
+          validFrom: null,
+          validTo: null,
+        }));
+        return rows;
+      };
+      const sentFor = async (rows: Record<string, Row[]>) => {
+        const { service, sent } = setup(rows);
+        await service.propose(ask({ onlyUnstaffed: false, respectQualifications: true }), admin());
+        const payload = sent()[0]!;
+        const setOf = (id: string) =>
+          payload.eligibilitySets.find((set) => set.id === sentRow(payload, id, rows).eligibilitySetId)?.teacherIds ?? [];
+        return { payload, ma7: sentRow(payload, R_MA7, rows), ma8: setOf(R_MA8) };
+      };
+      // The same year, Anna's post the same all year: Ma 7A hers to keep or give up, Ma 8A open to her.
+      const steady = await sentFor(dated(schoolRows()));
+      expect(steady.ma7.fixed).toBe(false);
+      expect(steady.ma8).toEqual([steady.payload.teachers[0]!.id, steady.payload.teachers[4]!.id]);
+      const changing = await sentFor(dated(withAnnaHalfInSpring()));
+      expect(changing.ma7.fixed).toBe(true);
+      expect(changing.ma8).toEqual([changing.payload.teachers[4]!.id]);
+    });
+
+    describe('when the answer takes such a post past a period', () => {
+      // Without behörigheter a candidate set is a preference only, so the
+      // engine may give Anna the spring-only Ma 8A: 4 × 60 a week from
+      // 11 January is 123 over the year — inside her limit as the engine
+      // counts it, but 180 + 240 = 420 against 330 in the spring itself.
+      const springOnly = () => {
+        const rows = withAnnaHalfInSpring();
+        const list = rows['teachingRequirement']!;
+        Object.assign(list.find((row) => row['id'] === R_MA8)!, { startDate: day('2027-01-11'), lessonsPerWeek: 4 });
+        list.find((row) => row['id'] === R_SV7)!['teacherId'] = REKTOR;
+        return rows;
+      };
+
+      it('asks once more with every changing post held, and proposes what fits', async () => {
+        const { service, sent } = setup(springOnly());
+        const proposal = await service.propose(ask(), admin());
+        expect(sent()).toHaveLength(2);
+        const [first, second] = sent();
+        expect(first!.teachers[0]).toMatchObject({ targetTenths: 3000, fixedTenths: 1800 });
+        // Held: sent as a post without a target, so it keeps or sheds and gains nothing.
+        expect(second!.teachers[0]).toMatchObject({ targetTenths: null, limitTenths: null, floorTenths: null, fixedTenths: 1800 });
+        expect(second!.teachers[1]).toMatchObject({ targetTenths: 3000 });
+        // Fresh ids for the second ask, as for any request.
+        expect(second!.requestId).not.toBe(first!.requestId);
+        expect(second!.teachers[0]!.id).not.toBe(first!.teachers[0]!.id);
+        expect(proposal.assignments.map((a) => [a.requirementId, a.toTeacherId])).toEqual([
+          [R_MA8, BO],
+          [R_SV8, REKTOR],
+        ]);
+        expect(proposal.teachers.find((t) => t.userId === ANNA)).toMatchObject({
+          keepOrShed: true,
+          targetMinutesPerWeek: 300,
+          before: { countedMinutesPerWeek: 180 },
+          after: { countedMinutesPerWeek: 180 },
+        });
+      });
+
+      it('refuses (502) a second answer that still gives a held post a row', async () => {
+        // Every free row to Anna, both times.
+        const { service, sent } = setup(springOnly(), (payload) => ({
+          ...engineAnswer(payload),
+          assignments: payload.requirements
+            .filter((row) => !row.fixed)
+            .map((row) => ({ requirementId: row.id, teacherId: payload.teachers[0]!.id })),
+          unstaffed: [],
+        }));
+        await expect(service.propose(ask(), admin())).rejects.toMatchObject({ status: 502 });
+        expect(sent()).toHaveLength(2);
+      });
+    });
+  });
+
   describe('refuses (502) an answer outside the question asked', () => {
     const rows = schoolRows()['teachingRequirement']!;
     const cases: [string, (payload: StaffRequest, answer: StaffResponse) => StaffResponse][] = [
@@ -776,6 +906,23 @@ describe('StaffingProposalService.propose', () => {
       change(rows);
       expect(await basis(rows)).not.toBe(await basis(schoolRows()));
     });
+
+    it('changes with a period, and with each of its dates and figures', async () => {
+      const withPeriod = await basis(withAnnaHalfInSpring());
+      expect(withPeriod).not.toBe(await basis(schoolRows()));
+      const changes: Row[] = [
+        { validFrom: day('2027-01-18') },
+        { validTo: day('2027-05-31') },
+        { employmentPercent: new Prisma.Decimal('60.000') },
+        { reductionPercent: new Prisma.Decimal('10.000') },
+        { teachingTargetMinutesPerWeek: 250 },
+      ];
+      for (const change of changes) {
+        const rows = withAnnaHalfInSpring();
+        Object.assign(rows['teacherEmploymentPeriod']![0]!, change);
+        expect(await basis(rows)).not.toBe(withPeriod);
+      }
+    });
   });
 });
 
@@ -804,6 +951,22 @@ describe('StaffingProposalService.apply', () => {
   const changesOf = (proposal: StaffingProposal) =>
     proposal.assignments.map((a) => ({ requirementId: a.requirementId, fromTeacherId: a.fromTeacherId, toTeacherId: a.toTeacherId }));
   const leadOf = (world: RolloverWorld, id: string) => world.rows['teachingRequirement']!.find((row) => row['id'] === id)!['teacherId'];
+
+  it('applies, under REFUSE, what it proposed for a post that changes during the year — the apply judging each period', async () => {
+    const rows = withAnnaHalfInSpring();
+    rows['staffingPolicy']![0]!['overAllocationMode'] = 'REFUSE';
+    const { service, world, proposal } = await proposeThenApply(rows);
+    // Planned on the year's start (600), Anna would take Ma 8A too: 420 in the spring, past 330, and a 409.
+    const tooMuch = [...changesOf(proposal).filter((c) => c.requirementId !== R_MA8), { requirementId: R_MA8, fromTeacherId: null, toTeacherId: ANNA }];
+    await expect(
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: tooMuch }, admin()),
+    ).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_TARGET_IN_PERIOD' } });
+    await expect(
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+    ).resolves.toMatchObject({ updated: 3 });
+    expect(leadOf(world, R_SV7)).toBe(ANNA);
+    expect(leadOf(world, R_MA8)).toBe(BO);
+  });
 
   it('locks the year, then the posts, then the rows, then reads — and writes the leads, one log row, and the basis a fresh read gives', async () => {
     const { service, world, proposal } = await proposeThenApply();

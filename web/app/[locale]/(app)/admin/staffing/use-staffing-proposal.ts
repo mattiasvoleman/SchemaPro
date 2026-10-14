@@ -77,6 +77,11 @@ export interface ProposalTeacher {
   limitMinutesPerWeek: number | null;
   /** No target, target 0 or already over the limit: keeps or gives up only their own rows. */
   keepOrShed: boolean;
+  /**
+   * A post that changes during the year is planned on its tightest period:
+   * its dates, and target, limit, before and after are that period's.
+   */
+  period?: { from: string; to: string };
   before: TeacherLoadPoint;
   after: TeacherLoadPoint;
 }

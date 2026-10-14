@@ -3001,6 +3001,7 @@
       "minutesPercent": "{minutes} min/wk · {percent} %",
       "keepOrShed": "Keeps or gives up only their own entries",
       "keepsNoTarget": "Has no target and keeps their entries",
+      "plannedOnPeriod": "Planned on {from}–{to}, the period where the post has the least room",
       "tooMany": "The proposal would weigh {teachers} teachers and {rows} curriculum entries, but the engine takes at most {limitTeachers} teachers and {limitRows} entries at a time. Keep the entries that are settled as they are and try again.",
       "tooManyRequests": "You have computed many proposals in a short time. Wait a minute and try again.",
       "overLimitSelection": "The selection puts the teacher over the limit; the apply is judged against the school's settings.",

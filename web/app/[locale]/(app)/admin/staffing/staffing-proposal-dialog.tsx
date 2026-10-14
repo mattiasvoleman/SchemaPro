@@ -730,6 +730,11 @@ function ProposalResult({
                               {teacher.targetMinutesPerWeek === null ? t("keepsNoTarget") : t("keepOrShed")}
                             </span>
                           ) : null}
+                          {teacher.period ? (
+                            <span className="block text-xs font-normal text-muted-foreground">
+                              {t("plannedOnPeriod", { from: teacher.period.from, to: teacher.period.to })}
+                            </span>
+                          ) : null}
                         </th>
                         <td className="py-1.5 pr-3 tabular-nums">
                           {minutesText(teacher.before.countedMinutesPerWeek, teacher.before.percentOfTarget)}
