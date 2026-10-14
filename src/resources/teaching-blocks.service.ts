@@ -10,6 +10,13 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, writeConflict } from '../common/utils/prisma-errors';
 import { requirementName } from '../optimization/optimization-proxy.service';
+import { enforceRequirementWrite } from '../staffing/staffing-enforcement';
+import type { StaffingWarning } from '../staffing/staffing-checks';
+import {
+  assertLessonLengthFitsTheGrid,
+  mergeLessonShape,
+  touchesLessonShape,
+} from './lesson-shape-merge';
 import type { CreateTeachingBlockDto, UpdateTeachingBlockDto } from './dto/teaching-block.dto';
 
 /** A block as the API answers it: its name and the rows it holds. */
@@ -19,6 +26,12 @@ export interface TeachingBlockResponse {
   name: string;
   /** The timplansposter in the block, by id. */
   requirementIds: string[];
+  /**
+   * Only on a PATCH that changed the block's lessons: what the staffing
+   * policy's WARN mode said about each member's teachers, as the timplanspost
+   * PATCH answers it. A REFUSE is the 409 the write answered instead.
+   */
+  warnings?: StaffingWarning[];
 }
 
 /** The problem `code` of a block name its läsår already has. */
@@ -46,6 +59,12 @@ const NAME_MAX = 80;
  * that is in another block (409 REQUIREMENT_IN_ANOTHER_BLOCK — joining would
  * silently take it from a block the school wrote, so it has to leave that one
  * first), a row of another year and an id that is no row of the school (400).
+ *
+ * THE BLOCK'S LESSONS ARE CHANGED HERE, for every member at once: a
+ * timplanspost PATCH writes one row, and the trigger refuses one member whose
+ * lessons leave the others'. The new lessons are merged over the members'
+ * shape by the timplanspost's own merge, every member's teachers are judged by
+ * the staffing policy as the PATCH judges them, and one UPDATE writes them all.
  *
  * WHAT IS LEFT TO THE GENERATOR: members that share a teacher or pupils, and
  * a block whose lessons are partly locked. Rosters, teachers and locks change
@@ -91,6 +110,9 @@ export class TeachingBlocksService {
   ): Promise<TeachingBlockResponse> {
     requireSchoolId(user);
     const name = dto.name === undefined ? undefined : blockName(dto.name);
+    // Needs nothing from the database, so it answers before one is opened.
+    assertLessonLengthFitsTheGrid(dto.minutesPerLesson ?? undefined);
+    for (const minutes of dto.lessonLengths ?? []) assertLessonLengthFitsTheGrid(minutes);
     try {
       return await this.prisma.withRls(user, async (tx) => {
         const [locked] = await tx.$queryRaw<{ id: string; academicYearId: string; name: string }[]>`
@@ -110,7 +132,14 @@ export class TeachingBlocksService {
           dto.requirementIds === undefined
             ? await membersOf(tx, id)
             : await setMembers(tx, block, dto.requirementIds);
-        return { id: block.id, academicYearId: block.academicYearId, name: block.name, requirementIds };
+        const warnings = touchesLessonShape(dto) ? await setLessons(tx, user, id, dto) : null;
+        return {
+          id: block.id,
+          academicYearId: block.academicYearId,
+          name: block.name,
+          requirementIds,
+          ...(warnings !== null ? { warnings } : {}),
+        };
       });
     } catch (error) {
       rethrowBlockError(error, name);
@@ -210,6 +239,61 @@ async function setMembers(
     if (count !== joining.length) throw writeConflict();
   }
   return wanted;
+}
+
+/**
+ * The block's lessons, every member at once.
+ *
+ * The members have one shape (the trigger holds it), so the PATCH is merged
+ * over the first member's and the same write fits every member. Each member's
+ * teachers are judged before anything is written; a REFUSE is the 409 the
+ * judge throws, and nothing is written. Then ONE UPDATE over the block, which
+ * the trigger judges at its end with every member changed.
+ */
+async function setLessons(
+  tx: PrismaClient,
+  user: AuthenticatedUser,
+  blockId: string,
+  dto: UpdateTeachingBlockDto,
+): Promise<StaffingWarning[]> {
+  const members = await tx.teachingRequirement.findMany({
+    where: { blockId },
+    select: {
+      id: true,
+      academicYearId: true,
+      subjectId: true,
+      studentGroupId: true,
+      teacherId: true,
+      coTeacherId: true,
+      lessonsPerWeek: true,
+      minutesPerLesson: true,
+      lessonLengths: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  if (members.length === 0) {
+    throw new BadRequestException('lessonsPerWeek: blocket har inga poster att ändra lektionerna på.');
+  }
+  const resolved = mergeLessonShape(members[0]!, dto);
+  const warnings: StaffingWarning[] = [];
+  for (const member of members) {
+    warnings.push(
+      ...(await enforceRequirementWrite(tx, {
+        viewer: user,
+        schoolId: requireSchoolId(user),
+        academicYearId: member.academicYearId,
+        requirementId: member.id,
+        subjectId: member.subjectId,
+        studentGroupId: member.studentGroupId,
+        before: { teacherId: member.teacherId, coTeacherId: member.coTeacherId },
+        patch: { ...resolved.shape },
+      })),
+    );
+  }
+  if (Object.keys(resolved.write).length > 0) {
+    await tx.teachingRequirement.updateMany({ where: { blockId }, data: resolved.write });
+  }
+  return warnings;
 }
 
 function named(rows: { subject: { name: string }; studentGroup: { name: string } }[]): string {
