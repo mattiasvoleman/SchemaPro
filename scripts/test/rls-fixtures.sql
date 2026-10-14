@@ -1009,6 +1009,58 @@ BEGIN
     FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000957';
 END $$;
 
+-- Skolenheter (sections 130–133, 20261031090000). Two schools: one with no
+-- unit yet (its admin creates them inside the sections' transactions) and a
+-- source choosing one skolenhet, and one already split into F–6 and 7–9,
+-- committed, so a class's årskurs can be moved under it.
+DO $$
+DECLARE
+  today date := current_date;
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  klass uuid;
+  pupil uuid;
+  guardian uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-skolenheter-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Skolenheter', 'rls-skolenheter-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Skolenheter i år', today - 30, today + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'SE7A', 7, now()) RETURNING id INTO klass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s1, 'skolenheter-admin@example.invalid', 'Skolenhet', 'Admin', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000130', true, now()),
+    (s1, 'skolenheter-teacher@example.invalid', 'Skolenhet', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000131', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'skolenheter-pupil@example.invalid', 'Skolenhet', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000132', true, klass, now())
+  RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'skolenheter-guardian@example.invalid', 'Skolenhet', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000000133', true, now())
+  RETURNING id INTO guardian;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, guardian, pupil);
+  INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind", "tokenUrl", "clientId", "organisationIds")
+  VALUES (s1, 'Skolenheter', 'https://api.ist.example/ss12000v2-api/source/SE00130/v2.0', 'OAUTH2_CLIENT_CREDENTIALS',
+          'https://skolid.example/connect/token', 'skolenheter', ARRAY['aaaaaaaa-0000-4000-8000-000000000130']::uuid[]);
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Skolenheter delad', 'rls-skolenheter-delad', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Delad i år', today - 30, today + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y, 'SD6A', 6, now()) RETURNING id INTO klass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'skolenheter-delad-admin@example.invalid', 'Delad', 'Admin', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000134', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s2, 'skolenheter-delad-pupil@example.invalid', 'Delad', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000135', true, klass, now());
+  INSERT INTO "SchoolUnits" ("schoolId", name, code, "schoolTypes", "gradeFrom", "gradeTo") VALUES
+    (s2, 'Delad F–6', '31313131', '{FKLASS,GR}', 0, 6),
+    (s2, 'Delad 7–9', '32323232', '{GR}', 7, 9);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
