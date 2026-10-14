@@ -166,6 +166,20 @@ const EVENTS_READ: V2Read = withEmbedded((items) => [
   },
 ]);
 
+/**
+ * A read filtered to named pupils (activities?member=, calendarEvents?student=
+ * and their lookups) answers which lessons those pupils take part in: their
+ * timetable, recorded as SCHEDULE about them, as the family's week is. The
+ * page itself names them only where they stand outside the groups, so
+ * without this the read would name nobody it is about. Only a page that
+ * carries something: an empty one says no more than that there is nothing
+ * in the window. A teacher filter is the timetable, as everywhere, and is
+ * not recorded.
+ */
+export const forPupils =
+  (read: V2Read, pupils: readonly string[]): V2Read =>
+  (items) => [...read(items), ...(items.length > 0 && pupils.length > 0 ? [{ kind: 'SCHEDULE' as const, persons: [...pupils] }] : [])];
+
 /** The reads by resource, for the läslogg's spec. */
 export const V2_READS = {
   persons: PERSONS_READ,
@@ -945,7 +959,8 @@ export class Ss12000V2Service {
     const expand = expands(query.params);
     this.activityExpandScopes(caller, expand);
     const key = sortkey<Obj>(query.params, { ModifiedDesc: byModified, DisplayNameAsc: byName });
-    return this.runRead(caller, query.params, ACTIVITIES_READ, async (model) => {
+    const member = text(query.params, 'member');
+    return this.runRead(caller, query.params, forPupils(ACTIVITIES_READ, member ? [member] : []), async (model) => {
       const filter = await this.activityFilter(model, query.params);
       const items = (await this.activityObjects(model, expand)).filter(filter).map((entry) => entry.item);
       return page(items, key, query, this.token(caller, operation, query));
@@ -971,7 +986,7 @@ export class Ss12000V2Service {
     const expand = expands(params);
     this.activityExpandScopes(caller, expand);
     const ids = lookupIds(body, ['ids', 'teachers', 'members']);
-    return this.runRead(caller, params, ACTIVITIES_READ, async (model) => {
+    return this.runRead(caller, params, forPupils(ACTIVITIES_READ, ids['members'] ?? []), async (model) => {
       const members = (ids['members'] ?? []).length > 0 ? await this.groupMembersNow(model) : new Map<string, Set<string>>();
       const memberIds = (ids['members'] ?? []).map((id) => model.ids.personFrom(id)).filter((id): id is string => id !== null);
       return (await this.activityObjects(model, expand))
@@ -1145,7 +1160,8 @@ export class Ss12000V2Service {
       StartTimeAsc: { value: start, direction: 1 },
       StartTimeDesc: { value: start, direction: -1 },
     });
-    return this.runRead(caller, query.params, EVENTS_READ, async (model) => {
+    const student = text(query.params, 'student');
+    return this.runRead(caller, query.params, forPupils(EVENTS_READ, student ? [student] : []), async (model) => {
       const lessons = await model.slice.lessons(from, to);
       const filter = this.eventFilter(model, query.params, await model.slice.teachingMembers());
       const items = (await this.events(model, lessons, expand)).filter(filter).map((entry) => entry.item);
@@ -1178,7 +1194,7 @@ export class Ss12000V2Service {
     need(caller, 'calendarEvents.read');
     const params = parseItemQuery('POST /calendarEvents/lookup', raw);
     const ids = lookupIds(body, ['ids', 'activities', 'student', 'teacher']);
-    return this.runRead(caller, params, EVENTS_READ, async (model) => {
+    return this.runRead(caller, params, forPupils(EVENTS_READ, ids['student'] ?? []), async (model) => {
       const wanted = new Set<string>(ids['ids'] ?? []);
       const activities = await model.slice.activities();
       const teachers = (ids['teacher'] ?? []).map((id) => model.ids.dutyFrom(id)?.userId).filter((id): id is string => !!id);

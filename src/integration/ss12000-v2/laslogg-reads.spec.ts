@@ -1,4 +1,4 @@
-import { V2_READS, type V2Seen } from './ss12000-v2.service';
+import { V2_READS, forPupils, type V2Seen } from './ss12000-v2.service';
 
 /*
  * What each SS12000 v2 read records in the läslogg (runRead maps the emitted
@@ -92,5 +92,18 @@ describe('the läslogg of SS12000 v2', () => {
       ROSTER: { persons: ['p3'], duties: [] },
       STAFF_ABSENCES: { persons: [], duties: ['d1'] },
     });
+  });
+
+  it('a read filtered to named pupils records them as SCHEDULE beside what the page names, and an empty page records nothing', () => {
+    const event: Obj = { id: 'e1', studentExceptions: [{ student: ref('p9') }] };
+    expect(seen(forPupils(V2_READS.calendarEvents, ['p4']), [event])).toEqual({
+      ROSTER: { persons: ['p9'], duties: [] },
+      SCHEDULE: { persons: ['p4'], duties: [] },
+    });
+    expect(seen(forPupils(V2_READS.activities, ['p4', 'p5']), [{ id: 'a1' }])).toEqual({
+      SCHEDULE: { persons: ['p4', 'p5'], duties: [] },
+    });
+    expect(seen(forPupils(V2_READS.activities, ['p4']), [])).toEqual({});
+    expect(seen(forPupils(V2_READS.activities, []), [{ id: 'a1' }])).toEqual({});
   });
 });
