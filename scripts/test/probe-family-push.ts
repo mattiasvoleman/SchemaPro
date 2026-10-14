@@ -6,7 +6,7 @@
  * and as an ADMIN with Expo stubbed at fetch (ey-c), the device registry,
  * tickets, receipts and housekeeping through the real functions (ey-d), the
  * guardian's read timed for the record (ey-e), and a pupil's own leave
- * request through the real FamilyService (ey-f). In a school of its own
+ * request through the real LeaveService (ey-f). In a school of its own
  * (slug <marker>-familj), swept whole before and after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
@@ -19,7 +19,7 @@ import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { FamilyScheduleService, type FamilySchedule } from '../../src/family/family-schedule.service';
-import { FamilyService } from '../../src/family/family.service';
+import { LeaveService } from '../../src/family/leave.service';
 import { DevicesService } from '../../src/notifications/devices.service';
 import { ExpoPushClient, resetExpoPacing } from '../../src/notifications/expo-push.client';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
@@ -493,10 +493,12 @@ export async function familyPushChecks(owner: Client, api: PrismaService, marker
     });
 
     // 20261015130000: before it, the pupil's own request was a 42501 here, which the gateway answered 500.
-    await check('(ey-f) a pupil files their own leave request through the real FamilyService, never their sibling’s; the guardian reads it, and the admin’s approval writes the absence and tells the pupil alone', async () => {
-      const family = new FamilyService(api, notifications);
+    await check('(ey-f) a pupil files their own leave request through the real LeaveService, never their sibling’s; the guardian reads it, and the admin’s approval writes the absence and tells the pupil alone', async () => {
+      const family = new LeaveService(api, notifications);
       const pupil: AuthenticatedUser = { authId: school.child.authId, userId: school.child.id, schoolId: school.schoolId, role: Role.STUDENT };
-      const start = addDays(school.today, 30);
+      // A Monday and its Tuesday: an approval writes absence on skoldagar
+      // only (20261023091000), so a start on a Saturday would write none.
+      const start = mondayOf(addDays(school.today, 30));
       const made = await family.createLeaveRequest({ studentId: school.child.id, startDate: start, endDate: addDays(start, 1), reason: 'Probe: elevens egen' }, pupil);
       assert.equal(made.status, 'PENDING');
       await assert.rejects(

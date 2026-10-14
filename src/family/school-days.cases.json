@@ -1,0 +1,155 @@
+{
+  "about": "Skoldagar of a leave request. src/family/school-days.ts (jest, school-days.spec.ts) and app.leave_school_days (scripts/test/probe-leave.ts, in CI) are both held to every case. Läsår 2026/27 runs 2026-08-17 to 2027-06-11; 2027-02-22 is the Monday of sportlov v.8.",
+  "cases": [
+    {
+      "name": "en vanlig vecka",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2027-02-01",
+      "to": "2027-02-05",
+      "days": ["2027-02-01", "2027-02-02", "2027-02-03", "2027-02-04", "2027-02-05"]
+    },
+    {
+      "name": "över en helg",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2027-02-05",
+      "to": "2027-02-08",
+      "days": ["2027-02-05", "2027-02-08"]
+    },
+    {
+      "name": "en lördag",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2027-02-06",
+      "to": "2027-02-06",
+      "days": []
+    },
+    {
+      "name": "över sportlovet",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-02-22", "endDate": "2027-02-26", "minGradeLevel": null, "maxGradeLevel": null }],
+      "enrollments": [{ "validFrom": "2026-08-17", "validTo": null, "gradeLevel": 8 }],
+      "from": "2027-02-18",
+      "to": "2027-03-02",
+      "days": ["2027-02-18", "2027-02-19", "2027-03-01", "2027-03-02"]
+    },
+    {
+      "name": "ett lov som började före ansökan",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2026-12-21", "endDate": "2027-01-08", "minGradeLevel": null, "maxGradeLevel": null }],
+      "enrollments": [],
+      "from": "2027-01-07",
+      "to": "2027-01-12",
+      "days": ["2027-01-11", "2027-01-12"]
+    },
+    {
+      "name": "en studiedag för hela skolan",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-03-10", "endDate": "2027-03-10", "minGradeLevel": null, "maxGradeLevel": null }],
+      "enrollments": [{ "validFrom": "2026-08-17", "validTo": null, "gradeLevel": 4 }],
+      "from": "2027-03-08",
+      "to": "2027-03-12",
+      "days": ["2027-03-08", "2027-03-09", "2027-03-11", "2027-03-12"]
+    },
+    {
+      "name": "prao för åk 9, eleven går i åk 8",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-03-15", "endDate": "2027-03-19", "minGradeLevel": 9, "maxGradeLevel": 9 }],
+      "enrollments": [{ "validFrom": "2026-08-17", "validTo": null, "gradeLevel": 8 }],
+      "from": "2027-03-15",
+      "to": "2027-03-16",
+      "days": ["2027-03-15", "2027-03-16"]
+    },
+    {
+      "name": "prao för åk 9, eleven går i åk 9",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-03-15", "endDate": "2027-03-19", "minGradeLevel": 9, "maxGradeLevel": 9 }],
+      "enrollments": [{ "validFrom": "2026-08-17", "validTo": null, "gradeLevel": 9 }],
+      "from": "2027-03-15",
+      "to": "2027-03-16",
+      "days": []
+    },
+    {
+      "name": "elevens klass har ingen årskurs",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-03-15", "endDate": "2027-03-19", "minGradeLevel": 7, "maxGradeLevel": 9 }],
+      "enrollments": [{ "validFrom": "2026-08-17", "validTo": null, "gradeLevel": null }],
+      "from": "2027-03-15",
+      "to": "2027-03-16",
+      "days": ["2027-03-15", "2027-03-16"]
+    },
+    {
+      "name": "eleven har ingen klass de dagarna, men lovet gäller alla",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [
+        { "startDate": "2027-03-15", "endDate": "2027-03-19", "minGradeLevel": 7, "maxGradeLevel": 9 },
+        { "startDate": "2027-03-17", "endDate": "2027-03-17", "minGradeLevel": null, "maxGradeLevel": null }
+      ],
+      "enrollments": [],
+      "from": "2027-03-15",
+      "to": "2027-03-17",
+      "days": ["2027-03-15", "2027-03-16"]
+    },
+    {
+      "name": "klassbyte mitt i ansökan",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-03-17", "endDate": "2027-03-18", "minGradeLevel": 9, "maxGradeLevel": 9 }],
+      "enrollments": [
+        { "validFrom": "2026-08-17", "validTo": "2027-03-17", "gradeLevel": 8 },
+        { "validFrom": "2027-03-17", "validTo": null, "gradeLevel": 9 }
+      ],
+      "from": "2027-03-15",
+      "to": "2027-03-19",
+      "days": ["2027-03-15", "2027-03-16", "2027-03-19"]
+    },
+    {
+      "name": "eleven lämnar klassen mitt i praoveckan",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [{ "startDate": "2027-03-15", "endDate": "2027-03-19", "minGradeLevel": 9, "maxGradeLevel": 9 }],
+      "enrollments": [{ "validFrom": "2026-08-17", "validTo": "2027-03-16", "gradeLevel": 9 }],
+      "from": "2027-03-15",
+      "to": "2027-03-16",
+      "days": ["2027-03-16"]
+    },
+    {
+      "name": "sommaren mellan två läsår",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }, { "startDate": "2027-08-16", "endDate": "2028-06-09" }],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2027-06-10",
+      "to": "2027-06-15",
+      "days": ["2027-06-10", "2027-06-11"]
+    },
+    {
+      "name": "efter det sista läsåret som finns",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2027-06-10",
+      "to": "2027-06-15",
+      "days": ["2027-06-10", "2027-06-11", "2027-06-14", "2027-06-15"]
+    },
+    {
+      "name": "före det första läsåret",
+      "years": [{ "startDate": "2026-08-17", "endDate": "2027-06-11" }],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2026-08-12",
+      "to": "2026-08-18",
+      "days": ["2026-08-17", "2026-08-18"]
+    },
+    {
+      "name": "skolan har inget läsår",
+      "years": [],
+      "breaks": [],
+      "enrollments": [],
+      "from": "2027-02-05",
+      "to": "2027-02-08",
+      "days": ["2027-02-05", "2027-02-08"]
+    }
+  ]
+}

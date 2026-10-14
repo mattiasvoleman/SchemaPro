@@ -84,30 +84,6 @@ describe('FamilyReadsService', () => {
     });
   });
 
-  describe('leaveRequests', () => {
-    it('answers the dates bare and the instants ISO, and records LEAVE_REQUESTS with the reasons it carries', async () => {
-      tx.leaveRequest.findMany.mockResolvedValue([
-        {
-          id: 'q1', studentId: CHILD_A, requestedById: GUARDIAN_ID,
-          startDate: new Date('2026-11-02T00:00:00.000Z'), endDate: new Date('2026-11-06T00:00:00.000Z'),
-          reason: 'Resa', status: 'APPROVED', decidedById: 'admin', decidedAt: new Date('2026-10-12T09:00:00.000Z'),
-          decisionNote: null, createdAt: new Date('2026-10-10T09:00:00.000Z'),
-        },
-      ]);
-      await expect(service.leaveRequests({ status: 'APPROVED' }, guardian())).resolves.toEqual([
-        {
-          id: 'q1', studentId: CHILD_A, requestedById: GUARDIAN_ID, startDate: '2026-11-02', endDate: '2026-11-06',
-          reason: 'Resa', status: 'APPROVED', decidedById: 'admin', decidedAt: '2026-10-12T09:00:00.000Z',
-          decisionNote: null, createdAt: '2026-10-10T09:00:00.000Z',
-        },
-      ]);
-      const [query] = tx.leaveRequest.findMany.mock.calls[0] as [{ where: unknown; take: number }];
-      expect(query.where).toEqual({ status: 'APPROVED' });
-      expect(query.take).toBe(FAMILY_READ_LIMIT);
-      expect(recordedReads(tx)).toEqual([{ kind: 'LEAVE_REQUESTS', channel: 'APP', ids: [CHILD_A] }]);
-    });
-  });
-
   describe('guardianLinks', () => {
     it('records the pupil and their guardians as GUARDIANS', async () => {
       tx.guardianStudent.findMany.mockResolvedValue([

@@ -10,6 +10,7 @@ import {
 import { lockingRead, rawSql, type LockedTable } from '../../test/utils/locking-read';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { Role } from '../auth/enums/role.enum';
 import { DUTY_SLOT_REASON, TeacherDutiesService, assertDutySlot, assertDutySlots } from './teacher-duties.service';
 import { DUTY_SLOTS_MAX, dutySlotConstraintData, isOnSolverGrid } from './duty-slot';
@@ -661,6 +662,54 @@ describe('TeacherDutiesService', () => {
       duties = [];
       await expect(service.remove(DUTY_ID, testUser())).rejects.toBeInstanceOf(NotFoundException);
       expect(tx.teacherDuty.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the leave requests a MENTORSKAP gives (Mentorns ledighetsbeslut)', () => {
+    const MENTOR_NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const LEAVE_ID = '88888888-8888-4888-8888-888888888888';
+    let deliver: jest.Mock;
+
+    beforeEach(() => {
+      deliver = jest.fn();
+      service = new TeacherDutiesService(
+        prisma as unknown as PrismaService,
+        { deliver } as unknown as NotificationsService,
+      );
+      const locking = queryRaw.getMockImplementation()!;
+      queryRaw.mockImplementation((...call: unknown[]) =>
+        rawSql(call).includes('app.leave_requests_tell_new_mentors()')
+          ? Promise.resolve([
+              { notificationId: MENTOR_NOTICE, userId: COLLEAGUE, email: null, meta: { leaveRequestId: LEAVE_ID, schoolDays: 2 } },
+            ])
+          : locking(...call),
+      );
+    });
+
+    const toldMentors = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes('app.leave_requests_tell_new_mentors()'));
+
+    it('tells the mentors a new MENTORSKAP gives pending requests, in the same transaction', async () => {
+      await service.create(
+        { userId: COLLEAGUE, academicYearId: YEAR_ID, kind: 'MENTORSKAP', label: 'Mentor 7B', minutesPerWeek: 60 },
+        testUser(),
+      );
+
+      expect(toldMentors()).toHaveLength(1);
+      expect(deliver).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ type: 'LEAVE_REQUESTED', recipients: [{ userId: COLLEAGUE, notificationId: MENTOR_NOTICE }] }),
+      );
+    });
+
+    it('tells them after an update that leaves the uppdrag a MENTORSKAP, and asks nothing of another kind', async () => {
+      tx.teacherDuty.update.mockResolvedValue(storedDuty({ kind: 'MENTORSKAP' }));
+      await service.update(DUTY_ID, { minutesPerWeek: 30 }, testUser());
+      expect(toldMentors()).toHaveLength(1);
+
+      tx.teacherDuty.update.mockResolvedValue(storedDuty());
+      await service.update(DUTY_ID, { minutesPerWeek: 30 }, testUser());
+      await service.create({ userId: COLLEAGUE, academicYearId: YEAR_ID, kind: 'RASTVAKT', label: 'Rastvakt', minutesPerWeek: 20 }, testUser());
+      expect(toldMentors()).toHaveLength(1);
     });
   });
 });

@@ -42,6 +42,13 @@ enum LeaveRequestStatus {
   REJECTED
 }
 
+/// In which role a leave request was decided (20261023091000): by the pupil's
+/// mentor under rektor's delegation, or by the admin (rektor).
+enum LeaveDeciderRole {
+  MENTOR
+  ADMIN
+}
+
 enum NotificationType {
   ABSENCE_UNREPORTED
   LEAVE_DECIDED
@@ -60,6 +67,8 @@ enum NotificationType {
   LESSON_SUPERVISED_STUDY
   /// One notice per person for a bulk avbokning, and one for its reversal (20261018090000).
   CANCELLATION_DIGEST
+  /// A leave request the school's delegation gives the pupil's mentor to decide; to those mentors, no reason (20261023090000).
+  LEAVE_REQUESTED
 }
 
 enum RoomBookingStatus {
@@ -301,6 +310,7 @@ model User {
   leaveRequests       LeaveRequest[]    @relation("LeaveStudent")
   requestedLeaves     LeaveRequest[]    @relation("LeaveRequester")
   decidedLeaves       LeaveRequest[]    @relation("LeaveDecider")
+  referredLeaves      LeaveRequest[]    @relation("LeaveReferrer")
   notifications       Notification[]    @relation("NotificationRecipient")
   roomBookings        RoomBooking[]     @relation("RoomBookingBooker")
   decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
@@ -1892,12 +1902,21 @@ model LeaveRequest {
   decidedById   String?            @db.Uuid
   decidedAt     DateTime?          @db.Timestamptz(6)
   decisionNote  String?
+  /// MENTOR or ADMIN, set with the decision; NULL while PENDING, and for the
+  /// decisions before 20261023091000 whose decider was no SCHOOL_ADMIN.
+  decidedAs     LeaveDeciderRole?
+  /// A mentor passed the request on to rektor: when, and who. The admin
+  /// decides it then. CHECKs in 20261023091000: a referrer has a time, and a
+  /// referred request is never decided as MENTOR.
+  referredAt    DateTime?          @db.Timestamptz(6)
+  referredById  String?            @db.Uuid
   createdAt     DateTime           @default(now()) @db.Timestamptz(6)
 
   school      School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   student     User   @relation("LeaveStudent", fields: [studentId], references: [id], onDelete: Cascade)
   requestedBy User   @relation("LeaveRequester", fields: [requestedById], references: [id], onDelete: Cascade)
   decidedBy   User?  @relation("LeaveDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  referredBy  User?  @relation("LeaveReferrer", fields: [referredById], references: [id], onDelete: SetNull)
 
   @@index([schoolId, status, createdAt])
   @@index([studentId, startDate])
@@ -3439,6 +3458,27 @@ enum GallringRunStatus {
   RUNNING
   DONE
   INTERRUPTED
+}
+
+/// Rektor's delegation of leave decisions (skollagen 2 kap. 10 §, 7 kap. 18 §):
+/// the mentor decides a request of at most mentorMaxSchoolDays skoldagar (1..10;
+/// NULL, and no row at all, is no delegation: the admin decides everything).
+/// Append-only like RetentionDecision: a trigger stamps decidedAt and
+/// decidedById and refuses UPDATE and DELETE, so the latest row is in force.
+/// The keys to Schools and to Users (decidedById, ON DELETE SET NULL of that
+/// column alone) live in 20261023091000. The school's staff read it and the
+/// administrator inserts (RLS, the API's role only).
+model LeaveDelegationDecision {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId            String   @db.Uuid
+  mentorMaxSchoolDays Int?
+  /// The delegationsordning's reference (dnr), at most 200 characters.
+  reference           String?
+  decidedById         String?  @db.Uuid
+  decidedAt           DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([schoolId, decidedAt(sort: Desc)])
+  @@map("LeaveDelegationDecisions")
 }
 
 /// A school's decision on how long one kind of data is kept. Append-only: a

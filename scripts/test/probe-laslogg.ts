@@ -52,6 +52,7 @@ import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service
 import type { PrismaService } from '../../src/database/prisma.service';
 import { FamilyReadsService } from '../../src/family/family-reads.service';
 import { FamilyScheduleService } from '../../src/family/family-schedule.service';
+import { LeaveService } from '../../src/family/leave.service';
 import { Ss12000Service } from '../../src/integration/ss12000.service';
 import { Ss12000SyncService } from '../../src/integration/ss12000-sync/ss12000-sync.service';
 import { Ss12000Outbound, Ss12000Secrets } from '../../src/integration/ss12000-sync/ss12000-sync.providers';
@@ -207,7 +208,9 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
       const family = new FamilyReadsService(api);
       assert.deepEqual((await family.children(asGuardian)).map((child) => child.id), [pupil.id]);
       assert.equal((await family.absenceReports({}, asGuardian)).length, 1);
-      assert.equal((await family.leaveRequests({}, asGuardian)).length, 1);
+      // The leave requests are LeaveService's (Mentorns ledighetsbeslut), recorded as before.
+      const leave = new LeaveService(api, { deliver: () => undefined, notifyUsers: async () => 0 } as unknown as NotificationsService);
+      assert.equal((await leave.listLeaveRequests({}, asGuardian)).length, 1);
       const rows = await log(`"actorId" = $2`, [guardian.id]);
       assert.deepEqual(
         rows.map((row) => [row.kind, row.actorRole, row.channel, row.subjectIds]),

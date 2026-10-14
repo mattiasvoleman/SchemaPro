@@ -1,0 +1,22 @@
+-- En mentor får veta om en ledighetsansökan.
+--
+-- One notification type (Mentorns ledighetsbeslut):
+--
+--   * LEAVE_REQUESTED: a guardian or a pupil filed a leave request that the
+--     school's delegation gives to the pupil's mentor to decide
+--     (20261023091000). To the mentors who may decide it, and to nobody
+--     else. Meta: the request's id, the pupil's name, its first and last day
+--     and its skoldagar. Never the reason: the e-mail and the push carry no
+--     free text, and the reason is read in SchemaPro by the deciding mentor
+--     and the admin only.
+--
+-- Not a notice the school must deliver: a mentor may opt out of the e-mail
+-- and the push, and the request still waits in /teacher/ledighet
+-- (NotificationOptOuts' CHECKs name only ABSENCE_UNREPORTED and
+-- TEACHER_ABSENCE_REPORTED).
+--
+-- Its own migration: a value added to an enum cannot be used in the
+-- transaction that adds it (as 20261018090000), and 20261023091000's
+-- functions name it. Nothing else here; no data is written.
+
+ALTER TYPE "NotificationType" ADD VALUE IF NOT EXISTS 'LEAVE_REQUESTED';

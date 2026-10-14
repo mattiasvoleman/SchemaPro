@@ -83,6 +83,18 @@ describe('push messages', () => {
     expect(pushText('LESSON_SUPERVISED_STUDY', META, 'en', TZ).body).toBe('A lesson Tue 13 Oct 08:00 becomes supervised self-study.');
   });
 
+  it('tells the mentor a leave request waits, with its days and neither the pupil nor the reason', () => {
+    const meta = { studentName: 'Ella Elev', reason: 'Begravning', startDate: '2026-10-19', endDate: '2026-10-21', schoolDays: 3 };
+    expect(pushText('LEAVE_REQUESTED', meta, 'sv', TZ)).toEqual({ title: 'Ledighet', body: 'En ledighetsansökan 19 okt–21 okt väntar på ditt beslut.' });
+    expect(pushText('LEAVE_REQUESTED', meta, 'en', TZ).body).toBe('A leave request 19 Oct–21 Oct is waiting for your decision.');
+    expect(pushText('LEAVE_REQUESTED', { ...meta, endDate: '2026-10-19' }, 'sv', TZ).body).toBe('En ledighetsansökan 19 okt väntar på ditt beslut.');
+    expect(pushText('LEAVE_REQUESTED', {}, 'sv', TZ).body).toBe('En ledighetsansökan väntar på ditt beslut.');
+    expect(pushText('LEAVE_REQUESTED', meta, 'sv', TZ, 2).body).toBe('2 ledighetsansökningar väntar på ditt beslut.');
+    for (const locale of ['sv', 'en'] as const) {
+      expect(JSON.stringify(pushText('LEAVE_REQUESTED', meta, locale, TZ))).not.toMatch(/Ella|Begravning/);
+    }
+  });
+
   it('says how many of the person’s lessons an avbokning takes, over which days, and never its name', () => {
     expect(pushText('CANCELLATION_DIGEST', META, 'sv', TZ)).toEqual({ title: 'Inställda lektioner', body: '3 lektioner 19 okt–21 okt är inställda.' });
     expect(pushText('CANCELLATION_DIGEST', META, 'en', TZ).body).toBe('3 lessons 19 Oct–21 Oct are cancelled.');
@@ -142,6 +154,7 @@ describe('push messages', () => {
       'LESSON_REINSTATED',
       'LESSON_SUPERVISED_STUDY',
       'CANCELLATION_DIGEST',
+      'LEAVE_REQUESTED',
     ];
     for (const type of all) expect(KINDS).toContain(pushKindOf(type, {}));
   });

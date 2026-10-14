@@ -427,6 +427,59 @@ describe('NotificationsService', () => {
     });
   });
 
+  describe('deliver', () => {
+    // app.leave_request_notify (20261023091000) writes a guardian's
+    // LEAVE_REQUESTED notices to the mentors itself; deliver hands them on.
+    const entry = (overrides: Record<string, unknown> = {}) => ({
+      schoolId: SCHOOL_ID,
+      type: 'LEAVE_REQUESTED' as const,
+      meta: { startDate: '2027-02-15', endDate: '2027-02-16', schoolDays: 2 },
+      recipients: [
+        { userId: 'mentor-1', notificationId: 'n-1' },
+        { userId: 'mentor-2', notificationId: 'n-2' },
+      ],
+      email: { subject: 'Ny ledighetsansökan', body: 'x', recipients: [{ userId: 'mentor-1', email: 'mentor-1@school.se' }] },
+      ...overrides,
+    });
+
+    it('mails the notices another writer made, after the commit, and writes no row of its own', async () => {
+      process.env.RESEND_API_KEY = 'resend-key';
+      process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
+
+      await inTransaction(async (c) => service.deliver(c, entry()));
+
+      expect(tx.notification.createMany).not.toHaveBeenCalled();
+      expect(prisma.onCommit).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      await flushDelivery();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const mail = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body) as { bcc: string[]; subject: string };
+      expect(mail.bcc).toEqual(['mentor-1@school.se']);
+      expect(mail.subject).toBe('Ny ledighetsansökan');
+    });
+
+    it('queues nothing when neither e-mail nor push is configured, and nothing for no recipient', async () => {
+      await inTransaction(async (c) => service.deliver(c, entry()));
+      process.env.RESEND_API_KEY = 'resend-key';
+      await inTransaction(async (c) => service.deliver(c, entry({ recipients: [] })));
+
+      expect(prisma.onCommit).not.toHaveBeenCalled();
+      await flushDelivery();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('delivers nothing outside a withRls transaction, and says so', async () => {
+      process.env.RESEND_API_KEY = 'resend-key';
+      const warn = jest.spyOn(loggerOf(service), 'warn').mockImplementation(() => undefined);
+
+      service.deliver(client(), entry());
+
+      await flushDelivery();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('type=LEAVE_REQUESTED'));
+    });
+  });
+
   describe('recipientsForLessons', () => {
     it('asks nothing for no lesson', async () => {
       await expect(service.recipientsForLessons(client(), [])).resolves.toEqual([]);

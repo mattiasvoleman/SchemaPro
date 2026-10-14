@@ -4,7 +4,7 @@ import { recordRead } from '../access-log/access-log';
 import { requireUserId } from '../common/utils/request-context';
 import { parseDateString } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
-import type { AbsenceReportsQueryDto, GuardianLinksQueryDto, LeaveRequestsQueryDto } from './dto/family-reads.dto';
+import type { AbsenceReportsQueryDto, GuardianLinksQueryDto } from './dto/family-reads.dto';
 
 /** A guardian's child, as the family's pages list them: no contact details. */
 export interface ChildView {
@@ -29,20 +29,6 @@ export interface AbsenceReportView {
   createdAt: string;
 }
 
-export interface LeaveRequestView {
-  id: string;
-  studentId: string;
-  requestedById: string;
-  startDate: string;
-  endDate: string;
-  reason: string;
-  status: string;
-  decidedById: string | null;
-  decidedAt: string | null;
-  decisionNote: string | null;
-  createdAt: string;
-}
-
 export interface GuardianLinkView {
   id: string;
   guardianId: string;
@@ -62,11 +48,13 @@ function clock(value: Date | null): string | null {
 }
 
 /**
- * The family's reads (Läslogg): a guardian's children, absence reports and
- * leave requests, and an administrator's view of a pupil's guardians. The web
- * and the app read these straight from PostgREST until now; every one of them
- * names other people, so they come through here, where each response is
- * recorded in the read log in the same transaction (recordRead).
+ * The family's reads (Läslogg): a guardian's children, absence reports, and
+ * an administrator's view of a pupil's guardians. The leave requests are
+ * LeaveService's (GET /api/v1/leave-requests), which records them the same
+ * way. The web and the app read these straight from PostgREST until now;
+ * every one of them names other people, so they come through here, where
+ * each response is recorded in the read log in the same transaction
+ * (recordRead).
  *
  * Row security decides what each role sees, as it did for the direct reads:
  * a guardian their linked children's rows, a pupil their own, the
@@ -124,38 +112,6 @@ export class FamilyReadsService {
         date: day(row.date),
         startTime: clock(row.startTime),
         endTime: clock(row.endTime),
-        createdAt: row.createdAt.toISOString(),
-      }));
-    });
-  }
-
-  /** GET /api/v1/leave-requests: the requests row security shows the caller, newest first. */
-  async leaveRequests(query: LeaveRequestsQueryDto, user: AuthenticatedUser): Promise<LeaveRequestView[]> {
-    return this.prisma.withRls(user, async (tx) => {
-      const rows = await tx.leaveRequest.findMany({
-        where: query.status ? { status: query.status } : {},
-        select: {
-          id: true,
-          studentId: true,
-          requestedById: true,
-          startDate: true,
-          endDate: true,
-          reason: true,
-          status: true,
-          decidedById: true,
-          decidedAt: true,
-          decisionNote: true,
-          createdAt: true,
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-        take: FAMILY_READ_LIMIT,
-      });
-      await recordRead(tx, 'LEAVE_REQUESTS', rows.map((row) => row.studentId), user.channel);
-      return rows.map((row) => ({
-        ...row,
-        startDate: day(row.startDate),
-        endDate: day(row.endDate),
-        decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,
         createdAt: row.createdAt.toISOString(),
       }));
     });

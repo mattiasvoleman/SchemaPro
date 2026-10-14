@@ -18,7 +18,8 @@ export type NotificationKind =
   | 'LESSON_COVER_WITHDRAWN'
   | 'LESSON_REINSTATED'
   | 'LESSON_SUPERVISED_STUDY'
-  | 'CANCELLATION_DIGEST';
+  | 'CANCELLATION_DIGEST'
+  | 'LEAVE_REQUESTED';
 
 
 /** Where a transaction's outbox is kept (PrismaService.commitLocal). */
@@ -91,11 +92,7 @@ export class NotificationsService {
           ).map((r) => ({ userId: r.id, email: r.email }))
         : [];
 
-      const outbox = this.prisma.commitLocal<OutboxEntry[]>(tx, OUTBOX, () => {
-        const entries: OutboxEntry[] = [];
-        this.prisma.onCommit(tx, async () => this.delivery.enqueue(entries));
-        return entries;
-      });
+      const outbox = this.outboxOf(tx);
       if (!outbox) {
         // Not a withRls transaction: there is no commit to wait for, and
         // delivering now could tell somebody about a write that never lands.
@@ -115,6 +112,36 @@ export class NotificationsService {
     }
 
     return userIds.length;
+  }
+
+  /**
+   * Hands notices already written in `tx` to the delivery after the commit,
+   * as notifyUsers does with its own rows. For the one writer that is not
+   * notifyUsers: app.leave_request_notify (20261023091000), which writes a
+   * guardian's or a pupil's LEAVE_REQUESTED notice to the mentors because
+   * the filer may neither insert a teacher's notification nor read a
+   * teacher's address. The e-mail goes only when it is configured, and
+   * nothing goes outside a withRls transaction.
+   */
+  deliver(tx: PrismaClient, entry: OutboxEntry): void {
+    if (entry.recipients.length === 0) return;
+    if (!this.delivery.wants({ type: entry.type, email: entry.email })) return;
+    const outbox = this.outboxOf(tx);
+    if (!outbox) {
+      this.logger.warn(`Notice not delivered: no transaction to wait for [type=${entry.type}]`);
+      return;
+    }
+    const { email, ...rest } = entry;
+    outbox.push(email && this.delivery.emailConfigured() ? { ...rest, email } : rest);
+  }
+
+  /** The transaction's outbox, delivered by one hook after its commit; undefined outside withRls. */
+  private outboxOf(tx: PrismaClient): OutboxEntry[] | undefined {
+    return this.prisma.commitLocal<OutboxEntry[]>(tx, OUTBOX, () => {
+      const entries: OutboxEntry[] = [];
+      this.prisma.onCommit(tx, async () => this.delivery.enqueue(entries));
+      return entries;
+    });
   }
 
   /**

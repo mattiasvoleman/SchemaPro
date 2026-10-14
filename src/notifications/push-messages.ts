@@ -13,6 +13,9 @@ import type { NotificationKind } from './notifications.service';
  * of thing happened and when, on the school's clock, and the in-app inbox
  * behind the login has the rest. `data` is { notificationId, type } only.
  *
+ * A leave request waiting for the mentor (LEAVE_REQUESTED) says its days and
+ * nothing of the pupil or the reason.
+ *
  * TEACHER_ABSENCE_REPORTED has no text here: it is never pushed. An
  * avbokning digest (CANCELLATION_DIGEST) says how many of the person's
  * lessons and over which days, never the avbokning's name ("Prao åk 9" is
@@ -126,6 +129,12 @@ const SV: Record<PushKind, Template> = {
     bare: 'Lektioner är inställda.',
     many: 'Lektioner är inställda.',
   },
+  LEAVE_REQUESTED: {
+    title: 'Ledighet',
+    one: 'En ledighetsansökan {span} väntar på ditt beslut.',
+    bare: 'En ledighetsansökan väntar på ditt beslut.',
+    many: '{count} ledighetsansökningar väntar på ditt beslut.',
+  },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lektioner blir av',
     one: ({ lessons }) =>
@@ -209,6 +218,12 @@ const EN: Record<PushKind, Template> = {
     one: ({ lessons }) => (lessons === 1 ? 'A lesson {span} is cancelled.' : `${lessons} lessons {span} are cancelled.`),
     bare: 'Lessons are cancelled.',
     many: 'Lessons are cancelled.',
+  },
+  LEAVE_REQUESTED: {
+    title: 'Leave',
+    one: 'A leave request {span} is waiting for your decision.',
+    bare: 'A leave request is waiting for your decision.',
+    many: '{count} leave requests are waiting for your decision.',
   },
   CANCELLATION_DIGEST_REVERSED: {
     title: 'Lessons back on',

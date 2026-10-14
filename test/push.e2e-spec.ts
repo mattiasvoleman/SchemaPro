@@ -170,7 +170,7 @@ describe('push (e2e)', () => {
 
     it('sends nothing for a decision refused before it is written', async () => {
       arrangeLeaveDecision('APPROVED');
-      await request(http()).patch(`/api/v1/leave-requests/${REQUEST}/decide`).set('x-test-user', who('SCHOOL_ADMIN')).send({ status: 'REJECTED' }).expect(400);
+      await request(http()).patch(`/api/v1/leave-requests/${REQUEST}/decide`).set('x-test-user', who('SCHOOL_ADMIN')).send({ status: 'REJECTED' }).expect(409);
       await settle();
       expect(expoCalls()).toHaveLength(0);
       expect(harness.tx.notification.createMany).not.toHaveBeenCalled();
@@ -218,6 +218,7 @@ describe('push (e2e)', () => {
       status,
       student: { firstName: 'Ella', lastName: 'Ekström' },
     });
-    harness.tx.leaveRequest.update.mockResolvedValue({ id: REQUEST, status: 'REJECTED' });
+    // The decision is a conditional update of a pending row (20261023091000).
+    harness.tx.leaveRequest.updateMany.mockResolvedValue({ count: 1 });
   }
 });
