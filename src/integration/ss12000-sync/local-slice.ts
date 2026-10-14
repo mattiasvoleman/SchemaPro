@@ -38,8 +38,14 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "GuardianStudents" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "StudentGroupMembers" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "Ss12000DutyLinks" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
+    // An admin's apply locks the units it may write; the sync principal has
+    // no UPDATE arm on them, so for it this locks nothing, and it writes none.
+    // A row lock queues no INSERT, so the school's unit lock too (migration
+    // 20261031090000): a unit an admin adds meanwhile waits for the apply.
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`SchoolUnits:${schoolId}`}, 0))`);
+    await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "SchoolUnits" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
   }
-  const [school, users, groups, members, links, dutyLinks, years, deactivations] = await Promise.all([
+  const [school, users, groups, members, links, dutyLinks, years, deactivations, units] = await Promise.all([
     tx.school.findFirst({ where: { id: schoolId }, select: { name: true, timezone: true } }),
     tx.user.findMany({
       where: { schoolId },
@@ -79,6 +85,11 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
     tx.ss12000SyncChange.findMany({
       where: { schoolId, op: 'DEACTIVATE', applied: true, localId: { not: null } },
       select: { localId: true, runId: true },
+    }),
+    tx.schoolUnit.findMany({
+      where: { schoolId },
+      select: { id: true, name: true, code: true, schoolTypes: true, gradeFrom: true, gradeTo: true, ss12000Id: true, updatedAt: true },
+      orderBy: { id: 'asc' },
     }),
   ]);
   const runIds = [...new Set(deactivations.map((change) => change.runId))];
@@ -131,6 +142,7 @@ export async function readLocalSlice(tx: PrismaClient, schoolId: string, options
       endDate: day(year.endDate) ?? '',
       isActive: year.isActive,
     })),
+    units: units.map((unit) => ({ ...unit, schoolTypes: [...unit.schoolTypes] })),
     lastAppliedAt: null,
   };
 }
@@ -155,6 +167,15 @@ export function basisHash(slice: LocalSlice, source: SourceBasis): string {
       d.id, d.userId, d.academicYearId, d.ss12000DutyId, d.dutyRole, d.startDate, d.endDate, d.ended,
     ]),
     activeYear: slice.years.find((year) => year.isActive)?.id ?? null,
+    // Only when the school has units: a school without any hashes as it did
+    // before skolenheter, so a dry run made before them still applies.
+    ...((slice.units ?? []).length > 0
+      ? {
+          units: sortBy(slice.units!, (u) => u.id).map((u) => [
+            u.id, u.name, u.code, [...u.schoolTypes].sort().join(','), u.gradeFrom, u.gradeTo, u.ss12000Id,
+          ]),
+        }
+      : {}),
     source: {
       modifiedCursor: source.modifiedCursor?.toISOString() ?? null,
       deletedCursor: source.deletedCursor?.toISOString() ?? null,

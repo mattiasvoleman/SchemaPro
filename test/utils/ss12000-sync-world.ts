@@ -95,6 +95,8 @@ export class SyncWorld {
   readonly links: Row[] = [];
   readonly dutyLinks: Row[] = [];
   readonly years: Row[] = [];
+  /** SchoolUnits (20261031090000): what the admin's apply creates from the source's skolenheter. */
+  readonly units: Row[] = [];
   readonly rawStatements: string[] = [];
   /** What app.ss12000_due_sources answers on the next tick. */
   due: Array<{ source_id: string; school_id: string; full_due: boolean }> = [];
@@ -127,6 +129,9 @@ export class SyncWorld {
       studentGroupMember: table(this.members),
       guardianStudent: table(this.links, () => ({ origin: 'MANUAL' })),
       ss12000DutyLink: table(this.dutyLinks, () => ({ endedAt: null })),
+      schoolUnit: table(this.units, () => ({
+        code: null, schoolTypes: [], gradeFrom: null, gradeTo: null, ss12000Id: null, createdAt: now(), updatedAt: now(),
+      })),
       academicYear: table(this.years),
       school: table([this.school]),
     };

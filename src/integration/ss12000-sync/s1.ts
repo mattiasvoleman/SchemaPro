@@ -15,7 +15,7 @@
  *
  * What the parsers keep, per schema (required fields per S1 marked *):
  *
- *   Organisation  *id *displayName *organisationType, schoolUnitCode
+ *   Organisation  *id *displayName *organisationType, schoolUnitCode, schoolTypes
  *   Person        *id *givenName *familyName, middleName,
  *                 eduPersonPrincipalNames, securityMarking, personStatus,
  *                 emails[{*value *type}], enrolments[{*enroledAt.id,
@@ -130,7 +130,15 @@ export interface S1Organisation {
   displayName: string;
   organisationType: string;
   schoolUnitCode: string | null;
+  /** S1 SchoolTypesEnum values the record lists, once each; anything else is dropped. */
+  schoolTypes: string[];
 }
+
+/** S1 SchoolTypesEnum (openapi_ss12000_version2_1_0.yaml). */
+export const SCHOOL_TYPES = [
+  'FS', 'FKLASS', 'FTH', 'OPPFTH', 'GR', 'GRS', 'TR', 'SP', 'SAM', 'GY', 'GYS', 'VUX', 'VUXSFI', 'VUXGR', 'VUXGY',
+  'VUXSARGR', 'VUXSARTR', 'VUXSARGY', 'SFI', 'SARVUX', 'SARVUXGR', 'SARVUXGY', 'KU', 'YH', 'FHS', 'STF', 'KKU', 'HS', 'ABU', 'AU',
+] as const;
 
 export interface S1Email {
   value: string;
@@ -257,7 +265,8 @@ export function parseOrganisation(raw: unknown): Parsed<S1Organisation> {
   const displayName = text(raw['displayName'], 300);
   const organisationType = oneOf(ORGANISATION_TYPES, raw['organisationType']);
   if (!id || !displayName || !organisationType) return { ok: false, externalId: id };
-  return { ok: true, value: { id, displayName, organisationType, schoolUnitCode: text(raw['schoolUnitCode'], 32) } };
+  const schoolTypes = [...new Set(arrayOf(raw['schoolTypes']).filter((type): type is string => oneOf(SCHOOL_TYPES, type) !== null))];
+  return { ok: true, value: { id, displayName, organisationType, schoolUnitCode: text(raw['schoolUnitCode'], 32), schoolTypes } };
 }
 
 export function parsePerson(raw: unknown): Parsed<S1Person> {

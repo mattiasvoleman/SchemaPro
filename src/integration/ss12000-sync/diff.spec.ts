@@ -1,5 +1,5 @@
 import type { FetchedRoster } from './fetch-plan';
-import { brakeTripped, computeDiff, pickEmail, type LocalSlice, type LocalUser, type ProposedChange } from './diff';
+import { brakeTripped, computeDiff, pickEmail, type LocalSlice, type LocalUnit, type LocalUser, type ProposedChange } from './diff';
 import type { S1Duty, S1Group, S1Person } from './s1';
 
 const TODAY = '2026-10-10';
@@ -69,7 +69,7 @@ function roster(patch: Partial<FetchedRoster> & { people?: S1Person[] } = {}): F
   return {
     mode: 'FULL',
     incrementalUnsupported: false,
-    organisations: [{ id: ORG, displayName: 'Ekskolan', organisationType: 'Skolenhet', schoolUnitCode: '123' }],
+    organisations: [{ id: ORG, displayName: 'Ekskolan', organisationType: 'Skolenhet', schoolUnitCode: '12345678', schoolTypes: ['GR'] }],
     persons,
     enrolmentIds: new Set(people.filter((p) => p.enrolments.length > 0).map((p) => p.id)),
     dutyPersonIds: new Set(),
@@ -100,9 +100,17 @@ function user(n: number, patch: Partial<LocalUser> = {}): LocalUser {
   };
 }
 
+/** The source's skolenhet, linked and as the source has it: no ORGANISATION change unless a test makes one. */
+const UNIT = '20000000-0000-4000-8000-0000000000a1';
+const linkedUnit = (patch: Partial<LocalUnit> = {}): LocalUnit => ({
+  id: UNIT, name: 'Ekskolan', code: '12345678', schoolTypes: ['GR'], gradeFrom: 0, gradeTo: 9, ss12000Id: ORG,
+  updatedAt: new Date('2026-09-01T00:00:00Z'), ...patch,
+});
+
 function slice(patch: Partial<LocalSlice> = {}): LocalSlice {
   return {
     schoolName: 'Ekskolan',
+    units: [linkedUnit()],
     users: [],
     groups: [],
     teachingMembers: [],
@@ -582,6 +590,144 @@ describe('computeDiff: review findings (2026-10-11)', () => {
     expect(only(result.changes, 'DUTY_LINK', 'END')).toEqual([
       expect.objectContaining({ localId: loc(500), after: expect.objectContaining({ userLocalId: loc(1), personExternalId: ext(1), reason: 'ABSENT_FROM_SOURCE' }) }),
     ]);
+  });
+});
+
+describe('computeDiff: skolenheter', () => {
+  const OTHER_UNIT = '20000000-0000-4000-8000-0000000000a2';
+  const org = (patch: Record<string, unknown> = {}) => ({
+    id: ORG, displayName: 'Ekskolan', organisationType: 'Skolenhet', schoolUnitCode: '12345678', schoolTypes: ['GR'], ...patch,
+  });
+  const at = (grade: number, organisationId = ORG) =>
+    pupil(ext(100 + grade), `E${grade}`, 'Elev', `e${grade}@skola.se`, {
+      enrolments: [{ organisationId, schoolYear: grade, schoolType: 'GR', startDate: '2026-08-15', endDate: null, cancelled: false }],
+    });
+  const units = (changes: ProposedChange[]) => only(changes, 'ORGANISATION');
+
+  it('CREATEs a unit for a skolenhet nothing here is, with its code, skolformer and the årskurser its pupils are in', () => {
+    const result = diff(roster({ organisations: [org({ schoolTypes: ['FKLASS', 'GR', 'FTH'] })], people: [at(0), at(4), at(6)] }), slice({ units: [] }));
+    expect(units(result.changes)).toEqual([
+      expect.objectContaining({
+        op: 'CREATE', externalId: ORG, localId: null, selected: true, autoApplicable: false,
+        after: { name: 'Ekskolan', code: '12345678', schoolTypes: ['FKLASS', 'FTH', 'GR'], gradeFrom: 0, gradeTo: 6 },
+      }),
+    ]);
+  });
+
+  it('LINKs the one unlinked unit with the code, or by name when the source gives none, and writes what the source owns', () => {
+    const local = linkedUnit({ ss12000Id: null, name: 'Ekskolan F–9', schoolTypes: [], gradeFrom: 0, gradeTo: 9 });
+    const byCode = units(diff(roster({ organisations: [org()], people: [at(7)] }), slice({ units: [local] })).changes);
+    expect(byCode).toEqual([
+      expect.objectContaining({ op: 'LINK', localId: UNIT, after: { ss12000Id: ORG }, autoApplicable: false }),
+      // Written only if the LINK is: no local id, the source's id alone.
+      expect.objectContaining({ op: 'UPDATE', localId: null, externalId: ORG, after: { name: 'Ekskolan' }, autoApplicable: false }),
+      expect.objectContaining({ op: 'UPDATE', localId: null, externalId: ORG, after: { schoolTypes: ['GR'] }, autoApplicable: false }),
+    ]);
+    const byName = units(diff(roster({ organisations: [org({ schoolUnitCode: null, displayName: 'Ekskolan F–9' })] }), slice({ units: [{ ...local, code: null }] })).changes);
+    expect(byName).toEqual([
+      expect.objectContaining({ op: 'LINK', localId: UNIT, after: { ss12000Id: ORG } }),
+      expect.objectContaining({ op: 'UPDATE', localId: null, after: { schoolTypes: ['GR'] } }),
+    ]);
+    // Another name and no code: a new unit, not a guess.
+    expect(units(diff(roster({ organisations: [org({ schoolUnitCode: null })] }), slice({ units: [{ ...local, code: null }] })).changes).map((c) => c.op)).toEqual(['CREATE']);
+  });
+
+  it('UPDATEs what the source owns on a linked unit, one field a change, never automatically, and leaves out what the source does not give', () => {
+    const result = diff(roster({ organisations: [org({ displayName: 'Eksskolan', schoolUnitCode: '87654321', schoolTypes: [] })] }), slice());
+    expect(units(result.changes)).toEqual([
+      expect.objectContaining({
+        op: 'UPDATE', localId: UNIT, before: { unitName: 'Ekskolan', name: 'Ekskolan' }, after: { name: 'Eksskolan' },
+        selected: true, autoApplicable: false,
+      }),
+      expect.objectContaining({
+        op: 'UPDATE', localId: UNIT, before: { unitName: 'Ekskolan', code: '12345678' }, after: { code: '87654321' },
+        selected: true, autoApplicable: false,
+      }),
+    ]);
+  });
+
+  it('gives a code the source lists twice to the first organisation only', () => {
+    const result = diff(
+      roster({ organisations: [org({ id: OTHER_ORG, displayName: 'Andra' }), org({ displayName: 'Första' })] }),
+      slice({ units: [] }),
+    );
+    const creates = only(result.changes, 'ORGANISATION', 'CREATE').map((c) => [c.externalId, (c.after as { code: string | null }).code]);
+    expect(creates).toEqual([
+      [ORG, '12345678'],
+      [OTHER_ORG, null],
+    ]);
+    expect(codes(units(result.changes))).toEqual(['SCHOOL_UNIT_CODE_TAKEN']);
+  });
+
+  it('never writes a code that is not eight digits, or one another unit holds', () => {
+    const invalid = diff(roster({ organisations: [org({ schoolUnitCode: '1234-567' })] }), slice());
+    expect(codes(units(invalid.changes))).toEqual(['SCHOOL_UNIT_CODE_INVALID']);
+    const other = linkedUnit({ id: OTHER_UNIT, name: 'Annan', code: '87654321', ss12000Id: OTHER_ORG, gradeFrom: null, gradeTo: null });
+    const taken = diff(roster({ organisations: [org({ schoolUnitCode: '8765 4321' })] }), slice({ units: [linkedUnit(), other] }));
+    expect(units(taken.changes).map((c) => [c.op, c.conflictCode])).toEqual([
+      ['CONFLICT', 'SCHOOL_UNIT_CODE_TAKEN'],
+      ['INFO', 'SCHOOL_UNIT_NOT_CHOSEN'],
+    ]);
+  });
+
+  it('widens a span to the årskurser enrolled, never narrows it, deselects it after a local edit, and refuses an overlap', () => {
+    const narrow = linkedUnit({ gradeFrom: 7, gradeTo: 8 });
+    const widened = units(diff(roster({ organisations: [org()], people: [at(7), at(9)] }), slice({ units: [narrow] })).changes);
+    expect(widened).toEqual([
+      expect.objectContaining({ op: 'UPDATE', before: { unitName: 'Ekskolan', gradeFrom: 7, gradeTo: 8 }, after: { gradeFrom: 7, gradeTo: 9 }, selected: true }),
+    ]);
+    expect(units(diff(roster({ organisations: [org()], people: [at(8)] }), slice({ units: [narrow] })).changes)).toEqual([]);
+    const edited = units(diff(roster({ organisations: [org()], people: [at(9)] }), slice({ units: [narrow], lastAppliedAt: new Date('2026-08-01T00:00:00Z') })).changes);
+    expect(edited).toEqual([expect.objectContaining({ conflictCode: 'LOCAL_EDIT_SINCE_LAST_SYNC', selected: false })]);
+    const f6 = linkedUnit({ id: OTHER_UNIT, name: 'F–6', code: null, ss12000Id: null, gradeFrom: 0, gradeTo: 6 });
+    const overlap = units(diff(roster({ organisations: [org()], people: [at(6), at(9)] }), slice({ units: [narrow, f6] })).changes);
+    expect(overlap.map((c) => c.conflictCode)).toEqual(['SCHOOL_UNIT_SPAN_OVERLAP']);
+    // A unit the admin wrote after the last apply keeps its span by default, also one this run links.
+    const fresh = linkedUnit({ ss12000Id: null, gradeFrom: 7, gradeTo: 8, updatedAt: new Date('2026-10-01T00:00:00Z') });
+    const linking = units(diff(roster({ organisations: [org()], people: [at(9)] }), slice({ units: [fresh], lastAppliedAt: new Date('2026-09-15T00:00:00Z') })).changes);
+    expect(linking.find((c) => c.op === 'UPDATE' && c.after && 'gradeTo' in c.after)).toMatchObject({ conflictCode: 'LOCAL_EDIT_SINCE_LAST_SYNC', selected: false, localId: null });
+    // An incremental run sees only the pupils that changed: no span from it.
+    expect(units(diff(roster({ mode: 'INCREMENTAL', organisations: [org()], people: [at(9)] }), slice({ units: [narrow] })).changes)).toEqual([]);
+  });
+
+  it('notes an organisation of another type, a linked unit no longer chosen, and an S1 skolform SchemaPro does not hold', () => {
+    const result = diff(roster({ organisations: [org({ organisationType: 'Skola' })] }), slice());
+    expect(units(result.changes).map((c) => [c.op, c.conflictCode])).toEqual([['INFO', 'ORGANISATION_NOT_SKOLENHET']]);
+    const gone = diff(roster({ organisations: [org({ id: OTHER_ORG, schoolUnitCode: '11111111' })] }), slice());
+    expect(units(gone.changes).map((c) => [c.op, c.conflictCode, c.localId])).toEqual([
+      ['CREATE', null, null],
+      ['INFO', 'SCHOOL_UNIT_NOT_CHOSEN', UNIT],
+    ]);
+    const gy = diff(roster({ organisations: [org({ schoolTypes: ['GR', 'GY'] })] }), slice());
+    expect(units(gy.changes)).toEqual([expect.objectContaining({ op: 'INFO', conflictCode: 'SCHOOL_UNIT_TYPES_UNSUPPORTED', after: { displayName: 'Ekskolan', schoolTypes: ['GY'] } })]);
+  });
+
+  it("calls a class whose årskurs puts it in another unit than the source's GROUP_UNIT_MISMATCH", () => {
+    const f6 = linkedUnit({ id: OTHER_UNIT, name: 'Ekskolan F–6', code: '11111111', ss12000Id: OTHER_ORG, gradeFrom: 0, gradeTo: 6 });
+    const u79 = linkedUnit({ name: 'Ekskolan 7–9', gradeFrom: 7, gradeTo: 9 });
+    const klass = (grade: number) => ({ id: loc(900 + grade), name: `${grade}A`, kind: 'CLASS' as const, academicYearId: YEAR, gradeLevel: grade, ss12000Id: ext(900 + grade), updatedAt: new Date('2026-09-01T00:00:00Z') });
+    const result = diff(
+      roster({
+        organisations: [org({ displayName: 'Ekskolan 7–9' }), org({ id: OTHER_ORG, displayName: 'Ekskolan F–6', schoolUnitCode: '11111111' })],
+        groups: [group(ext(906), '6A', 'Klass', [], { organisationId: ORG }), group(ext(907), '7A', 'Klass', [])],
+      }),
+      slice({ units: [f6, u79], groups: [klass(6), klass(7)] }),
+    );
+    const mismatch = only(result.changes, 'GROUP', 'CONFLICT').filter((c) => c.conflictCode === 'GROUP_UNIT_MISMATCH');
+    expect(mismatch).toEqual([
+      expect.objectContaining({ externalId: ext(906), localId: loc(906), after: { name: '6A', gradeLevel: 6, sourceUnit: 'Ekskolan 7–9', localUnit: 'Ekskolan F–6' } }),
+    ]);
+
+    // F–6 linked by its code in this very run: 6A at that skolenhet is where it belongs.
+    const linking = diff(
+      roster({
+        organisations: [org({ displayName: 'Ekskolan 7–9' }), org({ id: OTHER_ORG, displayName: 'Ekskolan F–6', schoolUnitCode: '11111111' })],
+        groups: [group(ext(906), '6A', 'Klass', [], { organisationId: OTHER_ORG }), group(ext(907), '7A', 'Klass', [])],
+      }),
+      slice({ units: [{ ...f6, ss12000Id: null }, u79], groups: [klass(6), klass(7)] }),
+    );
+    expect(only(linking.changes, 'ORGANISATION', 'LINK').map((c) => c.localId)).toEqual([OTHER_UNIT]);
+    expect(linking.changes.filter((c) => c.conflictCode === 'GROUP_UNIT_MISMATCH')).toEqual([]);
   });
 });
 

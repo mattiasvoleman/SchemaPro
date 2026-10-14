@@ -243,6 +243,72 @@ describe('applyChanges, op by op', () => {
   });
 });
 
+describe('applyChanges: skolenheter', () => {
+  let tx: TxMock;
+  const UNIT = '20000000-0000-4000-8000-0000000000a1';
+  const OTHER = '20000000-0000-4000-8000-0000000000a2';
+  beforeEach(() => {
+    seq = 0;
+    tx = createTxMock();
+    tx.schoolUnit.updateMany.mockResolvedValue({ count: 1 });
+    tx.schoolUnit.create.mockResolvedValue({});
+  });
+  const run = (changes: StoredChange[]) => applyChanges(tx as unknown as PrismaClient, SCHOOL, changes, STAMP);
+  const local = (patch: Record<string, unknown>) => ({ id: UNIT, code: null, gradeFrom: null, gradeTo: null, ss12000Id: null, ...patch });
+
+  it('creates a unit under the source id with what the change carries, before any group', async () => {
+    const unit = change({ entity: 'ORGANISATION', op: 'CREATE', externalId: ext(1), after: { name: 'Ekskolan', code: '12345678', schoolTypes: ['GR', 'FKLASS', 'GY'], gradeFrom: 0, gradeTo: 6 } });
+    const group = change({ entity: 'GROUP', op: 'CREATE', externalId: ext(70), after: { name: '7A', kind: 'CLASS', academicYearId: YEAR, gradeLevel: 7 } });
+    const outcome = await run([group, unit]);
+    expect(outcome.applied.sort()).toEqual([unit.id, group.id].sort());
+    expect(tx.schoolUnit.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        schoolId: SCHOOL, name: 'Ekskolan', code: '12345678', schoolTypes: ['FKLASS', 'GR'], gradeFrom: 0, gradeTo: 6, ss12000Id: ext(1), updatedAt: STAMP,
+      }),
+    });
+    expect(tx.schoolUnit.create.mock.invocationCallOrder[0]).toBeLessThan(tx.studentGroup.createMany.mock.invocationCallOrder[0]!);
+  });
+
+  it('links only a unit still unlinked, then writes the source fields through the id it linked', async () => {
+    tx.schoolUnit.findMany.mockResolvedValue([local({})]);
+    const link = change({ entity: 'ORGANISATION', op: 'LINK', externalId: ext(1), localId: UNIT, after: { ss12000Id: ext(1) } });
+    const name = change({ entity: 'ORGANISATION', op: 'UPDATE', externalId: ext(1), localId: null, after: { name: 'Ekskolan' } });
+    const types = change({ entity: 'ORGANISATION', op: 'UPDATE', externalId: ext(1), localId: null, after: { schoolTypes: ['GR'] } });
+    expect((await run([types, name, link])).applied.sort()).toEqual([link.id, name.id, types.id].sort());
+    expect(tx.schoolUnit.updateMany.mock.calls.map(([args]) => args)).toEqual([
+      { where: { id: UNIT, schoolId: SCHOOL, ss12000Id: null }, data: { ss12000Id: ext(1), updatedAt: STAMP } },
+      { where: { id: UNIT, schoolId: SCHOOL }, data: { name: 'Ekskolan', updatedAt: STAMP } },
+      { where: { id: UNIT, schoolId: SCHOOL }, data: { schoolTypes: ['GR'], updatedAt: STAMP } },
+    ]);
+    tx.schoolUnit.updateMany.mockResolvedValue({ count: 0 });
+    const again = change({ entity: 'ORGANISATION', op: 'LINK', externalId: ext(1), localId: UNIT, after: { ss12000Id: ext(1) } });
+    expect((await run([again])).skipped.map((s) => s.code)).toEqual(['SS12000_TARGET_CHANGED']);
+  });
+
+  it('updates a unit through the source id only, including one this apply links', async () => {
+    tx.schoolUnit.findMany.mockResolvedValue([local({})]);
+    const link = change({ entity: 'ORGANISATION', op: 'LINK', externalId: ext(1), localId: UNIT, after: { ss12000Id: ext(1) } });
+    const span = change({ entity: 'ORGANISATION', op: 'UPDATE', externalId: ext(1), localId: null, after: { gradeFrom: 7, gradeTo: 9 } });
+    const stray = change({ entity: 'ORGANISATION', op: 'UPDATE', externalId: ext(2), localId: null, after: { gradeFrom: 0, gradeTo: 6 } });
+    const outcome = await run([span, stray, link]);
+    expect(outcome.applied.sort()).toEqual([link.id, span.id].sort());
+    expect(outcome.skipped.map((s) => [s.id, s.code])).toEqual([[stray.id, 'SS12000_DEPENDENCY_NOT_APPLIED']]);
+    expect(tx.schoolUnit.updateMany).toHaveBeenLastCalledWith({ where: { id: UNIT, schoolId: SCHOOL }, data: { gradeFrom: 7, gradeTo: 9, updatedAt: STAMP } });
+  });
+
+  it('skips a write another unit\'s code or årskurser block, instead of failing the whole apply', async () => {
+    tx.schoolUnit.findMany.mockResolvedValue([local({ id: OTHER, code: '87654321', gradeFrom: 0, gradeTo: 6, ss12000Id: ext(9) }), local({ ss12000Id: ext(1) })]);
+    const code = change({ entity: 'ORGANISATION', op: 'UPDATE', externalId: ext(1), localId: UNIT, after: { code: '87654321' } });
+    const span = change({ entity: 'ORGANISATION', op: 'UPDATE', externalId: ext(1), localId: UNIT, after: { gradeFrom: 5, gradeTo: 9 } });
+    const create = change({ entity: 'ORGANISATION', op: 'CREATE', externalId: ext(3), after: { name: 'Ny', code: null, schoolTypes: [], gradeFrom: 6, gradeTo: 6 } });
+    const outcome = await run([code, span, create]);
+    expect(outcome.applied).toEqual([]);
+    expect(outcome.skipped.map((s) => s.code)).toEqual(['SCHOOL_UNIT_SPAN_OVERLAP', 'SCHOOL_UNIT_CODE_TAKEN', 'SCHOOL_UNIT_SPAN_OVERLAP']);
+    expect(tx.schoolUnit.updateMany).not.toHaveBeenCalled();
+    expect(tx.schoolUnit.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('nothing is deleted', () => {
   it('no statement in the consumer module removes a row', () => {
     const dir = __dirname;

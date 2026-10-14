@@ -164,8 +164,12 @@ describe('S1 transcription (SS12000 2.1.0)', () => {
   it('parses an Organisation and refuses one without an organisationType from the enum', () => {
     expect(parseOrganisation({ id: ORG, displayName: 'Skolan', organisationType: 'Skolenhet', schoolUnitCode: '123' })).toEqual({
       ok: true,
-      value: { id: ORG, displayName: 'Skolan', organisationType: 'Skolenhet', schoolUnitCode: '123' },
+      value: { id: ORG, displayName: 'Skolan', organisationType: 'Skolenhet', schoolUnitCode: '123', schoolTypes: [] },
     });
+    // schoolTypes: S1's enum values once each; anything else is not a skolform.
+    expect(
+      parseOrganisation({ id: ORG, displayName: 'Skolan', organisationType: 'Skolenhet', schoolTypes: ['GR', 'FKLASS', 'GR', 'Grundskola', 7, 'GY'] }),
+    ).toMatchObject({ ok: true, value: { schoolTypes: ['GR', 'FKLASS', 'GY'] } });
     expect(parseOrganisation({ id: ORG, displayName: 'Skolan', organisationType: 'Gymnasium' }).ok).toBe(false);
   });
 

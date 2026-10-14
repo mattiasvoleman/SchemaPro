@@ -1,5 +1,6 @@
+import { normaliseUnitCode, spansOverlap, unitForGrade } from '../../school-units/school-unit-map';
 import type { FetchedRoster } from './fetch-plan';
-import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S1Person } from './s1';
+import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S1Organisation, type S1Person } from './s1';
 
 /*
  * The dry-run diff: what applying the source's roster would change in the
@@ -60,6 +61,28 @@ import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S
  * ended at the source is MEMBERSHIP_ENDED_AT_SOURCE / RESPONSIBLE_ENDED_AT_SOURCE
  * for the admin; a guardian with no active child left is deactivated
  * instead; a duty link that ended gets endedAt.
+ *
+ * SKOLENHETER (migration 20261031090000). Every chosen organisation of type
+ * Skolenhet is a SchoolUnit: matched by its ss12000Id first, else LINKed to
+ * the one unlinked local unit with the same skolenhetskod (or, when the
+ * source gives no code, the same name), else CREATEd. The source owns a
+ * linked unit's name, code and skolformer (the ones SchemaPro holds; an S1
+ * type outside them is SCHOOL_UNIT_TYPES_UNSUPPORTED); a code that is not
+ * eight digits is SCHOOL_UNIT_CODE_INVALID and never written, and a code
+ * another local unit holds is SCHOOL_UNIT_CODE_TAKEN. The årskurs span is
+ * SchemaPro's, since S1's Organisation has none: a FULL run reads the
+ * schoolYear of the active enrolments at the unit and proposes that span
+ * where the unit has none, or the span widened to hold them, never a
+ * narrower one, as an
+ * UPDATE of its own, deselected as LOCAL_EDIT_SINCE_LAST_SYNC when the admin
+ * changed the unit after the last apply, and SCHOOL_UNIT_SPAN_OVERLAP when
+ * it would share an årskurs with another unit. A linked unit the run no
+ * longer reads is SCHOOL_UNIT_NOT_CHOSEN, and an organisation of another
+ * type ORGANISATION_NOT_SKOLENHET. With two or more units, a class whose
+ * årskurs puts it in another unit than the source's group names is
+ * GROUP_UNIT_MISMATCH: the span is the map here, so either the span or the
+ * class's årskurs is not what the source has. No unit change is ever
+ * automatic: the sync principal reads units and writes none.
  */
 
 export type LocalRole = 'STUDENT' | 'TEACHER' | 'SCHOOL_ADMIN' | 'GUARDIAN';
@@ -98,6 +121,17 @@ export interface LocalYear {
   isActive: boolean;
 }
 
+export interface LocalUnit {
+  id: string;
+  name: string;
+  code: string | null;
+  schoolTypes: string[];
+  gradeFrom: number | null;
+  gradeTo: number | null;
+  ss12000Id: string | null;
+  updatedAt: Date;
+}
+
 export interface LocalDutyLink {
   id: string;
   userId: string;
@@ -117,6 +151,8 @@ export interface LocalSlice {
   guardianLinks: Array<{ guardianId: string; studentId: string; origin: 'MANUAL' | 'SS12000' }>;
   dutyLinks: LocalDutyLink[];
   years: LocalYear[];
+  /** The school's skolenheter; absent in a slice read before they existed (treated as none). */
+  units?: LocalUnit[];
   lastAppliedAt: Date | null;
 }
 
@@ -844,18 +880,247 @@ export function computeDiff(input: DiffInput): DiffResult {
     }
   }
 
-  // ---------------------------------------------------------------------
-  // The organisation: shown, never written to Schools.
-  // ---------------------------------------------------------------------
-  if (roster.organisations.length === 1 && roster.organisations[0]!.displayName !== local.schoolName) {
-    const organisation = roster.organisations[0]!;
-    note('ORGANISATION', 'INFO', 'ORGANISATION_NAME_DIFFERS', organisation.id, null, {
+  unitsDiff({ roster, local, today, orgs, push, note, editedLocally, activeYear, groupYear, supported });
+
+  return { changes, counts, sourceEmpty: null };
+}
+
+/** The skolformer a unit holds here (SchoolUnitType); the order SchemaPro lists them in. */
+const UNIT_TYPES = ['FKLASS', 'FTH', 'GR', 'GRS', 'TR', 'SP', 'SAM'];
+
+interface UnitsDiffInput {
+  roster: FetchedRoster;
+  local: LocalSlice;
+  today: string;
+  orgs: Set<string>;
+  push: (change: ProposedChange) => void;
+  note: (entity: ChangeEntity, op: 'CONFLICT' | 'INFO', code: string, externalId: string | null, localId?: string | null, after?: Record<string, unknown> | null) => void;
+  editedLocally: (updatedAt: Date) => boolean;
+  activeYear: LocalYear | null;
+  groupYear: Map<string, LocalYear | null>;
+  supported: S1Group[];
+}
+
+/** The skolenheter: see SKOLENHETER above. */
+function unitsDiff(input: UnitsDiffInput): void {
+  const { roster, local, today, orgs, push, note, editedLocally } = input;
+  const units = local.units ?? [];
+  const byExt = new Map(units.filter((unit) => unit.ss12000Id).map((unit) => [unit.ss12000Id!, unit]));
+  const sameTypes = (a: string[], b: string[]) => a.length === b.length && a.every((type, index) => type === b[index]);
+
+  // The span each unit will have if the selected changes are applied: the
+  // local one, or the one proposed below. Keyed by the local id, or by the
+  // source id for a unit this run creates.
+  const planned = new Map<string, { key: string; ext: string | null; name: string; code: string | null; gradeFrom: number | null; gradeTo: number | null }>();
+  for (const unit of units) {
+    planned.set(unit.id, { key: unit.id, ext: unit.ss12000Id, name: unit.name, code: unit.code, gradeFrom: unit.gradeFrom, gradeTo: unit.gradeTo });
+  }
+  const overlaps = (key: string, span: { gradeFrom: number; gradeTo: number }) =>
+    [...planned.values()].find((other) => other.key !== key && spansOverlap(other, span)) ?? null;
+  const claimed = new Set<string>();
+  // Codes this run already gives a unit: a second organisation with one gets none.
+  const codesClaimed = new Set<string>();
+
+  for (const organisation of [...roster.organisations].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+    if (organisation.organisationType !== 'Skolenhet') {
+      note('ORGANISATION', 'INFO', 'ORGANISATION_NOT_SKOLENHET', organisation.id, null, {
+        displayName: organisation.displayName,
+        organisationType: organisation.organisationType,
+      });
+      continue;
+    }
+    const linked = byExt.get(organisation.id) ?? null;
+    const code = sourceCode(organisation, note, linked?.id ?? null);
+    const types = UNIT_TYPES.filter((type) => organisation.schoolTypes.includes(type));
+    const unsupported = organisation.schoolTypes.filter((type) => !UNIT_TYPES.includes(type));
+    if (unsupported.length > 0) {
+      note('ORGANISATION', 'INFO', 'SCHOOL_UNIT_TYPES_UNSUPPORTED', organisation.id, linked?.id ?? null, {
+        displayName: organisation.displayName,
+        schoolTypes: unsupported,
+      });
+    }
+    // Only a FULL run reads every pupil: an incremental one would see the
+    // årskurser of the pupils that changed.
+    const span = roster.mode === 'FULL' ? sourceSpan(roster, organisation.id, today) : null;
+    const holder = code ? units.find((unit) => unit.code === code && unit.id !== linked?.id) : undefined;
+
+    // The local unit this organisation is, or would be.
+    let target: LocalUnit | null = linked;
+    let linking = false;
+    if (!target) {
+      if (holder && holder.ss12000Id === null && !claimed.has(holder.id)) {
+        target = holder;
+        linking = true;
+      } else if (!code) {
+        const named = units.filter((unit) => unit.ss12000Id === null && unit.name === organisation.displayName && !claimed.has(unit.id));
+        if (named.length === 1) {
+          target = named[0]!;
+          linking = true;
+        }
+      }
+    }
+    // A code another unit holds (linked to another organisation, or already
+    // claimed in this run) is never written.
+    const codeTaken = code !== null && ((holder !== undefined && holder.id !== target?.id) || codesClaimed.has(code));
+    if (codeTaken) {
+      note('ORGANISATION', 'CONFLICT', 'SCHOOL_UNIT_CODE_TAKEN', organisation.id, target?.id ?? null, {
+        displayName: organisation.displayName,
+        schoolUnitCode: code,
+        holder: holder && holder.id !== target?.id ? holder.name : null,
+      });
+    }
+    const writeCode = code !== null && !codeTaken ? code : undefined;
+    if (writeCode !== undefined) codesClaimed.add(writeCode);
+    if (target) {
+      claimed.add(target.id);
+      // As the apply will leave it: the source's id, name and code.
+      planned.set(target.id, {
+        ...planned.get(target.id)!,
+        ext: organisation.id,
+        name: organisation.displayName,
+        ...(writeCode !== undefined ? { code: writeCode } : {}),
+      });
+    }
+
+    if (!target) {
+      const key = `ext:${organisation.id}`;
+      const free = span && !overlaps(key, span) ? span : null;
+      if (span && !free) {
+        note('ORGANISATION', 'CONFLICT', 'SCHOOL_UNIT_SPAN_OVERLAP', organisation.id, null, {
+          displayName: organisation.displayName,
+          gradeFrom: span.gradeFrom,
+          gradeTo: span.gradeTo,
+          other: overlaps(key, span)!.name,
+        });
+      }
+      planned.set(key, {
+        key, ext: organisation.id, name: organisation.displayName, code: writeCode ?? null, gradeFrom: free?.gradeFrom ?? null, gradeTo: free?.gradeTo ?? null,
+      });
+      push({
+        entity: 'ORGANISATION', op: 'CREATE', externalId: organisation.id, localId: null,
+        before: null,
+        after: {
+          name: organisation.displayName,
+          code: writeCode ?? null,
+          schoolTypes: types,
+          gradeFrom: free?.gradeFrom ?? null,
+          gradeTo: free?.gradeTo ?? null,
+        },
+        conflictCode: null, selected: true, autoApplicable: false, protectedIdentity: false,
+      });
+      continue;
+    }
+
+    // What the source owns: name, the code it gives, the skolformer it
+    // lists. One UPDATE each, as a person's name and address are, so the
+    // review shows every one and the admin chooses each; beside a LINK they
+    // carry no local id and are written only if the LINK is.
+    const updates: Array<[string, unknown, unknown]> = [];
+    if (target.name !== organisation.displayName) updates.push(['name', target.name, organisation.displayName]);
+    if (writeCode !== undefined && writeCode !== target.code) updates.push(['code', target.code, writeCode]);
+    if (types.length > 0 && !sameTypes(types, UNIT_TYPES.filter((type) => target!.schoolTypes.includes(type)))) {
+      updates.push(['schoolTypes', target.schoolTypes, types]);
+    }
+    if (linking) {
+      push({
+        entity: 'ORGANISATION', op: 'LINK', externalId: organisation.id, localId: target.id,
+        before: { name: target.name, code: target.code, schoolTypes: target.schoolTypes },
+        after: { ss12000Id: organisation.id },
+        conflictCode: null, selected: true, autoApplicable: false, protectedIdentity: false,
+      });
+    }
+    for (const [field, from, to] of updates) {
+      push({
+        entity: 'ORGANISATION', op: 'UPDATE', externalId: organisation.id, localId: linking ? null : target.id,
+        // unitName: what the review calls the unit; never written.
+        before: { unitName: target.name, [field]: from }, after: { [field]: to },
+        conflictCode: null, selected: true, autoApplicable: false, protectedIdentity: false,
+      });
+    }
+
+    // The span: SchemaPro's. The source's enrolments set one where the unit
+    // has none and widen one they fall outside; a span wider than this
+    // year's pupils (an F–6 with no förskoleklass this year) is left alone.
+    if (!span) continue;
+    const wanted =
+      target.gradeFrom === null || target.gradeTo === null
+        ? span
+        : { gradeFrom: Math.min(span.gradeFrom, target.gradeFrom), gradeTo: Math.max(span.gradeTo, target.gradeTo) };
+    if (wanted.gradeFrom === target.gradeFrom && wanted.gradeTo === target.gradeTo) continue;
+    const other = overlaps(target.id, wanted);
+    if (other) {
+      note('ORGANISATION', 'CONFLICT', 'SCHOOL_UNIT_SPAN_OVERLAP', organisation.id, linking ? null : target.id, {
+        displayName: organisation.displayName,
+        gradeFrom: wanted.gradeFrom,
+        gradeTo: wanted.gradeTo,
+        other: other.name,
+      });
+      continue;
+    }
+    planned.set(target.id, { ...planned.get(target.id)!, ext: organisation.id, ...wanted });
+    // A unit the admin wrote after the last apply, linked or about to be.
+    const localEdit = editedLocally(target.updatedAt);
+    push({
+      entity: 'ORGANISATION', op: 'UPDATE', externalId: organisation.id,
+      // A unit this apply links is reached through the source id alone.
+      localId: linking ? null : target.id,
+      before: { unitName: target.name, gradeFrom: target.gradeFrom, gradeTo: target.gradeTo },
+      after: { gradeFrom: wanted.gradeFrom, gradeTo: wanted.gradeTo },
+      conflictCode: localEdit ? 'LOCAL_EDIT_SINCE_LAST_SYNC' : null,
+      selected: !localEdit, autoApplicable: false, protectedIdentity: false,
+    });
+  }
+
+  for (const unit of units) {
+    if (unit.ss12000Id && !roster.organisations.some((organisation) => organisation.id === unit.ss12000Id)) {
+      note('ORGANISATION', 'INFO', 'SCHOOL_UNIT_NOT_CHOSEN', unit.ss12000Id, unit.id, { name: unit.name });
+    }
+  }
+
+  // A class the source puts in one unit and its årskurs in another.
+  const map = [...planned.values()].map((unit) => ({ ...unit, id: unit.key }));
+  if (map.length < 2 || !input.activeYear) return;
+  const groupsByExt = new Map(local.groups.filter((group) => group.ss12000Id).map((group) => [group.ss12000Id!, group]));
+  for (const group of [...input.supported].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    if (group.groupType !== 'Klass' || !orgs.has(group.organisationId)) continue;
+    if (input.groupYear.get(group.id)?.id !== input.activeYear.id) continue;
+    const local = groupsByExt.get(group.id);
+    if (!local || local.gradeLevel === null) continue;
+    const unit = unitForGrade(map, local.gradeLevel);
+    if (!unit || unit.ext === group.organisationId) continue;
+    const named = map.find((entry) => entry.ext === group.organisationId);
+    note('GROUP', 'CONFLICT', 'GROUP_UNIT_MISMATCH', group.id, local.id, {
+      name: local.name,
+      gradeLevel: local.gradeLevel,
+      sourceUnit: named?.name ?? null,
+      localUnit: unit.name,
+    });
+  }
+}
+
+/** The organisation's skolenhetskod when it is one; a code that is not is named and dropped. */
+function sourceCode(organisation: S1Organisation, note: UnitsDiffInput['note'], localId: string | null): string | null {
+  if (organisation.schoolUnitCode === null) return null;
+  const code = normaliseUnitCode(organisation.schoolUnitCode);
+  if (code === null) {
+    note('ORGANISATION', 'CONFLICT', 'SCHOOL_UNIT_CODE_INVALID', organisation.id, localId, {
       displayName: organisation.displayName,
       schoolUnitCode: organisation.schoolUnitCode,
     });
   }
+  return code;
+}
 
-  return { changes, counts, sourceEmpty: null };
+/** Lowest to highest schoolYear (0..10) of the enrolments at the organisation active on `today`; null when none gives one. */
+function sourceSpan(roster: FetchedRoster, organisationId: string, today: string): { gradeFrom: number; gradeTo: number } | null {
+  const grades: number[] = [];
+  for (const person of roster.persons.values()) {
+    for (const enrolment of person.enrolments) {
+      if (enrolment.organisationId !== organisationId || enrolment.cancelled || !activeOn(today, enrolment.startDate, enrolment.endDate)) continue;
+      if (enrolment.schoolYear !== null && enrolment.schoolYear >= 0 && enrolment.schoolYear <= 10) grades.push(enrolment.schoolYear);
+    }
+  }
+  return grades.length === 0 ? null : { gradeFrom: Math.min(...grades), gradeTo: Math.max(...grades) };
 }
 
 /** The deactivations a brake counts against `max(floor, percent %)` of the linked active people. */
