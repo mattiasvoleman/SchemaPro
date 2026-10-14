@@ -24,6 +24,9 @@ into an unstaffed one:
   load after is a subset of their load before and never grows. This mirrors
   the gateway's enforcement exactly, which only refuses NEW placements and
   GROWING loads (overTargetFinding, judgeRequirementWrite).
+* A teacher a row excludes (excludedTeacherIds) is never NEWLY given it, as
+  one outside its set is not under respect; a kept row's lead keeps it
+  whatever either says.
 
 TWO STAGES, NOT ONE WEIGHTED SUM. Stage 1 minimises what stays unstaffed,
 alone — the number of rows first, then their lesson minutes between answers
@@ -181,6 +184,11 @@ class StaffProblem:
     #: Row → its eligibility set (teacher positions), empty when it has none.
     eligible: list[frozenset[int]]
     last_year: list[frozenset[int]]
+    #: Row → the teachers it is never newly given, whatever their
+    #: qualification or room (excludedTeacherIds). Like the co-teacher, they
+    #: are taken out of the row's pool row by row, so the pools stay shared
+    #: per eligibility set.
+    excluded: list[frozenset[int]]
     #: Row → its class, as a position in order of first appearance.
     group: list[int]
     #: Class → teachers already in it through a fixed row's lead or any
@@ -206,11 +214,19 @@ class StaffProblem:
 
     def qualified_pool(self, row: int) -> list[int]:
         """Teachers not excluded from `row` by qualification or by being its
-        co-teacher — whatever their target or room."""
+        co-teacher — whatever their target or room. The teachers the row
+        excludes are in it: unstaffed_reason reads them as candidates
+        without room (see there)."""
         co = self.co.get(row)
         if self.respect:
             return sorted(t for t in self.eligible[row] if t != co)
         return [t for t in range(len(self.teachers)) if t != co]
+
+    def barred(self, row: int) -> frozenset[int]:
+        """Who is never newly given `row`, whatever their room: the teachers
+        it excludes and its co-teacher."""
+        co = self.co.get(row)
+        return self.excluded[row] if co is None else self.excluded[row] | {co}
 
 
 def prepare(request: StaffRequest) -> StaffProblem:
@@ -282,6 +298,10 @@ def prepare(request: StaffRequest) -> StaffProblem:
             frozenset(teacher_index[teacher] for teacher in row.last_year_teacher_ids)
             for row in rows
         ],
+        excluded=[
+            frozenset(teacher_index[teacher] for teacher in row.excluded_teacher_ids)
+            for row in rows
+        ],
         group=group,
         present={key: frozenset(value) for key, value in present.items()},
         current_load=current_load,
@@ -328,7 +348,8 @@ def _pools(problem: StaffProblem) -> list[_ByCap]:
 
 def _in_pool_with_room(problem: StaffProblem, row: int, teacher: int) -> bool:
     """Whether `teacher` is among the row's pool's normal teachers with room —
-    what _ByCap.with_room returns — co-teacher or not."""
+    what _ByCap.with_room returns — barred from the row or not (the shared
+    pool knows nothing of one row's co-teacher or exclusions)."""
     if not problem.normal[teacher]:
         return False
     if problem.respect and teacher not in problem.eligible[row]:
@@ -342,11 +363,10 @@ def candidate_counts(problem: StaffProblem) -> dict[int, int]:
     counts: dict[int, int] = {}
     for row in problem.free:
         count = pools[row].count_with_room(problem.rows[row].charge_tenths)
-        co = problem.co.get(row)
-        if co is not None and _in_pool_with_room(problem, row, co):
-            count -= 1
+        barred = problem.barred(row)
+        count -= sum(1 for t in barred if _in_pool_with_room(problem, row, t))
         lead = problem.current.get(row)
-        if lead is not None and not _in_pool_with_room(problem, row, lead):
+        if lead is not None and (lead in barred or not _in_pool_with_room(problem, row, lead)):
             count += 1  # a kept row's lead is in its domain whatever else holds
         counts[row] = count
     return counts
@@ -365,13 +385,14 @@ def estimate_model_size(problem: StaffProblem) -> int:
 
 
 def build_domains(problem: StaffProblem) -> None:
-    """E_r: the normal teachers with room who may take the row, plus — for a
-    kept row — its current lead, always."""
+    """E_r: the normal teachers with room who may take the row — never its
+    co-teacher or a teacher it excludes — plus, for a kept row, its current
+    lead, always."""
     pools = _pools(problem)
     for row in problem.free:
         charge = problem.rows[row].charge_tenths
-        co = problem.co.get(row)
-        candidates = {t for t in pools[row].with_room(charge) if t != co}
+        barred = problem.barred(row)
+        candidates = {t for t in pools[row].with_room(charge) if t not in barred}
         lead = problem.current.get(row)
         if lead is not None:
             candidates.add(lead)
@@ -426,6 +447,9 @@ def check(problem: StaffProblem, answer: Assignment) -> None:
                 raise SolverBuildError(msg)
             if problem.respect and teacher not in problem.eligible[row]:
                 msg = f"The staffing model gave row {row} to an unqualified teacher."
+                raise SolverBuildError(msg)
+            if teacher in problem.excluded[row]:
+                msg = f"The staffing model gave row {row} to a teacher it excludes."
                 raise SolverBuildError(msg)
         load[teacher] += problem.rows[row].charge_tenths
     for teacher, total in enumerate(load):
@@ -832,12 +856,13 @@ def verdicts(problem: StaffProblem) -> list[StaffConflict]:
     # STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT: the Fach-Engpass, as a lower bound.
     # D_s is what the subject's free rows that SOMEBODY may take charge — E_r
     # before the room prune: the normal teachers the row's rule admits, its
-    # co-teacher excepted, and a kept row's lead. A_s is the most the teachers
-    # who may take any of them could give it: a normal teacher's whole room
-    # (shared with other subjects, so an over-estimate), a keep-or-shed
-    # teacher's own kept rows in the subject. Whatever the search does, at
-    # least D_s − A_s of the subject stays unstaffed. Measured against the
-    # hard limit, unlike Fas 1's planning bottleneck against the target.
+    # co-teacher and the teachers it excludes excepted, and a kept row's
+    # lead. A_s is the most the teachers who may take any of them could give
+    # it: a normal teacher's whole room (shared with other subjects, so an
+    # over-estimate), a keep-or-shed teacher's own kept rows in the subject.
+    # Whatever the search does, at least D_s − A_s of the subject stays
+    # unstaffed. Measured against the hard limit, unlike Fas 1's planning
+    # bottleneck against the target.
     by_subject: dict[UUID, list[int]] = {}
     for row in problem.free:
         by_subject.setdefault(problem.rows[row].subject_id, []).append(row)
@@ -848,6 +873,8 @@ def verdicts(problem: StaffProblem) -> list[StaffConflict]:
         shed: dict[int, int] = defaultdict(int)
         for row in rows:
             pool = pools[row]
+            if problem.excluded[row]:
+                pool = pool - problem.excluded[row]
             co = problem.co.get(row)
             lead = problem.current.get(row)
             reachable = len(pool) - (1 if co in pool else 0)
@@ -889,15 +916,16 @@ def verdicts(problem: StaffProblem) -> list[StaffConflict]:
 
     # STAFF_TEACHER_CAPACITY_ZERO: a teacher with a target whose load they
     # cannot shed already leaves no room for the smallest row they could
-    # otherwise take — one they do not lead or co-teach, and (respected) one
-    # they qualify for. What they cannot shed is their fixed load (fixed
-    # rows, co-teaching, duties) for a normal teacher: their kept rows may
-    # move to somebody else, and then a row does fit, so counting those
-    # would refuse what the same proposal assigns. A keep-or-shed teacher is
-    # given nothing new whatever they shed, so for them it is what they carry
-    # today. A target of zero (a full nedsättning) is not a capacity problem
-    # to report, and a teacher with no target has no limit to be at. Rows are
-    # walked smallest first, so a teacher costs a step or two, not a pass.
+    # otherwise take — one they do not lead, co-teach or stand excluded from,
+    # and (respected) one they qualify for. What they cannot shed is their
+    # fixed load (fixed rows, co-teaching, duties) for a normal teacher: their
+    # kept rows may move to somebody else, and then a row does fit, so
+    # counting those would refuse what the same proposal assigns. A
+    # keep-or-shed teacher is given nothing new whatever they shed, so for
+    # them it is what they carry today. A target of zero (a full nedsättning)
+    # is not a capacity problem to report, and a teacher with no target has
+    # no limit to be at. Rows are walked smallest first, so a teacher costs a
+    # step or two, not a pass.
     by_charge = sorted(problem.free, key=lambda row: (problem.rows[row].charge_tenths, row))
     for teacher, spec in enumerate(problem.teachers):
         if not problem.target_above_zero(teacher) or spec.limit_tenths is None:
@@ -908,6 +936,7 @@ def verdicts(problem: StaffProblem) -> list[StaffConflict]:
                 for row in by_charge
                 if problem.current.get(row) != teacher
                 and problem.co.get(row) != teacher
+                and teacher not in problem.excluded[row]
                 and (not problem.respect or teacher in problem.eligible[row])
             ),
             None,
@@ -937,7 +966,16 @@ def answer_loads(problem: StaffProblem, answer: Assignment) -> list[int]:
 
 def unstaffed_reason(problem: StaffProblem, row: int, load: list[int]) -> str:
     """Why an open row ends unstaffed, judged on the final answer's loads
-    (answer_loads)."""
+    (answer_loads).
+
+    A teacher the row excludes counts as a candidate WITHOUT room. The
+    gateway excludes a post from a row whose charge it cannot fit to that
+    post's own periods: a question of room, asked of a teacher who may well
+    hold a covering qualification and a target. So a row only such teachers
+    could take is NO_CAPACITY_LEFT. Never NOT_REACHED, which would say the
+    search stopped short of a teacher it was never allowed to use, and
+    never NO_QUALIFIED_TEACHER, which the dialog reads as "nobody holds one".
+    """
     if problem.recorded and problem.respect and not (
         problem.eligible[row] - {problem.co.get(row)}
     ):
@@ -947,7 +985,11 @@ def unstaffed_reason(problem: StaffProblem, row: int, load: list[int]) -> str:
     if not with_target:
         return "NO_TEACHER_WITH_TARGET"
     charge = problem.rows[row].charge_tenths
-    if any(problem.normal[t] and load[t] + charge <= problem.cap[t] for t in with_target):
+    excluded = problem.excluded[row]
+    if any(
+        t not in excluded and problem.normal[t] and load[t] + charge <= problem.cap[t]
+        for t in with_target
+    ):
         return "NOT_REACHED"
     return "NO_CAPACITY_LEFT"
 
