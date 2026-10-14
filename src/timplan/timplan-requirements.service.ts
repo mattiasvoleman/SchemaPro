@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { LocalTimplanStatus } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -12,6 +12,9 @@ import {
   type ProposedRow,
   type SkippedRow,
 } from './generate-requirements';
+
+/** The problem `code` of a språkval block whose name another årskurs' posts hold. */
+export const LANGUAGE_BLOCK_IN_OTHER_GRADE = 'LANGUAGE_BLOCK_IN_OTHER_GRADE';
 
 export interface GeneratedRow extends ProposedRow {
   /** The created requirement; absent in a preview. */
@@ -60,6 +63,15 @@ export interface GenerateRequirementsResponse {
  * block as it stands with all of them in it: a block the school already filled
  * with rows of other lessons refuses the apply as a whole (409
  * BLOCK_MEMBERS_DIFFER), and nothing is written.
+ *
+ * A NAME IS NOT AN ÅRSKURS. "Språkval åk 7" can already hold another årskurs'
+ * posts — a block carried at its årskurs by the rollover keeps its name, and a
+ * school names its blocks as it likes — and joining it would place åk 7's
+ * languages at the same times as åk 8's. So a block of that name with a post
+ * on a group of another årskurs refuses the preview and the apply alike (409
+ * LANGUAGE_BLOCK_IN_OTHER_GRADE), naming the groups, before anything is
+ * written. A group without an årskurs, as a teaching group often is, says
+ * nothing either way and refuses nothing.
  *
  * No teacher is set, so the staffing policy's checks have nothing to judge;
  * no period is set, so the year's bounds need no FOR SHARE read. A draft plan
@@ -160,6 +172,36 @@ export class TimplanRequirementsService {
               }
             : {}),
         });
+
+        if (proposal.blocks && proposal.blocks.length > 0) {
+          const named = await tx.teachingBlock.findMany({
+            where: { academicYearId: dto.academicYearId, name: { in: proposal.blocks.map((block) => block.name) } },
+            select: {
+              name: true,
+              requirements: { select: { studentGroup: { select: { name: true, gradeLevel: true } } } },
+            },
+          });
+          for (const block of proposal.blocks) {
+            const held = named.find((candidate) => candidate.name === block.name);
+            const others = [
+              ...new Set(
+                (held?.requirements ?? [])
+                  .map((requirement) => requirement.studentGroup)
+                  .filter((group) => group.gradeLevel !== null && group.gradeLevel !== block.gradeLevel)
+                  .map((group) => group.name),
+              ),
+            ].sort((a, b) => a.localeCompare(b, 'sv'));
+            if (others.length > 0) {
+              throw new ConflictException({
+                message:
+                  `Läsåret har redan ett block som heter "${block.name}", och det håller poster i en annan ` +
+                  `årskurs (${others.join(', ')}). Språkvalet i åk ${block.gradeLevel} läggs inte i det. ` +
+                  'Byt namn på det blocket under Block på Timplansposter, och skapa sedan timplansposterna igen.',
+                code: LANGUAGE_BLOCK_IN_OTHER_GRADE,
+              });
+            }
+          }
+        }
 
         const answer = {
           localTimplanId: plan.id,
