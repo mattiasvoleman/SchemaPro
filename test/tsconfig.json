@@ -8,5 +8,10 @@
     "isolatedModules": true,
     "types": ["jest", "node"]
   },
-  "include": ["**/*.ts", "../src/**/*.ts"]
+  "include": ["**/*.ts", "../src/**/*.ts"],
+  // Its own, because an `exclude` is inherited whole: the root's leaves out
+  // `test` and `src/**/*.spec.ts`, the very files this config exists to check,
+  // and under it this typecheck saw neither. Nothing the includes reach needs
+  // leaving out.
+  "exclude": []
 }
