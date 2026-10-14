@@ -51,14 +51,18 @@ import {
 } from "@/components/schedule/planning-year";
 
 /**
- * A history row's word for how the run ended: the gateway's own refusal over
- * unstaffed posts first (it travels as INFEASIBLE, but the engine was never
- * asked), then a failed job, then the solver's verdict, then the job's state.
- * The same order solverRunVariant reads them in for the colour.
+ * A history row's word for how the run ended: the gateway's own refusals
+ * first — over unstaffed posts, or a partly locked parallel block (they travel
+ * as INFEASIBLE, but the engine was never asked) — then a failed job, then the
+ * solver's verdict, then the job's state. The same order solverRunVariant
+ * reads them in for the colour.
  */
 function historyStatusKey(run: OptimizationJob): string {
   if (run.solverStatus === "INFEASIBLE" && run.conflictSummaryCode === "STAFF_UNSTAFFED_REQUIREMENTS") {
     return "UNSTAFFED";
+  }
+  if (run.solverStatus === "INFEASIBLE" && run.conflictSummaryCode === "BLOCK_PARTLY_LOCKED_SUMMARY") {
+    return "PARTLY_LOCKED";
   }
   if (run.status === "FAILED") return "FAILED";
   return run.solverStatus ?? run.status;
@@ -392,6 +396,10 @@ export default function GeneratePage() {
   const refusedUnstaffed =
     solverStatus === "INFEASIBLE" &&
     job?.conflictSummaryCode === "STAFF_UNSTAFFED_REQUIREMENTS";
+  /** The same for a parallel block with some of its lessons locked: the conflict below names it. */
+  const refusedPartlyLocked =
+    solverStatus === "INFEASIBLE" &&
+    job?.conflictSummaryCode === "BLOCK_PARTLY_LOCKED_SUMMARY";
 
   /** When a run was started, in the app's language — not the browser's. */
   const runDate = useMemo(
@@ -691,7 +699,9 @@ export default function GeneratePage() {
                 : tCommon("error")
               : refusedUnstaffed
                 ? t("statusUnstaffed")
-                : solverStatus
+                : refusedPartlyLocked
+                  ? t("statusPartlyLocked")
+                  : solverStatus
                   ? t(`status${solverStatus}`)
                   : undefined
           }
@@ -724,6 +734,8 @@ export default function GeneratePage() {
                 {t("preStaffedLink")}
               </Link>
             </p>
+          ) : refusedPartlyLocked ? (
+            <p className="max-w-prose text-sm text-muted-foreground">{t("partlyLockedHint")}</p>
           ) : solverStatus === "INFEASIBLE" ? (
             <p className="max-w-prose text-sm text-muted-foreground">{t("infeasibleHint")}</p>
           ) : solverStatus === "TIMEOUT" ? (

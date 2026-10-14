@@ -339,6 +339,28 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     );
   });
 
+  it("reads a partly locked block as a refusal before the engine, not as an impossible timetable", () => {
+    const run = {
+      id: "job-7",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "1 block has lessons locked or placed by hand.",
+      conflictSummaryCode: "BLOCK_PARTLY_LOCKED_SUMMARY",
+      conflictSummaryParams: { count: 1 },
+      conflicts: [],
+      createdAt: "2026-10-07T10:00:00.000Z",
+    };
+    state.job = run;
+    state.history = [run];
+    render(<GeneratePage />);
+
+    expect(screen.getByText("generate.statusPartlyLocked")).toBeInTheDocument();
+    expect(screen.getByText("generate.partlyLockedHint")).toBeInTheDocument();
+    expect(screen.queryByText("generate.infeasibleHint")).toBeNull();
+    expect(screen.queryByText("generate.statusINFEASIBLE")).toBeNull();
+    expect(screen.getByText("generate.historyStatus.PARTLY_LOCKED")).toBeInTheDocument();
+  });
+
   it("keeps the engine's own INFEASIBLE hint for every other refusal", () => {
     state.job = {
       id: "job-6",
