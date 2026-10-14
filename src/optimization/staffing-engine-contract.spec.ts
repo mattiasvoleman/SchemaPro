@@ -15,7 +15,10 @@ import { STAFF_PATH, StaffingProposalService } from './staffing-proposal.service
  * (test_the_wire_contract_is_exactly_what_the_gateway_sends_and_reads). The
  * engine's models forbid extra fields, so one name here the engine has not
  * heard of is a 422 for the whole proposal: change both lists in the commit
- * that deploys the engine, engine first. ai-engine-contract.spec.ts — the
+ * that deploys the engine, engine first. A field added later is optional on
+ * the engine's side and sent only when it says something, so the payload of
+ * a school that does not need it is the one an older engine took.
+ * ai-engine-contract.spec.ts — the
  * /optimize and /optimize-rooms contract — is untouched by this route.
  *
  * And the privacy half: nothing crosses but opaque ids minted for the request
@@ -49,6 +52,8 @@ const REQUIREMENT_FIELDS = [
   'studentGroupId',
   'subjectId',
 ];
+/** Sent only when non-empty; absent, the engine reads an empty list. */
+const OPTIONAL_REQUIREMENT_FIELDS = ['excludedTeacherIds'];
 /** What the gateway reads back; the engine's StaffResponse and its parts. */
 const RESPONSE_FIELDS = ['assignments', 'conflicts', 'requestId', 'status', 'terms', 'unstaffed', 'unstaffedProven'];
 const ASSIGNMENT_FIELDS = ['requirementId', 'teacherId'];
@@ -138,17 +143,42 @@ function strings(value: unknown): string[] {
   return [];
 }
 
-async function sendOnce(weights?: Record<string, number>) {
-  const world = givenRolloverWorld(rows());
+/** Anna goes down to 50 % from 11 January, and Ma 7A's open row (002) runs only from then. */
+const withAChangingPostAndADatedRow = (): Record<string, Row[]> => {
+  const tables = rows();
+  tables['teacherEmploymentPeriod'] = [
+    {
+      id: 'f4000000-0000-4000-8000-000000000000',
+      schoolId: SCHOOL,
+      employmentId: 'f3000000-0000-4000-8000-000000000000',
+      userId: ANNA,
+      academicYearId: YEAR,
+      validFrom: new Date('2027-01-11'),
+      validTo: null,
+      employmentPercent: new Prisma.Decimal('50.000'),
+      reductionPercent: new Prisma.Decimal('0.000'),
+      teachingTargetMinutesPerWeek: null,
+    },
+  ];
+  tables['teachingRequirement']!.find((row) => row['id'] === '00000000-0000-4000-8000-000000000002')!['startDate'] =
+    new Date('2027-01-11');
+  return tables;
+};
+
+async function sendOnce(weights?: Record<string, number>, tables: Record<string, Row[]> = rows()) {
+  const world = givenRolloverWorld(tables);
   const prisma = prismaFor(world);
   const http = {
-    post: jest.fn((_url: string, payload: StaffRequest) =>
-      of({
+    post: jest.fn((_url: string, payload: StaffRequest) => {
+      const sets = new Map(payload.eligibilitySets.map((set) => [set.id, set.teacherIds]));
+      const leadOf = (row: StaffRequest['requirements'][number]) =>
+        (sets.get(row.eligibilitySetId ?? '') ?? []).find((id) => !(row.excludedTeacherIds ?? []).includes(id))!;
+      return of({
         data: {
           requestId: payload.requestId,
           status: 'OPTIMAL',
           unstaffedProven: true,
-          assignments: payload.requirements.filter((r) => !r.fixed).map((r) => ({ requirementId: r.id, teacherId: payload.teachers[0]!.id })),
+          assignments: payload.requirements.filter((r) => !r.fixed).map((r) => ({ requirementId: r.id, teacherId: leadOf(r) })),
           unstaffed: [],
           conflicts: [],
           terms: {
@@ -156,8 +186,8 @@ async function sendOnce(weights?: Record<string, number>) {
             after: Object.fromEntries(TERMS_FIELDS.map((f) => [f, 0])),
           },
         } as unknown as StaffResponse,
-      }),
-    ),
+      });
+    }),
   };
   const config = { getOrThrow: jest.fn().mockReturnValue({ baseUrl: 'http://solver.test', apiKey: 'k'.repeat(32), timeoutMs: 50 }) };
   const proxy = new OptimizationProxyService(prisma as unknown as PrismaService, http as never, config as never);
@@ -185,6 +215,26 @@ describe('the /staff wire contract', () => {
     // Only the weights the caller set; the engine's defaults fill the rest.
     expect(payload.weights).toEqual({ balance: 7, unqualified: 0 });
     for (const key of Object.keys(payload.weights)) expect(WEIGHT_FIELDS).toContain(key);
+  });
+
+  it('sends excludedTeacherIds only where it names somebody: on a dated row, every post that changes during the year', async () => {
+    // Without such a post nothing names it: the payload an older engine takes.
+    const { payload: plain } = await sendOnce();
+    for (const requirement of plain.requirements) expect(keys(requirement)).toEqual(REQUIREMENT_FIELDS);
+
+    const { payload } = await sendOnce(undefined, withAChangingPostAndADatedRow());
+    const [fixed, dated, undated] = payload.requirements;
+    expect(keys(dated!)).toEqual([...REQUIREMENT_FIELDS, ...OPTIONAL_REQUIREMENT_FIELDS].sort());
+    expect(dated!.excludedTeacherIds).toEqual([payload.teachers[0]!.id]);
+    // A fixed row is not decided, and an undated row charges every period alike.
+    expect(keys(fixed!)).toEqual(REQUIREMENT_FIELDS);
+    expect(keys(undated!)).toEqual(REQUIREMENT_FIELDS);
+    // Anna stays in the set: she holds the behörighet, and the exclusion says why she is not offered the row.
+    expect(payload.eligibilitySets.find((set) => set.id === dated!.eligibilitySetId)!.teacherIds).toContain(payload.teachers[0]!.id);
+    for (const value of strings(dated!.excludedTeacherIds)) {
+      expect(value).toMatch(V4);
+      expect(value).not.toBe(ANNA);
+    }
   });
 
   it('names the response fields the gateway reads', () => {

@@ -187,8 +187,9 @@ const ZERO_TERMS: StaffTerms = {
 /**
  * A stand-in engine that keeps the rules: kept rows keep their lead, an open
  * row goes to the first eligible (or, without respect, any) normal teacher with
- * room, in payload order — or stays unstaffed. Enough to exercise the
- * realisation; the model itself is the engine's tests' business.
+ * room whom the row does not exclude, in payload order — or stays unstaffed.
+ * Enough to exercise the realisation; the model itself is the engine's tests'
+ * business.
  */
 function engineAnswer(payload: StaffRequest): StaffResponse {
   const sets = new Map(payload.eligibilitySets.map((set) => [set.id, set.teacherIds]));
@@ -214,7 +215,11 @@ function engineAnswer(payload: StaffRequest): StaffResponse {
       ? (sets.get(row.eligibilitySetId ?? '') ?? [])
       : payload.teachers.map((t) => t.id);
     const pick = pool.find(
-      (id) => id !== row.coTeacherId && normal.has(id) && load.get(id)! + row.chargeTenths <= limit.get(id)!,
+      (id) =>
+        id !== row.coTeacherId &&
+        !(row.excludedTeacherIds ?? []).includes(id) &&
+        normal.has(id) &&
+        load.get(id)! + row.chargeTenths <= limit.get(id)!,
     );
     if (pick) {
       load.set(pick, load.get(pick)! + row.chargeTenths);
@@ -727,7 +732,7 @@ describe('StaffingProposalService.propose', () => {
       expect(proposal.teachers.find((t) => t.userId === BO)!.period).toBeUndefined();
     });
 
-    it('leaves a dated row such a post leads where it is, and offers it no dated row', async () => {
+    it('leaves a dated row such a post leads where it is, and every dated row excludes it', async () => {
       const dated = (rows: Record<string, Row[]>) => {
         const list = rows['teachingRequirement']!;
         list.find((row) => row['id'] === R_MA7)!['endDate'] = day('2027-01-08');
@@ -747,24 +752,30 @@ describe('StaffingProposalService.propose', () => {
         const { service, sent } = setup(rows);
         await service.propose(ask({ onlyUnstaffed: false, respectQualifications: true }), admin());
         const payload = sent()[0]!;
-        const setOf = (id: string) =>
-          payload.eligibilitySets.find((set) => set.id === sentRow(payload, id, rows).eligibilitySetId)?.teacherIds ?? [];
-        return { payload, ma7: sentRow(payload, R_MA7, rows), ma8: setOf(R_MA8) };
+        const ma8 = sentRow(payload, R_MA8, rows);
+        const set = payload.eligibilitySets.find((entry) => entry.id === ma8.eligibilitySetId)?.teacherIds ?? [];
+        return { payload, ma7: sentRow(payload, R_MA7, rows), ma8, set };
       };
       // The same year, Anna's post the same all year: Ma 7A hers to keep or give up, Ma 8A open to her.
       const steady = await sentFor(dated(schoolRows()));
       expect(steady.ma7.fixed).toBe(false);
-      expect(steady.ma8).toEqual([steady.payload.teachers[0]!.id, steady.payload.teachers[4]!.id]);
+      expect(steady.set).toEqual([steady.payload.teachers[0]!.id, steady.payload.teachers[4]!.id]);
+      expect(steady.ma8.excludedTeacherIds).toBeUndefined();
+      // Changing: Ma 7A stays hers, and Ma 8A excludes her. She still holds the
+      // behörighet, so the set still names her: a line saying nobody does would be false.
       const changing = await sentFor(dated(withAnnaHalfInSpring()));
       expect(changing.ma7.fixed).toBe(true);
-      expect(changing.ma8).toEqual([changing.payload.teachers[4]!.id]);
+      expect(changing.set).toEqual([changing.payload.teachers[0]!.id, changing.payload.teachers[4]!.id]);
+      expect(changing.ma8.excludedTeacherIds).toEqual([changing.payload.teachers[0]!.id]);
+      // Only dated rows exclude: Sv 8A runs all year.
+      expect(sentRow(changing.payload, R_SV8, schoolRows()['teachingRequirement']!).excludedTeacherIds).toBeUndefined();
     });
 
-    describe('when the answer takes such a post past a period', () => {
-      // Without behörigheter a candidate set is a preference only, so the
-      // engine may give Anna the spring-only Ma 8A: 4 × 60 a week from
-      // 11 January is 123 over the year — inside her limit as the engine
-      // counts it, but 180 + 240 = 420 against 330 in the spring itself.
+    describe('a spring-only row', () => {
+      // Without behörigheter a candidate set is a preference only. Ma 8A,
+      // 4 × 60 a week from 11 January, is 123 over the year — inside Anna's
+      // limit as the engine counts it, but 180 + 240 = 420 against 330 in the
+      // spring itself. The exclusion is the engine's hard rule either way.
       const springOnly = () => {
         const rows = withAnnaHalfInSpring();
         const list = rows['teachingRequirement']!;
@@ -772,43 +783,58 @@ describe('StaffingProposalService.propose', () => {
         list.find((row) => row['id'] === R_SV7)!['teacherId'] = REKTOR;
         return rows;
       };
+      // 7A has nothing left to decide, so only 8A's rows are sent.
+      const sentIn8A = () => springOnly()['teachingRequirement']!.filter((row) => row['studentGroupId'] === G8A);
 
-      it('asks once more with every changing post held, and proposes what fits', async () => {
+      it('is never offered to such a post, behörigheter or not, and the post takes the undated row it has room for: one ask', async () => {
         const { service, sent } = setup(springOnly());
         const proposal = await service.propose(ask(), admin());
-        expect(sent()).toHaveLength(2);
-        const [first, second] = sent();
-        expect(first!.teachers[0]).toMatchObject({ targetTenths: 3000, fixedTenths: 1800 });
-        // Held: sent as a post without a target, so it keeps or sheds and gains nothing.
-        expect(second!.teachers[0]).toMatchObject({ targetTenths: null, limitTenths: null, floorTenths: null, fixedTenths: 1800 });
-        expect(second!.teachers[1]).toMatchObject({ targetTenths: 3000 });
-        // Fresh ids for the second ask, as for any request.
-        expect(second!.requestId).not.toBe(first!.requestId);
-        expect(second!.teachers[0]!.id).not.toBe(first!.teachers[0]!.id);
+        expect(sent()).toHaveLength(1);
+        const [payload] = sent();
+        expect(payload!.respectQualifications).toBe(false);
+        expect(sentRow(payload!, R_MA8, sentIn8A()).excludedTeacherIds).toEqual([payload!.teachers[0]!.id]);
+        expect(sentRow(payload!, R_SV8, sentIn8A()).excludedTeacherIds).toBeUndefined();
+        // Anna is not held: Sv 8A runs all year, 120 a week in every period, and 180 + 120 fits the spring's 330.
         expect(proposal.assignments.map((a) => [a.requirementId, a.toTeacherId])).toEqual([
           [R_MA8, BO],
-          [R_SV8, REKTOR],
+          [R_SV8, ANNA],
         ]);
         expect(proposal.teachers.find((t) => t.userId === ANNA)).toMatchObject({
-          keepOrShed: true,
-          targetMinutesPerWeek: 300,
+          keepOrShed: false,
+          period: { from: '2027-01-11', to: '2027-06-11' },
           before: { countedMinutesPerWeek: 180 },
-          after: { countedMinutesPerWeek: 180 },
+          after: { countedMinutesPerWeek: 300, status: 'OK' },
         });
       });
 
-      it('refuses (502) a second answer that still gives a held post a row', async () => {
-        // Every free row to Anna, both times.
-        const { service, sent } = setup(springOnly(), (payload) => ({
+      it('refuses (502) an answer that gives it to such a post anyway, though it would fit, and asks nothing more', async () => {
+        // One lesson a week: 180 + 60 fits the spring, so only the exclusion refuses it.
+        const small = springOnly();
+        small['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 1;
+        const { service, sent } = setup(small, (payload) => ({
           ...engineAnswer(payload),
-          assignments: payload.requirements
-            .filter((row) => !row.fixed)
-            .map((row) => ({ requirementId: row.id, teacherId: payload.teachers[0]!.id })),
+          assignments: [
+            { requirementId: sentRow(payload, R_MA8, sentIn8A()).id, teacherId: payload.teachers[0]!.id },
+            { requirementId: sentRow(payload, R_SV8, sentIn8A()).id, teacherId: payload.teachers[4]!.id },
+          ],
           unstaffed: [],
         }));
         await expect(service.propose(ask(), admin())).rejects.toMatchObject({ status: 502 });
-        expect(sent()).toHaveLength(2);
+        expect(sent()).toHaveLength(1);
       });
+    });
+
+    it('refuses (502) an answer that takes such a post past a period with undated rows, and asks nothing more', async () => {
+      // Every free row to Anna: Ma 8A and Sv 8A, both all year, take the spring to 180 + 240 = 420 against 330.
+      const { service, sent } = setup(withAnnaHalfInSpring(), (payload) => ({
+        ...engineAnswer(payload),
+        assignments: payload.requirements
+          .filter((row) => !row.fixed)
+          .map((row) => ({ requirementId: row.id, teacherId: payload.teachers[0]!.id })),
+        unstaffed: [],
+      }));
+      await expect(service.propose(ask(), admin())).rejects.toMatchObject({ status: 502 });
+      expect(sent()).toHaveLength(1);
     });
   });
 
@@ -966,6 +992,25 @@ describe('StaffingProposalService.apply', () => {
     ).resolves.toMatchObject({ updated: 3 });
     expect(leadOf(world, R_SV7)).toBe(ANNA);
     expect(leadOf(world, R_MA8)).toBe(BO);
+  });
+
+  it('applies, under REFUSE, an odd-week row that fills such a post’s tightest period to its limit: an undated row charges every period what it charges the year', async () => {
+    const rows = withAnnaHalfInSpring();
+    rows['staffingPolicy']![0]!['overAllocationMode'] = 'REFUSE';
+    // Sv 7A, Eva's until she left: 5 × 60 on odd weeks, 150 a week in the autumn, in the spring and over the year.
+    Object.assign(rows['teachingRequirement']!.find((row) => row['id'] === R_SV7)!, { lessonsPerWeek: 5, recurrence: 'ODD_WEEKS' });
+    const { service, world, proposal, sent } = await proposeThenApply(rows);
+    expect(sent()).toHaveLength(1);
+    expect(sentRow(sent()[0]!, R_SV7, rows['teachingRequirement']!).excludedTeacherIds).toBeUndefined();
+    // Spring: 180 + 150 = 330, the limit itself.
+    expect(proposal.teachers.find((t) => t.userId === ANNA)).toMatchObject({
+      limitMinutesPerWeek: 330,
+      after: { countedMinutesPerWeek: 330, status: 'OK' },
+    });
+    await expect(
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+    ).resolves.toMatchObject({ updated: 3 });
+    expect(leadOf(world, R_SV7)).toBe(ANNA);
   });
 
   it('locks the year, then the posts, then the rows, then reads — and writes the leads, one log row, and the basis a fresh read gives', async () => {
