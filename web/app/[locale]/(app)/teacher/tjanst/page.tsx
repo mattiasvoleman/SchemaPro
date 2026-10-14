@@ -167,16 +167,21 @@ export default function MyStaffingPage() {
       <SectionCard id="tjanst-employment" title={tStaffing("employmentTitle")} className="text-sm">
         {employment ? (
           <p>
-            {employment.reductionPercent > 0
-              ? tStaffing("employmentSummaryReduction", {
-                  percent: formatPercent(employment.employmentPercent),
-                  reduction: formatPercent(employment.reductionPercent),
-                  kind: tStaffing(`contract${employment.contractKind}`),
-                })
-              : tStaffing("employmentSummary", {
-                  percent: formatPercent(employment.employmentPercent),
-                  kind: tStaffing(`contract${employment.contractKind}`),
-                })}
+            {/* A post that changes during the year: as it is on the läsår's
+                first day, and said so; the periods are listed below. */}
+            {(() => {
+              const start = postAtStart(row!) ?? employment;
+              const changing = (row!.periods?.length ?? 0) > 0;
+              const kind = tStaffing(`contract${employment.contractKind}`);
+              const percent = formatPercent(start.employmentPercent);
+              if (start.reductionPercent > 0) {
+                const reduction = formatPercent(start.reductionPercent);
+                return changing
+                  ? t("employmentAtStartReduction", { percent, reduction, kind })
+                  : tStaffing("employmentSummaryReduction", { percent, reduction, kind });
+              }
+              return changing ? t("employmentAtStart", { percent, kind }) : tStaffing("employmentSummary", { percent, kind });
+            })()}
           </p>
         ) : (
           <p>{t("noEmployment")}</p>

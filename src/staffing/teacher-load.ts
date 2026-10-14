@@ -144,8 +144,10 @@ import {
  * are the post's percentage weighted by the weeks it held. A post with no
  * period in the year has one stretch and every figure the one it always had
  * (`periods: []`, computed by the code that computed it before). Subjects'
- * percentOfEmployment stays the year-start post's: SCB asks about its
- * mätdatum, which is the next release's reader of the periods.
+ * percentOfEmployment stays a share of the base row, the post the
+ * Anställning card edits. It is informational, and no check or export reads
+ * it: the SCB underlag reads the post on its mätdatum (postOn) and the
+ * assignments' minutes.
  *
  * BEHÖRIGHET IS CHECKED ONLY WHEN THE SCHOOL HAS SAID SOMETHING. A school with
  * zero qualification rows has not recorded that nobody is qualified, it has

@@ -109,6 +109,36 @@ describe("Uppdragsbeskrivning", () => {
     // A stretch with no taught week: no counted minutes, no verdict.
     expect(rows[2]).toHaveTextContent("staffing.periodNoWeek");
     expect(rows[2]).not.toHaveTextContent("statusOK");
+    expect(screen.getByText("uppdrag.postPeriodsIntro")).toBeInTheDocument();
+  });
+
+  it("claims no average target where the year has none: a period without one says so", () => {
+    renderPage({
+      load: {
+        ...uppdragLoad,
+        targetMinutesPerWeek: null,
+        periods: [
+          {
+            from: "2026-08-17",
+            to: "2027-06-11",
+            kind: "PERIOD",
+            effectiveFrom: "2026-08-17",
+            effectiveTo: "2027-06-11",
+            employmentPercent: 80,
+            reductionPercent: 0,
+            ownTargetMinutesPerWeek: null,
+            targetMinutesPerWeek: null,
+            teachingWeeks: 38,
+            countedMinutesPerWeek: 580,
+            balanceMinutesPerWeek: null,
+            percentOfTarget: null,
+            status: "NO_TARGET",
+          },
+        ],
+      },
+    });
+    expect(screen.getByText("uppdrag.postPeriodsIntroNoTarget")).toBeInTheDocument();
+    expect(screen.queryByText("uppdrag.postPeriodsIntro")).toBeNull();
   });
 
   it("lists the teaching per subject, group and period, with the gateway's total and toppvecka", () => {

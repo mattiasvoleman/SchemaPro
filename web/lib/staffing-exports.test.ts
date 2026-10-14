@@ -234,7 +234,10 @@ describe("Tjänstefördelning för samverkan", () => {
     });
     const parsed = parseCsv(samverkanCsv({ ...base, load: [changing], reconciliation: [] }));
     const cell = (header: string) => parsed.rows[0]![parsed.headers.indexOf(header)];
-    expect(cell("Tjänstgöringsgrad %")).toBe("90");
+    // The grad is the first day's, and the header says so beside the weighted figures.
+    expect(parsed.headers).not.toContain("Tjänstgöringsgrad %");
+    expect(cell("Tjänstgöringsgrad % vid läsårets start")).toBe("90");
+    expect(cell("Nedsättning % vid läsårets start")).toBe("0");
     expect(cell("Tjänstens perioder")).toBe(
       [
         "2026-08-17–2026-08-23: 90 %, riktmärke 540 min/v, räknat 600 min/v, över mål",

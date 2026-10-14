@@ -189,10 +189,24 @@ const FACTOR_HEADER: Partial<Record<(typeof SAMVERKAN_HEADERS)[number], string>>
 export const SAMVERKAN_TIME_HEADER = "Undervisningstid min/v (standardvecka, utan faktor)";
 const TIME_AFTER = SAMVERKAN_HEADERS.indexOf("Undervisning min/v (standardvecka)") + 1;
 
-export function samverkanHeaders(loadModel: LoadModel): string[] {
-  if (loadModel !== "FACTOR") return [...SAMVERKAN_HEADERS];
-  const headers: string[] = SAMVERKAN_HEADERS.map((header) => FACTOR_HEADER[header] ?? header);
-  headers.splice(TIME_AFTER, 0, SAMVERKAN_TIME_HEADER);
+/**
+ * When some post in the file changes during the year, the grad and the
+ * nedsättning are the post on the läsår's first day, beside a riktmärke and
+ * hours weighted over its periods. The headers say so, as the
+ * uppdragsbeskrivning does; a file without such a post keeps its headers.
+ */
+const AT_START_HEADER: Partial<Record<(typeof SAMVERKAN_HEADERS)[number], string>> = {
+  "Tjänstgöringsgrad %": "Tjänstgöringsgrad % vid läsårets start",
+  "Nedsättning %": "Nedsättning % vid läsårets start",
+};
+
+export function samverkanHeaders(loadModel: LoadModel, postsChange = false): string[] {
+  const named = (header: (typeof SAMVERKAN_HEADERS)[number]): string =>
+    (postsChange ? AT_START_HEADER[header] : undefined) ??
+    (loadModel === "FACTOR" ? FACTOR_HEADER[header] : undefined) ??
+    header;
+  const headers: string[] = SAMVERKAN_HEADERS.map(named);
+  if (loadModel === "FACTOR") headers.splice(TIME_AFTER, 0, SAMVERKAN_TIME_HEADER);
   return headers;
 }
 
@@ -308,7 +322,10 @@ export function samverkanCsv(input: SamverkanInput): string {
     return row;
   });
 
-  const headers = samverkanHeaders(input.loadModel);
+  const headers = samverkanHeaders(
+    input.loadModel,
+    input.load.some((row) => (row.periods?.length ?? 0) > 0),
+  );
   if (input.qualifications !== null) headers.push("Behörigheter");
   return serializeCsv(headers, rows);
 }
