@@ -123,6 +123,26 @@ describe('employment (HR)', () => {
     expect(recordedReads(tx)).toHaveLength(1);
   });
 
+  it('saving a post records the teacher only when the answer carries periods the caller did not send', async () => {
+    (tx as unknown as { $queryRaw: jest.Mock }).$queryRaw.mockResolvedValue([{ role: 'TEACHER' }]);
+    const period = {
+      id: 'per-1',
+      employmentId: `post-${P1}`,
+      validFrom: new Date('2026-11-02T00:00:00.000Z'),
+      validTo: null,
+      employmentPercent: 80,
+      reductionPercent: 0,
+      teachingTargetMinutesPerWeek: null,
+    };
+    tx.teacherEmployment.upsert.mockResolvedValueOnce({ ...post(P1), periods: [period] });
+    await service().upsert(P1, 'y', { employmentPercent: 100 }, testUser({ channel: 'WEB' }));
+    expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [P1] }]);
+    // No periods: the answer is what was sent, a write's echo.
+    tx.teacherEmployment.upsert.mockResolvedValueOnce({ ...post(P2), periods: [] });
+    await service().upsert(P2, 'y', { employmentPercent: 100 }, testUser({ channel: 'WEB' }));
+    expect(recordedReads(tx)).toHaveLength(1);
+  });
+
   it('a teacher asking for a colleague\'s history is refused before anything is read or recorded', async () => {
     await expect(service().history(P2, 'y', testUser({ role: Role.TEACHER, userId: P1 }))).rejects.toThrow();
     expect(recordedReads(tx)).toEqual([]);

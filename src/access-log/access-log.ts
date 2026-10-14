@@ -51,7 +51,10 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     and recorded (EMPLOYMENT);
  *   - a write's echo: POST /users answers with the row its caller just
  *     typed. PATCH /users/:id answers with the whole row, fields the caller
- *     did not send among them, so it is recorded (PEOPLE);
+ *     did not send among them, so it is recorded (PEOPLE). PUT
+ *     /teacher-employments/:userId answers with the post it was sent and
+ *     the post's periods, which it was not, so a post with periods is
+ *     recorded (EMPLOYMENT);
  *   - the realtime pushes (src/realtime): a changed lesson's pupil ids to
  *     its teachers, the timetable editor's presence to the staff. Nobody
  *     asks, no transaction is the recipient's, and the ids name no one
