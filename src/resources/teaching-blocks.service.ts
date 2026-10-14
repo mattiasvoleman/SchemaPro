@@ -10,8 +10,8 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError, writeConflict } from '../common/utils/prisma-errors';
 import { requirementName } from '../optimization/optimization-proxy.service';
-import { enforceRequirementWrite } from '../staffing/staffing-enforcement';
-import type { StaffingWarning } from '../staffing/staffing-checks';
+import { RequirementImportChecks } from '../staffing/staffing-enforcement';
+import { staffingSentence, type StaffingWarning } from '../staffing/staffing-checks';
 import {
   assertLessonLengthFitsTheGrid,
   mergeLessonShape,
@@ -28,10 +28,18 @@ export interface TeachingBlockResponse {
   requirementIds: string[];
   /**
    * Only on a PATCH that changed the block's lessons: what the staffing
-   * policy's WARN mode said about each member's teachers, as the timplanspost
-   * PATCH answers it. A REFUSE is the 409 the write answered instead.
+   * policy's WARN mode said about each member's teachers, each with the
+   * member it is about. A REFUSE is the 409 the write answered instead.
    */
-  warnings?: StaffingWarning[];
+  warnings?: BlockStaffingWarning[];
+}
+
+/**
+ * A WARN about one member's teachers: the dialog covers several posts, so the
+ * sentence alone would not say whose (never the teacher; the post).
+ */
+export interface BlockStaffingWarning extends StaffingWarning {
+  requirementId: string;
 }
 
 /** The problem `code` of a block name its läsår already has. */
@@ -64,7 +72,8 @@ const NAME_MAX = 80;
  * timplanspost PATCH writes one row, and the trigger refuses one member whose
  * lessons leave the others'. The new lessons are merged over the members'
  * shape by the timplanspost's own merge, every member's teachers are judged by
- * the staffing policy as the PATCH judges them, and one UPDATE writes them all.
+ * the staffing policy with the members before it counted, and one UPDATE
+ * writes them all.
  *
  * WHAT IS LEFT TO THE GENERATOR: members that share a teacher or pupils, and
  * a block whose lessons are partly locked. Rosters, teachers and locks change
@@ -246,16 +255,21 @@ async function setMembers(
  *
  * The members have one shape (the trigger holds it), so the PATCH is merged
  * over the first member's and the same write fits every member. Each member's
- * teachers are judged before anything is written; a REFUSE is the 409 the
- * judge throws, and nothing is written. Then ONE UPDATE over the block, which
- * the trigger judges at its end with every member changed.
+ * teachers are judged before anything is written, as the import judges a
+ * file (RequirementImportChecks): the year read once, and each member's new
+ * lessons laid over it before the next member is asked, so a teacher on two
+ * members is charged both increases and not one at a time. A REFUSE is a 409
+ * that names the member, as enforceRequirementBatch names its row, and
+ * nothing is written; every WARN carries its member's id. Then ONE UPDATE
+ * over the block, which the trigger judges at its end with every member
+ * changed.
  */
 async function setLessons(
   tx: PrismaClient,
   user: AuthenticatedUser,
   blockId: string,
   dto: UpdateTeachingBlockDto,
-): Promise<StaffingWarning[]> {
+): Promise<BlockStaffingWarning[]> {
   const members = await tx.teachingRequirement.findMany({
     where: { blockId },
     select: {
@@ -275,23 +289,63 @@ async function setLessons(
     throw new BadRequestException('lessonsPerWeek: blocket har inga poster att ändra lektionerna på.');
   }
   const resolved = mergeLessonShape(members[0]!, dto);
-  const warnings: StaffingWarning[] = [];
-  for (const member of members) {
-    warnings.push(
-      ...(await enforceRequirementWrite(tx, {
-        viewer: user,
-        schoolId: requireSchoolId(user),
-        academicYearId: member.academicYearId,
-        requirementId: member.id,
-        subjectId: member.subjectId,
-        studentGroupId: member.studentGroupId,
-        before: { teacherId: member.teacherId, coTeacherId: member.coTeacherId },
-        patch: { ...resolved.shape },
-      })),
-    );
-  }
+  const warnings = await judgeMembers(tx, user, members, resolved.shape);
   if (Object.keys(resolved.write).length > 0) {
     await tx.teachingRequirement.updateMany({ where: { blockId }, data: resolved.write });
+  }
+  return warnings;
+}
+
+/** setLessons' staffing judgement, member by member with the earlier ones counted. */
+async function judgeMembers(
+  tx: PrismaClient,
+  user: AuthenticatedUser,
+  members: readonly {
+    id: string;
+    academicYearId: string;
+    subjectId: string;
+    studentGroupId: string;
+    teacherId: string | null;
+    coTeacherId: string | null;
+  }[],
+  shape: ReturnType<typeof mergeLessonShape>['shape'],
+): Promise<BlockStaffingWarning[]> {
+  const teacherIds = [
+    ...new Set(members.flatMap((member) => [member.teacherId, member.coTeacherId])),
+  ].filter((id): id is string => id !== null);
+  const checks = await RequirementImportChecks.open(tx, {
+    viewer: user,
+    schoolId: requireSchoolId(user),
+    academicYearId: members[0]!.academicYearId,
+    teacherIds,
+    groupIds: [...new Set(members.map((member) => member.studentGroupId))],
+  });
+  if (!checks) return [];
+  const warnings: BlockStaffingWarning[] = [];
+  for (const member of members) {
+    if (member.teacherId === null && member.coTeacherId === null) continue;
+    const stored = checks.stored(member.id);
+    // A member RLS hides from the year read is one the UPDATE does not reach.
+    if (!stored) continue;
+    const { findings, after } = checks.judge({
+      requirementId: member.id,
+      rowNumber: 0,
+      subjectId: member.subjectId,
+      subjectName: stored.subjectName,
+      studentGroupId: member.studentGroupId,
+      groupName: stored.groupName,
+      patch: { ...shape },
+    });
+    const refusal = findings.find((finding) => finding.mode === 'REFUSE');
+    if (refusal) {
+      throw new ConflictException({
+        message: `${requirementName(stored.subjectName, stored.groupName)}: ${staffingSentence(refusal)}`,
+        code: refusal.code,
+        params: { ...refusal.params, requirementId: member.id },
+      });
+    }
+    warnings.push(...findings.map(({ code, params }) => ({ code, params, requirementId: member.id })));
+    checks.apply(after);
   }
   return warnings;
 }

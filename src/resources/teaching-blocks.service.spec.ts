@@ -8,7 +8,8 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { enforceRequirementWrite } from '../staffing/staffing-enforcement';
+import { RequirementImportChecks } from '../staffing/staffing-enforcement';
+import type { StaffingFinding } from '../staffing/staffing-checks';
 import {
   REQUIREMENT_IN_ANOTHER_BLOCK,
   TEACHING_BLOCK_NAME_TAKEN,
@@ -16,12 +17,13 @@ import {
 } from './teaching-blocks.service';
 
 // The staffing judge, replaced so a test can say what it answers; what it
-// decides is staffing-enforcement.spec.ts's.
+// decides, and how it carries a row forward, is the import's and
+// staffing-enforcement.spec.ts's.
 jest.mock('../staffing/staffing-enforcement', () => ({
   ...jest.requireActual('../staffing/staffing-enforcement'),
-  enforceRequirementWrite: jest.fn(),
+  RequirementImportChecks: { open: jest.fn() },
 }));
-const judge = enforceRequirementWrite as jest.MockedFunction<typeof enforceRequirementWrite>;
+const openChecks = RequirementImportChecks.open as jest.MockedFunction<typeof RequirementImportChecks.open>;
 
 const YEAR = '11111111-1111-4111-8111-111111111111';
 const OTHER_YEAR = '22222222-2222-4222-8222-222222222222';
@@ -267,38 +269,85 @@ describe('TeachingBlocksService', () => {
       ...extra,
     });
 
+    // A judge that answers per member and records the order it was asked and told in.
+    const checksAnswering = (answers: Record<string, StaffingFinding[]>) => {
+      const order: string[] = [];
+      const checks = {
+        stored: (id: string) => ({ id, subjectName: id === TY ? 'Tyska' : 'Franska', groupName: id === TY ? 'Ty7' : 'Fr7' }),
+        judge: jest.fn(({ requirementId }: { requirementId: string }) => {
+          order.push(`judge ${requirementId}`);
+          return { findings: answers[requirementId] ?? [], after: { id: requirementId } };
+        }),
+        apply: jest.fn((after: { id: string }) => order.push(`apply ${after.id}`)),
+      };
+      openChecks.mockResolvedValue(checks as never);
+      return { checks, order };
+    };
+    const overTarget = (mode: 'WARN' | 'REFUSE'): StaffingFinding => ({
+      mode,
+      userId: 't-bo',
+      code: 'STAFF_TEACHER_OVER_TARGET',
+      params: { role: 'TEACHER', minutes: 1560, target: 1500, limit: 1500, tolerance: 0 },
+    });
+
     beforeEach(() => {
       tx.$queryRaw = jest.fn().mockResolvedValue([{ id: BLOCK, academicYearId: YEAR, name: 'Språkval åk 7' }]);
-      judge.mockReset().mockResolvedValue([]);
+      openChecks.mockReset().mockResolvedValue(null);
       tx.teachingRequirement.findMany.mockImplementation(async ({ select }: { select: Record<string, unknown> }) =>
         'lessonsPerWeek' in select
-          ? [member(TY, { teacherId: 't-anna' }), member(FR)]
+          ? [member(TY, { teacherId: 't-anna' }), member(FR, { teacherId: 't-bo', coTeacherId: 't-anna' })]
           : [{ id: TY }, { id: FR }],
       );
     });
 
-    it('judges every member\'s teachers and writes every member in one UPDATE', async () => {
-      judge.mockResolvedValueOnce([{ code: 'STAFF_TEACHER_OVER_TARGET', params: { role: 'TEACHER' } } as never]);
+    it('judges each member with the ones before it counted, names whom a warning is about, and writes once', async () => {
+      const { checks, order } = checksAnswering({ [FR]: [overTarget('WARN')] });
 
       const block = await service.update(BLOCK, { lessonsPerWeek: 3, minutesPerLesson: 40 }, admin);
 
-      expect(judge).toHaveBeenCalledTimes(2);
-      expect(judge.mock.calls[0]![1]).toMatchObject({
+      expect(openChecks.mock.calls[0]![1]).toMatchObject({
+        academicYearId: YEAR,
+        teacherIds: ['t-anna', 't-bo'],
+        groupIds: [`g-${TY}`, `g-${FR}`],
+      });
+      // Anna on both members is charged Tyska's increase when Franska is asked.
+      expect(order).toEqual([`judge ${TY}`, `apply ${TY}`, `judge ${FR}`, `apply ${FR}`]);
+      expect(checks.judge.mock.calls[0]![0]).toMatchObject({
         requirementId: TY,
-        before: { teacherId: 't-anna', coTeacherId: null },
         patch: { lessonsPerWeek: 3, minutesPerLesson: 40, lessonLengths: [] },
       });
       expect(tx.teachingRequirement.updateMany.mock.calls).toEqual([
         [{ where: { blockId: BLOCK }, data: { lessonsPerWeek: 3, minutesPerLesson: 40 } }],
       ]);
-      expect(block.warnings).toEqual([{ code: 'STAFF_TEACHER_OVER_TARGET', params: { role: 'TEACHER' } }]);
+      expect(block.warnings).toEqual([
+        { code: 'STAFF_TEACHER_OVER_TARGET', params: overTarget('WARN').params, requirementId: FR },
+      ]);
     });
 
-    it('writes nothing when the staffing policy refuses one member', async () => {
-      judge.mockResolvedValueOnce([]).mockRejectedValueOnce(new ConflictException('över mål'));
+    it('refuses with the member named and its id, and writes nothing', async () => {
+      checksAnswering({ [FR]: [overTarget('REFUSE')] });
 
-      await expect(service.update(BLOCK, { lessonsPerWeek: 4 }, admin)).rejects.toBeInstanceOf(ConflictException);
+      const refusal = await service.update(BLOCK, { lessonsPerWeek: 4 }, admin).catch((error) => error);
+
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect(refusal.getResponse()).toEqual({
+        message: 'Franska för Fr7: Läraren skulle få 1560 min/v mot riktmärket 1500 min/v (gränsen är 1500 min/v med 0 % tolerans).',
+        code: 'STAFF_TEACHER_OVER_TARGET',
+        params: { ...overTarget('REFUSE').params, requirementId: FR },
+      });
       expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing of a member without teachers, and nothing at all when the policy asks nothing', async () => {
+      tx.teachingRequirement.findMany.mockImplementation(async () => [member(TY, { teacherId: 't-anna' }), member(FR)]);
+      const { checks } = checksAnswering({});
+
+      await service.update(BLOCK, { lessonsPerWeek: 3 }, admin);
+      expect(checks.judge.mock.calls.map(([call]) => call.requirementId)).toEqual([TY]);
+
+      openChecks.mockResolvedValue(null);
+      const block = await service.update(BLOCK, { lessonsPerWeek: 3 }, admin);
+      expect(block.warnings).toEqual([]);
     });
 
     it('refuses a length off the grid before the database, and a block with no posts', async () => {
@@ -316,7 +365,7 @@ describe('TeachingBlocksService', () => {
 
       const block = await service.update(BLOCK, { name: 'Språkval 7' }, admin);
 
-      expect(judge).not.toHaveBeenCalled();
+      expect(openChecks).not.toHaveBeenCalled();
       expect(block).not.toHaveProperty('warnings');
     });
   });

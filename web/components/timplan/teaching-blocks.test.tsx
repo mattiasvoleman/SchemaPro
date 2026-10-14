@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   error: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
+  invalidates: [] as unknown[][],
 }));
 
 vi.mock("@/utils/supabase/client", () => ({
@@ -32,7 +33,7 @@ vi.mock("@/utils/supabase/client", () => ({
   }),
 }));
 vi.mock("@/lib/queries", () => ({
-  useCrudMutations: () => ({
+  useCrudMutations: (_path: string, keys: unknown[][]) => (state.invalidates = keys, {
     create: { mutateAsync: state.create, isPending: false },
     update: { mutateAsync: state.update, isPending: false },
     remove: { mutateAsync: state.remove, isPending: false },
@@ -221,27 +222,42 @@ describe("BlocksHost", () => {
       expect(within(dialog).getByRole("button", { name: "lessonsSave" })).toBeDisabled();
     });
 
-    it("says the staffing policy's warnings after saving, and its refusal in the dialog", async () => {
+    it("says the staffing policy's warnings and refusal after the post each is about", async () => {
       state.update.mockResolvedValueOnce({
         id: "b-sv",
-        warnings: [{ code: "STAFF_TEACHER_OVER_TARGET", params: { minutes: 1200 } }],
+        warnings: [{ code: "STAFF_TEACHER_OVER_TARGET", params: { minutes: 1200 }, requirementId: "r-fr" }],
       });
       show(members);
 
       await userEvent.click(await screen.findByRole("button", { name: "lessonsNamed(Språkval åk 7)" }));
       await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "lessonsSave" }));
       expect(state.warning).toHaveBeenCalledWith("lessonsSaved(Språkval åk 7)", {
-        description: "STAFF_TEACHER_OVER_TARGET(1200)",
+        description: "cellLabel(Franska|Fr7): STAFF_TEACHER_OVER_TARGET(1200)",
         duration: 12_000,
       });
 
       state.update.mockRejectedValueOnce(
-        new ApiError(409, "Över mål", "STAFF_TEACHER_OVER_TARGET", { minutes: 1300 }),
+        new ApiError(409, "Över mål", "STAFF_TEACHER_OVER_TARGET", { minutes: 1300, requirementId: "r-ty" }),
       );
       await userEvent.click(await screen.findByRole("button", { name: "lessonsNamed(Språkval åk 7)" }));
       await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "lessonsSave" }));
-      expect(screen.getByRole("dialog")).toHaveTextContent("refusedTitle STAFF_TEACHER_OVER_TARGET(1300)");
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        "refusedTitle cellLabel(Tyska|Ty7): STAFF_TEACHER_OVER_TARGET(1300|r-ty)",
+      );
       expect(state.error).not.toHaveBeenCalled();
+    });
+
+    it("refreshes the teachers' load and the candidates with the block, as a post's save does", async () => {
+      show(members);
+      await screen.findByRole("heading", { name: "Språkval åk 7" });
+
+      expect(state.invalidates).toEqual([
+        ["teachingBlocks", YEAR],
+        ["requirements", YEAR],
+        ["staffingLoad"],
+        ["staffingUnstaffed"],
+        ["staffingSuggestions"],
+      ]);
     });
 
     it("is not offered for a block without posts", async () => {
