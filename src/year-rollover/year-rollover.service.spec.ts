@@ -20,6 +20,7 @@ import { rolloverRowsAtFa4a3d6 } from '../../test/utils/rollover-rows-fa4a3d6';
 import { ROLLOVER_REGISTRY, carriedModels, type ColumnRule } from './rollover-registry';
 import type { ExecuteRolloverDto, RolloverOptionsDto } from './dto/year-rollover.dto';
 import { YearRolloverService } from './year-rollover.service';
+import { TimplanRequirementsService } from '../timplan/timplan-requirements.service';
 
 const admin = testUser();
 const OPTIONS: RolloverOptionsDto = {
@@ -847,6 +848,99 @@ describe('YearRolloverService — rollover execute', () => {
     expect(
       world.rows['teachingBlock']!.filter((row) => row['academicYearId'] === target).map((row) => row['name']),
     ).toEqual(['Språkval åk 9']);
+  });
+
+  describe('a språkval block over groups without an årskurs', () => {
+    // "Tyska A": Ma7 grupp 1's row, recast as a språkval group the school
+    // gave no årskurs, in "Språkval åk 7" — what Skapa timplansposter makes.
+    const withLanguageBlock = (pupils: string[]) => {
+      const rows = defaultRolloverRows();
+      const group = rows['studentGroup']!.find((row) => row['id'] === IDS.gMa7)!;
+      Object.assign(group, { name: 'Tyska A', gradeLevel: null });
+      const homeOf = (id: string) => rows['user']!.find((user) => user['id'] === id)!['studentGroupId'];
+      rows['studentGroupMember'] = pupils.map((studentId) => ({
+        studentGroupId: IDS.gMa7,
+        studentId,
+        student: { studentGroupId: homeOf(studentId) },
+      }));
+      rows['teachingBlock'] = [{ id: BLOCK_ID, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 7' }];
+      for (const requirement of rows['teachingRequirement']!) {
+        if (requirement['studentGroupId'] === IDS.gMa7) requirement['blockId'] = BLOCK_ID;
+      }
+      return rows;
+    };
+    const blocksIn = (world: RolloverWorld, yearId: string) =>
+      world.rows['teachingBlock']!.filter((block) => block['academicYearId'] === yearId);
+
+    it('is named by its pupils, so next year\'s Skapa timplansposter for åk 7 makes a block of its own', async () => {
+      // The group's two pupils are 7A's, so the cohort moves from åk 7 to åk 8.
+      const { world, prisma, service } = setup(withLanguageBlock([IDS.p7a1, IDS.p7a2]));
+      const { result } = await previewAndExecute(world, service, OPTIONS);
+      const target = result.academicYear.id;
+      expect(blocksIn(world, target).map((block) => block['name'])).toEqual(['Språkval åk 8']);
+      const carried = blocksIn(world, target)[0]!['id'];
+
+      // Next year's åk 7 chooses its språkval: Tyska on a new group.
+      const TYSKA = 'd8d8d8d8-d8d8-4d8d-8d8d-d8d8d8d8d8d8';
+      const PLAN = 'a2a2a2a2-a2a2-4a2a-8a2a-a2a2a2a2a2a2';
+      const TYSKA_B = 'e9e9e9e9-e9e9-4e9e-8e9e-e9e9e9e9e9e9';
+      world.rows['subject']!.push({ id: TYSKA, name: 'Tyska', nationalCode: 'M2' });
+      world.rows['localTimplan']!.push({
+        id: PLAN,
+        name: 'Språkval 2027',
+        status: 'DECIDED',
+        entries: [{ subjectId: TYSKA, gradeLevel: 7, minutesPerWeek: 120 }],
+      });
+      world.rows['academicYearTimplan']!.push({ schoolId: IDS.school, academicYearId: target, gradeLevel: 7, localTimplanId: PLAN });
+      world.rows['studentGroup']!.push({
+        id: TYSKA_B,
+        schoolId: IDS.school,
+        academicYearId: target,
+        name: 'Tyska B',
+        kind: 'TEACHING_GROUP',
+        gradeLevel: null,
+        predecessorId: null,
+      });
+      await new TimplanRequirementsService(prisma as unknown as PrismaService).generate(
+        PLAN,
+        {
+          academicYearId: target,
+          minutesPerLesson: 60,
+          dryRun: false,
+          languageGroups: [{ gradeLevel: 7, subjectId: TYSKA, studentGroupId: TYSKA_B }],
+        },
+        admin,
+      );
+
+      const [made, ...others] = blocksIn(world, target).filter((block) => block['id'] !== carried);
+      expect(others).toEqual([]);
+      // A new block: before the rollover named the copy by its pupils, the
+      // new row went into last year's cohort's "Språkval åk 7" and none was made.
+      expect(made?.['name']).toBe('Språkval åk 7');
+      const members = (blockId: unknown) =>
+        world.rows['teachingRequirement']!.filter((row) => row['blockId'] === blockId).map((row) => row['studentGroupId']);
+      expect(members(made?.['id'])).toEqual([TYSKA_B]);
+      expect(members(carried)).not.toContain(TYSKA_B);
+    });
+
+    it('takes last year\'s name when its pupils\' årskurs is unknown, so it cannot pass for this year\'s', async () => {
+      // A 7A pupil and an 8A pupil: no one årskurs to name the cohort by.
+      const { world, service } = setup(withLanguageBlock([IDS.p7a1, IDS.p8a1]));
+      const { result } = await previewAndExecute(world, service, OPTIONS);
+
+      expect(blocksIn(world, result.academicYear.id).map((block) => block['name'])).toEqual([
+        'Språkval åk 7 (2026/27)',
+      ]);
+    });
+
+    it('takes last year\'s name when no pupil is carried with the group', async () => {
+      const { world, service } = setup(withLanguageBlock([IDS.p7a1, IDS.p7a2]));
+      const { result } = await previewAndExecute(world, service, { ...OPTIONS, carryTeachingGroupMembers: false });
+
+      expect(blocksIn(world, result.academicYear.id).map((block) => block['name'])).toEqual([
+        'Språkval åk 7 (2026/27)',
+      ]);
+    });
   });
 
   it('keeps the block\'s name when a member is carried at its årskurs', async () => {

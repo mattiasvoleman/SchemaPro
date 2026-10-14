@@ -601,7 +601,29 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       requirementStats.carried++;
     }
   }
-  writes.blocks = planBlocks(source, writes, groupById);
+  // A carried group's årskurs this year and next, for its block's name: the
+  // group's own when it has one, as its own name is promoted; else that of the
+  // pupils carried with it, read from their classes as spanOf reads a teaching
+  // group's span. Null where they differ, or where nobody is carried.
+  const carriedPupils = new Map<string, string[]>();
+  for (const member of writes.members) {
+    carriedPupils.set(member.groupKey, [...(carriedPupils.get(member.groupKey) ?? []), member.studentId]);
+  }
+  const single = (grades: (number | null)[]): number | null => {
+    const distinct = new Set(grades);
+    return distinct.size === 1 ? [...distinct][0]! : null;
+  };
+  const cohortMove = (groupId: string): CohortMove => {
+    const own = groupById.get(groupId)?.gradeLevel ?? null;
+    if (own !== null) return { from: own, to: resolvedById.get(groupId)?.successor?.gradeLevel ?? null };
+    const pupils = carriedPupils.get(groupId) ?? [];
+    const homeGrade = (studentId: string): number | null => {
+      const home = source.homeClassOf.get(studentId);
+      return home ? (groupById.get(home)?.gradeLevel ?? null) : null;
+    };
+    return { from: single(pupils.map(homeGrade)), to: single(pupils.map(projectedGrade)) };
+  };
+  writes.blocks = planBlocks(source, writes.requirements, cohortMove);
   if (requirementStats.oddEvenRows > 0 && crossesIsoWeek53(sourceBounds.startDate, target.startDate)) {
     problems.push({ code: 'ISO_WEEK_53_CROSSED', blocking: false, params: { rows: requirementStats.oddEvenRows } });
   }
@@ -883,15 +905,26 @@ export function hashWrites(writes: RolloverWrites): string {
  *
  * A block follows its rows, as the rows follow their groups. The rows carried
  * to the successor groups make one copy, named as the groups are promoted:
- * promoteName() at the årskurs the carried rows' groups have, when every one
- * of them moves to a successor one årskurs up, so "Språkval åk 7" over Ty7,
- * Fr7 and Sp7 becomes "Språkval åk 8". Otherwise the name is kept: members in
- * different årskurser, in groups with none, or one carried at its årskurs
- * (CARRY) — "åk 8" over a group still in åk 7 would say the wrong year. Only
- * the rows carried count, and the successor's årskurs is the one resolved for
- * the new year, not this year's plus one. The rows carried to the intake
- * twins make a second copy under the source's own name, as the twins keep
- * theirs. A copy holding no carried row is not written.
+ * promoteName() at the årskurs the carried rows' cohorts are in, when every
+ * one of them moves one årskurs up, so "Språkval åk 7" over Ty7, Fr7 and Sp7
+ * becomes "Språkval åk 8". A cohort's årskurs is its group's, or, for a
+ * språkval group without one, that of the pupils carried with it (cohortMove
+ * in planRollover). Only the rows carried count, and next year's årskurs is
+ * the one resolved for the new year, not this year's plus one.
+ *
+ * A NAME THAT WOULD SAY THE WRONG YEAR IS NOT KEPT AS IT IS. Members in
+ * different årskurser, or one carried at its årskurs (CARRY), keep the name:
+ * their groups say which årskurs they are. But a copy whose cohort's årskurs
+ * is unknown — groups without one and no pupils carried, or pupils from
+ * several — would keep "Språkval åk 7" over last year's cohort, and next
+ * year's "Skapa timplansposter" for åk 7 upserts its block by that name and
+ * would put the new språkval in it, with nothing left to say the groups are
+ * another årskurs'. So such a name, when it has a digit in it, takes the
+ * source year's name: "Språkval åk 7 (2026/27)".
+ *
+ * The rows carried to the intake twins make a second copy under the source's
+ * own name, as the twins keep theirs. A copy holding no carried row is not
+ * written.
  *
  * The rows' lessons and weeks are carried as they are and their periods by
  * one rule, so a block whose rows agreed agrees in the new year as well, and
@@ -903,26 +936,24 @@ export function hashWrites(writes: RolloverWrites): string {
  */
 function planBlocks(
   source: RolloverSource,
-  writes: Pick<RolloverWrites, 'requirements' | 'groups'>,
-  groupById: ReadonlyMap<string, SourceGroup>,
+  rows: RolloverWrites['requirements'],
+  cohortMove: (sourceGroupId: string) => CohortMove,
 ): RolloverWrites['blocks'] {
   if (source.blocks.length === 0) return [];
-  const rows = writes.requirements;
   const used = new Set(rows.flatMap((row) => (row.blockKey ? [row.blockKey] : [])));
-  const nextGrade = new Map(writes.groups.map((group) => [group.key, group.gradeLevel]));
   const copies = source.blocks.flatMap((block) => {
     const sides: { key: string; sourceBlockId: string; name: string; intake: boolean }[] = [];
     if (used.has(block.id)) {
       // A successor row's groupKey is its source group's id.
-      const moves = rows
-        .filter((row) => row.blockKey === block.id)
-        .map((row) => ({
-          from: groupById.get(row.groupKey)?.gradeLevel ?? null,
-          to: nextGrade.get(row.groupKey) ?? null,
-        }));
+      const moves = rows.filter((row) => row.blockKey === block.id).map((row) => cohortMove(row.groupKey));
       const from = moves[0]?.from ?? null;
       const promoted = from !== null && moves.every((move) => move.from === from && move.to === from + 1);
-      const name = promoted ? promoteName(block.name, from).name : block.name;
+      const unknown = moves.some((move) => move.from === null || move.to === null);
+      const name = promoted
+        ? promoteName(block.name, from).name
+        : unknown && /\d/.test(block.name)
+          ? withSuffix(block.name, ` (${source.year.name})`)
+          : block.name;
       sides.push({ key: block.id, sourceBlockId: block.id, name, intake: false });
     }
     if (used.has(intakeKey(block.id))) {
@@ -939,10 +970,7 @@ function planBlocks(
   const taken = new Set<string>();
   return copies.map(({ key, sourceBlockId, name }) => {
     let unique = name;
-    for (let n = 2; taken.has(unique); n++) {
-      const suffix = ` (${n})`;
-      unique = `${name.slice(0, BLOCK_NAME_MAX - suffix.length).trimEnd()}${suffix}`;
-    }
+    for (let n = 2; taken.has(unique); n++) unique = withSuffix(name, ` (${n})`);
     taken.add(unique);
     return { key, sourceBlockId, name: unique };
   });
@@ -950,6 +978,16 @@ function planBlocks(
 
 /** TeachingBlocks_name_is_sane's bound. */
 const BLOCK_NAME_MAX = 80;
+
+/** A carried row's cohort: its årskurs this year and next, null where unknown. */
+interface CohortMove {
+  from: number | null;
+  to: number | null;
+}
+
+/** `name` and `suffix`, the name cut to keep within BLOCK_NAME_MAX. */
+const withSuffix = (name: string, suffix: string): string =>
+  `${name.slice(0, BLOCK_NAME_MAX - suffix.length).trimEnd()}${suffix}`;
 
 /** The plan as the API answers it: everything but the rows to write. */
 export function previewOf(plan: RolloverPlan): Omit<RolloverPlan, 'writes'> {
