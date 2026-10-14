@@ -8,7 +8,12 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { rethrowPrismaError, writeConflict } from '../common/utils/prisma-errors';
+import {
+  BLOCK_MEMBERS_DIFFER,
+  rethrowPrismaError,
+  teachingBlockRefusal,
+  writeConflict,
+} from '../common/utils/prisma-errors';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { RequirementImportChecks } from '../staffing/staffing-enforcement';
 import { staffingSentence, type StaffingWarning } from '../staffing/staffing-checks';
@@ -102,7 +107,7 @@ export class TeachingBlocksService {
         return { ...block, requirementIds };
       });
     } catch (error) {
-      rethrowBlockError(error, name);
+      rethrowBlockError(error, name, 'CREATE');
     }
   }
 
@@ -151,7 +156,7 @@ export class TeachingBlocksService {
         };
       });
     } catch (error) {
-      rethrowBlockError(error, name);
+      rethrowBlockError(error, name, dto.requirementIds === undefined ? null : 'ADD');
     }
   }
 
@@ -355,7 +360,19 @@ function named(rows: { subject: { name: string }; studentGroup: { name: string }
 }
 
 /** A name the year already has is said as such; everything else as everywhere. */
-function rethrowBlockError(error: unknown, name: string | undefined): never {
+/**
+ * The write's own refusals, then the shared ones.
+ *
+ * WHILE POSTS ARE PUT IN THE BLOCK, the trigger's TB409 is about them, not
+ * about the block's lessons: the shared 409 sends the reader to Ändra
+ * lektioner and to taking the post out of the block, and on a create neither
+ * the block nor the membership exists after the rollback. So `joining` says
+ * which write it was, and the 409 (the same BLOCK_MEMBERS_DIFFER) says what
+ * that writer does: give the posts the same lessons and weeks first, or leave
+ * the one that differs out — and, adding to a block that exists, change the
+ * block's lessons to the new post's.
+ */
+function rethrowBlockError(error: unknown, name: string | undefined, joining: 'CREATE' | 'ADD' | null): never {
   if (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === 'P2002' &&
@@ -364,6 +381,22 @@ function rethrowBlockError(error: unknown, name: string | undefined): never {
     throw new ConflictException({
       message: `Läsåret har redan ett block som heter "${name}".`,
       code: TEACHING_BLOCK_NAME_TAKEN,
+    });
+  }
+  const refusal = joining ? teachingBlockRefusal(error) : null;
+  if (refusal) {
+    const which = refusal.blockName ?? name;
+    throw new ConflictException({
+      message:
+        `Posterna i ${which ? `blocket "${which}"` : 'ett block'} läggs på samma tider och måste ha samma antal ` +
+        'lektioner, samma längder och samma veckor redan när de läggs i blocket. ' +
+        (joining === 'CREATE'
+          ? 'Ge posterna samma lektioner och veckor i varje posts dialog först, eller lämna den som skiljer sig utanför blocket.'
+          : 'Ge den nya posten blockets lektioner och veckor i postens dialog först, ändra blockets lektioner med ' +
+            'Ändra lektioner, eller lämna posten utanför blocket.'),
+      code: BLOCK_MEMBERS_DIFFER,
+      // A refused create left no block to point at.
+      ...(joining === 'ADD' && refusal.teachingBlockId !== null ? { teachingBlockId: refusal.teachingBlockId } : {}),
     });
   }
   rethrowPrismaError(error);

@@ -137,7 +137,7 @@ describe('TeachingBlocksService', () => {
       });
     });
 
-    it('turns the trigger’s TB409 into the 409 BLOCK_MEMBERS_DIFFER naming the block', async () => {
+    it('turns the trigger’s TB409 into a 409 BLOCK_MEMBERS_DIFFER about the posts it was given, naming the block', async () => {
       tx.teachingRequirement.findMany.mockResolvedValue([row(TY), row(FR)]);
       tx.teachingRequirement.updateMany.mockImplementation(
         async ({ data }: { data: { blockId: string | null } }) => {
@@ -153,8 +153,12 @@ describe('TeachingBlocksService', () => {
       expect(error).toBeInstanceOf(ConflictException);
       const body = (error as ConflictException).getResponse() as Record<string, string>;
       expect(body.code).toBe('BLOCK_MEMBERS_DIFFER');
-      expect(body.teachingBlockId).toBe(BLOCK);
       expect(body.message).toContain('blocket "Språkval åk 7"');
+      // The create rolled back: no block to send the reader to, and no
+      // membership to take a post out of.
+      expect(body).not.toHaveProperty('teachingBlockId');
+      expect(body.message).toContain('Ge posterna samma lektioner och veckor i varje posts dialog först');
+      expect(body.message).not.toContain('Ändra lektioner');
     });
   });
 
@@ -238,6 +242,23 @@ describe('TeachingBlocksService', () => {
       await expect(service.update(BLOCK, { requirementIds: [TY] }, admin)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('answers a post that would join with other lessons by what the one adding it can do', async () => {
+      tx.teachingRequirement.findMany.mockResolvedValue([row(TY, { blockId: BLOCK }), row(FR)]);
+      tx.teachingRequirement.updateMany.mockImplementation(
+        async ({ data }: { data: { blockId: string | null } }) => {
+          if (data.blockId !== null) throw tb409();
+          return { count: 0 };
+        },
+      );
+
+      const error = await service.update(BLOCK, { requirementIds: [TY, FR] }, admin).catch((caught: unknown) => caught);
+
+      const body = (error as ConflictException).getResponse() as Record<string, string>;
+      expect(body.code).toBe('BLOCK_MEMBERS_DIFFER');
+      expect(body.teachingBlockId).toBe(BLOCK);
+      expect(body.message).toContain('Ge den nya posten blockets lektioner och veckor i postens dialog först');
     });
 
     it('answers a row another request took meanwhile as a write conflict', async () => {
