@@ -146,6 +146,8 @@ export const ALL_V2_SCOPES = [
 export class ProviderWorld {
   readonly school: Row = { id: W.school, name: 'Ekskolan', timezone: 'Europe/Stockholm', createdAt: t('2026-01-10T08:00:00Z'), updatedAt: t('2026-01-10T08:00:00Z') };
   readonly identity = { organisation_ids: [W.org] as string[], school_unit_codes: ['12345678'] as string[] };
+  /** SchoolUnits (migration 20261031090000): none, as every school had before. */
+  readonly units: Row[] = [];
   publishMode: 'DIRECT' | 'DRAFT' = 'DIRECT';
   readonly snapshotRanges: Array<{ id: string; publishedAt: Date; validFrom: Date; validTo: Date }> = [];
   readonly webhookSecrets = new Map<string, Row>();
@@ -311,6 +313,7 @@ export class ProviderWorld {
     const own = (rows: Row[]) => rows.filter((row) => row['schoolId'] === undefined || row['schoolId'] === W.school);
     const models: Record<string, ReturnType<typeof table>> = {
       school: table([this.school]),
+      schoolUnit: table(this.units),
       academicYear: table(this.years),
       localTimplan: table(this.localTimplans),
       academicYearTimplan: table(this.yearTimplans),

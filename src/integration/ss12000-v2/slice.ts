@@ -21,7 +21,8 @@ import type { EmittedResource } from './scopes';
  * dutyPercent and hoursPerYear, and only under the school's opt-in, through
  * dutyEmploymentSelect and toSs12000Duty, as v1); the source's baseUrl,
  * tokenUrl and clientId (the identity function hands over organisation ids
- * and skolenhetskoder only).
+ * and skolenhetskoder only). SchoolUnits is read whole: a skolenhet's name,
+ * code, skolformer and span are what its Organisation carries.
  */
 
 export type Day = string; // YYYY-MM-DD
@@ -60,6 +61,19 @@ export interface GroupRow {
   name: string;
   kind: 'CLASS' | 'TEACHING_GROUP';
   gradeLevel: number | null;
+  ss12000Id: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** A skolenhet (migration 20261031090000): one emitted Organisation each. */
+export interface UnitRow {
+  id: string;
+  name: string;
+  code: string | null;
+  schoolTypes: string[];
+  gradeFrom: number | null;
+  gradeTo: number | null;
   ss12000Id: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -189,6 +203,25 @@ export class SchoolSlice {
       schoolUnitCodes: row?.school_unit_codes ?? [],
     };
   });
+
+  /** The school's skolenheter, under school_units_service_select. */
+  readonly units = memo(
+    async () =>
+      (await this.tx.schoolUnit.findMany({
+        where: { schoolId: this.schoolId },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          schoolTypes: true,
+          gradeFrom: true,
+          gradeTo: true,
+          ss12000Id: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })) as UnitRow[],
+  );
 
   readonly years = memo(
     async () =>

@@ -330,22 +330,46 @@ export class Ss12000V2Service {
   // Organisations
   // ===========================================================================
 
+  /**
+   * One Organisation per skolenhet, of organisationType Skolenhet, or the
+   * school itself when it has none, as before units (IdSpace). A unit's schoolTypes are
+   * its own (the source's, once linked); a unit that lists none, and the
+   * school without units, take the active year's timplans for the årskurser
+   * it holds. meta.modified is the later of the unit's own version and the
+   * school's: a timplan's skolform or the school's name still move what the
+   * school's Organisation moved before units existed.
+   */
   private async organisations(model: Model): Promise<Obj[]> {
-    const versions = await this.versions(model, 'Organisation', [model.slice.schoolId]);
+    const units = model.ids.organisations.flatMap((organisation) => (organisation.unit ? [organisation.unit.id] : []));
+    const versions = await this.versions(model, 'Organisation', [model.slice.schoolId, ...units]);
+    const school = versions.get(model.slice.schoolId);
     const active = model.activeYearId;
-    const schoolTypes = active ? model.types.ofYear(active) : [];
-    return [
-      {
-        id: model.ids.organisationId,
-        meta: metaOf(versions.get(model.slice.schoolId), model.school.createdAt, model.school.updatedAt),
-        displayName: model.school.name,
-        organisationType: model.ids.organisationType,
-        ...(model.ids.schoolUnitCode ? { schoolUnitCode: model.ids.schoolUnitCode } : {}),
+    return model.ids.organisations.map((organisation) => {
+      const unit = organisation.unit;
+      const own = unit ? versions.get(unit.id) : undefined;
+      const version = own && school ? (own.modifiedAt > school.modifiedAt ? own : { createdAt: own.createdAt, modifiedAt: school.modifiedAt }) : own ?? school;
+      const derived = (): string[] => {
+        if (!active) return [];
+        if (!unit || unit.gradeFrom === null || unit.gradeTo === null) return unit && model.ids.organisations.length > 1 ? [] : model.types.ofYear(active);
+        const types = new Set<string>();
+        for (let grade = unit.gradeFrom; grade <= unit.gradeTo; grade++) {
+          const type = model.types.of(active, grade);
+          if (type) types.add(type);
+        }
+        return [...types].sort();
+      };
+      const schoolTypes = unit && unit.schoolTypes.length > 0 ? [...unit.schoolTypes] : derived();
+      return {
+        id: organisation.id,
+        meta: unit ? metaOf(version, unit.createdAt, unit.updatedAt) : metaOf(school, model.school.createdAt, model.school.updatedAt),
+        displayName: unit?.name ?? model.school.name,
+        organisationType: organisation.organisationType,
+        ...(organisation.schoolUnitCode ? { schoolUnitCode: organisation.schoolUnitCode } : {}),
         // S1 Organisation.schoolTypes: "Anges endast för organisationselement
-        // typen Skolenhet" — never on the Skola several skolenheter make.
-        ...(schoolTypes.length > 0 && model.ids.organisationType === 'Skolenhet' ? { schoolTypes } : {}),
-      },
-    ];
+        // typen Skolenhet" — never on the Skola several chosen skolenheter make.
+        ...(schoolTypes.length > 0 && organisation.organisationType === 'Skolenhet' ? { schoolTypes } : {}),
+      };
+    });
   }
 
   private organisationFilter(item: Obj, params: Params): boolean {
@@ -576,7 +600,7 @@ export class Ss12000V2Service {
         endDate: bounds.endDate,
         groupType: group.kind === 'CLASS' ? 'Klass' : 'Undervisning',
         ...(schoolType ? { schoolType } : {}),
-        organisation: model.organisationRef(),
+        organisation: model.organisationRef(model.groupOrganisation(group.id)),
       });
     }
     return out;
@@ -621,14 +645,14 @@ export class Ss12000V2Service {
     return out;
   }
 
-  private groupFilter(model: Model, params: Params): (item: Obj) => boolean {
+  private groupFilter(params: Params): (item: Obj) => boolean {
     const types = list(params, 'groupType');
     const schoolTypes = list(params, 'schoolTypes');
     const organisations = list(params, 'organisation');
     return (item) => {
       if (types && !types.includes(String(item['groupType']))) return false;
       if (schoolTypes && !schoolTypes.includes(String(item['schoolType'] ?? ''))) return false;
-      if (organisations && !organisations.includes(model.ids.organisationId)) return false;
+      if (organisations && !organisations.includes((item['organisation'] as Ref).id)) return false;
       if (!datesMatch(item['startDate'] as string, item['endDate'] as string | undefined, params)) return false;
       return metaMatches(item['meta'] as Meta, params);
     };
@@ -651,7 +675,7 @@ export class Ss12000V2Service {
       EndDateDesc: { value: end, direction: -1 },
     });
     return this.runRead(caller, query.params, GROUPS_READ, async (model) => {
-      const items = (await this.groupObjects(model, expand)).filter(this.groupFilter(model, query.params));
+      const items = (await this.groupObjects(model, expand)).filter(this.groupFilter(query.params));
       return page(items, key, query, this.token(caller, operation, query));
     });
   }
@@ -695,12 +719,12 @@ export class Ss12000V2Service {
     });
   }
 
-  private dutyFilter(model: Model, params: Params): (item: Obj) => boolean {
+  private dutyFilter(params: Params): (item: Obj) => boolean {
     const organisation = text(params, 'organisation');
     const role = text(params, 'dutyRole');
     const person = text(params, 'person');
     return (item) => {
-      if (organisation !== undefined && organisation !== model.ids.organisationId) return false;
+      if (organisation !== undefined && organisation !== (item['dutyAt'] as Ref).id) return false;
       if (role !== undefined && item['dutyRole'] !== role) return false;
       if (person !== undefined && (item['person'] as Ref).id !== person) return false;
       if (!datesMatch(item['startDate'] as string, item['endDate'] as string | undefined, params)) return false;
@@ -721,7 +745,7 @@ export class Ss12000V2Service {
       ModifiedDesc: byModified,
     });
     return this.runRead(caller, query.params, DUTIES_READ, async (model) => {
-      const items = (await this.dutyObjects(model, expand)).filter(this.dutyFilter(model, query.params));
+      const items = (await this.dutyObjects(model, expand)).filter(this.dutyFilter(query.params));
       return page(items, key, query, this.token(caller, operation, query));
     });
   }
@@ -759,6 +783,7 @@ export class Ss12000V2Service {
       meta: metaOf(versions.get(room.id), room.createdAt, room.updatedAt),
       displayName: room.name,
       ...(room.capacity !== null ? { seats: room.capacity } : {}),
+      // A room is the school's: the first skolenhet owns it.
       owner: model.organisationRef(),
     }));
   }
@@ -771,7 +796,7 @@ export class Ss12000V2Service {
     const organisation = text(query.params, 'organisation');
     return this.run(caller, query.params, async (model) => {
       const items = (await this.roomObjects(model)).filter(
-        (item) => (organisation === undefined || organisation === model.ids.organisationId) && metaMatches(item['meta'] as Meta, query.params),
+        (item) => (organisation === undefined || organisation === (item['owner'] as Ref).id) && metaMatches(item['meta'] as Meta, query.params),
       );
       return page(items, key, query, this.token(caller, operation, query));
     });
@@ -899,7 +924,7 @@ export class Ss12000V2Service {
         ...(syllabus
           ? { syllabus: model.reach.names && model.can('syllabuses.read') ? { id: subject.id, displayName: subject.name } : { id: subject.id } }
           : {}),
-        organisation: model.organisationRef(),
+        organisation: model.organisationRef(model.groupOrganisation(row.studentGroupId)),
       };
       if (expand.size > 0) {
         const embedded: Record<string, unknown> = {};
@@ -940,7 +965,7 @@ export class Ss12000V2Service {
     const memberId = member ? model.ids.personFrom(member) : null;
     const groupId = group ? model.ids.groupFrom(group) : null;
     return ({ item, row }) => {
-      if (organisation !== undefined && organisation !== model.ids.organisationId) return false;
+      if (organisation !== undefined && organisation !== (item['organisation'] as Ref).id) return false;
       if (group !== undefined && !(groupId && [row.studentGroupId, ...row.extraGroupIds].includes(groupId))) return false;
       if (teacher !== undefined && !((item['teachers'] as Array<{ duty: Ref }> | undefined) ?? []).some((entry) => entry.duty.id === teacher)) return false;
       if (member !== undefined) {
@@ -1126,7 +1151,8 @@ export class Ss12000V2Service {
     const studentGroups = studentUser ? groupsOfPerson(studentUser, teaching) : new Set<string>();
     const groupId = group ? model.ids.groupFrom(group) : null;
     return ({ item, groups, named, activityDuties }) => {
-      if (organisation !== undefined && organisation !== model.ids.organisationId) return false;
+      // An event's organisation is its activity's: the lesson's own group's skolenhet.
+      if (organisation !== undefined && organisation !== model.groupOrganisation(groups[0]!)) return false;
       if (activity !== undefined && (item['activity'] as Ref).id !== activity) return false;
       if (eb && !(String(item['endTime']) <= eb)) return false;
       if (ea && !(String(item['endTime']) >= ea)) return false;
