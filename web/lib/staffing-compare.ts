@@ -1,3 +1,4 @@
+import { percentSteps, postAtStart } from "@/lib/period-view";
 import type { TeacherLoad } from "@/lib/teacher-load";
 
 /*
@@ -13,9 +14,15 @@ import type { TeacherLoad } from "@/lib/teacher-load";
  */
 
 export interface YearFigures {
-  /** Tjänst % (anställning); null without a post. */
+  /**
+   * Tjänst % (anställning) on the läsår's first day; null without a post. A
+   * post that changes during the year is compared by where it starts, and
+   * shown with its steps.
+   */
   employmentPercent: number | null;
-  /** Nedsättning %; 0 without a post. */
+  /** The grad as it changes over the year, [100, 50]; one step all year; [] without a post. */
+  employmentSteps: number[];
+  /** Nedsättning % on the läsår's first day; 0 without a post. */
   reductionPercent: number;
   /** Teaching plus counted uppdrag, standardvecka — what the target is compared with. */
   countedMinutesPerWeek: number;
@@ -38,9 +45,12 @@ export interface ComparisonRow {
 }
 
 function figures(load: TeacherLoad): YearFigures {
+  const start = postAtStart(load);
+  const steps = (load.periods?.length ?? 0) > 0 ? percentSteps(load.periods!) : start ? [start.employmentPercent] : [];
   return {
-    employmentPercent: load.employment?.employmentPercent ?? null,
-    reductionPercent: load.employment?.reductionPercent ?? 0,
+    employmentPercent: start?.employmentPercent ?? null,
+    employmentSteps: steps,
+    reductionPercent: start?.reductionPercent ?? 0,
     countedMinutesPerWeek: load.countedMinutesPerWeek,
     percentOfTarget: load.percentOfTarget,
   };

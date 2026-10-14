@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
 import sv from "@/messages/sv.json";
-import { refusalText, savedToast, staffingRefusal, warningText } from "./staffing-warnings";
+import { STAFFING_CODES, refusalText, savedToast, staffingRefusal, warningText } from "./staffing-warnings";
 
 const toasts = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast: toasts }));
@@ -32,11 +32,7 @@ describe("staffing warnings", () => {
   });
 
   it("every code the policy writes has a Swedish sentence", () => {
-    for (const code of [
-      "STAFF_TEACHER_NOT_QUALIFIED",
-      "STAFF_TEACHER_OVER_TARGET",
-      "STAFF_UNSTAFFED_REQUIREMENTS",
-    ]) {
+    for (const code of STAFFING_CODES) {
       expect(sv.engineMessages).toHaveProperty(code);
     }
   });
@@ -59,6 +55,24 @@ describe("staffingRefusal", () => {
     });
     // Without the key the gateway's own Swedish is what is shown.
     expect(refusalText(lookup({}), refusal!)).toBe("Läraren skulle få 1200 min/v…");
+  });
+
+  it("reads a period's refusal as the policy's, with the period's dates", () => {
+    // A post that changes during the year is refused for the stretch it would go over in.
+    const error = new ApiError(409, "Läraren skulle få 420 min/v…", "STAFF_TEACHER_OVER_TARGET_IN_PERIOD", {
+      role: "TEACHER",
+      minutes: 420,
+      target: 300,
+      limit: 330,
+      tolerance: 10,
+      from: "2027-01-11",
+      to: "2027-06-11",
+    });
+    const refusal = staffingRefusal(error);
+    expect(refusal?.code).toBe("STAFF_TEACHER_OVER_TARGET_IN_PERIOD");
+    const text = refusalText(lookup(sv.engineMessages as Record<string, string>), refusal!);
+    expect(text).toContain("från {from} till och med {to}");
+    expect(text).toContain('"from":"2027-01-11"');
   });
 
   it("is null for every other failure", () => {

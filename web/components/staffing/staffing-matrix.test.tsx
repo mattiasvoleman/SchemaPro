@@ -321,6 +321,59 @@ describe("StaffingMatrix", () => {
     // A post without periods carries no mark.
     const bo = screen.getByText("Bo Alm").closest("tr")!;
     expect(within(bo).queryByText(/periodsBadge/)).toBeNull();
+    // Tjänst %: 100 in the autumn, 80 from November, each step in the cell itself.
+    expect(within(anna).getByText("100 → 80")).toBeInTheDocument();
+    expect(within(anna).getByText("periodPercentSteps(100 % → 80 %)")).toBeInTheDocument();
+    expect(within(bo).getByText("80")).toBeInTheDocument();
+  });
+
+  it("gives a stretch with no taught week no status, and a period over the whole year its own grad", () => {
+    const stretch = (overrides: Partial<NonNullable<TeacherLoad["periods"]>[number]>) => ({
+      from: "2026-08-17",
+      to: "2026-12-20",
+      kind: "BASE" as const,
+      effectiveFrom: "2026-08-17",
+      effectiveTo: "2026-12-20",
+      employmentPercent: 100,
+      reductionPercent: 0,
+      ownTargetMinutesPerWeek: null,
+      targetMinutesPerWeek: 1080,
+      teachingWeeks: 18,
+      countedMinutesPerWeek: 1000,
+      balanceMinutesPerWeek: 80,
+      percentOfTarget: null,
+      status: "OK" as const,
+      ...overrides,
+    });
+    renderMatrix({
+      report: {
+        ...report,
+        teachers: [
+          teacher({
+            periods: [
+              stretch({}),
+              // Jullov: whole weeks, none taught; its 0 minutes are no "under mål".
+              stretch({ from: "2026-12-21", to: "2027-01-10", kind: "PERIOD", effectiveFrom: "2026-12-21", teachingWeeks: 0, countedMinutesPerWeek: 0, status: "UNDER" }),
+              // A period that holds no Monday at all.
+              stretch({ from: "2027-01-12", to: "2027-01-15", kind: "PERIOD", effectiveFrom: null, effectiveTo: null, teachingWeeks: 0, status: "UNDER" }),
+            ],
+          }),
+          // A period over the whole year: the grad is the period's, not the base row's 80.
+          teacher({
+            userId: "t-bo",
+            periods: [stretch({ to: "2027-06-11", kind: "PERIOD", employmentPercent: 60, effectiveTo: "2027-06-11" })],
+          }),
+        ],
+      },
+    });
+    const anna = screen.getByText("Anna Ek").closest("tr")!;
+    const summary = within(anna).getByText(/periodStatusLine\(2026-12-21/).textContent!;
+    expect(summary).toContain("periodStatusLine(2026-12-21|2027-01-10|periodNoTeachingWeek)");
+    expect(summary).toContain("periodStatusLine(2027-01-12|2027-01-15|periodNoWeek)");
+    expect(summary).not.toContain("statusUNDER");
+    const bo = screen.getByText("Bo Alm").closest("tr")!;
+    expect(within(bo).getByText("60")).toBeInTheDocument();
+    expect(within(bo).queryByText("80")).toBeNull();
   });
 
   it("opens the teacher on the row's name", async () => {

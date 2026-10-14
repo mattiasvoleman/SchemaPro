@@ -11,6 +11,7 @@ import {
   type UnitView,
   type WeekView,
 } from "@/lib/staffing-view";
+import { isJudged, percentSteps } from "@/lib/period-view";
 import type { LoadStatus, TeacherLoad, TeacherLoadReport } from "@/lib/teacher-load";
 import { LOAD_STATUS_VARIANT } from "@/lib/status-variants";
 import { subjectColor } from "@/lib/utils";
@@ -89,9 +90,33 @@ export function StaffingMatrix({
   const stretchSummary = (teacher: TeacherLoad) =>
     (teacher.periods ?? [])
       .map((period) =>
-        t("periodStatusLine", { from: period.from, to: period.to, status: t(`status${period.status}`) }),
+        t("periodStatusLine", {
+          from: period.from,
+          to: period.to,
+          // A stretch with no taught week has no verdict to give.
+          status: isJudged(period)
+            ? t(`status${period.status}`)
+            : period.effectiveFrom === null
+              ? t("periodNoWeek")
+              : t("periodNoTeachingWeek"),
+        }),
       )
       .join("; ");
+
+  // Tjänst %: a post whose tjänstgöringsgrad changes during the year shows
+  // each step, "100 → 50", said in full for a screen reader and on hover. One
+  // step is the grad all year — a period over the whole year included.
+  const percentCell = (teacher: TeacherLoad) => {
+    const steps = percentSteps(teacher.periods ?? []);
+    if (steps.length <= 1) return formatPercent(steps[0] ?? teacher.employment!.employmentPercent);
+    const said = t("periodPercentSteps", { steps: steps.map((step) => `${formatPercent(step)} %`).join(" → ") });
+    return (
+      <span title={said}>
+        <span aria-hidden="true">{steps.map(formatPercent).join(" → ")}</span>
+        <span className="sr-only">{said}</span>
+      </span>
+    );
+  };
 
   const balanceText = (teacher: TeacherLoad) => {
     if (teacher.balanceMinutesPerWeek === null) return "—";
@@ -221,7 +246,7 @@ export function StaffingMatrix({
                 })}
                 <td className="sticky right-[32rem] z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground">
                   {teacher.employment ? (
-                    formatPercent(teacher.employment.employmentPercent)
+                    percentCell(teacher)
                   ) : (
                     <span className="text-xs text-muted-foreground">{t("noPost")}</span>
                   )}
