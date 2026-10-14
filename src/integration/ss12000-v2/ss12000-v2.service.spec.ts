@@ -34,7 +34,7 @@ describe('organisations', () => {
     expect(ids(await service.listOrganisations(caller(), { 'startDate.onOrAfter': '2030-01-01', sortkey: 'DisplayNameAsc' }))).toEqual([W.org]);
   });
 
-  it('is the school itself under its own id with several skolenheter, and a skolenhet with none', async () => {
+  it('without skolenheter is the school itself under its own id with several chosen (a Skola) and with none (a Skolenhet), as before units', async () => {
     const { world, service } = setup();
     world.identity.organisation_ids = ['aaaaaaaa-0000-4000-8000-0000000000ab', W.org];
     world.identity.school_unit_codes = ['1', '2'];
@@ -60,6 +60,77 @@ describe('organisations', () => {
     await expect(service.lookupOrganisations(caller(), null, {})).rejects.toMatchObject({ code: 'INVALID_BODY' });
     await expect(service.lookupOrganisations(caller(), { schoolUnitCodes: [42] }, {})).rejects.toMatchObject({ code: 'INVALID_BODY' });
     await expect(service.lookupOrganisations(caller(), { ids: Array.from({ length: 1001 }, () => W.org) }, {})).rejects.toMatchObject({ code: 'INVALID_BODY' });
+  });
+});
+
+describe('skolenheter', () => {
+  const F6 = 'aaaaaaaa-0000-4000-8000-0000000000f6';
+  const U79 = 'aaaaaaaa-0000-4000-8000-000000000079';
+  const unit = (id: string, name: string, code: string | null, gradeFrom: number | null, gradeTo: number | null, schoolTypes: string[], ss12000Id: string | null) => ({
+    id, schoolId: W.school, name, code, gradeFrom, gradeTo, schoolTypes, ss12000Id,
+    createdAt: new Date('2026-09-01T08:00:00Z'), updatedAt: new Date('2026-09-02T08:00:00Z'),
+  });
+  function split() {
+    const { world, service } = setup();
+    // F–6 linked to the source's skolenhet, 7–9 SchemaPro's own and without skolformer.
+    world.units.push(unit(F6, 'Ekskolan F–6', '11111111', 0, 6, ['FKLASS', 'GR'], W.org), unit(U79, 'Ekskolan 7–9', '22222222', 7, 9, [], null));
+    return { world, service };
+  }
+
+  it('emits one Skolenhet per unit, under the source id once linked, with its code and skolformer', async () => {
+    const { service } = split();
+    const organisations = (await service.listOrganisations(caller(), { sortkey: 'DisplayNameAsc' })).data;
+    expect(organisations).toEqual([
+      // No skolformer of its own: the active year's timplans for 7–9.
+      expect.objectContaining({ id: U79, displayName: 'Ekskolan 7–9', organisationType: 'Skolenhet', schoolUnitCode: '22222222', schoolTypes: ['GR'] }),
+      expect.objectContaining({ id: W.org, displayName: 'Ekskolan F–6', organisationType: 'Skolenhet', schoolUnitCode: '11111111', schoolTypes: ['FKLASS', 'GR'] }),
+    ]);
+    expect(ids(await service.listOrganisations(caller(), { schoolUnitCode: '22222222' }))).toEqual([U79]);
+    expect(ids(await service.listOrganisations(caller(), { schoolTypes: 'FKLASS' }))).toEqual([W.org]);
+    expect((await service.lookupOrganisations(caller(), { schoolUnitCodes: ['11111111'] }, {})).map((o) => o.id)).toEqual([W.org]);
+    await expect(service.getOrganisation(caller(), W.school, {})).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("dates a unit by the later of its own version and the school's", async () => {
+    const { world, service } = split();
+    const at = (iso: string) => new Date(iso);
+    world.versions.push(
+      { schoolId: W.school, resource: 'Organisation', entityId: W.school, createdAt: at('2026-10-01T08:00:00Z'), modifiedAt: at('2026-10-05T08:00:00Z') },
+      { schoolId: W.school, resource: 'Organisation', entityId: U79, createdAt: at('2026-09-01T08:00:00Z'), modifiedAt: at('2026-10-09T08:00:00Z') },
+      { schoolId: W.school, resource: 'Organisation', entityId: F6, createdAt: at('2026-09-01T08:00:00Z'), modifiedAt: at('2026-09-03T08:00:00Z') },
+    );
+    const modified = Object.fromEntries((await service.listOrganisations(caller(), {})).data.map((o) => [o.id, (o['meta'] as { modified: string }).modified]));
+    expect(modified).toEqual({ [U79]: '2026-10-09T08:00:00.000Z', [W.org]: '2026-10-05T08:00:00.000Z' });
+  });
+
+  it('puts a class, its pupils, its activities and its lessons in the unit holding its årskurs', async () => {
+    const { service } = split();
+    const names = { expandReferenceNames: 'true' };
+    expect((await service.getGroup(caller(), W.c7aSource, names))['organisation']).toEqual({ id: U79, displayName: 'Ekskolan 7–9' });
+    // An undervisningsgrupp without an årskurs is the first unit's.
+    expect((await service.getGroup(caller(), W.ma7, {}))['organisation']).toEqual({ id: W.org });
+    expect(ids(await service.listGroups(caller(), { organisation: U79 })).sort()).toEqual([W.c7aSource, W.c8b].sort());
+    const [p1] = (await service.lookupPersons(caller(), { ids: [W.p1Source] }, {}));
+    expect((p1!['enrolments'] as Array<{ enroledAt: { id: string } }>)[0]!.enroledAt).toEqual({ id: U79 });
+    const by = async (raw: Record<string, unknown>) => ids(await service.listPersons(caller(), raw)).sort();
+    expect(await by({ 'relationship.organisation': U79, 'relationship.entity.type': 'enrolment' })).toEqual([W.p1Source, W.p2, W.p3, W.p4].sort());
+    expect(await by({ 'relationship.organisation': W.org, 'relationship.entity.type': 'enrolment' })).toEqual([]);
+    expect(ids(await service.listActivities(caller(), { organisation: U79 })).sort()).toEqual([W.m1, W.m2, adhocActivityId(W.l3Adhoc)].sort());
+    expect(ids(await service.listActivities(caller(), { organisation: W.org }))).toEqual([]);
+    expect(ids(await service.listCalendarEvents(caller(), { ...WINDOW, organisation: W.org }))).toEqual([]);
+    expect(ids(await service.listCalendarEvents(caller(), { ...WINDOW, organisation: U79 })).length).toBeGreaterThan(0);
+  });
+
+  it('places a duty at its mentor class\'s unit, else the first, and a room with the first', async () => {
+    const { world, service } = split();
+    expect((await service.getDuty(caller(), W.emp1, {}))['dutyAt']).toEqual({ id: U79 });
+    expect(ids(await service.listDuties(caller(), { organisation: U79 }))).toEqual([W.emp1]);
+    expect((await service.getRoom(caller(), W.r1, {}))['owner']).toEqual({ id: W.org });
+    expect(ids(await service.listRooms(caller(), { organisation: U79 }))).toEqual([]);
+    expect(ids(await service.listRooms(caller(), { organisation: W.org })).sort()).toEqual([W.r1, W.r2].sort());
+    // No mentor class: the first unit.
+    world.mentorships.length = 0;
+    expect((await service.getDuty(caller(), W.emp1, {}))['dutyAt']).toEqual({ id: W.org });
   });
 });
 

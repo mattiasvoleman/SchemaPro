@@ -1,3 +1,4 @@
+import { compareUnits, unitForGrade } from '../../school-units/school-unit-map';
 import { toSs12000Duty, type Ss12000Duty } from '../ss12000-duties';
 import { inTurn } from './in-turn';
 import {
@@ -10,6 +11,7 @@ import {
   type GroupRow,
   type LessonRow,
   type SchoolSlice,
+  type UnitRow,
   type UserRow,
   type Version,
 } from './slice';
@@ -65,16 +67,38 @@ export const EMAIL_TYPE: Record<UserRow['role'], 'Skola elev' | 'Skola personal'
 
 export const personName = (user: Pick<UserRow, 'firstName' | 'lastName'>) => `${user.firstName} ${user.lastName}`;
 
+/** An emitted Organisation: a unit, or the school itself when it has none. */
+export interface EmittedOrganisation {
+  id: string;
+  /** Skolenhet for a unit; for a school without units, as before them. */
+  organisationType: 'Skolenhet' | 'Skola';
+  /** The skolenhet; null when the school has none and is emitted itself. */
+  unit: UnitRow | null;
+  schoolUnitCode: string | null;
+}
+
 /**
  * The id namespace (S1 L5061, ids.ts): a linked person or group under the
- * source's id; the Organisation under the source's skolenhet id when exactly
- * one is chosen (else the school's own id, as a "Skola"); a teacher's Duty
- * under A5.5's choice.
+ * source's id; a teacher's Duty under A5.5's choice; and the Organisations:
+ *
+ *   * one per skolenhet (migration 20261031090000), under the source's id
+ *     once the unit is linked, else the unit's own, in compareUnits order;
+ *   * with no unit, the school itself exactly as before: under the source's
+ *     skolenhet id when exactly one is chosen (a Skolenhet), else the
+ *     school's own id, a Skolenhet with none chosen and a "Skola" with
+ *     several. That type changes with the code and not with the data, so it
+ *     would move no meta.modified; the sync turns the chosen skolenheter
+ *     into units, whose arrival the triggers track.
+ *
+ * app.ss12000_organisation_ids(school) is the same set; the triggers bury
+ * and move by it. What belongs where is src/school-units/school-unit-map.ts:
+ * a class by its årskurs, what has none by the first unit.
  */
 export class IdSpace {
-  readonly organisationId: string;
-  readonly organisationType: 'Skolenhet' | 'Skola';
-  readonly schoolUnitCode: string | null;
+  /** Every emitted Organisation; the first is what has no årskurs. Never empty. */
+  readonly organisations: EmittedOrganisation[];
+  private readonly units: UnitRow[];
+  private readonly unitIds = new Map<string, string>();
   private readonly personOut = new Map<string, string>();
   private readonly personIn = new Map<string, string>();
   private readonly groupOut = new Map<string, string>();
@@ -88,15 +112,30 @@ export class IdSpace {
     schoolId: string;
     organisationIds: string[];
     schoolUnitCodes: string[];
+    units: UnitRow[];
     users: UserRow[];
     groups: GroupRow[];
     employments: EmploymentRow[];
     links: { userId: string; academicYearId: string; ss12000DutyId: string; dutyRole: string; startDate: Date; endDate?: Date | null; id: string }[];
   }) {
-    const single = input.organisationIds.length === 1 ? input.organisationIds[0]! : null;
-    this.organisationId = single ?? input.schoolId;
-    this.organisationType = input.organisationIds.length > 1 ? 'Skola' : 'Skolenhet';
-    this.schoolUnitCode = single && input.schoolUnitCodes.length === 1 ? input.schoolUnitCodes[0]! : null;
+    this.units = [...input.units].sort(compareUnits);
+    if (this.units.length > 0) {
+      this.organisations = this.units.map((unit) => {
+        const id = (unit.ss12000Id ?? unit.id).toLowerCase();
+        this.unitIds.set(unit.id, id);
+        return { id, organisationType: 'Skolenhet' as const, unit, schoolUnitCode: unit.code };
+      });
+    } else {
+      const single = input.organisationIds.length === 1 ? input.organisationIds[0]! : null;
+      this.organisations = [
+        {
+          id: single ?? input.schoolId,
+          organisationType: input.organisationIds.length > 1 ? 'Skola' : 'Skolenhet',
+          unit: null,
+          schoolUnitCode: single && input.schoolUnitCodes.length === 1 ? input.schoolUnitCodes[0]! : null,
+        },
+      ];
+    }
     for (const user of input.users) {
       const emitted = (user.ss12000Id ?? user.id).toLowerCase();
       this.personOut.set(user.id, emitted);
@@ -126,6 +165,20 @@ export class IdSpace {
       const [userId, yearId] = key.split(':') as [string, string];
       this.dutyIn.set(id, { userId, yearId });
     }
+  }
+
+  /** The first Organisation: a room's owner, and what no årskurs places. */
+  get primaryOrganisation(): string {
+    return this.organisations[0]!.id;
+  }
+  /** The Organisation of a class, a pupil's class or a mentor's class, by its årskurs. */
+  organisationOf(grade: number | null): string {
+    const unit = unitForGrade(this.units, grade);
+    return unit ? this.unitIds.get(unit.id)! : this.primaryOrganisation;
+  }
+  /** The Organisation emitted under `id`, if one is. */
+  organisation(id: string): EmittedOrganisation | null {
+    return this.organisations.find((organisation) => organisation.id === id) ?? null;
   }
 
   person(userId: string): string | null {
@@ -199,9 +252,10 @@ export class Model {
   }
 
   static async load(slice: SchoolSlice, reach: Reach): Promise<Model> {
-    const [school, identity, users, groups, years, employments, links, types] = await inTurn(
+    const [school, identity, units, users, groups, years, employments, links, types] = await inTurn(
       () => slice.school(),
       () => slice.identity(),
+      () => slice.units(),
       () => slice.users(),
       () => slice.groups(),
       () => slice.years(),
@@ -216,6 +270,7 @@ export class Model {
       schoolId: slice.schoolId,
       organisationIds: identity.organisationIds,
       schoolUnitCodes: identity.schoolUnitCodes,
+      units,
       users: visible,
       groups,
       employments: employments.filter((post) => visible.some((user) => user.id === post.userId)),
@@ -231,10 +286,15 @@ export class Model {
 
   // --- references ---------------------------------------------------------
 
-  organisationRef(): Ref {
-    return this.reach.names && this.can('organisations.read')
-      ? { id: this.ids.organisationId, displayName: this.school.name }
-      : { id: this.ids.organisationId };
+  /** A reference to an emitted Organisation (the first when none is named). */
+  organisationRef(id: string = this.ids.primaryOrganisation): Ref {
+    if (!(this.reach.names && this.can('organisations.read'))) return { id };
+    return { id, displayName: this.ids.organisation(id)?.unit?.name ?? this.school.name };
+  }
+
+  /** The Organisation a group belongs to: its skolenhet by its årskurs. */
+  groupOrganisation(groupId: string): string {
+    return this.ids.organisationOf(this.groupsById.get(groupId)?.gradeLevel ?? null);
   }
 
   personRef(userId: string): Ref | null {
@@ -327,7 +387,8 @@ export class Model {
         const schoolType = this.types.of(open.academicYearId, open.gradeLevel);
         if (!schoolType) continue;
         out.set(pupilId, {
-          enroledAt: this.organisationRef(),
+          // The skolenhet holding the pupil's årskurs now.
+          enroledAt: this.organisationRef(this.ids.organisationOf(open.gradeLevel)),
           ...(open.gradeLevel !== null && open.gradeLevel >= 0 && open.gradeLevel <= 10 ? { schoolYear: open.gradeLevel } : {}),
           schoolType,
           startDate: dayOf(sorted[first]!.validFrom),
@@ -407,14 +468,19 @@ export class Model {
             validTo: duty.validTo ? dayOf(duty.validTo) : null,
           })),
         });
-        out.push({ duty: this.translateDuty(raw, post, versions.get(post.id)), post });
+        // dutyAt: the skolenhet of the teacher's mentor classes when they are
+        // one unit's, else the first unit (S1 Duty.dutyAt is required, and
+        // a teacher teaching across units has one Duty here).
+        const mentorUnits = new Set(own.map((duty) => this.groupOrganisation(duty.studentGroupId!)));
+        const dutyAt = mentorUnits.size === 1 ? [...mentorUnits][0]! : this.ids.primaryOrganisation;
+        out.push({ duty: this.translateDuty(raw, post, versions.get(post.id), dutyAt), post });
       }
       return out;
     })());
   }
 
   /** A5.5's pass over toSs12000Duty's output: ids into the namespace, meta from versions. */
-  translateDuty(raw: Ss12000Duty, post: EmploymentRow, version: Version | undefined): Ss12000Duty {
+  translateDuty(raw: Ss12000Duty, post: EmploymentRow, version: Version | undefined, dutyAt: string = this.ids.primaryOrganisation): Ss12000Duty {
     const person = this.personRef(raw.person.id);
     const assignmentRole = raw.assignmentRole
       ?.map((role) => {
@@ -430,7 +496,7 @@ export class Model {
       // Duty unchanged when the Fas 3 opt-in is off.
       meta: version ? metaOf(version, post.createdAt, post.updatedAt) : { ...raw.meta, modified: raw.meta.created },
       person: person ?? { id: raw.person.id },
-      dutyAt: this.organisationRef(),
+      dutyAt: this.organisationRef(dutyAt),
     };
     delete out.assignmentRole;
     if (assignmentRole && assignmentRole.length > 0) out.assignmentRole = assignmentRole;
@@ -459,22 +525,25 @@ export class Model {
       () => this.duties(),
       () => this.slice.guardianLinks(),
     );
-    const org = this.ids.organisationId;
     const out = new Map<string, Relation[]>();
     const add = (userId: string, relation: Relation) => out.set(userId, [...(out.get(userId) ?? []), relation]);
-    for (const [userId, enrolment] of enrolments) add(userId, { type: 'enrolment', organisationId: org, startDate: enrolment.startDate });
-    for (const { duty, post } of duties) add(post.userId, { type: 'duty', organisationId: org, startDate: duty.startDate, endDate: duty.endDate });
+    for (const [userId, enrolment] of enrolments) {
+      add(userId, { type: 'enrolment', organisationId: enrolment.enroledAt.id, startDate: enrolment.startDate });
+    }
+    for (const { duty, post } of duties) {
+      add(post.userId, { type: 'duty', organisationId: duty.dutyAt.id, startDate: duty.startDate, endDate: duty.endDate });
+    }
     if (this.can('responsibles.read')) {
       for (const link of links) {
         const child = enrolments.get(link.studentId);
         if (!child || !this.usersById.has(link.guardianId)) continue;
-        add(link.guardianId, { type: 'responsibleFor.enrolment', organisationId: org, startDate: child.startDate });
+        add(link.guardianId, { type: 'responsibleFor.enrolment', organisationId: child.enroledAt.id, startDate: child.startDate });
       }
     }
     for (const membership of memberships) {
       add(membership.userId, {
         type: 'groupMembership',
-        organisationId: org,
+        organisationId: this.groupOrganisation(membership.groupId),
         ...(membership.startDate ? { startDate: membership.startDate } : {}),
         ...(membership.endDate ? { endDate: membership.endDate } : {}),
       });
