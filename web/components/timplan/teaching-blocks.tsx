@@ -19,6 +19,13 @@
 // block with REQUIREMENT_IN_ANOTHER_BLOCK — both in the toast, in the
 // gateway's own Swedish. The posts, groups and subjects are the page's.
 //
+// ÄNDRA LEKTIONER. A member's lessons cannot change on its own — the trigger
+// refuses the first member against the others — so the block has its own
+// lessons dialog: the cell dialog's two fields and extra lengths, sent as one
+// PATCH that the gateway writes over every member in one statement. Each
+// member's teachers are judged by the staffing policy as the cell dialog's
+// save is: a REFUSE is the same notice in the dialog, a WARN the same toast.
+//
 // WHAT IT SAYS BEFORE THE GENERATOR DOES. Two things the generator refuses by
 // name can be seen from the page's own rows, and each block says them as soon
 // as they hold: posts that share a teacher, and two posts on one group. That
@@ -35,8 +42,13 @@ import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { useCrudMutations } from "@/lib/queries";
 import { lengthPartsOf } from "@/lib/lesson-lengths";
-import type { TeachingBlock, TeachingRequirement } from "@/lib/types";
+import { draftPartsOf, shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
+import type { MessageLookup } from "@/lib/engine-message";
+import { refusalText, savedToast, staffingRefusal } from "@/lib/staffing-warnings";
+import type { StaffingWarning, TeachingBlock, TeachingRequirement } from "@/lib/types";
+import { EXTRA_ROW_GRID, LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
+import { RefusalNotice } from "@/components/staffing/staffing-notices";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -67,12 +79,22 @@ interface BlockBody {
   academicYearId?: string;
   name: string;
   requirementIds: string[];
+  lessonsPerWeek?: number;
+  minutesPerLesson?: number;
+  lessonLengths?: number[];
 }
 
 interface Draft {
   id: string | null;
   name: string;
   members: Set<string>;
+}
+
+/** The lessons dialog: the first length in its own two fields, the rest under them. */
+interface LessonsDraft {
+  block: TeachingBlock;
+  first: DraftPart;
+  extra: DraftPart[];
 }
 
 /** The year's blocks, by name. */
@@ -123,6 +145,7 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
   const t = useTranslations("requirements.blocks");
   const tRequirements = useTranslations("requirements");
   const tCommon = useTranslations("common");
+  const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const locale = useLocale();
   const lengthsInWords = useLengthsInWords();
   const blocks = useTeachingBlocks(academicYearId);
@@ -133,6 +156,8 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
   const [draft, setDraft] = useState<Draft | null>(null);
   const [filter, setFilter] = useState("");
   const [removing, setRemoving] = useState<TeachingBlock | null>(null);
+  const [lessons, setLessons] = useState<LessonsDraft | null>(null);
+  const [lessonsRefusal, setLessonsRefusal] = useState<string | null>(null);
 
   const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
   const subjectName = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject.name])), [subjects]);
@@ -197,6 +222,35 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
     }
   };
 
+  // The block's lessons are its first member's: the trigger keeps them equal.
+  const openLessons = (block: TeachingBlock) => {
+    const first = membersOf(block.id)[0];
+    if (!first) return;
+    const [head, ...extra] = draftPartsOf(first);
+    setLessonsRefusal(null);
+    setLessons({ block, first: head!, extra });
+  };
+  // Always the whole shape, lessonLengths [] for a uniform one: the explicit
+  // "make it uniform" (lesson-shape-merge.ts), right whatever the members were.
+  const lessonsShape = lessons ? shapeFromDraft([lessons.first, ...lessons.extra]).shape : null;
+  const saveLessons = async () => {
+    if (!lessons || !lessonsShape) return;
+    try {
+      const saved = await update.mutateAsync({ id: lessons.block.id, ...lessonsShape });
+      // Read defensively, as the cell dialog reads a post's warnings.
+      const warnings = (saved as { warnings?: StaffingWarning[] } | null)?.warnings;
+      savedToast(tEngine, t("lessonsSaved", { name: lessons.block.name }), warnings);
+      setLessons(null);
+    } catch (error) {
+      const refused = staffingRefusal(error);
+      if (refused) {
+        setLessonsRefusal(refusalText(tEngine, refused));
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
+
   const needle = filter.trim().toLocaleLowerCase("sv");
   const listed = needle
     ? rows.filter((requirement) => label(requirement).toLocaleLowerCase("sv").includes(needle))
@@ -229,7 +283,17 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
               <li key={block.id} className="space-y-2 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-medium">{block.name}</h3>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    {members.length > 0 ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label={t("lessonsNamed", { name: block.name })}
+                        onClick={() => openLessons(block)}
+                      >
+                        {t("lessons")}
+                      </Button>
+                    ) : null}
                     <Button
                       variant="outline"
                       size="sm"
@@ -350,6 +414,74 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
             </Button>
             <Button disabled={saving || nameProblem !== null} onClick={() => void save()}>
               {t("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={lessons !== null} onOpenChange={(next) => !next && !update.isPending && setLessons(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("lessonsTitle", { name: lessons?.block.name ?? "" })}</DialogTitle>
+            <DialogDescription>
+              {t("lessonsDescription", { count: lessons ? membersOf(lessons.block.id).length : 0 })}
+            </DialogDescription>
+          </DialogHeader>
+          {lessons ? (
+            <div className="space-y-4">
+              {lessonsRefusal ? <RefusalNotice text={lessonsRefusal} /> : null}
+              {/* Three columns while extra lengths exist, as in the cell dialog. */}
+              <div className={lessons.extra.length > 0 ? EXTRA_ROW_GRID : "grid gap-4 sm:grid-cols-2 [&>*]:min-w-0"}>
+                <div className="space-y-1.5">
+                  <Label htmlFor="block-lessons">
+                    {lessons.extra.length > 0 ? tRequirements("lengthLessons", { n: 1 }) : tRequirements("lessonsPerWeek")}
+                  </Label>
+                  <Input
+                    id="block-lessons"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={lessons.first.lessons}
+                    onChange={(event) =>
+                      setLessons({ ...lessons, first: { ...lessons.first, lessons: event.target.value } })
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="block-minutes">
+                    {lessons.extra.length > 0 ? tRequirements("lengthMinutes", { n: 1 }) : tRequirements("minutesPerLesson")}
+                  </Label>
+                  <Input
+                    id="block-minutes"
+                    type="number"
+                    min={15}
+                    max={240}
+                    step={5}
+                    value={lessons.first.minutes}
+                    onChange={(event) =>
+                      setLessons({ ...lessons, first: { ...lessons.first, minutes: event.target.value } })
+                    }
+                  />
+                </div>
+              </div>
+              <LessonLengthsFields
+                first={lessons.first}
+                extra={lessons.extra}
+                onChange={(extra) => setLessons({ ...lessons, extra })}
+                statusId="block-lengths-status"
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" disabled={update.isPending} onClick={() => setLessons(null)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              aria-describedby={lessons && lessons.extra.length > 0 ? "block-lengths-status" : undefined}
+              disabled={update.isPending || lessonsShape === null}
+              onClick={() => void saveLessons()}
+            >
+              {t("lessonsSave")}
             </Button>
           </DialogFooter>
         </DialogContent>

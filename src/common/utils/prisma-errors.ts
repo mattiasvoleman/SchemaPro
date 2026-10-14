@@ -153,8 +153,8 @@ export function blockMembersDifferConflict(refusal: TeachingBlockRefusal): Confl
   return new ConflictException({
     message:
       `Timplansposterna i ${which} läggs på samma tider och måste ha samma antal lektioner, ` +
-      'samma längder och samma veckor. Ändra lektionerna för hela blocket under Block på Timplansposter, ' +
-      'eller ta posten ur blocket först.',
+      'samma längder och samma veckor. Ändra hela blockets lektioner med Ändra lektioner under Block på ' +
+      'Timplansposter, eller ta posten ur blocket först.',
     code: BLOCK_MEMBERS_DIFFER,
     ...(refusal.teachingBlockId !== null ? { teachingBlockId: refusal.teachingBlockId } : {}),
   });

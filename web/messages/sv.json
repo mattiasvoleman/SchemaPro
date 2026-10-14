@@ -594,12 +594,18 @@
       "posts": "Poster i blocket ({count, plural, =0 {inga valda} one {# vald} other {# valda}})",
       "filter": "Sök post",
       "inOther": "Ligger i blocket {name}",
-      "postsHint": "Posterna måste ha samma antal lektioner, samma längder och samma veckor. En post som ligger i ett annat block tas ur det först.",
+      "postsHint": "Posterna måste ha samma antal lektioner, samma längder och samma veckor när de läggs i blocket; sedan ändras hela blockets lektioner med Ändra lektioner. En post i ett annat block går att välja när den tagits ur det.",
       "save": "Spara block",
       "warnOne": "Ett block behöver minst två poster för att något ska läggas samtidigt.",
       "warnTeacher": "{first} och {second} har samma lärare, som inte kan undervisa i båda samtidigt. Generatorn vägrar blocket.",
       "warnGroup": "{first} och {second} är samma grupp, och samma elever kan inte vara i båda samtidigt. Generatorn vägrar blocket.",
-      "memberNotice": "Posten ligger i ett parallellt block. Dess lektioner och veckor är hela blockets: ta den ur blocket under Block för att ändra dem här."
+      "memberNotice": "Posten ligger i ett parallellt block, och dess lektioner och veckor är hela blockets. Ändra hela blockets lektioner med Ändra lektioner under Block, eller ta posten ur blocket för att ändra dem bara här.",
+      "lessons": "Ändra lektioner",
+      "lessonsNamed": "Ändra lektionerna i blocket {name}",
+      "lessonsTitle": "Lektioner i {name}",
+      "lessonsDescription": "{count, plural, one {Blockets post får} other {Blockets # poster får}} de här lektionerna på en gång, så de fortsätter att läggas på samma tider. Varje posts lärare prövas mot bemanningen som när en post ändras.",
+      "lessonsSave": "Spara lektioner",
+      "lessonsSaved": "Lektionerna i blocket {name} sparades."
     }
   },
   "timplan": {

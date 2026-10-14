@@ -1514,7 +1514,7 @@ export class ImportService {
               message:
                 `Raden ligger i blocket "${block?.name ?? ''}", vars timplansposter läggs på samma tider och ` +
                 'måste ha samma antal lektioner, samma längder och samma veckor. Ändra alla blockets rader ' +
-                'likadant i filen, eller ändra lektionerna för hela blocket under Block på Timplansposter.',
+                'likadant i filen, eller ändra hela blockets lektioner med Ändra lektioner under Block på Timplansposter.',
             });
           }
           continue;
