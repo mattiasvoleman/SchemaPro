@@ -388,6 +388,21 @@ Walk the full product loop once, in order:
   (staff absences, posts, uppdrag, class histories, statements, the sync's
   changes) is read through the gateway. No client reads these tables
   directly, so it waits for no release, only for the closing migration.
+- **Skolenheter**: 20261031090000 adds `SchoolUnits` (a school's
+  skolenheter with skolenhetskod, skolformer and årskurser, set up under
+  `/admin/groups`). Every SS12000 v2 request reads it under the service
+  principal, and the sync's dry run and apply read and lock it, so the
+  migration must be in the database before the API that reads it runs: the
+  migration first, then the merge. It is additive and changes nothing for a
+  school without units (none has any when it runs): the provider emits the
+  school itself exactly as before, and the replaced
+  `app.ss12000_organisation_moved` behaves as before. A school's first sync
+  after the deploy proposes its chosen skolenheter as units (never applied
+  by the night). The first unit a school
+  creates moves every SS12000 object that names an organisation (one
+  `Ss12000EntityVersions` row each) and lists the school's own Organisation
+  id in `/deletedEntities`, so a consumer subscribed to the school sees one
+  large notice. The SCB file reads the units when the export is made.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

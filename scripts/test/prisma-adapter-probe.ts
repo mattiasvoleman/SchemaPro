@@ -121,6 +121,7 @@ import { ss12000ProviderChecks } from './probe-ss12000-provider';
 import { gallringChecks, sweepGallringSchool } from './probe-gallring';
 import { lasloggChecks, sweepLasloggSchool } from './probe-laslogg';
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
+import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -4271,6 +4272,7 @@ async function runChecks(
   await gallringChecks(owner, api, MARKER, check);
   await lasloggChecks(owner, api, MARKER, check);
   await leaveChecks(owner, api, MARKER, check);
+  await skolenheterChecks(owner, api, MARKER, check);
 }
 
 
@@ -4728,6 +4730,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepLasloggSchool(owner, MARKER);
   // Mentorns ledighetsbeslut's two schools, likewise.
   await sweepLeaveSchool(owner, MARKER);
+  // Skolenheter's school, likewise.
+  await sweepSkolenheterSchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Duties first: each one's links cascade, and TeacherDutySlots_take_their_block
   // deletes the slot with its link (the service writes the slot's reason as the bare word "Uppdrag", so a

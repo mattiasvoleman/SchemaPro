@@ -446,6 +446,44 @@
     timplansposterna, och en nivågrupp kan mycket väl ha en årskurs utan att för den
     skull vara en klass — därför frågar SchemaPro i stället för att gissa.
   </p>
+  <h4>Skolenheter</h4>
+  <p>
+    Under klasslistan står skolans <strong>skolenheter</strong> — de enheter
+    Skolverkets skolenhetsregister, SCB och SS12000 räknar med. De flesta skolor
+    är en enda skolenhet; en F–9-skola är ofta två, F–6 och 7–9, och anpassad
+    grundskola är ofta en egen. Klicka
+    <span class="ui">Lägg till skolenhet</span> och fyll i namnet,
+    <strong>skolenhetskoden</strong> (åtta siffror, som i registret),
+    skolformerna och vilka <strong>årskurser</strong> enheten har.
+  </p>
+  <p>
+    Har skolan en enda skolenhet hör alla klasser till den. Har den flera är
+    årskurserna kartan: en klass hör till den skolenhet vars årskurser rymmer
+    klassens årskurs, så 7A hör till 7–9 och blir 8A i samma enhet när läsåret
+    rullas vidare, utan att du gör något. Två skolenheter kan därför inte ha
+    samma årskurs. Tabellen visar årets klasser i varje enhet. En klass vars
+    årskurs ingen av enheterna har nämns ovanför tabellen och räknas till den
+    första skolenheten (den med lägst årskurs) tills du ändrar årskurserna;
+    detsamma gäller en klass utan årskurs. En enhet utan årskurser, som ett
+    fritidshem, får då inga klasser.
+  </p>
+  <p>
+    Skolenheten och dess kod används i SCB-underlaget (6.9) och i det SS12000
+    SchemaPro lämnar ut till andra system (7.3). Hämtar skolan från sitt
+    elevregister (7.2) kommer namn, kod och skolformer därifrån; de visas med
+    <span class="ui">Från elevregistret</span> och ändras i registret, medan
+    årskurserna alltid är skolans.
+  </p>
+  <div class="note">
+    <span class="label">Samma gräns som timplanen</span>
+    <p>
+      En årskurs följer en timplan per läsår (4.1), och den hör till en
+      skolenhet. En grundskoleklass och en klass i anpassad grundskola i samma
+      årskurs och skola kan därför inte läggas i var sin skolenhet. Är anpassad
+      grundskola en egen skolenhet med egen rektor brukar den vara en egen skola
+      i SchemaPro.
+    </p>
+  </div>
   <div class="check">
     <span class="label">Schemat skyddar eleverna, inte bara grupperna</span>
     <p>
@@ -3131,11 +3169,17 @@
     undervisning (inte perioden ovan):
   </p>
   <ul>
-    <li>En rad per lärare och stadium: förskoleklass (verksamhetstyp 1),
-      grundskola åk 1–3, 4–6, 7–9 (4, 5, 6) eller anpassad grundskola (10, 11,
-      12), efter vilken timplan årskursen följer i
+    <li>En rad per lärare, skolenhet och stadium: förskoleklass
+      (verksamhetstyp 1), grundskola åk 1–3, 4–6, 7–9 (4, 5, 6) eller anpassad
+      grundskola (10, 11, 12), efter vilken timplan årskursen följer i
       <span class="ui">Timplan per årskurs</span> (4.1). Specialskola och
-      sameskola har ingen kod i SCB:s lista och får tom verksamhetstyp.</li>
+      sameskola har ingen kod i SCB:s lista och får tom verksamhetstyp.
+      <strong>SkolenhetsKod</strong> och <strong>SkolenhetNamn</strong> är
+      skolenhetens (3.4): undervisningen läggs i den skolenhet som har
+      gruppens årskurs, så en lärare som undervisar i både F–6 och 7–9 får en
+      rad i vardera. En tjänst utan planerad undervisning står i den första
+      skolenheten. Har skolan ingen skolenhet är koden tom och namnet skolans,
+      och listan under knappen säger det, liksom en skolenhet utan kod.</li>
     <li><strong>OmfLarare</strong> = tjänst − nedsättning, så som tjänsten är
       på SCB:s mätdatum 15 oktober, fördelad över lärarens rader efter
       undervisningstiden. Ändras en lärares tjänst under läsåret namnger
@@ -3153,9 +3197,9 @@
       ämnen utanför timplanen — lämnas utanför och de övriga räknas upp, som
       SCB:s instruktion säger; varje sådant ämne nämns i listan under
       knappen. Förskoleklass får inga ämnen.</li>
-    <li>Tomma, att fylla i: <strong>PersonNr</strong>,
-      <strong>SkolenhetsKod</strong> och <strong>AnstForm</strong> — SchemaPro
-      lagrar dem inte — och andelen för förstelärare och lektor. System är
+    <li>Tomma, att fylla i: <strong>PersonNr</strong> och
+      <strong>AnstForm</strong> — SchemaPro lagrar dem inte — och andelen för
+      förstelärare och lektor. System är
       <em>SchemaPro</em> och Version SchemaPros versionsnummer.
       Behörigheter och legitimation tas aldrig med; SCB hämtar dem själv.</li>
   </ul>
@@ -3165,8 +3209,8 @@
       Rubrikraden med SCB:s variabelnamn och kodningen (UTF-8 med BOM) är
       SchemaPros egna val — SCB:s datafilsbeskrivning säger inget om dem. SCB
       tar emot sin egen Excelmall eller ett systems textfil. Klistra in
-      underlagets rader i SCB:s Excelmall, komplettera personnummer,
-      skolenhetskod och anställningsform, gå igenom listan under knappen, och
+      underlagets rader i SCB:s Excelmall, komplettera personnummer och
+      anställningsform, gå igenom listan under knappen, och
       kontrollera mot SCB:s aktuella datafilsbeskrivning innan du skickar in.
       Spara inte om CSV-filen i Excel efter att ha skrivit in personnummer:
       Excel kan göra om ett tolvsiffrigt nummer till ett tal. För ett annat
@@ -3472,6 +3516,21 @@
     e-postadressen, och då bara om adressen pekar ut exakt en aktiv person med
     samma roll.
   </p>
+  <p>
+    Varje vald skolenhet blir en <strong>skolenhet</strong> under
+    <span class="path">Grunddata › Klasser</span> (3.4). Finns enheten redan
+    där med samma skolenhetskod kopplas den, annars skapas den. Namn, kod och
+    skolformer kommer sedan från registret. Årskurserna föreslås efter vilka
+    årskurser eleverna i registret går i, men bara där enheten saknar årskurser
+    eller där elever går utanför dem: ett F–6 utan förskoleklass i år behåller
+    sitt F. Har du själv ändrat skolenheten sedan senaste synken är förslaget
+    inte förvalt. En kod som inte är åtta siffror, en kod som en annan enhet
+    redan har och årskurser som skulle hamna i två enheter blir konflikter.
+    Har skolan flera skolenheter och lägger registret en klass i en annan enhet
+    än klassens årskurs gör här, står det som en konflikt: rätta
+    skolenheternas årskurser eller klassens årskurs. Nattens synk ändrar
+    aldrig en skolenhet.
+  </p>
   <div class="warn">
     <span class="label">Vårdnadshavare som inte längre anges</span>
     <p>
@@ -3570,9 +3629,15 @@
     fanns innan omfången infördes, och en ny nyckel där du inte ändrar
     förvalet, når SchemaPros eget format (<code>/ss12000/v1</code>) och dess
     import, precis som förut. En ny nyckel kan också bara få läsa, eller bara
-    nå standardformatet SS12000 2.1 (<code>/ss12000/v2.0</code>): skolenheten,
+    nå standardformatet SS12000 2.1 (<code>/ss12000/v2.0</code>): skolenheterna,
     elever och personal, vårdnadshavare, klasser och grupper, lärartjänster,
     aktiviteter och lektioner i det publicerade schemat, salar och ämnen.
+    Varje skolenhet under <span class="path">Grunddata › Klasser</span> (3.4)
+    lämnas ut som en egen skolenhet med sin skolenhetskod, och varje klass,
+    elev och lektion hör till den enhet som har klassens årskurs. Har skolan
+    ingen skolenhet lämnas skolan själv ut som förut, med registrets
+    skolenhetskod när exakt en skolenhet är vald under
+    <span class="path">Integrationer › Elevregister</span>.
     Ändra omfånget med <span class="ui">Ändra omfång</span>. Ge varje system
     bara det det behöver: en lärplattform behöver sällan vårdnadshavare.
   </p>
