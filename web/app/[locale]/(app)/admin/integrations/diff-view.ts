@@ -200,6 +200,14 @@ export function readChange(
     }
     case "GROUP": {
       const name = text(after, "name") ?? text(before, "name");
+      const sourceUnit = text(after, "sourceUnit");
+      const localUnit = text(after, "localUnit");
+      if (localUnit) {
+        return {
+          subject: name,
+          detail: { key: "unitMismatch", values: { grade: gradeOf(after?.["gradeLevel"]), local: localUnit, source: sourceUnit ?? "–" } },
+        };
+      }
       const from = text(before, "name");
       const to = text(after, "name");
       if (change.op === "UPDATE" && from && to) return { subject: from, detail: { key: "nameChange", values: { from, to } } };
@@ -241,10 +249,58 @@ export function readChange(
       return { subject: holder, detail: end ? { key: "dutyUntil", values: { role, start, end } } : { key: "duty", values: { role, start } } };
     }
     case "ORGANISATION": {
-      const code = text(after, "schoolUnitCode");
-      return { subject: text(after, "displayName"), detail: code ? { key: "unitCode", values: { code } } : null };
+      // A skolenhet (SchoolUnits): created, linked or updated from the
+      // source's Organisation, or a note naming it by its displayName.
+      const subject = text(before, "unitName") ?? text(after, "name") ?? text(after, "displayName") ?? text(before, "name");
+      const code = text(after, "code") ?? text(after, "schoolUnitCode");
+      const span = spanOf(after);
+      const types = Array.isArray(after?.["schoolTypes"]) ? (after!["schoolTypes"] as unknown[]).filter((t): t is string => typeof t === "string") : [];
+      const other = text(after, "other");
+      const holder = text(after, "holder");
+      if (other && span) return { subject, detail: { key: "unitOverlap", values: { span, other } } };
+      if (holder && code) return { subject, detail: { key: "unitCodeHolder", values: { code, holder } } };
+      // One field an UPDATE (the gateway's diff), so each row says its one change.
+      if (change.op === "UPDATE") {
+        const fromName = text(before, "name");
+        const toName = text(after, "name");
+        if (fromName && toName) return { subject, detail: { key: "nameChange", values: { from: fromName, to: toName } } };
+        if (after && "code" in after) {
+          return { subject, detail: { key: "unitCodeChange", values: { from: text(before, "code") ?? "–", to: code ?? "–" } } };
+        }
+        if (span) return { subject, detail: { key: "unitSpanChange", values: { from: spanOf(before) ?? "–", to: span } } };
+        if (types.length > 0) return { subject, detail: { key: "unitTypes", values: { types: types.join(", ") } } };
+      }
+      // A LINK names the unit it links and the code it was matched by.
+      if (change.op === "LINK") {
+        const linkedCode = text(before, "code");
+        return { subject: text(before, "name") ?? subject, detail: linkedCode ? { key: "unitCode", values: { code: linkedCode } } : null };
+      }
+      if (change.op === "CONFLICT" || change.op === "INFO") {
+        if (types.length > 0 && change.conflictCode === "SCHOOL_UNIT_TYPES_UNSUPPORTED") {
+          return { subject, detail: { key: "unitTypes", values: { types: types.join(", ") } } };
+        }
+        return { subject, detail: code ? { key: "unitCode", values: { code } } : null };
+      }
+      if (span && code) return { subject, detail: { key: "unitSpanCode", values: { span, code } } };
+      if (span) return { subject, detail: { key: "unitSpan", values: { span } } };
+      if (code) return { subject, detail: { key: "unitCode", values: { code } } };
+      if (types.length > 0) return { subject, detail: { key: "unitTypes", values: { types: types.join(", ") } } };
+      return { subject, detail: null };
     }
   }
+}
+
+/** An årskurs as the school writes it: förskoleklass is F. */
+function gradeOf(value: unknown): string {
+  return value === 0 ? "F" : typeof value === "number" ? String(value) : "–";
+}
+
+/** "F–6", "7–9", "4": a payload's gradeFrom..gradeTo, or null when it has none. */
+export function spanOf(payload: Payload | null): string | null {
+  const from = payload?.["gradeFrom"];
+  const to = payload?.["gradeTo"];
+  if (typeof from !== "number" || typeof to !== "number") return null;
+  return from === to ? gradeOf(from) : `${gradeOf(from)}–${gradeOf(to)}`;
 }
 
 /** Pupils with a guardian link the source no longer names: their ids, for the people register's guardian dialog. */

@@ -15,5 +15,8 @@ export const INTEGRATION_KEYS = {
   signIn: ["signInMethod"],
 } as const;
 
-/** What an applied diff makes stale elsewhere: the register and the classes. */
-export const AFTER_APPLY: readonly (readonly string[])[] = [["people"], ["groups"]];
+/**
+ * What an applied diff makes stale elsewhere: the register, the classes and
+ * the skolenheter (groups/use-school-units.ts) an apply creates or links.
+ */
+export const AFTER_APPLY: readonly (readonly string[])[] = [["people"], ["groups"], ["school-units"]];

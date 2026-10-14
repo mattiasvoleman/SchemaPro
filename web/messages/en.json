@@ -1614,7 +1614,10 @@
           "GRADE_OUT_OF_SCOPE": "Grade {grade} is outside the file (preschool class to grade 9); the row has no type of activity.",
           "FORM_WITHOUT_CODE": "Grade {grade} follows a timplan for {form}, which SCB's list of activity types has no code for; the row has no type of activity.",
           "GRADE_WITHOUT_TIMPLAN": "Grade {grade} has no timplan for the school year and is reported as compulsory school.",
-          "ALL_LEFT_OUT": "{name}: the teaching on one row has no SCB column. State the subjects by hand."
+          "ALL_LEFT_OUT": "{name}: the teaching on one row has no SCB column. State the subjects by hand.",
+          "NO_SCHOOL_UNIT": "The school has no school unit in SchemaPro, so SkolenhetsKod is empty and SkolenhetNamn is the school's name. Add the school units under Classes.",
+          "UNIT_WITHOUT_CODE": "The school unit {unit} has no school unit code, so SkolenhetsKod is empty on its rows. Enter the code under Classes.",
+          "GRADE_WITHOUT_UNIT": "Grade {grade} is in no school unit's grades and is reported under {unit}."
         }
       },
       "loadFailedHint": "The reconciliation shows no figures until the server has answered. No plan, no timetable and no delivered time has changed – try again in a moment."
@@ -2128,7 +2131,15 @@
           "ENROLMENT_ENDED": "The enrolment has ended",
           "NO_ACTIVE_CHILD": "No child with an active enrolment left",
           "ABSENT_FROM_SOURCE": "No longer in the register"
-        }
+        },
+        "unitSpan": "Grades {span}",
+        "unitSpanCode": "Grades {span} · school unit code {code}",
+        "unitCodeChange": "School unit code {from} → {to}",
+        "unitSpanChange": "Grades {from} → {to}",
+        "unitTypes": "School types: {types}",
+        "unitOverlap": "Grades {span} already belong to {other}",
+        "unitCodeHolder": "School unit code {code} is already on {holder}",
+        "unitMismatch": "Grade {grade}: {local} here, {source} in the register"
       },
       "changesLoadFailed": "The changes could not be loaded"
     },
@@ -2207,7 +2218,14 @@
       "MEMBERSHIP_ENDED_AT_SOURCE": "The membership has ended in the register. A sync never removes it; remove it by hand if it should go.",
       "RESPONSIBLE_NOT_PROVISIONED": "The guardian is not in SchemaPro.",
       "RESPONSIBLE_ENDED_AT_SOURCE": "The register no longer names the guardian for the child. A sync never removes the link.",
-      "ORGANISATION_NAME_DIFFERS": "The school unit has another name in the register. The school's name in SchemaPro does not change."
+      "ORGANISATION_NAME_DIFFERS": "The school unit has another name in the register. The school's name in SchemaPro does not change.",
+      "ORGANISATION_NOT_SKOLENHET": "The organisation is not a school unit in the register and does not become one in SchemaPro.",
+      "SCHOOL_UNIT_TYPES_UNSUPPORTED": "The register lists school types SchemaPro does not hold; they are not written.",
+      "SCHOOL_UNIT_CODE_INVALID": "The register's school unit code is not eight digits and is not written.",
+      "SCHOOL_UNIT_CODE_TAKEN": "Another school unit in SchemaPro already has that code.",
+      "SCHOOL_UNIT_SPAN_OVERLAP": "The grades would belong to two school units. Change the units' grades under Classes.",
+      "SCHOOL_UNIT_NOT_CHOSEN": "The school unit is linked but no longer chosen. It stays in SchemaPro.",
+      "GROUP_UNIT_MISMATCH": "The class's grade puts it in another school unit than the register does. Change the units' grades or the class's grade."
     },
     "errors": {
       "SS12000_SOURCE_NOT_FOUND": "The school has no source yet.",
@@ -4882,5 +4900,64 @@
     "link": "Accessibility statement",
     "languageNote": "This accessibility statement is published in Swedish, the language Swedish law requires it in.",
     "toApp": "Go to SchemaPro"
+  },
+  "schoolUnits": {
+    "title": "School units",
+    "description": "The Skolverket school units (skolenheter) the school is made of. With one school unit, every class belongs to it. With several, a class belongs to the one whose grades hold its grade, and a class without a grade to the first. The school unit code goes into the SCB file and into the SS12000 data SchemaPro hands out.",
+    "add": "Add school unit",
+    "addTitle": "New school unit",
+    "editTitle": "Edit {name}",
+    "dialogHint": "The name and the school unit code are in Skolverket's register of school units.",
+    "fromSourceHint": "The name, code and school types come from the student register and are changed there. The school decides the grades.",
+    "fromSource": "From the student register",
+    "loadFailed": "The school units could not be loaded.",
+    "loadFailedHint": "Nothing has changed. Reload the page, and if that does not help, contact whoever runs SchemaPro.",
+    "empty": "No school units yet. Without one the school counts as a single unit: SkolenhetsKod is left empty in the SCB file, and the school itself is handed out as the school unit in SS12000.",
+    "caption": "The school's units, with this year's classes in each",
+    "columns": {
+      "name": "School unit",
+      "code": "School unit code",
+      "types": "School types",
+      "span": "Grades",
+      "classes": "Classes this year"
+    },
+    "span": "{from}–{to}",
+    "types": {
+      "FKLASS": "Preschool class",
+      "FTH": "After-school centre",
+      "GR": "Compulsory school",
+      "GRS": "Adapted compulsory school",
+      "TR": "Adapted compulsory school, subject areas",
+      "SP": "Special school",
+      "SAM": "Sami school"
+    },
+    "fields": {
+      "name": "Name",
+      "code": "School unit code",
+      "codeHint": "Eight digits, as in the register of school units.",
+      "types": "School types",
+      "gradeFrom": "First grade",
+      "gradeTo": "Last grade",
+      "noSpan": "None"
+    },
+    "spanHint": "Two school units cannot share a grade. With several school units, a unit without grades, such as an after-school centre, has no classes.",
+    "overlap": "These grades already belong to {name}.",
+    "outsideTitle": "Classes without a school unit",
+    "outside": "{classes} have a grade no school unit holds, so they count towards {unit}. Change the units' grades if the classes belong to another.",
+    "saved": "{name} was saved.",
+    "created": "{name} was added.",
+    "deleted": "{name} was removed.",
+    "deleteTitle": "Remove {name}?",
+    "deleteBody": "The classes in the unit's grades then belong to the school's first unit, or to none if this was the last one.",
+    "deleteFromSource": "The school unit comes from the student register. The next sync proposes it again for as long as it is chosen under Integrations.",
+    "errors": {
+      "nameMissing": "Enter the school unit's name.",
+      "SCHOOL_UNIT_CODE_INVALID": "A school unit code is eight digits.",
+      "SCHOOL_UNIT_CODE_TAKEN": "Another school unit already has that code.",
+      "SCHOOL_UNIT_SPAN_OVERLAP": "These grades already belong to another school unit.",
+      "SCHOOL_UNIT_SPAN_INVALID": "Enter both the first and the last grade.",
+      "SCHOOL_UNIT_FROM_SOURCE": "The name, code and school types come from the student register and are changed there."
+    },
+    "saveFailed": "The school unit was not saved"
   }
 }

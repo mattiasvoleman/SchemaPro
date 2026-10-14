@@ -20,6 +20,7 @@ import {
   type StaffingNotice,
 } from "@/lib/staffing-reconciliation";
 import type { ScbNotice } from "@/lib/staffing-exports";
+import type { SchoolUnit } from "@/lib/school-units";
 import type { YearTimplanRow } from "@/lib/year-timplan-queries";
 import type { LocalTimplanListItem } from "@/lib/timplan-queries";
 import type { SchoolForm, TeacherDuty, TeacherQualification } from "@/lib/types";
@@ -209,12 +210,14 @@ export function StaffingReport() {
     setExporting("scb");
     try {
       const encoded = encodeURIComponent(year.id);
-      const [{ scbUnderlag, scbFilename }, { downloadCsv }, duties, yearPlans, plans] = await Promise.all([
+      const [{ scbUnderlag, scbFilename }, { downloadCsv }, duties, yearPlans, plans, units] = await Promise.all([
         import("@/lib/staffing-exports"),
         import("@/lib/csv-export"),
         api.get<TeacherDuty[]>(`/api/v1/teacher-duties?academicYearId=${encoded}`),
         api.get<YearTimplanRow[]>(`/api/v1/academic-years/${encoded}/timplans`),
         api.get<LocalTimplanListItem[]>("/api/v1/local-timplans"),
+        // Asked on the click, like the rest: SkolenhetsKod per row.
+        api.get<SchoolUnit[]>("/api/v1/school-units"),
       ]);
       const formOf = new Map(plans.map((plan) => [plan.id, plan.schoolForm]));
       const schoolFormByGrade = new Map<number, SchoolForm>();
@@ -232,6 +235,7 @@ export function StaffingReport() {
         schoolFormByGrade,
         personOf: (id) => personOf.get(id) ?? null,
         adminIds: new Set((people ?? []).filter((person) => person.role === "SCHOOL_ADMIN").map((p) => p.id)),
+        units,
       });
       downloadCsv(scbFilename(year.name), result.csv);
       setScbNotices(result.notices);

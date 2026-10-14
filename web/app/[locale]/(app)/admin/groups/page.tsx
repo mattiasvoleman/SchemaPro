@@ -19,6 +19,7 @@ import {
 } from "@/lib/queries";
 import type { StudentGroup } from "@/lib/types";
 import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
+import { SchoolUnitsCard } from "./school-units-card";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -116,6 +117,12 @@ export default function GroupsPage() {
   const membershipsQuery = useGroupMemberships();
   const memberships = membershipsQuery.data;
   const setMembers = useSetGroupMembers();
+
+  // The active year's classes, for the skolenheter card's map.
+  const activeClasses = useMemo(() => {
+    const active = years.find((year) => year.isActive);
+    return (groups ?? []).filter((group) => group.kind === "CLASS" && group.academicYearId === active?.id);
+  }, [groups, years]);
 
   const students = useMemo(
     () =>
@@ -455,6 +462,8 @@ export default function GroupsPage() {
           </TableCard>
         </>
       )}
+
+      <SchoolUnitsCard classes={activeClasses} />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

@@ -163,6 +163,54 @@ describe("reading a change", () => {
     expect(unknownSubjectKey("DUTY_LINK")).toBe("unknownPerson");
   });
 
+  it("reads a skolenhet's create, link, update and notes, and a class the register puts in another unit", () => {
+    const read = (over: Partial<SyncChange>) => readChange(change({ entity: "ORGANISATION", ...over }), new Map(), () => null);
+    expect(read({ op: "CREATE", after: { name: "Norra F–6", code: "11111111", schoolTypes: ["GR"], gradeFrom: 0, gradeTo: 6 } })).toEqual({
+      subject: "Norra F–6",
+      detail: { key: "unitSpanCode", values: { span: "F–6", code: "11111111" } },
+    });
+    expect(read({ op: "LINK", before: { name: "Norra", code: "11111111", schoolTypes: [] }, after: { ss12000Id: "x" } })).toEqual({
+      subject: "Norra",
+      detail: { key: "unitCode", values: { code: "11111111" } },
+    });
+    expect(read({ op: "UPDATE", before: { unitName: "Norra", schoolTypes: ["GR"] }, after: { schoolTypes: ["FKLASS", "GR"] } })).toEqual({
+      subject: "Norra",
+      detail: { key: "unitTypes", values: { types: "FKLASS, GR" } },
+    });
+    expect(read({ op: "UPDATE", before: { unitName: "Norra", gradeFrom: 7, gradeTo: 8 }, after: { gradeFrom: 7, gradeTo: 9 } })).toEqual({
+      subject: "Norra",
+      detail: { key: "unitSpanChange", values: { from: "7–8", to: "7–9" } },
+    });
+    expect(read({ op: "UPDATE", before: { unitName: "Norra", code: null }, after: { code: "11111111" } })).toEqual({
+      subject: "Norra",
+      detail: { key: "unitCodeChange", values: { from: "–", to: "11111111" } },
+    });
+    expect(read({ op: "UPDATE", before: { unitName: "Norra", name: "Norra" }, after: { name: "Södra" } })).toEqual({
+      subject: "Norra",
+      detail: { key: "nameChange", values: { from: "Norra", to: "Södra" } },
+    });
+    expect(
+      read({ op: "CONFLICT", conflictCode: "SCHOOL_UNIT_SPAN_OVERLAP", after: { displayName: "Norra 7–9", gradeFrom: 6, gradeTo: 9, other: "Norra F–6" } }),
+    ).toEqual({ subject: "Norra 7–9", detail: { key: "unitOverlap", values: { span: "6–9", other: "Norra F–6" } } });
+    expect(
+      read({ op: "CONFLICT", conflictCode: "SCHOOL_UNIT_CODE_TAKEN", after: { displayName: "Norra", schoolUnitCode: "11111111", holder: "Södra" } }),
+    ).toEqual({ subject: "Norra", detail: { key: "unitCodeHolder", values: { code: "11111111", holder: "Södra" } } });
+    expect(read({ op: "INFO", conflictCode: "SCHOOL_UNIT_TYPES_UNSUPPORTED", after: { displayName: "Norra", schoolTypes: ["GY", "VUX"] } })).toEqual({
+      subject: "Norra",
+      detail: { key: "unitTypes", values: { types: "GY, VUX" } },
+    });
+    const mismatch = change({
+      entity: "GROUP",
+      op: "CONFLICT",
+      conflictCode: "GROUP_UNIT_MISMATCH",
+      after: { name: "6A", gradeLevel: 6, sourceUnit: "Norra 7–9", localUnit: "Norra F–6" },
+    });
+    expect(readChange(mismatch, new Map(), () => null)).toEqual({
+      subject: "6A",
+      detail: { key: "unitMismatch", values: { grade: "6", local: "Norra F–6", source: "Norra 7–9" } },
+    });
+  });
+
   it("lists each pupil whose guardian the register no longer names, once", () => {
     const ended = change({
       entity: "RESPONSIBLE",
