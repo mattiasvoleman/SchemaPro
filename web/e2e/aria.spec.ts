@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { expectAriaBaseline } from "./aria-baseline";
+import { scanBothSchemes } from "./axe";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
 import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
 import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, TEACHERS } from "./stub/fixtures/world";
@@ -75,20 +76,25 @@ for (const screen of SCREENS) {
   });
 }
 
-test("the menu drawer on a phone is a named modal dialog that holds the menu", async ({ page, baseURL }) => {
+test("the menu drawer on a phone is a named modal dialog that holds the menu, and passes axe open", async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, { url: "/sv/teacher", persona: "teacher" }, baseURL!);
   await page.getByRole("button", { name: "Öppna meny" }).click();
   const drawer = page.getByRole("dialog");
   await expect(drawer).toBeVisible();
   await expectAriaBaseline(drawer, "teacher-menylada");
+  // And axe, open, in both themes: the page scans see it closed.
+  expect((await scanBothSchemes(page, "drawer open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+  await expect(drawer).toBeVisible();
 });
 
-test("the notification menu names its unread count and lists the notices", async ({ page, baseURL }) => {
+test("the notification menu names its unread count, lists the notices, and passes axe open", async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await open(page, { url: "/sv/guardian", persona: "guardian" }, baseURL!);
   const bell = page.getByRole("button", { name: /^Notiser/ });
   await expect(bell).toHaveAccessibleName(/^Notiser, \d+ olästa?$/);
   await bell.click();
   await expectAriaBaseline(page.getByRole("menu"), "guardian-notismeny");
+  expect((await scanBothSchemes(page, "menu open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+  await expect(page.getByRole("menu")).toBeVisible();
 });

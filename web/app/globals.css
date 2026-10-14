@@ -31,6 +31,9 @@
     --accent-foreground: 243 75% 40%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
+    /* A solid hover, as --primary-hover: bg-destructive/90 let the surface
+       through. The label on it measures 5.83:1. */
+    --destructive-hover: 0 72% 45%;
     --success: 152 60% 36%;
     --success-foreground: 0 0% 100%;
     /* Success and warning as ink and icons on light grounds: --success measures
@@ -93,6 +96,9 @@
     /* Dark ink on the fill, as --success-foreground: white on this red, light
        enough to read as text on the dark page, measured 4.04:1; this 4.88:1. */
     --destructive-foreground: 0 80% 6%;
+    /* Lighter under the pointer, away from the dark label: /90 let the dark
+       page through and took the hover to 4.13:1. This 5.84:1. */
+    --destructive-hover: 0 72% 64%;
     --success: 152 55% 45%;
     --success-foreground: 152 80% 8%;
     --success-strong: 152 55% 45%;

@@ -224,6 +224,15 @@ describe("NotificationBell badge", () => {
     expect(bellButton()).toHaveAccessibleName("titleUnread(count=12)");
   });
 
+  it("says at least, not exactly, when the newest twenty are all it read", async () => {
+    // A full page: unread notices older than these twenty are not counted.
+    supabaseState.selectResults.push(ok(Array.from({ length: 20 }, () => notif())));
+    renderBell();
+
+    await waitFor(() => expect(within(bellButton()).getByText("9+")).toBeInTheDocument());
+    expect(bellButton()).toHaveAccessibleName("titleUnreadAtLeast(count=20)");
+  });
+
   it("shows no badge and the empty state when the query fails", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(dbError("permission denied"));

@@ -85,6 +85,19 @@ export const PEOPLE: Record<Persona, SignedInPerson> = {
   },
 };
 
+/**
+ * Someone signed in whom no school knows: an auth user with no Users row, so
+ * the (app) layout sends them to /no-profile — the one way to reach that page.
+ * Their persona is a pupil's, but no page reads anything for them.
+ */
+export const ORPHAN: SignedInPerson = {
+  persona: "student",
+  role: "STUDENT",
+  authId: uid(KIND.auth, 9),
+  userId: uid(KIND.user, 999),
+  email: "okand@exempelskolan.example",
+};
+
 const base64url = (text: string) => Buffer.from(text).toString("base64url");
 
 /** 2100-01-01: never refreshed, never expired, during any test run. */
@@ -122,7 +135,7 @@ export function personForToken(token: string | null | undefined): SignedInPerson
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { sub?: string };
-    return Object.values(PEOPLE).find((person) => person.authId === payload.sub) ?? null;
+    return [...Object.values(PEOPLE), ORPHAN].find((person) => person.authId === payload.sub) ?? null;
   } catch {
     return null;
   }

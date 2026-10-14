@@ -98,6 +98,13 @@ export default async function PublicTimetablePage({
       ) : (
         <WeekView document={outcome.document} token={token} query={query} locale={locale} t={t} tDays={tDays} />
       )}
+      {/* The tillgänglighetsredogörelse, which a visitor without an account
+          can reach from nowhere else. The screen's, not the paper's. */}
+      <p className="mt-6 text-xs print:hidden">
+        <a href={`/${locale}/tillganglighet`} className="underline underline-offset-4">
+          {t("accessibility")}
+        </a>
+      </p>
     </main>
   );
 }

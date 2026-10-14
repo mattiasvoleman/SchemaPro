@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { CalendarRange } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
 import { localePath } from "@/i18n/paths";
-import { INTRO, SECTIONS, TITLE, type Block, type Inline } from "./statement";
+import { contactFromEnv, statement, TITLE, type Block, type Inline } from "./statement";
 
 /**
  * The tillgänglighetsredogörelse, public: Digg's guidance is that nobody
@@ -59,6 +59,8 @@ export default async function AccessibilityStatementPage() {
   const locale = await getLocale();
   const t = await getTranslations("accessibilityStatement");
   const tCommon = await getTranslations("common");
+  // The deployment's contact details, read when the page is served.
+  const { intro, sections } = statement(contactFromEnv());
 
   return (
     <div className="min-h-screen bg-muted/40 px-4 py-10">
@@ -76,10 +78,10 @@ export default async function AccessibilityStatementPage() {
           {locale === "sv" ? null : <p className="mb-6 text-sm text-muted-foreground">{t("languageNote")}</p>}
           <article lang="sv" className="space-y-4 text-sm leading-relaxed sm:text-base">
             <h1 className="text-2xl font-semibold tracking-tight">{TITLE}</h1>
-            {INTRO.map((block, index) => (
+            {intro.map((block, index) => (
               <BlockView key={index} block={block} />
             ))}
-            {SECTIONS.map((section) => {
+            {sections.map((section) => {
               const Heading = section.level === 2 ? "h2" : "h3";
               return (
                 <section key={section.heading} className="space-y-3 pt-2">

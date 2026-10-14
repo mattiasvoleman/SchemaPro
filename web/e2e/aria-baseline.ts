@@ -34,6 +34,10 @@ export function normalize(tree: string): string {
       // läsår 2026/27, 2026–2027
       .replace(/\b20\d{2}\s?[/–-]\s?(20)?\d{2}\b/g, "<läsår>")
       .replace(/\b20\d{2}\b/g, "<år>")
+      // A day range in any shape formatRange gives it: "21–25 okt." (one
+      // month, the first day bare), "28 okt.–1 nov." and "28 dec. – 1 jan."
+      // all read <datum>–<datum>, so the shape cannot change with the week.
+      .replace(/(?:\b\d{1,2}|<datum>)\s?[–-]\s?<datum>/g, "<datum>–<datum>")
   );
 }
 

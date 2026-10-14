@@ -36,7 +36,23 @@ export function isoWeekday(date: string): number {
 /** Monday of the week `date` falls in. */
 export const mondayOf = (date: string) => addDays(date, 1 - isoWeekday(date));
 
-export const THIS_MONDAY = mondayOf(stockholmDate(new Date()));
+/**
+ * The real day, or E2E_TODAY (YYYY-MM-DD) to run the whole suite as another
+ * week: the stub's rows and the browser's frozen clock both follow it. That is
+ * how the accessibility-tree baselines are shown to hold in any week:
+ * `E2E_TODAY=2026-12-07 npx playwright test --project=a11y e2e/aria.spec.ts`.
+ * The Next.js server keeps the real clock. So in a week before the real one,
+ * Schemavisaren leaves out its "Föregående vecka" link, which it offers only
+ * from the current week on. CI always runs in the real week, where it is there.
+ */
+const REAL_TODAY = (() => {
+  const override = process.env.E2E_TODAY;
+  if (override === undefined || override === "") return stockholmDate(new Date());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(override)) throw new Error(`E2E_TODAY must be YYYY-MM-DD, not ${override}`);
+  return override;
+})();
+
+export const THIS_MONDAY = mondayOf(REAL_TODAY);
 
 /** The fixture school's today: this week's Wednesday. */
 export const TODAY = addDays(THIS_MONDAY, 2);

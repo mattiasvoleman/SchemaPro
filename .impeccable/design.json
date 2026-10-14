@@ -118,6 +118,23 @@
           "hsl(0 0% 95%)"
         ]
       },
+      "destructive-hover": {
+        "role": "secondary",
+        "displayName": "Signal Red Hover",
+        "canonical": "hsl(0 72% 45%)",
+        "dark": "hsl(0 72% 64%)",
+        "tonalRamp": [
+          "hsl(0 72% 15%)",
+          "hsl(0 72% 25%)",
+          "hsl(0 72% 35%)",
+          "hsl(0 72% 45%)",
+          "hsl(0 72% 55%)",
+          "hsl(0 72% 65%)",
+          "hsl(0 72% 80%)",
+          "hsl(0 72% 95%)"
+        ],
+        "note": "The destructive Button's hover fill, solid rather than destructive/90, which let the surface through (4.13:1 in dark). destructive-foreground on it measures 5.83:1 light and 5.84:1 dark."
+      },
       "success": {
         "role": "secondary",
         "displayName": "Ledger Green",

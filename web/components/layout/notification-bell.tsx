@@ -42,6 +42,9 @@ interface NotificationRow {
  * notice of the school, so both the read and the write name the recipient.
  * Marking read is a single own-row column update, also RLS-guarded. Polls
  * every 60s. */
+/** The newest notices the bell reads. A full page may hide more unread behind it. */
+const NOTICE_LIMIT = 20;
+
 export function NotificationBell() {
   const t = useTranslations("notifications");
   const queryClient = useQueryClient();
@@ -57,7 +60,7 @@ export function NotificationBell() {
         .select("id, type, meta, readAt, createdAt")
         .eq("userId", profile.id)
         .order("createdAt", { ascending: false })
-        .limit(20);
+        .limit(NOTICE_LIMIT);
       if (error) throw new Error(error.message);
       return (data ?? []) as NotificationRow[];
     },
@@ -180,7 +183,15 @@ export function NotificationBell() {
           variant="ghost"
           size="icon"
           className="relative"
-          aria-label={unread > 0 ? t("titleUnread", { count: unread }) : t("title")}
+          aria-label={
+            unread === 0
+              ? t("title")
+              : // A full page of notices may have more unread behind it: the
+                // name says "minst", as the badge says 9+ rather than a number.
+                (notifications ?? []).length >= NOTICE_LIMIT
+                ? t("titleUnreadAtLeast", { count: unread })
+                : t("titleUnread", { count: unread })
+          }
         >
           <Bell />
           {unread > 0 ? (

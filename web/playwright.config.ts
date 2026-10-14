@@ -18,8 +18,11 @@ import { STUB_ORIGIN } from "./e2e/stub/sessions";
  * suites sign in by cookie as one of four people. Flows that need the real
  * database and gateway still belong in a staging pipeline.
  *
- * Run one suite with `--project=visual`. E2E_WEB_PORT moves the app off 3000
- * (and E2E_STUB_PORT the stub off 54329) when another run holds the port.
+ * Run one suite with `--project=visual`. E2E_WEB_PORT and E2E_STUB_PORT move
+ * the app off 3000 and the stub off 54329 when another run holds them. Move
+ * both together: the app is built against the stub's port, and with
+ * E2E_STUB_PORT set a server already on the web port is never reused, since
+ * it would be another run's app talking to another run's stub.
  */
 
 const isCI = !!process.env.CI;
@@ -108,7 +111,7 @@ export default defineConfig({
     // dev-only overlays and unminified CSS that shift layout by a pixel or two.
     command: isCI ? `npm run build && npm run start -- -p ${webPort}` : `npm run dev -- -p ${webPort}`,
     url: `${baseURL}/sv/login`,
-    reuseExistingServer: !isCI,
+    reuseExistingServer: !isCI && !process.env.E2E_STUB_PORT,
     timeout: 300_000,
     env: {
       // Both backends are the stub, whatever the job's environment says: the

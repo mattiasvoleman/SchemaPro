@@ -5,7 +5,16 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const DropdownMenu = DropdownMenuPrimitive.Root;
+/**
+ * Non-modal unless a caller asks otherwise. Radix's modal mode hides the rest
+ * of the page with aria-hidden while its links and buttons stay focusable —
+ * axe's aria-hidden-focus, serious, on every open menu — and a menu is not a
+ * dialog: in the APG's menu button pattern Escape closes it and Tab leaves
+ * it, which Radix's non-modal mode does (focus outside dismisses it).
+ */
+function DropdownMenu({ modal = false, ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  return <DropdownMenuPrimitive.Root modal={modal} {...props} />;
+}
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 const DropdownMenuPortal = DropdownMenuPrimitive.Portal;

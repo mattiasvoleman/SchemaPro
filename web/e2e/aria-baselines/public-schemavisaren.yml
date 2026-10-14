@@ -1,7 +1,7 @@
 - main:
   - paragraph: Exempelskolan · Klass eller grupp
   - heading "7A" [level=1]
-  - paragraph: Vecka <n> · <datum> – <datum>
+  - paragraph: Vecka <n> · <datum>–<datum>
   - navigation "Schema":
     - link "Alla":
       - /url: /v/ExempelskolanKlasserDelasMedVardnadshavarna
@@ -40,4 +40,7 @@
   - text: Lunch 11:40–12:10
   - paragraph: "Fredag <datum>: Inga lektioner"
   - paragraph: "Skolans publicerade schema. En ändring syns här inom en minut. Skriv ut med webbläsarens utskrift: veckan får plats på ett liggande A4."
+  - paragraph:
+    - link "Tillgänglighetsredogörelse":
+      - /url: /sv/tillganglighet
 - alert

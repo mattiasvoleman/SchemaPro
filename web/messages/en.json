@@ -1789,6 +1789,7 @@
   "notifications": {
     "title": "Notifications",
     "titleUnread": "Notifications, {count} unread",
+    "titleUnreadAtLeast": "Notifications, at least {count} unread",
     "empty": "No notifications yet.",
     "markAllRead": "Mark all read",
     "absenceUnreported": "{student} was marked absent from {subject} on {date} without a prior report.",
@@ -4177,7 +4178,8 @@
     "busyTitle": "Too many views right now",
     "busyBody": "Try again in a minute.",
     "unavailableTitle": "The timetable could not be fetched",
-    "unavailableBody": "Try again in a while."
+    "unavailableBody": "Try again in a while.",
+    "accessibility": "Accessibility statement"
   },
   "absenceForm": {
     "createTitle": "Register absence",

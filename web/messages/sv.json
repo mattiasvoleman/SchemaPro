@@ -1789,6 +1789,7 @@
   "notifications": {
     "title": "Notiser",
     "titleUnread": "Notiser, {count, plural, one {# oläst} other {# olästa}}",
+    "titleUnreadAtLeast": "Notiser, minst {count, plural, one {# oläst} other {# olästa}}",
     "empty": "Inga notiser ännu.",
     "markAllRead": "Markera alla som lästa",
     "absenceUnreported": "{student} markerades frånvarande från {subject} den {date} utan föranmälan.",
@@ -4177,7 +4178,8 @@
     "busyTitle": "För många visningar just nu",
     "busyBody": "Försök igen om en minut.",
     "unavailableTitle": "Schemat kunde inte hämtas",
-    "unavailableBody": "Försök igen om en stund."
+    "unavailableBody": "Försök igen om en stund.",
+    "accessibility": "Tillgänglighetsredogörelse"
   },
   "absenceForm": {
     "createTitle": "Registrera frånvaro",

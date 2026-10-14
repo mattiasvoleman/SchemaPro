@@ -43,7 +43,7 @@ const answers = vi.hoisted(() => ({
   attendance: { data: [] as unknown[] | undefined, isError: false },
   reported: { data: { studentIds: [] as string[] } },
   subjects: { data: [{ id: "s-ma", name: "Matematik" }] },
-  report: { mutate: () => undefined, isPending: false },
+  report: { mutate: () => undefined, mutateAsync: vi.fn(async (_input: unknown) => undefined), isPending: false },
 }));
 
 vi.mock("@/utils/supabase/client", () => ({ createClient: () => ({}) }));
@@ -155,5 +155,32 @@ describe("/teacher/attendance/[lessonId], what each pupil opens as", () => {
     renderPage();
     await userEvent.setup().click(within(group("Jamal Sjö")).getByRole("radio", { name: "Sen" }));
     expect(within(group("Jamal Sjö")).getByRole("radio", { name: "Sen" })).toBeChecked();
+  });
+
+  it("saves only the listed pupils, whatever the stored records hold", async () => {
+    // Hugo has a stored mark from before he left 7A; he is not on the roster.
+    roster.students = [JAMAL, ELLA];
+    answers.attendance = {
+      data: [
+        { id: "r-1", calendarLessonId: "l-1", studentId: JAMAL.id, status: "ABSENT", recordedAt: null, note: null },
+        { id: "r-2", calendarLessonId: "l-1", studentId: "p-hugo", status: "PRESENT", recordedAt: null, note: null },
+      ],
+      isError: false,
+    };
+    answers.report.mutateAsync.mockClear();
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
+    expect(answers.report.mutateAsync).toHaveBeenLastCalledWith({
+      calendarLessonId: "l-1",
+      records: [{ studentId: JAMAL.id, status: "ABSENT" }],
+    });
+
+    // "Markera alla" as well: the roster, and nobody else.
+    await user.click(screen.getByRole("button", { name: "Markera alla närvarande" }));
+    await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
+    const sent = answers.report.mutateAsync.mock.lastCall![0] as { records: Array<{ studentId: string }> };
+    expect(sent.records.map((record) => record.studentId).sort()).toEqual([ELLA.id, JAMAL.id].sort());
   });
 });

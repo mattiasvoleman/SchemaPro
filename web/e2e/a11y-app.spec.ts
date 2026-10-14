@@ -1,11 +1,7 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { APP_ROUTES, PAGES } from "./app-routes";
+import { DESKTOP, PHONE, scanBothSchemes, setScheme, type Violation } from "./axe";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
-
-const WCAG_AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
-
-const scan = (page: Page) => new AxeBuilder({ page }).withTags(WCAG_AA_TAGS).analyze();
 
 /**
  * Violations the suite lets through, each with the reason it is not fixed
@@ -15,8 +11,6 @@ const scan = (page: Page) => new AxeBuilder({ page }).withTags(WCAG_AA_TAGS).ana
  * substring of the failing node's selector.
  */
 const ALLOWED: Array<{ rule: string; page: string; target: string; reason: string }> = [];
-
-type Violation = Awaited<ReturnType<typeof scan>>["violations"][number];
 
 /** The violations left once the allowed nodes are taken out. */
 function unexplained(violations: Violation[], page: string): Violation[] {
@@ -34,15 +28,6 @@ function unexplained(violations: Violation[], page: string): Violation[] {
     .filter((violation) => violation.nodes.length > 0);
 }
 
-const format = (violations: Violation[]): string =>
-  violations
-    .map(
-      (v) =>
-        `[${v.impact ?? "unknown"}] ${v.id}: ${v.help}\n` +
-        v.nodes.map((n) => `    ${n.target.join(" ")}\n      ${n.failureSummary?.split("\n").join("\n      ")}`).join("\n"),
-    )
-    .join("\n");
-
 test("every signed-in page is covered", () => {
   const uncovered = PAGES.filter((entry) => entry.url === null || entry.personas.length === 0).map((entry) => entry.page);
   expect(uncovered, "add the area to AREAS, or the [param] to PARAMS, in e2e/app-routes.ts").toEqual([]);
@@ -58,31 +43,20 @@ for (const route of APP_ROUTES) {
       await freezeClock(page);
       const misses = watchStubMisses(page);
 
-      await page.setViewportSize({ width: 1280, height: 800 });
-      await page.emulateMedia({ colorScheme: "light" });
+      await page.setViewportSize(DESKTOP);
+      await setScheme(page, "light", false);
       await page.goto(`/sv${route.url}`);
       await settle(page);
       expect(page.url(), "the page sent this person somewhere else").toContain(route.url);
       // Soft, so one run names both what the stub lacks and what axe found.
       expect.soft(misses, "the stub has no fixture for these reads (e2e/stub/fixtures/)").toEqual([]);
 
-      const results: string[] = [];
-      for (const [width, height, label] of [
-        [1280, 800, "desktop"],
-        [390, 844, "mobile"],
-      ] as const) {
-        if (width !== 1280) {
-          await page.setViewportSize({ width, height });
-          await page.reload();
-          await settle(page);
-        }
-        for (const scheme of ["light", "dark"] as const) {
-          await page.emulateMedia({ colorScheme: scheme });
-          await expect(page.locator("html")).toHaveClass(scheme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
-          const violations = unexplained((await scan(page)).violations, route.page);
-          if (violations.length > 0) results.push(`--- ${label} ${scheme}\n${format(violations)}`);
-        }
-      }
+      const keep = (violations: Violation[]) => unexplained(violations, route.page);
+      const results = await scanBothSchemes(page, "desktop", true, keep);
+      await page.setViewportSize(PHONE);
+      await page.reload();
+      await settle(page);
+      results.push(...(await scanBothSchemes(page, "mobile", true, keep)));
       expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
     });
   }

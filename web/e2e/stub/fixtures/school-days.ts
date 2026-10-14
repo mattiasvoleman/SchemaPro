@@ -14,7 +14,7 @@ import type {
   TeacherWorkRule,
 } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
-import { addDays, AUTUMN_YEAR, stockholmInstant, thisWeek, TODAY } from "./calendar";
+import { addDays, stockholmInstant, THIS_MONDAY, thisWeek, TODAY } from "./calendar";
 import {
   ADMIN,
   CALENDAR_LESSONS,
@@ -129,14 +129,30 @@ export const CONSTRAINTS: AvailabilityConstraint[] = [
   },
 ];
 
+/**
+ * The Monday `weeks` weeks from this one, inside the läsår: ahead if a break
+ * of `span` weeks fits before it ends, behind otherwise. The breaks never
+ * fall in the current week, which every page shows, so a run in what would
+ * be höstlov does not turn the week's lessons into a lov; and their weekdays
+ * are always the same count.
+ */
+function breakMonday(weeks: number, span = 1): string {
+  const ahead = addDays(THIS_MONDAY, 7 * weeks);
+  return addDays(ahead, 7 * span) <= YEAR.endDate ? ahead : addDays(THIS_MONDAY, -7 * weeks);
+}
+
+const autumnBreak = breakMonday(3);
+const winterBreak = breakMonday(7, 3);
+const staffDay = addDays(breakMonday(11), 4);
+
 export const SCHOOL_BREAKS: SchoolBreak[] = [
   {
     id: uid(KIND.misc, 1041),
     academicYearId: YEAR.id,
     name: "Höstlov",
     kind: "HOLIDAY",
-    startDate: `${AUTUMN_YEAR}-11-02`,
-    endDate: `${AUTUMN_YEAR}-11-06`,
+    startDate: autumnBreak,
+    endDate: addDays(autumnBreak, 4),
     minGradeLevel: null,
     maxGradeLevel: null,
   },
@@ -145,8 +161,8 @@ export const SCHOOL_BREAKS: SchoolBreak[] = [
     academicYearId: YEAR.id,
     name: "Jullov",
     kind: "HOLIDAY",
-    startDate: `${AUTUMN_YEAR}-12-21`,
-    endDate: `${AUTUMN_YEAR + 1}-01-08`,
+    startDate: winterBreak,
+    endDate: addDays(winterBreak, 18),
     minGradeLevel: null,
     maxGradeLevel: null,
   },
@@ -155,8 +171,8 @@ export const SCHOOL_BREAKS: SchoolBreak[] = [
     academicYearId: YEAR.id,
     name: "Studiedag",
     kind: "STAFF_DAY",
-    startDate: `${AUTUMN_YEAR + 1}-03-15`,
-    endDate: `${AUTUMN_YEAR + 1}-03-15`,
+    startDate: staffDay,
+    endDate: staffDay,
     minGradeLevel: null,
     maxGradeLevel: null,
   },

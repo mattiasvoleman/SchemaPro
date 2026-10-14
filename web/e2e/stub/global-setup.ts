@@ -15,7 +15,9 @@ export default async function globalSetup() {
     if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
       throw new Error(
         "The e2e backend stub's port is taken — another Playwright run is probably using it. " +
-          "Stop it, or set E2E_STUB_PORT for both runs' builds.",
+          "Stop it, or give this run ports of its own: E2E_STUB_PORT and E2E_WEB_PORT together " +
+          "(the app is built against the stub's port, so a run that moves only the stub would " +
+          "test the other run's app).",
       );
     }
     throw error;

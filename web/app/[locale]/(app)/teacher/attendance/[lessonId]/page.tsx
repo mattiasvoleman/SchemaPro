@@ -85,18 +85,26 @@ export default function LessonAttendancePage({
   const [chosen, setChosen] = useState<Record<string, AttendanceStatus>>({});
 
   /**
-   * Each pupil's status: an absence reported in advance pre-fills EXCUSED, a
-   * stored record replaces that, and what the teacher chooses here replaces
-   * both. Derived, not seeded: two effects that each filled only the pupils
-   * still missing let whichever read answered first win, so a pupil with a
-   * stored ABSENT and a report opened as one or the other by network timing.
+   * Each listed pupil's status: an absence reported in advance pre-fills
+   * EXCUSED, a stored record replaces that, and what the teacher chooses
+   * here replaces both. Derived, not seeded: two effects that each filled
+   * only the pupils still missing let whichever read answered first win, so a
+   * pupil with a stored ABSENT and a report opened as one or the other by
+   * network timing.
+   *
+   * Only the roster's pupils, which is all the save sends. The stored records
+   * also hold pupils who have since left the lesson's groups; sent back, the
+   * gateway refuses the whole register (403, not on the roster), and a
+   * deactivated pupil's row would be rewritten in this teacher's name.
    */
   const statuses = useMemo(() => {
+    const listed = new Set((students ?? []).map((student) => student.id));
     const known: Record<string, AttendanceStatus> = {};
     for (const studentId of reportedAbsent) known[studentId] = "EXCUSED";
     for (const record of existingRecords ?? []) known[record.studentId] = record.status;
-    return { ...known, ...chosen };
-  }, [reportedAbsent, existingRecords, chosen]);
+    const all = { ...known, ...chosen };
+    return Object.fromEntries(Object.entries(all).filter(([studentId]) => listed.has(studentId)));
+  }, [students, reportedAbsent, existingRecords, chosen]);
 
   const subject = useMemo(
     () => subjects?.find((candidate) => candidate.id === lesson?.subjectId),
