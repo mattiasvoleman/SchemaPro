@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
  * The läslogg: every read of another person's row in these tables goes through the gateway,
  * which records who read what. Two migrations then take PostgREST's `authenticated` role off other
  * people's rows in them (20261026100000 the first six, 20261028090000 the staff and timplan
- * tables), so a direct read that slips back into the web would not leak anything — it would come
+ * tables), and the post's periods are closed so from their start (20261022120000), so a direct
+ * read that slips back into the web would not leak anything — it would come
  * back empty, and the page would show a school without pupils, a class without attendance or a
  * staff without posts, as if that were the data. No type and no other test sees that; this one does.
  *
@@ -27,6 +28,7 @@ const TABLES = [
   "TeacherAbsenceCovers",
   "TeacherEmployments",
   "TeacherEmploymentLogs",
+  "TeacherEmploymentPeriods",
   "TeacherDuties",
   "StudentEnrollments",
   "TimplanStatements",

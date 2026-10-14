@@ -35,6 +35,8 @@ const PERSONAL = [
   'TeacherAbsenceCovers',
   'TeacherEmployments',
   'TeacherEmploymentLogs',
+  // 20261022120000: a post's periods, closed to PostgREST from the start.
+  'TeacherEmploymentPeriods',
   'TeacherDuties',
   'StudentEnrollments',
   'TimplanStatements',

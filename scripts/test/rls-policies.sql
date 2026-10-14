@@ -15296,10 +15296,12 @@ ROLLBACK;
 -- Section 91: en tjänsts perioder läses som tjänsten (20261022120000).
 --
 -- A period says what a post is from a date — "80 % från 1 november" — and is
--- the post's HR data, so it carries the post's three arms exactly: the admin
--- writes the school's, a TEACHER reads the periods of their OWN post and no
--- colleague's and writes none, the service principal reads by school under
--- the API's role alone, and nobody else reads anything. The copy-paste
+-- the post's HR data, so it is read by the post's three arms: the admin
+-- writes the school's, under the API's role alone (PostgREST's role reads
+-- and writes none of them, so a colleague's period is read only through the
+-- gateway and its läslogg), a TEACHER reads the periods of their OWN post and
+-- no colleague's and writes none, the service principal reads by school
+-- under the API's role alone, and nobody else reads anything. The copy-paste
 -- failure is again the one that matters — a staff arm would hand every
 -- teacher a colleague's nedsättning from January — so the teacher's read is
 -- an exact count against a colleague's period written in the same
@@ -15335,6 +15337,27 @@ BEGIN
          (school, e_col, colleague, y, DATE '2103-01-07', NULL, 50, now());
   SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
   IF n <> 3 THEN RAISE EXCEPTION 'post periods: the admin reads % of the three periods they wrote', n; END IF;
+  -- The same admin straight through PostgREST: nothing to read, nothing to
+  -- write. A colleague's period is read through the API, which logs it.
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM "TeacherEmploymentPeriods";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'post periods: through PostgREST the admin reads % period(s) — the admin arm is not the API''s alone', n;
+  END IF;
+  BEGIN
+    -- September alone: clear of the colleague's period, so only a policy can refuse it.
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+    VALUES (school, e_col, colleague, y, DATE '2102-09-01', DATE '2102-09-30', 90, now());
+    RAISE EXCEPTION 'post periods: through PostgREST the admin wrote a period';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "TeacherEmploymentPeriods" SET "employmentPercent" = 1, "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: through PostgREST the admin rewrote % period(s)', n; END IF;
+  DELETE FROM "TeacherEmploymentPeriods";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'post periods: through PostgREST the admin removed % period(s)', n; END IF;
+  SET LOCAL ROLE app_authenticated;
   PERFORM set_config('app.test_rls91_mine', e_me::text, true);
   PERFORM set_config('app.test_rls91_theirs', e_col::text, true);
   PERFORM set_config('app.test_rls91_me', me::text, true);
@@ -15637,8 +15660,10 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 -- Section 94: periodtabellen börjar som en ny tabell ska (20261022120000).
 --
--- Row security on, exactly the three arms with their roles (none TO PUBLIC),
--- the grants of a table created after 20261016130000 — the API role reads and
+-- Row security on, exactly the three arms with their roles (none TO PUBLIC,
+-- and the teacher's own the one TO authenticated: PostgREST reads a teacher's
+-- own periods and nothing else, as 20261026100000 leaves the six tables of
+-- section 126), the grants of a table created after 20261016130000 — the API role reads and
 -- writes, PostgREST's role has no TRUNCATE, REFERENCES or TRIGGER (nor
 -- MAINTAIN on 17), anon nothing, service_role SELECT alone — the history
 -- trigger enabled on a SECURITY DEFINER function, the EXCLUDE in place, and
@@ -15657,10 +15682,25 @@ BEGIN
   SELECT string_agg(format('%s %s', polname, polroles::regrole[]::text), ', ' ORDER BY polname) INTO wrong
     FROM pg_policy WHERE polrelid = rel;
   IF wrong IS DISTINCT FROM concat_ws(', ',
-       'teacher_employment_periods_admin_all {authenticated}',
+       'teacher_employment_periods_admin_all {app_authenticated}',
        'teacher_employment_periods_service_select {app_authenticated}',
        'teacher_employment_periods_teacher_own_select {authenticated}') THEN
     RAISE EXCEPTION 'period table: the arms are %', wrong;
+  END IF;
+  -- Section 126's question for this table: what shows its rows to PostgREST's
+  -- role (or to PUBLIC) is the own-row arm alone, and it names the reader.
+  SELECT string_agg(policyname, ' ' ORDER BY policyname) INTO wrong
+    FROM pg_policies
+   WHERE schemaname = 'public' AND tablename = 'TeacherEmploymentPeriods'
+     AND cmd IN ('SELECT', 'ALL', 'INSERT', 'UPDATE', 'DELETE')
+     AND roles && ARRAY['authenticated', 'public']::name[];
+  IF wrong IS DISTINCT FROM 'teacher_employment_periods_teacher_own_select' THEN
+    RAISE EXCEPTION 'period table: authenticated reaches the periods through %, not only the own-row arm', wrong;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                  WHERE schemaname = 'public' AND policyname = 'teacher_employment_periods_teacher_own_select'
+                    AND qual LIKE '%= ( SELECT app.current_user_id() AS current_user_id)%') THEN
+    RAISE EXCEPTION 'period table: the own-row arm no longer reads only the reader''s own periods';
   END IF;
   SELECT string_agg(item, ', ') INTO wrong FROM (
     SELECT format('%s %s %s', r, priv, has_table_privilege(r, rel, priv)) AS item
@@ -16280,12 +16320,13 @@ ROLLBACK;
 --
 -- The catalogue, as 126 for the six tables. On TeacherAbsences,
 -- TeacherAbsenceCovers, TeacherEmployments, TeacherEmploymentLogs,
--- TeacherDuties, StudentEnrollments, TimplanStatements and
--- Ss12000SyncChanges, the arms that show rows to authenticated are exactly
--- the seven own-row arms, and each is anchored on the reader in the row's
--- own person column, with no OR or NOT to widen it. The eleven arms the
--- migration moved are the API's role's alone (28g lets a cover arm be
--- either role; this says which). Exactly one policy on another table reads
+-- TeacherEmploymentPeriods, TeacherDuties, StudentEnrollments,
+-- TimplanStatements and Ss12000SyncChanges, the arms that show rows to
+-- authenticated are exactly the eight own-row arms, and each is anchored on
+-- the reader in the row's own person column, with no OR or NOT to widen it.
+-- The eleven arms the migration moved, and the period table's admin arm
+-- (created the API's in 20261022120000, section 94), are the API's role's
+-- alone (28g lets a cover arm be either role; this says which). Exactly one policy on another table reads
 -- the eight as the reader: TeacherDutySlots' teacher arm, through the
 -- teacher's own uppdrag, which 129 runs. A new one would read narrowed rows
 -- as the reader, so it fails here and is weighed. And every function a
@@ -16296,11 +16337,13 @@ ROLLBACK;
 DO $$
 DECLARE
   tables text[] := ARRAY['TeacherAbsences', 'TeacherAbsenceCovers', 'TeacherEmployments', 'TeacherEmploymentLogs',
-                         'TeacherDuties', 'StudentEnrollments', 'TimplanStatements', 'Ss12000SyncChanges'];
+                         'TeacherEmploymentPeriods', 'TeacherDuties', 'StudentEnrollments', 'TimplanStatements',
+                         'Ss12000SyncChanges'];
   got text;
   want text := 'StudentEnrollments.student_enrollments_student_select TeacherAbsenceCovers.teacher_absence_covers_own_select '
             || 'TeacherAbsences.teacher_absences_own_select TeacherDuties.teacher_duties_teacher_own_select '
             || 'TeacherEmploymentLogs.teacher_employment_logs_teacher_own_select '
+            || 'TeacherEmploymentPeriods.teacher_employment_periods_teacher_own_select '
             || 'TeacherEmployments.teacher_employments_teacher_own_select TimplanStatements.timplan_statements_student_select';
   bad text;
 BEGIN
@@ -16322,6 +16365,7 @@ BEGIN
                  ('TeacherAbsenceCovers', 'teacher_absence_covers_own_select', 'absentTeacherId'),
                  ('TeacherEmployments', 'teacher_employments_teacher_own_select', 'userId'),
                  ('TeacherEmploymentLogs', 'teacher_employment_logs_teacher_own_select', 'userId'),
+                 ('TeacherEmploymentPeriods', 'teacher_employment_periods_teacher_own_select', 'userId'),
                  ('TeacherDuties', 'teacher_duties_teacher_own_select', 'userId')) AS own(tbl, pol, col)
       ON p.schemaname = 'public' AND p.tablename = own.tbl AND p.policyname = own.pol
    WHERE p.qual NOT LIKE '%("' || own.col || '" = ( SELECT app.current_user_id() AS current_user_id))%'
@@ -16334,6 +16378,7 @@ BEGIN
                  ('TeacherAbsenceCovers', 'teacher_absence_covers_admin_all'),
                  ('TeacherEmployments', 'teacher_employments_admin_all'),
                  ('TeacherEmploymentLogs', 'teacher_employment_logs_admin_select'),
+                 ('TeacherEmploymentPeriods', 'teacher_employment_periods_admin_all'),
                  ('TeacherDuties', 'teacher_duties_admin_all'),
                  ('StudentEnrollments', 'student_enrollments_admin_select'),
                  ('StudentEnrollments', 'student_enrollments_staff_select'),
