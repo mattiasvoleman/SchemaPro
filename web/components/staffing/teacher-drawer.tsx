@@ -21,6 +21,7 @@ import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { DutiesCard } from "@/components/staffing/duties-card";
 import { AnnualCard } from "@/components/staffing/annual-card";
 import { EmploymentHistoryCard } from "@/components/staffing/employment-history-card";
+import { PeriodLoadList } from "@/components/staffing/period-load-list";
 import { SectionCard } from "@/components/ui/section-card";
 import {
   TeacherRequirementsCard,
@@ -110,6 +111,19 @@ export function TeacherDrawer({
         </DialogHeader>
 
         {load ? <LoadBar teacher={load} /> : null}
+
+        {/* A post that changes during the year: the status above is its
+            worst stretch, and here is which one, each with its own verdict. */}
+        {load && (load.periods?.length ?? 0) > 0 ? (
+          <SectionCard
+            id={`drawer-periods-${teacher.id}`}
+            headingLevel={3}
+            title={t("periodsTimeline")}
+            description={t("drawerPeriodsIntro")}
+          >
+            <PeriodLoadList periods={load.periods!} />
+          </SectionCard>
+        ) : null}
 
         {/* The print action as the app draws one: an outline button with its icon. */}
         <Button variant="outline" size="sm" asChild className="justify-self-start">

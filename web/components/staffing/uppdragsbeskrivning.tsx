@@ -2,6 +2,7 @@
 
 import { useLocale, useTranslations } from "next-intl";
 import { Printer } from "lucide-react";
+import { isJudged } from "@/lib/period-view";
 import { formatPercent } from "@/lib/staffing-view";
 import { formatStamp, type VersionStamp } from "@/lib/employment-history-view";
 import { periodOf, tickedBoxes, UPPDRAG_BOXES, type AssignmentPeriod } from "@/lib/uppdrag-view";
@@ -110,18 +111,25 @@ export function Uppdragsbeskrivning({
     }
   };
 
+  // A post that changes during the year (20261022120000): the header states
+  // it as it is on the läsår's first day — the first stretch's figures — and
+  // says so; each stretch is printed with the target below.
+  const periods = load.periods ?? [];
+  const atStart = periods[0] ?? null;
   const header: { label: string; value: string }[] = [
     { label: t("year"), value: yearName },
     { label: t("name"), value: teacherName },
     { label: t("school"), value: schoolName },
     { label: t("signature"), value: employment?.signature ?? "—" },
     {
-      label: t("employmentPercent"),
-      value: employment ? `${formatPercent(employment.employmentPercent)} %` : t("noPost"),
+      label: atStart ? t("employmentPercentAtStart") : t("employmentPercent"),
+      value: employment
+        ? `${formatPercent((atStart ?? employment).employmentPercent)} %`
+        : t("noPost"),
     },
     {
-      label: t("reductionPercent"),
-      value: employment ? `${formatPercent(employment.reductionPercent)} %` : "—",
+      label: atStart ? t("reductionPercentAtStart") : t("reductionPercent"),
+      value: employment ? `${formatPercent((atStart ?? employment).reductionPercent)} %` : "—",
     },
     {
       label: t("contractKind"),
@@ -315,6 +323,59 @@ export function Uppdragsbeskrivning({
             })}
           </p>
         )}
+        {periods.length > 0 ? (
+          <>
+            <p>{t("postPeriodsIntro")}</p>
+            <table className="w-full border-collapse">
+              <caption className="sr-only">{t("postPeriodsCaption")}</caption>
+              <thead>
+                <tr className="border-b text-left">
+                  <th scope="col" className="py-1 pr-2 font-medium">
+                    {t("period")}
+                  </th>
+                  <th scope="col" className="py-1 pr-2 text-right font-medium">
+                    {t("employmentPercent")}
+                  </th>
+                  <th scope="col" className="py-1 pr-2 text-right font-medium">
+                    {t("reductionPercent")}
+                  </th>
+                  <th scope="col" className="py-1 pr-2 text-right font-medium">
+                    {t("postPeriodTarget")}
+                  </th>
+                  <th scope="col" className="py-1 pr-2 text-right font-medium">
+                    {t("postPeriodCounted")}
+                  </th>
+                  <th scope="col" className="py-1 font-medium">
+                    {t("postPeriodStatus")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {periods.map((period) => (
+                  <tr key={`${period.kind}-${period.from}`} className="border-b border-dashed align-top">
+                    <th scope="row" className="py-1 pr-2 text-left font-normal">
+                      {`${dayOf(period.from)} – ${dayOf(period.to)}`}
+                    </th>
+                    <td className="py-1 pr-2 text-right tabular-nums">{`${formatPercent(period.employmentPercent)} %`}</td>
+                    <td className="py-1 pr-2 text-right tabular-nums">{`${formatPercent(period.reductionPercent)} %`}</td>
+                    <td className="py-1 pr-2 text-right tabular-nums">{period.targetMinutesPerWeek ?? "—"}</td>
+                    <td className="py-1 pr-2 text-right tabular-nums">
+                      {isJudged(period) ? period.countedMinutesPerWeek : "—"}
+                    </td>
+                    <td className="py-1">
+                      {/* A stretch with no taught week has no verdict to print. */}
+                      {isJudged(period)
+                        ? tStaffing(`status${period.status}`)
+                        : period.effectiveFrom === null
+                          ? tStaffing("periodNoWeek")
+                          : tStaffing("periodNoTeachingWeek")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        ) : null}
       </section>
 
       <footer className="break-inside-avoid space-y-6 border-t pt-3">

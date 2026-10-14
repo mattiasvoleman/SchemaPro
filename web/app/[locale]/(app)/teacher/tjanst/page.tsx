@@ -47,6 +47,7 @@ import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import { useLastYearTjanst } from "./use-last-year-tjanst";
+import { isJudged, postAtStart } from "@/lib/period-view";
 import { formatPercent } from "@/lib/staffing-view";
 import { LoadBar } from "@/components/staffing/load-bar";
 import { AnnualCard } from "@/components/staffing/annual-card";
@@ -229,6 +230,9 @@ export default function MyStaffingPage() {
                       <p>
                         {period.effectiveFrom === null ? (
                           tStaffing("periodNoWeek")
+                        ) : !isJudged(period) ? (
+                          // Whole weeks, all of them lov: no verdict to give.
+                          tStaffing("periodNoTeachingWeek")
                         ) : period.targetMinutesPerWeek === null ? (
                           t("countedOnly", { minutes: period.countedMinutesPerWeek })
                         ) : (
@@ -253,7 +257,8 @@ export default function MyStaffingPage() {
             {lastYear.row.employment
               ? t("lastYear", {
                   year: lastYear.yearName,
-                  percent: formatPercent(lastYear.row.employment.employmentPercent),
+                  // Where last year's post started, should it have changed during the year.
+                  percent: formatPercent(postAtStart(lastYear.row)!.employmentPercent),
                   minutes: lastYear.row.countedMinutesPerWeek,
                 })
               : t("lastYearNoPost", { year: lastYear.yearName, minutes: lastYear.row.countedMinutesPerWeek })}

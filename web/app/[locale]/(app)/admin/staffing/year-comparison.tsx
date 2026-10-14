@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ApiError } from "@/lib/api";
-import { compareYears, type ComparisonRow } from "@/lib/staffing-compare";
+import { compareYears, type ComparisonRow, type YearFigures } from "@/lib/staffing-compare";
 import { useStaffingLoad } from "@/lib/staffing-queries";
 import { formatPercent } from "@/lib/staffing-view";
 import type { TeacherLoad } from "@/lib/teacher-load";
@@ -59,6 +59,11 @@ export function YearComparison({
 
   const shown = changedOnly ? rows.filter(({ row }) => row.change !== "SAME") : rows;
   const percent = (value: number | null | undefined) => (value == null ? "—" : `${formatPercent(value)} %`);
+  // A post that changes during the year: each step, "100 → 50 %".
+  const grad = (year: YearFigures | null) =>
+    year && year.employmentSteps.length > 1
+      ? `${year.employmentSteps.map(formatPercent).join(" → ")} %`
+      : percent(year?.employmentPercent);
   const minutes = (value: number | null | undefined) => (value == null ? "—" : String(value));
   const delta = (value: number | null, unit: string) =>
     value === null || value === 0 ? "" : `${value > 0 ? "+" : "−"}${formatPercent(Math.abs(value))}${unit}`;
@@ -107,9 +112,9 @@ export function YearComparison({
                     <span className="ml-2 text-xs font-normal text-muted-foreground">{change(row)}</span>
                   ) : null}
                 </th>
-                <TableCell className="text-right tabular-nums">{percent(row.lastYear?.employmentPercent)}</TableCell>
+                <TableCell className="text-right tabular-nums">{grad(row.lastYear)}</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {percent(row.thisYear?.employmentPercent)}
+                  {grad(row.thisYear)}
                   {row.employmentDelta ? (
                     <span className="ml-1 text-xs text-muted-foreground">({delta(row.employmentDelta, " %")})</span>
                   ) : null}

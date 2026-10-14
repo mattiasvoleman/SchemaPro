@@ -192,6 +192,8 @@ describe("Min tjänst", () => {
                 status: "OVER",
               }),
               stretch("2027-02-16", "2027-02-19", { effectiveFrom: null, effectiveTo: null }),
+              // Whole weeks, all of them lov: no verdict, so no "under mål" for its 0 minutes.
+              stretch("2026-12-21", "2027-01-10", { teachingWeeks: 0, countedMinutesPerWeek: 0 }),
             ],
           }),
         ],
@@ -200,10 +202,12 @@ describe("Min tjänst", () => {
     render(<MyStaffingPage />);
     expect(screen.getByRole("heading", { level: 3, name: "myStaffing.periodsTitle" })).toBeInTheDocument();
     const items = within(screen.getByRole("heading", { name: "myStaffing.periodsTitle" }).closest("section")!).getAllByRole("listitem");
-    expect(items).toHaveLength(3);
+    expect(items).toHaveLength(4);
     expect(items[1]).toHaveTextContent("staffing.periodDates(2026-11-01|2027-06-11) · staffing.periodFiguresReduction(80|10)");
     expect(items[1]).toHaveTextContent("myStaffing.target(755) · myStaffing.counted(960) · staffing.statusOVER");
     expect(items[2]).toHaveTextContent("staffing.periodNoWeek");
+    expect(items[3]).toHaveTextContent("staffing.periodNoTeachingWeek");
+    expect(items[3]).not.toHaveTextContent("statusUNDER");
   });
 
   it("draws no period list for a post that is the same all year", () => {

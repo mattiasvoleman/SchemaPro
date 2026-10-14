@@ -54,6 +54,20 @@ describe("compareYears", () => {
     expect(gone.lastYear?.countedMinutesPerWeek).toBe(960);
   });
 
+  it("compares a post that changes during the year by where it starts, and keeps its steps", () => {
+    const stretch = (from: string, to: string, employmentPercent: number, reductionPercent = 0) =>
+      ({ from, to, employmentPercent, reductionPercent }) as NonNullable<TeacherLoad["periods"]>[number];
+    const [row] = compareYears(
+      // 100 % on the first day this year too, 50 % from January.
+      [load("t-b", { periods: [stretch("2026-08-17", "2027-01-10", 100), stretch("2027-01-11", "2027-06-11", 50, 10)] })],
+      [load("t-b")],
+    );
+    expect(row!.thisYear).toMatchObject({ employmentPercent: 100, employmentSteps: [100, 50], reductionPercent: 0 });
+    expect(row!.lastYear).toMatchObject({ employmentPercent: 100, employmentSteps: [100] });
+    expect(row!.employmentDelta).toBe(0);
+    expect(row!.reductionChanged).toBe(false);
+  });
+
   it("subtracts this year from last: counted minutes and tjänst %", () => {
     const [row] = compareYears(
       [
@@ -67,6 +81,7 @@ describe("compareYears", () => {
     expect(row).toMatchObject({ countedDelta: -120, employmentDelta: -20, change: "CHANGED" });
     expect(row!.thisYear).toEqual({
       employmentPercent: 80,
+      employmentSteps: [80],
       reductionPercent: 0,
       countedMinutesPerWeek: 840,
       percentOfTarget: 88.9,

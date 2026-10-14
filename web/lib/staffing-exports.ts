@@ -25,8 +25,17 @@
  */
 
 import { serializeCsv } from "@/lib/csv-export";
+import { postOn } from "@/lib/employment-periods";
+import { isJudged } from "@/lib/period-view";
 import { compareSwedish } from "@/lib/sorting";
-import { qualificationValidInYear, type GradeSpan, type LoadModel, type TeacherLoad } from "@/lib/teacher-load";
+import {
+  qualificationValidInYear,
+  type GradeSpan,
+  type LoadModel,
+  type LoadStatus,
+  type PeriodLoad,
+  type TeacherLoad,
+} from "@/lib/teacher-load";
 import type { TeacherReconciliation } from "@/lib/staffing-reconciliation";
 import type { SchoolForm, Subject, TeacherDuty, TeacherQualification } from "@/lib/types";
 
@@ -149,6 +158,7 @@ export const SAMVERKAN_HEADERS = [
   "Period från",
   "Period till",
   "Beräkningsmodell",
+  "Tjänstens perioder",
 ] as const;
 
 /**
@@ -173,6 +183,7 @@ const FACTOR_HEADER: Partial<Record<(typeof SAMVERKAN_HEADERS)[number], string>>
   "Varav som vikarie min": "Varav som vikarie min (räknad tid, faktor)",
   "Vikarierad av andra min": "Vikarierad av andra min (räknad tid, faktor)",
   "Bortfall min": "Bortfall min (räknad tid, faktor)",
+  "Tjänstens perioder": "Tjänstens perioder (räknad tid, faktor)",
 };
 /** Under FACTOR, after the charged undervisning: the lesson time itself. */
 export const SAMVERKAN_TIME_HEADER = "Undervisningstid min/v (standardvecka, utan faktor)";
@@ -183,6 +194,35 @@ export function samverkanHeaders(loadModel: LoadModel): string[] {
   const headers: string[] = SAMVERKAN_HEADERS.map((header) => FACTOR_HEADER[header] ?? header);
   headers.splice(TIME_AFTER, 0, SAMVERKAN_TIME_HEADER);
   return headers;
+}
+
+const STATUS_WORD: Record<LoadStatus, string> = {
+  OVER: "över mål",
+  UNDER: "under mål",
+  OK: "i nivå",
+  NO_TARGET: "inget mål",
+};
+
+/**
+ * A post that changes during the year (20261022120000), stretch by stretch,
+ * in one cell: the dates, the figures and each stretch's own verdict, so the
+ * file says which part of the year is over. Empty for a post the same all
+ * year, whose figures are the row's.
+ */
+export function stretchesCell(periods: readonly PeriodLoad[] | undefined): string {
+  return (periods ?? [])
+    .map((period) => {
+      const figures =
+        `${csvDecimal(period.employmentPercent, 3)} %` +
+        (period.reductionPercent > 0 ? `, nedsättning ${csvDecimal(period.reductionPercent, 3)} %` : "");
+      const verdict = !isJudged(period)
+        ? "ingen undervisningsvecka"
+        : period.targetMinutesPerWeek === null
+          ? `räknat ${whole(period.countedMinutesPerWeek)} min/v, inget mål`
+          : `riktmärke ${whole(period.targetMinutesPerWeek)} min/v, räknat ${whole(period.countedMinutesPerWeek)} min/v, ${STATUS_WORD[period.status]}`;
+      return `${period.from}–${period.to}: ${figures}, ${verdict}`;
+    })
+    .join("; ");
 }
 
 export function samverkanCsv(input: SamverkanInput): string {
@@ -204,7 +244,9 @@ export function samverkanCsv(input: SamverkanInput): string {
   const rows = people.map(({ id, person }) => {
     const load = loadOf.get(id);
     const rec = recOf.get(id);
-    const employment = load?.employment ?? null;
+    // A post that changes during the year: its grad and nedsättning as on
+    // the läsår's first day, the stretches in their own column.
+    const employment = load?.employment ? postOn(load.employment, input.year.startDate) : null;
     const subjects = [...(load?.subjects ?? [])]
       .sort((a, b) => b.minutesPerWeek - a.minutesPerWeek || compareSwedish(a.subjectName, b.subjectName))
       .map((subject) => `${subject.subjectName} ${whole(subject.minutesPerWeek)}`)
@@ -239,6 +281,7 @@ export function samverkanCsv(input: SamverkanInput): string {
       input.from,
       input.to,
       model,
+      stretchesCell(load?.periods),
     ];
     if (input.loadModel === "FACTOR") {
       const time = load?.assignments?.reduce((sum, assignment) => sum + assignment.timeMinutesPerWeek, 0);
@@ -497,6 +540,7 @@ export type ScbNoticeCode =
   | "NO_POST"
   | "NO_TEACHING"
   | "FULL_LEAVE"
+  | "POST_CHANGES"
   | "REDUCTION"
   | "FORSTELARARE"
   | "ADMIN"
@@ -590,10 +634,18 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
         (a.row.userId < b.row.userId ? -1 : 1),
     );
 
+  // SCB counts the staff as on its mätdatum, 15 oktober of the läsår's
+  // autumn: a post that changes during the year (20261022120000) is reported
+  // as it is that day, and said so.
+  const matdatum = `${input.yearStartDate.slice(0, 4)}-10-15`;
+
   const out: string[][] = [];
   for (const { row, person } of teachers) {
     const name = `${person.firstName} ${person.lastName}`.trim();
-    const employment = row.employment;
+    const employment = row.employment ? postOn(row.employment, matdatum) : null;
+    if ((row.employment?.periods ?? []).length > 0) {
+      notice({ code: "POST_CHANGES", params: { name, date: matdatum } });
+    }
     const omf = employment ? employment.employmentPercent - employment.reductionPercent : null;
 
     // Teaching per stage, in UNWEIGHTED undervisningstid (C11): SCB's

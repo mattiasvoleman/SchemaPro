@@ -25,6 +25,9 @@ import { join, relative } from 'node:path';
  *     year-start post where the post on a date is the right answer, and is
  *     moved by the next release ("Perioder i export och rullning"); one that
  *     joins the list, or leaves it, is a decision, so the list is written out.
+ *
+ * The web half, for the screens and the files built in the browser, is
+ * web/lib/employment-readers.inventory.test.ts.
  */
 
 const ROOT = join(__dirname, '..', '..');
@@ -86,8 +89,12 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'the same ranking, from cover-context’s posts',
   },
   'src/optimization/staffing-proposal.service.ts': {
-    basis: 'NEXT',
-    why: 'the proposal’s capacity is the year-start post’s target; its apply is judged per stretch by judgeRequirementBatch, so a proposal can be refused in a stretch it did not know about until the next release',
+    basis: 'PERIODS',
+    why: 'plans a changing post on its tightest stretch and realises every stretch as its apply is judged; the periods are in the basis',
+  },
+  'src/publication/publications.service.ts': {
+    basis: 'PERIODS',
+    why: 'the publication gate names the worst stretch of a changing post it stops on, from the report',
   },
   'src/integration/ss12000.service.ts': {
     basis: 'NEXT',
@@ -121,7 +128,6 @@ const NEXT_RELEASE = [
   'src/integration/ss12000-duties.ts',
   'src/integration/ss12000-v2/slice.ts',
   'src/integration/ss12000.service.ts',
-  'src/optimization/staffing-proposal.service.ts',
   'src/year-rollover/rollover-apply.ts',
   'src/year-rollover/rollover-source.ts',
   'src/year-rollover/rollover-staffing.ts',

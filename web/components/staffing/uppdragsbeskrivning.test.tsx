@@ -59,6 +59,58 @@ describe("Uppdragsbeskrivning", () => {
     expect(within(header).getAllByLabelText("uppdrag.toFillIn")).toHaveLength(2);
   });
 
+  it("prints a post that changes during the year as it is at the start, and each period with its own verdict", () => {
+    const stretch = (overrides: Partial<NonNullable<typeof uppdragLoad.periods>[number]>) => ({
+      from: "2026-08-17",
+      to: "2027-01-10",
+      kind: "BASE" as const,
+      effectiveFrom: "2026-08-17",
+      effectiveTo: "2027-01-10",
+      employmentPercent: 100,
+      reductionPercent: 0,
+      ownTargetMinutesPerWeek: null,
+      targetMinutesPerWeek: 600,
+      teachingWeeks: 20,
+      countedMinutesPerWeek: 580,
+      balanceMinutesPerWeek: 20,
+      percentOfTarget: 96.7,
+      status: "OK" as const,
+      ...overrides,
+    });
+    renderPage({
+      load: {
+        ...uppdragLoad,
+        periods: [
+          stretch({}),
+          stretch({
+            from: "2027-01-11",
+            to: "2027-06-11",
+            kind: "PERIOD",
+            effectiveFrom: "2027-01-11",
+            effectiveTo: "2027-06-11",
+            employmentPercent: 50,
+            reductionPercent: 10,
+            targetMinutesPerWeek: 240,
+            countedMinutesPerWeek: 580,
+            status: "OVER",
+          }),
+          stretch({ from: "2027-06-12", to: "2027-06-13", kind: "PERIOD", effectiveFrom: null, effectiveTo: null, teachingWeeks: 0 }),
+        ],
+      },
+    });
+    // The header: the post on the läsår's first day, and said so — not the base row's 80 / 10.
+    const header = screen.getByText("uppdrag.employmentPercentAtStart").closest("dl")!;
+    expect(header).toHaveTextContent("uppdrag.employmentPercentAtStart100 %");
+    expect(header).toHaveTextContent("uppdrag.reductionPercentAtStart0 %");
+    const table = screen.getByRole("table", { name: "uppdrag.postPeriodsCaption" });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toHaveTextContent("50 %10 %240580staffing.statusOVER");
+    // A stretch with no taught week: no counted minutes, no verdict.
+    expect(rows[2]).toHaveTextContent("staffing.periodNoWeek");
+    expect(rows[2]).not.toHaveTextContent("statusOK");
+  });
+
   it("lists the teaching per subject, group and period, with the gateway's total and toppvecka", () => {
     renderPage();
     const table = screen.getByRole("table");

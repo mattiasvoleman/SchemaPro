@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import pkg from "../package.json";
 import { parseCsv } from "@/lib/csv";
-import type { TeacherAssignment, TeacherLoad } from "@/lib/teacher-load";
+import type { PeriodLoad, TeacherAssignment, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherReconciliation } from "@/lib/staffing-reconciliation";
 import type { SchoolForm } from "@/lib/types";
 import {
@@ -153,7 +153,7 @@ describe("Tjänstefördelning för samverkan", () => {
     expect(csv.endsWith("\r\n")).toBe(true);
     const parsed = parseCsv(csv);
     expect(parsed.delimiter).toBe(";");
-    expect(parsed.headers).toHaveLength(28);
+    expect(parsed.headers).toHaveLength(29);
     expect(parsed.rows.map((row) => row[0])).toEqual(["Alm", "Vikarie", "Öberg"]);
     const anna = parsed.rows[2]!;
     expect(anna.slice(0, 6)).toEqual(["Öberg", "Anna", "T-ANNA", "100", "0", "Ferietjänst"]);
@@ -183,7 +183,7 @@ describe("Tjänstefördelning för samverkan", () => {
     });
     const parsed = parseCsv(samverkanCsv({ ...base, loadModel: "FACTOR", load: [factor], reconciliation: [reconciliation("t-anna")] }));
     const cell = (header: string) => parsed.rows[0]![parsed.headers.indexOf(header)];
-    expect(parsed.headers).toHaveLength(29);
+    expect(parsed.headers).toHaveLength(30);
     expect(parsed.headers).not.toContain("Undervisning min/v (standardvecka)");
     expect(parsed.headers).not.toContain("Undervisning h/år");
     expect(cell("Räknad undervisning min/v (standardvecka, faktor)")).toBe("270");
@@ -195,6 +195,58 @@ describe("Tjänstefördelning för samverkan", () => {
     // MINUTES: the file of before, header for header.
     const minutes = parseCsv(samverkanCsv({ ...base, load: [teacher("t-anna")], reconciliation: [] }));
     expect(minutes.headers).toEqual([...SAMVERKAN_HEADERS]);
+  });
+
+  it("writes a post that changes during the year as on the läsår's first day, and each stretch with its own verdict", () => {
+    const stretch = (overrides: Partial<PeriodLoad>): PeriodLoad => ({
+      from: "2026-08-17",
+      to: "2027-01-10",
+      kind: "BASE",
+      effectiveFrom: "2026-08-17",
+      effectiveTo: "2027-01-10",
+      employmentPercent: 100,
+      reductionPercent: 0,
+      ownTargetMinutesPerWeek: null,
+      targetMinutesPerWeek: 600,
+      teachingWeeks: 20,
+      countedMinutesPerWeek: 600,
+      balanceMinutesPerWeek: 0,
+      percentOfTarget: 100,
+      status: "OK",
+      ...overrides,
+    });
+    const changing = teacher("t-anna", {
+      // A period from the first day: the row's grad is the period's, not the base row's.
+      employment: {
+        ...teacher("t-anna").employment!,
+        periods: [
+          { validFrom: "2026-08-17", validTo: "2026-08-23", employmentPercent: 90, reductionPercent: 0, teachingTargetMinutesPerWeek: null },
+          { validFrom: "2026-12-21", validTo: "2027-01-10", employmentPercent: 100, reductionPercent: 0, teachingTargetMinutesPerWeek: null },
+          { validFrom: "2027-01-11", validTo: null, employmentPercent: 50, reductionPercent: 10, teachingTargetMinutesPerWeek: null },
+        ],
+      },
+      periods: [
+        stretch({ to: "2026-08-23", kind: "PERIOD", employmentPercent: 90, effectiveTo: "2026-08-23", teachingWeeks: 1, targetMinutesPerWeek: 540, countedMinutesPerWeek: 600, status: "OVER" }),
+        stretch({ from: "2026-08-24", to: "2026-12-20", effectiveFrom: "2026-08-24", effectiveTo: "2026-12-20" }),
+        stretch({ from: "2026-12-21", to: "2027-01-10", kind: "PERIOD", effectiveFrom: "2026-12-21", teachingWeeks: 0, countedMinutesPerWeek: 0, status: "UNDER" }),
+        stretch({ from: "2027-01-11", to: "2027-06-11", kind: "PERIOD", employmentPercent: 50, reductionPercent: 10, effectiveFrom: "2027-01-11", teachingWeeks: 22, targetMinutesPerWeek: 240, countedMinutesPerWeek: 300, status: "OVER" }),
+      ],
+    });
+    const parsed = parseCsv(samverkanCsv({ ...base, load: [changing], reconciliation: [] }));
+    const cell = (header: string) => parsed.rows[0]![parsed.headers.indexOf(header)];
+    expect(cell("Tjänstgöringsgrad %")).toBe("90");
+    expect(cell("Tjänstens perioder")).toBe(
+      [
+        "2026-08-17–2026-08-23: 90 %, riktmärke 540 min/v, räknat 600 min/v, över mål",
+        "2026-08-24–2026-12-20: 100 %, riktmärke 600 min/v, räknat 600 min/v, i nivå",
+        "2026-12-21–2027-01-10: 100 %, ingen undervisningsvecka",
+        "2027-01-11–2027-06-11: 50 %, nedsättning 10 %, riktmärke 240 min/v, räknat 300 min/v, över mål",
+      ].join("; "),
+    );
+    // A post the same all year: the column is empty, the row is the row it was.
+    const steady = parseCsv(samverkanCsv({ ...base, load: [teacher("t-anna")], reconciliation: [] }));
+    expect(steady.rows[0]![steady.headers.indexOf("Tjänstens perioder")]).toBe("");
+    expect(steady.rows[0]![steady.headers.indexOf("Tjänstgöringsgrad %")]).toBe("100");
   });
 
   it("carries behörigheter only when the admin ticked them, legitimation named as a kind", () => {
@@ -333,6 +385,38 @@ describe("SCB Pedagogisk personal, underlag", () => {
     expect(notices).toEqual([]);
     // Nothing about legitimation reaches the file.
     expect(csv.toLowerCase()).not.toContain("legitim");
+  });
+
+  it("reports a post that changes during the year as it is on the mätdatum, 15 oktober, and says so", () => {
+    const period = (validFrom: string, validTo: string | null, employmentPercent: number, reductionPercent = 0) => ({
+      validFrom,
+      validTo,
+      employmentPercent,
+      reductionPercent,
+      teachingTargetMinutesPerWeek: null,
+    });
+    const withPeriods = (userId: string, periods: ReturnType<typeof period>[]) =>
+      teacher(userId, { employment: { ...teacher(userId).employment!, periods } });
+    const { csv, notices } = scbUnderlag(
+      input({
+        load: [
+          // 80 % from 1 October (15 October falls in it), 100 % again from January.
+          withPeriods("t-anna", [period("2026-10-01", "2026-12-31", 80)]),
+          // 100 % on 15 October; 50 % only from the spring.
+          withPeriods("t-bo", [period("2027-01-11", null, 50)]),
+          // Helt nedsatt from 12 October: the post held before the leave, no subjects.
+          withPeriods("t-vik", [period("2026-10-12", "2026-12-18", 100, 100)]),
+        ],
+      }),
+    );
+    const byName = new Map(rowsOf(csv).map((row) => [row[col("PersonNamn")], row]));
+    expect(byName.get("Anna Öberg")![col("OmfLarare")]).toBe("80");
+    expect(byName.get("Bo Alm")![col("OmfLarare")]).toBe("100");
+    expect(byName.get("Vera Vikarie")![col("OmfLarare")]).toBe("100");
+    expect(byName.get("Vera Vikarie")![col("OmfMatematik")]).toBe("");
+    expect(notices).toContainEqual({ code: "POST_CHANGES", params: { name: "Anna Öberg", date: "2026-10-15" } });
+    expect(notices).toContainEqual({ code: "FULL_LEAVE", params: { name: "Vera Vikarie" } });
+    expect(notices.filter((entry) => entry.code === "FULL_LEAVE")).toHaveLength(1);
   });
 
   it("names a post with no planned teaching: SCB wants a verksamhetstyp and subjects for OmfLarare > 0", () => {

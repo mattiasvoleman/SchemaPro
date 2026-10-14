@@ -11,6 +11,7 @@ import { useStaffingLoad } from "@/lib/staffing-queries";
 import { compareSwedish } from "@/lib/sorting";
 import { cn } from "@/lib/utils";
 import { formatPercent } from "@/lib/staffing-view";
+import { percentStepsIn } from "@/lib/period-view";
 import { formatStamp } from "@/lib/employment-history-view";
 import {
   LOST_CAUSES,
@@ -120,6 +121,13 @@ export function StaffingReport() {
   const groupName = (id: string) => groups?.find((group) => group.id === id)?.name ?? "—";
 
   const data = rec.data;
+  // The post over the reconciled range: a post that changes during the year
+  // shows the steps of the stretches the range touches, "100 → 50 %".
+  const percentText = (userId: string) => {
+    const row = loadOf.get(userId);
+    const steps = row && data ? percentStepsIn(row, data.from, data.to) : [];
+    return steps.length > 0 ? `${steps.map(formatPercent).join(" → ")} %` : "—";
+  };
   const eventLosses = (data?.groupLosses ?? []).some((loss) => (loss.cancelledEvent ?? 0) > 0);
   // By family name, Swedish order; a teacher the roster cannot name by their
   // signature (or id), like the staffing matrix.
@@ -371,7 +379,6 @@ export function StaffingReport() {
               <TableBody>
                 {teachers.map((row) => {
                   const expanded = open.has(row.userId);
-                  const employment = loadOf.get(row.userId)?.employment ?? null;
                   const name = nameOf(row.userId);
                   const lineId = (index: number) => `staffing-lines-${row.userId}-${index}`;
                   return (
@@ -399,7 +406,7 @@ export function StaffingReport() {
                           </button>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {employment ? `${formatPercent(employment.employmentPercent)} %` : "—"}
+                          {percentText(row.userId)}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{row.planned}</TableCell>
                         <TableCell className="text-right tabular-nums">{row.scheduled}</TableCell>
