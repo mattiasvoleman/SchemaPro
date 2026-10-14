@@ -258,9 +258,12 @@ describe('PublicationsService (DIRECT)', () => {
     expect(byCode.PUB_UNPLACED.items[0].label).toBe('Matematik för 7B: 60 av 120 min/vecka');
     expect(byCode.PUB_TIMPLAN).toMatchObject({ count: 1, items: [{ label: 'Åk 7 saknar timplan.' }] });
     expect(byCode.PUB_STAFFING_REFUSE.items[0].label).toBe('Anna Ek saknar behörighet: Matematik för 7B');
-    // The report is read to judge, unrecorded; the läslogg names only the
-    // teacher the check stops on, with the names read in the same transaction.
+    // The report and both timplan layers are read to judge, unrecorded; the
+    // läslogg names only the teacher the check stops on, with the names read
+    // in the same transaction.
     expect(load.load).toHaveBeenCalledWith(YEAR_ID, 'planned', testUser(), { record: false });
+    expect(coverage.scheduled).toHaveBeenCalledWith({ academicYearId: YEAR_ID }, testUser(), { record: false });
+    expect(coverage.planned).toHaveBeenCalledWith({ academicYearId: YEAR_ID }, testUser(), { record: false });
     expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: ['tea'] }]);
   });
 

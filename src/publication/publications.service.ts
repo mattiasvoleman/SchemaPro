@@ -318,7 +318,11 @@ export class PublicationsService {
   /**
    * Everything a publish would do and say, in a transaction that is rolled
    * back: the gates, and the materialiser's own counts (in DRAFT also what the
-   * draft moves, adopts and removes). Nothing is written, not even a log row.
+   * draft moves, adopts and removes). Nothing is written but one läslogg row:
+   * the teachers a REFUSE staffing check stops on, whom the preview names as
+   * a publish would (EMPLOYMENT, externalFindings). The timplan coverage and
+   * the load report it judges by are not recorded, since it hands out none
+   * of their pupils or figures.
    */
   async preview(dto: PublicationRangeDto, user: AuthenticatedUser): Promise<PublicationPreview> {
     const schoolId = requireSchoolId(user);
@@ -861,7 +865,10 @@ export class PublicationsService {
     user: AuthenticatedUser,
   ): Promise<GateFinding[]> {
     const findings: GateFinding[] = [];
-    const scheduled = await this.coverage.scheduled({ academicYearId }, user);
+    // Both timplan layers are read to judge, and not recorded: the gate hands
+    // out group lines and the verdicts' sentences, and a pupil verdict's
+    // sentence ("En elev i 7A ...") names no pupil.
+    const scheduled = await this.coverage.scheduled({ academicYearId }, user, { record: false });
     const short = scheduled.groups.flatMap((group) =>
       group.lines
         .filter((line) => line.status === 'UNSCHEDULED' || line.status === 'SHORT')
@@ -885,7 +892,7 @@ export class PublicationsService {
         })),
       });
     }
-    const planned = await this.coverage.planned({ academicYearId }, user);
+    const planned = await this.coverage.planned({ academicYearId }, user, { record: false });
     const warnings = planned.verdicts.filter((verdict) => verdict.severity === 'warning');
     findings.push({
       code: 'PUB_TIMPLAN',

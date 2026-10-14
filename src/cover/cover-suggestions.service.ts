@@ -137,7 +137,7 @@ export class CoverSuggestionsService {
     });
   }
 
-  /** The proposal for every open lesson of a day; writes nothing. */
+  /** The proposal for every open lesson of a day; writes nothing but its läslogg row. */
   async proposal(
     date: string,
     excludeUserIds: readonly string[],
@@ -147,6 +147,10 @@ export class CoverSuggestionsService {
     return this.prisma.withRls(user, async (tx) => {
       const timezone = await schoolTimezone(tx, schoolId);
       const proposal = await this.propose(tx, user, schoolId, date, timezone, excludeUserIds);
+      // Each proposed substitute's reasons carry their cover counter and their
+      // week against their tjänst, as the candidates' do (EMPLOYMENT). The
+      // absences are ids only: who is away is the board's, which records it.
+      await recordRead(tx, 'EMPLOYMENT', proposal.items.map((item) => item.userId), user.channel);
       return { date, ...proposal, basis: await basisOf(tx, date, timezone) };
     });
   }

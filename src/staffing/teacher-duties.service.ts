@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { Prisma, TeacherDuty } from '@prisma/client';
+import { recordRead } from '../access-log/access-log';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
@@ -229,13 +230,17 @@ export class TeacherDutiesService {
       // Duplicates the RLS arm on purpose, as the employments list does.
       where = { academicYearId, userId: own };
     }
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.teacherDuty.findMany({
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const found = await tx.teacherDuty.findMany({
         where,
         include: WITH_SLOT_TIMES,
         orderBy: [{ userId: 'asc' }, { kind: 'asc' }, { label: 'asc' }],
-      }),
-    );
+      });
+      // Each teacher's uppdrag, with minutes, notes and times: EMPLOYMENT in
+      // the läslogg, as their posts are (a teacher's own are left out).
+      await recordRead(tx, 'EMPLOYMENT', found.map((row) => row.userId), user.channel);
+      return found;
+    });
     return rows.map(toResponse);
   }
 

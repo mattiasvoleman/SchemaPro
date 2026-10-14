@@ -140,11 +140,6 @@ describe('CoverSuggestionsService', () => {
     ]);
   });
 
-  it('the day proposal records nothing: it names the substitutes it would book and the absences by id', async () => {
-    await service.proposal(D, [], testUser({ channel: 'WEB' }));
-    expect(recordedReads(tx)).toEqual([]);
-  });
-
   it('candidates: a colleague whose own lesson then is cancelled is free and on site; one cancelled for an activity is ranked down, not up', async () => {
     const cancelled = (cancelCause: string) =>
       tx.calendarLessonTeacher.findMany.mockImplementation((query: { where: { teacherId?: unknown; role?: string } }) =>
@@ -241,6 +236,17 @@ describe('CoverSuggestionsService', () => {
       // Nothing open: nothing proposed, nothing more read.
       tx.$queryRaw.mockResolvedValue([{ ...pair, lessonStatus: 'CANCELLED' }]);
       expect((await service.proposal(D, [], testUser())).items).toEqual([]);
+    });
+
+    it('records the substitutes it would book as EMPLOYMENT (each comes with their counter and load), and the absences, ids only, not at all', async () => {
+      tx.$queryRaw.mockResolvedValue([pair]);
+      const proposal = await service.proposal(D, [], testUser({ channel: 'WEB' }));
+      expect(proposal.items.map((item) => item.userId)).toEqual([S]);
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [S] }]);
+      // Nothing open, nobody proposed: no further row.
+      tx.$queryRaw.mockResolvedValue([{ ...pair, lessonStatus: 'CANCELLED' }]);
+      expect((await service.proposal(D, [], testUser())).items).toEqual([]);
+      expect(recordedReads(tx)).toHaveLength(1);
     });
 
     it('apply: a basis that moved is a 409 writing nothing; the same basis writes every item as a decision, in one transaction', async () => {

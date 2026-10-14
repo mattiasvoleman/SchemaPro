@@ -372,9 +372,9 @@ Walk the full product loop once, in order:
   20261026110000 adds the kinds `SCHEDULE` (a pupil's timetable: the
   family's week, and an SS12000 v2 activities or calendarEvents read filtered
   to the pupil) and `TEACHING_TIME` (timplan coverage per pupil and the
-  pupil's statement), and the planning previews, the cover board and reports,
-  the sync's change review and a person's PATCH record under the existing
-  kinds. It, too, must
+  pupil's statement), and the planning previews, the cover board, day
+  proposal and reports, the uppdrag list, the sync's change review and a
+  person's PATCH record under the existing kinds. It, too, must
   be in the database before the API that writes them: an unknown kind is
   22P02 and fails the read. What is deliberately not recorded (the timetable
   layer, pushes, notices, a create's echo) is listed with the reason in

@@ -8,6 +8,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, type LockedTable } from '../../test/utils/locking-read';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import { Role } from '../auth/enums/role.enum';
 import { DUTY_SLOT_REASON, TeacherDutiesService, assertDutySlot, assertDutySlots } from './teacher-duties.service';
@@ -142,6 +143,18 @@ describe('TeacherDutiesService', () => {
       expect(tx.teacherDuty.findMany).toHaveBeenLastCalledWith(
         expect.objectContaining({ where: { academicYearId: YEAR_ID, userId: COLLEAGUE } }),
       );
+    });
+
+    it('records whose uppdrag it handed out as EMPLOYMENT, in its transaction; an empty answer records nothing', async () => {
+      tx.teacherDuty.findMany.mockResolvedValue([storedDuty(), storedDuty({ id: 'other', userId: ME })]);
+      await service.list(YEAR_ID, undefined, testUser({ channel: 'WEB' }));
+      // The reader's own id goes too; app.personal_data_read drops it.
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE, ME] }]);
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+
+      tx.teacherDuty.findMany.mockResolvedValue([]);
+      await service.list(YEAR_ID, COLLEAGUE, testUser());
+      expect(recordedReads(tx)).toHaveLength(1);
     });
 
     it('reads a link whose constraint has no weekday as no time rather than half of one', async () => {
