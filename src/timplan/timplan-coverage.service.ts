@@ -104,9 +104,17 @@ export function pupilsNamedBy(coverage: {
 export class TimplanCoverageService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * `record: false` is for a caller that reads the coverage to judge
+   * something and hands out none of its pupils (the publication check, which
+   * passes on group lines and the verdicts' sentences, and a pupil verdict's
+   * sentence names no pupil). Every route that returns the coverage records
+   * it, as StaffingLoadService.load does.
+   */
   async planned(
     query: TimplanCoverageQueryDto,
     user: AuthenticatedUser,
+    options: { record?: boolean } = {},
   ): Promise<TimplanCoverageResponse> {
     requireSchoolId(user);
     if (query.studentGroupId !== undefined) {
@@ -120,7 +128,7 @@ export class TimplanCoverageService {
       const input = await readPlannedInput(tx, user, query.academicYearId, includePupils);
       if (!input) return null;
       const computed = computePlannedCoverage(input);
-      await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
+      if (options.record !== false) await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
       return computed;
     });
     if (!coverage) throw new NotFoundException('Läsåret finns inte.');
@@ -275,10 +283,14 @@ export class TimplanCoverageService {
     };
   }
 
-  /** Layer 2 — see readScheduledInput for what is read and who sees what. */
+  /**
+   * Layer 2 — see readScheduledInput for what is read and who sees what.
+   * `record: false` as for planned().
+   */
   async scheduled(
     query: TimplanCoverageQueryDto,
     user: AuthenticatedUser,
+    options: { record?: boolean } = {},
   ): Promise<ScheduledCoverageResponse> {
     requireSchoolId(user);
     const includePupils = user.role === Role.SCHOOL_ADMIN;
@@ -297,7 +309,7 @@ export class TimplanCoverageService {
         includePupils,
         drillGroupId: includePupils ? (query.studentGroupId ?? null) : null,
       });
-      await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
+      if (options.record !== false) await recordRead(tx, 'TEACHING_TIME', pupilsNamedBy(computed), user.channel);
       return computed;
     });
     if (!coverage) throw new NotFoundException('Läsåret finns inte.');

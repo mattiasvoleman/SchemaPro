@@ -37,11 +37,18 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     read directly (TeacherSubjectQualifications), against the timetable.
  *     An absent teacher is left out, not named. The cover candidates, which
  *     do name the absent and state load, are recorded;
- *   - the cover day proposal: the substitutes it would book, and the
- *     absences only by id; who is away is the board's, which records it;
+ *   - the cover day proposal's absences, which it gives only by id: who
+ *     is away is the board's, which records it. The substitutes it would
+ *     book come with their cover counter and their week against their
+ *     tjänst, and are recorded (EMPLOYMENT), as the candidates are;
  *   - counts and summaries that name nobody (/users/counts, the attendance
  *     summary, the rollover preview's pupils, the stage overview without a
  *     class);
+ *   - the publication check's timplan coverage (preview and publish): it
+ *     judges by both layers and hands out group lines and the verdicts'
+ *     sentences, and a pupil verdict's sentence ("En elev i 7A ...") names
+ *     no pupil. The teachers a REFUSE staffing check stops on are named,
+ *     and recorded (EMPLOYMENT);
  *   - a write's echo: POST /users answers with the row its caller just
  *     typed. PATCH /users/:id answers with the whole row, fields the caller
  *     did not send among them, so it is recorded (PEOPLE);

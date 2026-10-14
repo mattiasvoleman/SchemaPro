@@ -129,6 +129,14 @@ describe('TimplanCoverageService', () => {
     expect(recordedReads(tx)).toEqual([]);
   });
 
+  it('records nothing with record: false, for a caller that only judges by it (the publication check)', async () => {
+    givenTheYear();
+    const answer = await service.planned({ academicYearId: YEAR_ID }, testUser({ channel: 'WEB' }), { record: false });
+    // The same answer, Bo's verdict in it, and no row.
+    expect(answer.verdicts).toEqual(expect.arrayContaining([expect.objectContaining({ pupilId: BO })]));
+    expect(recordedReads(tx)).toEqual([]);
+  });
+
   it('pupilsNamedBy: the pupil rows and the verdicts that name a pupil, nothing else', () => {
     expect(
       pupilsNamedBy({ pupils: [{ pupilId: ANNA }], verdicts: [{ pupilId: BO }, {}, { pupilId: ANNA }] }),
@@ -368,6 +376,16 @@ describe('TimplanCoverageService, layer 2 (schemalagt mot planerat)', () => {
       expect.objectContaining({ pupilId: ANNA, lines: [expect.objectContaining({ scheduledMinutesPerWeek: 115 })] }),
     ]);
     expect(recordedReads(tx)).toEqual([{ kind: 'TEACHING_TIME', channel: 'WEB', ids: [ANNA] }]);
+  });
+
+  it('records nothing with record: false, for a caller that only judges by it (the publication check)', async () => {
+    const answer = await service.scheduled(
+      { academicYearId: YEAR_ID, layer: 'scheduled', studentGroupId: CLASS_ID },
+      testUser({ channel: 'WEB' }),
+      { record: false },
+    );
+    expect(answer.pupils).toEqual([expect.objectContaining({ pupilId: ANNA })]);
+    expect(recordedReads(tx)).toEqual([]);
   });
 
   it('records nothing for a teacher’s drill-down, which names no pupil', async () => {
