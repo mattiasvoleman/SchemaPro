@@ -28,11 +28,22 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         subject: str('subjectName'),
         date: str('date'),
       });
-    case 'LEAVE_DECIDED':
-      return t(str('status') === 'APPROVED' ? 'notifications.text.leaveApproved' : 'notifications.text.leaveRejected', {
+    case 'LEAVE_DECIDED': {
+      // A mentor's decision says so; an older notice has no decidedAs.
+      const approved = str('status') === 'APPROVED';
+      const key =
+        meta['decidedAs'] === 'MENTOR'
+          ? approved ? 'notifications.text.leaveApprovedByMentor' : 'notifications.text.leaveRejectedByMentor'
+          : approved ? 'notifications.text.leaveApproved' : 'notifications.text.leaveRejected';
+      return t(key, { student: str('studentName'), from: str('startDate'), to: str('endDate') });
+    }
+    case 'LEAVE_REQUESTED':
+      // To the mentor who decides it: the pupil and the days, never the reason.
+      return t('notifications.text.leaveRequested', {
         student: str('studentName'),
         from: str('startDate'),
         to: str('endDate'),
+        count: Number(meta['schoolDays'] ?? 0),
       });
     case 'LESSON_CANCELLED':
       return t('notifications.text.lessonCancelled', { subject: str('subjectName'), when: when('startsAt') });

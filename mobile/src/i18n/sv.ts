@@ -126,7 +126,7 @@ export const sv = {
   },
   leave: {
     title: 'Ledighetsansökningar',
-    subtitle: 'Beslutas av skolans administration',
+    subtitle: 'Rektor eller elevens mentor beslutar',
     child: 'Barn',
     from: 'Från (ÅÅÅÅ-MM-DD)',
     to: 'Till (ÅÅÅÅ-MM-DD)',
@@ -139,6 +139,8 @@ export const sv = {
     submitFailed: 'Ansökan gick inte att skicka.',
     status: { PENDING: 'Väntar', APPROVED: 'Beviljad', REJECTED: 'Avslagen' },
     note: 'Kommentar: {note}',
+    decidedByMentor: 'Beslutad av mentor',
+    decidedByRektor: 'Beslutad av rektor',
   },
   studentSchedule: {
     title: 'Mitt schema',
@@ -170,6 +172,10 @@ export const sv = {
       absenceUnreported: '{student} markerades frånvarande från {subject} den {date} utan föranmälan.',
       leaveApproved: 'Ledighet för {student} ({from} – {to}) beviljades.',
       leaveRejected: 'Ledighet för {student} ({from} – {to}) avslogs.',
+      leaveApprovedByMentor: 'Ledighet för {student} ({from} – {to}) beviljades av mentorn.',
+      leaveRejectedByMentor: 'Ledighet för {student} ({from} – {to}) avslogs av mentorn.',
+      leaveRequested_one: 'Ny ledighetsansökan för {student} ({from} – {to}, en skoldag) väntar på ditt beslut.',
+      leaveRequested_other: 'Ny ledighetsansökan för {student} ({from} – {to}, {count} skoldagar) väntar på ditt beslut.',
       lessonCancelled: '{subject} ({when}) ställdes in.',
       lessonSubstitute: '{subject} ({when}) har en vikarie.',
       lessonSubstituteCover: 'Du vikarierar: {subject} ({when}), {group}, {room}.',
@@ -211,6 +217,7 @@ export const sv = {
     types: {
       ABSENCE_UNREPORTED: 'Oanmäld frånvaro',
       LEAVE_DECIDED: 'Beslut om ledighet',
+      LEAVE_REQUESTED: 'Ledighetsansökningar att besluta om',
       LESSON_CANCELLED: 'Inställda lektioner',
       CANCELLATION_DIGEST: 'Sammanfattningar av avbokningar',
       LESSON_REINSTATED: 'Lektioner som blir av igen',

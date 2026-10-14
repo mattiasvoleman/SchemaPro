@@ -38,6 +38,30 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Leave for Alva Elev (2026-11-02 – 2026-11-06) was rejected.',
   ],
   [
+    'LEAVE_DECIDED by the mentor',
+    row('LEAVE_DECIDED', { studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-03', status: 'APPROVED', decidedAs: 'MENTOR' }),
+    'Ledighet för Alva Elev (2026-11-02 – 2026-11-03) beviljades av mentorn.',
+    'Leave for Alva Elev (2026-11-02 – 2026-11-03) was approved by the mentor.',
+  ],
+  [
+    'LEAVE_DECIDED rejected by the mentor',
+    row('LEAVE_DECIDED', { studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-03', status: 'REJECTED', decidedAs: 'MENTOR' }),
+    'Ledighet för Alva Elev (2026-11-02 – 2026-11-03) avslogs av mentorn.',
+    'Leave for Alva Elev (2026-11-02 – 2026-11-03) was rejected by the mentor.',
+  ],
+  [
+    'LEAVE_REQUESTED, to the mentor, never the reason',
+    row('LEAVE_REQUESTED', { leaveRequestId: 'l-1', studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-04', schoolDays: 3 }),
+    'Ny ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-04, 3 skoldagar) väntar på ditt beslut.',
+    'A new leave request for Alva Elev (2026-11-02 – 2026-11-04, 3 school days) is waiting for your decision.',
+  ],
+  [
+    'LEAVE_REQUESTED of one skoldag',
+    row('LEAVE_REQUESTED', { leaveRequestId: 'l-1', studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-02', schoolDays: 1 }),
+    'Ny ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-02, en skoldag) väntar på ditt beslut.',
+    'A new leave request for Alva Elev (2026-11-02 – 2026-11-02, one school day) is waiting for your decision.',
+  ],
+  [
     'LESSON_CANCELLED',
     row('LESSON_CANCELLED', { subjectName: 'Matematik', startsAt: at }),
     'Matematik (tis 13 okt 08:00) ställdes in.',
@@ -145,9 +169,18 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all twelve types the gateway writes', () => {
+  it('covers all thirteen types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(12);
+    expect(types.size).toBe(13);
+  });
+
+  it('never carries a leave request’s reason to the mentor, whatever the meta holds', () => {
+    const text = notificationText(
+      row('LEAVE_REQUESTED', { studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-03', schoolDays: 2, reason: 'Begravning' }),
+      translatorFor('sv'),
+      'sv',
+    );
+    expect(text).not.toContain('Begravning');
   });
 
   it('never names whom a substitute replaces, nor a reason, whatever the meta carries', () => {

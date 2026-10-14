@@ -122,7 +122,7 @@ export const en: Messages = {
   },
   leave: {
     title: 'Leave requests',
-    subtitle: 'Decided by the school administration',
+    subtitle: 'Decided by the principal or the pupil’s mentor',
     child: 'Child',
     from: 'From (YYYY-MM-DD)',
     to: 'To (YYYY-MM-DD)',
@@ -135,6 +135,8 @@ export const en: Messages = {
     submitFailed: 'The request could not be submitted.',
     status: { PENDING: 'Pending', APPROVED: 'Approved', REJECTED: 'Rejected' },
     note: 'Note: {note}',
+    decidedByMentor: 'Decided by the mentor',
+    decidedByRektor: 'Decided by the principal',
   },
   studentSchedule: {
     title: 'My schedule',
@@ -166,6 +168,10 @@ export const en: Messages = {
       absenceUnreported: '{student} was marked absent from {subject} on {date} without a prior report.',
       leaveApproved: 'Leave for {student} ({from} – {to}) was approved.',
       leaveRejected: 'Leave for {student} ({from} – {to}) was rejected.',
+      leaveApprovedByMentor: 'Leave for {student} ({from} – {to}) was approved by the mentor.',
+      leaveRejectedByMentor: 'Leave for {student} ({from} – {to}) was rejected by the mentor.',
+      leaveRequested_one: 'A new leave request for {student} ({from} – {to}, one school day) is waiting for your decision.',
+      leaveRequested_other: 'A new leave request for {student} ({from} – {to}, {count} school days) is waiting for your decision.',
       lessonCancelled: '{subject} ({when}) was cancelled.',
       lessonSubstitute: '{subject} ({when}) has a substitute teacher.',
       lessonSubstituteCover: 'You are covering: {subject} ({when}), {group}, {room}.',
@@ -207,6 +213,7 @@ export const en: Messages = {
     types: {
       ABSENCE_UNREPORTED: 'Unreported absence',
       LEAVE_DECIDED: 'Leave decisions',
+      LEAVE_REQUESTED: 'Leave requests to decide',
       LESSON_CANCELLED: 'Cancelled lessons',
       CANCELLATION_DIGEST: 'Summaries of bulk cancellations',
       LESSON_REINSTATED: 'Lessons that go ahead after all',

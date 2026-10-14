@@ -124,6 +124,8 @@ export interface LeaveRequestRow {
   readonly reason: string;
   readonly status: LeaveRequestStatus;
   readonly decisionNote: string | null;
+  /** MENTOR or ADMIN once decided (Mentorns ledighetsbeslut); null before, and for older decisions. */
+  readonly decidedAs: 'MENTOR' | 'ADMIN' | null;
   readonly createdAt: string;
 }
 
@@ -139,7 +141,8 @@ export type NotificationType =
   | 'LESSON_COVER_WITHDRAWN'
   | 'LESSON_REINSTATED'
   | 'LESSON_SUPERVISED_STUDY'
-  | 'CANCELLATION_DIGEST';
+  | 'CANCELLATION_DIGEST'
+  | 'LEAVE_REQUESTED';
 
 export interface NotificationRow {
   readonly id: string;
