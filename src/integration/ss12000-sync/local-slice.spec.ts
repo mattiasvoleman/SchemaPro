@@ -52,6 +52,21 @@ describe('basisHash', () => {
     expect(basisHash(changed, source)).not.toBe(basisHash(slice(), source));
   });
 
+  it('moves when a skolenhet appears or changes, and is what it was before skolenheter for a school without any', () => {
+    const unit = {
+      id: '30000001-0000-4000-8000-000000000000', name: 'Ekskolan', code: '12345678', schoolTypes: ['GR'], gradeFrom: 0, gradeTo: 9,
+      ss12000Id: null, updatedAt: new Date('2026-09-01T00:00:00Z'),
+    };
+    const base = basisHash(slice(), source);
+    expect(basisHash({ ...slice(), units: [] }, source)).toBe(base);
+    const withUnit = basisHash({ ...slice(), units: [unit] }, source);
+    expect(withUnit).not.toBe(base);
+    for (const patch of [{ name: 'Eks' }, { code: null }, { schoolTypes: ['GR', 'FKLASS'] }, { gradeTo: 6 }, { ss12000Id: 'aaaaaaaa-0000-4000-8000-000000000001' }]) {
+      expect({ patch, hash: basisHash({ ...slice(), units: [{ ...unit, ...patch }] }, source) }).not.toEqual({ patch, hash: withUnit });
+    }
+    expect(basisHash({ ...slice(), units: [{ ...unit, updatedAt: new Date() }] }, source)).toBe(withUnit);
+  });
+
   it('moves when the cursors or the organisations move', () => {
     const base = basisHash(slice(), source);
     expect(basisHash(slice(), { ...source, modifiedCursor: new Date('2026-10-01T00:00:00Z') })).not.toBe(base);
@@ -64,10 +79,15 @@ describe('readLocalSlice', () => {
     const tx = createTxMock();
     await readLocalSlice(tx as unknown as PrismaClient, 'school', { lock: true });
     const sql = tx.$executeRaw.mock.calls.map(([statement]) => (statement as { strings: string[] }).strings.join('?'));
-    expect(sql).toHaveLength(5);
-    for (const table of ['Users', 'StudentGroups', 'GuardianStudents', 'StudentGroupMembers', 'Ss12000DutyLinks']) {
+    expect(sql).toHaveLength(7);
+    for (const table of ['Users', 'StudentGroups', 'GuardianStudents', 'StudentGroupMembers', 'Ss12000DutyLinks', 'SchoolUnits']) {
       expect(sql.some((text) => text.includes(`"${table}"`) && text.includes('FOR NO KEY UPDATE'))).toBe(true);
     }
+    // And the school's unit lock (20261031090000), before the units' row locks: a row lock queues no INSERT.
+    const unitLock = sql.findIndex((text) => text.includes('pg_advisory_xact_lock(hashtextextended('));
+    expect(unitLock).toBeGreaterThanOrEqual(0);
+    expect(unitLock).toBeLessThan(sql.findIndex((text) => text.includes('"SchoolUnits"')));
+    expect(tx.$executeRaw.mock.calls[unitLock]![0].values).toEqual(['SchoolUnits:school']);
   });
 
   it('calls a person deactivated by an applied sync change, and untouched since, deactivatedBySync', async () => {

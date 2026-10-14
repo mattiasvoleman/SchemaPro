@@ -373,7 +373,14 @@ export class Ss12000SyncService {
           await tx.ss12000SyncRun.update({ where: { id: runId }, data: { autoApplyBlockedReason: 'MASS_DEACTIVATION' } });
           return 'BLOCKED';
         }
-        const pendingForAdmin = changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !change.autoApplicable);
+        // A skolenhet proposal holds nothing: every run reads the chosen
+        // organisations whole, whatever the cursors, so it comes back with the
+        // next run, and one the admin keeps declining must not stop the
+        // cursors for good.
+        const holds = (change: { entity: string }) => change.entity !== 'ORGANISATION';
+        const pendingForAdmin = changes.some(
+          (change) => change.selected && !change.applied && !NOTES.has(change.op) && !change.autoApplicable && holds(change),
+        );
         // Nothing the night may make, and something the admin must: it waits.
         if (auto.length === 0 && pendingForAdmin) {
           await tx.ss12000SyncRun.update({ where: { id: runId }, data: { autoApplyBlockedReason: 'REVIEW_REQUIRED' } });
@@ -386,7 +393,9 @@ export class Ss12000SyncService {
         const outcome = auto.length > 0 ? await applyChanges(tx, schoolId, auto.map(storedOf), stamp) : { applied: [], skipped: [] };
         await this.markApplied(tx, schoolId, outcome.applied);
         const applied = new Set(outcome.applied);
-        const remaining = changes.some((change) => change.selected && !change.applied && !NOTES.has(change.op) && !applied.has(change.id));
+        const remaining = changes.some(
+          (change) => change.selected && !change.applied && !NOTES.has(change.op) && !applied.has(change.id) && holds(change),
+        );
         const errors = [...asArray(run.errors), ...outcome.skipped.map(({ code, entity, externalId }) => ({ code, entity, externalId }))].slice(0, 200);
         if (!remaining) {
           await tx.ss12000SyncRun.update({

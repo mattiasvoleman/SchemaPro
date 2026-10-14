@@ -31,6 +31,11 @@ import { makeTestTls } from './utils/test-tls';
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const ADMIN = asUser({});
 const ORG = 'aaaaaaaa-0000-4000-8000-000000000001';
+/** The source's skolenhet as a first apply leaves it: linked, so a run proposes nothing about it. */
+const linkedUnit = () => ({
+  id: '20000000-0000-4000-8000-0000000000e1', schoolId: SCHOOL, name: 'Ekskolan', code: '12345678', schoolTypes: ['GR'],
+  gradeFrom: 0, gradeTo: 9, ss12000Id: ORG, createdAt: new Date(0), updatedAt: new Date(0),
+});
 const PUPIL = 'bbbbbbbb-0000-4000-8000-000000000001';
 const PROTECTED = 'bbbbbbbb-0000-4000-8000-000000000002';
 const GUARDIAN = 'cccccccc-0000-4000-8000-000000000001';
@@ -259,6 +264,8 @@ describe('SS12000 sync (e2e)', () => {
           `PERSON:CREATE:${PROTECTED}`,
           `GROUP:CREATE:${CLASS}`,
           `CLASS_MEMBERSHIP:MOVE:${PUPIL}`,
+          // The source's skolenhet becomes the school's first unit.
+          `ORGANISATION:CREATE:${ORG}`,
           `RESPONSIBLE:ADD:${PUPIL}`,
           'DUTY_LINK:ADD:ffffffff-0000-4000-8000-000000000001',
         ]),
@@ -350,6 +357,7 @@ describe('SS12000 sync (e2e)', () => {
 
     it('calls a run with nothing but notes NO_CHANGES and moves the cursors, keeping the note without its payload', async () => {
       await configured();
+      w.units.push(linkedUnit());
       provider.world.persons = [s1Pupil(PUPIL, 'Ny', 'Elev', 'ny@skola.se', ORG, { startDate: isoDay(30) })];
       provider.world.groups = [];
       provider.world.duties = [];
@@ -427,8 +435,22 @@ describe('SS12000 sync (e2e)', () => {
       expect(w.source).toMatchObject({ modifiedCursor: null, lastAppliedAt: expect.any(Date) });
     });
 
+    it('lets a night end APPLIED beside a skolenhet only an admin applies, and moves the cursors', async () => {
+      await scheduled(true);
+      // A school without units: every run proposes the source's skolenhet.
+      provider.world.persons = [{ ...s1Pupil(PUPIL, 'Utan', 'Adress', 'x@y.se', ORG), emails: [] }];
+      provider.world.groups = [];
+      provider.world.duties = [];
+      await harness.app.get(Ss12000SchedulerService).tick();
+      expect(w.runs).toEqual([expect.objectContaining({ trigger: 'SCHEDULED', status: 'APPLIED', autoApplied: true })]);
+      expect(w.changes.find((c) => c['entity'] === 'ORGANISATION')).toMatchObject({ op: 'CREATE', applied: false, autoApplicable: false });
+      expect(w.units).toEqual([]);
+      expect(w.source).toMatchObject({ modifiedCursor: expect.any(Date), lastAppliedAt: expect.any(Date) });
+    });
+
     it('finishes a night with nothing to make but a conflict as APPLIED, so a standing conflict does not hold the cursors', async () => {
       await scheduled(true);
+      w.units.push(linkedUnit());
       provider.world.persons = [{ ...s1Pupil(PUPIL, 'Utan', 'Adress', 'x@y.se', ORG), emails: [] }];
       provider.world.groups = [];
       provider.world.duties = [];

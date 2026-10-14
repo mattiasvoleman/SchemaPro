@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient, type SchoolUnitType } from '@prisma/client';
+import { normaliseUnitTypes, SCHOOL_UNIT_TYPES, spansOverlap } from '../../school-units/school-unit-map';
 import type { ChangeEntity, ChangeOp } from './diff';
 
 /**
@@ -7,9 +8,9 @@ import type { ChangeEntity, ChangeOp } from './diff';
  * opened (the admin's, or the sync principal's for a scheduled auto-apply),
  * in dependency order:
  *
- *   groups (create, link, rename) -> persons (create, link, relink, names,
- *   email, reactivate) -> class moves -> teaching-group adds -> guardian
- *   links -> duty links -> deactivations
+ *   skolenheter (create, link, update) -> groups (create, link, rename) ->
+ *   persons (create, link, relink, names, email, reactivate) -> class moves
+ *   -> teaching-group adds -> guardian links -> duty links -> deactivations
  *
  * so a pupil created in this apply can be moved into a class created in it,
  * and a guardian linked in it can be linked to a child. A change that
@@ -38,6 +39,11 @@ import type { ChangeEntity, ChangeOp } from './diff';
  *   * updatedAt is the apply's own stamp, the same value the source's
  *     lastAppliedAt gets, so the apply's own writes never read as a local
  *     edit made after it.
+ *
+ *   * A skolenhet is written only when no other unit holds its code or an
+ *     årskurs of its span, judged against the units as this apply leaves
+ *     them (SCHOOL_UNIT_CODE_TAKEN, SCHOOL_UNIT_SPAN_OVERLAP): the unique
+ *     index and the span trigger would otherwise fail the whole apply.
  *
  * Nothing is deleted: no statement here removes a row.
  */
@@ -98,6 +104,9 @@ export async function applyChanges(
     const id = str(change.after?.[key]);
     return id ? userByExt.get(id) ?? null : null;
   };
+
+  // --- skolenheter ------------------------------------------------------------
+  await applyUnits(tx, schoolId, of, stamp, done, skip);
 
   // --- groups ---------------------------------------------------------------
   const groupCreates = of('GROUP', 'CREATE').filter((change) => change.externalId && change.after);
@@ -342,4 +351,112 @@ export async function applyChanges(
   }
 
   return outcome;
+}
+
+type Unit = { id: string; code: string | null; gradeFrom: number | null; gradeTo: number | null; ss12000Id: string | null };
+
+const unitTypes = (value: unknown): SchoolUnitType[] | undefined =>
+  Array.isArray(value)
+    ? normaliseUnitTypes(value.filter((type): type is SchoolUnitType => (SCHOOL_UNIT_TYPES as readonly string[]).includes(type as string)))
+    : undefined;
+
+/** The skolenheter of a diff: see the column rules above. An admin's apply only; no unit change is automatic. */
+async function applyUnits(
+  tx: PrismaClient,
+  schoolId: string,
+  of: (entity: ChangeEntity, op: ChangeOp) => StoredChange[],
+  stamp: Date,
+  done: (change: StoredChange) => void,
+  skip: (change: StoredChange, code: string) => void,
+): Promise<void> {
+  const changes = [...of('ORGANISATION', 'CREATE'), ...of('ORGANISATION', 'LINK'), ...of('ORGANISATION', 'UPDATE')];
+  if (changes.length === 0) return;
+  const units: Unit[] = await tx.schoolUnit.findMany({
+    where: { schoolId },
+    select: { id: true, code: true, gradeFrom: true, gradeTo: true, ss12000Id: true },
+  });
+  const unitOfExt = (ext: string | null) => (ext ? units.find((unit) => unit.ss12000Id === ext) ?? null : null);
+  const span = (after: Record<string, unknown>) =>
+    'gradeFrom' in after ? { gradeFrom: num(after['gradeFrom']), gradeTo: num(after['gradeTo']) } : undefined;
+  const blocked = (self: string | null, code: string | null | undefined, wanted: ReturnType<typeof span>): string | null => {
+    if (code && units.some((unit) => unit.id !== self && unit.code === code)) return 'SCHOOL_UNIT_CODE_TAKEN';
+    if (wanted && units.some((unit) => unit.id !== self && spansOverlap(unit, wanted))) return 'SCHOOL_UNIT_SPAN_OVERLAP';
+    return null;
+  };
+  /** The columns a change writes, from its after; only what it carries. */
+  const columns = (after: Record<string, unknown>) => {
+    const name = str(after['name']);
+    const types = unitTypes(after['schoolTypes']);
+    const wanted = span(after);
+    return {
+      ...(name !== null ? { name } : {}),
+      ...('code' in after ? { code: str(after['code']) } : {}),
+      ...(types !== undefined ? { schoolTypes: types } : {}),
+      ...(wanted ? wanted : {}),
+    };
+  };
+
+  for (const change of of('ORGANISATION', 'CREATE')) {
+    const after = change.after;
+    const name = str(after?.['name']);
+    if (!after || !name || !change.externalId) continue;
+    if (unitOfExt(change.externalId)) {
+      skip(change, 'SS12000_TARGET_CHANGED');
+      continue;
+    }
+    const data = columns(after);
+    const refusal = blocked(null, data.code, span(after));
+    if (refusal) {
+      skip(change, refusal);
+      continue;
+    }
+    const id = randomUUID();
+    await tx.schoolUnit.create({ data: { id, schoolId, ...data, name, ss12000Id: change.externalId, updatedAt: stamp } });
+    units.push({ id, code: data.code ?? null, gradeFrom: data.gradeFrom ?? null, gradeTo: data.gradeTo ?? null, ss12000Id: change.externalId });
+    done(change);
+  }
+
+  for (const change of of('ORGANISATION', 'LINK')) {
+    if (!change.localId || !change.externalId || !change.after) continue;
+    const data = columns(change.after);
+    const refusal = unitOfExt(change.externalId) ? 'SS12000_TARGET_CHANGED' : blocked(change.localId, data.code, undefined);
+    if (refusal) {
+      skip(change, refusal);
+      continue;
+    }
+    const { count } = await tx.schoolUnit.updateMany({
+      where: { id: change.localId, schoolId, ss12000Id: null },
+      data: { ...data, ss12000Id: change.externalId, updatedAt: stamp },
+    });
+    if (count !== 1) {
+      skip(change, 'SS12000_TARGET_CHANGED');
+      continue;
+    }
+    const unit = units.find((row) => row.id === change.localId)!;
+    Object.assign(unit, { ss12000Id: change.externalId, ...('code' in data ? { code: data.code } : {}) });
+    done(change);
+  }
+
+  for (const change of of('ORGANISATION', 'UPDATE')) {
+    if (!change.after) continue;
+    // The unit linked before this apply, or the one it linked or created:
+    // never a local id the source id does not reach.
+    const unit = unitOfExt(change.externalId);
+    if (!unit || (change.localId !== null && change.localId !== unit.id)) {
+      skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
+      continue;
+    }
+    const data = columns(change.after);
+    const refusal = blocked(unit.id, data.code, span(change.after));
+    if (refusal) {
+      skip(change, refusal);
+      continue;
+    }
+    await tx.schoolUnit.updateMany({ where: { id: unit.id, schoolId }, data: { ...data, updatedAt: stamp } });
+    Object.assign(unit, {
+      ...('code' in data ? { code: data.code } : {}),
+      ...('gradeFrom' in data ? { gradeFrom: data.gradeFrom, gradeTo: data.gradeTo } : {}),
+    });
+    done(change);
+  }
 }
