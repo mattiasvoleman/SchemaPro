@@ -54,9 +54,12 @@ describe('propagateTemplateChange', () => {
 
   it("'update' reads, writes and answers exactly as update() always did", async () => {
     tx.calendarLesson.findMany.mockResolvedValue([{ id: 'r1', date: day('2026-10-13') }]);
+    // NOW as in every other case here: on the real clock, a lesson moved to
+    // 2026-10-14 10:00 has begun by that morning and is left as it was.
     const result = await propagateTemplateChange(tx as unknown as PrismaClient, before, after, {
       timezone: 'Europe/Stockholm',
       schoolId: 'school',
+      now: NOW,
     });
     expect(tx.calendarLesson.findMany.mock.calls[0]![0]).toEqual({
       where: expect.objectContaining({ masterLessonId: 'master', status: 'SCHEDULED' }),
