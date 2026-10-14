@@ -13,6 +13,7 @@ has somewhere to go unless the case says otherwise.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -248,10 +249,11 @@ class TestTheModel:
             literal=1,
         ) == "FEASIBLE"
 
-    def test_every_member_starts_on_the_block_s_common_starts(self) -> None:
+    @staticmethod
+    def _years_apart(**extra: object) -> dict[str, object]:
         """Frames per year: åk 7 08:00-11:00, åk 8 09:00-13:00. A member of each
-        may start only where both may, which is 09:00-10:00 for an hour."""
-        payload = _payload(
+        may start an hour only where both may, which is 09:00-10:00."""
+        return _payload(
             tyska={"minGradeLevel": 7, "maxGradeLevel": 7},
             franska={"minGradeLevel": 8, "maxGradeLevel": 8},
             frameTimes=[
@@ -260,13 +262,16 @@ class TestTheModel:
                 *({"minGradeLevel": 8, "maxGradeLevel": 8, "dayOfWeek": day,
                    "startTime": "09:00:00", "endTime": "13:00:00"} for day in range(1, 6)),
             ],
+            **extra,
         )
+
+    def test_every_member_keeps_its_own_starts_and_the_block_meets_in_common(self) -> None:
+        payload = self._years_apart()
         solver = SchedulerSolver(_settings())
         request = _request(payload)
         model, _registry, decisions, _plan, _lunches = solver._build_model(
             request, use_assumptions=False, include_objective=False,
         )
-        spd = solver._grid.slots_per_day
         variables = model.Proto().variables
         built = {
             str(decision.lesson.requirement.id): list(variables[decision.start.Index()].domain)
@@ -282,15 +287,47 @@ class TestTheModel:
             for requirement in request.requirements
             if requirement.block_id is not None
         }
-        common = own[TYSKA].intersection_with(own[FRANSKA])
 
-        assert built[TYSKA] == built[FRANSKA] == common.flattened_intervals()
-        assert own[TYSKA].flattened_intervals() != common.flattened_intervals()
-        assert own[FRANSKA].flattened_intervals() != common.flattened_intervals()
-        # 09:00 to 10:00 on every day, whatever the step keeps of it.
-        assert all(
-            12 <= value % spd <= 24 for value in common.flattened_intervals()
-        )
+        # No narrowing outside the block's literal: each member is built on
+        # its own frames, and the block's equalities do the rest.
+        assert built[TYSKA] == own[TYSKA].flattened_intervals()
+        assert built[FRANSKA] == own[FRANSKA].flattened_intervals()
+        assert built[TYSKA] != built[FRANSKA]
+        response = solver.solve(request)
+        assert response.status in {"OPTIMAL", "FEASIBLE"}
+        assert _times(response.lessons, TYSKA) == _times(response.lessons, FRANSKA)
+        assert all("09:00:00" <= start <= "10:00:00" for _day, start, _end in _times(response.lessons, TYSKA))
+        assert _validate(payload, response.lessons) == []
+
+    def test_a_closure_inside_the_hours_the_members_share_names_the_block(self) -> None:
+        """Tyska's teacher is away 09:00-11:00 every day: Tyska alone starts
+        at 08:00 and Franska alone at 09:00 or later, so each member has its
+        week, and only the block, whose hour is 09:00-10:00, has none. The
+        core must say so; a domain cut to the block's hour outside its literal
+        would have been proved impossible by the closures alone."""
+        away = [
+            {**_closure(TEACHER_TY, day), "startTime": "09:00:00", "endTime": "11:00:00"}
+            for day in range(1, 6)
+        ]
+        response = SchedulerSolver(_settings()).solve(_request(self._years_apart(constraints=away)))
+
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+        assert "BLOCK_CANNOT_BE_PLACED" in [d.code for d in response.conflicts.conflicts]
+
+    def test_lifting_the_block_s_literal_lifts_its_common_hours(self) -> None:
+        """The same closures, the block's literal lifted: each member is back
+        on its own hours and the week solves. Any narrowing of a member's
+        starts to the block's that the literal does not carry fails here."""
+        away = [
+            {**_closure(TEACHER_TY, day), "startTime": "09:00:00", "endTime": "11:00:00"}
+            for day in range(1, 6)
+        ]
+        payload = self._years_apart(constraints=away)
+
+        assert _solve_pinned(payload, {}, literal=0) == "FEASIBLE"
+        assert _solve_pinned(payload, {}, literal=1) == "INFEASIBLE"
 
     def test_split_lengths_start_together_length_by_length(self) -> None:
         payload = _payload(
@@ -478,6 +515,77 @@ class TestWhatReachesTheSchool:
         assert response.status == "INFEASIBLE"
         assert response.conflicts is not None
         assert response.conflicts.summary_code == "CONFLICT_NO_CORE"
+
+
+class TestTheProbesBudget:
+    """The block probe runs inside the solve's budget, never on top of it."""
+
+    @staticmethod
+    def _unexplained(monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            scheduler_solver, "build_conflict_analysis",
+            lambda _solver, _registry: ConflictAnalysis(summary_code="CONFLICT_NO_CORE", conflicts=[]),
+        )
+
+    @staticmethod
+    def _budgets(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        """Every CpSolver.Solve's max_time_in_seconds, in order."""
+        seen: list[float] = []
+        original = cp_model.CpSolver.Solve
+
+        def solve(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+            seen.append(self.parameters.max_time_in_seconds)
+            return original(self, model, *args, **kwargs)
+
+        monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
+        return seen
+
+    def test_the_probe_gets_what_is_left_when_that_is_less(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        budgets = self._budgets(monkeypatch)
+        solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=5.0))
+
+        assert solver._blocks_verdict(_request(TestWhatReachesTheSchool._apart()), seconds_left=2.0) is not None
+        assert solver._blocks_verdict(_request(TestWhatReachesTheSchool._apart())) is not None
+        assert budgets == [2.0, 5.0]
+
+    def test_too_little_left_is_no_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        budgets = self._budgets(monkeypatch)
+        solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=5.0))
+
+        assert solver._blocks_verdict(
+            _request(TestWhatReachesTheSchool._apart()), seconds_left=SchedulerSolver.MIN_PHASE_SECONDS / 2,
+        ) is None
+        assert budgets == []
+
+    def test_an_explanation_past_the_deadline_keeps_the_unexplained_verdict(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._unexplained(monkeypatch)
+        solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=5.0))
+        request = _request(TestWhatReachesTheSchool._apart())
+
+        late = solver._explain_infeasible(request, deadline=time.monotonic())
+        on_time = solver._explain_infeasible(request, deadline=time.monotonic() + 60)
+
+        assert late.conflicts is not None and late.conflicts.summary_code == "CONFLICT_NO_CORE"
+        assert on_time.conflicts is not None and on_time.conflicts.summary_code == "BLOCK_PROBE_SUMMARY"
+
+    def test_solve_hands_the_explanation_its_own_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        solver = SchedulerSolver(_settings())
+        deadlines: list[float | None] = []
+        original = solver._explain_infeasible
+
+        def explain(request: OptimizeScheduleRequest, *, deadline: float | None = None) -> object:
+            deadlines.append(deadline)
+            return original(request, deadline=deadline)
+
+        monkeypatch.setattr(solver, "_explain_infeasible", explain)
+        before = time.monotonic()
+        solver.solve(_request(TestWhatReachesTheSchool._apart()))
+
+        assert len(deadlines) == 1
+        assert deadlines[0] is not None
+        assert before < deadlines[0] <= time.monotonic() + solver._settings.solver_max_time_seconds
 
 
 class TestTheWarmStart:

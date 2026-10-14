@@ -1555,6 +1555,8 @@ class SchedulerSolver:
     def _explain_infeasible(
         self,
         request: OptimizeScheduleRequest,
+        *,
+        deadline: float | None = None,
     ) -> OptimizeScheduleResponse:
         """Re-solve with assumptions so CP-SAT can name the guilty constraints.
 
@@ -1600,7 +1602,11 @@ class SchedulerSolver:
         # the refusal says so by name rather than as an unexplained INFEASIBLE.
         unexplained = conflicts is None or conflicts.summary_code == "CONFLICT_NO_CORE"
         if unexplained and _blocks_of(request.requirements):
-            conflicts = self._blocks_verdict(request) or conflicts
+            # Out of the solve's own budget, not on top of it: `deadline` is
+            # solve()'s, a time.monotonic() value, and the probe gets what the
+            # proof and the explanation left of it.
+            left = None if deadline is None else deadline - time.monotonic()
+            conflicts = self._blocks_verdict(request, seconds_left=left) or conflicts
         return OptimizeScheduleResponse(
             request_id=request.request_id,
             status="INFEASIBLE",
@@ -1741,7 +1747,7 @@ class SchedulerSolver:
         # Explaining the failure means rebuilding — paid only on a payload
         # that has no timetable.
         if phase1_code == cp_model.INFEASIBLE:
-            return self._explain_infeasible(request)
+            return self._explain_infeasible(request, deadline=started + total_budget)
 
         if phase1_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             winner_solver: cp_model.CpSolver = phase1
@@ -1789,7 +1795,7 @@ class SchedulerSolver:
                 msg = f"CP-SAT rejected the generated model: {clone_model.Validate()}"
                 raise SolverBuildError(msg)
             if phase1b_code == cp_model.INFEASIBLE:
-                return self._explain_infeasible(request)
+                return self._explain_infeasible(request, deadline=started + total_budget)
             if phase1b_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 logger.warning(self._timeout_diagnosis(request, "neither satisfaction encoding found a timetable"))
                 return OptimizeScheduleResponse(
@@ -3947,7 +3953,9 @@ class SchedulerSolver:
             cp_model.Domain(0, self._grid.horizon),
         )
 
-    def _blocks_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
+    def _blocks_verdict(
+        self, request: OptimizeScheduleRequest, *, seconds_left: float | None = None,
+    ) -> ConflictAnalysis | None:
         """Name the blocks of a proved INFEASIBLE week the core did not explain.
 
         The week is solved once more without its blocks, the requirements
@@ -3959,13 +3967,21 @@ class SchedulerSolver:
         generating again, and it would multiply the wait on a week that is
         already refused.
 
+        THE PROBE'S BUDGET, AND NEVER MORE THAN THE SOLVE HAS LEFT. The school
+        asked for an answer within solver_max_time_seconds, and the proof and
+        its explanation have already spent part of it; `seconds_left` is the
+        rest. Below MIN_PHASE_SECONDS a solve is all presolve, so the probe is
+        not run at all.
+
         None when the probe has no budget, the relaxed week refuses by name,
         or it finds nothing inside the budget: the unexplained verdict stands
         rather than an invented one.
         """
         budget = self._settings.solver_probe_seconds
+        if seconds_left is not None:
+            budget = min(budget, seconds_left)
         blocks = _blocks_of(request.requirements)
-        if budget <= 0 or not blocks:
+        if budget < self.MIN_PHASE_SECONDS or not blocks:
             return None
         try:
             feas_model, _, _, _, _ = self._build_model(
@@ -4357,22 +4373,18 @@ class SchedulerSolver:
         horizon = self._grid.horizon
         lattice = _start_lattice(step, horizon)
 
+        # EACH REQUIREMENT ITS OWN STARTS, a block's members included. Their
+        # common starts follow from the equalities under the block's literal
+        # (_add_block_constraints), and only from them: a member's domain cut
+        # to the block's here would be a narrowing no literal carries, so a
+        # week the block makes impossible — a closure inside the hours two
+        # members' frames share — would be proved without the block and named
+        # as the closure alone. Presolve intersects the equal starts once the
+        # literal is pinned true, so the search sees the same narrowed domains.
         domains_of = {
             requirement.id: self._start_domains(requirement, frames, rasts, lattice)
             for requirement in requirements
         }
-        # PARALLELLA BLOCK NARROW THE DOMAINS TOO, before any variable exists.
-        # The k-th lessons of a block's members start together, so a start one
-        # member may not take is a start none of them can: Ty7 and Fr7 inherit
-        # each other's frames, rasts and margins. Intersected here, the members
-        # get fewer free starts and the equalities posted under the block's
-        # literal (_add_block_constraints) have nothing left to prune. Every
-        # member has the same lengths (_validate_blocks), so the keys agree, and
-        # an empty intersection was refused there as BLOCK_NO_COMMON_START.
-        for members in _blocks_of(requirements).values():
-            shared = _common_domains([domains_of[member.id] for member in members])
-            for member in members:
-                domains_of[member.id] = shared
 
         for requirement in requirements:
             span = span_of(requirement)
@@ -4414,7 +4426,8 @@ class SchedulerSolver:
         """The starts each length of a requirement may take, one domain per length.
 
         Read by _create_lesson_decisions, which builds the variables on them,
-        and by _validate_blocks, which refuses a block whose members share none.
+        and by _validate_blocks, which refuses a block whose members share none
+        of their starts before the model.
         One computation for both, for the reason the margins' refusal gives for
         sharing its arithmetic with the builder: two would disagree.
         """
@@ -4565,10 +4578,11 @@ class SchedulerSolver:
         with it, the three are one slot of 7A's week per lesson.
 
         FEWER FREE STARTS, NOT MORE VARIABLES. One equality per member and
-        lesson, on the start variables that already exist, and the members'
-        domains were already intersected (_create_lesson_decisions). With the
-        literal pinned true, as every build but the explaining one pins it,
-        presolve merges the equal starts into one variable per block lesson.
+        lesson, on the start variables that already exist, each on its own
+        member's domain (_create_lesson_decisions says why not the block's).
+        With the literal pinned true, as every build but the explaining one
+        pins it, presolve merges the equal starts into one variable per block
+        lesson, on the intersection of the members' domains.
         The end follows, since the k-th lessons have the same length: the
         members have the same lesson lengths, longest first, or
         _validate_blocks refused them.
