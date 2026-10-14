@@ -1089,6 +1089,8 @@
     "preStaffedPropose": "Propose staffing",
     "runBlockedUnstaffed": "The school's staffing setting refuses to generate a timetable until every curriculum entry has a teacher.",
     "statusUnstaffed": "Not run: curriculum entries have no teacher",
+    "statusPartlyLocked": "No run: a parallel block is partly locked",
+    "partlyLockedHint": "The engine was not started. The conflict below names the block: unlock its lessons, or lock them all.",
     "run": "Generate schedule",
     "running": "Optimizing… this can take up to a minute",
     "lastRun": "Last run",
@@ -1144,7 +1146,8 @@
       "PENDING": "Waiting",
       "RUNNING": "Running",
       "SUCCEEDED": "Done",
-      "UNSTAFFED": "Stopped: teachers missing"
+      "UNSTAFFED": "Stopped: teachers missing",
+      "PARTLY_LOCKED": "Stopped: block partly locked"
     },
     "historyYearsLoadFailedHint": "The academic years could not be loaded, so the page does not know which year's runs to show. Earlier runs and the timetable are untouched. Reload the page.",
     "historyNoYear": "There is no active academic year, so there are no runs to show."
