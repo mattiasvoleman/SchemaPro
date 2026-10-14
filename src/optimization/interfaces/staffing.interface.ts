@@ -69,6 +69,13 @@ export interface AnonymousStaffRequirement {
   coTeacherId: string | null;
   eligibilitySetId: string | null;
   lastYearTeacherIds: string[];
+  /**
+   * Teachers the row is never newly given, whatever their behörighet or
+   * room: on a dated row, every post that changes during the year (planOf).
+   * Sent only when it names somebody, so a school without such posts sends
+   * exactly what an engine that predates the field accepts.
+   */
+  excludedTeacherIds?: string[];
 }
 
 export interface StaffRequest {
