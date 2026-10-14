@@ -1962,6 +1962,103 @@ describe('ImportService', () => {
       Object.assign(tx, { $queryRaw: queryRaw });
     });
 
+    describe('a parallel block\'s rows', () => {
+      const BLOCK = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+      const members = () => [
+        stored({ id: 'req-1', studentGroupId: GROUP_7A, blockId: BLOCK }),
+        stored({ id: 'req-2', studentGroupId: GROUP_7B, blockId: BLOCK }),
+      ];
+      const shape = { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [], recurrence: 'ALL_WEEKS', startDate: null, endDate: null };
+
+      beforeEach(() => {
+        arrangeRows(tx.teachingRequirement.findMany, members());
+        tx.teachingRequirement.updateMany.mockResolvedValue({ count: 2 });
+        tx.teachingBlock.findUnique.mockResolvedValue({ name: 'Språkval åk 7' });
+      });
+
+      it('changes every member in one statement when the file changes them alike, then the rest row by row', async () => {
+        const report = await run(
+          row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+          row({ groupName: '7B', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+        );
+
+        expect(report).toEqual({ created: 0, updated: 2, skipped: 0, errors: [], warnings: [] });
+        expect(tx.teachingRequirement.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.teachingRequirement.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: ['req-1', 'req-2'] } },
+          data: shape,
+        });
+        // The other columns of each row, which the block trigger never reads.
+        for (const id of ['req-1', 'req-2']) {
+          const call = tx.teachingRequirement.update.mock.calls.find(
+            ([args]) => (args as { where: { id: string } }).where.id === id,
+          )![0] as { data: Record<string, unknown> };
+          expect(Object.keys(call.data).sort()).toEqual(
+            ['coTeacherId', 'coTeacherLoadPercent', 'minutesAfter', 'minutesBefore', 'teacherId', 'teacherLoadPercent'],
+          );
+        }
+        expect(tx.teachingRequirement.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+          tx.teachingRequirement.update.mock.invocationCallOrder[0]!,
+        );
+      });
+
+      it('writes nothing of a block the file leaves divided, and names the block on each of its rows', async () => {
+        const report = await run(
+          row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+          row({ groupName: '7B', subject: 'SV' }),
+        );
+
+        expect(report.errors).toEqual([
+          {
+            row: 1,
+            message: expect.stringMatching(/^Raden ligger i blocket "Språkval åk 7", vars timplansposter läggs på samma tider/),
+          },
+        ]);
+        expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+        expect(
+          tx.teachingRequirement.update.mock.calls.some(([args]) => (args as { where: { id: string } }).where.id === 'req-1'),
+        ).toBe(false);
+        // The rest of the file proceeds: 7B's Svenska is a create.
+        expect(report.created).toBe(1);
+      });
+
+      it('writes a member whose lessons and weeks the file leaves as they are as it always did', async () => {
+        const report = await run(row({ groupName: '7A', teacherEmail: 'karin@example.com' }));
+
+        expect(report.updated).toBe(1);
+        expect(tx.teachingRequirement.updateMany).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.update).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 'req-1' }, data: expect.objectContaining({ teacherId: TEACHER_ID, lessonsPerWeek: 3 }) }),
+        );
+      });
+
+      it('answers a TB409 the database meets anyway as the 409 naming the block, not a 500', async () => {
+        tx.teachingRequirement.updateMany.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Database error', {
+            code: 'P2039',
+            clientVersion: Prisma.prismaVersion.client,
+            meta: {
+              driverAdapterError: {
+                cause: {
+                  originalCode: 'TB409',
+                  originalMessage: 'BLOCK_MEMBERS_DIFFER: timplansposterna i blocket "Språkval åk 7" har inte samma lektioner och veckor',
+                  detail: `teachingBlockId=${BLOCK} requirementId=req-1 otherRequirementId=req-2`,
+                },
+              },
+            },
+          }),
+        );
+
+        const error = await run(
+          row({ groupName: '7A', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+          row({ groupName: '7B', lessonsPerWeek: 2, minutesPerLesson: 80 }),
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect(((error as ConflictException).getResponse() as { code: string }).code).toBe('BLOCK_MEMBERS_DIFFER');
+      });
+    });
+
     describe('resolution', () => {
       it('creates a requirement from a row with no counterpart, stamped with the school of the caller and the posted year', async () => {
         const report = await run(

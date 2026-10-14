@@ -96,6 +96,41 @@ type RequirementValues = {
 type StoredRequirementValues = Required<RequirementValues>;
 
 /**
+ * What a parallel block's members must share (migration 20261024090000): the
+ * lessons and the weeks. A row's shape after a write is its stored shape with
+ * the write's fields over it.
+ */
+interface BlockShape {
+  lessonsPerWeek: number;
+  minutesPerLesson: number;
+  lessonLengths: number[];
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+}
+
+const shapeAfter = (
+  stored: Pick<StoredRequirementValues, keyof BlockShape>,
+  values: Partial<RequirementValues> = {},
+): BlockShape => ({
+  lessonsPerWeek: values.lessonsPerWeek ?? stored.lessonsPerWeek,
+  minutesPerLesson: values.minutesPerLesson ?? stored.minutesPerLesson,
+  lessonLengths: values.lessonLengths ?? stored.lessonLengths ?? [],
+  recurrence: values.recurrence ?? stored.recurrence,
+  startDate: 'startDate' in values ? (values.startDate ?? null) : stored.startDate,
+  endDate: 'endDate' in values ? (values.endDate ?? null) : stored.endDate,
+});
+
+const sameBlockShape = (a: BlockShape, b: BlockShape): boolean =>
+  a.lessonsPerWeek === b.lessonsPerWeek &&
+  a.minutesPerLesson === b.minutesPerLesson &&
+  a.lessonLengths.length === b.lessonLengths.length &&
+  a.lessonLengths.every((minutes, i) => minutes === b.lessonLengths[i]) &&
+  a.recurrence === b.recurrence &&
+  (a.startDate?.getTime() ?? null) === (b.startDate?.getTime() ?? null) &&
+  (a.endDate?.getTime() ?? null) === (b.endDate?.getTime() ?? null);
+
+/**
  * CSV import: people, classes, teaching-group memberships and the timplan in
  * bulk.
  *
@@ -985,12 +1020,39 @@ export class ImportService {
    * schedule is generated again. Same as editing a requirement in the UI — this
    * import introduces no new surprise, it only makes the existing one reachable
    * 300 rows at a time, which is why the dialog is where it belongs.
+   *
+   * A PARALLEL BLOCK'S ROWS CHANGE TOGETHER OR NOT AT ALL. The members of a
+   * block have the same lessons and weeks, and the database refuses a member
+   * that leaves the others (SQLSTATE TB409, 20261024090000). Written row by
+   * row, the first member of a block the file changes would be judged against
+   * members not yet changed, and no file could ever change a block. So a row
+   * that changes a member's lessons or weeks is held until every row has been
+   * read, and each block's held rows are written in ONE statement once the
+   * block's members, as the file leaves them, agree. When they do not, every
+   * held row of that block is a row error naming the block and nothing of it
+   * is written; the rest of the file proceeds, as for any other row error.
+   * The staffing judge has counted a held row in file order like any other,
+   * so a refused block can only have made a later row's judgement stricter.
    */
   async importRequirements(
     dto: ImportRequirementsDto,
     user: AuthenticatedUser,
   ): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
+    try {
+      return await this.importRequirementRows(dto, user, schoolId);
+    } catch (error) {
+      // TB409 and every other refusal a write meets, mapped as the timplan
+      // import maps them: a 409 naming the block, never a bare 500.
+      rethrowPrismaError(error);
+    }
+  }
+
+  private importRequirementRows(
+    dto: ImportRequirementsDto,
+    user: AuthenticatedUser,
+    schoolId: string,
+  ): Promise<ImportReport> {
     return this.prisma.withRls(user, async (tx) => {
       // `updated` typed as present rather than optional: it is optional on
       // ImportReport so the six create-only kinds can leave it out, but this
@@ -1088,6 +1150,7 @@ export class ImportService {
           recurrence: true,
           startDate: true,
           endDate: true,
+          blockId: true,
         },
       });
       const existingByKey = new Map(
@@ -1137,6 +1200,11 @@ export class ImportService {
         value === undefined ? undefined : value === null ? null : value.toISOString().slice(0, 10);
 
       const seenAtRow = new Map<string, number>();
+      /** Rows that change a block member's lessons or weeks, by block, in file order. */
+      const heldForBlock = new Map<
+        string,
+        { rowNumber: number; current: (typeof existing)[number]; values: RequirementValues }[]
+      >();
 
       for (const [index, row] of dto.rows.entries()) {
         const rowNumber = index + 1;
@@ -1414,12 +1482,62 @@ export class ImportService {
           report.skipped += 1;
           continue;
         }
+        if (current.blockId && !sameBlockShape(shapeAfter(current, values), shapeAfter(current))) {
+          heldForBlock.set(current.blockId, [
+            ...(heldForBlock.get(current.blockId) ?? []),
+            { rowNumber, current, values },
+          ]);
+          if (judged) checks?.apply(judged.after);
+          continue;
+        }
         await tx.teachingRequirement.update({
           where: { id: current.id },
           data: values,
         });
         if (judged) checks?.apply(judged.after);
         report.updated += 1;
+      }
+
+      // Each block's held rows, judged against the block as the file leaves
+      // it and written in one statement, which the block trigger judges at its
+      // end with every one of them changed.
+      for (const [blockId, held] of heldForBlock) {
+        const target = new Map(held.map((entry) => [entry.current.id, shapeAfter(entry.current, entry.values)]));
+        const shapes = existing
+          .filter((row) => row.blockId === blockId)
+          .map((row) => target.get(row.id) ?? shapeAfter(row));
+        if (!shapes.every((shape) => sameBlockShape(shape, shapes[0]!))) {
+          const block = await tx.teachingBlock.findUnique({ where: { id: blockId }, select: { name: true } });
+          for (const entry of held) {
+            report.errors.push({
+              row: entry.rowNumber,
+              message:
+                `Raden ligger i blocket "${block?.name ?? ''}", vars timplansposter läggs på samma tider och ` +
+                'måste ha samma antal lektioner, samma längder och samma veckor. Ändra alla blockets rader ' +
+                'likadant i filen, eller ändra lektionerna för hela blocket under Block på Timplansposter.',
+            });
+          }
+          continue;
+        }
+        await tx.teachingRequirement.updateMany({
+          where: { id: { in: held.map((entry) => entry.current.id) } },
+          data: shapes[0]!,
+        });
+        for (const { current, values } of held) {
+          const {
+            lessonsPerWeek: _lessons,
+            minutesPerLesson: _minutes,
+            lessonLengths: _lengths,
+            recurrence: _recurrence,
+            startDate: _start,
+            endDate: _end,
+            ...rest
+          } = values;
+          if (Object.keys(rest).length > 0) {
+            await tx.teachingRequirement.update({ where: { id: current.id }, data: rest });
+          }
+          report.updated += 1;
+        }
       }
 
       return report;
