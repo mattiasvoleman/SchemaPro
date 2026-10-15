@@ -214,15 +214,17 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
       expect(staffNamedBy(plan.preview)).toContain(T1);
     });
 
-    it('names both when an open period follows one that ended', () => {
+    it('names the period carried, not the one that ended before it, when an open period follows an ended one', () => {
+      // The ended one leaves nothing as the card has it: listing it would say the card follows.
       const plan = planStaffingCarry(
         input([post(T1, { periods: [period({ validFrom: '2026-09-01', validTo: '2026-10-31' }), period({ employmentPercent: '75.000' })] })], []),
       );
       expect(plan.writes.employments[0]!.employmentPercent).toBe('75.000');
       expect(plan.preview.employments).toMatchObject({
         fromPeriod: [{ userId: T1, validFrom: '2027-01-11' }],
-        periodsEnded: [{ userId: T1, periods: 1 }],
+        periodsEnded: [],
       });
+      expect(plan.problems.map((problem) => problem.code)).not.toContain('STAFFING_POST_PERIODS_ENDED');
     });
 
     it('carries nothing of a post not carried, periods or not', () => {
