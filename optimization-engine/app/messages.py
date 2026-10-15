@@ -469,17 +469,17 @@ MESSAGES: dict[str, str] = {
     ),
     "BLOCK_PARTLY_LOCKED": (
         "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand "
-        "while the rest of it is still to be placed. Unlock the block's lessons, or lock all of "
-        "them."
+        "while the rest of it is still to be placed. Unlock the block's lessons and move any moved "
+        "by hand back with the block, or lock all of them."
     ),
     # Sent by the GATEWAY beside a hand edit that moved one member of a block
     # away from the others (master-lessons.service.ts, block-lessons.ts): a
     # warning, never a refusal. The lesson is the school's from then on, which
     # is why the next generation refuses the block above.
     "BLOCK_SPLIT": (
-        "{block} is split: this lesson no longer stands at the same times as the rest of the "
-        "block. It now counts as placed by hand, so the next generation will refuse the block as "
-        "partly locked. Move it back with the block, or lock all of the block's lessons."
+        "{block} is split: this lesson has left the rest of the block and now counts as placed by "
+        "hand. Unless every lesson of the block is locked, the next generation refuses the block "
+        "as partly locked. Move it back with the block, or lock all of the block's lessons."
     ),
 
     # ---- The timeout probe ----------------------------------------------
