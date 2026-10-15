@@ -619,9 +619,10 @@ export class SchoolSlice {
     return new Map(rows.map((row) => [row.entityId, { createdAt: row.createdAt, modifiedAt: row.modifiedAt }]));
   }
 
-  async tombstones(after: Date | null) {
+  /** The school's tombstones of these resources (as stored: AdhocActivity is its own), after `after`. */
+  async tombstones(after: Date | null, resources: readonly string[]) {
     return await this.tx.ss12000Tombstone.findMany({
-      where: { schoolId: this.schoolId, ...(after ? { removedAt: { gt: after } } : {}) },
+      where: { schoolId: this.schoolId, resource: { in: [...resources] }, ...(after ? { removedAt: { gt: after } } : {}) },
       select: { resource: true, emittedId: true, removedAt: true },
     });
   }

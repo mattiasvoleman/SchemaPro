@@ -1924,6 +1924,8 @@ model AttendanceRecord {
   @@index([schoolId, recordedAt])
   @@index([studentId, recordedAt])
   @@index([calendarLessonId])
+  /// SS12000's /attendances keyset, page by page within one school (20261114090000).
+  @@index([schoolId, id])
   @@map("AttendanceRecords")
 }
 
@@ -2056,6 +2058,11 @@ model AbsenceReport {
   endTime      DateTime?         @db.Time(0)
   type         AbsenceReportType @default(SICK)
   note         String?
+  /// A day of a granted leave, written by the leave decision (LeaveService).
+  /// A trigger lets only a SCHOOL_ADMIN or a TEACHER set it (20261114090000),
+  /// so a guardian's own note can never make a report one. SS12000 emits it as
+  /// "Beviljad ledighet", every other report as "Anmäld frånvaro".
+  grantedLeave Boolean           @default(false)
   createdAt    DateTime          @default(now()) @db.Timestamptz(6)
 
   school     School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -3701,6 +3708,27 @@ enum GallringRunStatus {
   RUNNING
   DONE
   INTERRUPTED
+}
+
+/// The school's decision whether integrations (SS12000 v2.0, scopes
+/// attendances.read and absences.read) may read pupils' attendance and
+/// absence (20261114090000). Append-only like LeaveDelegationDecision: a
+/// trigger stamps decidedAt and decidedById and refuses UPDATE and DELETE, so
+/// the latest row is in force; no row is not shared. The keys to Schools and
+/// to Users (decidedById, ON DELETE SET NULL of that column alone) live in
+/// the migration. The school's administrators read and insert (RLS, the API's
+/// role only).
+model AttendanceSharingDecision {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String   @db.Uuid
+  shares      Boolean
+  /// The school's konsekvensbedömning or decision (dnr), at most 200 characters.
+  reference   String?
+  decidedById String?  @db.Uuid
+  decidedAt   DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([schoolId, decidedAt(sort: Desc)])
+  @@map("AttendanceSharingDecisions")
 }
 
 /// Rektor's delegation of leave decisions (skollagen 2 kap. 10 §, 7 kap. 18 §):

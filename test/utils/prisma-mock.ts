@@ -76,6 +76,15 @@ export function createTxMock(): TxMock {
 }
 
 /**
+ * The integration key the last withServicePrincipal ran as, per tx: what
+ * app.current_service_key_id() reads in the database. An in-memory school
+ * that answers a function of the key (ss12000-provider-world's
+ * app.service_reads_attendance) asks it here.
+ */
+const SERVICE_KEYS = new WeakMap<object, string | null>();
+export const serviceKeyOf = (tx: TxMock): string | null => SERVICE_KEYS.get(tx) ?? null;
+
+/**
  * A `PrismaService` stand-in whose `withRls` / `withSystemTransaction` invoke
  * the caller's callback with `tx` directly. Services under test therefore run
  * their real transaction bodies without a database. `withRls` also keeps
@@ -143,8 +152,10 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
     ),
     withServiceKeyLookup: jest.fn(run),
     withServicePrincipal: jest.fn(
-      <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>) =>
-        run(fn),
+      <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>, options?: { keyId?: string }) => {
+        SERVICE_KEYS.set(tx, options?.keyId ?? null);
+        return run(fn);
+      },
     ),
     withSyncPrincipal: jest.fn(
       <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>) =>

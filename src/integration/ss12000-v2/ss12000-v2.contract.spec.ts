@@ -50,7 +50,8 @@ describe('S1 transcription', () => {
 
 describe('every v2 object is S1-shaped', () => {
   it('lists, with every expand and referenced names', async () => {
-    const { service } = setup();
+    const { service, world } = setup();
+    world.attendanceShared = true;
     const all = caller();
     const cases: Array<[string, Promise<unknown>]> = [
       ['Organisations', service.listOrganisations(all, { expandReferenceNames: 'true' })],
@@ -58,9 +59,11 @@ describe('every v2 object is S1-shaped', () => {
       ['GroupsExpanded', service.listGroups(all, { expand: 'assignmentRoles', expandReferenceNames: 'true' })],
       ['Duties', service.listDuties(all, { expand: 'person', expandReferenceNames: 'true' })],
       ['Activities', service.listActivities(all, { expand: ['groups', 'teachers', 'syllabus'], expandReferenceNames: 'true' })],
-      ['CalendarEvents', service.listCalendarEvents(all, { ...WINDOW, expand: 'activity', expandReferenceNames: 'true' })],
+      ['CalendarEvents', service.listCalendarEvents(all, { ...WINDOW, expand: ['activity', 'attendance'], expandReferenceNames: 'true' })],
       ['Rooms', service.listRooms(all, { expandReferenceNames: 'true' })],
       ['Syllabuses', service.listSyllabuses(all, {})],
+      ['Attendances', service.listAttendances(all, { expandReferenceNames: 'true' })],
+      ['Absences', service.listAbsences(all, { expandReferenceNames: 'true' })],
       ['DeletedEntities', service.deletedEntities(all, {})],
     ];
     for (const [schema, pending] of cases) {
@@ -71,8 +74,16 @@ describe('every v2 object is S1-shaped', () => {
   });
 
   it('items and lookups', async () => {
-    const { service } = setup();
+    const { service, world } = setup();
+    world.attendanceShared = true;
     const all = caller();
+    expect(checkSchema(await service.getAttendance(all, W.attLate, {}), 'Attendance')).toEqual([]);
+    expect(checkSchema(await service.getAbsence(all, W.absGranted, {}), 'Absence')).toEqual([]);
+    const attendances = await service.lookupAttendances(all, { students: [W.p1Source] }, {});
+    const absences = await service.lookupAbsences(all, { ids: [W.absSick, W.absHours] }, {});
+    expect([attendances.length, absences.length]).toEqual([2, 2]);
+    for (const item of attendances) expect(checkSchema(item, 'Attendance')).toEqual([]);
+    for (const item of absences) expect(checkSchema(item, 'Absence')).toEqual([]);
     expect(checkSchema(await service.getPerson(all, W.p1Source, { expand: 'duties' }), 'PersonExpanded')).toEqual([]);
     expect(checkSchema(await service.getGroup(all, W.c7aSource, {}), 'GroupExpanded')).toEqual([]);
     expect(checkSchema(await service.getActivity(all, W.m1, {}), 'ActivityExpanded')).toEqual([]);
@@ -176,21 +187,32 @@ describe('what the objects say', () => {
 
 describe('privacy, as properties of the output', () => {
   it('no absence reason, note, cause, HR figure, personnummer or EPPN in any answer', async () => {
-    const { service } = setup();
+    const { service, world } = setup();
+    // Attendance shared: what it adds is held to the same line.
+    world.attendanceShared = true;
     const all = caller();
     const bodies = [
-      await service.listCalendarEvents(all, { ...WINDOW, expand: 'activity' }),
+      await service.listCalendarEvents(all, { ...WINDOW, expand: ['activity', 'attendance'] }),
       await service.listPersons(all, { expand: ['duties', 'responsibleFor', 'groupMemberships'] }),
       await service.listDuties(all, { expand: 'person' }),
       await service.listActivities(all, { expand: ['teachers', 'groups', 'syllabus'] }),
       await service.listGroups(all, { expand: 'assignmentRoles' }),
+      await service.listAttendances(all, { expandReferenceNames: 'true' }),
+      await service.listAbsences(all, { expandReferenceNames: 'true' }),
+      await service.lookupAttendances(all, { students: [W.p1Source, W.p2, W.p4] }, {}),
     ];
     const text = JSON.stringify(bodies);
     expect(text).not.toContain(ABSENCE_TEXT);
     expect(text).not.toContain('Nedsättning');
     expect(text).not.toContain('070-1234567');
+    // An absence's type and the leave decision's note are reasons by other names.
+    for (const reason of ['Tandläkare', 'Approved leave', 'SICK', 'APPOINTMENT']) expect(text).not.toContain(reason);
     const keys = allKeys(bodies);
-    for (const key of ['note', 'cancelCause', 'reductionPercent', 'teachingTargetMinutesPerWeek', 'dutyPercent', 'hoursPerYear', 'civicNo', 'eduPersonPrincipalNames', 'phoneNumbers', 'securityMarking', 'relationType', 'minutesPlanned', 'comment']) {
+    for (const key of [
+      'note', 'cancelCause', 'reductionPercent', 'teachingTargetMinutesPerWeek', 'dutyPercent', 'hoursPerYear', 'civicNo',
+      'eduPersonPrincipalNames', 'phoneNumbers', 'securityMarking', 'relationType', 'minutesPlanned', 'comment',
+      'absenceReason', 'reporter', 'registeredBy', 'otherAttendanceMinutes',
+    ]) {
       expect({ key, present: keys.has(key) }).toEqual({ key, present: false });
     }
   });

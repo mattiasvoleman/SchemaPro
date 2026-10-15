@@ -96,6 +96,11 @@ export class FamilyService {
         'startTime and endTime must be provided together (omit both for full day).',
       );
     }
+    // HH:MM compares as text. A span that ends before it starts covers no lesson
+    // in the register, and SS12000 would hand it out as nonsense (AbsenceReports_ends_after_it_starts).
+    if (dto.startTime !== undefined && dto.endTime !== undefined && dto.endTime <= dto.startTime) {
+      throw new BadRequestException('endTime must be after startTime.');
+    }
     return this.prisma.withRls(user, async (tx) => {
       await assertMayActForStudent(tx, dto.studentId, user);
       const schoolId = await schoolIdOf(tx, dto.studentId);

@@ -7,7 +7,8 @@ import { Ss12000Outbound } from '../ss12000-sync/ss12000-sync.providers';
 import { normaliseUuid } from './ids';
 import { v2Errors } from './errors';
 import { encodePageToken, page, parseQuery } from './query';
-import { EMITTED_RESOURCES, type EmittedResource } from './scopes';
+import { EMITTED_RESOURCE_NAMES, EMITTED_RESOURCES, SHARED_ONLY, type EmittedResource } from './scopes';
+import { serviceReadsAttendance } from './attendance';
 import type { V2Caller } from './ss12000-v2.service';
 
 /** Live subscriptions a key may hold. */
@@ -104,6 +105,13 @@ export class Ss12000SubscriptionsService {
   async create(caller: V2Caller, body: unknown): Promise<S1Subscription> {
     const input = await this.parse(caller, body);
     return this.run(caller, async (tx) => {
+      // Attendance and Absence only at a school that shares them; a school
+      // that stops sharing stops their notices too (app.ss12000_notifies).
+      for (const resource of input.resourceTypes) {
+        if (!SHARED_ONLY.has(resource)) continue;
+        const scope = EMITTED_RESOURCES[resource] as 'attendances.read' | 'absences.read';
+        if (!(await serviceReadsAttendance(tx, scope))) throw v2Errors.notShared();
+      }
       const [secret] = await tx.$queryRaw<{ exists: boolean }[]>(Prisma.sql`SELECT app.ss12000_webhook_secret_exists() AS "exists"`);
       if (secret?.exists !== true) throw v2Errors.webhookSecretMissing();
       const live = await tx.ss12000Subscription.count({ where: { schoolId: caller.schoolId, keyId: caller.keyId, endedAt: null } });
@@ -176,13 +184,16 @@ export class Ss12000SubscriptionsService {
     if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 200) throw v2Errors.invalidBody();
     const url = vetTarget(target);
     if (!url) throw v2Errors.invalidBody();
-    if (!Array.isArray(resourceTypes) || resourceTypes.length === 0 || resourceTypes.length > 8) throw v2Errors.invalidBody();
+    if (!Array.isArray(resourceTypes) || resourceTypes.length === 0 || resourceTypes.length > EMITTED_RESOURCE_NAMES.length) {
+      throw v2Errors.invalidBody();
+    }
     const resources: EmittedResource[] = [];
     for (const entry of resourceTypes) {
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw v2Errors.invalidBody();
       const keys = Object.keys(entry);
       const resource = (entry as { resource?: unknown }).resource;
-      if (keys.length !== 1 || typeof resource !== 'string' || !(resource in EMITTED_RESOURCES)) throw v2Errors.invalidBody();
+      // Own keys only: `in` would also take an inherited name such as toString.
+      if (keys.length !== 1 || typeof resource !== 'string' || !Object.prototype.hasOwnProperty.call(EMITTED_RESOURCES, resource)) throw v2Errors.invalidBody();
       const scope = EMITTED_RESOURCES[resource as EmittedResource];
       if (!caller.scopes.has(scope)) throw v2Errors.scopeMissing(scope);
       if (!resources.includes(resource as EmittedResource)) resources.push(resource as EmittedResource);

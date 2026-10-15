@@ -31,6 +31,9 @@ import type { Request, Response } from 'express';
  *   401 UNAUTHENTICATED
  *   403 SCOPE_MISSING          the key's scopes do not reach the resource,
  *                              the expand or the referenced names
+ *   403 NOT_SHARED             the key holds attendances.read or
+ *                              absences.read, and the school's decision in
+ *                              force does not share attendance
  *   409 WEBHOOK_SECRET_MISSING / SUBSCRIPTION_LIMIT
  *   429 TOO_MANY_REQUESTS
  *   503 TOO_LARGE
@@ -57,6 +60,7 @@ export const v2Errors = {
   invalidBody: () => new Ss12000V2Error(400, 'INVALID_BODY', 'Anropets innehåll följer inte SS12000 2.1.0.'),
   unauthenticated: () => new Ss12000V2Error(401, 'UNAUTHENTICATED', 'Ange en giltig integrationsnyckel som Bearer eller X-API-Key.'),
   scopeMissing: (scope: string) => new Ss12000V2Error(403, 'SCOPE_MISSING', `Nyckeln saknar omfånget ${scope}.`),
+  notShared: () => new Ss12000V2Error(403, 'NOT_SHARED', 'Skolan har inte beslutat att lämna ut närvaro och frånvaro till integrationer.'),
   notFound: () => new Ss12000V2Error(404, 'NOT_FOUND', ''),
   webhookSecretMissing: () => new Ss12000V2Error(409, 'WEBHOOK_SECRET_MISSING', 'Skolan har inte skapat någon signeringsnyckel för den här nyckeln ännu.'),
   subscriptionLimit: () => new Ss12000V2Error(409, 'SUBSCRIPTION_LIMIT', 'Nyckeln har redan tio aktiva prenumerationer.'),
