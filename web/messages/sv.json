@@ -1591,9 +1591,9 @@
       "exportSamverkanHint": "En rad per lärare: tjänst, riktmärke, undervisning och uppdrag, årsarbetstid enligt skolans inställningar och perioden ovan. Semikolon, UTF-8 med BOM, för Excel.",
       "includeQualifications": "Ta med behörigheter",
       "exportScb": "SCB-underlag, Pedagogisk personal (CSV)",
-      "scbNotice": "Ett underlag, inte SCB:s fil. Komplettera personnummer, skolenhetskod och anställningsform och kontrollera mot SCB:s aktuella datafilsbeskrivning innan inlämning. Kolumnerna följer SCB:s datafilsbeskrivning för Pedagogisk personal HT 2026 (versionsdatum 2026-05-07, hämtad 2026-10-09); rubrikraden och BOM är SchemaPros egna. Klistra in raderna i SCB:s Excelmall — SCB tar emot Excelmallen eller ett systems textfil.",
+      "scbNotice": "Ett underlag, inte SCB:s fil. Komplettera personnummer och anställningsform och kontrollera mot SCB:s aktuella datafilsbeskrivning innan inlämning. Kolumnerna följer SCB:s datafilsbeskrivning för Pedagogisk personal HT 2026 (versionsdatum 2026-05-07, hämtad 2026-10-09); rubrikraden och BOM är SchemaPros egna. Klistra in raderna i SCB:s Excelmall — SCB tar emot Excelmallen eller ett systems textfil.",
       "scbYearNote": "Underlaget räknar läsårets planerade undervisning, inte perioden ovan, i undervisningstid utan faktor. Uppdrag ingår i lärartjänsten. Behörigheter och legitimation tas aldrig med.",
-      "scbNoticesTitle": "{count, plural, =0 {Inget att kontrollera utöver personnummer, skolenhetskod och anställningsform.} one {# sak att kontrollera i underlaget:} other {# saker att kontrollera i underlaget:}}",
+      "scbNoticesTitle": "{count, plural, =0 {Inget att kontrollera utöver personnummer och anställningsform.} one {# sak att kontrollera i underlaget:} other {# saker att kontrollera i underlaget:}}",
       "exportFailed": "Exporten misslyckades.",
       "scb": {
         "form": {

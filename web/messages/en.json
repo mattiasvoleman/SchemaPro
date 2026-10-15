@@ -1591,9 +1591,9 @@
       "exportSamverkanHint": "One row per teacher: post, target, teaching and duties, annual working time per the school's settings, and the period above. Semicolons, UTF-8 with BOM, for Excel.",
       "includeQualifications": "Include qualifications",
       "exportScb": "SCB working file, Pedagogisk personal (CSV)",
-      "scbNotice": "A working file, not SCB's file. Complete personal identity numbers, school unit code and employment form, and check against SCB's current file description before submitting. The columns follow SCB's file description for Pedagogisk personal HT 2026 (version date 2026-05-07, retrieved 2026-10-09); the header row and BOM are SchemaPro's own. Paste the rows into SCB's Excel template — SCB accepts the Excel template or a system's text file.",
+      "scbNotice": "A working file, not SCB's file. Complete personal identity numbers and employment form, and check against SCB's current file description before submitting. The columns follow SCB's file description for Pedagogisk personal HT 2026 (version date 2026-05-07, retrieved 2026-10-09); the header row and BOM are SchemaPro's own. Paste the rows into SCB's Excel template — SCB accepts the Excel template or a system's text file.",
       "scbYearNote": "The file counts the school year's planned teaching, not the period above, in teaching time without the factor. Duties are part of the teaching post. Qualifications and certification are never included.",
-      "scbNoticesTitle": "{count, plural, =0 {Nothing to check beyond identity numbers, school unit code and employment form.} one {# thing to check in the file:} other {# things to check in the file:}}",
+      "scbNoticesTitle": "{count, plural, =0 {Nothing to check beyond identity numbers and employment form.} one {# thing to check in the file:} other {# things to check in the file:}}",
       "exportFailed": "The export failed.",
       "scb": {
         "form": {

@@ -113,6 +113,9 @@ describe('SchoolUnitsService', () => {
     tx['schoolUnit']!['deleteMany']!.mockResolvedValueOnce({ count: 1 });
     await service.remove(F6, admin);
     expect(tx['schoolUnit']!['deleteMany']).toHaveBeenCalledWith({ where: { id: F6, schoolId: SCHOOL } });
+    // The school's lock before the row's, as update() and the sync apply take
+    // them: a DELETE locks its row before its trigger takes the school's lock.
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx['schoolUnit']!['deleteMany']!.mock.invocationCallOrder[0]!);
     tx['schoolUnit']!['deleteMany']!.mockResolvedValueOnce({ count: 0 });
     await expect(service.remove(F6, admin)).rejects.toMatchObject({ status: 404 });
   });
