@@ -84,7 +84,7 @@ function school() {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 29 statements (28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 30 statements (29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -108,7 +108,11 @@ describe('the active year’s statement budget', () => {
       'masterLesson.findMany › extraGroups',
       'masterLesson.findMany › participants',
       'teachingRequirement.findMany',
-      // rosterOf, CURRENT: the reader's own two reads.
+      // rosterOf: which of the groups in play are halves or have halves
+      // (Halvklasser, class-halves.ts), one statement; this school has none,
+      // so no second read for a half's siblings. Then, CURRENT, the reader's
+      // own two reads.
+      'studentGroup.findMany',
       'user.findMany',
       'studentGroupMember.findMany',
       'availabilityConstraint.findMany',
