@@ -20648,3 +20648,726 @@ BEGIN
 END $$;
 SET LOCAL ROLE app_authenticated;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 144: kalenderprenumeration, katalogen (20261112091000).
+--
+-- The feed's door, the person's three (create, revoke, audience_on) and the
+-- admin's count are SECURITY DEFINER with a pinned search_path and the API's
+-- role's alone. The builders and the family's label rule run as their caller
+-- and are nobody's to call, nor are the triggers' functions.
+-- CalendarFeeds has row security and one arm, the owner's SELECT for the
+-- API's role; the API's role holds SELECT and nothing else, PostgREST's role
+-- and anon nothing. The settings', the people's and the links' triggers are
+-- in place, the family's staff and the pupil's builder ask the one label
+-- rule, the CHECKs hold, a person has one live feed per week by a unique
+-- index (the functions revoke the old first, so only the index says it of
+-- every writer), and the read log has its CALENDAR way.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE fn text; r text; priv text; c text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['app.calendar_feed(text)', 'app.calendar_feed_create(uuid, text, text)', 'app.calendar_feed_revoke(uuid)',
+                            'app.calendar_feed_counts()', 'app.calendar_feed_audience_on()'] LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'feed: % is not SECURITY DEFINER', fn; END IF;
+    IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                       FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
+      RAISE EXCEPTION 'feed: % has no pinned search_path', fn;
+    END IF;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'feed: the API may not call %', fn; END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'feed: % may call %', r, fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.calendar_feed_teacher_lessons(uuid, uuid, date, date, text)',
+                            'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")',
+                            'app.calendar_feed_breaks(uuid, integer, boolean, date, date)',
+                            'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[])'] LOOP
+    IF (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'feed: % runs as its owner', fn; END IF;
+  END LOOP;
+  -- The triggers' functions write the feeds as their owner, and the family's
+  -- staff, replaced to ask the label rule, is still a door of its own.
+  FOREACH fn IN ARRAY ARRAY['app.calendar_feeds_follow_the_school()', 'app.calendar_feeds_follow_the_person()',
+                            'app.family_lesson_staff(uuid[])'] LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'feed: % is not SECURITY DEFINER', fn; END IF;
+    IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                       FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
+      RAISE EXCEPTION 'feed: % has no pinned search_path', fn;
+    END IF;
+  END LOOP;
+  IF NOT has_function_privilege('app_authenticated', 'app.family_lesson_staff(uuid[])', 'EXECUTE') THEN
+    RAISE EXCEPTION 'feed: the API may no longer ask the family''s staff';
+  END IF;
+  FOREACH fn IN ARRAY ARRAY['app.calendar_feed_teacher_lessons(uuid, uuid, date, date, text)',
+                            'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")',
+                            'app.calendar_feed_breaks(uuid, integer, boolean, date, date)',
+                            'app.family_lesson_labels(uuid, "TeacherDisplay", uuid[])',
+                            'app.calendar_feeds_follow_the_school()',
+                            'app.calendar_feeds_follow_the_person()'] LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'feed: % may call %', r, fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"CalendarFeeds"'::regclass) THEN
+    RAISE EXCEPTION 'feed: CalendarFeeds has no row security';
+  END IF;
+  IF (SELECT array_agg(p.polname::text || ':' || p.polcmd::text || ':' || r.rolname::text ORDER BY p.polname, r.rolname)
+        FROM pg_policy p, unnest(p.polroles) AS pr(oid) JOIN pg_roles r ON r.oid = pr.oid
+       WHERE p.polrelid = '"CalendarFeeds"'::regclass) IS DISTINCT FROM ARRAY['calendar_feeds_owner_select:r:app_authenticated'] THEN
+    RAISE EXCEPTION 'feed: CalendarFeeds'' arms are %', (SELECT array_agg(polname) FROM pg_policy WHERE polrelid = '"CalendarFeeds"'::regclass);
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', '"CalendarFeeds"', 'SELECT') THEN RAISE EXCEPTION 'feed: the API may not read its feeds'; END IF;
+  FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', '"CalendarFeeds"', priv) THEN RAISE EXCEPTION 'feed: the API holds % on CalendarFeeds', priv; END IF;
+  END LOOP;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_table_privilege(r, '"CalendarFeeds"', priv) THEN
+        RAISE EXCEPTION 'feed: % holds % on CalendarFeeds', r, priv;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"PublicationSettings"'::regclass
+                    AND tgname = 'PublicationSettings_calendar_feeds_follow' AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'feed: the settings do not take their feeds with them';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"Users"'::regclass
+                    AND tgname = 'Users_calendar_feeds_follow' AND tgenabled = 'O')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"GuardianStudents"'::regclass
+                    AND tgname = 'GuardianStudents_calendar_feeds_follow' AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'feed: a person or a link does not take their feeds with them';
+  END IF;
+  IF NOT coalesce((SELECT i.indisunique
+                          AND pg_get_indexdef(i.indexrelid) LIKE '%("userId", COALESCE("studentId", "userId"))%'
+                          AND pg_get_expr(i.indpred, i.indrelid) = '("revokedAt" IS NULL)'
+                     FROM pg_index i WHERE i.indexrelid = '"CalendarFeeds_one_live_feed_per_week"'::regclass), false) THEN
+    RAISE EXCEPTION 'feed: one live feed per week is not a unique index of the live feeds';
+  END IF;
+  FOREACH fn IN ARRAY ARRAY['app.family_lesson_staff(uuid[])', 'app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")'] LOOP
+    IF (SELECT prosrc FROM pg_proc WHERE oid = fn::regprocedure) NOT LIKE '%app.family_lesson_labels(%' THEN
+      RAISE EXCEPTION 'feed: % names teachers without the family''s rule', fn;
+    END IF;
+  END LOOP;
+  FOREACH c IN ARRAY ARRAY['CalendarFeeds_token_is_a_sha256', 'CalendarFeeds_locale_is_known', 'CalendarFeeds_whose_week',
+                           'CalendarFeeds_only_a_guardian_is_recorded'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = '"CalendarFeeds"'::regclass AND conname = c AND convalidated) THEN
+      RAISE EXCEPTION 'feed: % is not in place', c;
+    END IF;
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+                  WHERE t.typname = 'PersonalDataAccessChannel' AND e.enumlabel = 'CALENDAR') THEN
+    RAISE EXCEPTION 'feed: the read log has no CALENDAR way';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 145: vem som gör en prenumeration (app.calendar_feed_create,
+-- _revoke, _counts, _audience_on).
+--
+-- In the ledighet school, with every audience off nobody makes a feed and
+-- nobody's audience is on; with only the teachers' on, a pupil's and a
+-- guardian's are still off. With them on: the admin and a teacher make their
+-- own week's, a pupil theirs, the guardian each of their children's — and
+-- nobody anything else (a teacher a pupil's, a pupil another's, the guardian
+-- none of their own or a stranger's, even one another guardian has); a
+-- deactivated teacher makes nothing. A second feed
+-- of a week revokes the first. Each person reads and revokes their own
+-- feeds only; the admin counts the school's live feeds per audience and
+-- nobody else does. An address that is no sha256 is refused by the CHECK.
+-- PostgREST's role neither calls the functions nor reads the table, and the
+-- API's role writes nothing past them.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+CREATE FUNCTION pg_temp.rls145_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+END $$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  gustav uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957');
+  frida uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958');
+  r jsonb; first_ella uuid; ellas_own uuid; n integer;
+BEGIN
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  r := app.calendar_feed_create(NULL, repeat('1', 64), 'sv');
+  IF r ->> 'refused' IS DISTINCT FROM 'AUDIENCE_OFF' THEN RAISE EXCEPTION 'feed: the admin made a feed with every audience off: %', r; END IF;
+  IF app.calendar_feed_audience_on() THEN RAISE EXCEPTION 'feed: the admin''s audience reads as on'; END IF;
+  -- The teachers' on, and only theirs: a pupil's and a guardian's stay off.
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true WHERE "schoolId" = school;
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000956');
+  IF app.calendar_feed_audience_on() OR app.calendar_feed_create(NULL, repeat('1', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'AUDIENCE_OFF' THEN
+    RAISE EXCEPTION 'feed: a pupil''s audience is on with only the teachers''';
+  END IF;
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000955');
+  IF app.calendar_feed_audience_on() OR app.calendar_feed_create(ella, repeat('1', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'AUDIENCE_OFF' THEN
+    RAISE EXCEPTION 'feed: a guardian''s audience is on with only the teachers''';
+  END IF;
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000950');
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true, "calendarFeedStudents" = true, "calendarFeedGuardians" = true
+   WHERE "schoolId" = school;
+  -- Gustav has a guardian, though not this one.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'rls145-otto@example.invalid', 'Otto', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000001451', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT school, id, gustav FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000001451';
+
+  -- The admin: their own week, as a teacher's, and no pupil's.
+  IF NOT app.calendar_feed_audience_on() THEN RAISE EXCEPTION 'feed: the admin''s audience reads as off'; END IF;
+  r := app.calendar_feed_create(NULL, repeat('1', 64), 'sv');
+  IF r #>> '{feed,audience}' IS DISTINCT FROM 'TEACHER' OR r #>> '{feed,studentId}' IS NOT NULL THEN RAISE EXCEPTION 'feed: the admin made %', r; END IF;
+  IF app.calendar_feed_create(ella, repeat('2', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NOT_YOURS' THEN
+    RAISE EXCEPTION 'feed: the admin made a pupil''s feed';
+  END IF;
+
+  -- A teacher: their own, in English when asked, and no pupil's.
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000951');
+  r := app.calendar_feed_create(NULL, repeat('3', 64), 'en');
+  IF r #>> '{feed,audience}' IS DISTINCT FROM 'TEACHER' OR r #>> '{feed,locale}' IS DISTINCT FROM 'en' THEN RAISE EXCEPTION 'feed: the teacher made %', r; END IF;
+  IF app.calendar_feed_create(ella, repeat('4', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NOT_YOURS' THEN
+    RAISE EXCEPTION 'feed: a teacher made a pupil''s feed';
+  END IF;
+
+  -- A pupil: their own (asked by none or by their own id), and nobody else's.
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000956');
+  r := app.calendar_feed_create(NULL, repeat('5', 64), 'de');
+  IF r #>> '{feed,audience}' IS DISTINCT FROM 'STUDENT' OR r #>> '{feed,studentId}' IS DISTINCT FROM ella::text
+     OR r #>> '{feed,locale}' IS DISTINCT FROM 'sv' THEN
+    RAISE EXCEPTION 'feed: the pupil made %', r;
+  END IF;
+  ellas_own := (r #>> '{feed,id}')::uuid;
+  IF app.calendar_feed_create(gustav, repeat('6', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NOT_YOURS' THEN
+    RAISE EXCEPTION 'feed: a pupil made another pupil''s feed';
+  END IF;
+
+  -- The guardian: each child's, and no stranger's and no week of their own.
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000955');
+  r := app.calendar_feed_create(ella, repeat('7', 64), 'sv');
+  IF r #>> '{feed,audience}' IS DISTINCT FROM 'GUARDIAN' OR r #>> '{feed,studentId}' IS DISTINCT FROM ella::text THEN
+    RAISE EXCEPTION 'feed: the guardian made %', r;
+  END IF;
+  first_ella := (r #>> '{feed,id}')::uuid;
+  IF app.calendar_feed_create(frida, repeat('8', 64), 'sv') ? 'refused' THEN RAISE EXCEPTION 'feed: the guardian made no feed of Frida'; END IF;
+  IF app.calendar_feed_create(gustav, repeat('9', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NOT_YOURS'
+     OR app.calendar_feed_create(NULL, repeat('9', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NOT_YOURS' THEN
+    RAISE EXCEPTION 'feed: the guardian made a stranger''s feed, or one of their own';
+  END IF;
+  -- A second of Ella's revokes the first: one live feed per week.
+  r := app.calendar_feed_create(ella, repeat('a', 64), 'sv');
+  IF (SELECT "revokedAt" FROM "CalendarFeeds" WHERE id = first_ella) IS NULL THEN RAISE EXCEPTION 'feed: the first feed of Ella lives on'; END IF;
+  SELECT count(*) INTO n FROM "CalendarFeeds" WHERE "revokedAt" IS NULL;
+  IF n <> 2 THEN RAISE EXCEPTION 'feed: the guardian has % live feeds (Ella''s new one, Frida''s)', n; END IF;
+  -- Their own rows only: Ella's own feed is not theirs to read or revoke.
+  IF EXISTS (SELECT 1 FROM "CalendarFeeds" WHERE id = ellas_own) OR (SELECT count(*) FROM "CalendarFeeds") <> 3 THEN
+    RAISE EXCEPTION 'feed: the guardian reads feeds that are not theirs';
+  END IF;
+  IF app.calendar_feed_revoke(ellas_own) THEN RAISE EXCEPTION 'feed: the guardian revoked the pupil''s own feed'; END IF;
+  IF NOT app.calendar_feed_revoke((r #>> '{feed,id}')::uuid) THEN RAISE EXCEPTION 'feed: the guardian could not revoke their own'; END IF;
+  IF app.calendar_feed_revoke((r #>> '{feed,id}')::uuid) THEN RAISE EXCEPTION 'feed: a revoked feed was revoked again'; END IF;
+  IF EXISTS (SELECT 1 FROM app.calendar_feed_counts()) THEN RAISE EXCEPTION 'feed: a guardian counts the school''s feeds'; END IF;
+  BEGIN
+    PERFORM app.calendar_feed_create(frida, 'not a hash', 'sv');
+    RAISE EXCEPTION 'feed: an address that is no sha256 was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- Erik has left: no principal, no feed.
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000959');
+  IF app.calendar_feed_create(NULL, repeat('b', 64), 'sv') ->> 'refused' IS DISTINCT FROM 'NO_PRINCIPAL' THEN
+    RAISE EXCEPTION 'feed: a deactivated teacher made a feed';
+  END IF;
+
+  -- The admin counts: two teachers' weeks, one pupil's, one child's (Frida's).
+  PERFORM pg_temp.rls145_as('00000000-0000-4000-8000-000000000950');
+  IF (SELECT string_agg(audience::text || '=' || live, ',' ORDER BY audience) FROM app.calendar_feed_counts())
+     IS DISTINCT FROM 'TEACHER=2,STUDENT=1,GUARDIAN=1' THEN
+    RAISE EXCEPTION 'feed: the admin counts %', (SELECT string_agg(audience::text || '=' || live, ',') FROM app.calendar_feed_counts());
+  END IF;
+  BEGIN
+    INSERT INTO "CalendarFeeds" ("schoolId", "userId", audience, "tokenHash") SELECT school, id, 'TEACHER', repeat('c', 64)
+      FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000950';
+    RAISE EXCEPTION 'feed: the API wrote a feed past the functions';
+  EXCEPTION WHEN insufficient_privilege THEN
+    -- The grant's refusal, not a policy's (which is the same SQLSTATE).
+    IF SQLERRM NOT LIKE 'permission denied%' THEN RAISE; END IF;
+  END;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM count(*) FROM "CalendarFeeds";
+    RAISE EXCEPTION 'feed: PostgREST''s role reads the feeds';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.calendar_feed_create(NULL, repeat('d', 64), 'sv');
+    RAISE EXCEPTION 'feed: PostgREST''s role makes feeds';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 146: skolan stänger av, och en prenumeration slutar med det den
+-- gjordes för (the settings', the people's and the links' triggers).
+--
+-- Switching an audience off revokes that audience's live feeds and no
+-- other's, in the same statement; switching it on again revives none. A
+-- revoked feed answers nothing at the door. The school's settings row
+-- deleted revokes all of its feeds. A teacher made admin keeps their feed,
+-- one made a guardian loses it; a guardian's link to one child deleted ends
+-- that child's feed and not the other's; a pupil deactivated ends their own
+-- feed and every guardian's of them, and reactivated revives neither.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+CREATE FUNCTION pg_temp.rls146_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+END $$;
+CREATE FUNCTION pg_temp.rls146_live() RETURNS text LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  SELECT string_agg(audience::text || '=' || live, ',' ORDER BY audience) INTO got FROM app.calendar_feed_counts();
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN coalesce(got, '');
+END $$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+BEGIN
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true, "calendarFeedStudents" = true, "calendarFeedGuardians" = true
+   WHERE "schoolId" = school;
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000951');
+  PERFORM app.calendar_feed_create(NULL, repeat('1', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000956');
+  PERFORM app.calendar_feed_create(NULL, repeat('2', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000955');
+  PERFORM app.calendar_feed_create(ella, repeat('3', 64), 'sv');
+  IF pg_temp.rls146_live() IS DISTINCT FROM 'TEACHER=1,STUDENT=1,GUARDIAN=1' THEN RAISE EXCEPTION 'feed: live before: %', pg_temp.rls146_live(); END IF;
+
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000950');
+  UPDATE "PublicationSettings" SET "calendarFeedStudents" = false WHERE "schoolId" = school;
+  IF pg_temp.rls146_live() IS DISTINCT FROM 'TEACHER=1,GUARDIAN=1' THEN RAISE EXCEPTION 'feed: pupils off leaves %', pg_temp.rls146_live(); END IF;
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = false WHERE "schoolId" = school;
+  IF pg_temp.rls146_live() IS DISTINCT FROM 'GUARDIAN=1' THEN RAISE EXCEPTION 'feed: teachers off leaves %', pg_temp.rls146_live(); END IF;
+  -- On again: the revoked stay revoked, and their addresses answer nothing.
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true, "calendarFeedStudents" = true WHERE "schoolId" = school;
+  IF pg_temp.rls146_live() IS DISTINCT FROM 'GUARDIAN=1' THEN RAISE EXCEPTION 'feed: switching on revived %', pg_temp.rls146_live(); END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF app.calendar_feed(repeat('1', 64)) IS NOT NULL OR app.calendar_feed(repeat('2', 64)) IS NOT NULL THEN
+    RAISE EXCEPTION 'feed: a feed revoked by its audience answers';
+  END IF;
+  IF app.calendar_feed(repeat('3', 64)) IS NULL THEN RAISE EXCEPTION 'feed: the guardian''s feed stopped with the others'; END IF;
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000950');
+  UPDATE "PublicationSettings" SET "calendarFeedGuardians" = false WHERE "schoolId" = school;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF app.calendar_feed(repeat('3', 64)) IS NOT NULL THEN RAISE EXCEPTION 'feed: the guardian''s feed answers with guardians off'; END IF;
+
+  -- The settings row deleted: every feed of the school, whatever its audience.
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000950');
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true, "calendarFeedStudents" = true, "calendarFeedGuardians" = true
+   WHERE "schoolId" = school;
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000951');
+  PERFORM app.calendar_feed_create(NULL, repeat('4', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000955');
+  PERFORM app.calendar_feed_create(ella, repeat('5', 64), 'sv');
+  IF pg_temp.rls146_live() IS DISTINCT FROM 'TEACHER=1,GUARDIAN=1' THEN RAISE EXCEPTION 'feed: live before the delete: %', pg_temp.rls146_live(); END IF;
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000950');
+  DELETE FROM "PublicationSettings" WHERE "schoolId" = school;
+  IF pg_temp.rls146_live() IS DISTINCT FROM '' THEN RAISE EXCEPTION 'feed: the deleted settings leave %', pg_temp.rls146_live(); END IF;
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+CREATE FUNCTION pg_temp.rls146_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+END $$;
+-- The door as a calendar asks it: no principal, the claims put back after.
+CREATE FUNCTION pg_temp.rls146_answers(hash text) RETURNS boolean LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  got := app.calendar_feed(hash);
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN got IS NOT NULL;
+END $$;
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  frida uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958');
+  guardian uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000955');
+  hash text;
+BEGIN
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true, "calendarFeedStudents" = true, "calendarFeedGuardians" = true
+   WHERE "schoolId" = school;
+  -- Anna's (1), Bertil's (2), Ella's own (3), the guardian's of Ella (4) and of Frida (5).
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000951');
+  PERFORM app.calendar_feed_create(NULL, repeat('1', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000952');
+  PERFORM app.calendar_feed_create(NULL, repeat('2', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000956');
+  PERFORM app.calendar_feed_create(NULL, repeat('3', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000955');
+  PERFORM app.calendar_feed_create(ella, repeat('4', 64), 'sv');
+  PERFORM app.calendar_feed_create(frida, repeat('5', 64), 'sv');
+  PERFORM pg_temp.rls146_as('00000000-0000-4000-8000-000000000950');
+  FOREACH hash IN ARRAY ARRAY['1', '2', '3', '4', '5'] LOOP
+    IF NOT pg_temp.rls146_answers(repeat(hash, 64)) THEN RAISE EXCEPTION 'feed: feed % answers nothing before the people change', hash; END IF;
+  END LOOP;
+
+  -- Each change, and then its undoing: an address the change ended stays
+  -- ended, which only a revocation makes so (the door alone would answer
+  -- again once the person is what the feed was made for).
+  -- Anna made admin: still a teacher's week.
+  UPDATE "Users" SET role = 'SCHOOL_ADMIN' WHERE "authId" = '00000000-0000-4000-8000-000000000951';
+  IF NOT pg_temp.rls146_answers(repeat('1', 64)) THEN RAISE EXCEPTION 'feed: a teacher made admin lost their feed'; END IF;
+  -- Bertil made a guardian, and a teacher again.
+  UPDATE "Users" SET role = 'GUARDIAN' WHERE "authId" = '00000000-0000-4000-8000-000000000952';
+  UPDATE "Users" SET role = 'TEACHER' WHERE "authId" = '00000000-0000-4000-8000-000000000952';
+  IF pg_temp.rls146_answers(repeat('2', 64)) THEN RAISE EXCEPTION 'feed: a teacher''s feed outlived their being a guardian'; END IF;
+  -- The guardian's link to Frida deleted, and made again: Frida's feed ends, Ella's does not.
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = guardian AND "studentId" = frida;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (school, guardian, frida);
+  IF pg_temp.rls146_answers(repeat('5', 64)) THEN RAISE EXCEPTION 'feed: a guardian''s feed outlived the link to the child'; END IF;
+  IF NOT pg_temp.rls146_answers(repeat('4', 64)) THEN RAISE EXCEPTION 'feed: one child''s link took the other child''s feed'; END IF;
+  -- Ella deactivated, and back: her own and her guardian's feed end, and stay ended.
+  UPDATE "Users" SET "isActive" = false WHERE id = ella;
+  UPDATE "Users" SET "isActive" = true WHERE id = ella;
+  IF pg_temp.rls146_answers(repeat('3', 64)) OR pg_temp.rls146_answers(repeat('4', 64)) THEN
+    RAISE EXCEPTION 'feed: a pupil''s week outlived their leaving';
+  END IF;
+  IF (SELECT string_agg(audience::text || '=' || live, ',' ORDER BY audience) FROM app.calendar_feed_counts()) IS DISTINCT FROM 'TEACHER=1' THEN
+    RAISE EXCEPTION 'feed: after the people changed the admin counts %',
+      (SELECT string_agg(audience::text || '=' || live, ',' ORDER BY audience) FROM app.calendar_feed_counts());
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 147: vad en prenumeration visar (app.calendar_feed).
+--
+-- The ledighet school's week from tomorrow (the school's), published: a 9A lesson Anna
+-- leads with Bertil, David (protected) and Erik (who left) beside her, Tyska 9
+-- its extra group; Ella's Spanska group's
+-- lessons (Cecilia's; one cancelled, one Bertil covers); a lesson Ella and
+-- Gustav are named on; Frida's Tyska; Spanska last Monday, the day before
+-- it, and a year and a day ahead; a studiedag for all, prao for åk 9, a day
+-- for åk 8 and one for åk 10–12. Asked with no principal, as a calendar asks:
+--
+--   * Anna's feed is the lessons she is on, the 9A lesson with its groups,
+--     room and Bertil (never David, never Erik), the named lesson naming no
+--     pupil, and the whole school's studiedag; Bertil's marks the lesson he
+--     covers; each lesson's version is its row's updatedAt (a fixed day
+--     long ago, so the clock cannot pass for it), and the feed's scope (the
+--     entries' UIDs) Anna's own id;
+--   * Ella's own feed and her guardian's are her Spanska lessons from last
+--     Monday on (Cecilia named as the school names teachers; the cancelled
+--     and the covered ones naming nobody, the covered one marked) and the
+--     named lesson; not 9A's (her class history names 9A from 2095 on), not
+--     Frida's Tyska, nothing outside the window; the studiedag and her
+--     year's prao, not åk 8's day nor åk 10–12's. Both feeds' scope is
+--     Ella. No other pupil's name anywhere. By signature, Cecilia is her
+--     signature; naming nobody, nobody;
+--   * the guardian's feed is written once a school day to the read log, as
+--     a read of Ella's schedule by the guardian through the calendar; a
+--     teacher's and a pupil's are not; the feed is marked used; and the
+--     guardian opening Ella's week in the app after it is still written;
+--   * a guardian's feed of a child with no lesson in the window (Tom, in no
+--     class) answers an empty week and writes no read-log row;
+--   * nothing answers for a revoked feed, an unknown address, a teacher
+--     deactivated, a guardian no longer the child's, a child deactivated;
+--     and PostgREST's role cannot ask. (That the door ends a live feed it
+--     refuses needs the triggers off: the adapter probe, kf-f.)
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+CREATE FUNCTION pg_temp.rls147_as(sub text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+END $$;
+-- The school's day, which the door counts from (not the server's, which is
+-- UTC: around midnight they are two days).
+CREATE FUNCTION pg_temp.rls147_today() RETURNS date LANGUAGE sql AS $$ SELECT (now() AT TIME ZONE 'Europe/Stockholm')::date $$;
+-- The door as a calendar asks it: no principal, the claims put back after.
+CREATE FUNCTION pg_temp.rls147_feed(hash text) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got jsonb;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  got := app.calendar_feed(hash);
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN got;
+END $$;
+-- "subject@offset" per lesson, in the feed's order, offset in days from tomorrow.
+CREATE FUNCTION pg_temp.rls147_lessons(doc jsonb) RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg((l ->> 'subject') || '@' || ((l ->> 'date')::date - (pg_temp.rls147_today() + 1)), ',' ORDER BY l ->> 'start', l ->> 'id')
+    FROM jsonb_array_elements(doc -> 'lessons') l
+$$;
+CREATE FUNCTION pg_temp.rls147_lesson(doc jsonb, subject text, offset_days integer) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT l FROM jsonb_array_elements(doc -> 'lessons') l
+   WHERE l ->> 'subject' = subject AND (l ->> 'date')::date = pg_temp.rls147_today() + 1 + offset_days
+$$;
+CREATE FUNCTION pg_temp.rls147_breaks(doc jsonb) RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg(b ->> 'name', ',' ORDER BY b ->> 'from') FROM jsonb_array_elements(doc -> 'breaks') b
+$$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1);
+  d0 date := pg_temp.rls147_today() + 1;
+  monday date := (pg_temp.rls147_today() - 7) - (extract(isodow FROM pg_temp.rls147_today() - 7)::int - 1);
+  g9a uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = app.current_school_id() AND name = '9A');
+  g9b uuid := (SELECT id FROM "StudentGroups" WHERE "schoolId" = app.current_school_id() AND name = '9B');
+  anna uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951');
+  bertil uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000952');
+  cecilia uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000953');
+  david uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000954');
+  ella uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956');
+  gustav uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000957');
+  frida uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958');
+  room uuid; spanska uuid; tyska uuid; s_hem uuid; s_sp uuid; s_namn uuid; s_ty uuid; lesson uuid;
+BEGIN
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  UPDATE "PublicationSettings" SET "calendarFeedTeachers" = true, "calendarFeedStudents" = true, "calendarFeedGuardians" = true,
+         "publicTeacherDisplay" = 'NAME' WHERE "schoolId" = school;
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden) VALUES (david, school, true);
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'rls147 Sal', now()) RETURNING id INTO room;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'rls147 Hem', now()) RETURNING id INTO s_hem;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'rls147 Spanska', now()) RETURNING id INTO s_sp;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'rls147 Namn', now()) RETURNING id INTO s_namn;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'rls147 Tyska', now()) RETURNING id INTO s_ty;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, y, 'rls147 Spanska 9', 'TEACHING_GROUP', now())
+  RETURNING id INTO spanska;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, y, 'rls147 Tyska 9', 'TEACHING_GROUP', now())
+  RETURNING id INTO tyska;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, spanska, ella), (school, tyska, frida);
+
+  -- 9A, Anna leading, Bertil and David beside her.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt")
+  -- Changed long ago: its version is that moment, not the time of the ask.
+  VALUES (school, s_hem, g9a, room, d0, (d0 + time '08:00') AT TIME ZONE 'Europe/Stockholm', (d0 + time '09:00') AT TIME ZONE 'Europe/Stockholm',
+          timestamptz '2026-01-02 03:04:05+00')
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
+  VALUES (school, lesson, anna, 'LEAD'), (school, lesson, bertil, 'ASSISTANT'), (school, lesson, david, 'ASSISTANT'),
+         (school, lesson, (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000959'), 'ASSISTANT');
+  PERFORM set_config('app.test_rls147_9a', lesson::text, true);
+  INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (school, lesson, tyska);
+  -- Spanska: held, cancelled, covered; and last Monday, the day before it, a year and a day on.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, s_sp, spanska, d0, (d0 + time '10:00') AT TIME ZONE 'Europe/Stockholm', (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm',
+          timestamptz '2026-01-02 03:04:05+00')
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, cecilia, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, s_sp, spanska, d0 + 1, (d0 + 1 + time '10:00') AT TIME ZONE 'Europe/Stockholm', (d0 + 1 + time '11:00') AT TIME ZONE 'Europe/Stockholm', 'CANCELLED', now())
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, cecilia, 'LEAD');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, s_sp, spanska, d0 + 2, (d0 + 2 + time '10:00') AT TIME ZONE 'Europe/Stockholm', (d0 + 2 + time '11:00') AT TIME ZONE 'Europe/Stockholm', now())
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, bertil, 'SUBSTITUTE');
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, s_sp, spanska, monday, (monday + time '09:00') AT TIME ZONE 'Europe/Stockholm', (monday + time '10:00') AT TIME ZONE 'Europe/Stockholm', now()),
+         (school, s_sp, spanska, monday - 1, (monday - 1 + time '09:00') AT TIME ZONE 'Europe/Stockholm', (monday - 1 + time '10:00') AT TIME ZONE 'Europe/Stockholm', now()),
+         (school, s_sp, spanska, pg_temp.rls147_today() + 366, (pg_temp.rls147_today() + 366 + time '09:00') AT TIME ZONE 'Europe/Stockholm',
+          (pg_temp.rls147_today() + 366 + time '10:00') AT TIME ZONE 'Europe/Stockholm', now());
+  -- Named: Ella and Gustav, Anna leading.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, s_namn, g9b, d0, (d0 + time '13:00') AT TIME ZONE 'Europe/Stockholm', (d0 + time '14:00') AT TIME ZONE 'Europe/Stockholm', now())
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, anna, 'LEAD');
+  INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (school, lesson, ella), (school, lesson, gustav);
+  -- Frida's Tyska.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, s_ty, tyska, d0, (d0 + time '11:00') AT TIME ZONE 'Europe/Stockholm', (d0 + time '12:00') AT TIME ZONE 'Europe/Stockholm', now())
+  RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (school, lesson, cecilia, 'LEAD');
+  -- The days off.
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, kind, "startDate", "endDate", "updatedAt")
+  VALUES (school, y, 'rls147 Studiedag', 'STAFF_DAY', d0 + 3, d0 + 3, now());
+  INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, "startDate", "endDate", "minGradeLevel", "maxGradeLevel", "updatedAt")
+  VALUES (school, y, 'rls147 Prao', d0 + 4, d0 + 5, 9, 9, now()), (school, y, 'rls147 Åk 8', d0 + 6, d0 + 6, 8, 8, now()),
+         (school, y, 'rls147 Gymnasiet', d0 + 6, d0 + 6, 10, 12, now());
+
+  -- The feeds: Anna's (b), Bertil's (c), Ella's own (d), the guardian's of Ella (e) and of Frida (f).
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000951');
+  PERFORM app.calendar_feed_create(NULL, repeat('b', 64), 'sv');
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000952');
+  PERFORM app.calendar_feed_create(NULL, repeat('c', 64), 'sv');
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000956');
+  PERFORM app.calendar_feed_create(NULL, repeat('d', 64), 'sv');
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000955');
+  PERFORM app.calendar_feed_create(ella, repeat('e', 64), 'sv');
+  PERFORM app.calendar_feed_create(frida, repeat('f', 64), 'sv');
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000950');
+  -- Tom, the guardian's third child, in no class and no group: no lesson to show.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'rls147-tom@example.invalid', 'Tom', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000001471', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT school, g.id, t.id FROM "Users" g, "Users" t
+   WHERE g."authId" = '00000000-0000-4000-8000-000000000955' AND t."authId" = '00000000-0000-4000-8000-000000001471';
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000955');
+  PERFORM app.calendar_feed_create((SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000001471'), repeat('a', 64), 'sv');
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000950');
+  PERFORM set_config('app.test_rls147_ella', ella::text, true);
+  PERFORM set_config('app.test_rls147_cecilia', cecilia::text, true);
+  PERFORM set_config('app.test_rls147_year', y::text, true);
+END $$;
+
+DO $$
+DECLARE doc jsonb; one jsonb; got text; ella uuid := current_setting('app.test_rls147_ella')::uuid; guardian uuid;
+BEGIN
+  -- Anna: the lessons she is on, her colleague named and David not, no pupil anywhere, the whole school's day.
+  doc := pg_temp.rls147_feed(repeat('b', 64));
+  IF doc ->> 'audience' IS DISTINCT FROM 'TEACHER' OR doc ->> 'title' IS DISTINCT FROM 'Anna Mentor'
+     OR doc ->> 'timezone' IS DISTINCT FROM 'Europe/Stockholm' OR doc ->> 'school' IS DISTINCT FROM 'RLS Ledighet' THEN
+    RAISE EXCEPTION 'feed: Anna''s feed reads %', doc - 'lessons' - 'breaks';
+  END IF;
+  IF pg_temp.rls147_lessons(doc) IS DISTINCT FROM 'rls147 Hem@0,rls147 Namn@0' THEN RAISE EXCEPTION 'feed: Anna''s lessons are %', pg_temp.rls147_lessons(doc); END IF;
+  one := pg_temp.rls147_lesson(doc, 'rls147 Hem', 0);
+  IF one -> 'groups' IS DISTINCT FROM '["9A", "rls147 Tyska 9"]'::jsonb OR one -> 'teachers' IS DISTINCT FROM '["Bertil Mentor"]'::jsonb
+     OR one ->> 'room' IS DISTINCT FROM 'rls147 Sal' OR (one ->> 'substitute')::boolean OR (one ->> 'cancelled')::boolean
+     OR one ->> 'start' IS DISTINCT FROM to_char(pg_temp.rls147_today() + 1, 'YYYYMMDD') || 'T080000' THEN
+    RAISE EXCEPTION 'feed: Anna''s 9A lesson reads %', one;
+  END IF;
+  IF doc::text LIKE '%Gustav%' OR doc::text LIKE '%Ella%' OR doc::text LIKE '%David%' OR doc::text LIKE '%Erik%' THEN
+    RAISE EXCEPTION 'feed: Anna''s feed names a pupil, David or Erik';
+  END IF;
+  IF doc ->> 'scope' IS DISTINCT FROM (SELECT id::text FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951')
+     OR one ->> 'version' IS DISTINCT FROM '20260102T030405Z' THEN
+    RAISE EXCEPTION 'feed: Anna''s scope is % and her 9A lesson''s version %', doc ->> 'scope', one ->> 'version';
+  END IF;
+  IF pg_temp.rls147_breaks(doc) IS DISTINCT FROM 'rls147 Studiedag' THEN RAISE EXCEPTION 'feed: Anna''s days off are %', pg_temp.rls147_breaks(doc); END IF;
+  -- Bertil: beside Anna in 9A (David not named), covering Spanska.
+  doc := pg_temp.rls147_feed(repeat('c', 64));
+  IF pg_temp.rls147_lessons(doc) IS DISTINCT FROM 'rls147 Hem@0,rls147 Spanska@2' THEN RAISE EXCEPTION 'feed: Bertil''s lessons are %', pg_temp.rls147_lessons(doc); END IF;
+  IF pg_temp.rls147_lesson(doc, 'rls147 Hem', 0) -> 'teachers' IS DISTINCT FROM '["Anna Mentor"]'::jsonb
+     OR NOT (pg_temp.rls147_lesson(doc, 'rls147 Spanska', 2) ->> 'substitute')::boolean THEN
+    RAISE EXCEPTION 'feed: Bertil''s feed reads %', doc -> 'lessons';
+  END IF;
+
+  -- Ella's own, and her guardian's: the same week of hers.
+  FOREACH got IN ARRAY ARRAY[repeat('d', 64), repeat('e', 64)] LOOP
+    doc := pg_temp.rls147_feed(got);
+    IF pg_temp.rls147_lessons(doc) IS DISTINCT FROM
+       format('rls147 Spanska@%s,rls147 Spanska@0,rls147 Namn@0,rls147 Spanska@1,rls147 Spanska@2', (date_trunc('week', (pg_temp.rls147_today() - 7)::timestamp)::date) - (pg_temp.rls147_today() + 1)) THEN
+      RAISE EXCEPTION 'feed: Ella''s week (%) is %', got, pg_temp.rls147_lessons(doc);
+    END IF;
+    IF pg_temp.rls147_lesson(doc, 'rls147 Spanska', 0) -> 'teachers' IS DISTINCT FROM '["Cecilia Mentor"]'::jsonb
+       OR pg_temp.rls147_lesson(doc, 'rls147 Namn', 0) -> 'teachers' IS DISTINCT FROM '["Anna Mentor"]'::jsonb THEN
+      RAISE EXCEPTION 'feed: Ella''s teachers read %', doc -> 'lessons';
+    END IF;
+    one := pg_temp.rls147_lesson(doc, 'rls147 Spanska', 1);
+    IF NOT (one ->> 'cancelled')::boolean OR one -> 'teachers' IS DISTINCT FROM '[]'::jsonb OR (one ->> 'substitute')::boolean THEN
+      RAISE EXCEPTION 'feed: Ella''s cancelled lesson reads %', one;
+    END IF;
+    one := pg_temp.rls147_lesson(doc, 'rls147 Spanska', 2);
+    IF NOT (one ->> 'substitute')::boolean OR one -> 'teachers' IS DISTINCT FROM '[]'::jsonb THEN
+      RAISE EXCEPTION 'feed: Ella''s covered lesson reads %', one;
+    END IF;
+    IF pg_temp.rls147_breaks(doc) IS DISTINCT FROM 'rls147 Studiedag,rls147 Prao' THEN RAISE EXCEPTION 'feed: Ella''s days off are %', pg_temp.rls147_breaks(doc); END IF;
+    IF doc ->> 'scope' IS DISTINCT FROM ella::text THEN RAISE EXCEPTION 'feed: Ella''s week (%) is scoped %', got, doc ->> 'scope'; END IF;
+    IF pg_temp.rls147_lesson(doc, 'rls147 Spanska', 0) ->> 'version' IS DISTINCT FROM '20260102T030405Z' THEN
+      RAISE EXCEPTION 'feed: Ella''s Spanska''s version is %', pg_temp.rls147_lesson(doc, 'rls147 Spanska', 0) ->> 'version';
+    END IF;
+    IF doc::text LIKE '%Gustav%' OR doc::text LIKE '%Frida%' OR doc::text LIKE '%Tyska%' OR doc::text LIKE '%David%' THEN
+      RAISE EXCEPTION 'feed: Ella''s week names another pupil, Frida''s lesson or David';
+    END IF;
+  END LOOP;
+  IF pg_temp.rls147_feed(repeat('d', 64)) ->> 'title' IS DISTINCT FROM 'Ella Elev' OR pg_temp.rls147_feed(repeat('d', 64)) ->> 'audience' IS DISTINCT FROM 'STUDENT'
+     OR pg_temp.rls147_feed(repeat('e', 64)) ->> 'title' IS DISTINCT FROM 'Ella' OR pg_temp.rls147_feed(repeat('e', 64)) ->> 'audience' IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'feed: Ella''s feeds are titled wrong';
+  END IF;
+  -- Frida's: her Tyska, and 9A's lesson Tyska is the extra group of; none of Ella's.
+  IF pg_temp.rls147_lessons(pg_temp.rls147_feed(repeat('f', 64))) IS DISTINCT FROM 'rls147 Hem@0,rls147 Tyska@0' THEN
+    RAISE EXCEPTION 'feed: Frida''s week is %', pg_temp.rls147_lessons(pg_temp.rls147_feed(repeat('f', 64)));
+  END IF;
+
+  -- Tom's: an empty week, asked, and nothing of his read.
+  doc := pg_temp.rls147_feed(repeat('a', 64));
+  IF doc IS NULL OR doc -> 'lessons' IS DISTINCT FROM '[]'::jsonb THEN RAISE EXCEPTION 'feed: Tom''s week reads %', doc; END IF;
+  -- The read log: the guardian's two feeds that showed a lesson, once each today, and no other's.
+  SELECT id INTO guardian FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000955';
+  IF (SELECT count(*) FROM "PersonalDataAccess" WHERE channel = 'CALENDAR') <> 2
+     OR NOT EXISTS (SELECT 1 FROM "PersonalDataAccess" WHERE channel = 'CALENDAR' AND "actorId" = guardian AND "actorRole" = 'GUARDIAN'
+                     AND kind = 'SCHEDULE' AND "subjectIds" = ARRAY[ella] AND "readSize" = 1 AND "apiKeyId" IS NULL) THEN
+    RAISE EXCEPTION 'feed: the read log holds %', (SELECT jsonb_agg(to_jsonb(a) - 'id' - 'at') FROM "PersonalDataAccess" a WHERE channel = 'CALENDAR');
+  END IF;
+  -- The guardian opens Ella's week in the app minutes after the calendar
+  -- fetched it: another read, by another way, and written.
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000955');
+  IF app.personal_data_read('SCHEDULE', 'APP', ARRAY[ella]) <> 1 THEN
+    RAISE EXCEPTION 'feed: the calendar''s row hides the guardian''s read in the app';
+  END IF;
+  IF app.personal_data_read('SCHEDULE', 'APP', ARRAY[ella]) <> 0 THEN
+    RAISE EXCEPTION 'feed: the app''s own quarter-hour no longer holds';
+  END IF;
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000950');
+
+  -- By signature, Cecilia is hers; naming nobody, nobody.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+  VALUES (app.current_school_id(), current_setting('app.test_rls147_cecilia')::uuid, current_setting('app.test_rls147_year')::uuid, 100, 'CEME', now());
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'SIGNATURE' WHERE "schoolId" = app.current_school_id();
+  IF pg_temp.rls147_lesson(pg_temp.rls147_feed(repeat('e', 64)), 'rls147 Spanska', 0) -> 'teachers' IS DISTINCT FROM '["CEME"]'::jsonb THEN
+    RAISE EXCEPTION 'feed: by signature Ella''s Spanska reads %', pg_temp.rls147_lesson(pg_temp.rls147_feed(repeat('e', 64)), 'rls147 Spanska', 0);
+  END IF;
+  UPDATE "PublicationSettings" SET "publicTeacherDisplay" = 'NONE' WHERE "schoolId" = app.current_school_id();
+  IF pg_temp.rls147_lesson(pg_temp.rls147_feed(repeat('e', 64)), 'rls147 Spanska', 0) -> 'teachers' IS DISTINCT FROM '[]'::jsonb THEN
+    RAISE EXCEPTION 'feed: naming nobody, Ella''s Spanska names someone';
+  END IF;
+  -- Asked again the same day: still one row per feed.
+  IF (SELECT count(*) FROM "PersonalDataAccess" WHERE channel = 'CALENDAR') <> 2 THEN
+    RAISE EXCEPTION 'feed: the guardian''s feed is written more than once a day';
+  END IF;
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000955');
+  IF EXISTS (SELECT 1 FROM "CalendarFeeds" WHERE "revokedAt" IS NULL AND "lastUsedAt" IS NULL) THEN
+    RAISE EXCEPTION 'feed: an asked feed is not marked used';
+  END IF;
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000950');
+
+  -- Nothing for what is not a live feed of a person still theirs.
+  IF pg_temp.rls147_feed(repeat('0', 64)) IS NOT NULL THEN RAISE EXCEPTION 'feed: an unknown address answers'; END IF;
+  DELETE FROM "GuardianStudents" WHERE "guardianId" = guardian AND "studentId" = (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000958');
+  IF pg_temp.rls147_feed(repeat('f', 64)) IS NOT NULL THEN RAISE EXCEPTION 'feed: a guardian no longer Frida''s reads her week'; END IF;
+  UPDATE "Users" SET "isActive" = false WHERE "authId" = '00000000-0000-4000-8000-000000000951';
+  IF pg_temp.rls147_feed(repeat('b', 64)) IS NOT NULL THEN RAISE EXCEPTION 'feed: a deactivated teacher''s feed answers'; END IF;
+  UPDATE "Users" SET "isActive" = false WHERE id = ella;
+  IF pg_temp.rls147_feed(repeat('e', 64)) IS NOT NULL OR pg_temp.rls147_feed(repeat('d', 64)) IS NOT NULL THEN
+    RAISE EXCEPTION 'feed: a deactivated pupil''s week answers';
+  END IF;
+  PERFORM pg_temp.rls147_as('00000000-0000-4000-8000-000000000952');
+  PERFORM app.calendar_feed_revoke((SELECT id FROM "CalendarFeeds" WHERE "revokedAt" IS NULL LIMIT 1));
+  IF pg_temp.rls147_feed(repeat('c', 64)) IS NOT NULL THEN RAISE EXCEPTION 'feed: a revoked feed answers'; END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM app.calendar_feed(repeat('c', 64));
+  RAISE EXCEPTION 'feed: PostgREST''s role asks the feed''s door';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
