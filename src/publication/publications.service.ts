@@ -67,6 +67,11 @@ export interface PublicViewerSettings {
   publicTeacherDisplay: 'NONE' | 'SIGNATURE' | 'NAME';
   publicShowMeals: boolean;
   publicMinGroupSize: number;
+  /** Embedding (20261102090000): per scope, and the websites that may frame the viewer. */
+  publicEmbedGroups: boolean;
+  publicEmbedTeachers: boolean;
+  publicEmbedRooms: boolean;
+  publicEmbedOrigins: string[];
 }
 
 export const DEFAULT_VIEWER_SETTINGS: PublicViewerSettings = {
@@ -77,6 +82,10 @@ export const DEFAULT_VIEWER_SETTINGS: PublicViewerSettings = {
   publicTeacherDisplay: 'NONE',
   publicShowMeals: true,
   publicMinGroupSize: 5,
+  publicEmbedGroups: false,
+  publicEmbedTeachers: false,
+  publicEmbedRooms: false,
+  publicEmbedOrigins: [],
 };
 
 const VIEWER_KEYS = Object.keys(DEFAULT_VIEWER_SETTINGS) as (keyof PublicViewerSettings)[];

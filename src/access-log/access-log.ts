@@ -30,7 +30,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     directly through PostgREST, where every member of staff sees them, so
  *     a row for one gateway copy (GET /schedule-versions/:id) would not
  *     answer who saw a pupil's lessons. Recorded where the gateway is the
- *     only way: the family's week (SCHEDULE);
+ *     only way: the family's week (SCHEDULE). The admin's print set (GET
+ *     /print/timetables) is this layer too, every class's, teacher's or
+ *     room's week by Schemavisaren's whitelist, with no pupil on it; a
+ *     printed week of a pupil is the family's week, recorded when it was
+ *     read;
  *   - substitute suggestions (GET /calendar-lessons/:id/substitute-
  *     suggestions) and the rollover preview's cleared teachers and
  *     qualification warnings: teachers with their behörighet, which staff

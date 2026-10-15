@@ -26,6 +26,34 @@ export interface PublicLinkView {
    * (20261011120000, 20261011133000); the probe pins the two together.
    */
   notShownBecause: NotShownReason | null;
+  /**
+   * Whether the school lets this link's viewer be framed by its websites
+   * (20261102090000): not revoked, the viewer and the scope on, the scope's
+   * embedding on and at least one website. The same predicate
+   * app.public_timetable_embed asks; the probe pins the two together.
+   */
+  embeddable: boolean;
+}
+
+type EmbedSettings = Pick<
+  Prisma.PublicationSettingsGetPayload<object>,
+  | 'publicViewerEnabled'
+  | 'publicGroups'
+  | 'publicTeachers'
+  | 'publicRooms'
+  | 'publicTeacherDisplay'
+  | 'publicEmbedGroups'
+  | 'publicEmbedTeachers'
+  | 'publicEmbedRooms'
+  | 'publicEmbedOrigins'
+>;
+
+/** app.public_timetable_embed's condition, for a link of `kind`. */
+export function embedsKind(settings: EmbedSettings | null, kind: 'GROUP' | 'TEACHER' | 'ROOM'): boolean {
+  if (!settings?.publicViewerEnabled || settings.publicEmbedOrigins.length === 0) return false;
+  if (kind === 'GROUP') return settings.publicGroups && settings.publicEmbedGroups;
+  if (kind === 'ROOM') return settings.publicRooms && settings.publicEmbedRooms;
+  return settings.publicTeachers && settings.publicTeacherDisplay !== 'NONE' && settings.publicEmbedTeachers;
 }
 
 export type NotShownReason =
@@ -51,7 +79,7 @@ const SELECT = {
 
 type LinkRow = Prisma.PublicTimetableLinkGetPayload<{ select: typeof SELECT }>;
 
-const toView = (row: LinkRow, notShownBecause: NotShownReason | null = null): PublicLinkView => ({
+const toView = (row: LinkRow, notShownBecause: NotShownReason | null, embeddable: boolean): PublicLinkView => ({
   id: row.id,
   academicYearId: row.academicYearId,
   kind: row.kind,
@@ -61,6 +89,7 @@ const toView = (row: LinkRow, notShownBecause: NotShownReason | null = null): Pu
   revokedAt: row.revokedAt ? row.revokedAt.toISOString() : null,
   lastUsedAt: row.lastUsedAt ? row.lastUsedAt.toISOString() : null,
   notShownBecause,
+  embeddable: embeddable && row.revokedAt === null,
 });
 
 /**
@@ -76,7 +105,7 @@ export class PublicLinksService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(academicYearId: string, user: AuthenticatedUser): Promise<PublicLinkView[]> {
-    requireSchoolId(user);
+    const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
       const rows = await tx.publicTimetableLink.findMany({
         where: { academicYearId },
@@ -85,7 +114,8 @@ export class PublicLinksService {
       });
       if (rows.length === 0) return [];
       const reasons = await notShownReasons(tx as unknown as PrismaClient, academicYearId, rows);
-      return rows.map((row) => toView(row, reasons.get(row.id) ?? null));
+      const settings = await tx.publicationSettings.findUnique({ where: { schoolId } });
+      return rows.map((row) => toView(row, reasons.get(row.id) ?? null, embedsKind(settings, row.kind)));
     });
   }
 
@@ -100,8 +130,8 @@ export class PublicLinksService {
     }
     const token = newToken();
     try {
-      const row = await this.prisma.withRls(user, (tx) =>
-        tx.publicTimetableLink.create({
+      const { row, embeddable } = await this.prisma.withRls(user, async (tx) => {
+        const created = await tx.publicTimetableLink.create({
           data: {
             schoolId,
             academicYearId: dto.academicYearId,
@@ -114,10 +144,12 @@ export class PublicLinksService {
             createdByUserId: user.userId ?? null,
           },
           select: SELECT,
-        }),
-      );
+        });
+        const settings = await tx.publicationSettings.findUnique({ where: { schoolId } });
+        return { row: created, embeddable: embedsKind(settings, created.kind) };
+      });
       this.logger.log(`Public timetable link created [link=${row.id}, kind=${row.kind}]`);
-      return { link: toView(row), token };
+      return { link: toView(row, null, embeddable), token };
     } catch (error) {
       const refusal = viewerRefusal(error);
       if (refusal === PUBLIC_GROUP_TOO_SMALL) {
@@ -138,6 +170,7 @@ export class PublicLinksService {
 
   async revoke(id: string, user: AuthenticatedUser): Promise<PublicLinkView> {
     requireSchoolId(user);
+    // A revoked link answers nothing and frames nowhere.
     return this.prisma.withRls(user, async (tx) => {
       const found = await tx.publicTimetableLink.findUnique({ where: { id }, select: { id: true, revokedAt: true } });
       if (!found) throw new NotFoundException('Länken finns inte.');
@@ -146,7 +179,7 @@ export class PublicLinksService {
         data: { revokedAt: found.revokedAt ?? new Date() },
         select: SELECT,
       });
-      return toView(row);
+      return toView(row, null, false);
     });
   }
 

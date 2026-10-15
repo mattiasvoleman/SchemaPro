@@ -966,6 +966,13 @@ model PublicationSettings {
   publicShowMeals      Boolean        @default(true)
   /// The smallest teaching group shown by name. 3..30.
   publicMinGroupSize   Int            @default(5)
+  /// Embedding (20261102090000): per scope, off by default, and the school's
+  /// websites that may frame the viewer (frame-ancestors; at most ten
+  /// lowercase https origins, CHECK).
+  publicEmbedGroups    Boolean        @default(false)
+  publicEmbedTeachers  Boolean        @default(false)
+  publicEmbedRooms     Boolean        @default(false)
+  publicEmbedOrigins   String[]       @default([])
   createdAt          DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
 

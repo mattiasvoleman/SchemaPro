@@ -43,6 +43,13 @@ export function isViewerDate(value: string): boolean {
  *   - rate-limits per viewer address and per link (PublicViewerThrottlerGuard),
  *     skipping the global limit, which would put every family behind the web
  *     server in one bucket.
+ *
+ * GET :token/embed answers which websites may frame the link's viewer page
+ * (20261102090000, app.public_timetable_embed): the web server's
+ * frame-ancestors for /v/<token>/embed. The same 404 for a link that may not
+ * be embedded as for one that does not exist, and the same minute of
+ * caching, so a school that switches embedding off is out of the frame
+ * within a minute, as a revoked link is gone.
  */
 @Controller('public/v1/timetables')
 @Public()
@@ -77,6 +84,42 @@ export class PublicTimetableController {
       return;
     }
     response.status(200).type('application/json').send(body);
+  }
+
+  @Get(':token/embed')
+  async embed(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    response.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    const origins = await this.readEmbed(token);
+    if (origins === null) {
+      response.setHeader('Cache-Control', 'no-store');
+      response.status(404).json(NOT_FOUND);
+      return;
+    }
+    const body = JSON.stringify({ frameAncestors: origins });
+    const etag = `W/"${createHash('sha256').update(body).digest('base64url')}"`;
+    // Kept a minute by the web server that asked, and by no cache between:
+    // a school that switches embedding off is out of every frame within
+    // that minute, whatever stands in front of the gateway.
+    response.setHeader('Cache-Control', 'private, max-age=60');
+    response.setHeader('ETag', etag);
+    if (request.headers['if-none-match'] === etag) {
+      response.status(304).end();
+      return;
+    }
+    response.status(200).type('application/json').send(body);
+  }
+
+  private async readEmbed(token: string): Promise<string[] | null> {
+    if (!TOKEN_PATTERN.test(token)) return null;
+    const hash = tokenHashOf(token);
+    const rows = await this.prisma.withPublicViewer((tx) =>
+      tx.$queryRaw<{ origins: string[] | null }[]>(
+        Prisma.sql`SELECT app.public_timetable_embed(${hash}) AS "origins"`,
+      ),
+    );
+    const origins = rows?.[0]?.origins ?? null;
+    return origins && origins.length > 0 ? origins : null;
   }
 
   private async read(token: string, target: string | undefined, date: string | undefined): Promise<unknown | null> {
