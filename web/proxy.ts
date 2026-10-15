@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import createIntlMiddleware from "next-intl/middleware";
 import { routing } from "./i18n/routing";
 import { updateSession } from "@/utils/supabase/middleware";
+import { EMBED_PATH, embedOriginsOf, frameAncestorsOf } from "@/lib/embed-policy";
+import { viewerFetchOf } from "@/lib/public-timetable";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
@@ -17,6 +19,12 @@ export async function proxy(request: NextRequest) {
   //    cookies and sends anyone without a session to /login). The share link
   //    is the secret: noindex and no-referrer keep it out of search engines
   //    and out of the Referer of a link followed off the page.
+  //
+  //    And nobody frames it (20261102090000): frame-ancestors 'none' and
+  //    X-Frame-Options: DENY on every viewer page, except /v/<token>/embed,
+  //    which the school's own websites may frame when the school has chosen
+  //    so (lib/embed-policy.ts asks the gateway which). A gateway that does
+  //    not answer leaves the frame closed.
   if (request.nextUrl.pathname.startsWith("/v/")) {
     // The page's language for the layout's <html lang> (app/v/layout.tsx);
     // always set here, so whatever a browser sent under that name is replaced.
@@ -25,6 +33,26 @@ export async function proxy(request: NextRequest) {
     const response = NextResponse.next({ request: { headers: forwarded } });
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
     response.headers.set("Referrer-Policy", "no-referrer");
+    const embed = request.nextUrl.pathname.match(EMBED_PATH);
+    if (embed) {
+      const base = process.env.PUBLIC_VIEWER_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+      const { headers } = viewerFetchOf(
+        base,
+        embed[1]!,
+        { target: null, date: null },
+        request.headers.get("x-forwarded-for"),
+        process.env.PUBLIC_VIEWER_PROXY_KEY,
+      );
+      const origins = await embedOriginsOf({ base, token: embed[1]!, headers });
+      const policy = frameAncestorsOf(origins);
+      response.headers.set("Content-Security-Policy", policy);
+      // A frame the school does not allow is refused as every viewer page is,
+      // also by a browser that reads only X-Frame-Options.
+      if (policy === "frame-ancestors 'none'") response.headers.set("X-Frame-Options", "DENY");
+    } else {
+      response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+      response.headers.set("X-Frame-Options", "DENY");
+    }
     return response;
   }
 

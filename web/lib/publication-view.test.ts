@@ -188,3 +188,26 @@ describe("formatInstant", () => {
     expect(formatInstant("2026-10-12T06:30:00.000Z", "en", { withTime: true, timeZone: "Europe/Stockholm" })).toBe("12/10/2026, 08:30");
   });
 });
+
+describe("the embed code (20261102090000)", () => {
+  const token = "Tok_en-".padEnd(43, "x");
+
+  it("frames the link's embed page, titled, lazy and with no referrer, escaping what it quotes", async () => {
+    const { embedSnippet, publicViewerEmbedUrl } = await import("./publication-view");
+    const url = publicViewerEmbedUrl("https://schema.example.se/", token);
+    expect(url).toBe(`https://schema.example.se/v/${token}/embed`);
+    expect(embedSnippet(url, 'Schema – 7A "Ö" <&>')).toBe(
+      `<iframe src="${url}" title="Schema – 7A &quot;Ö&quot; &lt;&amp;&gt;" width="100%" height="680" style="border:0" loading="lazy" referrerpolicy="no-referrer"></iframe>`,
+    );
+  });
+
+  it("finds a link's token in what an admin pastes, and nothing in anything else", async () => {
+    const { tokenOfViewerUrl } = await import("./publication-view");
+    expect(tokenOfViewerUrl(`https://schema.example.se/v/${token}`)).toBe(token);
+    expect(tokenOfViewerUrl(` https://schema.example.se/v/${token}/embed?lang=en `)).toBe(token);
+    expect(tokenOfViewerUrl(`/v/${token}?target=4&date=2026-10-12#x`)).toBe(token);
+    expect(tokenOfViewerUrl("https://schema.example.se/v/short")).toBeNull();
+    expect(tokenOfViewerUrl(`https://schema.example.se/v/${token}/other`)).toBeNull();
+    expect(tokenOfViewerUrl("skolan.se")).toBeNull();
+  });
+});

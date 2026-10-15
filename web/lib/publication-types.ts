@@ -84,6 +84,11 @@ export interface PublicationSettings extends GatePolicy {
   publicTeacherDisplay: TeacherDisplay;
   publicShowMeals: boolean;
   publicMinGroupSize: number;
+  /** Embedding (20261102090000): per scope, and the websites that may frame the viewer. */
+  publicEmbedGroups: boolean;
+  publicEmbedTeachers: boolean;
+  publicEmbedRooms: boolean;
+  publicEmbedOrigins: string[];
 }
 
 export type PublicationSettingsInput = Partial<Omit<PublicationSettings, "publishMode" | "stored">>;
@@ -347,6 +352,8 @@ export interface PublicLink {
   lastUsedAt: string | null;
   /** Why an unrevoked link answers the viewer's 404 (the gateway's own rule), or null. */
   notShownBecause: PublicLinkNotShown | null;
+  /** Whether the school's websites may frame this link (app.public_timetable_embed's rule). */
+  embeddable: boolean;
 }
 
 export interface PublicLinkInput {

@@ -82,7 +82,7 @@ export default function GuardianPage() {
   const t = useTranslations("guardian");
   const tCommon = useTranslations("common");
   const locale = useLocale();
-  const { profile } = useProfile();
+  const { profile, school } = useProfile();
   // Only a guardian is asked for children: the gateway answers the read for
   // a guardian alone, and refuses any other role that opens this page. That
   // role sees "no children", as it did when the read was PostgREST's and
@@ -257,7 +257,7 @@ export default function GuardianPage() {
           404 as an unknown id. Another role opening this page asks nothing. */}
       {profile.role === "GUARDIAN" && activeChildren.length > 0 ? (
         <Suspense fallback={null}>
-          <ChildSchedule childList={activeChildren} />
+          <ChildSchedule childList={activeChildren} school={school?.name ?? ""} />
         </Suspense>
       ) : null}
 

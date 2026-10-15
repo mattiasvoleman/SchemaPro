@@ -217,12 +217,20 @@ export function canGoBack(monday: string, today: string): boolean {
   return shiftWeek(monday, -1) >= shiftWeek(thisMonday, -1);
 }
 
-/** A link inside the viewer: the same token, with what to show. */
-export function viewerHref(token: string, params: { target?: string | null; date?: string | null; lang?: string | null }): string {
+/**
+ * A link inside the viewer: the same token, with what to show. Inside the
+ * embedded frame (`embed`), to the frame's own pages, so a reader paging
+ * through the weeks stays in the school's website.
+ */
+export function viewerHref(
+  token: string,
+  params: { target?: string | null; date?: string | null; lang?: string | null },
+  options: { embed?: boolean } = {},
+): string {
   const search = new URLSearchParams();
   if (params.target) search.set("target", params.target);
   if (params.date) search.set("date", params.date);
   if (params.lang && params.lang !== "sv") search.set("lang", params.lang);
   const qs = search.toString();
-  return `/v/${token}${qs ? `?${qs}` : ""}`;
+  return `/v/${token}${options.embed ? "/embed" : ""}${qs ? `?${qs}` : ""}`;
 }

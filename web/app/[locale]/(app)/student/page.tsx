@@ -15,6 +15,7 @@ import {
   calendarLunchToBand,
   calendarRastToBand,
 } from "@/lib/lesson-mapper";
+import { sheetFromGrid } from "@/lib/print-sheet";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -38,7 +39,7 @@ const TeachingTimeCard = lazy(() =>
 export default function StudentSchedulePage() {
   const t = useTranslations("schedule");
   const tLunch = useTranslations("lunch");
-  const { profile } = useProfile();
+  const { profile, school } = useProfile();
   const [weekStart, setWeekStart] = useState(() => startOfIsoWeek(new Date()));
 
   const fromDate = toDateString(weekStart);
@@ -110,6 +111,23 @@ export default function StudentSchedulePage() {
         isLoading={isLoading}
         isError={isError}
         bands={lunchBands}
+        // The pupil's own week only: any role may open this page, and a
+        // teacher's or an admin's view of it is no pupil's week.
+        printSheet={
+          profile.role === "STUDENT"
+            ? () =>
+                sheetFromGrid({
+                  kind: "PUPIL",
+                  title: `${profile.firstName} ${profile.lastName}`,
+                  school: school?.name ?? "",
+                  weekStart,
+                  lessons: gridLessons,
+                  meals: (lunches ?? [])
+                    .filter((lunch) => lunch.studentGroupId === profile.studentGroupId)
+                    .map((lunch) => calendarLunchToBand(lunch, tLunch("bandLabel"))),
+                })
+            : undefined
+        }
       />
       {/* A pupil's own card only: any role may open this page, and the
           gateway answers a STUDENT with their own statement whatever is

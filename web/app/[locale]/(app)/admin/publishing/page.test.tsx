@@ -74,6 +74,10 @@ const SETTINGS: PublicationSettings = {
   publicTeacherDisplay: "NONE",
   publicShowMeals: true,
   publicMinGroupSize: 5,
+  publicEmbedGroups: false,
+  publicEmbedTeachers: false,
+  publicEmbedRooms: false,
+  publicEmbedOrigins: [],
 };
 
 const publication = (id: string, kind: string, validFrom: string, validTo: string) => ({
@@ -403,5 +407,100 @@ describe("/admin/publishing › Schemavisaren", () => {
     await user.click(screen.getByRole("combobox", { name: "Vilken" }));
     const options = (await screen.findAllByRole("option")).map((option) => option.textContent);
     expect(options).toEqual(["Anna Berg"]);
+  });
+});
+
+describe("/admin/publishing › Inbäddning", () => {
+  const TOKEN = "T".repeat(43);
+  beforeEach(() => {
+    vi.resetAllMocks();
+    server.settings = { ...SETTINGS, publicViewerEnabled: true, publicGroups: true };
+    server.links = [
+      {
+        id: "k-1",
+        academicYearId: "y26",
+        kind: "GROUP",
+        targetId: "g-7a",
+        label: null,
+        createdAt: "2026-10-01T08:00:00.000Z",
+        revokedAt: null,
+        lastUsedAt: null,
+        notShownBecause: null,
+        embeddable: true,
+      },
+    ];
+    server.hidden = [];
+    answer();
+  });
+
+  const openViewerTab = async (user: ReturnType<typeof userEvent.setup>) => {
+    renderPage();
+    await user.click(await screen.findByRole("tab", { name: "Schemavisaren" }));
+  };
+
+  it("offers a kind's embedding only while the viewer shows that kind, and saves only what changed", async () => {
+    put.mockImplementation(async (_path: string, body: object) => ({ ...(server.settings as object), ...body }));
+    const user = userEvent.setup();
+    await openViewerTab(user);
+    expect(await screen.findByRole("switch", { name: "Bädda in lärare" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Bädda in salar" })).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "Bädda in klasser och grupper" }));
+    // On, and no website yet: said, before saving.
+    expect(screen.getByText(/ingen webbplats är angiven/)).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: /Webbplatser som får visa schemat/ }), "Skolan.se{Enter}https://www.skolan.se:8443{Enter}skolgården.se");
+    const card = screen.getByRole("heading", { name: "Inbäddning på skolans webbplats" }).closest("section") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith("/api/v1/publication-settings", {
+        publicEmbedGroups: true,
+        publicEmbedOrigins: ["Skolan.se", "https://www.skolan.se:8443", "skolgården.se"],
+      }),
+    );
+  });
+
+  it("names a website the frame cannot take, and saves nothing until it is mended", async () => {
+    const user = userEvent.setup();
+    await openViewerTab(user);
+    await user.type(
+      await screen.findByRole("textbox", { name: /Webbplatser som får visa schemat/ }),
+      "http://skolan.se{Enter}https://skolan.se/schema{Enter}https://skolan.se:65536",
+    );
+    expect(screen.getByText(/http:\/\/skolan\.se, https:\/\/skolan\.se\/schema, https:\/\/skolan\.se:65536/)).toBeInTheDocument();
+    const card = screen.getByRole("heading", { name: "Inbäddning på skolans webbplats" }).closest("section") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Spara" })).toBeDisabled();
+  });
+
+  it("gives the code for a link the school already has, and none for an address of another site", async () => {
+    const user = userEvent.setup();
+    await openViewerTab(user);
+    const field = await screen.findByRole("textbox", { name: /Inbäddningskod för en länk du redan har/ });
+    await user.type(field, `https://schema.test.example/v/${TOKEN}`);
+    expect(screen.getByText("Det är ingen adress till Schemavisaren.")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Inbäddningskod" })).not.toBeInTheDocument();
+    await user.clear(field);
+    await user.type(field, `${window.location.origin}/v/${TOKEN}`);
+    expect(screen.getByRole("textbox", { name: "Inbäddningskod" })).toHaveValue(
+      `<iframe src="${window.location.origin}/v/${TOKEN}/embed" title="Schema" width="100%" height="680" style="border:0" loading="lazy" referrerpolicy="no-referrer"></iframe>`,
+    );
+  });
+
+  it("shows a new link's embed code beside its address when its kind may be embedded, and marks the links that may", async () => {
+    post.mockResolvedValueOnce({
+      link: { id: "k-2", academicYearId: "y26", kind: "GROUP", targetId: "g-7a", label: null, createdAt: "", revokedAt: null, lastUsedAt: null, notShownBecause: null, embeddable: true },
+      token: TOKEN,
+    });
+    const user = userEvent.setup();
+    await openViewerTab(user);
+    expect(await screen.findByText("Kan bäddas in")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Skapa länk" }));
+    const code = await screen.findByRole("textbox", { name: "Inbäddningskod" });
+    expect(code).toHaveValue(
+      `<iframe src="${window.location.origin}/v/${TOKEN}/embed" title="Schema – 7A" width="100%" height="680" style="border:0" loading="lazy" referrerpolicy="no-referrer"></iframe>`,
+    );
+  });
+
+  it("leads to the print set from the page's header", async () => {
+    renderPage();
+    expect(await screen.findByText("Skriv ut scheman")).toBeInTheDocument();
   });
 });

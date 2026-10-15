@@ -101,7 +101,7 @@ function renderCard(childList = [{ id: ALVA, firstName: "Alva" }, { id: BO, firs
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, ...(gcTime === undefined ? {} : { gcTime }) } } });
   return render(
     <QueryClientProvider client={client}>
-      <ChildSchedule childList={childList} />
+      <ChildSchedule childList={childList} school="Skolan i Exempelby" />
     </QueryClientProvider>,
   );
 }
@@ -281,5 +281,29 @@ describe("the guardian's Schema card", () => {
     state.answer = () => Promise.reject(new Error("boom"));
     renderCard();
     expect(await screen.findByRole("alert")).toHaveTextContent("guardian.schedule.error");
+  });
+
+  it("prints the child's week as the card read it, headed with the child and the school, saying Vikarie", async () => {
+    const print = vi.fn();
+    vi.stubGlobal("print", print);
+    const read = state.answer;
+    state.answer = (path) =>
+      path.startsWith("/api/v1/timetable-validity")
+        ? Promise.resolve({ week: { from: "2026-10-19", to: "2026-10-25" }, validity: [] })
+        : read(path);
+    const user = userEvent.setup();
+    renderCard([{ id: ALVA, firstName: "Alva" }]);
+    await user.click(await screen.findByRole("button", { name: "printWeek.print" }));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    // Only the validity was asked anew: the week is the one the card had read (and the read log recorded).
+    expect(state.asked.filter((path) => path.startsWith("/api/v1/family/schedule"))).toHaveLength(1);
+    expect(state.asked.at(-1)).toBe("/api/v1/timetable-validity?week=2026-10-19");
+    const sheet = document.body.querySelector(".print-sheet-root") as HTMLElement;
+    expect(sheet).toHaveTextContent("Alva");
+    expect(sheet).toHaveTextContent("Skolan i Exempelby");
+    expect(sheet).toHaveTextContent("Matematik Alva");
+    expect(sheet).toHaveTextContent("guardian.schedule.substitute");
+    window.dispatchEvent(new Event("afterprint"));
+    vi.unstubAllGlobals();
   });
 });

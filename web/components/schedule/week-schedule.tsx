@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PrintWeekButton } from "@/components/timetable-sheet/print-week-button";
+import type { SheetDocument } from "@/lib/print-sheet";
 
 interface WeekScheduleProps {
   weekStart: Date;
@@ -27,6 +29,11 @@ interface WeekScheduleProps {
   onLessonClick?: (lesson: TimetableLesson) => void;
   /** Stripes drawn behind the lessons — the meal, in a pupil's own week. */
   bands?: TimetableBand[];
+  /**
+   * "Skriv ut veckan": the shown week as a sheet, built from what the page
+   * draws (lib/print-sheet.ts sheetFromGrid). Absent: no print button.
+   */
+  printSheet?: () => SheetDocument;
 }
 
 export function WeekSchedule({
@@ -37,6 +44,7 @@ export function WeekSchedule({
   isError = false,
   onLessonClick,
   bands,
+  printSheet,
 }: WeekScheduleProps) {
   const t = useTranslations("schedule");
 
@@ -77,6 +85,12 @@ export function WeekSchedule({
         >
           {t("thisWeek")}
         </Button>
+        {printSheet ? (
+          <div className="ml-auto">
+            {/* Not while the week loads or failed: a printout of a week not read is no week. */}
+            <PrintWeekButton build={printSheet} disabled={isLoading || isError} />
+          </div>
+        ) : null}
       </div>
 
       {isLoading ? (
