@@ -248,6 +248,8 @@ export interface Proposal {
 
 /** "Språkval åk 7": what the block of one årskurs' språkval is called. */
 export const languageBlockName = (gradeLevel: number): string => `Språkval åk ${gradeLevel}`;
+/** Whether "Skapa timplansposter" could upsert a block by this name: languageBlockName of some årskurs. */
+export const isLanguageBlockName = (name: string): boolean => /^Språkval åk \d+$/.test(name);
 
 const pairKey = (groupId: string, subjectId: string): string => `${groupId}:${subjectId}`;
 
