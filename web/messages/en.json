@@ -1348,7 +1348,7 @@
       "moveBack": "Move back with the block",
       "unnamed": "Parallel block",
       "refusedSlot": "{name} cannot move there: one of the card's lessons clashes at that time. Open the card to move one lesson at a time.",
-      "refusedTray": "{name} is not set aside as a card. Open the card and set its lessons aside one at a time from their dialogs.",
+      "refusedTray": "{name} is not parked as a card. Open the card and park its lessons one at a time from their dialogs.",
       "lockedParked": "{parked, plural, one {# of the block's lessons is on the tray and was not locked. The next generation refuses the block as partly locked until it is placed.} other {# of the block's lessons are on the tray and were not locked. The next generation refuses the block as partly locked until they are placed.}}"
     }
   },

@@ -1336,7 +1336,7 @@
       "editMember": "Ändra",
       "editMemberNamed": "Ändra {lesson}",
       "splitNote": "Blocket är delat: någon av dess lektioner står inte här. Flytta tillbaka den med blocket, eller lås alla blockets lektioner, innan du genererar igen.",
-      "lockHint": "Lås blocket låser alla blockets lagda lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst. En lektion på brickan låses inte.",
+      "lockHint": "Lås blocket låser alla blockets lagda lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst. En parkerad lektion låses inte.",
       "lock": "Lås blocket",
       "unlock": "Lås upp blocket",
       "locked": "{count, plural, =0 {Blocket {name} var redan låst.} one {Blocket {name} är låst: # lektion låstes.} other {Blocket {name} är låst: # lektioner låstes.}}",
@@ -1348,8 +1348,8 @@
       "moveBack": "Flytta tillbaka med blocket",
       "unnamed": "Parallellt block",
       "refusedSlot": "{name} kan inte flyttas dit: någon av kortets lektioner krockar på den tiden. Öppna kortet för att flytta en lektion i taget.",
-      "refusedTray": "{name} läggs inte på brickan som ett kort. Öppna kortet och lägg en lektion i taget på brickan från dess dialog.",
-      "lockedParked": "{parked, plural, one {# av blockets lektioner ligger på brickan och låstes inte. Nästa generering vägrar blocket som delvis låst tills den är lagd.} other {# av blockets lektioner ligger på brickan och låstes inte. Nästa generering vägrar blocket som delvis låst tills de är lagda.}}"
+      "refusedTray": "{name} parkeras inte som ett kort. Öppna kortet och parkera en lektion i taget från dess dialog.",
+      "lockedParked": "{parked, plural, one {# av blockets lektioner är parkerad och låstes inte. Nästa generering vägrar blocket som delvis låst tills den är lagd.} other {# av blockets lektioner är parkerade och låstes inte. Nästa generering vägrar blocket som delvis låst tills de är lagda.}}"
     }
   },
   "roomOptimization": {
