@@ -529,7 +529,7 @@
     fritidshem, får då inga klasser.
   </p>
   <p>
-    Skolenheten och dess kod används i SCB-underlaget (6.9) och i det SS12000
+    Skolenheten och dess kod används i SCB-filen (6.9) och i det SS12000
     SchemaPro lämnar ut till andra system (7.3). Hämtar skolan från sitt
     elevregister (7.2) kommer namn, kod och skolformer därifrån; de visas med
     <span class="ui">Från elevregistret</span> och ändras i registret, medan
@@ -1493,12 +1493,31 @@
     dem ligger matrisen med en rad per lärare och en kolumn per ämne, och till
     höger lärarens uppdrag, mål, saldo och en stapel. Klicka på en lärare för
     att öppna lärarens kort: <span class="ui">Anställning</span> (tjänst,
-    nedsättning och avtal, som ger målet), <span class="ui">Behörigheter</span>,
+    nedsättning och avtal, som ger målet, och det SCB frågar efter:
+    anställningsform och andelen förstelärare och lektor, se nedan),
+    <span class="ui">Behörigheter</span>,
     <span class="ui">Uppdrag</span> och lärarens
     <span class="ui">Timplansposter</span>, och under dem
     <span class="ui">Årsarbetstid</span> och <span class="ui">Historik</span>.
     Länken <span class="ui">Skriv ut uppdragsbeskrivning</span> överst i kortet
     öppnar lärarens uppdragsbeskrivning (se nedan).
+  </p>
+
+  <h4>Anställningsform och karriärtjänst</h4>
+  <p>
+    Under <span class="ui">Anställning</span> står också tre uppgifter som
+    går till SCB:s Pedagogisk personal (6.9).
+    <span class="ui">Anställningsform</span> är <em>Tillsvidare</em> eller
+    <em>Visstid</em>; visstid gäller också långtidsvikarier och timanställda.
+    Tjänstledig är ingen anställningsform här: SCB-filen läser det ur
+    nedsättningen. <span class="ui">Förstelärare (% av tjänsten)</span> och
+    <span class="ui">Lektor (% av tjänsten)</span> är hur stor del av tjänsten
+    karriärtjänsten tar, i hela procent från 1 till 100; lämna fältet tomt för
+    en lärare som inte har den. En lärare kan vara både förstelärare och
+    lektor, men de två kan tillsammans vara högst hela tjänsten. Uppgifterna
+    hör till tjänsten och skyddas som den: varje ändring syns i
+    <span class="ui">Historik</span>, och de följer med tjänsten när läsåret
+    rullas vidare. De lämnas aldrig ut via SS12000.
   </p>
 
   <h4>En tjänst som ändras under läsåret</h4>
@@ -1857,7 +1876,7 @@
     i lärarens räknade tid överallt där en lärare belastas: matrisen (kolumnen
     heter då <span class="ui">Räknad tid (faktor)</span>), toppveckan,
     timmarna per läsår, <span class="ui">Föreslå lärare</span> och kontrollen
-    mot överbeläggning. Elevernas lektionsminuter, timplanen och SCB-underlaget
+    mot överbeläggning. Elevernas lektionsminuter, timplanen och SCB-filen
     påverkas aldrig. Under Minuter läses faktorn inte alls, och varje siffra är
     densamma som före faktorns tid.
   </p>
@@ -3374,14 +3393,16 @@
     som den var första dagen.
   </p>
   <p>
-    <span class="ui">SCB-underlag, Pedagogisk personal (CSV)</span> är ett
-    <strong>underlag</strong> till SCB:s insamling Pedagogisk personal, inte
-    SCB:s fil. Kolumnerna följer SCB:s <em>Pedagogisk personal HT 2026,
+    <span class="ui">SCB-fil, Pedagogisk personal (.txt)</span> hämtar
+    SCB:s textfil för insamlingen Pedagogisk personal. Filen byggs av
+    servern efter SCB:s <em>Pedagogisk personal HT 2026,
     Datafilsbeskrivning</em> (versionsdatum 2026-05-07) och SCB:s
     <em>Instruktioner 2026</em> (mätdatum 15 oktober 2026, sista insändningsdag
     2 november 2026), båda från
     <span class="path">scb.se › Lämna uppgifter › Pedagogisk personal</span>,
-    hämtade och kontrollerade 2026-10-09. Underlaget räknar läsårets planerade
+    hämtade 2026-10-09 och kontrollerade igen 2026-10-15. Bara en
+    administratör kan hämta den, och varje hämtning sparas i läsloggen (7.4):
+    filen namnger varje lärare med tjänst. Filen räknar läsårets planerade
     undervisning (inte perioden ovan):
   </p>
   <ul>
@@ -3394,45 +3415,72 @@
       skolenhetens (3.4): undervisningen läggs i den skolenhet som har
       gruppens årskurs, så en lärare som undervisar i både F–6 och 7–9 får en
       rad i vardera. En tjänst utan planerad undervisning står i den första
-      skolenheten. Har skolan ingen skolenhet är koden tom och namnet skolans,
-      och listan under knappen säger det, liksom en skolenhet utan kod.</li>
+      skolenheten. Har skolan ingen skolenhet är koden tom och namnet skolans.</li>
     <li><strong>OmfLarare</strong> = tjänst − nedsättning, så som tjänsten är
       på SCB:s mätdatum 15 oktober, fördelad över lärarens rader efter
-      undervisningstiden. Ändras en lärares tjänst under läsåret namnger
-      listan under knappen läraren och mätdatumet; är läraren helt nedsatt
-      den dagen gäller det som för en helt nedsatt. Uppdrag ingår i lärartjänsten,
-      som SCB anvisar. Nedsättningen räknas som partiell ledighet; avser den
-      förstelärarskap, facklig tid eller annat uppdrag ska hela tjänsten
-      anges, och underlaget påminner om det per lärare. En tjänst utan
-      planerad undervisning (till exempel en speciallärare) får en rad med
-      OmfLarare men utan verksamhetstyp och ämnen, och listan under knappen
-      namnger den: fyll i dem, eller redovisa personen i en annan befattning.</li>
+      undervisningstiden. Uppdrag ingår i lärartjänsten, som SCB anvisar.
+      Nedsättningen räknas som partiell ledighet; avser den förstelärarskap,
+      facklig tid eller annat uppdrag ska hela tjänsten anges, och listan
+      under knappen påminner om det per lärare. En tjänst utan planerad
+      undervisning (till exempel en speciallärare) får en rad med OmfLarare
+      och <em>N</em> för undervisning men utan verksamhetstyp: fyll i den,
+      eller redovisa personen i en annan befattning.</li>
+    <li><strong>AnstForm</strong> kommer från tjänstens anställningsform:
+      <em>T</em> för tillsvidare, <em>V</em> för visstid. Är läraren helt
+      nedsatt på mätdatumet i 30 dagar eller mer — en nedsättning på hela
+      tjänsten, även över flera perioder i rad — blir det <em>L</em>
+      (tjänstledig), med tjänsten och utan ämnen, som SCB vill. En kortare
+      hel ledighet räknas som SCB säger: läraren redovisas som tjänstgörande
+      med tjänsten närmast efter ledigheten. <em>U</em> (upphörd) hör till
+      SCB:s förifyllda rader och skrivs aldrig av SchemaPro.</li>
+    <li><strong>ForsteLarare</strong> och <strong>Lektor</strong> är
+      tjänstens andelar, fördelade över lärarens rader som OmfLarare så att
+      raderna summerar till andelen. Har läraren ett försteläraruppdrag på
+      mätdatumet men ingen andel på tjänsten, nämns raden. SCB säger
+      &rdquo;andel av tjänsten&rdquo; utan att säga hur en person på flera
+      rader ska delas; fördelningen är SchemaPros läsning, och för en lärare
+      på flera rader bör den kontrolleras mot SCB.</li>
+    <li>En frånvaro på 30 dagar eller mer över mätdatumet (från
+      vikariesidan) nämns i listan, vad den än gäller: SCB redovisar en hel
+      tjänstledighet eller sjukskrivning så lång som <em>L</em>, men
+      SchemaPro läser <em>L</em> bara ur nedsättningen. Ändra raden, eller
+      lägg in ledigheten som en period på tjänsten.</li>
     <li><strong>Ämnesomfattningen</strong> räknas på undervisningstid, utan
       faktor, i hela procent som summerar till 100. Ämnen SCB inte har en
       kolumn för på radens stadium — NO och SO som block, fördelningsbar tid,
       ämnen utanför timplanen — lämnas utanför och de övriga räknas upp, som
       SCB:s instruktion säger; varje sådant ämne nämns i listan under
       knappen. Förskoleklass får inga ämnen.</li>
-    <li>Tomma, att fylla i: <strong>PersonNr</strong> och
-      <strong>AnstForm</strong> — SchemaPro lagrar dem inte — och andelen för
-      förstelärare och lektor. System är
-      <em>SchemaPro</em> och Version SchemaPros versionsnummer.
-      Behörigheter och legitimation tas aldrig med; SCB hämtar dem själv.</li>
+    <li><strong>PersonNr</strong> är tomt på varje rad. SchemaPro sparar inga
+      personnummer, så skolan fyller i dem innan filen skickas. System är
+      <em>SchemaPro</em> och Version SchemaPros versionsnummer. Behörigheter
+      och legitimation tas aldrig med; SCB hämtar dem själv.</li>
   </ul>
+  <p>
+    Under knappen står vad som återstår: att personnummer fylls i, varje rad
+    som saknar något mer (anställningsform, tjänst, verksamhetstyp,
+    skolenhetskod, ämnen eller förstelärarandel) med radnummer, namn och
+    skolenhet, och vad SchemaPro har gjort som skolan bör känna till. En
+    tjänst finns kvar när lärarens konto inaktiveras, så en sådan lärare står
+    i filen och nämns i listan: har personen slutat före mätdatum ska raden
+    tas bort.
+    <span class="ui">Samma rader som CSV för Excel</span> ger samma rader med
+    SCB:s variabelnamn som rubrikrad, för att granska dem eller klistra in dem
+    i SCB:s Excelmall; den hämtar inget nytt.
+  </p>
   <div class="warn">
     <span class="label">Kontrollera innan inlämning</span>
     <p>
-      Rubrikraden med SCB:s variabelnamn och kodningen (UTF-8 med BOM) är
-      SchemaPros egna val — SCB:s datafilsbeskrivning säger inget om dem. SCB
-      tar emot sin egen Excelmall eller ett systems textfil. Klistra in
-      underlagets rader i SCB:s Excelmall, komplettera personnummer och
-      anställningsform, gå igenom listan under knappen, och
-      kontrollera mot SCB:s aktuella datafilsbeskrivning innan du skickar in.
-      Spara inte om CSV-filen i Excel efter att ha skrivit in personnummer:
-      Excel kan göra om ett tolvsiffrigt nummer till ett tal. För ett annat
-      läsår än HT 2026 säger underlaget att kolumnerna följer 2026 års
-      beskrivning. Formatet behöver prövas mot en verklig skolas inlämning
-      innan det används skarpt.
+      SCB:s datafilsbeskrivning anger semikolon och kolumnernas längd men inte
+      rubrikrad, teckenkodning eller radslut. SchemaPros val: ingen rubrikrad,
+      UTF-8 utan BOM och CRLF efter varje rad; namn kortas till SCB:s 100
+      tecken, och ett semikolon i ett namn blir ett blanksteg. Fyll i
+      personnumren i textfilen med en vanlig textredigerare, eller i SCB:s
+      Excelmall från CSV-filen. Spara inte om CSV-filen i Excel efter att ha
+      skrivit in personnummer: Excel kan göra om ett tolvsiffrigt nummer till
+      ett tal. För ett annat läsår än HT 2026 säger listan att kolumnerna
+      följer 2026 års beskrivning. Formatet behöver prövas mot en verklig
+      skolas inlämning innan det används skarpt.
     </p>
   </div>
 
@@ -4022,7 +4070,7 @@
       SCB:s Pedagogisk personal räknar vem som var anställd den 15 oktober.
       En lärare med en tjänst under ett läsår väntar till och med den
       30 november det läsåret och pseudonymiseras tidigast den 1 december, så
-      att SCB-underlaget kan lämnas med namn (6.9). Sidan och körningen räknar
+      att SCB-filen kan lämnas med namn (6.9). Sidan och körningen räknar
       dem som väntande.
     </p>
   </div>
@@ -4072,7 +4120,9 @@
     och ledighetsansökningar med anledning, vem som är vårdnadshavare till
     vem, en elevs veckoschema som familjen ser det, elevernas
     undervisningstid i timplanens täckning och på elevens sammanställning,
-    lärarnas tjänster, belastning och vikarietimmar, personalens frånvaro på
+    lärarnas tjänster, belastning och vikarietimmar, SCB-filen med varje
+    lärares tjänst och namn (och en lång frånvaro över mätdatumet),
+    personalens frånvaro på
     vikarietavlan och bland vikariekandidaterna, synkens ändringar och listan
     över nya personer, och det som en integration hämtar med en API-nyckel
     (7.3). Loggen säger bara att något lästes, aldrig vad som stod där.
@@ -4219,7 +4269,7 @@
       <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.3).</td></tr>
       <tr><td class="k">Sensommar</td><td>Granska efter sommarens klassbyten</td><td>Klassbyten och nya elever efter genereringen kan ge krockar; de ritas i grundschemat. Justera, eller generera om med hög <span class="ui">Schemastabilitet</span>.</td></tr>
       <tr><td class="k">Före terminsstart</td><td>Spara version och publicera</td><td>Publicera hela terminen eller läsåret.</td></tr>
-      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Ta ut SCB-underlaget under <span class="path">Rapporter › Tjänstefördelning</span>, komplettera och kontrollera det (6.9).</td></tr>
+      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Hämta SCB-filen under <span class="path">Rapporter › Tjänstefördelning</span>, fyll i personnummer och det listan under knappen nämner, och kontrollera den (6.9).</td></tr>
       <tr><td class="k">Löpande</td><td>Drift</td><td>Närvaro, vikarier, ledigheter, bokningar.</td></tr>
       <tr><td class="k">Vid större ändringar</td><td>Spara version, justera, generera om</td><td>Höj <span class="ui">Schemastabilitet</span> så att befintliga placeringar behålls.</td></tr>
       <tr><td class="k">Terminsslut</td><td>Exportera rapporter</td><td>Närvarostatistik per klass för arkivering, och tjänstefördelningens samverkansfil med planerat mot genomfört.</td></tr>
