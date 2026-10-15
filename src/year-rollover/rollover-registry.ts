@@ -240,6 +240,10 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       // its own id, and an id is unique per school. A sync LINKs the successor
       // when the source has it (an admin's apply), by name within its year.
       ss12000Id: 'DEFAULT',
+      // Halvklasser (20261113090000): a half's class is its class's successor,
+      // or the class's intake twin for the half's twin. Written only on a
+      // half, in a second statement after the classes.
+      halfOfId: 'MAP_GROUP',
       ...timestamps,
     },
   },
@@ -254,6 +258,9 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       schoolId: 'COPY',
       studentGroupId: 'MAP_GROUP',
       studentId: 'COPY',
+      // The class of the half a membership is in: the trigger copies it from
+      // the group whatever the writer sends, so the copy sends nothing.
+      halfOfId: 'DEFAULT',
       createdAt: 'DEFAULT',
     },
   },

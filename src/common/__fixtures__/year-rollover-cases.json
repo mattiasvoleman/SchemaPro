@@ -1279,5 +1279,468 @@
         "planned": 60
       }
     ]
+  },
+  "halves": {
+    "input": [
+      {
+        "id": "7a",
+        "name": "7A",
+        "kind": "CLASS",
+        "gradeLevel": 7,
+        "halfOfId": null
+      },
+      {
+        "id": "7a1",
+        "name": "7A:1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 7,
+        "halfOfId": "7a"
+      },
+      {
+        "id": "7a2",
+        "name": "7A:2",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 7,
+        "halfOfId": "7a"
+      },
+      {
+        "id": "8b",
+        "name": "8B",
+        "kind": "CLASS",
+        "gradeLevel": 8,
+        "halfOfId": null
+      },
+      {
+        "id": "8bs",
+        "name": "Slöjd 8B grupp 1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 8,
+        "halfOfId": "8b"
+      },
+      {
+        "id": "9a",
+        "name": "9A",
+        "kind": "CLASS",
+        "gradeLevel": 9,
+        "halfOfId": null
+      },
+      {
+        "id": "9a1",
+        "name": "9A:1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 9,
+        "halfOfId": "9a"
+      },
+      {
+        "id": "ma7",
+        "name": "Ma7 grupp 1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 7,
+        "halfOfId": null
+      }
+    ],
+    "cases": [
+      {
+        "name": "halves follow their class, teaching groups not carried",
+        "carryTeachingGroups": false,
+        "choices": {},
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A:1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a2",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A:2",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9B",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8bs",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Slöjd 9B grupp 1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a1",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "halves follow their class, teaching groups carried",
+        "carryTeachingGroups": true,
+        "choices": {},
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A:1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a2",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A:2",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9B",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8bs",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Slöjd 9B grupp 1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a1",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma8 grupp 1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "an intake class gives its halves twins; a half dropped, one renamed, other choices on a half ignored",
+        "carryTeachingGroups": false,
+        "choices": {
+          "7a": {
+            "outcome": "INTAKE"
+          },
+          "7a2": {
+            "outcome": "SKIP"
+          },
+          "8bs": {
+            "name": "Slöjd 9B grupp A"
+          },
+          "9a1": {
+            "outcome": "PROMOTE"
+          }
+        },
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "INTAKE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": {
+              "name": "7A",
+              "gradeLevel": 7
+            },
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A:1",
+              "gradeLevel": 8
+            },
+            "intake": {
+              "name": "7A:1",
+              "gradeLevel": 7
+            },
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a2",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9B",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8bs",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Slöjd 9B grupp A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "OVERRIDDEN",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a1",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "a class skipped takes its halves with it",
+        "carryTeachingGroups": true,
+        "choices": {
+          "7a": {
+            "outcome": "SKIP"
+          }
+        },
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a2",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9B",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8bs",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Slöjd 9B grupp 1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a1",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma8 grupp 1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          }
+        ],
+        "collisions": []
+      }
+    ]
   }
 }

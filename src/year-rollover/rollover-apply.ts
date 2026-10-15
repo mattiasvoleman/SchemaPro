@@ -77,26 +77,38 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
     context.targetYearId = created.id;
   },
 
+  /**
+   * Every group in one statement, and the halves (Halvklasser) in a second
+   * after their classes: a half names its class's NEW id, which the first
+   * statement makes. A school without halves writes the one statement it
+   * always wrote.
+   */
   async groups(context) {
     if (context.writes.groups.length === 0) return;
-    const created = await context.tx.studentGroup.createManyAndReturn({
-      data: context.writes.groups.map((group) => ({
-        schoolId: context.schoolId,
-        academicYearId: context.targetYearId as string,
-        name: group.name,
-        kind: group.kind,
-        gradeLevel: group.gradeLevel,
-        predecessorId: group.predecessorId,
-      })),
-      select: { id: true, name: true },
-    });
-    const idByName = new Map(created.map((group) => [group.name, group.id]));
-    for (const group of context.writes.groups) {
-      const id = idByName.get(group.name);
-      if (!id) throw new Error('Rollover: a created group did not come back.');
-      context.groupIdByKey.set(group.key, id);
-    }
-    context.counts.groups = created.length;
+    const write = async (rows: RolloverWrites['groups']) => {
+      if (rows.length === 0) return;
+      const created = await context.tx.studentGroup.createManyAndReturn({
+        data: rows.map((group) => ({
+          schoolId: context.schoolId,
+          academicYearId: context.targetYearId as string,
+          name: group.name,
+          kind: group.kind,
+          gradeLevel: group.gradeLevel,
+          predecessorId: group.predecessorId,
+          ...(group.halfOfKey ? { halfOfId: groupOf(context, group.halfOfKey) } : {}),
+        })),
+        select: { id: true, name: true },
+      });
+      const idByName = new Map(created.map((group) => [group.name, group.id]));
+      for (const group of rows) {
+        const id = idByName.get(group.name);
+        if (!id) throw new Error('Rollover: a created group did not come back.');
+        context.groupIdByKey.set(group.key, id);
+      }
+      context.counts.groups += created.length;
+    };
+    await write(context.writes.groups.filter((group) => !group.halfOfKey));
+    await write(context.writes.groups.filter((group) => group.halfOfKey));
   },
 
   async members(context) {

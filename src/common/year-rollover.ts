@@ -58,6 +58,8 @@ export interface RolloverGroupInput {
   name: string;
   kind: GroupKind;
   gradeLevel: number | null;
+  /** The class this group is a half of (Halvklasser); a half follows its class. */
+  halfOfId?: string | null;
 }
 
 export interface GroupChoice {
@@ -141,12 +143,29 @@ export function lowestClassGrade(groups: readonly RolloverGroupInput[]): number 
  * INTAKE is the default outcome PLUS an intake twin: the lowest-grade class
  * is still promoted (its cohort needs a successor to move into), and a new
  * class with its name and grade is opened for next year's intake.
+ *
+ * A HALF FOLLOWS ITS CLASS (Halvklasser), whatever carryTeachingGroups says:
+ * it is part of the class, not a group the school chose to keep. It is carried
+ * when its class is, into the class's successor, named after it ("7A:1" →
+ * "8A:1") and in its grade, and it gets a twin when the class gets an intake
+ * twin. The admin may still drop a half (SKIP) or rename it; other choices are
+ * the class's to make. See followTheClass.
  */
 export function resolveGroups(
   groups: readonly RolloverGroupInput[],
   graduatingGradeLevel: number,
   options: { carryTeachingGroups: boolean },
   choices: ReadonlyMap<string, GroupChoice> = new Map(),
+): ResolvedGroup[] {
+  const own = resolveEachGroup(groups, graduatingGradeLevel, options, choices);
+  return followTheClass(groups, own, choices);
+}
+
+function resolveEachGroup(
+  groups: readonly RolloverGroupInput[],
+  graduatingGradeLevel: number,
+  options: { carryTeachingGroups: boolean },
+  choices: ReadonlyMap<string, GroupChoice>,
 ): ResolvedGroup[] {
   const lowest = lowestClassGrade(groups);
   return groups.map((group) => {
@@ -218,6 +237,53 @@ export function resolveGroups(
       nameStatus,
       noGrade: g === null,
       error,
+    };
+  });
+}
+
+/**
+ * A half's name next year: its class's successor's name in place of the
+ * class's own where the half's name starts with it ("7A:1" → "8A:1", "7A grupp
+ * 2" → "8A grupp 2"), else promoteName over the half's own name.
+ */
+function halfName(half: string, className: string, successorName: string, grade: number | null): string {
+  return half.startsWith(className) && className.length > 0
+    ? `${successorName}${half.slice(className.length)}`
+    : promoteName(half, grade).name;
+}
+
+/** Each half's outcome made its class's; everything else as resolved. */
+function followTheClass(
+  groups: readonly RolloverGroupInput[],
+  resolved: ResolvedGroup[],
+  choices: ReadonlyMap<string, GroupChoice>,
+): ResolvedGroup[] {
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const resolvedById = new Map(resolved.map((row) => [row.sourceGroupId, row]));
+  return resolved.map((row) => {
+    const half = byId.get(row.sourceGroupId)!;
+    const classRow = half.halfOfId ? resolvedById.get(half.halfOfId) : undefined;
+    const theClass = half.halfOfId ? byId.get(half.halfOfId) : undefined;
+    if (!classRow || !theClass) return row;
+    const choice = choices.get(half.id) ?? {};
+    if (choice.outcome === 'SKIP') return { ...row, outcome: 'SKIP', successor: null, intake: null, error: null };
+    const named = classRow.successor
+      ? halfName(half.name, theClass.name, classRow.successor.name, half.gradeLevel)
+      : null;
+    const override = choice.name?.trim();
+    const renamed = named !== null && Boolean(override) && override !== named;
+    const successor =
+      classRow.successor && named !== null
+        ? { name: renamed ? (override as string) : named, gradeLevel: classRow.successor.gradeLevel }
+        : null;
+    return {
+      sourceGroupId: half.id,
+      outcome: classRow.outcome === 'INTAKE' ? (successor ? 'PROMOTE' : 'GRADUATE') : classRow.outcome,
+      successor,
+      intake: classRow.intake ? { name: half.name, gradeLevel: classRow.intake.gradeLevel } : null,
+      nameStatus: successor ? (renamed ? 'OVERRIDDEN' : classRow.nameStatus) : null,
+      noGrade: half.gradeLevel === null,
+      error: null,
     };
   });
 }
