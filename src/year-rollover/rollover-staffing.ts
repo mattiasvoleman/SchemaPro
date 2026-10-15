@@ -363,13 +363,19 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       signature = null;
     }
     // A post that changes during the year carries as it stands at the year's
-    // end. A period with no Till runs to the last day and on: its three
-    // figures are the post the new year gets (the avtalsform, signature and
-    // note are the post's own, as a period never changes them). A period with
-    // a Till ended in the source year and is not carried, nor are any of
-    // them as periods: the new year's are written there when they are agreed.
+    // end. The period in force on the last day — no Till, which the form
+    // calls the last day, or the last day written out — gives its three
+    // figures to the post the new year gets (the avtalsform, signature and
+    // note are the post's own, as a period never changes them). A period
+    // whose Till is earlier ended in the source year, as an uppdrag does
+    // below, and is not carried, nor are any of them as periods: the new
+    // year's are written there when they are agreed.
     const periods = employment.periods;
-    const open = periods.find((period) => period.validTo === null && period.validFrom <= input.sourceYearEndDate) ?? null;
+    const open =
+      periods.find(
+        (period) =>
+          (period.validTo === null || period.validTo >= input.sourceYearEndDate) && period.validFrom <= input.sourceYearEndDate,
+      ) ?? null;
     const figures = open ?? employment;
     if (open) preview.employments.fromPeriod.push({ userId: employment.userId, validFrom: open.validFrom });
     const ended = periods.filter((period) => period !== open).length;

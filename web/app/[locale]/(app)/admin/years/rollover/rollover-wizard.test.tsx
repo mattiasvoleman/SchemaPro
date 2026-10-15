@@ -443,7 +443,7 @@ describe("RolloverWizard", () => {
     expect(within(listUnder("Byter namn med gruppen")).getByText("Mentor 7A → Mentor 8A — Bo Alm")).toBeInTheDocument();
     expect(
       within(
-        listUnder("Tjänsten följer med som perioden utan slutdatum ger den, inte som den står i kortet:"),
+        listUnder("Tjänsten följer med som perioden som gäller läsårets sista dag ger den, inte som den står i kortet:"),
       ).getByText("Bo Alm (perioden från 2027-01-11)"),
     ).toBeInTheDocument();
     expect(
