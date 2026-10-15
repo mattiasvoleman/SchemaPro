@@ -3,6 +3,7 @@ import type {
   StaffingPolicy,
   TeacherDuty,
   TeacherEmployment,
+  TeacherEmploymentPeriod,
   TeacherQualification,
 } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
@@ -61,14 +62,35 @@ const employment = (
   teachingTargetMinutesPerWeek: null,
   signature,
   note: null,
+  // The gateway lists every post with its periods (20261022120000).
+  periods: [],
   ...extra,
 });
+
+/**
+ * Anna's post changes from the Monday of week 2 in January: the
+ * försteläraruppdrag shrinks to 70 % with a 10 % nedsättning. She teaches the
+ * same 60 % of a post all year, so every stretch stays OK and the report's
+ * figures are the ones they were, but the matrix steps (75 → 70), the drawer
+ * lists the stretches, Min tjänst its periods and Historik the version.
+ */
+const ANNA_POST_ID = uid(KIND.misc, 5101);
+export const ANNA_SPRING: TeacherEmploymentPeriod = {
+  id: uid(KIND.misc, 5150),
+  employmentId: ANNA_POST_ID,
+  validFrom: addDays(YEAR_START, 21 * 7),
+  validTo: null,
+  employmentPercent: 70,
+  reductionPercent: 10,
+  teachingTargetMinutesPerWeek: null,
+};
 
 /** This läsår's posts, by userId as the gateway orders them. David has none. */
 export const EMPLOYMENTS: TeacherEmployment[] = [
   employment(1, TEACHERS.anna.id, 75, "FERIE", "ALI", {
     reductionPercent: 15,
     note: "Nedsättning för försteläraruppdraget.",
+    periods: [ANNA_SPRING],
   }),
   employment(2, TEACHERS.bo.id, 40, "FERIE", "BEK"),
   employment(3, TEACHERS.cecilia.id, 30, "SEMESTER", "CÅS"),
@@ -273,6 +295,24 @@ export function historyOf(userId: string): HistoryEntry[] {
         ],
       },
       21,
+    );
+  }
+  for (const period of post?.periods ?? []) {
+    add(
+      {
+        entity: "PERIOD",
+        entityId: period.id,
+        action: "CREATE",
+        changes: created([
+          ["validFrom", period.validFrom],
+          ["validTo", period.validTo],
+          ["employmentPercent", period.employmentPercent],
+          ["reductionPercent", period.reductionPercent],
+          ["teachingTargetMinutesPerWeek", period.teachingTargetMinutesPerWeek],
+        ]),
+        periodFrom: period.validFrom,
+      },
+      28,
     );
   }
   return entries.reverse();

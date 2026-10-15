@@ -6,9 +6,11 @@ import type {
   StaffingReconciliationResponse,
   TeacherReconciliation,
 } from "../../../lib/staffing-reconciliation";
+import { changesDuringYear, postStretches } from "../../../lib/employment-periods";
 import type {
   GradeSpan,
   LoadStatus,
+  PeriodLoad,
   SubjectBottleneck,
   SubjectLoad,
   TeacherAssignment,
@@ -97,7 +99,9 @@ const weeklyMinutesOf = (row: TeachingRequirement) =>
     ? row.lessonLengths.reduce((sum, minutes) => sum + minutes, 0)
     : row.lessonsPerWeek * row.minutesPerLesson;
 
-function targetOf(employment: TeacherEmployment | null): number | null {
+function targetOf(
+  employment: Pick<TeacherEmployment, "employmentPercent" | "reductionPercent" | "teachingTargetMinutesPerWeek"> | null,
+): number | null {
   if (!employment) return null;
   if (employment.teachingTargetMinutesPerWeek !== null) return employment.teachingTargetMinutesPerWeek;
   const full = STAFFING_POLICY.fullTimeTeachingMinutesPerWeek;
@@ -115,6 +119,44 @@ function statusOf(counted: number, target: number | null): LoadStatus {
 }
 
 /** The strongest behörighet of `userId` covering a subject for a span, valid in the year. */
+/**
+ * A post that changes during the year, stretch by stretch, as the gateway's
+ * report gives it (teacher-load.ts stretchLoads): the year cut into whole
+ * weeks by postStretches, each stretch's target from its own figures. The
+ * stub's timplansposter and uppdrag run all year, so every stretch counts the
+ * year's minutes. Empty for a post the same all year.
+ */
+function periodsOf(year: AcademicYear, employment: TeacherEmployment | null, counted: number): PeriodLoad[] {
+  if (!employment || !changesDuringYear(employment, year)) return [];
+  return postStretches(employment, year).map((stretch): PeriodLoad => {
+    const target = targetOf(stretch.figures);
+    const weeks = stretch.window ? teachingWeeks(year, stretch.window.startDate, stretch.window.endDate) : 0;
+    return {
+      from: stretch.from,
+      to: stretch.to,
+      kind: stretch.kind,
+      effectiveFrom: stretch.window?.startDate ?? null,
+      effectiveTo: stretch.window?.endDate ?? null,
+      employmentPercent: stretch.figures.employmentPercent,
+      reductionPercent: stretch.figures.reductionPercent,
+      ownTargetMinutesPerWeek: stretch.figures.teachingTargetMinutesPerWeek,
+      targetMinutesPerWeek: target,
+      teachingWeeks: round1(weeks),
+      countedMinutesPerWeek: Math.round(counted),
+      balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
+      percentOfTarget: target === null || target === 0 ? null : round1((counted / target) * 100),
+      status: statusOf(counted, target),
+    };
+  });
+}
+
+/** The worst stretch with teaching weeks, as the report's status for a changing post. */
+function worstOf(periods: PeriodLoad[]): LoadStatus | null {
+  const judged = periods.filter((period) => period.teachingWeeks > 0);
+  if (judged.length === 0) return null;
+  return judged.reduce((worst, period) => (STATUS_ORDER[period.status] < STATUS_ORDER[worst] ? period.status : worst), judged[0]!.status);
+}
+
 function strongestCovering(userId: string, subjectId: string, span: GradeSpan | null, year: AcademicYear) {
   let best: TeacherQualificationKind | null = null;
   for (const row of QUALIFICATIONS) {
@@ -262,6 +304,7 @@ export function loadReport(
     const employment = employments.find((row) => row.userId === userId) ?? null;
     const target = targetOf(employment);
     const counted = tally.assigned + tally.countedDutyMinutes;
+    const periods = periodsOf(year, employment, counted);
     const active = employment ? employment.employmentPercent - employment.reductionPercent : null;
     const regulated = active === null ? null : (policy.fullTimeRegulatedHoursPerYear * active) / 100;
     const annualHours =
@@ -291,6 +334,18 @@ export function loadReport(
         contractKind: employment.contractKind,
         teachingTargetMinutesPerWeek: employment.teachingTargetMinutesPerWeek,
         signature: employment.signature,
+        // The gateway names a post's periods only when it has some.
+        ...((employment.periods ?? []).length > 0
+          ? {
+              periods: employment.periods!.map((period) => ({
+                validFrom: period.validFrom,
+                validTo: period.validTo,
+                employmentPercent: period.employmentPercent,
+                reductionPercent: period.reductionPercent,
+                teachingTargetMinutesPerWeek: period.teachingTargetMinutesPerWeek,
+              })),
+            }
+          : {}),
       },
       targetMinutesPerWeek: target,
       assignedMinutesPerWeek: Math.round(tally.assigned),
@@ -301,7 +356,8 @@ export function loadReport(
       countedMinutesPerWeek: Math.round(counted),
       balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
       percentOfTarget: target === null || target === 0 ? null : round1((counted / target) * 100),
-      status: statusOf(counted, target),
+      status: worstOf(periods) ?? statusOf(counted, target),
+      periods,
       requirementCount: tally.requirementCount,
       dutyCount: tally.dutyCount,
       subjects,
