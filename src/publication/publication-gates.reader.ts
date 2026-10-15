@@ -223,14 +223,17 @@ export interface BlockPost {
  * together — a member moved by hand away from the others (Block i schemat,
  * src/calendar/block-lessons.ts). Information, never asked about: the board
  * warned when the block was split, and the generation refuses it as partly
- * locked; the publish names it so a split nobody meant is seen before the
+ * locked unless all of it is locked; the publish names it so a split nobody meant is seen before the
  * calendar takes it.
  *
  * A block stands together when every slot (day, clock, weeks) holding a
  * lesson of one of its members holds one of every member that has a placed
  * lesson. A member with none is unplaced, which PUB_UNPLACED says; it splits
- * nothing. Counted per block; each entry a lesson standing apart, after its
- * block's name.
+ * nothing. Counted per lesson standing apart, as the entries name them,
+ * each after its block's name. Positions only, not owners: a block made over
+ * a timetable that never placed it together stands apart too, and the
+ * generation places that one together again, so the finding says where the
+ * lessons stand, not what the generation will do.
  */
 export function blockSplits(lessons: readonly GateLesson[], posts: readonly BlockPost[]): GateFinding {
   const blocks = new Map<string, { name: string; keys: Set<string> }>();
@@ -245,7 +248,6 @@ export function blockSplits(lessons: readonly GateLesson[], posts: readonly Bloc
     const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
     placed.set(key, [...(placed.get(key) ?? []), lesson]);
   }
-  let count = 0;
   const entries: GateEntry[] = [];
   for (const { name, keys } of [...blocks.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv'))) {
     const standing = [...keys].filter((key) => (placed.get(key) ?? []).length > 0);
@@ -263,15 +265,13 @@ export function blockSplits(lessons: readonly GateLesson[], posts: readonly Bloc
     const apart = [...slots.values()]
       .filter((slot) => slot.keys.size < standing.length)
       .flatMap((slot) => slot.lessons);
-    if (apart.length === 0) continue;
-    count += 1;
     entries.push(
       ...apart
         .map((lesson) => ({ label: `${name}: ${lessonLabel(lesson)}`, masterLessonId: lesson.id }))
         .sort((a, b) => a.label.localeCompare(b.label, 'sv')),
     );
   }
-  return { code: 'PUB_BLOCK_SPLIT', count, entries, info: true };
+  return { code: 'PUB_BLOCK_SPLIT', count: entries.length, entries, info: true };
 }
 
 /** PUB_BLOCK_SPLIT over the year's blocks, read once. */

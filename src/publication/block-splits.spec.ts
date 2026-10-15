@@ -57,12 +57,12 @@ describe('blockSplits', () => {
     expect(blockSplits(together, posts)).toEqual({ code: 'PUB_BLOCK_SPLIT', count: 0, entries: [], info: true });
   });
 
-  it('counts a block once and names the lessons standing apart, after the block', () => {
+  it('counts and names the lessons standing apart, after their block', () => {
     const moved = together.map((row) => (row.id === 'fr2' ? { ...row, dayOfWeek: 4 } : row));
 
     expect(blockSplits(moved, posts)).toEqual({
       code: 'PUB_BLOCK_SPLIT',
-      count: 1,
+      count: 2,
       entries: [
         { label: 'Språkval åk 7: Franska · Fr7, tors 10:00–11:00', masterLessonId: 'fr2' },
         { label: 'Språkval åk 7: Tyska · Ty7, ons 10:00–11:00', masterLessonId: 'ty2' },
@@ -74,7 +74,7 @@ describe('blockSplits', () => {
   it('reads other weeks at the same clock as apart', () => {
     const odd = together.map((row) => (row.id === 'mu1' ? { ...row, recurrence: 'ODD_WEEKS' as const } : row));
 
-    expect(blockSplits(odd, posts).count).toBe(1);
+    expect(blockSplits(odd, posts).count).toBe(2);
     expect(blockSplits(odd, posts).entries?.map((entry) => entry.masterLessonId).sort()).toEqual(['bi1', 'mu1']);
   });
 
@@ -91,6 +91,6 @@ describe('blockSplits', () => {
     const moved = together.map((row) => (row.id === 'fr2' ? { ...row, dayOfWeek: 4 } : row));
     const [item] = settleGates([blockSplits(moved, posts)], DEFAULT_GATE_POLICY);
 
-    expect(item).toMatchObject({ code: 'PUB_BLOCK_SPLIT', severity: 'INFO', count: 1 });
+    expect(item).toMatchObject({ code: 'PUB_BLOCK_SPLIT', severity: 'INFO', count: 2 });
   });
 });
