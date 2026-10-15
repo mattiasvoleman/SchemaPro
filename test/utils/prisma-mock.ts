@@ -1,9 +1,17 @@
 import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 
-/** Loose mock of a Prisma transaction client — tests stub what they need. */
+/**
+ * Loose mock of a Prisma transaction client — tests stub what they need. The
+ * raw-statement methods are functions, not models (see createTxMock); declared
+ * in their own member, they read and assign as a `jest.Mock` rather than as
+ * the index signature's model.
+ */
 export type TxMock = {
   [model: string]: { [method: string]: jest.Mock };
+} & {
+  $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
 };
 
 export interface PrismaMock {

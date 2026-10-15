@@ -792,7 +792,15 @@ export function prismaFor(world: RolloverWorld): PrismaMock {
     withVerifiedSubject: jest.fn(),
     withServiceKeyLookup: jest.fn(),
     withServicePrincipal: jest.fn(),
+    withSyncPrincipal: jest.fn((_schoolId: string, fn: (client: PrismaClient) => Promise<unknown>) => run(fn)),
     withSystemTransaction: jest.fn(),
+    withPublicViewer: jest.fn(run),
+    withDeliveryService: jest.fn(run),
+    // No transaction here is one PrismaService opened, so there is no commit
+    // scope to hang a hook or a local on: they answer as PrismaService does
+    // for such a client.
+    onCommit: jest.fn(() => false),
+    commitLocal: jest.fn(() => undefined),
   };
 }
 
