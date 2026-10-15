@@ -106,6 +106,14 @@ describe('toSs12000Duties', () => {
     expect(duties[0]).not.toHaveProperty('dutyPercent');
   });
 
+  it('gives a period that covers the whole year its own grad, under the post’s id', () => {
+    const [only] = toSs12000Duties(input(true, [period(SPRING, YEAR.startDate, null, 80)]));
+    expect(only).toMatchObject({ id: POST, startDate: YEAR.startDate, endDate: YEAR.endDate, dutyPercent: 80, hoursPerYear: 1414 });
+    expect(toSs12000Duties(input(true, [period(SPRING, YEAR.startDate, null, 80)]))).toHaveLength(1);
+    // Without the opt-in, no figure at all, as for any post.
+    expect(toSs12000Duties(input(false, [period(SPRING, YEAR.startDate, null, 80)]))[0]).not.toHaveProperty('dutyPercent');
+  });
+
   it('emits a Duty per stretch where it shares, each with its own grad, hours and mentorships clipped to it', () => {
     const duties = toSs12000Duties(
       input(true, [period(SPRING, '2027-01-11', null, 50)], [

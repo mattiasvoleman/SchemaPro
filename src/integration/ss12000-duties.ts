@@ -306,7 +306,10 @@ export function toSs12000Duties(input: DutyInput & { periods?: readonly DutyPeri
   const periods = input.periods ?? [];
   if (!input.share || periods.length === 0) return [whole];
   const segments = dutySegments(input.employment, periods, input.year);
-  if (segments.length <= 1) return [whole];
+  // One stretch on the post's own grad: the post as it always was. One
+  // stretch on a period's — 80 % from the first day, all year — is that
+  // grad, under the post's id and the year's dates, as below.
+  if (segments.length === 1 && segments[0]!.employmentPercent === input.employment.employmentPercent) return [whole];
   const modified = periods
     .map((period) => period.updatedAt)
     .reduce((a, b) => (b.getTime() > a.getTime() ? b : a), new Date(whole.meta.modified));

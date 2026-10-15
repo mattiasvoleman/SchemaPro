@@ -54,7 +54,11 @@
 -- The periods are on main before this migration. A post a period already
 -- splits gets its stretches versioned as this migration runs, and its own
 -- Duty bumped (its end date moves), so a consumer reading what changed
--- since its last sync is told.
+-- since its last sync is told (app.ss12000_version_split_duties). The
+-- gateway that emits the stretches deploys after the migration: a consumer
+-- that reads in between is told again if the owner runs
+-- SELECT app.ss12000_version_split_duties() once the gateway is up. It
+-- bumps nothing a school does not share, and nothing twice in one call.
 --
 -- ## Grants
 --
@@ -268,6 +272,12 @@ DECLARE
   written uuid[] := ARRAY[]::uuid[];
   was jsonb := '[]'::jsonb;
   before_stretches text[];
+  ids uuid[];
+  moved_school uuid[] := ARRAY[]::uuid[];
+  moved_post uuid[] := ARRAY[]::uuid[];
+  gone_school uuid[] := ARRAY[]::uuid[];
+  gone_id uuid[] := ARRAY[]::uuid[];
+  school_id uuid;
 BEGIN
   IF TG_OP <> 'DELETE' THEN
     SELECT coalesce(array_agg(x."id"), ARRAY[]::uuid[]) INTO written FROM n x;
@@ -285,20 +295,30 @@ BEGIN
   LOOP
     IF NOT app.ss12000_split_capable(r.post) THEN
       -- Nothing it emits moves. But a post deleted takes its periods with
-      -- it, and what they emitted while it could be split is buried here:
-      -- only an id with a version, so a school that never shared buries
-      -- nothing.
-      PERFORM app.ss12000_reconcile_split_duties(r.school, ARRAY[r.post], ARRAY(
+      -- it, and what they emitted while it could be split is buried: only
+      -- an id with a version, so a school that never shared buries nothing.
+      ids := ARRAY(
         SELECT (j->>'id')::uuid FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post
-        UNION SELECT app.ss12000_after_id((j->>'id')::uuid) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post));
-      CONTINUE;
+        UNION SELECT app.ss12000_after_id((j->>'id')::uuid) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post);
+    ELSE
+      before_stretches := app.ss12000_duty_stretches(r.post,
+        app.ss12000_periods_json(r.post, written)
+        || coalesce((SELECT jsonb_agg(j) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post), '[]'::jsonb));
+      CONTINUE WHEN before_stretches IS NOT DISTINCT FROM app.ss12000_duty_stretches(r.post, app.ss12000_periods_json(r.post, NULL));
+      ids := ARRAY(SELECT split_part(s.v, '|', 1)::uuid FROM unnest(before_stretches) WITH ORDINALITY AS s(v, i) WHERE s.i > 1);
     END IF;
-    before_stretches := app.ss12000_duty_stretches(r.post,
-      app.ss12000_periods_json(r.post, written)
-      || coalesce((SELECT jsonb_agg(j) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post), '[]'::jsonb));
-    CONTINUE WHEN before_stretches IS NOT DISTINCT FROM app.ss12000_duty_stretches(r.post, app.ss12000_periods_json(r.post, NULL));
-    PERFORM app.ss12000_reconcile_split_duties(r.school, ARRAY[r.post], ARRAY(
-      SELECT split_part(s.v, '|', 1)::uuid FROM unnest(before_stretches) WITH ORDINALITY AS s(v, i) WHERE s.i > 1));
+    moved_school := moved_school || r.school;
+    moved_post := moved_post || r.post;
+    gone_id := gone_id || ids;
+    gone_school := gone_school || array_fill(r.school, ARRAY[cardinality(ids)]);
+  END LOOP;
+  -- One reconcile per school over every post the statement moved: an id one
+  -- of them stops emitting while another starts (a period moved from one
+  -- post to another) is emitted, so not buried, whatever order they came in.
+  FOR school_id IN SELECT DISTINCT x FROM unnest(moved_school) x LOOP
+    PERFORM app.ss12000_reconcile_split_duties(school_id,
+      ARRAY(SELECT u.p FROM unnest(moved_school, moved_post) AS u(sc, p) WHERE u.sc = school_id),
+      ARRAY(SELECT u.g FROM unnest(gone_school, gone_id) AS u(sc, g) WHERE u.sc = school_id));
   END LOOP;
   RETURN NULL;
 END
@@ -420,11 +440,16 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- The posts split already: their stretches versioned, their own Duty bumped.
--- Outside a trigger, so under app.ss12000_housekeeping, for this transaction.
+-- Outside a trigger, so under app.ss12000_housekeeping for the transaction,
+-- and the setting put back. It returns how many posts it bumped.
 -- ---------------------------------------------------------------------------
 
-DO $$
-DECLARE r record;
+CREATE FUNCTION app.ss12000_version_split_duties() RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  r record;
+  bumped integer := 0;
+  was text := current_setting('app.ss12000_housekeeping', true);
 BEGIN
   PERFORM set_config('app.ss12000_housekeeping', 'on', true);
   FOR r IN
@@ -435,8 +460,16 @@ BEGIN
      GROUP BY 1
   LOOP
     PERFORM app.ss12000_bump(r.s, 'Duty', r.posts);
+    bumped := bumped + cardinality(r.posts);
   END LOOP;
-  PERFORM set_config('app.ss12000_housekeeping', 'off', true);
+  PERFORM set_config('app.ss12000_housekeeping', coalesce(was, ''), true);
+  RETURN bumped;
+END
+$$;
+
+DO $$
+BEGIN
+  PERFORM app.ss12000_version_split_duties();
 END
 $$;
 
@@ -457,6 +490,7 @@ BEGIN
     'app.ss12000_bump(uuid, text, uuid[])',
     'app.ss12000_reconcile_split_duties(uuid, uuid[], uuid[])',
     'app.ss12000_posts_with_periods(uuid, uuid, uuid[])',
+    'app.ss12000_version_split_duties()',
     'app.ss12000_v_split_periods()',
     'app.ss12000_v_split_employments()',
     'app.ss12000_v_split_policies()',
@@ -484,7 +518,8 @@ BEGIN
    WHERE r.rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated')
      AND p.proname IN ('ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_periods_json',
                        'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
-                       'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_v_split_periods',
+                       'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods',
+                       'ss12000_version_split_duties', 'ss12000_v_split_periods',
                        'ss12000_v_split_employments', 'ss12000_v_split_policies', 'ss12000_v_split_users',
                        'ss12000_v_split_teachers', 'ss12000_v_split_years')
      AND has_function_privilege(r.oid, p.oid, 'EXECUTE');

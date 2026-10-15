@@ -19501,9 +19501,9 @@ DECLARE
   bad text;
   helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_periods_json',
                           'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
-                          'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_v_split_periods',
-                          'ss12000_v_split_employments', 'ss12000_v_split_policies', 'ss12000_v_split_users',
-                          'ss12000_v_split_teachers', 'ss12000_v_split_years'];
+                          'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_version_split_duties',
+                          'ss12000_v_split_periods', 'ss12000_v_split_employments', 'ss12000_v_split_policies',
+                          'ss12000_v_split_users', 'ss12000_v_split_teachers', 'ss12000_v_split_years'];
   n integer;
 BEGIN
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
