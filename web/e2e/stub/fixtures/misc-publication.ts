@@ -77,6 +77,7 @@ export const PUBLICATION_SETTINGS: PublicationSettings = {
   gateWeekSplit: "WARN",
   gateGap: "WARN",
   gateDayOpsLost: "WARN",
+  gateEmptyHalf: "WARN",
 };
 
 // --- Lessons as the gateway names them ----------------------------------------------

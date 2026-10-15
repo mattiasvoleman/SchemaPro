@@ -217,7 +217,7 @@ export function useGroups() {
       sortByName(
         await selectAll<StudentGroup>(
           "StudentGroups",
-          "id, academicYearId, name, kind, gradeLevel",
+          "id, academicYearId, name, kind, gradeLevel, halfOfId, predecessorId",
           "name",
         ),
         (group) => group.name,

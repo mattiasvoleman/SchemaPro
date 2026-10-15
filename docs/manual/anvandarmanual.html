@@ -558,6 +558,65 @@
     </p>
   </div>
 
+  <h4 id="halvklasser">Halvklasser — dela klassen</h4>
+  <p>
+    Slöjd, hemkunskap och NO-laborationer läses ofta i halvklass: halva 7A
+    har trä- och metallslöjd medan andra halvan har NO i labbet, och efter
+    några veckor eller nästa lektion byter de. Klicka
+    <span class="ui">Dela klassen</span> på klassens rad. SchemaPro föreslår
+    namnen <em>7A:1</em> och <em>7A:2</em>; ändra dem om skolan säger
+    <em>7A grupp 1</em> eller något annat. Halvorna blir undervisningsgrupper
+    i klassens läsår och årskurs och står i listan med märket
+    <em>halva av 7A</em>. En klass delas en gång och i två halvor. En halva
+    kan inte flyttas till en annan klass eller ett annat läsår, och tas
+    klassen bort försvinner halvorna med den.
+  </p>
+  <p>
+    Lägg timplansposterna på halvorna (4.2), till exempel slöjd på 7A:1 och
+    NO på 7A:2, och generera. <strong>Eleverna behöver inte vara placerade
+    först.</strong> Så länge ingen är placerad håller en halvas lektion hela
+    klassen upptagen, utom bredvid den andra halvans lektion. 7A:1:s slöjd
+    och 7A:2:s NO kan alltså ligga samtidigt, men ingenting annat av 7A:s,
+    och inte heller en undervisningsgrupp med elever ur 7A, till exempel
+    Ma71. När eleverna är placerade gäller i stället vanliga regler: en
+    halvas lektion håller bara halvans egna elever upptagna, i klassen och i
+    deras andra grupper. En elev som ännu inte är placerad räknas till båda
+    halvorna, och salen räknas för halvans placerade elever plus hälften av
+    dem som inte är det.
+  </p>
+  <p>
+    Genereringen <em>får</em> lägga halvornas lektioner samtidigt men måste
+    inte. Får klassen tid över kan slöjden och NO:n hamna på olika timmar,
+    och då är klassen upptagen båda timmarna. Ska halvorna alltid byta med
+    varandra lägger du deras två poster i ett parallellt block (4.2). Blocket
+    lägger dem på samma tider, och två halvor av samma klass delar aldrig
+    elever, så blocket godtas.
+  </p>
+  <p>
+    Klicka <span class="ui">Placera elever</span> på klassens rad eller på
+    någon av halvornas. Dialogen listar klassens elever med en rullista per
+    elev: <span class="ui">Ingen halva</span>, 7A:1 eller 7A:2.
+    <span class="ui">Dela jämnt</span> fördelar de elever som inte är
+    placerade på halvorna, en i taget till den halva som har minst. Inget
+    sparas förrän du trycker <span class="ui">Spara</span>. En halva tar bara
+    klassens egna elever, och en elev går i högst en av sin klass halvor. Det
+    gäller också när en elev byter klass under läsåret: eleven lämnar då den
+    gamla klassens halvor. I ett läsår som rullats men inte aktiverats (8.2)
+    är klassens elever de som går i den klass den kommer från, alltså de som
+    flyttas in vid aktiveringen. Elever kan också placeras från fil med
+    <em>undervisningsgrupper.csv</em> (3.6) och halvans namn i kolumnen
+    <em>grupp</em>.
+  </p>
+  <p>
+    Halvan är sedan en undervisningsgrupp som alla andra. Halvans lektioner
+    syns i de placerade elevernas schema och kalender, närvaron tas på
+    halvans elever, och klasslistan för lektionen är halvans. Publiceras ett
+    schema där en halva har lektioner men inga placerade elever nämner
+    publiceringen halvan och klassen (5.6), eftersom halvans lektioner
+    annars inte når någon. Kontrollen varnar, eller stoppar om skolan valt
+    det under <span class="path">Schemaläggning › Publicering</span>.
+  </p>
+
   <h3><span class="num">3.5</span>Personer och inbjudningar</h3>
   <p>
     Lägg upp lärare, elever och vårdnadshavare. Varje elev måste tillhöra en
@@ -667,7 +726,7 @@
       <tr><td class="k">klasser.csv</td><td>namn; arskurs</td><td>Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
-      <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
+      <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas. En halvklass (3.4) tar bara klassens egna elever och varje elev i en halva i taget. En rad som bryter mot det avvisas med elevens och halvans namn, och de andra raderna läses ändå in.</td></tr>
       <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; fran; till; anteckning</td><td>Importeras under <span class="path">Grunddata › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. <em>fran</em> och <em>till</em> är uppdragets datum (åååå-mm-dd, inom läsåret); tomt betyder läsårets egen gräns. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.3.</td></tr>
     </tbody>
   </table>
@@ -2679,7 +2738,8 @@
       minuter, tjänstefördelningens stoppregler, timplanen under nivån,
       giltighet som delar period med ett annat publicerat schema, skoldagar utan
       publicerat schema, en giltighet som börjar före i dag eller mitt i en
-      vecka, lunch som inte är inställd, och dagsändringar som försvinner. Varje
+      vecka, lunch som inte är inställd, dagsändringar som försvinner, och
+      halvklasser som har lektioner men inga placerade elever (3.4). Varje
       kontroll visar upp till 20 av de lektioner eller dagar den gäller.
       Lektioner i ett parallellt block som inte står på samma tider som resten
       av blocket nämns också, efter blockets namn. Det är bara information: det
@@ -4373,7 +4433,7 @@
     <thead><tr><th style="width:24%">Steg</th><th>Vad du gör</th></tr></thead>
     <tbody>
       <tr><td class="k">Nytt läsår</td><td>Namn och datum föreslås ett år fram (samma veckodag som i år). Välj <span class="ui">Årskursen som går ut</span> — förslaget kommer från den senast beslutade lokala timplanen, annars från den högsta klassen. Säger de olika måste du välja. Rullar du från ett läsår som börjar före hösten 2028 till ett som börjar hösten 2028 eller senare varnar guiden: enligt SFS 2025:729 övergångsbestämmelse 4 går eleverna som redan går i skolan upp två årskurser den gången, men rullningen flyttar ännu bara upp en. Rullningen därefter, till exempel från 2028/29 till 2029/30, är en vanlig rullning och får ingen varning. Kontrollera klassernas årskurser innan läsåret aktiveras.</td></tr>
-      <tr><td class="k">Klasser och grupper</td><td>Varje klass flyttas upp en årskurs och byter namn därefter: <em>7A</em> blir <em>8A</em>, <em>FA</em> blir <em>1A</em>. Den högsta årskursen går ut. Ändra namnet eller utfallet för en enskild grupp (<span class="ui">Följer med oförändrad</span>, <span class="ui">Följer inte med</span>). För den lägsta årskursen kan du välja <span class="ui">Flyttas upp + ny klass för intaget</span>: 7A blir 8A med sina elever, och en ny, tom 7A öppnas med samma timplansposter men utan lärare. Fem brytare styr om undervisningsgrupper, gruppernas elever, lärarna, klassernas veckoregler och tjänster och uppdrag följer med.</td></tr>
+      <tr><td class="k">Klasser och grupper</td><td>Varje klass flyttas upp en årskurs och byter namn därefter: <em>7A</em> blir <em>8A</em>, <em>FA</em> blir <em>1A</em>. Den högsta årskursen går ut. Ändra namnet eller utfallet för en enskild grupp (<span class="ui">Följer med oförändrad</span>, <span class="ui">Följer inte med</span>). För den lägsta årskursen kan du välja <span class="ui">Flyttas upp + ny klass för intaget</span>: 7A blir 8A med sina elever, och en ny, tom 7A öppnas med samma timplansposter men utan lärare. Fem brytare styr om undervisningsgrupper, gruppernas elever, lärarna, klassernas veckoregler och tjänster och uppdrag följer med. En halvklass (3.4) följer sin klass, vad brytarna än säger, och behåller sina elever: 7A:1 blir 8A:1. Den kan lämnas kvar eller få ett annat namn, men inte följa med en klass som inte gör det. En ny klass för intaget får nya, tomma halvor med de gamla namnen.</td></tr>
       <tr><td class="k">Lov</td><td>Inget lov följer med om du inte bockar för det. Datumen föreslås — jullovet flyttas hela veckor, påsklovet följer påsken, övriga behåller sitt veckonummer — och kan ändras. Ett lov vars vecka inte finns nästa år måste få datum. Besluten om tillgodoräknad tid (4.1) följer inte med: de gäller sina datum, och nästa läsårs friluftsdagar beslutas på nytt.</td></tr>
       <tr><td class="k">Granska</td><td>Allt som skapas och allt som lämnas kvar. Läs särskilt lärare som tas bort från en post (inaktiva, eller utan behörighet för nästa årskurs när behörighetskontrollen står på Vägra), poster vars period hamnar utanför det nya läsåret, och under <span class="ui">Tjänster och uppdrag</span> de lärare vars nedsättning eller eget riktmärke följer med.</td></tr>
     </tbody>
@@ -4642,6 +4702,11 @@
   <table>
     <thead><tr><th style="width:27%">Symtom</th><th style="width:33%">Trolig orsak</th><th>Åtgärd</th></tr></thead>
     <tbody>
+      <tr>
+        <td class="k">Publiceringen nämner <em>Halvklasser utan elever</em></td>
+        <td>En halva har lektioner i grundschemat men ingen elev är placerad i den, så lektionerna når ingen.</td>
+        <td>Placera klassens elever (<span class="ui">Placera elever</span>, 3.4), eller ta bort halvans lektioner om halvan inte ska användas.</td>
+      </tr>
       <tr>
         <td class="k">En rapport säger att uppgifter är gallrade, eller visar inget före ett visst datum</td>
         <td>Skolan har beslutat en gallringsperiod för det slaget, och natten har gallrat det som var äldre.</td>

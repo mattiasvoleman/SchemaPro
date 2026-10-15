@@ -1,0 +1,27 @@
+- dialog "Placera eleverna i 7A":
+  - heading "Placera eleverna i 7A" [level=2]
+  - paragraph: Välj halva för varje elev. En elev utan halva planeras som om den kunde gå i båda halvorna tills den är placerad.
+  - paragraph: 1 placerad, 2 utan halva
+  - button "Dela jämnt"
+  - list:
+    - listitem:
+      - text: Ella Nord
+      - combobox "Halva för Ella Nord":
+        - option "Ingen halva" [selected]
+        - option "7A:1"
+        - option "7A:2"
+    - listitem:
+      - text: Jamal Sjö
+      - combobox "Halva för Jamal Sjö":
+        - option "Ingen halva"
+        - option "7A:1" [selected]
+        - option "7A:2"
+    - listitem:
+      - text: Ines Vik
+      - combobox "Halva för Ines Vik":
+        - option "Ingen halva" [selected]
+        - option "7A:1"
+        - option "7A:2"
+  - button "Avbryt"
+  - button "Spara"
+  - button "Stäng"

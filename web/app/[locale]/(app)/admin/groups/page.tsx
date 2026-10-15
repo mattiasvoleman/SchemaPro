@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarRange, Pencil, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
+import { CalendarRange, Pencil, Plus, Split, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
+import { LazyClassHalvesDialog } from "@/components/groups/lazy-class-halves-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { classesToCsv, membershipsToCsv } from "@/lib/csv-export";
 import {
@@ -98,6 +99,8 @@ export default function GroupsPage() {
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
   const [membersFor, setMembersFor] = useState<StudentGroup | null>(null);
+  // Halvklasser: "Dela klassen" or "Placera elever", for one class.
+  const [halvesFor, setHalvesFor] = useState<{ mode: "split" | "place"; theClass: StudentGroup } | null>(null);
   const [kindFilter, setKindFilter] = useState<"ALL" | "CLASS" | "TEACHING_GROUP">(
     "ALL",
   );
@@ -186,6 +189,9 @@ export default function GroupsPage() {
     () => countGroupMembers(people ?? [], memberships ?? []),
     [people, memberships],
   );
+
+  /** Group id → the group, for a half's class (Halvklasser). */
+  const groupById = useMemo(() => new Map((groups ?? []).map((group) => [group.id, group])), [groups]);
 
   /** Läsår id → its name, for the Läsår column and the search. */
   const yearNames = useMemo(() => new Map(years.map((year) => [year.id, year.name])), [years]);
@@ -281,8 +287,28 @@ export default function GroupsPage() {
   const countsFailed = peopleQuery.isError || membershipsQuery.isError;
   const countsKnown = people !== undefined && memberships !== undefined && !countsFailed;
 
+  /*
+   * A class splits once ("Dela klassen") and then places its pupils; a half
+   * places them for its class, in the same dialog, rather than in the member
+   * list a teaching group has — a half takes its class's pupils only.
+   */
+  const halvesAction = (group: StudentGroup): RowAction[] => {
+    const theClass = group.halfOfId ? groupById.get(group.halfOfId) : group.kind === "CLASS" ? group : undefined;
+    if (!theClass) return [];
+    const split = !(groups ?? []).some((other) => other.halfOfId === theClass.id);
+    return [
+      {
+        label: split ? t("halves.split") : t("halves.place"),
+        icon: split ? Split : UserPlus,
+        ariaLabel: t(split ? "halves.splitTitle" : "halves.placeTitle", { name: theClass.name }),
+        onSelect: () => setHalvesFor({ mode: split ? "split" : "place", theClass }),
+      },
+    ];
+  };
+
   const actionsOf = (group: StudentGroup): RowAction[] => [
-    ...(group.kind === "TEACHING_GROUP"
+    ...halvesAction(group),
+    ...(group.kind === "TEACHING_GROUP" && !group.halfOfId
       ? [
           {
             label: t("members"),
@@ -424,6 +450,11 @@ export default function GroupsPage() {
                         <Badge variant={group.kind === "CLASS" ? "secondary" : "outline"}>
                           {group.kind === "CLASS" ? t("kindClass") : t("kindTeachingGroup")}
                         </Badge>
+                        {group.halfOfId ? (
+                          <Badge variant="outline">
+                            {t("halves.badge", { name: groupById.get(group.halfOfId)?.name ?? "" })}
+                          </Badge>
+                        ) : null}
                         {group.gradeLevel !== null ? (
                           <Badge variant="secondary">
                             {tYears("gradeShort", { grade: group.gradeLevel })}
@@ -464,6 +495,14 @@ export default function GroupsPage() {
       )}
 
       <SchoolUnitsCard classes={activeClasses} />
+
+      <LazyClassHalvesDialog
+        opened={halvesFor}
+        onClose={() => setHalvesFor(null)}
+        groups={groups ?? []}
+        pupils={students}
+        memberships={memberships ?? []}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

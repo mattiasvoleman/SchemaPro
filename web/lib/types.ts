@@ -267,6 +267,10 @@ export interface StudentGroup {
   name: string;
   kind: StudentGroupKind;
   gradeLevel: number | null;
+  /** The class this group is a half of (Halvklasser, "Dela klassen"), or null. */
+  halfOfId?: string | null;
+  /** Last year's group this one continues (läsårsrullning), or null. */
+  predecessorId?: string | null;
 }
 
 export interface Person {
