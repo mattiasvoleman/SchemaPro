@@ -12,6 +12,7 @@ import {
 } from "@/lib/queries";
 import { calendarLessonToGrid, calendarRastToBand } from "@/lib/lesson-mapper";
 import { teacherRastBands } from "@/lib/rasts";
+import { sheetFromGrid } from "@/lib/print-sheet";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -19,7 +20,7 @@ import { WeekSchedule } from "@/components/schedule/week-schedule";
 
 export default function TeacherSchedulePage() {
   const t = useTranslations("schedule");
-  const { profile } = useProfile();
+  const { profile, school } = useProfile();
   const [weekStart, setWeekStart] = useState(() => startOfIsoWeek(new Date()));
 
   const fromDate = toDateString(weekStart);
@@ -93,6 +94,15 @@ export default function TeacherSchedulePage() {
         isLoading={isLoading}
         isError={isError}
         bands={rastBands}
+        printSheet={() =>
+          sheetFromGrid({
+            kind: "TEACHER",
+            title: `${profile.firstName} ${profile.lastName}`,
+            school: school?.name ?? "",
+            weekStart,
+            lessons: gridLessons,
+          })
+        }
       />
     </Page>
   );

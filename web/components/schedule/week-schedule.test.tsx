@@ -179,4 +179,32 @@ describe("WeekSchedule", () => {
 
     expect(screen.getByText("week 1")).toBeInTheDocument();
   });
+
+  describe("Skriv ut veckan", () => {
+    const sheet = () => ({
+      kind: "PUPIL" as const,
+      title: "Ada Lind",
+      school: "Skolan",
+      week: { from: "2026-08-03", to: "2026-08-09", isoWeek: "2026-W32" },
+      days: [],
+    });
+
+    it("is offered only by a page that gives the week as a sheet", () => {
+      const { rerender } = render(<WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[makeLesson()]} isLoading={false} />);
+      expect(screen.queryByRole("button", { name: "print" })).not.toBeInTheDocument();
+      rerender(
+        <WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[makeLesson()]} isLoading={false} printSheet={sheet} />,
+      );
+      expect(screen.getByRole("button", { name: "print" })).toBeEnabled();
+    });
+
+    it("is not offered for a week that is loading or could not be read", () => {
+      const { rerender } = render(
+        <WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[]} isLoading printSheet={sheet} />,
+      );
+      expect(screen.getByRole("button", { name: "print" })).toBeDisabled();
+      rerender(<WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[]} isLoading={false} isError printSheet={sheet} />);
+      expect(screen.getByRole("button", { name: "print" })).toBeDisabled();
+    });
+  });
 });

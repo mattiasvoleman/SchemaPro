@@ -4124,7 +4124,35 @@
     "linksLoadFailed": "The links could not be loaded",
     "linksLoadFailedHint": "No link has been revoked or changed. Reload the page to see the list.",
     "linkRevokeNamed": "Revoke the link to {name}",
-    "linkRevokeTitle": "Revoke the link to {name}?"
+    "linkRevokeTitle": "Revoke the link to {name}?",
+    "printAction": "Print timetables",
+    "embedTitle": "Embedding on the school's website",
+    "embedBody": "The public viewer can be shown in a frame on the school's own website. It is off until you turn it on for a kind and name the website. No other website can show the timetable in a frame, and the frame shows nothing more than the viewer.",
+    "embed": {
+      "publicEmbedGroups": "Embed classes and groups",
+      "publicEmbedGroupsHint": "For example the classes' weeks on the families' pages.",
+      "publicEmbedTeachers": "Embed teachers",
+      "publicEmbedTeachersHint": "For example the teachers' weeks on the staff pages, for substitutes.",
+      "publicEmbedRooms": "Embed rooms",
+      "publicEmbedRoomsHint": "For example the rooms' weeks for visitors and bookings."
+    },
+    "embedScopeOff": "First turn the kind on in the public viewer above.",
+    "embedSites": "Websites that may show the timetable",
+    "embedSitesHint": "One per line, at most {max}, for example https://www.school.example. Name the website only, not a page on it.",
+    "embedSitesRefused": "These are not website addresses that can be used: {sites}. Give https and the website's name, without a path.",
+    "embedSitesTooMany": "At most {max} websites.",
+    "embedNoSites": "Embedding is on, but no website is named. Then the timetable cannot be shown in a frame anywhere.",
+    "embedPaste": "Embed code for a link you already have",
+    "embedPasteHint": "Paste the address of one of the links above. The frame shows only when the link is marked Can be embedded. The code is also shown when you create a new link.",
+    "embedPasteNotALink": "That is not an address of the public viewer.",
+    "embedCode": "Embed code",
+    "embedCopy": "Copy the code",
+    "embedCopied": "The code is copied",
+    "embedSaved": "Embedding saved",
+    "embedFrameTitle": "Timetable",
+    "embedFrameTitleOf": "Timetable – {name}",
+    "linkEmbedCode": "Embed code for the school's website:",
+    "linkEmbeddable": "Can be embedded"
   },
   "cancellations": {
     "title": "Bulk cancellation",
@@ -4237,7 +4265,8 @@
     "kind": {
       "GROUP": "Class or group",
       "TEACHER": "Teacher",
-      "ROOM": "Room"
+      "ROOM": "Room",
+      "PUPIL": "Pupil"
     },
     "group": "Group",
     "cancelled": "Cancelled",
@@ -4253,7 +4282,10 @@
     "busyBody": "Try again in a minute.",
     "unavailableTitle": "The timetable could not be fetched",
     "unavailableBody": "Try again in a while.",
-    "accessibility": "Accessibility statement"
+    "accessibility": "Accessibility statement",
+    "validity": "Valid from {from} to {to}",
+    "openFull": "Open the full timetable",
+    "validityNone": "No publication gives a validity for this week"
   },
   "absenceForm": {
     "createTitle": "Register absence",
@@ -4961,5 +4993,55 @@
       "SCHOOL_UNIT_FROM_SOURCE": "The name, code and school types come from the student register and are changed there."
     },
     "saveFailed": "The school unit was not saved"
+  },
+  "printTimetables": {
+    "title": "Print timetables",
+    "subtitle": "Every class, teacher or room on a landscape A4 of its own, from the published timetable.",
+    "back": "Back to Publishing",
+    "choicesTitle": "What is printed",
+    "choicesBody": "The sheets show what the public viewer shows: times, subject, group, room and the teachers as you choose here. Never pupils, notes or causes. A class or a room never names a substitute, and a teacher's sheet shows the lessons the teacher holds, also as a substitute.",
+    "kindLabel": "Print",
+    "kind": {
+      "GROUP": "Classes",
+      "TEACHER": "Teachers",
+      "ROOM": "Rooms"
+    },
+    "dateLabel": "Week",
+    "dateHint": "Pick a day in the week to print.",
+    "previousWeek": "Previous week",
+    "nextWeek": "Next week",
+    "teachersLabel": "Show teachers as",
+    "teachersHint": "As in the public viewer by default, so the sheets name no more than the school's own pages do.",
+    "teachersHintTeacher": "A teacher's timetable is headed with the teacher, by signature or name. As in the public viewer by default, or by signature when the school shows no teachers there.",
+    "display": {
+      "SIGNATURE": "Signature",
+      "NAME": "Name",
+      "NONE": "Not at all"
+    },
+    "mealsLabel": "Show the class's lunch",
+    "sheetsLabel": "Timetables",
+    "all": "All",
+    "none": "None",
+    "print": "{count, plural, =0 {Nothing to print} one {Print # timetable} other {Print # timetables}}",
+    "chosen": "{chosen} of {total} timetables will be printed.",
+    "preview": "Preview",
+    "outOfYearsTitle": "The week is in no school year",
+    "outOfYearsBody": "Pick a week inside one of the school's years.",
+    "loadFailed": "The timetables could not be fetched",
+    "loadFailedHint": "Try again in a while.",
+    "emptyTitle": {
+      "GROUP": "The year has no classes",
+      "TEACHER": "No teachers to print",
+      "ROOM": "The school has no rooms"
+    },
+    "emptyBody": {
+      "GROUP": "Classes are set up under Classes and groups.",
+      "TEACHER": "A teacher is printed when they have a post in the year or a lesson in the week. By signature, only teachers with a signature are printed, and a teacher who is never shown in the public viewer is never printed.",
+      "ROOM": "Rooms are set up under Rooms."
+    }
+  },
+  "printWeek": {
+    "print": "Print the week",
+    "preparing": "Preparing the printout …"
   }
 }

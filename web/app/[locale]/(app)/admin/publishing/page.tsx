@@ -36,6 +36,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GatePolicyCard } from "./gate-policy-card";
+import { EmbedCard } from "./embed-card";
 import { HiddenTeachersCard } from "./hidden-teachers-card";
 import { LinksCard } from "./links-card";
 import { ModeCard } from "./mode-card";
@@ -99,7 +100,14 @@ export default function PublishingPage() {
         title={t("title")}
         subtitle={t("subtitle")}
         intro={t("intro")}
-        actions={<YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />}
+        actions={
+          <div className="flex flex-wrap items-end gap-2">
+            <Button variant="outline" asChild>
+              <Link href="/admin/publishing/print">{t("printAction")}</Link>
+            </Button>
+            <YearSelect value={yearId} onValueChange={setYearId} label={t("yearLabel")} />
+          </div>
+        }
       />
 
       {/*
@@ -131,6 +139,7 @@ export default function PublishingPage() {
           </TabsContent>
           <TabsContent value="viewer" className="space-y-4">
             <ViewerCard settings={settings.data} />
+            <EmbedCard settings={settings.data} />
             {yearBound((shown) => (
               <LinksCard
                 year={shown}

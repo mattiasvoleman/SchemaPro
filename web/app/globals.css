@@ -199,3 +199,21 @@
     background: #fff;
   }
 }
+
+/*
+ * A person's own week on paper (components/timetable-sheet/print-week-button.tsx):
+ * while it prints, the page is the sheet alone. The sheet waits in a portal
+ * under <body> that the screen never shows; the class on <html> lasts from
+ * "Skriv ut veckan" until the browser says the print is done.
+ */
+.print-sheet-root {
+  display: none;
+}
+@media print {
+  html.printing-sheet body > :not(.print-sheet-root) {
+    display: none !important;
+  }
+  html.printing-sheet .print-sheet-root {
+    display: block;
+  }
+}

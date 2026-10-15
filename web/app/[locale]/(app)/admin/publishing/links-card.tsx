@@ -20,7 +20,8 @@ import { Copy, Link2Off } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { PublicationSettings, PublicLink, PublicScopeKind } from "@/lib/publication-types";
-import { formatInstant, publicViewerUrl } from "@/lib/publication-view";
+import { embedSnippet, formatInstant, publicViewerEmbedUrl, publicViewerUrl } from "@/lib/publication-view";
+import { Textarea } from "@/components/ui/textarea";
 import { LINK_STATE_VARIANT, type LinkState } from "@/lib/status-variants";
 import type { AcademicYear, Person, Room, StudentGroup } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,8 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
   const [target, setTarget] = useState<string>(INDEX);
   const [label, setLabel] = useState("");
   const [made, setMade] = useState<string | null>(null);
+  /** The new link's embed code, when the school lets its kind be embedded. */
+  const [madeEmbed, setMadeEmbed] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<PublicLink | null>(null);
 
@@ -113,25 +116,34 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
   const doCreate = async () => {
     setProblem(null);
     setMade(null);
+    setMadeEmbed(null);
     try {
-      const { token } = await create.mutateAsync({
+      const { token, link } = await create.mutateAsync({
         academicYearId: year.id,
         kind,
         ...(target !== INDEX ? { targetId: target } : {}),
         ...(kind !== "TEACHER" && label.trim() ? { label: label.trim() } : {}),
       });
       setMade(publicViewerUrl(window.location.origin, token));
+      setMadeEmbed(
+        link.embeddable
+          ? embedSnippet(
+              publicViewerEmbedUrl(window.location.origin, token),
+              t("embedFrameTitleOf", { name: link.targetId === null ? t(`linkIndexOf.${link.kind}`) : targetName(link) }),
+            )
+          : null,
+      );
       setLabel("");
     } catch (error) {
       setProblem(publicationErrorText(tErrors, error, tCommon("error")));
     }
   };
 
-  const copy = async () => {
-    if (!made) return;
+  const copy = async (value: string | null, done: string) => {
+    if (!value) return;
     try {
-      await navigator.clipboard.writeText(made);
-      toast.success(t("linkCopied"));
+      await navigator.clipboard.writeText(value);
+      toast.success(done);
     } catch {
       // The address is on screen, selectable; a refused clipboard costs nothing.
     }
@@ -207,10 +219,40 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
         <Notice tone="success" title={t("linkMade")}>
           <div className="flex items-center gap-2">
             <Input readOnly value={made} aria-label={t("linkAddress")} onFocus={(event) => event.target.select()} />
-            <Button variant="outline" size="icon" onClick={copy} title={t("linkCopy")} aria-label={t("linkCopy")}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => void copy(made, t("linkCopied"))}
+              title={t("linkCopy")}
+              aria-label={t("linkCopy")}
+            >
               <Copy />
             </Button>
           </div>
+          {madeEmbed ? (
+            <div className="mt-3 space-y-1">
+              <p className="text-sm">{t("linkEmbedCode")}</p>
+              <div className="flex items-start gap-2">
+                <Textarea
+                  readOnly
+                  rows={3}
+                  value={madeEmbed}
+                  aria-label={t("embedCode")}
+                  onFocus={(event) => event.target.select()}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => void copy(madeEmbed, t("embedCopied"))}
+                  title={t("embedCopy")}
+                  aria-label={t("embedCopy")}
+                >
+                  <Copy />
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </Notice>
       ) : null}
       {problem ? <Notice tone="destructive">{problem}</Notice> : null}
@@ -287,6 +329,9 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
                           ? t(`linkNotShown.${link.notShownBecause}`)
                           : t("linkStateActive")}
                     </Badge>
+                    {link.embeddable && !link.notShownBecause ? (
+                      <span className="block text-xs text-muted-foreground">{t("linkEmbeddable")}</span>
+                    ) : null}
                   </TableCell>
                   <TableCell className={cn(TD, "pr-0 text-right")}>
                     {link.revokedAt ? null : (

@@ -54,6 +54,11 @@ export const PUBLICATION_SETTINGS: PublicationSettings = {
   publicTeacherDisplay: "NAME",
   publicShowMeals: true,
   publicMinGroupSize: 5,
+  // The school's website frames the classes' weeks (Utskrift och inbäddning); the teachers' stay off it.
+  publicEmbedGroups: true,
+  publicEmbedTeachers: false,
+  publicEmbedRooms: false,
+  publicEmbedOrigins: ["https://www.exempelskolan.example"],
   gateClashes: "REFUSE",
   gateParked: "WARN",
   gateUnplaced: "WARN",
@@ -272,6 +277,8 @@ const link = (n: number, extra: Partial<PublicLink> & Pick<PublicLink, "kind">):
   revokedAt: null,
   lastUsedAt: null,
   notShownBecause: null,
+  // A class link may be framed on the school's website (PUBLICATION_SETTINGS), a teacher's and a room's not.
+  embeddable: extra.kind === "GROUP" && !extra.revokedAt && !extra.notShownBecause,
   ...extra,
 });
 

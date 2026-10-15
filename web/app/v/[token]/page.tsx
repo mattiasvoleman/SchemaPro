@@ -1,29 +1,21 @@
-import { Fragment } from "react";
-import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { createTranslator } from "next-intl";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
-import { layoutClusters } from "@/lib/day-lanes";
+import { SHEET_PAGE_STYLE, WeekSheet, type Translate } from "@/components/timetable-sheet/week-sheet";
+import { weekNumberOf } from "@/lib/print-sheet";
 import {
   isIndex,
-  placement,
-  readViewerResponse,
   shiftWeek,
-  shownDays,
-  timed,
   TOKEN_PATTERN,
-  viewerFetchOf,
   viewerHref,
   viewerQueryOf,
-  weekSpan,
   canGoBack,
   type PublicIndex,
-  type PublicLesson,
   type PublicWeek,
-  type ViewerOutcome,
   type ViewerQuery,
 } from "@/lib/public-timetable";
+import { readViewer } from "./read-viewer";
 
 /*
  * Schemavisaren: a class's, a teacher's or a room's PUBLISHED week, or an
@@ -49,7 +41,6 @@ import {
 export const dynamic = "force-dynamic";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type Translate = (key: string, values?: Record<string, string | number>) => string;
 
 export default async function PublicTimetablePage({
   params,
@@ -67,27 +58,13 @@ export default async function PublicTimetablePage({
   if (!TOKEN_PATTERN.test(token)) notFound();
 
   const query = viewerQueryOf({ target: search.target, date: search.date });
-  const base = process.env.PUBLIC_VIEWER_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-  const request = viewerFetchOf(
-    base,
-    token,
-    query,
-    (await headers()).get("x-forwarded-for"),
-    process.env.PUBLIC_VIEWER_PROXY_KEY,
-  );
-  let outcome: ViewerOutcome;
-  try {
-    outcome = await readViewerResponse(await fetch(request.url, { cache: "no-store", headers: request.headers }));
-  } catch {
-    outcome = { kind: "unavailable" };
-  }
+  const outcome = await readViewer(token, query);
   if (outcome.kind === "notFound") notFound();
 
   return (
     <main lang={locale} className="mx-auto max-w-6xl px-4 py-6 print:max-w-none print:p-0">
       {/* One A4, landscape; the blocks keep their tint on paper. */}
-      <style>{`@page { size: A4 landscape; margin: 8mm; }
-@media print { .viewer-block { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }`}</style>
+      <style>{SHEET_PAGE_STYLE}</style>
       {outcome.kind === "busy" || outcome.kind === "unavailable" ? (
         <Message
           title={t(outcome.kind === "busy" ? "busyTitle" : "unavailableTitle")}
@@ -161,24 +138,6 @@ function IndexView({ document, token, locale, t }: { document: PublicIndex; toke
   );
 }
 
-/**
- * A lesson's line under its subject: what the page's own target is not.
- * A class's week leaves out the class (it is the page's title) and puts the
- * room first, so the room survives when a narrow block clips the line; a
- * room's week leaves out the room, a teacher's week the teacher.
- */
-function lessonText(lesson: PublicLesson, t: Translate, page: Pick<PublicWeek, "kind" | "title">): { main: string; detail: string } {
-  if (lesson.busy) return { main: t("busy"), detail: "" };
-  const groupNames = (lesson.groups ?? [])
-    .filter((group) => !(page.kind === "GROUP" && group === page.title))
-    .map((group) => group ?? t("group"));
-  const groups = groupNames.join(", ") || null;
-  const room = page.kind === "ROOM" ? null : lesson.room ?? null;
-  const teachers = (lesson.teachers ?? []).filter((label) => !(page.kind === "TEACHER" && label === page.title)).join(", ") || null;
-  const parts = page.kind === "GROUP" ? [room, teachers, groups] : [groups, room, teachers];
-  return { main: lesson.subject ?? "", detail: parts.filter(Boolean).join(" · ") };
-}
-
 function WeekView({
   document,
   token,
@@ -194,199 +153,40 @@ function WeekView({
   t: Translate;
   tDays: Translate;
 }) {
-  const days = shownDays(document.days);
-  const span = weekSpan(document.days);
-  const hours = Array.from({ length: (span.end - span.start) / 60 + 1 }, (_, index) => span.start / 60 + index);
-  const dateFormat = new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  });
-  const short = (date: string) => dateFormat.format(new Date(`${date}T00:00:00Z`));
-  const dayName = (date: string) => tDays(String(new Date(`${date}T00:00:00Z`).getUTCDay() || 7));
-  const week = Number(document.week.isoWeek.split("W")[1]);
+  const week = weekNumberOf(document);
   const nav = (date: string | null) => viewerHref(token, { target: query.target, date, lang: locale });
 
   return (
     <div className="space-y-3 print:space-y-1">
       <title>{`${document.title} – ${t("week", { week })}`}</title>
-      <header className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <p className="text-sm">
-            {document.school} · {t(`kind.${document.kind}`)}
-          </p>
-          <h1 className="text-2xl font-semibold print:text-lg">{document.title}</h1>
-          <p className="text-sm">
-            {t("week", { week })} · {short(document.week.from)} – {short(document.week.to)}
-          </p>
-        </div>
-        <nav className="viewer-nav flex flex-wrap items-center gap-3 text-sm print:hidden" aria-label={t("title")}>
-          {query.target ? (
-            <a href={viewerHref(token, { lang: locale })} className="underline underline-offset-4">
-              {t("backToIndex")}
+      <WeekSheet
+        document={document}
+        locale={locale}
+        t={t}
+        tDays={tDays}
+        variant="page"
+        actions={
+          <nav className="viewer-nav flex flex-wrap items-center gap-3 text-sm" aria-label={t("title")}>
+            {query.target ? (
+              <a href={viewerHref(token, { lang: locale })} className="underline underline-offset-4">
+                {t("backToIndex")}
+              </a>
+            ) : null}
+            {canGoBack(document.week.from, new Date().toISOString().slice(0, 10)) ? (
+              <a href={nav(shiftWeek(document.week.from, -1))} className="underline underline-offset-4">
+                ← {t("previous")}
+              </a>
+            ) : null}
+            <a href={nav(null)} className="underline underline-offset-4">
+              {t("thisWeek")}
             </a>
-          ) : null}
-          {canGoBack(document.week.from, new Date().toISOString().slice(0, 10)) ? (
-            <a href={nav(shiftWeek(document.week.from, -1))} className="underline underline-offset-4">
-              ← {t("previous")}
+            <a href={nav(shiftWeek(document.week.from, 1))} className="underline underline-offset-4">
+              {t("next")} →
             </a>
-          ) : null}
-          <a href={nav(null)} className="underline underline-offset-4">
-            {t("thisWeek")}
-          </a>
-          <a href={nav(shiftWeek(document.week.from, 1))} className="underline underline-offset-4">
-            {t("next")} →
-          </a>
-          <LanguageLink token={token} query={query} locale={locale} t={t} />
-        </nav>
-      </header>
-
-      {/*
-        A phone gets the week as a list, day by day; a wider screen and the
-        printout get the grid. Both from the same document, one shown at a
-        time (display: none hides the other from screen readers too).
-      */}
-      <ol className="space-y-3 md:hidden print:hidden">
-        {days.map((day) => (
-          <li key={`list-${day.date}`} className="space-y-1">
-            <h2 className="font-semibold">
-              {dayName(day.date)} <span className="font-normal">{short(day.date)}</span>
-            </h2>
-            {day.lessons.length === 0 && (day.meals ?? []).length === 0 ? (
-              <p className="text-sm">{t("noLessons")}</p>
-            ) : (
-              <ul className="divide-y rounded-md border text-sm">
-                {[
-                  ...day.lessons.map((lesson) => ({ at: lesson.start, lesson })),
-                  ...(day.meals ?? []).map((meal) => ({ at: meal.start, meal })),
-                ]
-                  .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
-                  .map((entry, index) => {
-                    if ("meal" in entry && entry.meal) {
-                      return (
-                        <li key={`m-${index}`} className="bg-amber-50 px-3 py-1.5">
-                          <span className="tabular-nums">
-                            {entry.meal.start}–{entry.meal.end}
-                          </span>{" "}
-                          {t("meal")}
-                        </li>
-                      );
-                    }
-                    const lesson = (entry as { lesson: PublicLesson }).lesson;
-                    const text = lessonText(lesson, t, document);
-                    return (
-                      <li key={`l-${index}`} className={`px-3 py-1.5 ${lesson.cancelled ? "text-neutral-600" : ""}`}>
-                        <span className="tabular-nums">
-                          {lesson.start}–{lesson.end}
-                        </span>{" "}
-                        <span className={`font-semibold ${lesson.cancelled ? "line-through" : ""}`}>{text.main}</span>
-                        {lesson.cancelled ? <strong> · {t("cancelled")}</strong> : null}
-                        {text.detail ? <span className="block text-xs">{text.detail}</span> : null}
-                      </li>
-                    );
-                  })}
-              </ul>
-            )}
-          </li>
-        ))}
-      </ol>
-
-      <div
-        className="hidden rounded-md border text-xs md:grid print:grid print:text-[9px]"
-        style={{ gridTemplateColumns: `3rem repeat(${days.length}, minmax(0, 1fr))` }}
-      >
-        {/*
-          Every cell is placed by hand, so the source can go day by day — a
-          day's heading, then its column — while the picture keeps the
-          headings in one row. Auto-placed, all five headings came first and
-          a screen reader moving by heading met each with nothing under it.
-        */}
-        <div className="border-b" style={{ gridRow: 1, gridColumn: 1 }} />
-        <div className="relative h-[40rem] print:h-[145mm]" style={{ gridRow: 2, gridColumn: 1 }} aria-hidden>
-          {hours.slice(0, -1).map((hour) => (
-            <span
-              key={hour}
-              className="absolute right-1 -translate-y-0 tabular-nums"
-              style={{ top: `${placement({ start: `${hour}:00`, end: `${hour}:00` }, span).top}%` }}
-            >
-              {String(hour).padStart(2, "0")}:00
-            </span>
-          ))}
-        </div>
-        {days.map((day, dayIndex) => {
-          const lessons = layoutClusters(timed(day.lessons));
-          return (
-            <Fragment key={day.date}>
-              <h2
-                id={`day-${day.date}`}
-                className="min-w-0 truncate border-b border-l px-2 py-1 text-sm font-semibold print:text-[10px]"
-                style={{ gridRow: 1, gridColumn: dayIndex + 2 }}
-              >
-                {dayName(day.date)} <span className="font-normal">{short(day.date)}</span>
-              </h2>
-              <div className="relative h-[40rem] border-l print:h-[145mm]" style={{ gridRow: 2, gridColumn: dayIndex + 2 }}>
-                {hours.slice(1, -1).map((hour) => (
-                  <div
-                    key={hour}
-                    className="absolute inset-x-0 border-t border-dashed border-neutral-200"
-                    style={{ top: `${placement({ start: `${hour}:00`, end: `${hour}:00` }, span).top}%` }}
-                    aria-hidden
-                  />
-                ))}
-                {(day.meals ?? []).map((meal) => {
-                  const at = placement(meal, span);
-                  return (
-                    <div
-                      key={`meal-${meal.start}`}
-                      className="viewer-block absolute inset-x-0 border-y border-dashed border-amber-300 bg-amber-50 px-1"
-                      style={{ top: `${at.top}%`, height: `${at.height}%` }}
-                    >
-                      {t("meal")} {meal.start}–{meal.end}
-                    </div>
-                  );
-                })}
-                {lessons.length === 0 ? (
-                  <p className="sr-only">
-                    {dayName(day.date)} {short(day.date)}: {t("noLessons")}
-                  </p>
-                ) : (
-                  <ol aria-labelledby={`day-${day.date}`}>
-                    {lessons.map((lesson, index) => {
-                      const at = placement(lesson, span);
-                      const text = lessonText(lesson, t, document);
-                      return (
-                        <li
-                          key={`${lesson.start}-${index}`}
-                          className={`viewer-block absolute overflow-hidden rounded border px-1 py-0.5 leading-tight ${
-                            lesson.busy
-                              ? "border-neutral-300 bg-neutral-200 italic"
-                              : lesson.cancelled
-                                ? "border-neutral-300 bg-neutral-50 text-neutral-600"
-                                : "border-indigo-200 bg-indigo-50"
-                          }`}
-                          style={{
-                            top: `${at.top}%`,
-                            height: `${at.height}%`,
-                            left: `${(lesson.lane * 100) / lesson.laneCount}%`,
-                            width: `${100 / lesson.laneCount}%`,
-                          }}
-                        >
-                          <span className="block tabular-nums">
-                            {lesson.start}–{lesson.end}
-                            {lesson.cancelled ? <strong> · {t("cancelled")}</strong> : null}
-                          </span>
-                          <span className={`block font-semibold ${lesson.cancelled ? "line-through" : ""}`}>{text.main}</span>
-                          {text.detail ? <span className="block">{text.detail}</span> : null}
-                        </li>
-                      );
-                    })}
-                  </ol>
-                )}
-              </div>
-            </Fragment>
-          );
-        })}
-      </div>
+            <LanguageLink token={token} query={query} locale={locale} t={t} />
+          </nav>
+        }
+      />
       <p className="text-xs">
         {t("footer")} <span className="print:hidden">{t("printHint")}</span>
       </p>

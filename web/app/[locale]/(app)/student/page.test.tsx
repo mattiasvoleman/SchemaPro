@@ -223,3 +223,17 @@ describe("the pupil's Undervisningstid card", () => {
     expect(screen.queryByText(/^teaching-time/)).not.toBeInTheDocument();
   });
 });
+
+describe("the pupil's printed week", () => {
+  it("is offered to the pupil", async () => {
+    render(<StudentSchedulePage />);
+    expect(await screen.findByRole("button", { name: "printWeek.print" })).toBeInTheDocument();
+  });
+
+  it("is no one else's to print: a teacher or an admin who opens the page sees no pupil's week", async () => {
+    state.role = "TEACHER";
+    render(<StudentSchedulePage />);
+    await screen.findAllByText("lunch.bandLabel");
+    expect(screen.queryByRole("button", { name: "printWeek.print" })).not.toBeInTheDocument();
+  });
+});

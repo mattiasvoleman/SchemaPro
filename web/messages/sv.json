@@ -4124,7 +4124,35 @@
     "linksLoadFailed": "Länkarna kunde inte hämtas",
     "linksLoadFailedHint": "Ingen länk har återkallats eller ändrats. Ladda om sidan för att se listan.",
     "linkRevokeNamed": "Återkalla länken till {name}",
-    "linkRevokeTitle": "Återkalla länken till {name}?"
+    "linkRevokeTitle": "Återkalla länken till {name}?",
+    "printAction": "Skriv ut scheman",
+    "embedTitle": "Inbäddning på skolans webbplats",
+    "embedBody": "Schemavisaren kan visas i en ram på skolans egen webbplats. Det är avstängt tills du slår på det för en sort och anger webbplatsen. Ingen annan webbplats kan visa schemat i en ram, och ramen visar inget mer än Schemavisaren.",
+    "embed": {
+      "publicEmbedGroups": "Bädda in klasser och grupper",
+      "publicEmbedGroupsHint": "Till exempel klassernas veckor på familjernas sidor.",
+      "publicEmbedTeachers": "Bädda in lärare",
+      "publicEmbedTeachersHint": "Till exempel lärarnas veckor på personalens sidor, för vikarier.",
+      "publicEmbedRooms": "Bädda in salar",
+      "publicEmbedRoomsHint": "Till exempel salarnas veckor för besökare och bokningar."
+    },
+    "embedScopeOff": "Slå först på sorten i Schemavisaren ovan.",
+    "embedSites": "Webbplatser som får visa schemat",
+    "embedSitesHint": "En per rad, högst {max}, till exempel https://www.skolan.se. Ange bara webbplatsen, inte en sida på den.",
+    "embedSitesRefused": "Detta är inga webbplatsadresser som kan användas: {sites}. Ange https och webbplatsens namn, utan sökväg.",
+    "embedSitesTooMany": "Högst {max} webbplatser.",
+    "embedNoSites": "Inbäddningen är på, men ingen webbplats är angiven. Då kan schemat inte visas i en ram någonstans.",
+    "embedPaste": "Inbäddningskod för en länk du redan har",
+    "embedPasteHint": "Klistra in adressen till en av länkarna ovan. Ramen visas bara när länken är märkt Kan bäddas in. Koden visas också när du skapar en ny länk.",
+    "embedPasteNotALink": "Det är ingen adress till Schemavisaren.",
+    "embedCode": "Inbäddningskod",
+    "embedCopy": "Kopiera koden",
+    "embedCopied": "Koden är kopierad",
+    "embedSaved": "Inbäddningen är sparad",
+    "embedFrameTitle": "Schema",
+    "embedFrameTitleOf": "Schema – {name}",
+    "linkEmbedCode": "Inbäddningskod för skolans webbplats:",
+    "linkEmbeddable": "Kan bäddas in"
   },
   "cancellations": {
     "title": "Avbokning",
@@ -4237,7 +4265,8 @@
     "kind": {
       "GROUP": "Klass eller grupp",
       "TEACHER": "Lärare",
-      "ROOM": "Sal"
+      "ROOM": "Sal",
+      "PUPIL": "Elev"
     },
     "group": "Grupp",
     "cancelled": "Inställd",
@@ -4253,7 +4282,10 @@
     "busyBody": "Försök igen om en minut.",
     "unavailableTitle": "Schemat kunde inte hämtas",
     "unavailableBody": "Försök igen om en stund.",
-    "accessibility": "Tillgänglighetsredogörelse"
+    "accessibility": "Tillgänglighetsredogörelse",
+    "validity": "Giltig fr.o.m. {from} t.o.m. {to}",
+    "openFull": "Öppna i Schemavisaren",
+    "validityNone": "Ingen publicering anger giltighet för veckan"
   },
   "absenceForm": {
     "createTitle": "Registrera frånvaro",
@@ -4961,5 +4993,55 @@
       "SCHOOL_UNIT_FROM_SOURCE": "Namn, kod och skolformer kommer från elevregistret och ändras där."
     },
     "saveFailed": "Skolenheten sparades inte"
+  },
+  "printTimetables": {
+    "title": "Skriv ut scheman",
+    "subtitle": "Varje klass, lärare eller sal på ett eget liggande A4, ur det publicerade schemat.",
+    "back": "Till Publicering",
+    "choicesTitle": "Vad som skrivs ut",
+    "choicesBody": "Bladen visar det som Schemavisaren visar: tider, ämne, grupp, sal och läraren som du väljer här. Aldrig elever, anteckningar eller orsaker. En klass eller sal namnger aldrig en vikarie, och en lärares blad visar de lektioner läraren håller, också som vikarie.",
+    "kindLabel": "Skriv ut",
+    "kind": {
+      "GROUP": "Klasser",
+      "TEACHER": "Lärare",
+      "ROOM": "Salar"
+    },
+    "dateLabel": "Vecka",
+    "dateHint": "Välj en dag i veckan som ska skrivas ut.",
+    "previousWeek": "Föregående vecka",
+    "nextWeek": "Nästa vecka",
+    "teachersLabel": "Lärare visas som",
+    "teachersHint": "Förvalt som i Schemavisaren, så att bladen inte namnger fler än skolans egna sidor.",
+    "teachersHintTeacher": "Ett lärarschema har läraren som rubrik, med signatur eller namn. Förvalt som i Schemavisaren, eller som signatur om skolan inte visar lärare där.",
+    "display": {
+      "SIGNATURE": "Signatur",
+      "NAME": "Namn",
+      "NONE": "Inte alls"
+    },
+    "mealsLabel": "Visa klassens lunch",
+    "sheetsLabel": "Scheman",
+    "all": "Alla",
+    "none": "Inga",
+    "print": "{count, plural, =0 {Inget att skriva ut} one {Skriv ut # schema} other {Skriv ut # scheman}}",
+    "chosen": "{chosen} av {total} scheman skrivs ut.",
+    "preview": "Förhandsvisning",
+    "outOfYearsTitle": "Veckan ligger inte i något läsår",
+    "outOfYearsBody": "Välj en vecka inom ett av skolans läsår.",
+    "loadFailed": "Schemana kunde inte hämtas",
+    "loadFailedHint": "Försök igen om en stund.",
+    "emptyTitle": {
+      "GROUP": "Läsåret har inga klasser",
+      "TEACHER": "Inga lärare att skriva ut",
+      "ROOM": "Skolan har inga salar"
+    },
+    "emptyBody": {
+      "GROUP": "Klasserna läggs upp under Klasser och grupper.",
+      "TEACHER": "En lärare skrivs ut när hen har en tjänst under läsåret eller en lektion under veckan. Med signatur skrivs bara den ut som har en signatur, och en lärare som aldrig visas i Schemavisaren skrivs aldrig ut.",
+      "ROOM": "Salarna läggs upp under Salar."
+    }
+  },
+  "printWeek": {
+    "print": "Skriv ut veckan",
+    "preparing": "Förbereder utskriften …"
   }
 }

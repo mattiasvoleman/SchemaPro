@@ -32,6 +32,8 @@ import {
   type FamilyEntry,
 } from "@/lib/family-schedule";
 import { useFamilySchedule } from "@/lib/guardian-schedule-queries";
+import { sheetFromFamily } from "@/lib/print-sheet";
+import { PrintWeekButton } from "@/components/timetable-sheet/print-week-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -109,7 +111,8 @@ function EntryRow({ entry, lunch }: { entry: FamilyEntry; lunch: string }) {
   );
 }
 
-export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }) {
+/** `school` heads a printed week: the school's name, as the guardian's own profile says it. */
+export function ChildSchedule({ childList, school = "" }: { childList: ChildScheduleChild[]; school?: string }) {
   const t = useTranslations("guardian.schedule");
   const tDays = useTranslations("days");
   const locale = useLocale();
@@ -190,8 +193,15 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
         </div>
       ) : null}
 
+      {shown && view === "today" ? (
+        <div className="flex justify-end">
+          {/* The whole week on paper, the child's as the page read it (recorded then). */}
+          <PrintWeekButton build={() => sheetFromFamily(shown, school, t("substitute"))} disabled={isFetching} />
+        </div>
+      ) : null}
+
       {view === "week" && shown ? (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
             size="icon"
@@ -215,6 +225,9 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
           >
             <ChevronRight aria-hidden="true" />
           </Button>
+          <div className="ml-auto">
+            <PrintWeekButton build={() => sheetFromFamily(shown, school, t("substitute"))} disabled={isFetching} />
+          </div>
         </div>
       ) : null}
 

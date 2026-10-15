@@ -181,6 +181,30 @@ export function publicViewerUrl(origin: string, token: string): string {
   return `${origin.replace(/\/+$/, "")}/v/${token}`;
 }
 
+/** The share link's frame for the school's website (20261102090000): /v/<token>/embed. */
+export function publicViewerEmbedUrl(origin: string, token: string): string {
+  return `${publicViewerUrl(origin, token)}/embed`;
+}
+
+/** A share link's token, from an address an admin pasted: /v/<token>, with or without /embed, a query or a host. */
+export function tokenOfViewerUrl(pasted: string): string | null {
+  const match = pasted.trim().match(/\/v\/([A-Za-z0-9_-]{43})(?:\/embed)?\/?(?:[?#].*)?$/);
+  return match ? match[1]! : null;
+}
+
+const escapeAttribute = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * The code a school puts on its website: an iframe of the link's frame,
+ * titled for a screen reader, as wide as its column, lazily loaded, and
+ * sending no referrer — the address is the secret. The height fits a week
+ * of eight hours; the school may change it.
+ */
+export function embedSnippet(url: string, title: string): string {
+  return `<iframe src="${escapeAttribute(url)}" title="${escapeAttribute(title)}" width="100%" height="680" style="border:0" loading="lazy" referrerpolicy="no-referrer"></iframe>`;
+}
+
 /**
  * An instant from the gateway (toISOString, UTC) as the reader's clock and
  * calendar say it. Slicing the ISO string showed a publish at 08:30 CEST as
