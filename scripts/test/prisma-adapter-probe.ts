@@ -103,7 +103,7 @@ import { lockStaffRow } from '../../src/staffing/staff-lock';
 import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
 import { loadRosters } from '../../src/optimization/room-eligibility';
 import { RoomOptimizationService } from '../../src/optimization/room-optimization.service';
-import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { BLOCK_CARD_STALE, MasterLessonsService } from '../../src/calendar/master-lessons.service';
 import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
 import { LunchSittingsService } from '../../src/resources/lunch-sittings.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
@@ -2114,6 +2114,124 @@ async function runChecks(
     }
   });
 
+  // ---- (u2c) Block i schemat through the real adapter: a card, a split, a rejoin, a lock
+  await check('(u2c) a block card moves as one and keeps its owner, a member moved alone splits the block and rejoins it moved back, and the block locks whole', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const blocks = new TeachingBlocksService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const lessons = new MasterLessonsService(
+      api,
+      { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+      {} as NotificationsService,
+    );
+    const year = await years.create(
+      { name: `${MARKER} bis`, startDate: '2096-08-17', endDate: '2097-06-11' } as never,
+      admin,
+    );
+    const language = await subjects.create({ name: `${MARKER} bis-språk` } as never, admin);
+    const other = await subjects.create({ name: `${MARKER} bis-annat` } as never, admin);
+    const group = async (name: string) =>
+      (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' ' || $4, 'TEACHING_GROUP', 7, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER, name],
+        )
+      ).rows[0].id;
+    const stateOf = async (ids: string[]) =>
+      (
+        await owner.query<{ id: string; dayOfWeek: number; start: string; isGenerated: boolean; isLocked: boolean }>(
+          `SELECT id, "dayOfWeek", to_char("startTime", 'HH24:MI') AS start, "isGenerated", "isLocked"
+             FROM "MasterLessons" WHERE id = ANY($1::uuid[]) ORDER BY id`,
+          [ids],
+        )
+      ).rows;
+
+    try {
+      const ty7 = await group('Ty7');
+      const fr7 = await group('Fr7');
+      const post = (studentGroupId: string) =>
+        requirements.create(
+          { academicYearId: year.id, subjectId: language.id, studentGroupId, lessonsPerWeek: 1, minutesPerLesson: 60 } as never,
+          admin,
+        );
+      const ty = await post(ty7);
+      const fr = await post(fr7);
+      const block = await blocks.create(
+        { academicYearId: year.id, name: `${MARKER} Språkval`, requirementIds: [ty.id, fr.id] },
+        admin,
+      );
+      const place = (studentGroupId: string) =>
+        lessons.create(
+          { academicYearId: year.id, subjectId: language.id, studentGroupId, dayOfWeek: 1, startTime: '10:00', endTime: '11:00' },
+          admin,
+        );
+      const tyLesson = await place(ty7);
+      const frLesson = await place(fr7);
+      const ids = [tyLesson.id, frLesson.id].sort();
+      // As the generator would have left them: the engine's.
+      await owner.query(`UPDATE "MasterLessons" SET "isGenerated" = true WHERE id = ANY($1::uuid[])`, [ids]);
+
+      // The card moved as one: both on Tuesday at 09:00, both still the engine's.
+      await lessons.moveBlockCard({ lessonIds: ids, dayOfWeek: 2, startTime: '09:00', endTime: '10:00' }, admin);
+      assert.deepEqual(
+        (await stateOf(ids)).map((row) => [row.dayOfWeek, row.start, row.isGenerated]),
+        [[2, '09:00', true], [2, '09:00', true]],
+      );
+
+      // Tyska alone to Wednesday: the block read off the database names the
+      // block, and Tyska is the school's from now on.
+      const split = await lessons.update(tyLesson.id, { dayOfWeek: 3 }, admin);
+      assert.deepEqual(split.warnings, [{ code: 'BLOCK_SPLIT', params: { block: `${MARKER} Språkval` } }]);
+      assert.equal((await stateOf([tyLesson.id]))[0]?.isGenerated, false);
+
+      // The two no longer stand together: a card of them is stale.
+      await assert.rejects(
+        lessons.moveBlockCard({ lessonIds: ids, dayOfWeek: 4, startTime: '09:00', endTime: '10:00' }, admin),
+        (error: unknown) => {
+          assert.ok(error instanceof ConflictException, summarise(error));
+          assert.equal((error.getResponse() as { code?: string }).code, BLOCK_CARD_STALE);
+          return true;
+        },
+      );
+
+      // Moved back beside Franska: it joins the card, the engine's again,
+      // and nothing is said.
+      const back = await lessons.update(tyLesson.id, { dayOfWeek: 2 }, admin);
+      assert.deepEqual(back.warnings, []);
+      assert.equal((await stateOf([tyLesson.id]))[0]?.isGenerated, true);
+
+      // A card that would land on Ty7's other lesson is refused whole,
+      // naming the member, and nothing moves.
+      await lessons.create(
+        { academicYearId: year.id, subjectId: other.id, studentGroupId: ty7, dayOfWeek: 4, startTime: '09:00', endTime: '10:00' },
+        admin,
+      );
+      await assert.rejects(
+        lessons.moveBlockCard({ lessonIds: ids, dayOfWeek: 4, startTime: '09:00', endTime: '10:00' }, admin),
+        (error: unknown) => {
+          assert.ok(error instanceof ConflictException, summarise(error));
+          assert.match(error.message, /Ty7: The group already has/);
+          return true;
+        },
+      );
+      assert.deepEqual((await stateOf(ids)).map((row) => row.dayOfWeek), [2, 2]);
+
+      // The whole block locked, and the lock undone for exactly what it changed.
+      const locked = await lessons.lockBlock({ blockId: block.id, isLocked: true }, admin);
+      assert.deepEqual([...locked.lessonIds].sort(), ids);
+      assert.deepEqual((await stateOf(ids)).map((row) => row.isLocked), [true, true]);
+      await lessons.lockBlock({ blockId: block.id, isLocked: false, lessonIds: locked.lessonIds }, admin);
+      assert.deepEqual((await stateOf(ids)).map((row) => row.isLocked), [false, false]);
+    } finally {
+      // The year takes its groups, posts, blocks and lessons with it.
+      await years.remove(year.id, admin);
+      await subjects.remove(language.id, admin);
+      await subjects.remove(other.id, admin);
+    }
+  });
+
   // ---- (u3) tillgodoräknad tid through the real adapter
   await check('(u3) a timplan credit round-trips under RLS, a CHECK or key reached past the DTO is a 400 naming the field, and a teacher reads but cannot write', async () => {
     const credits = new TimplanCreditsService(api);
@@ -3895,8 +4013,11 @@ async function runChecks(
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
           // lesson nudged within its own day asks nothing.
-          'PATCH a drag': 22,
-          'PATCH a drag back beside 8A': 25,
+          // +1 each since Block i schemat: a lesson that moves asks which
+          // parallel block it is in, with the other members' lessons, in one
+          // joined statement (block-lessons.ts); this school has no block.
+          'PATCH a drag': 23,
+          'PATCH a drag back beside 8A': 26,
           'place a meal': 7,
           // +1 since Tjänstens perioder (20261022120000): the year has posts,
           // so the load read asks for their periods (one indexed SELECT); a

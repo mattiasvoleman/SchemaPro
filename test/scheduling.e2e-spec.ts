@@ -238,6 +238,100 @@ describe('Scheduling surface (e2e)', () => {
     });
 
     /*
+     * Block i schemat: a parallel block's card and its lock, through the
+     * handlers. Declared before PATCH :id, whose UUID pipe would answer the
+     * word with a 400, so a request that reaches the service here proves the
+     * order; the rest is the service's (master-lessons.service.spec.ts).
+     */
+    describe('a parallel block’s card (Block i schemat)', () => {
+      const FR_LESSON = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
+      const FR_GROUP = '8b8b8b8b-8b8b-4b8b-8b8b-8b8b8b8b8b8b';
+      const BLOCK = '4c4c4c4c-4c4c-4c4c-8c4c-4c4c4c4c4c4c';
+      const member = (id: string, studentGroupId: string, name: string) => ({
+        id,
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId,
+        teacherId: null,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 1,
+        startTime: new Date('1970-01-01T10:00:00.000Z'),
+        endTime: new Date('1970-01-01T11:00:00.000Z'),
+        isLocked: false,
+        isParked: false,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        extraGroups: [],
+        participants: [],
+        subject: { name: 'Tyska' },
+        studentGroup: { name },
+        school: { id: '33333333-3333-4333-8333-333333333333', timezone: 'Europe/Stockholm', _count: { academicYears: 1 } },
+      });
+
+      it('moves the card in one statement and answers every member', async () => {
+        harness.tx['masterLesson']!['findMany']!
+          .mockResolvedValueOnce([member(LESSON_ID, GROUP_ID, 'Ty7'), member(FR_LESSON, FR_GROUP, 'Fr7')])
+          .mockResolvedValue([]);
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+          { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, blockId: BLOCK },
+          { studentGroupId: FR_GROUP, subjectId: SUBJECT_ID, blockId: BLOCK },
+        ]);
+        harness.tx['masterLesson']!['updateMany']!.mockResolvedValue({ count: 2 });
+
+        const response = await request(http())
+          .patch('/api/v1/master-lessons/block-card')
+          .set('x-test-user', admin())
+          .send({ lessonIds: [LESSON_ID, FR_LESSON], dayOfWeek: 2, startTime: '09:00', endTime: '10:00' })
+          .expect(200);
+
+        expect(response.body.lessons.map((lesson: { id: string; dayOfWeek: number }) => [lesson.id, lesson.dayOfWeek])).toEqual([
+          [LESSON_ID, 2],
+          [FR_LESSON, 2],
+        ]);
+        expect(harness.tx['masterLesson']!['updateMany']).toHaveBeenCalledTimes(1);
+      });
+
+      it('answers a card of one lesson, or of no lessons, with 400 before the service', async () => {
+        for (const lessonIds of [[LESSON_ID], ['not-a-uuid', LESSON_ID], [LESSON_ID, LESSON_ID]]) {
+          await request(http())
+            .patch('/api/v1/master-lessons/block-card')
+            .set('x-test-user', admin())
+            .send({ lessonIds, dayOfWeek: 2, startTime: '09:00', endTime: '10:00' })
+            .expect(400);
+        }
+        expect(harness.tx['masterLesson']!['updateMany']).not.toHaveBeenCalled();
+      });
+
+      it('locks the block, and is the administrator’s alone', async () => {
+        harness.tx['teachingBlock']!['findUnique']!.mockResolvedValue({
+          id: BLOCK,
+          schoolId: '33333333-3333-4333-8333-333333333333',
+          academicYearId: YEAR_ID,
+          requirements: [{ studentGroupId: GROUP_ID, subjectId: SUBJECT_ID }],
+        });
+        harness.tx['masterLesson']!['findMany']!.mockResolvedValue([member(LESSON_ID, GROUP_ID, 'Ty7')]);
+        harness.tx['masterLesson']!['updateMany']!.mockResolvedValue({ count: 1 });
+
+        const response = await request(http())
+          .patch('/api/v1/master-lessons/block-lock')
+          .set('x-test-user', admin())
+          .send({ blockId: BLOCK, isLocked: true })
+          .expect(200);
+        expect(response.body).toEqual({ blockId: BLOCK, isLocked: true, lessonIds: [LESSON_ID] });
+
+        for (const path of ['block-lock', 'block-card']) {
+          await request(http())
+            .patch(`/api/v1/master-lessons/${path}`)
+            .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+            .send({ blockId: BLOCK, isLocked: true })
+            .expect(403);
+        }
+      });
+    });
+
+    /*
      * Re-teachering a lesson under the staffing policy, through the handler:
      * WARN is a 200 whose body still carries `warnings` after serialisation,
      * REFUSE a 409 problem with the code and the params the web renders its
