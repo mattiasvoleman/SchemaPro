@@ -18,13 +18,15 @@ import type { LessonRecurrence, PrismaClient } from '@prisma/client';
  * - moving the whole card keeps every member's owner as it was: the engine can
  *   place a block's lessons together, so a card it placed stays its own and
  *   the next generation places it again with the rest of the block;
- * - moving ONE member away from the others splits the block: that lesson is
- *   the school's from then on (isGenerated false), so the next generation
- *   refuses the block as partly locked rather than tearing the school's move
- *   apart without a word, and the save says so (BLOCK_SPLIT);
- * - moving a member onto a slot where other members of its block stand joins
- *   it to that card, owner and lock and all — which is what an undo of the
- *   split, or "flytta tillbaka med blocket", is.
+ * - moving ONE member out of its card splits the block: that lesson is the
+ *   school's from then on (isGenerated false), so the next generation refuses
+ *   the block as partly locked rather than tearing the school's move apart
+ *   without a word, and the save says so (BLOCK_SPLIT);
+ * - moving a member from no card onto a slot where other members of its block
+ *   stand joins it to that card, owner and lock and all — which is what an
+ *   undo of the split, or "flytta tillbaka med blocket", is;
+ * - writing a block lesson's weeks as they stood, without moving it (the
+ *   lesson dialog sends them on every save), leaves its owner as it was.
  */
 
 /** The warning a hand edit that splits a block answers with, beside the saved lesson. */
@@ -145,24 +147,33 @@ export function sameSlot(a: BlockSlot, b: BlockSlot): boolean {
   );
 }
 
+/** What moving ONE member of a block does to its owner (blockMoveOf). */
+export type BlockMove =
+  | { kind: 'split' }
+  | { kind: 'join'; isGenerated: boolean; isLocked: boolean | null }
+  | null;
+
 /**
- * What moving ONE member of a block to `landing` does to the lesson: joins the
- * card of the members already there, taking its owner and, when they agree, its
- * lock; or, with no member there, splits it from the block and makes it the
- * school's. Null when the block's other members have no placed lesson to stand
- * beside — then there is nothing to split from, and the edit is any edit.
+ * What moving ONE member of a block from `from` (null: off the tray) to `to`
+ * does to the lesson:
+ * - it LEAVES A CARD — members of its block stood beside it at `from` — and
+ *   the block is split: the lesson is the school's from now on, wherever it
+ *   lands, and the save says so;
+ * - it comes from no card and LANDS BESIDE members of its block: it joins
+ *   their card and takes the card's owner and, when they agree, its lock —
+ *   which is what an undo of a split, or "flytta tillbaka med blocket", is;
+ * - neither: an ordinary move. A lesson already apart moving on, or the
+ *   lessons of a block made over a timetable that never placed them
+ *   together, change no owner and say nothing: there was no card to leave.
  */
-export function blockMoveOf(
-  block: LessonBlock,
-  landing: BlockSlot,
-): { joins: true; isGenerated: boolean; isLocked: boolean | null } | { joins: false } | null {
-  if (block.siblings.length === 0) return null;
-  const card = block.siblings.filter((sibling) => sameSlot(sibling, landing));
-  if (card.length === 0) return { joins: false };
+export function blockMoveOf(block: LessonBlock, from: BlockSlot | null, to: BlockSlot): BlockMove {
+  if (from !== null && block.siblings.some((sibling) => sameSlot(sibling, from))) return { kind: 'split' };
+  const card = block.siblings.filter((sibling) => sameSlot(sibling, to));
+  if (card.length === 0) return null;
   const locked = card.every((sibling) => sibling.isLocked)
     ? true
     : card.every((sibling) => !sibling.isLocked)
       ? false
       : null;
-  return { joins: true, isGenerated: card.every((sibling) => sibling.isGenerated), isLocked: locked };
+  return { kind: 'join', isGenerated: card.every((sibling) => sibling.isGenerated), isLocked: locked };
 }

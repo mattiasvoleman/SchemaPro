@@ -319,7 +319,7 @@ describe('Scheduling surface (e2e)', () => {
           .set('x-test-user', admin())
           .send({ blockId: BLOCK, isLocked: true })
           .expect(200);
-        expect(response.body).toEqual({ blockId: BLOCK, isLocked: true, lessonIds: [LESSON_ID] });
+        expect(response.body).toEqual({ blockId: BLOCK, isLocked: true, lessonIds: [LESSON_ID], parked: 0 });
 
         for (const path of ['block-lock', 'block-card']) {
           await request(http())
