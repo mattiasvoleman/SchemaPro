@@ -192,9 +192,18 @@ export class SchoolUnitsService {
     }
   }
 
+  /**
+   * The school's lock first, as every other unit writer takes it: a DELETE
+   * locks its row before the BEFORE trigger takes the school's lock, so
+   * without this a delete beside an update or a sync apply (lock, then rows)
+   * takes the two in the other order and the two deadlock.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     const schoolId = requireSchoolId(user);
-    const { count } = await this.prisma.withRls(user, (tx) => tx.schoolUnit.deleteMany({ where: { id, schoolId } }));
+    const { count } = await this.prisma.withRls(user, async (tx) => {
+      await lockSchoolUnits(tx, schoolId);
+      return tx.schoolUnit.deleteMany({ where: { id, schoolId } });
+    });
     if (count === 0) throw new NotFoundException('The requested record does not exist.');
   }
 
