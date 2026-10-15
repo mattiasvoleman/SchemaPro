@@ -1326,7 +1326,25 @@
     "versionDelete": "Delete the version",
     "versionDeleteNamed": "Delete “{name}”",
     "versionsLoadFailed": "The versions could not be loaded",
-    "versionsLoadFailedHint": "No version has been saved, restored or deleted, and the master timetable is untouched. Close Versions and open it again."
+    "versionsLoadFailedHint": "No version has been saved, restored or deleted, and the master timetable is untouched. Close Versions and open it again.",
+    "blocks": {
+      "split": "Split",
+      "apart": "{name} · split",
+      "cardBody": "{day} {start}–{end}. The block's lessons are placed at the same times: move the card on the timetable and they all go with it.",
+      "editMember": "Edit",
+      "editMemberNamed": "Edit {lesson}",
+      "splitNote": "The block is split: one of its lessons does not stand here. Move it back with the block, or lock all of the block's lessons, before you generate again.",
+      "lockHint": "Lock block locks every lesson of the block, not only these, because the generation refuses a block that is partly locked.",
+      "lock": "Lock block",
+      "unlock": "Unlock block",
+      "locked": "{count, plural, =0 {The block {name} was already locked.} one {The block {name} is locked: # lesson was locked.} other {The block {name} is locked: # lessons were locked.}}",
+      "unlocked": "{count, plural, =0 {The block {name} was already unlocked.} one {The block {name} is unlocked: # lesson was unlocked.} other {The block {name} is unlocked: # lessons were unlocked.}}",
+      "splitTitle": "Split the block {name}?",
+      "splitBody": "{lesson} stands at the same times as {others}. If you move only this lesson the block is split: it counts as placed by hand, and the next generation reports the block as partly locked.",
+      "moveOne": "Move only this one",
+      "moveBlock": "Move the whole block",
+      "moveBack": "Move back with the block"
+    }
   },
   "roomOptimization": {
     "title": "Optimise rooms",

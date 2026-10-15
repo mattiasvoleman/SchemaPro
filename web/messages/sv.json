@@ -1326,7 +1326,25 @@
     "versionDelete": "Ta bort versionen",
     "versionDeleteNamed": "Ta bort ”{name}”",
     "versionsLoadFailed": "Versionerna kunde inte hämtas",
-    "versionsLoadFailedHint": "Ingen version har sparats, återställts eller tagits bort, och grundschemat är orört. Stäng Versioner och öppna igen."
+    "versionsLoadFailedHint": "Ingen version har sparats, återställts eller tagits bort, och grundschemat är orört. Stäng Versioner och öppna igen.",
+    "blocks": {
+      "split": "Delat",
+      "apart": "{name} · delat",
+      "cardBody": "{day} {start}–{end}. Blockets lektioner läggs på samma tider: flyttar du kortet i schemat följer alla med.",
+      "editMember": "Ändra",
+      "editMemberNamed": "Ändra {lesson}",
+      "splitNote": "Blocket är delat: någon av dess lektioner står inte här. Flytta tillbaka den med blocket, eller lås alla blockets lektioner, innan du genererar igen.",
+      "lockHint": "Lås blocket låser alla blockets lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst.",
+      "lock": "Lås blocket",
+      "unlock": "Lås upp blocket",
+      "locked": "{count, plural, =0 {Blocket {name} var redan låst.} one {Blocket {name} är låst: # lektion låstes.} other {Blocket {name} är låst: # lektioner låstes.}}",
+      "unlocked": "{count, plural, =0 {Blocket {name} var redan upplåst.} one {Blocket {name} är upplåst: # lektion låstes upp.} other {Blocket {name} är upplåst: # lektioner låstes upp.}}",
+      "splitTitle": "Dela blocket {name}?",
+      "splitBody": "{lesson} ligger på samma tider som {others}. Flyttar du bara den här lektionen delas blocket: den räknas som lagd för hand, och nästa generering säger att blocket är delvis låst.",
+      "moveOne": "Flytta bara den här",
+      "moveBlock": "Flytta hela blocket",
+      "moveBack": "Flytta tillbaka med blocket"
+    }
   },
   "roomOptimization": {
     "title": "Optimera salar",

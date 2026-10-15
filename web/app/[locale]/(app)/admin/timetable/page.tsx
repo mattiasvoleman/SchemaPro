@@ -183,6 +183,7 @@ import {
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import type { BlockKit } from "@/components/schedule/block-cards";
 import {
   TimetableGrid,
   type LessonChange,
@@ -309,6 +310,18 @@ export default function TimetablePage() {
   );
   const { data: constraints } = useConstraints();
   const { data: requirements } = useRequirements(shownYear?.id ?? null);
+  /*
+   * Block i schemat: a parallel block drawn as one card per slot, moved and
+   * locked as one (components/schedule/block-cards.tsx). Fetched once the
+   * year's timplan names a block and never otherwise — this route is near its
+   * budget — and the kit its host hands back answers for the cards below.
+   */
+  const [blockModule, setBlockModule] = useState<typeof import("@/components/schedule/block-cards") | null>(null);
+  const [blockKit, setBlockKit] = useState<BlockKit | null>(null);
+  const hasBlocks = requirements?.some((row) => row.blockId) ?? false;
+  useEffect(() => {
+    if (hasBlocks && !blockModule) void import("@/components/schedule/block-cards").then(setBlockModule, () => {});
+  }, [hasBlocks, blockModule]);
   /**
    * What an edit actually did, including the part that is not reversible by
    * editing back.
@@ -747,7 +760,7 @@ export default function TimetablePage() {
   );
 
   const validateChange = useCallback(
-    (id: string, change: LessonChange): boolean => {
+    (id: string, change: LessonChange, without?: ReadonlySet<string>): boolean => {
       const lesson = lessonById.get(id);
       if (!lesson) return false;
       return (
@@ -770,7 +783,8 @@ export default function TimetablePage() {
             // has visibly happened.
             ...pupilBufferOf(pupilBuffers, lesson),
           },
-          placements,
+          // A block card's lessons move together: none is in another's way.
+          without ? placements.filter((placement) => !without.has(placement.id ?? "")) : placements,
           constraints ?? [],
           studentGroupOf,
           groupConflictMap,
@@ -1046,8 +1060,13 @@ export default function TimetablePage() {
   );
 
   const gridLessons: TimetableLesson[] = useMemo(
-    () => filtered.map(toGridLesson),
-    [filtered, toGridLesson],
+    () => (blockKit ? blockKit.grid(filtered, toGridLesson) : filtered.map(toGridLesson)),
+    [filtered, toGridLesson, blockKit],
+  );
+  const validateGridChange = useCallback(
+    (id: string, change: LessonChange) =>
+      blockKit ? blockKit.validate(id, change, validateChange) : validateChange(id, change),
+    [blockKit, validateChange],
   );
 
   /** The tray: lessons set aside, in the order they were lifted. */
@@ -1272,16 +1291,16 @@ export default function TimetablePage() {
         // arrival, which restores the snapshot, parks it again.
         ...(lesson.isParked ? { isParked: false } : {}),
       })
-        .then((result) =>
-          announceSaved(result),
-        )
+        .then((result) => blockKit?.announce(lesson, result) || announceSaved(result))
         .catch(showError);
     },
-    [undoableUpdate, showError, t],
+    [undoableUpdate, showError, t, blockKit],
   );
 
   const handleGridChange = useCallback(
     (id: string, change: LessonChange) => {
+      // A block card, or a member moved out of one, is the block's to move.
+      if (blockKit?.move(id, change)) return;
       const lesson = lessonById.get(id);
       if (!lesson) return;
       // Asked of the LESSON, not of the filter: which class you are looking at
@@ -1293,7 +1312,7 @@ export default function TimetablePage() {
       }
       applyGridChange(lesson, change);
     },
-    [lessonById, homeClassIds, rosterIndex, applyGridChange],
+    [lessonById, homeClassIds, rosterIndex, applyGridChange, blockKit],
   );
 
   /**
@@ -1456,9 +1475,10 @@ export default function TimetablePage() {
   const selectedLessons = useMemo(
     () =>
       [...selectedIds]
+        .flatMap((id) => blockKit?.lessonIdsOf(id) ?? [id])
         .map((id) => lessonById.get(id))
         .filter((lesson): lesson is MasterLesson => Boolean(lesson)),
-    [selectedIds, lessonById],
+    [selectedIds, lessonById, blockKit],
   );
 
   const bulkSetLock = async (isLocked: boolean) => {
@@ -1681,6 +1701,7 @@ export default function TimetablePage() {
   };
 
   const openEditor = (lessonId: string) => {
+    if (blockKit?.open(lessonId)) return;
     const lesson = lessonById.get(lessonId);
     if (!lesson) return;
     const remoteEditor = remoteEditors.get(lessonId);
@@ -1718,7 +1739,7 @@ export default function TimetablePage() {
         startDate: editDraft.startDate === "" ? null : editDraft.startDate,
         endDate: editDraft.endDate === "" ? null : editDraft.endDate,
       });
-      announceSaved(result);
+      if (!blockKit?.announce(editing, result)) announceSaved(result);
       setEditing(null);
       setRemoteEditing(null);
     } catch (error) {
@@ -2366,7 +2387,7 @@ export default function TimetablePage() {
                 editable
                 onLessonClick={(lesson) => openEditor(lesson.id)}
                 onLessonChange={handleGridChange}
-                validateChange={validateChange}
+                validateChange={validateGridChange}
                 onInvalidDrop={handleInvalidDrop}
                 onDropOutside={handleDropOutside}
                 selectedIds={selectedIds}
@@ -2388,7 +2409,7 @@ export default function TimetablePage() {
           editable
           onLessonClick={(lesson) => openEditor(lesson.id)}
           onLessonChange={handleGridChange}
-          validateChange={validateChange}
+          validateChange={validateGridChange}
           onInvalidDrop={handleInvalidDrop}
           onDropOutside={handleDropOutside}
           selectedIds={selectedIds}
@@ -2475,6 +2496,23 @@ export default function TimetablePage() {
         after the page mounts (see loadLessonDialogs), and a fetch that fails
         is caught here and reported (see lessonDialogsFailed).
       */}
+      {blockModule && shownYear && lessons && requirements ? (
+        <blockModule.BlockHost
+          academicYearId={shownYear.id}
+          lessons={lessons}
+          requirements={requirements}
+          onKit={setBlockKit}
+          actions={{
+            update: undoableUpdate,
+            history,
+            showError,
+            announce: announceSaved,
+            title: editSavedMessage,
+            name: lessonName,
+            openEditor,
+          }}
+        />
+      ) : null}
       <DialogLoadBoundary key={`lessons-${dialogsAttempt}`} onError={lessonDialogsFailed}>
         {confirmUsed && (
           <Suspense fallback={null}>
