@@ -22,5 +22,8 @@
         - listitem:
           - link "Ledighet":
             - /url: /sv/teacher/ledighet
+        - listitem:
+          - link "Kalenderprenumeration":
+            - /url: /sv/calendar-feed
     - link "Tillgänglighetsredogörelse":
       - /url: /sv/tillganglighet

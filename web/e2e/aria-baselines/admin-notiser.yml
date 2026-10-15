@@ -67,6 +67,9 @@
       - listitem:
         - link "Publicering":
           - /url: /sv/admin/publishing
+      - listitem:
+        - link "Kalenderprenumeration":
+          - /url: /sv/admin/calendar-feeds
     - text: Drift
     - list "Drift":
       - listitem:

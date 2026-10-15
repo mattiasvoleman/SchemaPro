@@ -94,6 +94,8 @@ const AREAS: Array<[prefix: string, personas: Persona[]]> = [
   ["/student", ["student"]],
   ["/guardian", ["guardian"]],
   ["/notifications", ALL],
+  // Kalenderprenumeration: everybody's own, as Notiser is.
+  ["/calendar-feed", ALL],
 ];
 
 const personasFor = (page: string): Persona[] =>
