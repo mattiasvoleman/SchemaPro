@@ -22,6 +22,8 @@ const DOC = {
   days: [{ date: '2026-10-12', lessons: [{ start: '08:00', end: '09:00', subject: 'Matematik', groups: ['7A'], room: 'A101', teachers: [], cancelled: false }], meals: [] }],
 };
 
+const ORIGINS = ['https://skolan.example', 'https://www.skolan.example:8443'];
+
 describe('the public viewer (e2e)', () => {
   let harness: TestHarness;
   const http = () => harness.app.getHttpServer();
@@ -29,9 +31,13 @@ describe('the public viewer (e2e)', () => {
   beforeEach(async () => {
     // A fresh app per test: the viewer's counters live in its guard.
     harness = await createTestApp();
-    harness.tx.$queryRaw.mockImplementation(async (statement: { values: unknown[] }) =>
-      statement.values[0] === tokenHashOf(TOKEN) ? [{ doc: DOC }] : [{ doc: null }],
-    );
+    harness.tx.$queryRaw.mockImplementation(async (statement: { strings: string[]; values: unknown[] }) => {
+      const known = statement.values[0] === tokenHashOf(TOKEN);
+      if (statement.strings.join('?').includes('app.public_timetable_embed(')) {
+        return [{ origins: known ? ORIGINS : null }];
+      }
+      return known ? [{ doc: DOC }] : [{ doc: null }];
+    });
     // Listen once: an unlistened server makes supertest open and close an
     // ephemeral port per request, and across the 600 requests below a pooled
     // keep-alive socket can meet a closed one ("socket hang up", or a hang).
@@ -80,6 +86,35 @@ describe('the public viewer (e2e)', () => {
       expect(answer.headers['x-robots-tag']).toBe('noindex, nofollow');
     }
     expect(harness.tx.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers the websites a link may be framed by, kept a minute by the web server alone, with the viewer\'s headers', async () => {
+    const response = await request(http()).get(`/public/v1/timetables/${TOKEN}/embed`).expect(200);
+    expect(response.body).toEqual({ frameAncestors: ORIGINS });
+    expect(response.headers['cache-control']).toBe('private, max-age=60');
+    expect(response.headers['x-robots-tag']).toBe('noindex, nofollow');
+    expect(response.headers['referrer-policy']).toBe('no-referrer');
+    expect(response.headers['set-cookie']).toBeUndefined();
+    // The embed door, with the token's hash and nothing else.
+    expect(harness.tx.$queryRaw.mock.calls[0]![0].values).toEqual([tokenHashOf(TOKEN)]);
+    expect(harness.tx.$queryRaw.mock.calls[0]![0].strings.join('?')).toContain('app.public_timetable_embed(');
+    const again = await request(http())
+      .get(`/public/v1/timetables/${TOKEN}/embed`)
+      .set('If-None-Match', response.headers['etag'] as string)
+      .expect(304);
+    expect(again.text).toBe('');
+  });
+
+  it('answers the viewer\'s one 404 for a link that may not be embedded, is unknown or is malformed', async () => {
+    const viewer404 = await request(http()).get(`/public/v1/timetables/${OTHER}`).expect(404);
+    for (const path of [`/public/v1/timetables/${OTHER}/embed`, '/public/v1/timetables/short/embed']) {
+      const answer = await request(http()).get(path).expect(404);
+      expect(answer.body).toEqual(viewer404.body);
+      expect(answer.headers['cache-control']).toBe('no-store');
+      expect(answer.headers['x-robots-tag']).toBe('noindex, nofollow');
+    }
+    // The malformed token is never asked about.
+    expect(harness.tx.$queryRaw).toHaveBeenCalledTimes(2);
   });
 
   it('passes the target and the date on, as the function takes them', async () => {

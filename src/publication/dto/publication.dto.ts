@@ -1,6 +1,21 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { GATE_POLICY_KEYS } from '../publication-gates';
+import { EMBED_ORIGIN_PATTERN, MAX_EMBED_ORIGINS, normalizeEmbedOrigins } from '../embed-origins';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const lower = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.toLowerCase() : value);
@@ -80,6 +95,22 @@ export class UpsertPublicationSettingsDto {
   @IsOptional() @IsIn(['NONE', 'SIGNATURE', 'NAME']) publicTeacherDisplay?: 'NONE' | 'SIGNATURE' | 'NAME';
   @IsOptional() @IsBoolean() publicShowMeals?: boolean;
   @IsOptional() @IsInt() @Min(3) @Max(30) publicMinGroupSize?: number;
+
+  // Embedding (20261102090000). Off by default; origins are frame-ancestors
+  // sources, written lowercase without a path, at most ten.
+  @IsOptional() @IsBoolean() publicEmbedGroups?: boolean;
+  @IsOptional() @IsBoolean() publicEmbedTeachers?: boolean;
+  @IsOptional() @IsBoolean() publicEmbedRooms?: boolean;
+  @IsOptional()
+  @Transform(({ value }) => normalizeEmbedOrigins(value))
+  @IsArray({ message: 'publicEmbedOrigins: en lista med webbplatser.' })
+  @ArrayMaxSize(MAX_EMBED_ORIGINS, { message: `publicEmbedOrigins: högst ${MAX_EMBED_ORIGINS} webbplatser.` })
+  @IsString({ each: true })
+  @Matches(EMBED_ORIGIN_PATTERN, {
+    each: true,
+    message: 'publicEmbedOrigins: varje webbplats anges som https://namn.se, utan sökväg.',
+  })
+  publicEmbedOrigins?: string[];
 }
 
 /** Compile-time: the DTO names exactly the policy's columns. */

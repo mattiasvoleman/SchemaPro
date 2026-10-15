@@ -12,6 +12,8 @@ import { PublicLinksController } from './public-links.controller';
 import { PublicLinksService } from './public-links.service';
 import { PublicTimetableController } from './public-timetable.controller';
 import { PublicViewerThrottlerGuard } from './public-viewer-throttler.guard';
+import { PrintController } from './print.controller';
+import { PrintTimetablesService } from './print-timetables.service';
 
 /**
  * Publicering: validity-dated publications, the school's gate policy and the
@@ -30,8 +32,16 @@ import { PublicViewerThrottlerGuard } from './public-viewer-throttler.guard';
     CancellationBatchesController,
     PublicLinksController,
     PublicTimetableController,
+    PrintController,
   ],
-  providers: [PublicationsService, DraftService, CancellationBatchesService, PublicLinksService, PublicViewerThrottlerGuard],
+  providers: [
+    PublicationsService,
+    DraftService,
+    CancellationBatchesService,
+    PublicLinksService,
+    PublicViewerThrottlerGuard,
+    PrintTimetablesService,
+  ],
   exports: [PublicationsService],
 })
 export class PublicationModule {}
