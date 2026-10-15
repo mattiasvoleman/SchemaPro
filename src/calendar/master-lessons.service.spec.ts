@@ -112,6 +112,9 @@ function matches(row: Row, where: Row = {}): boolean {
           return (operand as unknown[]).some((candidate) => same(value, candidate));
         }
         if (operator === 'not') return !same(value, operand);
+        if (operator === 'notIn') {
+          return !(operand as unknown[]).some((candidate) => same(value, candidate));
+        }
         return matches(value, { [operator]: operand });
       });
     }
@@ -2855,6 +2858,338 @@ describe('MasterLessonsService', () => {
       expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(
         SCHOOL_ID,
       );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Block i schemat: a parallel block's card, and a member moved alone
+  // -------------------------------------------------------------------
+
+  describe('Block i schemat', () => {
+    const BLOCK_ID = '12121212-1212-4212-8212-121212121212';
+    const FR_LESSON = '13131313-1313-4313-8313-131313131313';
+    const FR_GROUP = '14141414-1414-4414-8414-141414141414';
+    const FR_SUBJECT = '15151515-1515-4515-8515-151515151515';
+    const FR_TEACHER = '16161616-1616-4616-8616-161616161616';
+    const FR_ROOM = '17171717-1717-4717-8717-171717171717';
+
+    /** block-lessons.ts' read: told apart from the other raw statements by its alias. */
+    const isBlockRead = (first: unknown): boolean =>
+      Array.isArray(first) && first.join('?').includes('FROM "TeachingRequirements" own');
+    /** Franska för Fr7, the other member of Språkval åk 7, on Monday 10:00–11:00. */
+    const franska = (overrides: Record<string, unknown> = {}) => ({
+      blockId: BLOCK_ID,
+      name: 'Språkval åk 7',
+      id: FR_LESSON,
+      studentGroupId: FR_GROUP,
+      subjectId: FR_SUBJECT,
+      dayOfWeek: 1,
+      startTime: '10:00',
+      endTime: '11:00',
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      isGenerated: true,
+      isLocked: false,
+      ...overrides,
+    });
+    const arrangeBlock = (rows: Row[]) => {
+      const raw = jest.fn((strings: unknown) => Promise.resolve(isBlockRead(strings) ? rows : []));
+      Object.assign(tx, { $queryRaw: raw });
+      return raw;
+    };
+    const blockReads = (raw: jest.Mock) => raw.mock.calls.filter(([strings]) => isBlockRead(strings)).length;
+
+    describe('a member moved by hand (update)', () => {
+      const arrangeStored = (overrides: Record<string, unknown> = {}) => {
+        tx.masterLesson.findUnique.mockImplementation(
+          answerUnique([
+            {
+              ...lessonRecord(overrides),
+              school: { id: SCHOOL_ID, timezone: 'Europe/Stockholm', _count: { academicYears: 1 } },
+            },
+          ]),
+        );
+        tx.masterLesson.update.mockResolvedValue(lessonRecord());
+      };
+      const written = () => (tx.masterLesson.update.mock.calls[0]![0] as { data: Row }).data;
+
+      it('splits the block when it leaves the others: the lesson is the school’s, and the save says so', async () => {
+        arrangeStored();
+        arrangeBlock([franska()]);
+
+        const result = await service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+
+        expect(written()).toMatchObject({ dayOfWeek: 2, isGenerated: false });
+        expect(written()).not.toHaveProperty('isLocked');
+        expect(result.warnings).toContainEqual({ code: 'BLOCK_SPLIT', params: { block: 'Språkval åk 7' } });
+      });
+
+      it('splits it again when a member already apart moves on: still apart, still the school’s', async () => {
+        arrangeStored({ dayOfWeek: 3 });
+        arrangeBlock([franska()]);
+
+        const result = await service.update(LESSON_ID, { dayOfWeek: 4 }, testUser());
+
+        expect(written()).toMatchObject({ isGenerated: false });
+        expect(result.warnings.map((warning) => warning.code)).toEqual(['BLOCK_SPLIT']);
+      });
+
+      it('joins the card it lands on, taking the card’s owner and lock, and says nothing', async () => {
+        arrangeStored({ dayOfWeek: 2 });
+        arrangeBlock([franska({ isLocked: true })]);
+
+        const result = await service.update(LESSON_ID, { dayOfWeek: 1 }, testUser());
+
+        expect(written()).toMatchObject({ dayOfWeek: 1, isGenerated: true, isLocked: true });
+        expect(result.warnings).toEqual([]);
+      });
+
+      it('lets an undo’s weeks and lock stand when it puts the member back beside its card', async () => {
+        // The undo of a split sends the whole snapshot: the window, which
+        // alone would make the lesson the school's, and the lock it had.
+        arrangeStored({ dayOfWeek: 2 });
+        arrangeBlock([franska({ isLocked: true })]);
+
+        await service.update(
+          LESSON_ID,
+          { dayOfWeek: 1, startTime: '10:00', endTime: '11:00', recurrence: 'ALL_WEEKS', startDate: null, endDate: null, isLocked: false },
+          testUser(),
+        );
+
+        expect(written()).toMatchObject({ isGenerated: true, isLocked: false });
+      });
+
+      it('joins only in the card’s weeks: the same clock on odd weeks is apart', async () => {
+        arrangeStored({ dayOfWeek: 2 });
+        arrangeBlock([franska({ recurrence: 'ODD_WEEKS' })]);
+
+        const result = await service.update(LESSON_ID, { dayOfWeek: 1 }, testUser());
+
+        expect(written()).toMatchObject({ isGenerated: false });
+        expect(result.warnings.map((warning) => warning.code)).toEqual(['BLOCK_SPLIT']);
+      });
+
+      it('puts a member back from the tray beside its card as the card’s', async () => {
+        arrangeStored({ isParked: true });
+        arrangeBlock([franska()]);
+
+        await service.update(LESSON_ID, { isParked: false }, testUser());
+
+        expect(written()).toMatchObject({ isParked: false, isGenerated: true });
+      });
+
+      it('asks nothing of an edit that moves no lesson, or sets one aside', async () => {
+        arrangeStored();
+        const raw = arrangeBlock([franska()]);
+
+        await service.update(LESSON_ID, { roomId: FR_ROOM }, testUser());
+        await service.update(LESSON_ID, { isParked: true, dayOfWeek: 2 }, testUser());
+
+        expect(blockReads(raw)).toBe(0);
+        for (const [call] of tx.masterLesson.update.mock.calls as Array<[{ data: Row }]>) {
+          expect(call.data).not.toHaveProperty('isGenerated');
+        }
+      });
+
+      it('leaves a lesson in no block, or alone in its block, as any lesson', async () => {
+        arrangeStored();
+        const raw = arrangeBlock([]);
+        const alone = await service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+        // A block whose other members have no placed lesson: one row of nulls.
+        arrangeBlock([{ blockId: BLOCK_ID, name: 'Språkval åk 7', ...Object.fromEntries(
+          ['id', 'studentGroupId', 'subjectId', 'dayOfWeek', 'startTime', 'endTime', 'recurrence', 'startDate', 'endDate', 'isGenerated', 'isLocked'].map((key) => [key, null]),
+        ) }]);
+        const lone = await service.update(LESSON_ID, { dayOfWeek: 2 }, testUser());
+
+        expect(blockReads(raw)).toBe(1);
+        for (const [call] of tx.masterLesson.update.mock.calls as Array<[{ data: Row }]>) {
+          expect(call.data).not.toHaveProperty('isGenerated');
+        }
+        expect([...alone.warnings, ...lone.warnings]).toEqual([]);
+      });
+    });
+
+    describe('moveBlockCard', () => {
+      /** Tyska för Ty7 and Franska för Fr7, one card on Monday 10:00–11:00. */
+      const tyska = (overrides: Record<string, unknown> = {}) => ({
+        ...lessonRecord(),
+        subject: { name: 'Tyska' },
+        studentGroup: { name: 'Ty7' },
+        school: { id: SCHOOL_ID, timezone: 'Europe/Stockholm', _count: { academicYears: 1 } },
+        ...overrides,
+      });
+      const franskaLesson = (overrides: Record<string, unknown> = {}) =>
+        tyska({
+          id: FR_LESSON,
+          studentGroupId: FR_GROUP,
+          subjectId: FR_SUBJECT,
+          teacherId: FR_TEACHER,
+          roomId: FR_ROOM,
+          subject: { name: 'Franska' },
+          studentGroup: { name: 'Fr7' },
+          ...overrides,
+        });
+      const posts = [
+        { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, blockId: BLOCK_ID },
+        { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT, blockId: BLOCK_ID },
+      ];
+      /** The card's lessons for the read by id, `day` for the clash scan. */
+      const arrangeCard = (card: Row[], day: Row[] = [], blockPosts: Row[] = posts) => {
+        tx.masterLesson.findMany.mockImplementation((query: Query = {}) =>
+          query.where && 'id' in query.where && (query.where.id as Row).in
+            ? answerRows(card)(query)
+            : answerRows(day)(query),
+        );
+        tx.teachingRequirement.findMany.mockImplementation((query: Query = {}) =>
+          Promise.resolve(query.select && 'blockId' in query.select ? blockPosts : []),
+        );
+        tx.masterLesson.updateMany.mockResolvedValue({ count: card.length });
+      };
+      const move = (dto: Record<string, unknown> = {}) =>
+        service.moveBlockCard(
+          { lessonIds: [LESSON_ID, FR_LESSON], dayOfWeek: 2, startTime: '09:00', endTime: '10:00', ...dto } as never,
+          testUser(),
+        );
+
+      it('moves every member in one statement held to the slot it was read in, and leaves the owner be', async () => {
+        arrangeCard([tyska(), franskaLesson()]);
+
+        const result = await move();
+
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: { in: [LESSON_ID, FR_LESSON] },
+            dayOfWeek: 1,
+            startTime: t('10:00'),
+            endTime: t('11:00'),
+            isParked: false,
+          },
+          data: { dayOfWeek: 2, startTime: t('09:00'), endTime: t('10:00') },
+        });
+        expect(result.lessons.map((lesson) => [lesson.id, lesson.dayOfWeek, lesson.startTime])).toEqual([
+          [LESSON_ID, 2, '09:00'],
+          [FR_LESSON, 2, '09:00'],
+        ]);
+        expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(2);
+        expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledTimes(1);
+      });
+
+      it('holds the card against the rest of the day with its own lessons left out of where they stood', async () => {
+        // Franska's teacher already teaches matematik on Tuesday at 09:00; the
+        // card's own lessons, still on Monday, are not in the way.
+        arrangeCard(
+          [tyska(), franskaLesson()],
+          [
+            franskaLesson({ dayOfWeek: 2, startTime: t('09:00'), endTime: t('10:00') }),
+            otherLesson({ teacherId: FR_TEACHER, startTime: t('09:00'), endTime: t('10:00') }),
+          ],
+        );
+
+        await expect(move()).rejects.toThrow('Franska för Fr7: Teacher already teaches Math in this slot.');
+        const scan = (tx.masterLesson.findMany.mock.calls as Array<[Query]>).find(
+          ([query]) => query.where && 'dayOfWeek' in query.where,
+        )![0];
+        expect(scan.where!.id).toEqual({ notIn: [LESSON_ID, FR_LESSON] });
+        expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('holds the members against each other at the new slot, naming the clash once', async () => {
+        arrangeCard([tyska(), franskaLesson({ roomId: ROOM_ID })]);
+
+        const refusal = await move().catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).message).toBe(
+          'Tyska för Ty7: Room is already booked for Franska in this slot.',
+        );
+      });
+
+      it('refuses lessons that are not one block’s card', async () => {
+        arrangeCard([tyska(), franskaLesson()], [], [posts[0]!, { ...posts[1]!, blockId: null }]);
+        await expect(move()).rejects.toMatchObject({ response: { code: 'NOT_A_BLOCK_CARD' } });
+
+        arrangeCard([tyska(), franskaLesson()], [], [posts[0]!, { ...posts[1]!, blockId: '18181818-1818-4818-8818-181818181818' }]);
+        await expect(move()).rejects.toMatchObject({ response: { code: 'NOT_A_BLOCK_CARD' } });
+
+        // Two lessons of one member are not two members.
+        arrangeCard([tyska(), tyska({ id: FR_LESSON })]);
+        await expect(move()).rejects.toMatchObject({ response: { code: 'NOT_A_BLOCK_CARD' } });
+        expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a card whose lessons no longer stand together, before and at the write', async () => {
+        arrangeCard([tyska(), franskaLesson({ startTime: t('10:05'), endTime: t('11:05') })]);
+        await expect(move()).rejects.toMatchObject({ response: { code: 'BLOCK_CARD_STALE' } });
+
+        arrangeCard([tyska(), franskaLesson({ isParked: true })]);
+        await expect(move()).rejects.toMatchObject({ response: { code: 'BLOCK_CARD_STALE' } });
+
+        // Moved by someone else between the read and the write.
+        arrangeCard([tyska(), franskaLesson()]);
+        tx.masterLesson.updateMany.mockResolvedValue({ count: 1 });
+        await expect(move()).rejects.toMatchObject({ response: { code: 'BLOCK_CARD_STALE' } });
+        expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('lockBlock', () => {
+      const lessons = [
+        lessonRecord(),
+        lessonRecord({ id: FR_LESSON, studentGroupId: FR_GROUP, subjectId: FR_SUBJECT, isLocked: true }),
+        lessonRecord({ id: OTHER_LESSON_ID, dayOfWeek: 3 }),
+      ];
+      const arrangeLock = () => {
+        tx.teachingBlock.findUnique.mockResolvedValue({
+          id: BLOCK_ID,
+          schoolId: SCHOOL_ID,
+          academicYearId: YEAR_ID,
+          requirements: [
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+            { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT },
+          ],
+        });
+        tx.masterLesson.findMany.mockImplementation(answerRows(lessons));
+      };
+
+      it('locks every lesson of the block not already locked, in one statement, and answers those', async () => {
+        arrangeLock();
+
+        const result = await service.lockBlock({ blockId: BLOCK_ID, isLocked: true }, testUser());
+
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [LESSON_ID, OTHER_LESSON_ID] } },
+          data: { isLocked: true },
+        });
+        expect(result).toEqual({ blockId: BLOCK_ID, isLocked: true, lessonIds: [LESSON_ID, OTHER_LESSON_ID] });
+        expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(2);
+      });
+
+      it('unlocks only the lessons an undo names, and refuses one that is not the block’s', async () => {
+        arrangeLock();
+
+        const result = await service.lockBlock(
+          { blockId: BLOCK_ID, isLocked: false, lessonIds: [FR_LESSON] },
+          testUser(),
+        );
+        expect(result.lessonIds).toEqual([FR_LESSON]);
+
+        await expect(
+          service.lockBlock({ blockId: BLOCK_ID, isLocked: true, lessonIds: [CAL_LESSON_ID] }, testUser()),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('writes nothing when every lesson is already as asked, and answers 404 for no block', async () => {
+        arrangeLock();
+        await service.lockBlock({ blockId: BLOCK_ID, isLocked: false, lessonIds: [LESSON_ID] }, testUser());
+        expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+
+        tx.teachingBlock.findUnique.mockResolvedValue(null);
+        await expect(service.lockBlock({ blockId: BLOCK_ID, isLocked: true }, testUser())).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
     });
   });
 });

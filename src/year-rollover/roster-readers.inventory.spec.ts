@@ -369,7 +369,10 @@ describe('the roster-reader inventory', () => {
     it('is exactly the routes that answer R6’s 409 (the decision, written out)', () => {
       // Some answer it only when they compute a basis: a timplanspost or an
       // import when the staffing checks run, a vikarie when behörighet is
-      // asked. A parallel block's lessons (TeachingBlocksController.update)
+      // asked. A parallel block's card moved on the timetable
+      // (MasterLessonsController.moveBlockCard) holds every member against the
+      // week's pupils as a single lesson's drag does, so it answers it where
+      // the drag would. A parallel block's lessons (TeachingBlocksController.update)
       // are judged member by member as a timplanspost's are, so a lesson edit
       // of a block answers it where the post's own PATCH would. StaffingLoadController.unstaffed reads the load input like
       // the report it is opened from, and .delivered (staffing Fas 3) reads
@@ -403,6 +406,7 @@ describe('the roster-reader inventory', () => {
         'ImportController.importRequirements',
         'LunchSittingsController.place',
         'MasterLessonsController.create',
+        'MasterLessonsController.moveBlockCard',
         'MasterLessonsController.update',
         'OptimizationController.applyRooms',
         'OptimizationController.applyStaffing',

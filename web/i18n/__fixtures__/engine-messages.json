@@ -8,6 +8,7 @@
   "BLOCK_PARTLY_LOCKED": "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand while the rest of it is still to be placed. Unlock the block's lessons, or lock all of them.",
   "BLOCK_PARTLY_LOCKED_SUMMARY": "{count, plural, one {# block has} other {# blocks have}} lessons locked or placed by hand while the rest of the block is still to be placed, and a block's lessons are placed together.",
   "BLOCK_PROBE_SUMMARY": "No timetable satisfies every rule, and the solver could not name which of them collide. With the blocks dropped a timetable was found in {seconds} s, so it is the blocks listed below that cannot all have their lessons at the same times.",
+  "BLOCK_SPLIT": "{block} is split: this lesson no longer stands at the same times as the rest of the block. It now counts as placed by hand, so the next generation will refuse the block as partly locked. Move it back with the block, or lock all of the block's lessons.",
   "CONFLICT_CORE_SUMMARY": "No timetable satisfies every rule. Start with the causes listed below: together they are enough to make the week impossible, but the solver reports a sufficient set rather than the smallest one, so some of them may carry no blame.",
   "CONFLICT_NO_CORE": "No timetable satisfies every rule, and the solver could not name which of them collide.",
   "CONFLICT_NO_CORE_GUESS": "Total teaching demand likely exceeds available room or teacher time. Review lessons per week, unavailable windows, and room capacity.",

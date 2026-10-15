@@ -18,6 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { parseTimeString } from '../common/utils/time';
 import type { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import type { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
+import type { LockBlockDto, MoveBlockCardDto } from './dto/block-card.dto';
 import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
 import {
   settleFindings,
@@ -41,6 +42,7 @@ import {
   type DistributionWarning,
 } from '../common/subject-distribution';
 import { requirementName } from '../optimization/optimization-proxy.service';
+import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -101,12 +103,22 @@ export interface MasterLessonResult {
 }
 
 /**
- * What a hand edit is told beside the saved lesson: the staffing policy's WARN
- * about a teacher it put on the lesson, and the ämnesfördelning the timplanspost
- * is held to when the edit breaks it. Both are a code from the engine catalogue
- * and its params, rendered by the page; neither is a refusal.
+ * A hand edit that moved one member of a parallel block away from the others:
+ * the block is split, and the lesson is the school's (block-lessons.ts).
  */
-export type LessonWarning = StaffingWarning | DistributionWarning;
+export interface BlockSplitWarning {
+  code: typeof BLOCK_SPLIT;
+  params: { block: string };
+}
+
+/**
+ * What a hand edit is told beside the saved lesson: the staffing policy's WARN
+ * about a teacher it put on the lesson, the ämnesfördelning the timplanspost
+ * is held to when the edit breaks it, and a parallel block the move split.
+ * Each is a code from the engine catalogue and its params, rendered by the
+ * page; none is a refusal.
+ */
+export type LessonWarning = StaffingWarning | DistributionWarning | BlockSplitWarning;
 
 export interface CreateMasterLessonResult extends MasterLessonResult {
   /** The ämnesfördelning the new lesson breaks; empty when it breaks none. */
@@ -128,6 +140,46 @@ export interface UpdateMasterLessonResult extends MasterLessonResult {
    * nothing was found.
    */
   warnings: LessonWarning[];
+}
+
+/** A block card moved as one (moveBlockCard): every member, as written. */
+export interface MoveBlockCardResult {
+  lessons: MasterLessonResult[];
+  /** Future calendar lessons moved along with the members, summed. */
+  propagatedLessons: number;
+  removedCalendarLessons: number;
+  /** The ämnesfördelning a member breaks on its new day; never a refusal. */
+  warnings: LessonWarning[];
+}
+
+/** A block locked or unlocked (lockBlock): the lessons whose lock changed. */
+export interface LockBlockResult {
+  blockId: string;
+  isLocked: boolean;
+  lessonIds: string[];
+}
+
+/** The problem `code` of a card whose lessons no longer stand together. */
+export const BLOCK_CARD_STALE = 'BLOCK_CARD_STALE';
+/** The problem `code` of lessons that are not one block's card. */
+export const NOT_A_BLOCK_CARD = 'NOT_A_BLOCK_CARD';
+
+/** A lesson the clash scan holds a candidate against: one of its day, or one moved with it. */
+interface DayLesson {
+  id: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  roomId: string | null;
+  studentGroupId: string;
+  subjectId: string;
+  startTime: Date;
+  endTime: Date;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+  subject: { name: string };
+  extraGroups: Array<{ studentGroupId: string }>;
+  participants: Array<{ studentId: string }>;
 }
 
 export interface DeleteMasterLessonResult {
@@ -447,6 +499,43 @@ export class MasterLessonsService {
             )
           : [];
 
+      /*
+       * A PARALLEL BLOCK'S LESSON MOVED BY HAND (block-lessons.ts). Onto a
+       * slot where other members of its block stand, it joins their card and
+       * takes the card's owner, and its lock when this PATCH names none — an
+       * undo of a split, or "flytta tillbaka med blocket", puts the block back
+       * as the generation will place it. Anywhere else it splits the block:
+       * the lesson is the school's from now on, so the next generation refuses
+       * the block as partly locked instead of undoing the move unasked, and the
+       * save says so. Asked only of a move — another slot or other weeks, or a
+       * lesson put back from the tray — one statement; a lesson set aside on
+       * the tray occupies nothing and is no move of a block's.
+       */
+      const landing: BlockSlot = {
+        dayOfWeek: candidate.dayOfWeek,
+        startTime: clockOf(candidate.startMinutes),
+        endTime: clockOf(candidate.endMinutes),
+        recurrence: candidate.recurrence,
+        startDate: toDateStringOrNull(candidate.startDate),
+        endDate: toDateStringOrNull(candidate.endDate),
+      };
+      const movesTheLesson =
+        !parking &&
+        ((lesson.isParked && dto.isParked === false) ||
+          !sameSlot(landing, {
+            dayOfWeek: lesson.dayOfWeek,
+            startTime: toHHMM(lesson.startTime),
+            endTime: toHHMM(lesson.endTime),
+            recurrence: lesson.recurrence,
+            startDate: toDateStringOrNull(lesson.startDate),
+            endDate: toDateStringOrNull(lesson.endDate),
+          }));
+      const block = movesTheLesson ? await readLessonBlock(tx, lesson) : null;
+      const blockMove = block ? blockMoveOf(block, landing) : null;
+      if (block && blockMove && !blockMove.joins) {
+        warnings.push({ code: BLOCK_SPLIT, params: { block: block.name } });
+      }
+
       const updated = await tx.masterLesson.update({
         where: { id },
         data: {
@@ -494,6 +583,20 @@ export class MasterLessonsService {
           dto.endDate !== undefined
             ? { isGenerated: false }
             : {}),
+          // The block's say comes last: joining a card makes the lesson the
+          // card's, whatever the window above said (the window is the card's
+          // own, or the slot would not be the card's), and a split is the
+          // school's.
+          ...(blockMove?.joins === true
+            ? {
+                isGenerated: blockMove.isGenerated,
+                ...(dto.isLocked === undefined && blockMove.isLocked !== null
+                  ? { isLocked: blockMove.isLocked }
+                  : {}),
+              }
+            : blockMove?.joins === false
+              ? { isGenerated: false }
+              : {}),
           ...(dto.extraGroupIds !== undefined
             ? {
                 extraGroups: {
@@ -596,6 +699,288 @@ export class MasterLessonsService {
       }
 
       return { ...after, propagatedLessons, removedCalendarLessons, warnings };
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Block i schemat: a parallel block's card, moved and locked as one
+  // ---------------------------------------------------------------------
+
+  /**
+   * Moves a block card — the lessons of a parallel block's members that stand
+   * in one slot — to another slot, as ONE move.
+   *
+   * THE LESSONS MUST BE A CARD. One block (by each lesson's post, the key
+   * block-lessons.ts reads it by), one lesson per member, all in one slot and
+   * none on the tray. A page that no longer shows what it was asked about
+   * gets a 409 BLOCK_CARD_STALE rather than a move of lessons it did not see;
+   * lessons that were never a card are a 400 NOT_A_BLOCK_CARD.
+   *
+   * JUDGED AS ONE MOVE by the PATCH's own clash check (findConflicts): each
+   * member against the rest of the new day with the card's lessons left out
+   * of where they stood, and against the members after it at the new slot, so
+   * a clash among them is named once. Any clash refuses the whole card with
+   * the PATCH's 409, each sentence after the member it is about.
+   *
+   * THE OWNER STAYS: the engine places a block's lessons together, so a card
+   * it placed is still its own after a move it could have made, and the next
+   * generation places the block again (block-lessons.ts). Only day and clock
+   * are written; weeks, rooms, teachers and locks are each member's own.
+   *
+   * The UPDATE is held to the slot the card was read in, so a member moved by
+   * someone else between the read and the write refuses the card as stale.
+   * Then per member what the PATCH does after its write: the published
+   * calendar, the ämnesfördelning on a new day, the change log, and one
+   * notice per member whose published lessons moved.
+   */
+  async moveBlockCard(dto: MoveBlockCardDto, user: AuthenticatedUser): Promise<MoveBlockCardResult> {
+    const startTime = parseTimeString(dto.startTime);
+    const endTime = parseTimeString(dto.endTime);
+    if (toMinutes(startTime) >= toMinutes(endTime)) {
+      throw new BadRequestException('startTime must be before endTime.');
+    }
+    return this.prisma.withRls(user, async (tx) => {
+      const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
+      const lessons = await tx.masterLesson.findMany({
+        where: { id: { in: dto.lessonIds } },
+        select: {
+          ...LESSON_SELECT,
+          subject: { select: { name: true } },
+          studentGroup: { select: { name: true } },
+          school: {
+            select: {
+              id: true,
+              timezone: true,
+              // As in update(): whether the year is one R1 or R2 settles.
+              _count: {
+                select: {
+                  academicYears: {
+                    where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id: dto.lessonIds[0] } } }] },
+                  },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { id: 'asc' },
+      });
+      if (lessons.length !== dto.lessonIds.length) {
+        throw new NotFoundException('Master lesson not found.');
+      }
+      const leader = lessons[0]!;
+      const slotOf = (lesson: (typeof lessons)[number]): BlockSlot => ({
+        dayOfWeek: lesson.dayOfWeek,
+        startTime: toHHMM(lesson.startTime),
+        endTime: toHHMM(lesson.endTime),
+        recurrence: lesson.recurrence,
+        startDate: toDateStringOrNull(lesson.startDate),
+        endDate: toDateStringOrNull(lesson.endDate),
+      });
+      if (
+        lessons.some(
+          (lesson) =>
+            lesson.isParked ||
+            lesson.academicYearId !== leader.academicYearId ||
+            !sameSlot(slotOf(lesson), slotOf(leader)),
+        )
+      ) {
+        throw blockCardStale();
+      }
+      const posts = await tx.teachingRequirement.findMany({
+        where: {
+          academicYearId: leader.academicYearId,
+          OR: lessons.map((lesson) => ({ studentGroupId: lesson.studentGroupId, subjectId: lesson.subjectId })),
+        },
+        select: { studentGroupId: true, subjectId: true, blockId: true },
+      });
+      const blockOf = new Map(posts.map((post) => [`${post.studentGroupId}:${post.subjectId}`, post.blockId]));
+      const keys = lessons.map((lesson) => `${lesson.studentGroupId}:${lesson.subjectId}`);
+      const blockId = blockOf.get(keys[0]!) ?? null;
+      if (blockId === null || new Set(keys).size !== keys.length || keys.some((key) => blockOf.get(key) !== blockId)) {
+        throw new BadRequestException({
+          message:
+            'lessonIds: lektionerna är inte ett parallellt blocks lektioner i samma tid, en per post i blocket.',
+          code: NOT_A_BLOCK_CARD,
+        });
+      }
+
+      const rosters = await rostersOfYear(tx, user, leader.academicYearId, {
+        settledCurrent: leader.school._count.academicYears > 0,
+      });
+      const placed: DayLesson[] = lessons.map((lesson) => ({ ...lesson, startTime, endTime }));
+      const refusals: string[] = [];
+      for (const [index, lesson] of lessons.entries()) {
+        const conflicts = await this.findConflicts(
+          tx,
+          rosters,
+          {
+            id: lesson.id,
+            academicYearId: lesson.academicYearId,
+            studentGroupId: lesson.studentGroupId,
+            subjectId: lesson.subjectId,
+          },
+          {
+            dayOfWeek: dto.dayOfWeek,
+            startMinutes: toMinutes(startTime),
+            endMinutes: toMinutes(endTime),
+            teacherId: lesson.teacherId,
+            coTeacherId: lesson.coTeacherId,
+            roomId: lesson.roomId,
+            extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
+            studentIds: lesson.participants.map((entry) => entry.studentId),
+            recurrence: lesson.recurrence,
+            startDate: lesson.startDate,
+            endDate: lesson.endDate,
+          },
+          { excludeIds: dto.lessonIds, alongside: placed.slice(index + 1) },
+        );
+        const name = requirementName(lesson.subject.name, lesson.studentGroup.name);
+        refusals.push(...conflicts.map((conflict) => `${name}: ${conflict.message}`));
+      }
+      if (refusals.length > 0) {
+        throw new ConflictException([...new Set(refusals)].join(' '));
+      }
+
+      const { count } = await tx.masterLesson.updateMany({
+        where: {
+          id: { in: dto.lessonIds },
+          dayOfWeek: leader.dayOfWeek,
+          startTime: leader.startTime,
+          endTime: leader.endTime,
+          isParked: false,
+        },
+        data: { dayOfWeek: dto.dayOfWeek, startTime, endTime },
+      });
+      if (count !== lessons.length) throw blockCardStale();
+
+      let propagatedLessons = 0;
+      let removedCalendarLessons = 0;
+      const warnings: LessonWarning[] = [];
+      const results: MasterLessonResult[] = [];
+      const notices: { lesson: (typeof lessons)[number]; after: MasterLessonResult }[] = [];
+      for (const lesson of lessons) {
+        const updated = { ...lesson, dayOfWeek: dto.dayOfWeek, startTime, endTime };
+        const { moved, removed } =
+          dto.propagate === false || mode === 'DRAFT'
+            ? { moved: 0, removed: 0 }
+            : await propagateTemplateChange(tx, lesson, updated, {
+                timezone: lesson.school.timezone,
+                schoolId: lesson.school.id,
+              });
+        propagatedLessons += moved;
+        removedCalendarLessons += removed;
+        if (dto.dayOfWeek !== lesson.dayOfWeek) {
+          warnings.push(...(await this.distributionWarnings(tx, updated)));
+        }
+        const after = toResult(updated);
+        await this.writeChangeLog(tx, {
+          schoolId: lesson.school.id,
+          academicYearId: lesson.academicYearId,
+          masterLessonId: lesson.id,
+          actorId: user.userId ?? null,
+          action: 'UPDATE',
+          before: toResult(lesson),
+          after,
+        });
+        results.push(after);
+        if (moved > 0 || removed > 0) notices.push({ lesson, after });
+      }
+
+      this.logger.log(
+        `Block card moved [block=${blockId}, lessons=${lessons.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
+      );
+      this.announce(leader.school.id, mode);
+      // As update() tells a class its published lessons moved: one notice per
+      // member, to the roster attending it, about its own subject.
+      for (const { lesson, after } of notices) {
+        const recipients = await this.notifications.recipientsForLessons(tx, [
+          { groupIds: [lesson.studentGroupId, ...after.extraGroupIds], participantIds: after.studentIds },
+        ]);
+        await this.notifications.notifyUsers(tx, {
+          schoolId: lesson.school.id,
+          userIds: recipients,
+          type: 'SCHEDULE_CHANGED',
+          meta: {
+            subjectName: lesson.subject.name,
+            dayOfWeek: after.dayOfWeek,
+            startTime: after.startTime,
+            endTime: after.endTime,
+          },
+        });
+      }
+      return { lessons: results, propagatedLessons, removedCalendarLessons, warnings };
+    });
+  }
+
+  /**
+   * Locks or unlocks a parallel block's lessons: every lesson of every member,
+   * or the ones `lessonIds` names among them.
+   *
+   * WHOLE BLOCKS, because the generation refuses a block with some lessons
+   * locked while the rest are still to place (BLOCK_PARTLY_LOCKED): a lock on
+   * one card of a block would only move the refusal to the next generation.
+   * Parked lessons are the block's too and are locked with it.
+   *
+   * A lock changes no slot, so nothing is held against the week and the
+   * published calendar has nothing to follow; the change log has a row per
+   * lesson whose lock changed, and only those are answered, for the undo.
+   */
+  async lockBlock(dto: LockBlockDto, user: AuthenticatedUser): Promise<LockBlockResult> {
+    return this.prisma.withRls(user, async (tx) => {
+      const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
+      const block = await tx.teachingBlock.findUnique({
+        where: { id: dto.blockId },
+        select: {
+          id: true,
+          schoolId: true,
+          academicYearId: true,
+          requirements: { select: { studentGroupId: true, subjectId: true } },
+        },
+      });
+      if (!block) throw new NotFoundException('Blocket finns inte.');
+      const lessons =
+        block.requirements.length === 0
+          ? []
+          : await tx.masterLesson.findMany({
+              where: {
+                academicYearId: block.academicYearId,
+                OR: block.requirements.map((post) => ({
+                  studentGroupId: post.studentGroupId,
+                  subjectId: post.subjectId,
+                })),
+              },
+              select: LESSON_SELECT,
+            });
+      if (dto.lessonIds) {
+        const ofBlock = new Set(lessons.map((lesson) => lesson.id));
+        if (dto.lessonIds.some((id) => !ofBlock.has(id))) {
+          throw new BadRequestException('lessonIds: varje lektion måste höra till blockets poster.');
+        }
+      }
+      const named = dto.lessonIds ? new Set(dto.lessonIds) : null;
+      const targets = lessons.filter(
+        (lesson) => (named === null || named.has(lesson.id)) && lesson.isLocked !== dto.isLocked,
+      );
+      if (targets.length > 0) {
+        await tx.masterLesson.updateMany({
+          where: { id: { in: targets.map((lesson) => lesson.id) } },
+          data: { isLocked: dto.isLocked },
+        });
+        for (const lesson of targets) {
+          await this.writeChangeLog(tx, {
+            schoolId: block.schoolId,
+            academicYearId: block.academicYearId,
+            masterLessonId: lesson.id,
+            actorId: user.userId ?? null,
+            action: 'UPDATE',
+            before: toResult(lesson),
+            after: toResult({ ...lesson, isLocked: dto.isLocked }),
+          });
+        }
+        this.logger.log(`Block ${dto.isLocked ? 'locked' : 'unlocked'} [block=${block.id}, lessons=${targets.length}]`);
+        this.announce(block.schoolId, mode);
+      }
+      return { blockId: block.id, isLocked: dto.isLocked, lessonIds: targets.map((lesson) => lesson.id) };
     });
   }
 
@@ -845,6 +1230,13 @@ export class MasterLessonsService {
       startDate?: Date | null;
       endDate?: Date | null;
     },
+    /**
+     * A block card's move (moveBlockCard): the card's lessons are not where
+     * they stood (`excludeIds`), and the ones moved with this candidate are
+     * where they go (`alongside`), so the card is held against the rest of
+     * the week and its members against each other, as one move.
+     */
+    options: { excludeIds?: readonly string[]; alongside?: readonly DayLesson[] } = {},
   ): Promise<MasterLessonConflict[]> {
     const conflicts: MasterLessonConflict[] = [];
     const candidateTeachers = [candidate.teacherId, candidate.coTeacherId ?? null]
@@ -873,7 +1265,11 @@ export class MasterLessonsService {
         // it was. Reading that as a placement would refuse B the very slot A
         // was lifted out of to make room for it.
         isParked: false,
-        ...(lesson.id ? { id: { not: lesson.id } } : {}),
+        ...(options.excludeIds?.length
+          ? { id: { notIn: [...new Set([...(lesson.id ? [lesson.id] : []), ...options.excludeIds])] } }
+          : lesson.id
+            ? { id: { not: lesson.id } }
+            : {}),
       },
       select: {
         id: true,
@@ -911,8 +1307,12 @@ export class MasterLessonsService {
      * or late for — and otherwise one query that finds nothing at the vast
      * majority of schools. See pupilBuffersOf.
      */
+    const others: DayLesson[] = [
+      ...sameDay,
+      ...(options.alongside ?? []).filter((other) => other.id !== lesson.id),
+    ];
     const buffers =
-      sameDay.length === 0
+      others.length === 0
         ? new Map<string, PupilBuffer>()
         : await this.pupilBuffersOf(tx, lesson.academicYearId);
     /**
@@ -985,7 +1385,7 @@ export class MasterLessonsService {
     // rule as the candidate's: the widest wins on both sides, or a guest class's
     // longer rule would hold on the lesson being placed and be forgotten on the
     // lesson it is placed against.
-    const clashing = sameDay.filter((other) => {
+    const clashing = others.filter((other) => {
       if (!weeksCanOverlap(candidateWeeks, other)) return false;
       const buffer = widestBufferOf(groupsAttending(other), other.subjectId);
       return (
@@ -1352,6 +1752,19 @@ function ombyteOf(label: string, buffer: PupilBuffer): string | null {
     sides.push(`${buffer.minutesAfter} min dusch och ombyte efter`);
   }
   return sides.length === 0 ? null : `${label} kräver ${sides.join(' och ')}`;
+}
+
+/** A card read in one slot that no longer stands in it. */
+function blockCardStale(): ConflictException {
+  return new ConflictException({
+    message: 'Blockets lektioner står inte längre tillsammans i den tiden. Ladda om schemat och försök igen.',
+    code: BLOCK_CARD_STALE,
+  });
+}
+
+/** Minutes after midnight as the HH:MM a card compares (block-lessons.ts). */
+function clockOf(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
 function toHHMM(time: Date): string {
