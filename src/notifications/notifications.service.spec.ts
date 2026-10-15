@@ -479,6 +479,32 @@ describe('NotificationsService', () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('type=LEAVE_REQUESTED'));
     });
+
+    describe('deliverCommitted', () => {
+      // The sync's and an integration key's leave catch-up (20261101090000):
+      // their transaction has no outbox, so the caller hands the notices over
+      // once it has resolved.
+      it('mails the notices of a committed transaction it is handed, as one batch, without any transaction', async () => {
+        process.env.RESEND_API_KEY = 'resend-key';
+        process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
+
+        service.deliverCommitted([entry(), entry({ recipients: [] })]);
+
+        expect(prisma.onCommit).not.toHaveBeenCalled();
+        expect(tx.notification.createMany).not.toHaveBeenCalled();
+        await flushDelivery();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const mail = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body) as { bcc: string[] };
+        expect(mail.bcc).toEqual(['mentor-1@school.se']);
+      });
+
+      it('queues nothing when neither e-mail nor push is configured', async () => {
+        service.deliverCommitted([entry()]);
+
+        await flushDelivery();
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('recipientsForLessons', () => {

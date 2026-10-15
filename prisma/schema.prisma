@@ -3608,6 +3608,23 @@ model LeaveDelegationDecision {
   @@map("LeaveDelegationDecisions")
 }
 
+/// A mentor told of a leave request (LEAVE_REQUESTED), once per request and
+/// mentor (20261101090000). app.leave_tell_mentors writes the row before the
+/// notice, so a notice gallring deletes is never owed again; the row goes
+/// with its request. The keys to LeaveRequests and to Users (userId,
+/// schoolId), both ON DELETE CASCADE, live in the migration. Row security
+/// with no policy: no API role reads or writes it.
+model LeaveRequestNotice {
+  leaveRequestId String   @db.Uuid
+  userId         String   @db.Uuid
+  schoolId       String   @db.Uuid
+  toldAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([leaveRequestId, userId])
+  @@index([userId, schoolId])
+  @@map("LeaveRequestNotices")
+}
+
 /// A school's decision on how long one kind of data is kept. Append-only: a
 /// trigger stamps decidedAt and decidedById and refuses UPDATE and DELETE, so
 /// the rows are the history and the latest per kind is the decision. No row

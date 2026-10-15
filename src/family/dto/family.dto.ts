@@ -9,11 +9,7 @@ import {
   MaxLength,
   Min,
   MinLength,
-  Validate,
   ValidateIf,
-  ValidatorConstraint,
-  type ValidationArguments,
-  type ValidatorConstraintInterface,
 } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}$/;
@@ -59,26 +55,12 @@ export class CreateAbsenceReportDto {
 /**
  * The most days one leave request covers, first and last day included: a
  * year. LeaveRequests_a_year_at_most (20261023091000) holds every insert to
- * it, PostgREST's included; here it is a 400 that says so.
+ * it, PostgREST's included. The gateway's bound is LeaveService's, a 400
+ * with a code (LEAVE_REQUEST_TOO_LONG, LEAVE_REQUEST_ENDS_BEFORE_START) that
+ * the family's page words in its own language; a check here, before it,
+ * would answer with the validation pipe's English sentence instead.
  */
 export const LEAVE_REQUEST_MAX_DAYS = 366;
-
-/** endDate is on or after startDate, and the request covers at most LEAVE_REQUEST_MAX_DAYS days. */
-@ValidatorConstraint({ name: 'leaveSpan', async: false })
-class LeaveSpanConstraint implements ValidatorConstraintInterface {
-  validate(endDate: unknown, args: ValidationArguments): boolean {
-    const startDate = (args.object as { startDate?: unknown }).startDate;
-    if (typeof endDate !== 'string' || typeof startDate !== 'string') return true;
-    const from = Date.parse(`${startDate}T00:00:00Z`);
-    const to = Date.parse(`${endDate}T00:00:00Z`);
-    if (Number.isNaN(from) || Number.isNaN(to)) return true;
-    return to >= from && (to - from) / 86_400_000 < LEAVE_REQUEST_MAX_DAYS;
-  }
-
-  defaultMessage(): string {
-    return `endDate must be on or after startDate, and a request covers at most ${LEAVE_REQUEST_MAX_DAYS} days.`;
-  }
-}
 
 /** A guardian requests leave (ledighetsansökan) for a child, or a pupil for themselves. */
 export class CreateLeaveRequestDto {
@@ -89,7 +71,6 @@ export class CreateLeaveRequestDto {
   startDate!: string;
 
   @Matches(DATE, { message: 'endDate must be YYYY-MM-DD.' })
-  @Validate(LeaveSpanConstraint)
   endDate!: string;
 
   @IsString()

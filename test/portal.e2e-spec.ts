@@ -158,17 +158,21 @@ describe('Portal and platform surfaces (e2e)', () => {
         .expect(403);
     });
 
-    it('refuses, at the body, a request that ends before it starts or covers more than a year', async () => {
+    it('refuses a request that ends before it starts or covers more than a year with a code, before any transaction', async () => {
       // LeaveRequests_a_year_at_most holds the database to the same bound
-      // (20261023091000); the body says it first, before any transaction.
+      // (20261023091000); the gateway says it first, with a code the
+      // guardian's page words in Swedish (20261101090000), not the
+      // validation pipe's English sentence.
       const filed = (startDate: string, endDate: string) =>
         request(http())
           .post('/api/v1/leave-requests')
           .set('x-test-user', guardian())
           .send({ studentId: STUDENT_ID, startDate, endDate, reason: 'Familjeresa' });
 
-      await filed('2027-03-02', '2027-03-01').expect(400);
-      await filed('2027-01-01', '2028-01-02').expect(400);
+      const backwards = await filed('2027-03-02', '2027-03-01').expect(400);
+      expect(backwards.body).toMatchObject({ code: 'LEAVE_REQUEST_ENDS_BEFORE_START' });
+      const long = await filed('2027-01-01', '2028-01-02').expect(400);
+      expect(long.body).toMatchObject({ code: 'LEAVE_REQUEST_TOO_LONG', params: { days: 366 } });
       expect(harness.tx['leaveRequest']!['create']).not.toHaveBeenCalled();
     });
 

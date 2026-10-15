@@ -2798,7 +2798,7 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
     AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
-                          'JobRuns', 'JobClaims')
+                          'JobRuns', 'JobClaims', 'LeaveRequestNotices')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -17298,10 +17298,15 @@ ROLLBACK;
 --   * The notice from the row: LeaveRequests_tell_mentors writes a new
 --     request's LEAVE_REQUESTED notice to its deciding mentors, once each,
 --     with no reason; app.leave_request_notices hands it to the filer's
---     transaction, app.leave_requests_tell_new_mentors catches up for staff.
+--     transaction, app.leave_requests_tell_new_mentors catches up for staff,
+--     and (20261101090000) for the sync or an integration key with no
+--     person behind it (98e).
 --   * app.leave_request_facts: skoldagar, limit, mentors and the pupil's
---     läsår, for the requests the caller reads as admin or mentor.
+--     läsår, for the requests the caller reads as admin or mentor; the
+--     läsår's totals only where the caller weighs them (98c).
 --   * The five internal functions are the owner's.
+--   * The trigger and the catch-up hold the school's advisory lock to their
+--     commit (98f, in transactions of their own).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -17580,6 +17585,122 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+-- The pupil's year goes to whoever weighs it (20261101090000): Anna reads
+-- it on the pending requests hers to decide and not on the two she decided,
+-- whose pupil may since be another mentor's; the admin reads it on all.
+DO $$
+DECLARE f record; n int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+  FOR f IN SELECT x.*, r.reason FROM app.leave_request_facts(current_setting('app.test_rls98_all')::uuid[]) x
+             JOIN "LeaveRequests" r ON r.id = x."requestId" LOOP
+    n := n + 1;
+    IF f.reason IN ('rls98 kort', 'rls98 jul') THEN
+      IF f."yearName" IS NOT NULL OR f."yearStart" IS NOT NULL OR f."yearEnd" IS NOT NULL
+         OR f."yearApprovedDays" IS NOT NULL OR f."yearApprovedRequests" IS NOT NULL OR f."yearPendingRequests" IS NOT NULL THEN
+        RAISE EXCEPTION 'facts: Anna reads the pupil''s year on her decided "%": %', f.reason, row_to_json(f);
+      END IF;
+      IF f."schoolDays" IS NULL THEN RAISE EXCEPTION 'facts: Anna lost the skoldagar of her decided "%"', f.reason; END IF;
+    ELSIF f."yearName" IS DISTINCT FROM 'Ledighet 2095/96' OR f."yearApprovedDays" IS DISTINCT FROM 3
+          OR f."yearApprovedRequests" IS DISTINCT FROM 1 OR coalesce(f."yearPendingRequests", 0) < 1 THEN
+      RAISE EXCEPTION 'facts: Anna does not read the pupil''s year on the pending "%": %', f.reason, row_to_json(f);
+    END IF;
+  END LOOP;
+  IF n <> 4 THEN RAISE EXCEPTION 'facts: Anna''s case covers % requests, not her four', n; END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  FOR f IN SELECT x.*, r.reason FROM app.leave_request_facts(ARRAY[current_setting('app.test_rls98_kort')::uuid, current_setting('app.test_rls98_jul')::uuid]) x
+             JOIN "LeaveRequests" r ON r.id = x."requestId" LOOP
+    IF f."yearName" IS DISTINCT FROM 'Ledighet 2095/96' OR f."yearApprovedDays" IS NULL OR f."yearPendingRequests" IS NULL THEN
+      RAISE EXCEPTION 'facts: the admin does not read the pupil''s year on "%": %', f.reason, row_to_json(f);
+    END IF;
+  END LOOP;
+END $$;
+
+-- 98e: the catch-up with no person behind it (20261101090000). With no
+-- delegation the admin files a one-day request for Ella, and the delegation
+-- recorded after it owes Anna its notice. The admin with the sync's setting
+-- beside her, the guardian with it, both settings at once, and the sync of
+-- another school tell nobody of it; the sync of this school tells Anna once,
+-- with her address, and a second call nobody. The same for an integration
+-- key and a second request.
+SELECT set_config('app.test_rls98_other', :'school_b', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE school uuid := app.current_school_id(); filed uuid;
+BEGIN
+  PERFORM set_config('app.test_rls98_school', school::text, true);
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, NULL);
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, current_setting('app.test_rls98_ella')::uuid, app.current_user_id(), DATE '2096-02-06', DATE '2096-02-06', 'rls98 synk')
+  RETURNING "LeaveRequests".id INTO filed;
+  PERFORM set_config('app.test_rls98_synk', filed::text, true);
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 3);
+END $$;
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls98_school'), true);
+DO $$
+DECLARE n bigint; who uuid; about text; mail text;
+BEGIN
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'principal: the admin with the sync''s setting beside her told % mentor(s)', n; END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000955')::text, true);
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'principal: the guardian with the sync''s setting told % mentor(s)', n; END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', current_setting('app.test_rls98_school'), true);
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'principal: the sync and a key at once told % mentor(s)', n; END IF;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.sync_school_id', current_setting('app.test_rls98_other'), true);
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors() t WHERE t.meta ->> 'leaveRequestId' = current_setting('app.test_rls98_synk');
+  IF n <> 0 THEN RAISE EXCEPTION 'principal: another school''s sync told % mentor(s) of this school''s request', n; END IF;
+
+  PERFORM set_config('app.sync_school_id', current_setting('app.test_rls98_school'), true);
+  WITH caught AS (SELECT * FROM app.leave_requests_tell_new_mentors())
+  SELECT count(*), min("userId"::text)::uuid, min(meta ->> 'leaveRequestId'), min(email) INTO n, who, about, mail FROM caught;
+  IF n <> 1 OR who IS DISTINCT FROM current_setting('app.test_rls98_anna')::uuid
+     OR about IS DISTINCT FROM current_setting('app.test_rls98_synk') OR mail IS DISTINCT FROM 'ledighet-anna@example.invalid' THEN
+    RAISE EXCEPTION 'principal: the sync told % mentor(s), % about % <%>', n, who, about, mail;
+  END IF;
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'principal: a second sync catch-up told % mentor(s) again', n; END IF;
+  PERFORM set_config('app.sync_school_id', '', true);
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE school uuid := app.current_school_id(); filed uuid;
+BEGIN
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, NULL);
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (school, current_setting('app.test_rls98_ella')::uuid, app.current_user_id(), DATE '2096-02-07', DATE '2096-02-07', 'rls98 nyckel')
+  RETURNING "LeaveRequests".id INTO filed;
+  PERFORM set_config('app.test_rls98_nyckel', filed::text, true);
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (school, 3);
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls98_school'), true);
+DO $$
+DECLARE n bigint; who uuid; about text;
+BEGIN
+  WITH caught AS (SELECT * FROM app.leave_requests_tell_new_mentors())
+  SELECT count(*), min("userId"::text)::uuid, min(meta ->> 'leaveRequestId') INTO n, who, about FROM caught;
+  IF n <> 1 OR who IS DISTINCT FROM current_setting('app.test_rls98_anna')::uuid OR about IS DISTINCT FROM current_setting('app.test_rls98_nyckel') THEN
+    RAISE EXCEPTION 'principal: the integration key told % mentor(s), % about %', n, who, about;
+  END IF;
+  SELECT count(*) INTO n FROM app.leave_requests_tell_new_mentors();
+  IF n <> 0 THEN RAISE EXCEPTION 'principal: a second key catch-up told % mentor(s) again', n; END IF;
+END $$;
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000951')::text, true);
+DO $$
+BEGIN
+  IF (SELECT array_agg(meta ->> 'leaveRequestId' ORDER BY meta ->> 'leaveRequestId') FROM "Notifications"
+       WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' IN (current_setting('app.test_rls98_synk'), current_setting('app.test_rls98_nyckel')))
+     IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(ARRAY[current_setting('app.test_rls98_synk'), current_setting('app.test_rls98_nyckel')]) AS x) THEN
+    RAISE EXCEPTION 'principal: Anna''s inbox holds % for the two', (SELECT array_agg(meta ->> 'leaveRequestId') FROM "Notifications"
+       WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' IN (current_setting('app.test_rls98_synk'), current_setting('app.test_rls98_nyckel')));
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
 
 -- 98d: the internal functions are the owner's: the API's role runs none.
 DO $$
@@ -17598,6 +17719,56 @@ BEGIN
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
   END LOOP;
+END $$;
+ROLLBACK;
+
+-- 98f: the school's lock (20261101090000). A filing's trigger and a
+-- catch-up, the staff's and the sync's, each hold
+-- pg_advisory_xact_lock(hashtext('leave_tell_mentors'), hashtext(school))
+-- once they have run, so whichever comes second waits for the first to
+-- commit and sees what it wrote. Each in a transaction of its own, so no
+-- earlier statement took the lock for it.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000955')::text, true);
+DO $$
+DECLARE ella uuid := (SELECT "studentId" FROM "GuardianStudents" gs JOIN "Users" u ON u.id = gs."studentId"
+                       WHERE u."authId" = '00000000-0000-4000-8000-000000000956');
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()) THEN
+    RAISE EXCEPTION 'lock: the transaction holds an advisory lock before the filing';
+  END IF;
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (app.current_school_id(), ella, app.current_user_id(), DATE '2096-02-13', DATE '2096-02-13', 'rls98 låset');
+  IF NOT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted AND mode = 'ExclusiveLock'
+                  AND classid = hashtext('leave_tell_mentors')::oid AND objid = hashtext(app.current_school_id()::text)::oid AND objsubid = 2) THEN
+    RAISE EXCEPTION 'lock: the filing''s trigger does not hold the school''s lock';
+  END IF;
+END $$;
+ROLLBACK;
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+BEGIN
+  PERFORM count(*) FROM app.leave_requests_tell_new_mentors();
+  IF NOT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted AND mode = 'ExclusiveLock'
+                  AND classid = hashtext('leave_tell_mentors')::oid AND objid = hashtext(app.current_school_id()::text)::oid AND objsubid = 2) THEN
+    RAISE EXCEPTION 'lock: the staff catch-up does not hold the school''s lock';
+  END IF;
+END $$;
+ROLLBACK;
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+SELECT set_config('app.test_rls98f_school', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.sync_school_id', current_setting('app.test_rls98f_school'), true);
+DO $$
+BEGIN
+  PERFORM count(*) FROM app.leave_requests_tell_new_mentors();
+  IF NOT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted AND mode = 'ExclusiveLock'
+                  AND classid = hashtext('leave_tell_mentors')::oid AND objid = hashtext(current_setting('app.test_rls98f_school'))::oid
+                  AND objsubid = 2) THEN
+    RAISE EXCEPTION 'lock: the sync''s catch-up does not hold the school''s lock';
+  END IF;
 END $$;
 ROLLBACK;
 
@@ -17832,6 +18003,46 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"LeaveRequests"'::regclass AND tgname = 'LeaveRequests_tell_mentors' AND tgenabled = 'O'
                     AND tgfoid = 'app.leave_requests_tell_mentors()'::regprocedure) THEN
     RAISE EXCEPTION 'trigger: LeaveRequests_tell_mentors is not in place';
+  END IF;
+END $$;
+
+-- 99e: who was told (LeaveRequestNotices, 20261101090000) is the owner's
+-- functions' alone: row security on, no policy, no privilege for any API
+-- role; one row per request and mentor, by its key; gone with the request
+-- and with the mentor.
+DO $$
+DECLARE r text; p text; privs text[] := ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
+BEGIN
+  IF current_setting('server_version_num')::int >= 170000 THEN privs := array_append(privs, 'MAINTAIN'); END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"LeaveRequestNotices"'::regclass) THEN
+    RAISE EXCEPTION 'told: LeaveRequestNotices has no row security';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = '"LeaveRequestNotices"'::regclass) THEN
+    RAISE EXCEPTION 'told: LeaveRequestNotices has a policy';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY privs LOOP
+      IF has_table_privilege(r, '"LeaveRequestNotices"', p) THEN RAISE EXCEPTION 'told: % holds % on LeaveRequestNotices', r, p; END IF;
+    END LOOP;
+  END LOOP;
+  BEGIN
+    PERFORM count(*) FROM "LeaveRequestNotices";
+    RAISE EXCEPTION 'told: the API reads LeaveRequestNotices';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  IF (SELECT array_agg(a.attname::text ORDER BY k.n) FROM pg_constraint c
+        CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, n)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.conrelid = '"LeaveRequestNotices"'::regclass AND c.contype = 'p')
+     IS DISTINCT FROM ARRAY['leaveRequestId', 'userId'] THEN
+    RAISE EXCEPTION 'told: LeaveRequestNotices is not keyed by request and mentor';
+  END IF;
+  IF (SELECT string_agg(confrelid::regclass::text || ':' || confdeltype::text, ',' ORDER BY confrelid::regclass::text) FROM pg_constraint
+       WHERE conrelid = '"LeaveRequestNotices"'::regclass AND contype = 'f')
+     IS DISTINCT FROM '"LeaveRequests":c,"Users":c' THEN
+    RAISE EXCEPTION 'told: LeaveRequestNotices'' keys are %', (SELECT string_agg(confrelid::regclass::text || ':' || confdeltype::text, ',')
+       FROM pg_constraint WHERE conrelid = '"LeaveRequestNotices"'::regclass AND contype = 'f');
   END IF;
 END $$;
 ROLLBACK;

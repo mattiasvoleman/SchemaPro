@@ -35,6 +35,7 @@ describe('the leave requests an SS12000 apply gives a mentor (Mentorns ledighets
   let tx: TxMock;
   let prisma: ReturnType<typeof createPrismaMock>;
   let deliver: jest.Mock;
+  let deliverCommitted: jest.Mock;
   let queryRaw: jest.Mock;
   let sync: Ss12000SyncService;
 
@@ -61,6 +62,7 @@ describe('the leave requests an SS12000 apply gives a mentor (Mentorns ledighets
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     deliver = jest.fn();
+    deliverCommitted = jest.fn();
     queryRaw = jest.fn((...call: unknown[]) =>
       Promise.resolve(
         rawSql(call).includes(TELL)
@@ -86,7 +88,7 @@ describe('the leave requests an SS12000 apply gives a mentor (Mentorns ledighets
       prisma as unknown as PrismaService,
       new Ss12000Secrets(undefined),
       new Ss12000Outbound(undefined),
-      { deliver } as unknown as NotificationsService,
+      { deliver, deliverCommitted } as unknown as NotificationsService,
     );
   });
 
@@ -103,16 +105,31 @@ describe('the leave requests an SS12000 apply gives a mentor (Mentorns ledighets
     ['a class move', 'CLASS_MEMBERSHIP', 'MOVE'],
     ['a reactivation', 'PERSON', 'REACTIVATE'],
     ['a relink, which reactivates', 'PERSON', 'RELINK'],
-  ])('tells the mentors once after the admin’s apply of %s, however many, in its transaction', async (_what, entity, op) => {
+  ])('tells the mentors once after the admin’s apply of %s, however many, in a transaction of its own after the commit', async (_what, entity, op) => {
+    // Not inside the apply (20261101090000): the apply may hold a person's
+    // row FOR UPDATE (an e-mail change) while the catch-up waits for the
+    // school's leave lock, which a filing that checks that row may hold.
     given([change(1, 'PERSON', 'UPDATE'), change(2, entity, op), change(3, entity, op)], [1, 2, 3]);
     await sync.apply(admin, 'run', { basisHash: 'basis' });
     expect(told()).toHaveLength(1);
+    expect(prisma.withRls).toHaveBeenCalledTimes(2);
     const at = queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
-    expect(at).toBeGreaterThan((applyChanges as jest.Mock).mock.invocationCallOrder.at(-1)!);
+    expect(at).toBeGreaterThan(tx.ss12000Source.update.mock.invocationCallOrder.at(-1)!);
+    expect(at).toBeGreaterThan(prisma.withRls.mock.invocationCallOrder[1]!);
     expect(deliver).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({ schoolId: admin.schoolId, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
     );
+  });
+
+  it('leaves the apply applied when the catch-up after it fails: the notice stays owed for the next one', async () => {
+    given([change(1, 'CLASS_MEMBERSHIP', 'MOVE')], [1]);
+    queryRaw.mockImplementation((...call: unknown[]) =>
+      rawSql(call).includes(TELL) ? Promise.reject(new Error('could not serialize')) : Promise.resolve([{ id: 'source' }]),
+    );
+    await expect(sync.apply(admin, 'run', { basisHash: 'basis' })).resolves.toEqual({ id: 'run' });
+    expect(told()).toHaveLength(1);
+    expect(tx.ss12000SyncRun.updateMany).not.toHaveBeenCalled();
   });
 
   it('asks nothing of an apply that moved nobody: names, a deactivation, a move it skipped', async () => {
@@ -122,11 +139,47 @@ describe('the leave requests an SS12000 apply gives a mentor (Mentorns ledighets
     expect(deliver).not.toHaveBeenCalled();
   });
 
-  it('the night’s auto-apply, as the sync principal, asks nothing: app.leave_requests_tell_new_mentors answers no principal but staff', async () => {
-    given([change(1, 'CLASS_MEMBERSHIP', 'MOVE', true)], [1]);
+  it('the night’s auto-apply of a move asks once, as the sync principal, and hands the notices to the delivery after its transaction', async () => {
+    // app.leave_requests_tell_new_mentors answers the sync principal for its
+    // own school (20261101090000); withSyncPrincipal has no outbox, so the
+    // e-mail and the push wait for the transaction to resolve.
+    let open = false;
+    prisma.withSyncPrincipal.mockImplementation(async (_school: string, fn: (client: unknown) => Promise<unknown>) => {
+      open = true;
+      try {
+        return await fn(tx);
+      } finally {
+        open = false;
+      }
+    });
+    deliverCommitted.mockImplementation(() => expect(open).toBe(false));
+    given([change(1, 'PERSON', 'UPDATE', true), change(2, 'CLASS_MEMBERSHIP', 'MOVE', true), change(3, 'CLASS_MEMBERSHIP', 'MOVE', true)], [1, 2, 3]);
+
+    await sync.autoApply('run', admin.schoolId!);
+
+    expect(told()).toHaveLength(1);
+    const at = queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+    expect(at).toBeGreaterThan((applyChanges as jest.Mock).mock.invocationCallOrder.at(-1)!);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(deliverCommitted).toHaveBeenCalledTimes(1);
+    expect(deliverCommitted).toHaveBeenCalledWith([
+      expect.objectContaining({ schoolId: admin.schoolId, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
+    ]);
+  });
+
+  it('the night asks nothing of a run that moved nobody, and delivers nothing', async () => {
+    given([change(1, 'PERSON', 'UPDATE', true), change(2, 'CLASS_MEMBERSHIP', 'MOVE', true)], [1]);
     await sync.autoApply('run', admin.schoolId!);
     expect(applyChanges).toHaveBeenCalled();
     expect(told()).toEqual([]);
-    expect(deliver).not.toHaveBeenCalled();
+    expect(deliverCommitted).not.toHaveBeenCalled();
+  });
+
+  it('the night delivers nothing when its transaction fails after the catch-up', async () => {
+    given([change(1, 'CLASS_MEMBERSHIP', 'MOVE', true)], [1]);
+    tx.ss12000SyncRun.update.mockRejectedValue(new Error('rolled back'));
+    await expect(sync.autoApply('run', admin.schoolId!)).rejects.toThrow('rolled back');
+    expect(told()).toHaveLength(1);
+    expect(deliverCommitted).not.toHaveBeenCalled();
   });
 });
