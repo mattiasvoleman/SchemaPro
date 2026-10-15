@@ -127,6 +127,7 @@ import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { adminAreaChecks, sweepRollerSchool } from './probe-admin-areas';
 import { scbFileChecks, sweepScbSchool } from './probe-scb-file';
+import { ss12000NarvaroChecks, sweepSs12000NarvaroSchool } from './probe-ss12000-narvaro';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -4595,6 +4596,7 @@ async function runChecks(
   await skolenheterChecks(owner, api, MARKER, check);
   await adminAreaChecks(owner, api, MARKER, check);
   await scbFileChecks(owner, api, MARKER, check);
+  await ss12000NarvaroChecks(owner, api, MARKER, check);
 }
 
 
@@ -5062,6 +5064,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepRollerSchool(owner, MARKER);
   // SCB-filen's school, likewise.
   await sweepScbSchool(owner, MARKER);
+  // SS12000-närvaro's school, likewise.
+  await sweepSs12000NarvaroSchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Duties first: each one's links cascade, and TeacherDutySlots_take_their_block
   // deletes the slot with its link (the service writes the slot's reason as the bare word "Uppdrag", so a
