@@ -59,6 +59,10 @@ export const PUBLICATION_SETTINGS: PublicationSettings = {
   publicEmbedTeachers: false,
   publicEmbedRooms: false,
   publicEmbedOrigins: ["https://www.exempelskolan.example"],
+  // Kalenderprenumeration: on for teachers and guardians, off for pupils (gateway-misc.ts answers the feeds).
+  calendarFeedTeachers: true,
+  calendarFeedStudents: false,
+  calendarFeedGuardians: true,
   gateClashes: "REFUSE",
   gateParked: "WARN",
   gateUnplaced: "WARN",

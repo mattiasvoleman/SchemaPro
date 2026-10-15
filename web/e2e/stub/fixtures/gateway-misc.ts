@@ -1,5 +1,7 @@
+import type { CalendarFeed, CalendarFeeds, FeedCounts } from "../../../lib/calendar-feed";
 import type { CancellationSelection } from "../../../lib/publication-types";
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
+import { KIND, uid } from "../sessions";
 import {
   PROVIDER_KEYS,
   PROVISIONING,
@@ -21,6 +23,7 @@ import {
   SCHEDULE_VERSIONS,
 } from "./misc-publication";
 import {
+  ago,
   LUNCH_SETTINGS,
   OPTIMIZATION_JOBS,
   optimizationJobsFor,
@@ -32,7 +35,7 @@ import {
   roomProposal,
   yearRosters,
 } from "./misc-school";
-import { byId, GROUPS, NEXT_YEAR, ROOM_TYPES, YEAR } from "./world";
+import { byId, GROUPS, NEXT_YEAR, ROOM_TYPES, STUDENTS, YEAR } from "./world";
 import { addDays, THIS_MONDAY } from "./calendar";
 import { weekOf } from "./gateway-public";
 
@@ -87,6 +90,34 @@ export const miscRoutes: GatewayRoute[] = [
     PUBLIC_LINKS.filter((link) => link.academicYearId === query.get("academicYearId")),
   ),
   route("GET", "/api/v1/teacher-public-labels", () => HIDDEN_TEACHERS),
+  // Kalenderprenumeration: each person's own feeds, as PUBLICATION_SETTINGS
+  // has the audiences (teachers and guardians on, pupils off). Anna has her
+  // week's, Sara Ella's but not yet Hugo's; the admin none of her own.
+  route("GET", "/api/v1/calendar-feeds", ({ person }): CalendarFeeds | Reply => {
+    if (!person) return new Reply(401, { message: "Unauthorized" });
+    const feed = (id: number, extra: Partial<CalendarFeed>): CalendarFeed => ({
+      id: uid(KIND.misc, id),
+      audience: "TEACHER",
+      studentId: null,
+      locale: "sv",
+      createdAt: ago(12, "19:05"),
+      lastUsedAt: ago(0, "06:40"),
+      ...extra,
+    });
+    switch (person.persona) {
+      case "teacher":
+        return { enabled: PUBLICATION_SETTINGS.calendarFeedTeachers, feeds: [feed(9301, {})] };
+      case "guardian":
+        return { enabled: PUBLICATION_SETTINGS.calendarFeedGuardians, feeds: [feed(9302, { audience: "GUARDIAN", studentId: STUDENTS.ella.id })] };
+      case "student":
+        return { enabled: PUBLICATION_SETTINGS.calendarFeedStudents, feeds: [] };
+      default:
+        return { enabled: PUBLICATION_SETTINGS.calendarFeedTeachers, feeds: [] };
+    }
+  }),
+  route("GET", "/api/v1/calendar-feeds/counts", ({ person }): FeedCounts | Reply =>
+    person?.persona === "admin" ? { TEACHER: 6, STUDENT: 0, GUARDIAN: 41 } : new Reply(403, { message: "Forbidden resource" }),
+  ),
   // Skriv ut scheman: the classes' set of this week, each sheet the viewer's
   // week of the class. Teachers' and rooms' sets are not modelled.
   route("GET", "/api/v1/print/timetables", ({ query }) => {
