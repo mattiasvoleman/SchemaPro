@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,7 +40,28 @@ const state = vi.hoisted(() => ({
   askedFor: {} as Record<string, string | null>,
   /** The years themselves still on their way (the page's state ladder). */
   yearsLoading: false,
+  /** The year's timplansposter: only their blockId is read here (Block i schemat). */
+  requirements: [] as unknown[],
 }));
+
+/*
+ * Block i schemat (components/schedule/block-cards.tsx): the year's block
+ * names as PostgREST answers them, and the card's own writes, which go to the
+ * gateway past the page's mutation hooks.
+ */
+const blockNames = vi.hoisted(() => ({
+  read: vi.fn(async () => ({ data: [{ id: "b-sv", academicYearId: "y-1", name: "Språkval åk 4" }], error: null })),
+}));
+vi.mock("@/utils/supabase/client", () => ({
+  createClient: () => ({
+    from: () => ({ select: () => ({ eq: () => ({ order: blockNames.read }) }) }),
+  }),
+}));
+const blockApi = vi.hoisted(() => ({ patch: vi.fn() }));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/api")>();
+  return { ...real, api: { ...real.api, patch: blockApi.patch } };
+});
 
 /**
  * The year choice (lib/planning-year.ts), as a hook with the real one's
@@ -120,7 +142,7 @@ vi.mock("@/lib/queries", () => ({
   useSubjects: () => ({ data: SUBJECTS }),
   useRequirements: (yearId: string | null) => {
     state.askedFor.requirements = yearId;
-    return { data: [] };
+    return { data: state.requirements };
   },
   useConstraints: () => ({ data: [] }),
   useGroupMemberships: () => ({ data: state.memberships }),
@@ -487,6 +509,7 @@ beforeEach(() => {
   state.nextLessons = [];
   state.askedFor = {};
   state.yearsLoading = false;
+  state.requirements = [];
   planning.successor = null;
   planning.rosters = null;
 });
@@ -2317,5 +2340,225 @@ describe("the Lektionstid panel", () => {
     );
     // One group in view: every one of its lines, Slöjd and Musik.
     expect(panel.textContent).toContain("timetable.lessonTime.unplanned(Musik|60)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Block i schemat: a parallel block on the grid
+// ---------------------------------------------------------------------------
+
+describe("a parallel block (Block i schemat)", () => {
+  // Språkval åk 4, say: Slöjd för 4ma1 (Karin) and Musik för 4ma2 (Nils), one
+  // card on Monday at 13:00. The two groups share no pupil.
+  const BLOCK_LESSONS = [
+    lesson("l-sv1", "s-sl", "g-ma1", "13:00"),
+    lesson("l-sv2", "s-mu", "g-ma2", "13:00", { teacherId: "t-2" }),
+  ];
+
+  beforeEach(() => {
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS];
+    state.requirements = [
+      { id: "r-sv1", studentGroupId: "g-ma1", subjectId: "s-sl", blockId: "b-sv" },
+      { id: "r-sv2", studentGroupId: "g-ma2", subjectId: "s-mu", blockId: "b-sv" },
+    ];
+    blockApi.patch.mockReset();
+    blockNames.read.mockClear();
+    toasts.warning.mockClear();
+    toasts.success.mockClear();
+  });
+
+  const card = () => screen.findByRole("button", { name: /Språkval åk 4/ });
+  // The block module reads its names through react-query, as the app does;
+  // the page's own reads are the mocks above.
+  const showPage = () =>
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <TimetablePage />
+      </QueryClientProvider>,
+    );
+
+  it("draws the block as one card naming the block and its members", async () => {
+    showPage();
+
+    const drawn = await card();
+    expect(drawn.textContent).toContain("4ma1");
+    expect(drawn.textContent).toContain("4ma2");
+    // The two lessons are inside the card, not beside it: no card of its own
+    // reads Musik for 4ma2 (5.1's Musik at 12:00 is another lesson).
+    expect(
+      screen.queryAllByRole("button").filter((el) => el.textContent?.includes("Musik") && el.textContent.includes("4ma2")),
+    ).toEqual([]);
+  });
+
+  it("moves the card as one move, with the way back on the undo stack", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
+    showPage();
+    await card();
+
+    dragToTuesday("Språkval åk 4");
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith("/api/v1/master-lessons/block-card", {
+        lessonIds: ["l-sv1", "l-sv2"],
+        dayOfWeek: 2,
+        startTime: "13:00",
+        endTime: "14:00",
+      }),
+    );
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenLastCalledWith("/api/v1/master-lessons/block-card", {
+        lessonIds: ["l-sv1", "l-sv2"],
+        dayOfWeek: 1,
+        startTime: "13:00",
+        endTime: "14:00",
+      }),
+    );
+  });
+
+  it("asks before one member is moved out of its block, and moves only it when told", async () => {
+    noMutation.mutateAsync.mockResolvedValueOnce({
+      id: "l-sv2",
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      warnings: [{ code: "BLOCK_SPLIT", params: { block: "Språkval åk 4" } }],
+    });
+    showPage();
+    await card();
+    // Nils's week: of the block only his Musik is on screen.
+    await filterToTeacher("Nils Berg");
+
+    dragToTuesday("Musik");
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("timetable.blocks.splitTitle(Språkval åk 4)");
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "timetable.blocks.moveOne" }));
+
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "l-sv2", dayOfWeek: 2, startTime: "13:00", endTime: "14:00" }),
+      ),
+    );
+    // The save said the block is split, with the way back beside it.
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalled());
+    const [, options] = toasts.warning.mock.calls.at(-1)! as [string, { action: { label: string; onClick: () => void } }];
+    expect(options.action.label).toBe("timetable.blocks.moveBack");
+    options.action.onClick();
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "l-sv2", dayOfWeek: 1, startTime: "13:00", endTime: "14:00" }),
+      ),
+    );
+  });
+
+  it("moves the whole block instead when asked to from the same question", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
+    showPage();
+    await card();
+    await filterToTeacher("Nils Berg");
+
+    dragToTuesday("Musik");
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "timetable.blocks.moveBlock" }));
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith(
+        "/api/v1/master-lessons/block-card",
+        expect.objectContaining({ lessonIds: ["l-sv1", "l-sv2"], dayOfWeek: 2 }),
+      ),
+    );
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("opens the block's own dialog from the card, and locks the whole block from it", async () => {
+    blockApi.patch.mockResolvedValue({ blockId: "b-sv", isLocked: true, lessonIds: ["l-sv1", "l-sv2"] });
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(await card());
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /timetable\.blocks\.editMemberNamed\(Slöjd/ })).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "timetable.blocks.lock" }));
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith("/api/v1/master-lessons/block-lock", { blockId: "b-sv", isLocked: true }),
+    );
+    expect(toasts.success).toHaveBeenCalledWith("timetable.blocks.locked(Språkval åk 4|2)");
+  });
+
+  it("moves the card with the keyboard as a drag does", async () => {
+    blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
+    showPage();
+
+    fireEvent.keyDown(await card(), { key: "ArrowRight" });
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith(
+        "/api/v1/master-lessons/block-card",
+        expect.objectContaining({ lessonIds: ["l-sv1", "l-sv2"], dayOfWeek: 2, startTime: "13:00" }),
+      ),
+    );
+  });
+
+  it("names the block under a member standing apart from it", async () => {
+    // A second lesson each, at different hours: both stand apart.
+    state.lessons = [
+      ...LESSONS,
+      ...BLOCK_LESSONS,
+      lesson("l-sv3", "s-sl", "g-ma1", "14:00"),
+      lesson("l-sv4", "s-mu", "g-ma2", "15:00", { teacherId: "t-2" }),
+    ];
+    showPage();
+    await screen.findAllByRole("button", { name: /Språkval åk 4/ });
+
+    expect(
+      screen.queryAllByRole("button").filter((el) => el.textContent?.includes("timetable.blocks.apart(Språkval åk 4)")),
+    ).toHaveLength(2);
+  });
+
+  it("selects a card's lessons with it, for the bulk actions", async () => {
+    showPage();
+
+    fireEvent.keyDown(await card(), { key: "Enter", shiftKey: true });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "timetable.bulkLock" }));
+
+    await waitFor(() =>
+      expect(noMutation.mutateAsync.mock.calls.map(([body]) => (body as { id: string }).id).sort()).toEqual([
+        "l-sv1",
+        "l-sv2",
+      ]),
+    );
+  });
+
+  it("offers the way back when a member's own dialog splits the block", async () => {
+    noMutation.mutateAsync.mockResolvedValueOnce({
+      id: "l-sv1",
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      warnings: [{ code: "BLOCK_SPLIT", params: { block: "Språkval åk 4" } }],
+    });
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(await card());
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: /timetable\.blocks\.editMemberNamed\(Slöjd/ }),
+    );
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalled());
+    const [, options] = toasts.warning.mock.calls.at(-1)! as [string, { action?: { label: string } }];
+    expect(options.action?.label).toBe("timetable.blocks.moveBack");
+  });
+
+  it("fetches nothing of it for a year whose timplan names no block", async () => {
+    state.requirements = [{ id: "r-sv1", studentGroupId: "g-ma1", subjectId: "s-sl", blockId: null }];
+    showPage();
+
+    await screen.findAllByRole("button", { name: /Slöjd/ });
+    expect(screen.queryByRole("button", { name: /Språkval åk 4/ })).toBeNull();
+    expect(blockNames.read).not.toHaveBeenCalled();
   });
 });
