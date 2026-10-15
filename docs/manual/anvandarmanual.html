@@ -54,6 +54,7 @@
       <li><span>5.5 Versioner</span><span class="dots"></span><span class="pg" data-pg="s55"></span></li>
       <li><span>5.6 Publicera schemat</span><span class="dots"></span><span class="pg" data-pg="s56"></span></li>
       <li><span>5.7 Utkastläge, giltighet och påfyllning</span><span class="dots"></span><span class="pg" data-pg="s57"></span></li>
+      <li><span>5.8 Skriv ut scheman</span><span class="dots"></span><span class="pg" data-pg="s58"></span></li>
     </ol>
     <li><span>6 · Fas 4 — Daglig drift</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
@@ -2634,6 +2635,70 @@
     som de var publicerade. De nya lunchtiderna når kalendern när utkastet
     publiceras, för de dagar publiceringen gäller.
   </p>
+
+  <h3 id="s58"><span class="num">5.8</span>Skriv ut scheman</h3>
+  <p>
+    <span class="ui">Skriv ut scheman</span> i sidhuvudet under
+    <span class="path">Schemaläggning › Publicering</span> skriver ut varje
+    klass, varje lärare eller varje sal på en gång, ur det
+    <em>publicerade</em> schemat: ett schema på varje liggande A4, att sätta
+    på klassrumsdörrarna eller lämna till vikarier.
+  </p>
+  <ol>
+    <li>Välj <span class="ui">Klasser</span>, <span class="ui">Lärare</span>
+      eller <span class="ui">Salar</span>.</li>
+    <li>Välj veckan med pilarna, eller välj en dag i den. Varje vecka i
+      skolans läsår går att skriva ut, också veckor som har varit.</li>
+    <li>Välj hur lärarna visas under <span class="ui">Lärare visas
+      som</span>. Förvalt är som i Schemavisaren, så att bladen inte namnger
+      fler lärare än skolans egna sidor. Ett lärarschema har läraren som
+      rubrik och kräver signatur eller namn: visar skolan inga lärare i
+      Schemavisaren är signatur förvalt där. För klasser väljer du också om
+      <span class="ui">Visa klassens lunch</span> ska med.</li>
+    <li>Bocka ur de scheman som inte ska skrivas ut, eller använd
+      <span class="ui">Alla</span> och <span class="ui">Inga</span>. Bladen
+      visas på sidan som de skrivs ut.</li>
+    <li>Klicka på <span class="ui">Skriv ut 24 scheman</span>. Webbläsarens
+      utskriftsdialog öppnas. Välj <em>Spara som PDF</em> där om du vill ha
+      en fil.</li>
+  </ol>
+  <p>
+    Varje blad har skolans namn, vad schemat gäller (klassen, läraren eller
+    salen), veckan och vilka datum det publicerade schemat är giltigt för
+    (<em>Giltig fr.o.m. 17 aug. 2026 t.o.m. 11 juni 2027</em>). Byter
+    schemat giltighet mitt i veckan står båda perioderna, och täcker ingen
+    publicering veckan står det. Giltigheten är bladens eget läsårs.
+  </p>
+  <p>
+    Bladen visar det som Schemavisaren visar (7.1), och de gör det även när
+    Schemavisaren är avstängd: tider, ämne, grupp, sal och läraren som du
+    väljer. Aldrig elever, närvaro, anteckningar eller orsaker. Klassens och
+    salens blad namnger aldrig en vikarie. En inställd lektion står
+    överstruken och märkt <em>Inställd</em>, utan lärare. Ett lärarschema
+    visar bara de lektioner som hålls, och de lektioner läraren håller som
+    vikarie står också där. En undervisningsgrupp under skolans gräns står som
+    <em>Grupp</em>, och en lektion för namngivna elever står på salens blad
+    som <em>Upptagen</em>. Inställt, upptaget och lunch står i ord och
+    streck, inte bara i färg, så bladen går att läsa i svartvitt.
+  </p>
+  <ul>
+    <li><strong>Klasser</strong>: läsårets klasser, med klassens lektioner,
+      också dem klassen delar med andra grupper.
+      Undervisningsgrupperna får inga egna blad.</li>
+    <li><strong>Lärare</strong>: den som har en tjänst under läsåret eller en
+      lektion under veckan. Med signatur skrivs bara den ut som har en
+      signatur för läsåret, och en lärare som aldrig visas i Schemavisaren
+      (7.1) skrivs aldrig ut.</li>
+    <li><strong>Salar</strong>: skolans salar.</li>
+  </ul>
+  <p>
+    Lärare, elever och vårdnadshavare skriver ut sin egen vecka själva, med
+    <span class="ui">Skriv ut veckan</span> på sin schemasida. Läraren och
+    eleven får veckan som deras sida visar den, utan raster, och
+    vårdnadshavaren barnets vecka som familjen ser den, med vikarie och
+    lunch. Lärarmanualen och
+    manualen för vårdnadshavare beskriver det.
+  </p>
 </section>
 
 <!-- ============================ 6 ============================ -->
@@ -3425,6 +3490,55 @@
     </p>
   </div>
 
+  <h4>Bädda in på skolans webbplats</h4>
+  <p>
+    Schemavisaren kan visas i en ram på skolans egen webbplats, till exempel
+    klassernas veckor på familjernas sidor. Det är avstängt tills skolan slår
+    på det under <span class="path">Schemaläggning › Publicering ›
+    Schemavisaren</span>, i rutan <span class="ui">Inbäddning på skolans
+    webbplats</span>.
+  </p>
+  <ol>
+    <li>Slå på <span class="ui">Bädda in klasser och grupper</span>,
+      <span class="ui">Bädda in lärare</span> eller <span class="ui">Bädda in
+      salar</span>. En sort går att bädda in bara när den är påslagen i
+      Schemavisaren.</li>
+    <li>Skriv skolans webbplats under <span class="ui">Webbplatser som får
+      visa schemat</span>, en per rad och högst tio, till exempel
+      <em>https://www.skolan.se</em>. Ange bara webbplatsen, inte en sida på
+      den. Ligger sidorna både med och utan www, ange båda.</li>
+    <li>Skapa en länk. Får dess sort bäddas in visas
+      <span class="ui">Inbäddningskod</span> under adressen. För en länk du
+      redan har klistrar du in dess adress under
+      <span class="ui">Inbäddningskod för en länk du redan har</span>.
+      Ramen visas bara för länkarna som är märkta <em>Kan bäddas
+      in</em>.</li>
+    <li>Klicka på <span class="ui">Kopiera koden</span> och klistra in den där
+      webbplatsens verktyg tar emot HTML eller en inbäddning. Höjden i koden
+      (680) går att ändra.</li>
+  </ol>
+  <p>
+    Ramen visar samma vecka som länken, i ett tätare format, och bläddrar
+    mellan veckorna inne i ramen. <span class="ui">Öppna i
+    Schemavisaren</span> öppnar hela visaren i en ny flik. Ramen följer
+    Schemavisarens regler och visar inget mer än den, och när länkens sida
+    inte finns i Schemavisaren visas den inte i ramen heller. Slår skolan på
+    inbäddningen visas ramen direkt. Stänger skolan av sorten, inbäddningen
+    eller Schemavisaren, tar bort webbplatsen eller återkallar länken, slutar
+    ramen visa schemat inom en minut. En sida som redan är öppen visar det
+    den har tills den laddas om.
+  </p>
+  <div class="warn">
+    <span class="label">Bara inbäddningskoden visas i en ram</span>
+    <p>
+      Ingen annan webbplats än de skolan anger kan visa schemat i en ram. Inte
+      heller länkens vanliga adress kan visas i en ram, på någon webbplats.
+      Har skolan tidigare lagt länkens vanliga adress i en ram på sin
+      webbplats, visas den inte längre: slå på inbäddningen och byt till
+      inbäddningskoden.
+    </p>
+  </div>
+
   <h3 id="s72"><span class="num">7.2</span>Hämta från elevregistret (SS12000)</h3>
   <p>
     Har kommunen ett elevregister som följer SS12000 2.1 — IST, Edlevo eller
@@ -3797,8 +3911,10 @@
   <p>
     Några uppgifter om andra skrivs inte. Schemat, alltså vem som undervisar
     en lektion och vilka elever som står på den, ser all personal, och det
-    skrivs inte, inte heller i en sparad schemaversion eller när
-    vikarieförslaget visar vem som är ledig och behörig. Notiser och mejl som
+    skrivs inte, inte heller i en sparad schemaversion, när
+    vikarieförslaget visar vem som är ledig och behörig eller när du skriver
+    ut klassernas, lärarnas och salarnas scheman (5.8). En vårdnadshavares
+    utskrift av barnets vecka är veckan som skrevs när sidan visade den. Notiser och mejl som
     SchemaPro skickar skrivs inte som läsningar, men varje notis finns kvar
     med mottagare och tid. Inte heller svaret när du lägger till en person
     skrivs, eftersom det är det du själv just skrev.
@@ -4282,6 +4398,11 @@
         <td class="k">En länk till Schemavisaren visar ”Schemat finns inte”</td>
         <td>Länken är återkallad, Schemavisaren eller länkens sort är avstängd, gruppen är för liten eller läraren visas aldrig.</td>
         <td>Kontrollera under <span class="path">Publicering › Schemavisaren</span>. Svaret är detsamma i alla fallen, så att en gissad adress inte avslöjar något.</td>
+      </tr>
+      <tr>
+        <td class="k">Schemat visas inte i ramen på skolans webbplats</td>
+        <td>Sorten är inte inbäddad, webbplatsen är inte angiven eller är skriven på ett annat sätt (med eller utan www), eller ramen använder länkens vanliga adress i stället för inbäddningskoden.</td>
+        <td>Kontrollera under <span class="path">Publicering › Schemavisaren</span>, i rutan Inbäddning på skolans webbplats, och använd koden därifrån (7.1). En avstängning gäller inom en minut.</td>
       </tr>
       <tr>
         <td class="k">En sal går inte att boka</td>
