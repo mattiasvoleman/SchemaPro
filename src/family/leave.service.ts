@@ -269,6 +269,9 @@ export class LeaveService {
               date: parseUtcDate(day),
               type: 'OTHER' as const,
               note: APPROVED_LEAVE_NOTE,
+              // What SS12000 emits as "Beviljad ledighet" (20261114090000);
+              // the note is free text a guardian may write too.
+              grantedLeave: true,
             })),
           });
         }

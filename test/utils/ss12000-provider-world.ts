@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { TxMock } from './prisma-mock';
+import { ATTENDANCE_ARGUMENTS } from '../../src/integration/ss12000-v2/attendance';
+import { serviceKeyOf, type TxMock } from './prisma-mock';
 
 /**
  * An in-memory school behind the Prisma mock, for the SS12000 v2.0
@@ -123,6 +124,19 @@ export const W = {
   keyGroups: '90000000-0000-4000-8000-000000000003',
   keyRevoked: '90000000-0000-4000-8000-000000000004',
   keyNoGuardians: '90000000-0000-4000-8000-000000000005',
+  // Attendance (SS12000-närvaro): by status, and the ones never emitted.
+  attPresent: 'a0000000-0000-4000-8000-000000000001',
+  attLate: 'a0000000-0000-4000-8000-000000000002',
+  attExcused: 'a0000000-0000-4000-8000-000000000003',
+  attAbsent: 'a0000000-0000-4000-8000-000000000004',
+  attUnknown: 'a0000000-0000-4000-8000-000000000005',
+  attFutureYear: 'a0000000-0000-4000-8000-000000000006',
+  attInactivePupil: 'a0000000-0000-4000-8000-000000000007',
+  absSick: 'ab000000-0000-4000-8000-000000000001',
+  absHours: 'ab000000-0000-4000-8000-000000000002',
+  absGranted: 'ab000000-0000-4000-8000-000000000003',
+  absForged: 'ab000000-0000-4000-8000-000000000004',
+  absInactivePupil: 'ab000000-0000-4000-8000-000000000005',
 } as const;
 
 /** The planted absence text: it must never appear in any v2 answer or notice. */
@@ -141,6 +155,8 @@ export const ALL_V2_SCOPES = [
   'rooms.read',
   'syllabuses.read',
   'subscriptions.write',
+  'attendances.read',
+  'absences.read',
 ];
 
 export class ProviderWorld {
@@ -149,6 +165,8 @@ export class ProviderWorld {
   /** SchoolUnits (migration 20261031090000): none, as every school had before. */
   readonly units: Row[] = [];
   publishMode: 'DIRECT' | 'DRAFT' = 'DIRECT';
+  /** The school's AttendanceSharingDecisions in force (none: not shared, the default). */
+  attendanceShared = false;
   readonly snapshotRanges: Array<{ id: string; publishedAt: Date; validFrom: Date; validTo: Date }> = [];
   readonly webhookSecrets = new Map<string, Row>();
   /** What app.ss12000_due_notifications answers on the next call. */
@@ -256,6 +274,24 @@ export class ProviderWorld {
     { schoolId: W.school, calendarLessonId: W.l1, studentId: W.p2 },
   ];
   readonly pendingRemovals: Row[] = [];
+  /** AttendanceRecords: every note is the planted absence text, which never leaves. */
+  readonly attendance: Row[] = [
+    this.record(W.attPresent, W.l1, W.p1, 'PRESENT'),
+    this.record(W.attLate, W.l1, W.p2, 'LATE'),
+    this.record(W.attExcused, W.l2Substituted, W.p1, 'EXCUSED'),
+    this.record(W.attAbsent, W.l2Substituted, W.p2, 'ABSENT'),
+    { ...this.record(W.attUnknown, W.l3Adhoc, W.p4, 'UNKNOWN'), recordedAt: null },
+    this.record(W.attFutureYear, W.l4Future, W.p3, 'ABSENT'),
+    this.record(W.attInactivePupil, W.l1, W.p5, 'ABSENT'),
+  ];
+  /** AbsenceReports: the guardian's own, a granted leave's day, and a guardian's note that pretends to be one. */
+  readonly absences: Row[] = [
+    this.absence(W.absSick, W.p1, W.g1, '2026-10-13', null, null, 'SICK', ABSENCE_TEXT, false),
+    this.absence(W.absHours, W.p2, W.p2, '2026-10-12', '08:00:00', '10:00:00', 'APPOINTMENT', `Tandläkare: ${ABSENCE_TEXT}`, false),
+    this.absence(W.absGranted, W.p4, W.admin, '2026-10-20', null, null, 'OTHER', 'Approved leave', true),
+    this.absence(W.absForged, W.p1, W.g1, '2026-10-21', null, null, 'OTHER', 'Approved leave', false),
+    this.absence(W.absInactivePupil, W.p5, W.p5, '2026-08-20', null, null, 'SICK', ABSENCE_TEXT, false),
+  ];
   readonly versions: Row[] = [
     { schoolId: W.school, resource: 'Person', entityId: W.p1, createdAt: t('2026-10-10T08:00:00Z'), modifiedAt: t('2026-10-10T09:00:00Z') },
     { schoolId: W.school, resource: 'Group', entityId: W.c7a, createdAt: t('2026-10-10T08:00:00Z'), modifiedAt: t('2026-10-11T09:00:00Z') },
@@ -305,11 +341,103 @@ export class ProviderWorld {
     };
   }
 
+  private record(id: string, lesson: string, student: string, status: string): Row {
+    return {
+      id, schoolId: W.school, calendarLessonId: lesson, studentId: student, status, recordedById: W.t1,
+      recordedAt: t('2026-10-12T10:00:00Z'), note: ABSENCE_TEXT, createdAt: t('2026-10-12T09:00:00Z'), updatedAt: t('2026-10-12T10:00:00Z'),
+    };
+  }
+
+  private absence(
+    id: string, student: string, reporter: string, date: string, start: string | null, end: string | null,
+    type: string, note: string, grantedLeave: boolean,
+  ): Row {
+    return {
+      id, schoolId: W.school, studentId: student, reportedById: reporter, date: d(date),
+      startTime: start ? t(`1970-01-01T${start}Z`) : null, endTime: end ? t(`1970-01-01T${end}Z`) : null,
+      type, note, grantedLeave, createdAt: t('2026-10-11T18:00:00Z'),
+    };
+  }
+
   private key(id: string, key: string, scopes: string[]): Row {
     return {
       id, schoolId: W.school, name: `Nyckel ${id.slice(-1)}`, keyHash: createHash('sha256').update(key).digest('hex'),
       createdById: W.admin, lastUsedAt: null, revokedAt: null, createdAt: t('2026-09-01T08:00:00Z'), scopes,
     };
+  }
+
+  /** app.service_reads_attendance: the request's key, live and the school's, holds the scope, and the school shares. */
+  private readsAttendance(tx: TxMock, scope: string): boolean {
+    const key = this.keys.find((row) => row['id'] === serviceKeyOf(tx) && row['revokedAt'] === null && row['schoolId'] === W.school);
+    return this.attendanceShared && !!key && (key['scopes'] as string[]).includes(scope);
+  }
+
+  /** app.ss12000_year_is_emitted: the active year, and those that started before it. */
+  private emittedYears(): Set<string> {
+    const active = this.years.find((row) => row['isActive']);
+    const horizon = active ? (active['startDate'] as Date) : new Date(Date.now() + 86_400_000);
+    return new Set(this.years.filter((row) => row['isActive'] || (row['startDate'] as Date) < horizon).map((row) => row['id'] as string));
+  }
+
+  /**
+   * app.ss12000_attendances as Postgres answers it under the service
+   * principal: the arguments by ATTENDANCE_ARGUMENTS' positions, a filter
+   * that is null not asked, and only the columns it returns.
+   */
+  private attendanceRows(tx: TxMock, values: unknown[]): Row[] {
+    if (!this.readsAttendance(tx, 'attendances.read')) return [];
+    const v = (name: keyof typeof ATTENDANCE_ARGUMENTS) => values[ATTENDANCE_ARGUMENTS[name]];
+    const within = (name: 'ids' | 'lessons' | 'students' | 'groups', value: unknown) => {
+      const list = v(name) as string[] | null;
+      return list === null || list.includes(value as string);
+    };
+    const instant = (name: keyof typeof ATTENDANCE_ARGUMENTS) => (v(name) === null ? null : new Date(v(name) as string));
+    const years = this.emittedYears();
+    const out: Row[] = [];
+    for (const record of this.attendance) {
+      if (record['schoolId'] !== W.school) continue;
+      const lesson = this.lessons.find((row) => row['id'] === record['calendarLessonId']);
+      const group = lesson && this.groups.find((row) => row['id'] === lesson['studentGroupId']);
+      const pupil = this.users.find((row) => row['id'] === record['studentId']);
+      if (!lesson || !group || !pupil || !pupil['isActive'] || pupil['role'] !== 'STUDENT') continue;
+      if (!years.has(group['academicYearId'] as string)) continue;
+      if (!within('ids', record['id']) || !within('lessons', lesson['id']) || !within('students', pupil['id']) || !within('groups', group['id'])) continue;
+      const version = this.versions.find((row) => row['resource'] === 'Attendance' && row['entityId'] === record['id']);
+      const created = record['createdAt'] as Date;
+      const modified = (version?.['modifiedAt'] as Date | undefined) ?? created;
+      const cb = instant('createdBefore');
+      const ca = instant('createdAfter');
+      const mb = instant('modifiedBefore');
+      const ma = instant('modifiedAfter');
+      if ((cb && !(created <= cb)) || (ca && !(created > ca)) || (mb && !(modified <= mb)) || (ma && !(version && modified > ma))) continue;
+      const after = v('after') as string | null;
+      if (after !== null && !((record['id'] as string) > after)) continue;
+      out.push({
+        id: record['id'], calendarLessonId: lesson['id'], studentId: pupil['id'], status: record['status'], createdAt: record['createdAt'],
+        startsAt: lesson['startsAt'], endsAt: lesson['endsAt'], studentGroupId: group['id'],
+        versionCreatedAt: version?.['createdAt'] ?? null, versionModifiedAt: version?.['modifiedAt'] ?? null,
+      });
+    }
+    out.sort((a, b) => ((a['id'] as string) < (b['id'] as string) ? -1 : 1));
+    const limit = v('limit') as number | null;
+    return limit === null ? out : out.slice(0, limit);
+  }
+
+  /** app.ss12000_absences: the date and the times as text, only the columns it returns. */
+  private absenceRows(tx: TxMock, values: unknown[]): Row[] {
+    if (!this.readsAttendance(tx, 'absences.read')) return [];
+    const [ids, students] = values as [string[] | null, string[] | null];
+    const clock = (time: unknown) => (time instanceof Date ? time.toISOString().slice(11, 19) : null);
+    return this.absences
+      .filter((row) => {
+        const pupil = this.users.find((user) => user['id'] === row['studentId']);
+        return row['schoolId'] === W.school && !!pupil && pupil['isActive'] && pupil['role'] === 'STUDENT';
+      })
+      .filter((row) => (ids === null || ids.includes(row['id'] as string)) && (students === null || students.includes(row['studentId'] as string)))
+      .map((row) => ({
+        id: row['id'], studentId: row['studentId'], date: (row['date'] as Date).toISOString().slice(0, 10),
+        startTime: clock(row['startTime']), endTime: clock(row['endTime']), grantedLeave: row['grantedLeave'], createdAt: row['createdAt'],
+      }));
   }
 
   install(tx: TxMock): void {
@@ -345,6 +473,7 @@ export class ProviderWorld {
       ss12000EntityVersion: table(this.versions),
       ss12000Tombstone: table(this.tombstones),
       integrationApiKey: table(this.keys),
+      absenceReport: table(this.absences),
       ss12000Subscription: table(this.subscriptions, () => ({
         endedAt: null, suspendedAt: null, suspendedReason: null, lastNotifiedAt: null, nextAttemptAt: now(), attempts: 0,
         failingSince: null, claimedAt: null, createdAt: now(), updatedAt: now(), expiresAt: new Date(Date.now() + 30 * 86_400_000),
@@ -388,6 +517,9 @@ export class ProviderWorld {
       const { text, values } = sqlOf(statement);
       this.rawStatements.push(text);
       if (text.includes('app.ss12000_provider_identity')) return [this.identity];
+      if (text.includes('app.service_reads_attendance')) return [{ reads: this.readsAttendance(tx, values[0] as string) }];
+      if (text.includes('app.ss12000_attendances(')) return this.attendanceRows(tx, values);
+      if (text.includes('app.ss12000_absences(')) return this.absenceRows(tx, values);
       if (text.includes('app.school_publish_mode')) return [{ mode: this.publishMode }];
       if (text.includes('app.publication_snapshot_ranges')) return this.snapshotRanges;
       if (text.includes('app.ss12000_webhook_secret_exists')) return [{ exists: this.webhookSecrets.size > 0 }];

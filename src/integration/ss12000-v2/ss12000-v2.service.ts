@@ -18,8 +18,17 @@ import {
   type ParsedQuery,
   type SortKey,
 } from './query';
-import { EMITTED_RESOURCES, type EmittedResource, type Scope } from './scopes';
+import { EMITTED_RESOURCES, SHARED_ONLY, type EmittedResource, type Scope } from './scopes';
 import { dayOf, SchoolSlice, type ActivityRow, type LessonRow } from './slice';
+import {
+  ABSENCE_TYPE,
+  absenceObject,
+  attendanceObject,
+  readAbsences,
+  readAttendances,
+  serviceReadsAttendance,
+  type AttendanceQuery,
+} from './attendance';
 import { EMAIL_TYPE, groupsOfPerson, metaOf, Model, type Meta, type Reach, type Ref, type Relation } from './model';
 
 /**
@@ -88,7 +97,10 @@ const embedded = (item: Obj): Record<string, unknown> => (item['_embedded'] as R
  *                                              members: ROSTER;
  *   groupMemberships  (persons?expand=groupMemberships) which groups the
  *                                              listed person is in: ROSTER
- *                                              about that person.
+ *                                              about that person;
+ *   attendance        (calendarEvents?expand=attendance) the lesson's
+ *                                              attendances: ATTENDANCE about
+ *                                              each pupil.
  *
  * An embedded activity (calendarEvents?expand=activity) names its teachers by
  * duty only, as the event itself does, and is not read here.
@@ -96,6 +108,7 @@ const embedded = (item: Obj): Record<string, unknown> => (item['_embedded'] as R
 const EMBEDDED_READ: V2Read = (items) => {
   const inner = items.map((item) => ({ item, embedded: embedded(item) }));
   return [
+    { kind: 'ATTENDANCE', persons: inner.flatMap(({ embedded: e }) => refsIn(e['attendance'], 'student')) },
     { kind: 'PEOPLE', persons: inner.map(({ embedded: e }) => (e['person'] as { id?: unknown } | undefined)?.id).filter(isText) },
     {
       kind: 'EMPLOYMENT',
@@ -180,6 +193,24 @@ export const forPupils =
   (read: V2Read, pupils: readonly string[]): V2Read =>
   (items) => [...read(items), ...(items.length > 0 && pupils.length > 0 ? [{ kind: 'SCHEDULE' as const, persons: [...pupils] }] : [])];
 
+/** Attendances: each pupil whose attendance at a lesson the page carries. */
+const ATTENDANCES_READ: V2Read = (items) => [
+  { kind: 'ATTENDANCE', persons: items.map((item) => (item['student'] as { id?: unknown } | undefined)?.id).filter(isText) },
+];
+/**
+ * Absences: a reported absence (Anmäld frånvaro) is the pupil's
+ * ABSENCE_REPORTS; a day of a granted leave (Beviljad ledighet) tells that a
+ * leave was granted, LEAVE_REQUESTS. Never a reason, which is not read.
+ */
+const ABSENCES_READ: V2Read = (items) => {
+  const of = (type: string) =>
+    items.filter((item) => item['type'] === type).map((item) => (item['student'] as { id?: unknown } | undefined)?.id).filter(isText);
+  return [
+    { kind: 'ABSENCE_REPORTS', persons: of(ABSENCE_TYPE.reported) },
+    { kind: 'LEAVE_REQUESTS', persons: of(ABSENCE_TYPE.granted) },
+  ];
+};
+
 /** The reads by resource, for the läslogg's spec. */
 export const V2_READS = {
   persons: PERSONS_READ,
@@ -187,6 +218,8 @@ export const V2_READS = {
   duties: DUTIES_READ,
   activities: ACTIVITIES_READ,
   calendarEvents: EVENTS_READ,
+  attendances: ATTENDANCES_READ,
+  absences: ABSENCES_READ,
 } as const;
 
 /** A lookup body may name at most this many ids in total. */
@@ -195,6 +228,8 @@ export const LOOKUP_MAX = 1000;
 export const WINDOW_MAX_DAYS = 400;
 /** More events than this for one lookup is S1's 503 "Svaret är förstort". */
 export const LOOKUP_EVENTS_MAX = 5000;
+/** The same for the attendances one lookup answers with. */
+export const LOOKUP_ATTENDANCES_MAX = 5000;
 
 const iso = (value: Date) => value.toISOString();
 
@@ -1155,8 +1190,25 @@ export class Ss12000V2Service {
   }
 
   private eventExpandScopes(caller: V2Caller, expand: Set<string>): void {
-    if (expand.has('attendance')) throw v2Errors.scopeMissing('attendance');
+    if (expand.has('attendance')) need(caller, 'attendances.read');
     if (expand.has('activity')) need(caller, 'activities.read');
+  }
+
+  /**
+   * expand=attendance: each event's attendances under `_embedded.attendance`,
+   * read for the events of the page only, once the school's decision has
+   * been asked (403 NOT_SHARED without it).
+   */
+  private async embedAttendance(model: Model, expand: Set<string>, items: readonly Obj[]): Promise<void> {
+    if (!expand.has('attendance')) return;
+    await this.shared(model, 'attendances.read');
+    const rows = items.length === 0 ? [] : await readAttendances(model.slice.tx, { lessons: items.map((item) => item.id) });
+    const byLesson = new Map<string, Obj[]>();
+    for (const row of rows) {
+      const attendance = attendanceObject(model, row);
+      if (attendance) byLesson.set(row.calendarLessonId, [...(byLesson.get(row.calendarLessonId) ?? []), attendance]);
+    }
+    for (const item of items) item['_embedded'] = { ...embedded(item), attendance: byLesson.get(item.id) ?? [] };
   }
 
   /**
@@ -1221,7 +1273,9 @@ export class Ss12000V2Service {
       const lessons = await model.slice.lessons(from, to);
       const filter = this.eventFilter(model, query.params, await model.slice.teachingMembers());
       const items = (await this.events(model, lessons, expand)).filter(filter).map((entry) => entry.item);
-      return page(items, key, query, this.token(caller, operation, query));
+      const result = page(items, key, query, this.token(caller, operation, query));
+      await this.embedAttendance(model, expand, result.data);
+      return result;
     });
   }
 
@@ -1235,6 +1289,7 @@ export class Ss12000V2Service {
       const lessons = await model.slice.lessonsById([wanted]);
       const [found] = await this.eventObjects(model, lessons, expand);
       if (!found) throw v2Errors.notFound();
+      await this.embedAttendance(model, expand, [found]);
       return found;
     });
   }
@@ -1301,6 +1356,215 @@ export class Ss12000V2Service {
   }
 
   // ===========================================================================
+  // Attendances and Absences (SS12000-närvaro, 20261114090000)
+  // ===========================================================================
+
+  /**
+   * The school's decision, asked after the scope: a key with the scope at a
+   * school that does not share is 403 NOT_SHARED. The database asks the same
+   * (app.service_reads_attendance) in its two read functions, so a read that
+   * slipped past this one would find no row.
+   */
+  private async shared(model: Model, scope: 'attendances.read' | 'absences.read'): Promise<void> {
+    if (!(await serviceReadsAttendance(model.slice.tx, scope))) throw v2Errors.notShared();
+  }
+
+  /**
+   * S1's filters on /attendances, as an AttendanceQuery: student (the
+   * pupil), calendarEvent (the lesson), organisation (the lesson's own
+   * group's skolenhet, as an event's), meta.*. Null when a filter names
+   * nothing SchemaPro emits, which is an empty page.
+   */
+  private attendanceQuery(model: Model, params: Params): AttendanceQuery | null {
+    const out: AttendanceQuery = {
+      createdBefore: text(params, 'meta.created.before'),
+      createdAfter: text(params, 'meta.created.after'),
+      modifiedBefore: text(params, 'meta.modified.before'),
+      modifiedAfter: text(params, 'meta.modified.after'),
+    };
+    const student = text(params, 'student');
+    if (student !== undefined) {
+      const userId = model.ids.personFrom(student);
+      if (!userId || model.usersById.get(userId)?.role !== 'STUDENT') return null;
+      out.students = [userId];
+    }
+    const lesson = text(params, 'calendarEvent');
+    if (lesson !== undefined) out.lessons = [lesson];
+    const organisation = text(params, 'organisation');
+    if (organisation !== undefined) {
+      out.groups = model.groups.filter((group) => model.groupOrganisation(group.id) === organisation).map((group) => group.id);
+      if (out.groups.length === 0) return null;
+    }
+    return out;
+  }
+
+  /** GET /attendances: by id, in pages read in SQL (S1 has no sortkey here). */
+  async listAttendances(caller: V2Caller, raw: Record<string, unknown>): Promise<V2Page<Obj>> {
+    need(caller, 'attendances.read');
+    const operation = 'GET /attendances';
+    const query = parseQuery(operation, raw, caller.keyId);
+    // Tokens are not signed: the position goes into SQL as a uuid, so a token
+    // whose position is not ours is 400 here, not a 500 from Postgres.
+    const after = query.after ? normaliseUuid(query.after[1]) : undefined;
+    if (query.after && (after === null || query.after[0] !== null)) throw v2Errors.invalidPageToken();
+    return this.runRead(caller, query.params, ATTENDANCES_READ, async (model) => {
+      await this.shared(model, 'attendances.read');
+      const filter = this.attendanceQuery(model, query.params);
+      if (!filter) return { data: [], pageToken: null };
+      const rows = await readAttendances(model.slice.tx, {
+        ...filter,
+        after: after ?? undefined,
+        limit: query.limit + 1,
+      });
+      const shown = rows.slice(0, query.limit);
+      const last = shown[shown.length - 1];
+      const data = shown.map((row) => attendanceObject(model, row)).filter((item): item is Obj => item !== null);
+      return { data, pageToken: rows.length > shown.length && last ? this.token(caller, operation, query)([null, last.id]) : null };
+    });
+  }
+
+  async getAttendance(caller: V2Caller, id: string, raw: Record<string, unknown>): Promise<Obj> {
+    need(caller, 'attendances.read');
+    const wanted = this.pathId(id);
+    const params = parseItemQuery('GET /attendances/{id}', raw);
+    return this.runRead(caller, params, ATTENDANCES_READ, async (model) => {
+      await this.shared(model, 'attendances.read');
+      const [row] = await readAttendances(model.slice.tx, { ids: [wanted] });
+      const found = row ? attendanceObject(model, row) : null;
+      if (!found) throw v2Errors.notFound();
+      return found;
+    });
+  }
+
+  /**
+   * POST /attendances/lookup {ids, activities, students, calendareEvents} —
+   * S1's own spelling, calendareEvents. The attendances named by any of
+   * them, once each, by id. More than LOOKUP_ATTENDANCES_MAX is 503
+   * TOO_LARGE.
+   */
+  async lookupAttendances(caller: V2Caller, body: unknown, raw: Record<string, unknown>): Promise<Obj[]> {
+    need(caller, 'attendances.read');
+    const params = parseItemQuery('POST /attendances/lookup', raw);
+    const asked = lookupIds(body, ['ids', 'activities', 'students', 'calendareEvents']);
+    return this.runRead(caller, params, ATTENDANCES_READ, async (model) => {
+      await this.shared(model, 'attendances.read');
+      const lessons = new Set<string>(asked['calendareEvents'] ?? []);
+      if ((asked['activities'] ?? []).length > 0) {
+        const wanted = new Set(asked['activities']);
+        const activities = (await model.slice.activities()).filter((row) => wanted.has(row.id));
+        activities.filter((row) => row.adhoc).forEach((row) => lessons.add(row.entityId));
+        const masters = activities.filter((row) => !row.adhoc).map((row) => row.entityId);
+        (await this.lessonIdsFor(model, masters, [], [])).forEach((id) => lessons.add(id));
+      }
+      const students = (asked['students'] ?? [])
+        .map((id) => model.ids.personFrom(id))
+        .filter((id): id is string => id !== null && model.usersById.get(id)?.role === 'STUDENT');
+      const found = new Map<string, Obj>();
+      const read = async (query: Omit<AttendanceQuery, 'limit'>) => {
+        const rows = await readAttendances(model.slice.tx, { ...query, limit: LOOKUP_ATTENDANCES_MAX + 1 });
+        for (const row of rows) {
+          const item = attendanceObject(model, row);
+          if (item) found.set(item.id, item);
+        }
+        if (found.size > LOOKUP_ATTENDANCES_MAX) throw v2Errors.tooLarge();
+      };
+      if ((asked['ids'] ?? []).length > 0) await read({ ids: asked['ids'] });
+      if (lessons.size > 0) await read({ lessons: [...lessons] });
+      if (students.length > 0) await read({ students });
+      return [...found.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+    });
+  }
+
+  /** The school's absences as S1 objects; only those ids, or one pupil's, when asked. */
+  private async absenceObjects(model: Model, only: { ids?: readonly string[]; students?: readonly string[] } = {}): Promise<Obj[]> {
+    const rows = await readAbsences(model.slice.tx, only);
+    const versions = await this.versions(model, 'Absence', rows.map((row) => row.id));
+    return rows.map((row) => absenceObject(model, row, versions.get(row.id))).filter((item): item is Obj => item !== null);
+  }
+
+  /**
+   * S1's filters on /absences: organisation (the pupil's own class's
+   * skolenhet, as their enrolment says), student, type, startTime.*,
+   * endTime.*, meta.*. registeredBy names an attribute SchemaPro never
+   * emits (who filed it), so it answers an empty page. The *.onOrAfter
+   * filters are inclusive, as their names and calendarEvents' say (S1's
+   * text for /absences says "Exkluderande").
+   */
+  private absenceFilter(model: Model, params: Params): (item: Obj) => boolean {
+    const organisation = text(params, 'organisation');
+    const student = text(params, 'student');
+    const type = text(params, 'type');
+    const registeredBy = text(params, 'registeredBy');
+    const window = (name: string) => text(params, name);
+    return (item) => {
+      if (registeredBy !== undefined) return false;
+      const pupil = (item['student'] as Ref).id;
+      if (student !== undefined && pupil !== student) return false;
+      if (type !== undefined && item['type'] !== type) return false;
+      if (organisation !== undefined) {
+        const user = model.usersById.get(model.ids.personFrom(pupil) ?? '');
+        if (!user || model.groupOrganisation(user.studentGroupId ?? '') !== organisation) return false;
+      }
+      const start = String(item['startTime']);
+      const end = String(item['endTime']);
+      const sb = window('startTime.onOrBefore');
+      const sa = window('startTime.onOrAfter');
+      const eb = window('endTime.onOrBefore');
+      const ea = window('endTime.onOrAfter');
+      if (sb && !(start <= sb)) return false;
+      if (sa && !(start >= sa)) return false;
+      if (eb && !(end <= eb)) return false;
+      if (ea && !(end >= ea)) return false;
+      return metaMatches(item['meta'] as Meta, params);
+    };
+  }
+
+  async listAbsences(caller: V2Caller, raw: Record<string, unknown>): Promise<V2Page<Obj>> {
+    need(caller, 'absences.read');
+    const operation = 'GET /absences';
+    const query = parseQuery(operation, raw, caller.keyId);
+    const start = (item: Obj) => String(item['startTime']);
+    const key = sortkey<Obj>(query.params, {
+      ModifiedDesc: byModified,
+      StartTimeAsc: { value: start, direction: 1 },
+      StartTimeDesc: { value: start, direction: -1 },
+    });
+    return this.runRead(caller, query.params, ABSENCES_READ, async (model) => {
+      await this.shared(model, 'absences.read');
+      // One pupil's absences are read as such; the rest of S1's filters on the school's.
+      const student = text(query.params, 'student');
+      const pupil = student === undefined ? undefined : model.ids.personFrom(student);
+      if (pupil === null) return { data: [], pageToken: null };
+      const items = (await this.absenceObjects(model, pupil ? { students: [pupil] } : {})).filter(this.absenceFilter(model, query.params));
+      return page(items, key, query, this.token(caller, operation, query));
+    });
+  }
+
+  async getAbsence(caller: V2Caller, id: string, raw: Record<string, unknown>): Promise<Obj> {
+    need(caller, 'absences.read');
+    const wanted = this.pathId(id);
+    const params = parseItemQuery('GET /absences/{id}', raw);
+    return this.runRead(caller, params, ABSENCES_READ, async (model) => {
+      await this.shared(model, 'absences.read');
+      const [found] = await this.absenceObjects(model, { ids: [wanted] });
+      if (!found) throw v2Errors.notFound();
+      return found;
+    });
+  }
+
+  /** POST /absences/lookup {ids} (S1's IdLookup). */
+  async lookupAbsences(caller: V2Caller, body: unknown, raw: Record<string, unknown>): Promise<Obj[]> {
+    need(caller, 'absences.read');
+    const params = parseItemQuery('POST /absences/lookup', raw);
+    const ids = lookupIds(body, ['ids'])['ids'] ?? [];
+    return this.runRead(caller, params, ABSENCES_READ, async (model) => {
+      await this.shared(model, 'absences.read');
+      if (ids.length === 0) return [];
+      return (await this.absenceObjects(model, { ids })).sort((a, b) => (a.id < b.id ? -1 : 1));
+    });
+  }
+
+  // ===========================================================================
   // DeletedEntities
   // ===========================================================================
 
@@ -1308,16 +1572,17 @@ export class Ss12000V2Service {
    * S1 DeletedEntities_data, keyed by S1's own names — `activitites` is the
    * standard's spelling — with the ids buried after `after` (exclusive), of
    * the categories asked for (all the key may read when none is), and of a
-   * category only when the key holds its read scope. Paged by (removedAt,
-   * category:id).
+   * category only when the key holds its read scope. Attendance and Absence
+   * also need the school's decision in force (SHARED_ONLY): without it they
+   * are left out, and a key that could read nothing else is 403 NOT_SHARED.
+   * Paged by (removedAt, category:id).
    */
   async deletedEntities(caller: V2Caller, raw: Record<string, unknown>): Promise<{ data: Record<string, string[]>; pageToken: string | null }> {
     const operation = 'GET /deletedEntities';
     const query = parseQuery(operation, raw, caller.keyId);
-    const readable = (Object.keys(EMITTED_RESOURCES) as EmittedResource[]).filter((resource) => caller.scopes.has(EMITTED_RESOURCES[resource]));
-    if (readable.length === 0) throw v2Errors.scopeMissing('<resurs>.read');
+    const scoped = (Object.keys(EMITTED_RESOURCES) as EmittedResource[]).filter((resource) => caller.scopes.has(EMITTED_RESOURCES[resource]));
+    if (scoped.length === 0) throw v2Errors.scopeMissing('<resurs>.read');
     const asked = list(query.params, 'entities');
-    const categories = (asked ?? readable).filter((entity): entity is EmittedResource => readable.includes(entity as EmittedResource));
     const after = text(query.params, 'after');
     const KEY: Record<EmittedResource, string> = {
       Organisation: 'organisations',
@@ -1328,9 +1593,21 @@ export class Ss12000V2Service {
       CalendarEvent: 'calendarEvents',
       Room: 'rooms',
       Syllabus: 'syllabuses',
+      Attendance: 'attendances',
+      Absence: 'absences',
     };
     return this.run(caller, query.params, async (model) => {
-      const rows = await model.slice.tombstones(after ? new Date(after) : null);
+      const readable: EmittedResource[] = [];
+      for (const resource of scoped) {
+        const scope = EMITTED_RESOURCES[resource];
+        if (!SHARED_ONLY.has(resource) || (await serviceReadsAttendance(model.slice.tx, scope as 'attendances.read' | 'absences.read'))) {
+          readable.push(resource);
+        }
+      }
+      if (readable.length === 0) throw v2Errors.notShared();
+      const categories = (asked ?? readable).filter((entity): entity is EmittedResource => readable.includes(entity as EmittedResource));
+      const stored = categories.flatMap((category) => (category === 'Activity' ? ['Activity', 'AdhocActivity'] : [category]));
+      const rows = await model.slice.tombstones(after ? new Date(after) : null, stored);
       const items = rows
         .map((row) => {
           const resource = (row.resource === 'AdhocActivity' ? 'Activity' : row.resource) as EmittedResource;

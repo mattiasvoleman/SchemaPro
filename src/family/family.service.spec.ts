@@ -259,6 +259,15 @@ describe('FamilyService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it('rejects a span that does not end after it starts', async () => {
+      for (const [startTime, endTime] of [['10:00', '08:00'], ['08:00', '08:00']]) {
+        await expect(
+          service.createAbsenceReport(reportDto({ startTime, endTime }) as any, testUser()),
+        ).rejects.toThrow('endTime must be after startTime.');
+      }
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
     it('lets a linked guardian file a full-day report', async () => {
       arrangeStudent();
       tx.guardianStudent.findFirst.mockResolvedValue({ id: LINK_ID });

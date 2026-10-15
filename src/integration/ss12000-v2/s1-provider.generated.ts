@@ -181,6 +181,42 @@ export const S1_SCHEMAS: Record<string, S1Schema> = {
       "data"
     ]
   },
+  "Attendances": {
+    "properties": {
+      "data": {
+        "kind": "array",
+        "items": {
+          "kind": "object",
+          "ref": "Attendance"
+        }
+      },
+      "pageToken": {
+        "kind": "string",
+        "nullable": true
+      }
+    },
+    "required": [
+      "data"
+    ]
+  },
+  "Absences": {
+    "properties": {
+      "data": {
+        "kind": "array",
+        "items": {
+          "kind": "object",
+          "ref": "Absence"
+        }
+      },
+      "pageToken": {
+        "kind": "string",
+        "nullable": true
+      }
+    },
+    "required": [
+      "data"
+    ]
+  },
   "Subscriptions": {
     "properties": {
       "data": {
@@ -389,6 +425,39 @@ export const S1_SCHEMAS: Record<string, S1Schema> = {
         }
       },
       "teacher": {
+        "kind": "array",
+        "items": {
+          "kind": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "required": []
+  },
+  "_attendances_lookup_post_request": {
+    "properties": {
+      "ids": {
+        "kind": "array",
+        "items": {
+          "kind": "string",
+          "format": "uuid"
+        }
+      },
+      "activities": {
+        "kind": "array",
+        "items": {
+          "kind": "string",
+          "format": "uuid"
+        }
+      },
+      "students": {
+        "kind": "array",
+        "items": {
+          "kind": "string",
+          "format": "uuid"
+        }
+      },
+      "calendareEvents": {
         "kind": "array",
         "items": {
           "kind": "string",
@@ -1144,6 +1213,107 @@ export const S1_SCHEMAS: Record<string, S1Schema> = {
       "official",
       "schoolType",
       "subjectName"
+    ]
+  },
+  "Attendance": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "meta": {
+        "kind": "object",
+        "ref": "Meta"
+      },
+      "calendarEvent": {
+        "kind": "object",
+        "ref": "CalendarEventReference"
+      },
+      "student": {
+        "kind": "object",
+        "ref": "Attendance_student"
+      },
+      "reporter": {
+        "kind": "object",
+        "ref": "Attendance_reporter"
+      },
+      "isReported": {
+        "kind": "boolean"
+      },
+      "attendanceMinutes": {
+        "kind": "integer"
+      },
+      "validAbsenceMinutes": {
+        "kind": "integer"
+      },
+      "invalidAbsenceMinutes": {
+        "kind": "integer"
+      },
+      "otherAttendanceMinutes": {
+        "kind": "integer"
+      },
+      "absenceReason": {
+        "kind": "string"
+      },
+      "reportedTimestamp": {
+        "kind": "string",
+        "format": "date-time"
+      }
+    },
+    "required": [
+      "calendarEvent",
+      "id",
+      "isReported",
+      "meta",
+      "student"
+    ]
+  },
+  "Absence": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "meta": {
+        "kind": "object",
+        "ref": "Meta"
+      },
+      "startTime": {
+        "kind": "string",
+        "format": "date-time"
+      },
+      "endTime": {
+        "kind": "string",
+        "format": "date-time"
+      },
+      "type": {
+        "kind": "string",
+        "enum": [
+          "Beviljad ledighet",
+          "Anmäld frånvaro"
+        ],
+        "enumName": "AbsenceEnum"
+      },
+      "student": {
+        "kind": "object",
+        "ref": "Attendance_student"
+      },
+      "organisation": {
+        "kind": "object",
+        "ref": "Absence_organisation"
+      },
+      "registeredBy": {
+        "kind": "object",
+        "ref": "Absence_registeredBy"
+      }
+    },
+    "required": [
+      "endTime",
+      "id",
+      "meta",
+      "startTime",
+      "student",
+      "type"
     ]
   },
   "DeletedEntities_data": {
@@ -1983,6 +2153,100 @@ export const S1_SCHEMAS: Record<string, S1Schema> = {
       "title"
     ]
   },
+  "CalendarEventReference": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "displayName": {
+        "kind": "string"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "Attendance_student": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "displayName": {
+        "kind": "string"
+      },
+      "securityMarking": {
+        "kind": "string",
+        "enum": [
+          "Ingen",
+          "Sekretessmarkering",
+          "Skyddad folkbokföring"
+        ]
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "Attendance_reporter": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "displayName": {
+        "kind": "string"
+      },
+      "securityMarking": {
+        "kind": "string",
+        "enum": [
+          "Ingen",
+          "Sekretessmarkering",
+          "Skyddad folkbokföring"
+        ]
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "Absence_organisation": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "displayName": {
+        "kind": "string"
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "Absence_registeredBy": {
+    "properties": {
+      "id": {
+        "kind": "string",
+        "format": "uuid"
+      },
+      "displayName": {
+        "kind": "string"
+      },
+      "securityMarking": {
+        "kind": "string",
+        "enum": [
+          "Ingen",
+          "Sekretessmarkering",
+          "Skyddad folkbokföring"
+        ]
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
   "SchoolUnitReference": {
     "properties": {
       "id": {
@@ -2523,59 +2787,6 @@ export const S1_SCHEMAS: Record<string, S1Schema> = {
       "startDate"
     ]
   },
-  "Attendance": {
-    "properties": {
-      "id": {
-        "kind": "string",
-        "format": "uuid"
-      },
-      "meta": {
-        "kind": "object",
-        "ref": "Meta"
-      },
-      "calendarEvent": {
-        "kind": "object",
-        "ref": "CalendarEventReference"
-      },
-      "student": {
-        "kind": "object",
-        "ref": "Attendance_student"
-      },
-      "reporter": {
-        "kind": "object",
-        "ref": "Attendance_reporter"
-      },
-      "isReported": {
-        "kind": "boolean"
-      },
-      "attendanceMinutes": {
-        "kind": "integer"
-      },
-      "validAbsenceMinutes": {
-        "kind": "integer"
-      },
-      "invalidAbsenceMinutes": {
-        "kind": "integer"
-      },
-      "otherAttendanceMinutes": {
-        "kind": "integer"
-      },
-      "absenceReason": {
-        "kind": "string"
-      },
-      "reportedTimestamp": {
-        "kind": "string",
-        "format": "date-time"
-      }
-    },
-    "required": [
-      "calendarEvent",
-      "id",
-      "isReported",
-      "meta",
-      "student"
-    ]
-  },
   "Placement_placedAt": {
     "properties": {
       "id": {
@@ -2709,64 +2920,6 @@ export const S1_SCHEMAS: Record<string, S1Schema> = {
       "meta",
       "organisation",
       "startDate"
-    ]
-  },
-  "CalendarEventReference": {
-    "properties": {
-      "id": {
-        "kind": "string",
-        "format": "uuid"
-      },
-      "displayName": {
-        "kind": "string"
-      }
-    },
-    "required": [
-      "id"
-    ]
-  },
-  "Attendance_student": {
-    "properties": {
-      "id": {
-        "kind": "string",
-        "format": "uuid"
-      },
-      "displayName": {
-        "kind": "string"
-      },
-      "securityMarking": {
-        "kind": "string",
-        "enum": [
-          "Ingen",
-          "Sekretessmarkering",
-          "Skyddad folkbokföring"
-        ]
-      }
-    },
-    "required": [
-      "id"
-    ]
-  },
-  "Attendance_reporter": {
-    "properties": {
-      "id": {
-        "kind": "string",
-        "format": "uuid"
-      },
-      "displayName": {
-        "kind": "string"
-      },
-      "securityMarking": {
-        "kind": "string",
-        "enum": [
-          "Ingen",
-          "Sekretessmarkering",
-          "Skyddad folkbokföring"
-        ]
-      }
-    },
-    "required": [
-      "id"
     ]
   }
 };
@@ -3866,6 +4019,212 @@ export const S1_OPERATIONS: Record<string, S1Operation> = {
     "responses": {
       "200": "AttendancesArray",
       "503": "Error",
+      "default": "Error"
+    }
+  },
+  "GET /attendances": {
+    "query": {
+      "student": {
+        "array": false,
+        "type": "string",
+        "format": "uuid"
+      },
+      "organisation": {
+        "array": false,
+        "type": "string",
+        "format": "uuid"
+      },
+      "calendarEvent": {
+        "array": false,
+        "type": "string",
+        "format": "uuid"
+      },
+      "meta.created.before": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.created.after": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.modified.before": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.modified.after": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "expandReferenceNames": {
+        "array": false,
+        "type": "boolean"
+      },
+      "limit": {
+        "array": false,
+        "type": "integer",
+        "minimum": 1
+      },
+      "pageToken": {
+        "array": false,
+        "type": "string"
+      }
+    },
+    "body": null,
+    "responses": {
+      "200": "Attendances",
+      "400": "Error",
+      "403": "Error",
+      "default": "Error"
+    }
+  },
+  "POST /attendances/lookup": {
+    "query": {
+      "expandReferenceNames": {
+        "array": false,
+        "type": "boolean"
+      }
+    },
+    "body": "_attendances_lookup_post_request",
+    "responses": {
+      "200": "AttendancesArray",
+      "503": "Error",
+      "default": "Error"
+    }
+  },
+  "GET /attendances/{id}": {
+    "query": {},
+    "body": null,
+    "responses": {
+      "200": "Attendance",
+      "400": "Error",
+      "403": "Error",
+      "404": null,
+      "default": "Error"
+    }
+  },
+  "GET /absences": {
+    "query": {
+      "organisation": {
+        "array": false,
+        "type": "string",
+        "format": "uuid"
+      },
+      "student": {
+        "array": false,
+        "type": "string",
+        "format": "uuid"
+      },
+      "registeredBy": {
+        "array": false,
+        "type": "string",
+        "format": "uuid"
+      },
+      "type": {
+        "array": false,
+        "type": "string",
+        "enum": [
+          "Beviljad ledighet",
+          "Anmäld frånvaro"
+        ]
+      },
+      "startTime.onOrBefore": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "startTime.onOrAfter": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "endTime.onOrBefore": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "endTime.onOrAfter": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.created.before": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.created.after": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.modified.before": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "meta.modified.after": {
+        "array": false,
+        "type": "string",
+        "format": "date-time"
+      },
+      "expandReferenceNames": {
+        "array": false,
+        "type": "boolean"
+      },
+      "sortkey": {
+        "array": false,
+        "type": "string",
+        "enum": [
+          "ModifiedDesc",
+          "StartTimeAsc",
+          "StartTimeDesc"
+        ]
+      },
+      "limit": {
+        "array": false,
+        "type": "integer",
+        "minimum": 1
+      },
+      "pageToken": {
+        "array": false,
+        "type": "string"
+      }
+    },
+    "body": null,
+    "responses": {
+      "200": "Absences",
+      "400": "Error",
+      "403": "Error",
+      "default": "Error"
+    }
+  },
+  "POST /absences/lookup": {
+    "query": {
+      "expandReferenceNames": {
+        "array": false,
+        "type": "boolean"
+      }
+    },
+    "body": "IdLookup",
+    "responses": {
+      "200": "AbsencesArray",
+      "403": "Error",
+      "503": "Error",
+      "default": "Error"
+    }
+  },
+  "GET /absences/{id}": {
+    "query": {},
+    "body": null,
+    "responses": {
+      "200": "Absence",
+      "400": "Error",
+      "403": "Error",
+      "404": null,
       "default": "Error"
     }
   },

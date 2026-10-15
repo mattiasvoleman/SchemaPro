@@ -94,6 +94,34 @@ describe('the läslogg of SS12000 v2', () => {
     });
   });
 
+  it('calendar events with expand=attendance: each embedded attendance\'s pupil, as ATTENDANCE', () => {
+    const event: Obj = {
+      id: 'e1',
+      _embedded: { attendance: [{ id: 'x1', student: ref('p1') }, { id: 'x2', student: ref('p2') }] },
+    };
+    expect(seen(V2_READS.calendarEvents, [event])).toEqual({ ATTENDANCE: { persons: ['p1', 'p2'], duties: [] } });
+  });
+
+  it('attendances: each pupil whose attendance the page carries', () => {
+    const items: Obj[] = [
+      { id: 'x1', student: ref('p1'), calendarEvent: ref('e1'), isReported: true },
+      { id: 'x2', student: ref('p2'), calendarEvent: ref('e1'), isReported: false },
+    ];
+    expect(seen(V2_READS.attendances, items)).toEqual({ ATTENDANCE: { persons: ['p1', 'p2'], duties: [] } });
+  });
+
+  it('absences: a reported absence as ABSENCE_REPORTS, a granted leave\'s day as LEAVE_REQUESTS', () => {
+    const items: Obj[] = [
+      { id: 'a1', student: ref('p1'), type: 'Anmäld frånvaro' },
+      { id: 'a2', student: ref('p2'), type: 'Beviljad ledighet' },
+      { id: 'a3', student: ref('p1'), type: 'Anmäld frånvaro' },
+    ];
+    expect(seen(V2_READS.absences, items)).toEqual({
+      ABSENCE_REPORTS: { persons: ['p1', 'p1'], duties: [] },
+      LEAVE_REQUESTS: { persons: ['p2'], duties: [] },
+    });
+  });
+
   it('a read filtered to named pupils records them as SCHEDULE beside what the page names, and an empty page records nothing', () => {
     const event: Obj = { id: 'e1', studentExceptions: [{ student: ref('p9') }] };
     expect(seen(forPupils(V2_READS.calendarEvents, ['p4']), [event])).toEqual({

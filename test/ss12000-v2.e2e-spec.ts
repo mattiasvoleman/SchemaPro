@@ -12,6 +12,7 @@ import type { ClientOptions } from '../src/integration/ss12000-sync/client';
 import { Ss12000Outbound } from '../src/integration/ss12000-sync/ss12000-sync.providers';
 import { allKeys, checkSchema } from './utils/s1-contract';
 import { ABSENCE_TEXT, ProviderWorld, W, keyOf } from './utils/ss12000-provider-world';
+import { recordedReads } from './utils/recorded-reads';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { makeTestTls } from './utils/test-tls';
 
@@ -299,11 +300,18 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       expect(JSON.stringify(res.body)).not.toContain('Ekskolan');
     });
 
-    it('the ad-hoc lesson\'s Activity id is never the event\'s id, and expand=attendance is refused', async () => {
+    it('the ad-hoc lesson\'s Activity id is never the event\'s id, and expand=attendance needs the scope and the school\'s decision', async () => {
       const event = await v2(`/calendarEvents/${W.l3Adhoc}`).expect(200);
       expect(event.body.activity.id).toBe(adhocActivityId(W.l3Adhoc));
       expect(event.body.activity.id).not.toBe(W.l3Adhoc);
       await v2(`/activities/${event.body.activity.id}`).expect(200);
+      // The key holds attendances.read; the school has not decided to share.
+      expect((await v2(`/calendarEvents?${WINDOW}&expand=attendance`).expect(403)).body.code).toBe('NOT_SHARED');
+      await http()
+        .patch(`/api/v1/integration-keys/${W.keyFull}`)
+        .set('x-test-user', admin)
+        .send({ scopes: ['calendarEvents.read'] })
+        .expect(200);
       expect((await v2(`/calendarEvents?${WINDOW}&expand=attendance`).expect(403)).body.code).toBe('SCOPE_MISSING');
     });
 
@@ -313,6 +321,151 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       expect(res.body.data.persons).toEqual([W.p5]);
       const groupsOnly = await v2('/deletedEntities', GROUPS_ONLY).expect(200);
       expect(Object.keys(groupsOnly.body.data)).toEqual(['groups']);
+    });
+  });
+
+  describe('attendance and absence (SS12000-närvaro)', () => {
+    const share = () => {
+      world.attendanceShared = true;
+    };
+    const ids = (body: { data: Array<{ id: string }> } | Array<{ id: string }>) =>
+      (Array.isArray(body) ? body : body.data).map((item) => item.id).sort();
+
+    it('is off by default: a key with the scopes is 403 NOT_SHARED, and deletedEntities has no category of it', async () => {
+      for (const path of ['/attendances', `/attendances/${W.attPresent}`, '/absences', `/absences/${W.absSick}`]) {
+        expect({ path, code: (await v2(path).expect(403)).body.code }).toEqual({ path, code: 'NOT_SHARED' });
+      }
+      expect((await v2post('/attendances/lookup', { ids: [W.attPresent] }).expect(403)).body.code).toBe('NOT_SHARED');
+      expect((await v2post('/absences/lookup', { ids: [W.absSick] }).expect(403)).body.code).toBe('NOT_SHARED');
+      const deleted = await v2('/deletedEntities?entities=Attendance&entities=Absence&entities=Person').expect(200);
+      expect(Object.keys(deleted.body.data)).toEqual(['persons']);
+    });
+
+    it('needs its own scope whatever the school decided', async () => {
+      share();
+      expect((await v2('/attendances', GROUPS_ONLY).expect(403)).body.code).toBe('SCOPE_MISSING');
+      expect((await v2('/absences', GROUPS_ONLY).expect(403)).body.code).toBe('SCOPE_MISSING');
+      expect((await v2('/attendances', REVOKED).expect(401)).body.code).toBe('UNAUTHENTICATED');
+      await http().patch(`/api/v1/integration-keys/${W.keyFull}`).set('x-test-user', admin).send({ scopes: ['absences.read'] }).expect(200);
+      expect((await v2('/attendances').expect(403)).body.code).toBe('SCOPE_MISSING');
+      await v2('/absences').expect(200);
+    });
+
+    it('answers S1\'s Attendances and Absences, with minutes by the närvarorapport\'s rule and nothing else', async () => {
+      share();
+      const attendances = await v2('/attendances?expandReferenceNames=true').expect(200);
+      expect(checkSchema(attendances.body, 'Attendances')).toEqual([]);
+      // Not the future year's lesson, not the pupil who left.
+      expect(ids(attendances.body)).toEqual([W.attPresent, W.attLate, W.attExcused, W.attAbsent, W.attUnknown].sort());
+      const byId = new Map<string, Record<string, unknown>>(attendances.body.data.map((item: { id: string }) => [item.id, item]));
+      expect(byId.get(W.attPresent)).toMatchObject({ isReported: true, attendanceMinutes: 60, validAbsenceMinutes: 0, invalidAbsenceMinutes: 0 });
+      expect(byId.get(W.attLate)).toMatchObject({ attendanceMinutes: 45, validAbsenceMinutes: 0, invalidAbsenceMinutes: 15 });
+      expect(byId.get(W.attExcused)).toMatchObject({ attendanceMinutes: 0, validAbsenceMinutes: 60, invalidAbsenceMinutes: 0 });
+      expect(byId.get(W.attAbsent)).toMatchObject({ attendanceMinutes: 0, validAbsenceMinutes: 0, invalidAbsenceMinutes: 60 });
+      expect(byId.get(W.attUnknown)).toEqual({
+        id: W.attUnknown,
+        meta: expect.any(Object),
+        calendarEvent: { id: W.l3Adhoc },
+        student: { id: W.p4, displayName: 'Pia Nivå' },
+        isReported: false,
+      });
+      // A linked pupil under the source's id; dated by its creation until a change gives it a version.
+      expect(byId.get(W.attPresent)).toMatchObject({
+        student: { id: W.p1Source },
+        meta: { created: '2026-10-12T09:00:00.000Z', modified: '2026-10-12T09:00:00.000Z' },
+      });
+
+      const absences = await v2('/absences').expect(200);
+      expect(checkSchema(absences.body, 'Absences')).toEqual([]);
+      expect(ids(absences.body)).toEqual([W.absSick, W.absHours, W.absGranted, W.absForged].sort());
+      const absence = new Map<string, Record<string, unknown>>(absences.body.data.map((item: { id: string }) => [item.id, item]));
+      // A whole day is the school's local day (Europe/Stockholm, summer time).
+      expect(absence.get(W.absSick)).toEqual({
+        id: W.absSick, meta: expect.any(Object), startTime: '2026-10-12T22:00:00.000Z', endTime: '2026-10-13T22:00:00.000Z',
+        type: 'Anmäld frånvaro', student: { id: W.p1Source },
+      });
+      expect(absence.get(W.absHours)).toMatchObject({ startTime: '2026-10-12T06:00:00.000Z', endTime: '2026-10-12T08:00:00.000Z', type: 'Anmäld frånvaro' });
+      expect(absence.get(W.absGranted)).toMatchObject({ type: 'Beviljad ledighet', student: { id: W.p4 } });
+      // A guardian's "Approved leave" note is not a decision.
+      expect(absence.get(W.absForged)).toMatchObject({ type: 'Anmäld frånvaro' });
+
+      const text = JSON.stringify([attendances.body, absences.body]);
+      for (const forbidden of [ABSENCE_TEXT, 'Tandläkare', 'Approved leave', 'SICK', 'APPOINTMENT']) expect(text).not.toContain(forbidden);
+      const keys = allKeys([attendances.body, absences.body]);
+      for (const key of ['note', 'absenceReason', 'reporter', 'registeredBy', 'otherAttendanceMinutes', 'reportedTimestamp', 'organisation']) {
+        expect({ key, present: keys.has(key) }).toEqual({ key, present: false });
+      }
+    });
+
+    it('filters, pages and looks up as S1 says', async () => {
+      share();
+      expect(ids((await v2(`/attendances?student=${W.p1Source}`).expect(200)).body)).toEqual([W.attPresent, W.attExcused].sort());
+      expect(ids((await v2(`/attendances?calendarEvent=${W.l1}`).expect(200)).body)).toEqual([W.attPresent, W.attLate].sort());
+      expect((await v2(`/attendances?student=${W.g1}`).expect(200)).body.data).toEqual([]);
+      // An incremental read is the rows changed since: those with a version after the mark.
+      expect((await v2('/attendances?meta.modified.after=2026-10-12T10:00:00Z').expect(200)).body.data).toEqual([]);
+      world.versions.push({ schoolId: W.school, resource: 'Attendance', entityId: W.attLate, createdAt: new Date('2026-10-12T09:00:00Z'), modifiedAt: new Date('2026-10-13T07:00:00Z') });
+      const changed = await v2('/attendances?meta.modified.after=2026-10-12T10:00:00Z').expect(200);
+      expect(changed.body.data).toEqual([expect.objectContaining({ id: W.attLate, meta: { created: '2026-10-12T09:00:00.000Z', modified: '2026-10-13T07:00:00.000Z' } })]);
+      expect(ids((await v2('/attendances?meta.modified.before=2026-10-12T09:00:00Z').expect(200)).body)).toEqual([W.attPresent, W.attExcused, W.attAbsent, W.attUnknown].sort());
+      const first = await v2('/attendances?limit=2').expect(200);
+      expect(first.body.data).toHaveLength(2);
+      const second = await v2(`/attendances?limit=2&pageToken=${first.body.pageToken}`).expect(200);
+      const third = await v2(`/attendances?pageToken=${second.body.pageToken}`).expect(200);
+      expect(third.body.pageToken).toBeNull();
+      expect([...ids(first.body), ...ids(second.body), ...ids(third.body)].sort()).toEqual(
+        [W.attPresent, W.attLate, W.attExcused, W.attAbsent, W.attUnknown].sort(),
+      );
+      await v2(`/attendances/${W.attFutureYear}`).expect(404);
+      await v2(`/attendances/${W.attInactivePupil}`).expect(404);
+      expect((await v2('/attendances/not-a-uuid').expect(400)).body.code).toBe('INVALID_ID');
+      expect(ids((await v2post('/attendances/lookup', { students: [W.p2], calendareEvents: [W.l1] }).expect(200)).body)).toEqual(
+        [W.attLate, W.attAbsent, W.attPresent].sort(),
+      );
+      expect(ids((await v2post('/attendances/lookup', { activities: [adhocActivityId(W.l3Adhoc)] }).expect(200)).body)).toEqual([W.attUnknown]);
+      expect((await v2post('/attendances/lookup', { calendarEvents: [W.l1] }).expect(400)).body.code).toBe('INVALID_BODY');
+
+      expect(ids((await v2('/absences?type=Beviljad%20ledighet').expect(200)).body)).toEqual([W.absGranted]);
+      expect((await v2(`/absences?registeredBy=${W.g1}`).expect(200)).body.data).toEqual([]);
+      // 20 October in Stockholm begins at 22:00Z the day before; onOrAfter is inclusive.
+      expect(ids((await v2('/absences?startTime.onOrAfter=2026-10-19T22:00:00Z').expect(200)).body)).toEqual([W.absGranted, W.absForged].sort());
+      expect(ids((await v2('/absences?startTime.onOrAfter=2026-10-19T22:00:00.001Z').expect(200)).body)).toEqual([W.absForged]);
+      const sorted = await v2('/absences?sortkey=StartTimeAsc').expect(200);
+      expect(sorted.body.data.map((item: { id: string }) => item.id)).toEqual([W.absHours, W.absSick, W.absGranted, W.absForged]);
+      await v2(`/absences/${W.absInactivePupil}`).expect(404);
+      expect(ids((await v2post('/absences/lookup', { ids: [W.absSick, W.absInactivePupil] }).expect(200)).body)).toEqual([W.absSick]);
+    });
+
+    it('calendarEvents?expand=attendance embeds each lesson\'s attendances once the school shares', async () => {
+      share();
+      const res = await v2(`/calendarEvents?${WINDOW}&expand=attendance`).expect(200);
+      expect(checkSchema(res.body, 'CalendarEvents')).toEqual([]);
+      const embedded = new Map<string, string[]>(
+        res.body.data.map((event: { id: string; _embedded: { attendance: Array<{ id: string }> } }) => [event.id, event._embedded.attendance.map((a) => a.id).sort()]),
+      );
+      expect(embedded.get(W.l1)).toEqual([W.attPresent, W.attLate].sort());
+      expect(embedded.get(W.l5Cancelled)).toEqual([]);
+      expect(JSON.stringify(res.body)).not.toContain(ABSENCE_TEXT);
+    });
+
+    it('records every read in the läslogg: attendance, a reported absence, a granted leave', async () => {
+      share();
+      await v2('/attendances').expect(200);
+      await v2('/absences').expect(200);
+      const reads = recordedReads(harness.tx);
+      expect(reads.find((read) => read.kind === 'ATTENDANCE')?.ids.sort()).toEqual([W.p1, W.p2, W.p4].sort());
+      expect(reads.find((read) => read.kind === 'ABSENCE_REPORTS')?.ids.sort()).toEqual([W.p1, W.p2].sort());
+      expect(reads.find((read) => read.kind === 'LEAVE_REQUESTS')?.ids).toEqual([W.p4]);
+    });
+
+    it('deletedEntities answers attendances and absences by S1\'s keys once the school shares', async () => {
+      share();
+      world.tombstones.push(
+        { schoolId: W.school, resource: 'Attendance', emittedId: 'a0000000-0000-4000-8000-0000000000ff', removedAt: new Date('2026-10-05T08:00:00Z') },
+        { schoolId: W.school, resource: 'Absence', emittedId: 'ab000000-0000-4000-8000-0000000000ff', removedAt: new Date('2026-10-05T09:00:00Z') },
+      );
+      const res = await v2('/deletedEntities?entities=Attendance&entities=Absence').expect(200);
+      expect(res.body.data).toEqual({ attendances: ['a0000000-0000-4000-8000-0000000000ff'], absences: ['ab000000-0000-4000-8000-0000000000ff'] });
     });
   });
 
@@ -401,7 +554,9 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       await makeSecret();
       // S1's own (non-normative) example: plain strings, "Organsation" misspelt.
       expect((await create({ name: 'x', target: receiver.url, resourceTypes: ['Organsation', 'Person', 'Duty'] }).expect(400)).body.code).toBe('INVALID_BODY');
-      expect((await create({ name: 'x', target: receiver.url, resourceTypes: [{ resource: 'Absence' }] }).expect(400)).body.code).toBe('INVALID_BODY');
+      expect((await create({ name: 'x', target: receiver.url, resourceTypes: [{ resource: 'Grade' }] }).expect(400)).body.code).toBe('INVALID_BODY');
+      // Emitted since SS12000-närvaro, but only at a school that shares it.
+      expect((await create({ name: 'x', target: receiver.url, resourceTypes: [{ resource: 'Absence' }] }).expect(403)).body.code).toBe('NOT_SHARED');
       await http().patch(`/api/v1/integration-keys/${W.keyFull}`).set('x-test-user', admin).send({ scopes: ['subscriptions.write', 'rooms.read'] }).expect(200);
       expect((await create({ name: 'x', target: receiver.url, resourceTypes: [{ resource: 'Person' }] }).expect(403)).body.code).toBe('SCOPE_MISSING');
     });

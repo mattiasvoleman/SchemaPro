@@ -59,7 +59,7 @@ function describe(v) {
   return o;
 }
 const wanted = new Set();
-const queue = ['Organisations', 'PersonsExpanded', 'Duties', 'GroupsExpanded', 'Activities', 'CalendarEvents', 'Rooms', 'Syllabuses', 'Subscriptions', 'DeletedEntities', 'CreateSubscription', '_subscriptions_get_request', 'Error', 'IdLookup', '_organisations_lookup_post_request', '_persons_lookup_post_request', '_activities_lookup_post_request', '_calendarEvents_lookup_post_request', 'Subscription'];
+const queue = ['Organisations', 'PersonsExpanded', 'Duties', 'GroupsExpanded', 'Activities', 'CalendarEvents', 'Rooms', 'Syllabuses', 'Attendances', 'Absences', 'Subscriptions', 'DeletedEntities', 'CreateSubscription', '_subscriptions_get_request', 'Error', 'IdLookup', '_organisations_lookup_post_request', '_persons_lookup_post_request', '_activities_lookup_post_request', '_calendarEvents_lookup_post_request', '_attendances_lookup_post_request', 'Subscription'];
 const schemas = {};
 while (queue.length) {
   const n = queue.shift();
@@ -78,9 +78,13 @@ while (queue.length) {
 // Parameters per served operation.
 const ops = {};
 for (const [p, methods] of Object.entries(d.paths)) {
-  if (!/^\/(organisations|persons|groups|duties|activities|calendarEvents|rooms|syllabuses|deletedEntities|subscriptions)(\/|$)/.test(p)) continue;
+  if (!/^\/(organisations|persons|groups|duties|activities|calendarEvents|rooms|syllabuses|attendances|absences|deletedEntities|subscriptions)(\/|$)/.test(p)) continue;
   for (const [m, op] of Object.entries(methods)) {
     if (m === 'parameters') continue;
+    // Attendance and absence are read only: S1's POST /attendances,
+    // POST /absences and DELETE /attendances/{id} write a school's register,
+    // which an integration never does here.
+    if (/^\/(attendances|absences)(\/\{id\})?$/.test(p) && m !== 'get') continue;
     const params = [...(methods.parameters || []), ...(op.parameters || [])].map(deref).filter((x) => x.in === 'query');
     const list = {};
     for (const x of params) {

@@ -141,7 +141,8 @@ describe('scopes', () => {
     expect(parseScopes([])).toBeNull();
     expect(parseScopes(['groups.write'])).toBeNull();
     expect(parseScopes('groups.read')).toBeNull();
-    expect(SCOPES).toHaveLength(12);
+    // 20261114090000's CHECK names fourteen: attendances.read and absences.read.
+    expect(SCOPES).toHaveLength(14);
   });
 });
 

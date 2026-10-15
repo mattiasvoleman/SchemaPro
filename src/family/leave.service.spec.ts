@@ -316,6 +316,8 @@ describe('LeaveService', () => {
           date: expect.any(Date),
           type: 'OTHER',
           note: APPROVED_LEAVE_NOTE,
+          // SS12000 tells a granted leave by this, never by the note.
+          grantedLeave: true,
         });
       }
       // The pupil's school days are read in the decider's transaction.

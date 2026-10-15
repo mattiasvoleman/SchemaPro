@@ -8,6 +8,11 @@
  * per resource it emits (S1 path), plus responsibles.read (guardians and
  * every responsibles[]: a library system needs no parents) and
  * subscriptions.write.
+ *
+ * attendances.read and absences.read (20261114090000) reach pupils' attendance
+ * and absence, and only at a school whose decision in force shares them
+ * (app.attendance_shared): with the scope and without the decision the
+ * answer is 403 NOT_SHARED, and the database's own arms read nothing.
  */
 export const SCOPES = [
   'ss12000.v1',
@@ -22,6 +27,8 @@ export const SCOPES = [
   'rooms.read',
   'syllabuses.read',
   'subscriptions.write',
+  'attendances.read',
+  'absences.read',
 ] as const;
 export type Scope = (typeof SCOPES)[number];
 
@@ -54,7 +61,16 @@ export const EMITTED_RESOURCES = {
   CalendarEvent: 'calendarEvents.read',
   Room: 'rooms.read',
   Syllabus: 'syllabuses.read',
+  Attendance: 'attendances.read',
+  Absence: 'absences.read',
 } as const satisfies Record<string, Scope>;
 export type EmittedResource = keyof typeof EMITTED_RESOURCES;
 
 export const EMITTED_RESOURCE_NAMES = Object.keys(EMITTED_RESOURCES) as EmittedResource[];
+
+/**
+ * The resources a key reads only while the school shares them (the school's
+ * AttendanceSharingDecisions): /deletedEntities leaves out their categories,
+ * a subscription is not told of them, and a read is 403 NOT_SHARED.
+ */
+export const SHARED_ONLY: ReadonlySet<EmittedResource> = new Set<EmittedResource>(['Attendance', 'Absence']);

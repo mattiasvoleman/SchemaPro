@@ -157,6 +157,34 @@ export class Ss12000V2Controller {
     return this.provider.getSyllabus(caller(req), id, query);
   }
 
+  // --- attendances and absences (SS12000-närvaro: read only) ---------------------
+  @Get('attendances')
+  attendances(@Req() req: Ss12000V2Request, @Query() query: Raw) {
+    return this.provider.listAttendances(caller(req), query);
+  }
+  @Post('attendances/lookup')
+  @HttpCode(200)
+  attendancesLookup(@Req() req: Ss12000V2Request, @Body() body: unknown, @Query() query: Raw) {
+    return this.provider.lookupAttendances(caller(req), body, query);
+  }
+  @Get('attendances/:id')
+  attendance(@Req() req: Ss12000V2Request, @Param('id') id: string, @Query() query: Raw) {
+    return this.provider.getAttendance(caller(req), id, query);
+  }
+  @Get('absences')
+  absences(@Req() req: Ss12000V2Request, @Query() query: Raw) {
+    return this.provider.listAbsences(caller(req), query);
+  }
+  @Post('absences/lookup')
+  @HttpCode(200)
+  absencesLookup(@Req() req: Ss12000V2Request, @Body() body: unknown, @Query() query: Raw) {
+    return this.provider.lookupAbsences(caller(req), body, query);
+  }
+  @Get('absences/:id')
+  absence(@Req() req: Ss12000V2Request, @Param('id') id: string, @Query() query: Raw) {
+    return this.provider.getAbsence(caller(req), id, query);
+  }
+
   // --- deletedEntities ---------------------------------------------------------
   @Get('deletedEntities')
   deletedEntities(@Req() req: Ss12000V2Request, @Query() query: Raw) {
