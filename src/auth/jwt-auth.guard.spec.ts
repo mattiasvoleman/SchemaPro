@@ -1,6 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
+import type { Request } from 'express';
 import passport from 'passport';
 import { Strategy } from 'passport-strategy';
 import { Public } from './decorators/public.decorator';
@@ -22,7 +23,7 @@ class BearerStub extends Strategy {
    */
   readonly asked: unknown[] = [];
 
-  authenticate(req: { headers: Record<string, string | undefined> }): void {
+  authenticate(req: Request): void {
     this.asked.push(req);
     const self = this as unknown as {
       success(user: object): void;

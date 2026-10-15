@@ -1,5 +1,5 @@
 import { adhocActivityId, normaliseUuid, SCHEMAPRO_SS12000_NAMESPACE, uuidV5 } from './ids';
-import { DEFAULT_LIMIT, encodePageToken, MAX_LIMIT, page, parseItemQuery, parseQuery } from './query';
+import { DEFAULT_LIMIT, encodePageToken, MAX_LIMIT, page, parseItemQuery, parseQuery, type SortKey } from './query';
 import { newWebhookSecret, signatureHeader, verifySignature, webhookSecretAad } from './signing';
 import { parseScopes, SCOPES } from './scopes';
 import { presentedKey } from './ss12000-v2.guard';
@@ -86,7 +86,7 @@ describe('query: S1 parameters', () => {
 
 describe('page: keyset over a total order', () => {
   const items = ['e', 'b', 'd', 'a', 'c'].map((id, at) => ({ id, rank: at % 2 === 0 ? 'x' : null }));
-  const walk = (key: Parameters<typeof page>[1]) => {
+  const walk = (key: SortKey<(typeof items)[number]> | null) => {
     const seen: string[] = [];
     let after: [string | number | null, string] | null = null;
     for (let n = 0; n < 10; n++) {

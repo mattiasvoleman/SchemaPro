@@ -1,11 +1,11 @@
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, type ClassConstructor } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateUserDto, UpdateUserDto } from './user.dto';
 
 const GROUP_ID = '66666666-6666-4666-8666-666666666666';
 
 /** The properties that failed validation. */
-const failing = async (cls: typeof CreateUserDto | typeof UpdateUserDto, body: object) =>
+const failing = async (cls: ClassConstructor<CreateUserDto | UpdateUserDto>, body: object) =>
   (await validate(plainToInstance(cls, body))).map((error) => error.property);
 
 describe.each([

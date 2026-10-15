@@ -103,7 +103,13 @@ const row = (g: PlannedGroup, subjectId: string, bucket: DeliveredAudienceRow['b
   ...extra,
 });
 
-const compute = (overrides: Partial<DeliveredCoverageInput> & { planned?: Partial<DeliveredCoverageInput['planned']> }): DeliveredCoverage =>
+/**
+ * What a case says about the input. `planned` is replaced, not intersected: a
+ * case names only the planned fields it is about, and `compute` fills the rest.
+ */
+type Overrides = Omit<Partial<DeliveredCoverageInput>, 'planned'> & { planned?: Partial<DeliveredCoverageInput['planned']> };
+
+const compute = (overrides: Overrides): DeliveredCoverage =>
   computeDeliveredCoverage({
     audiences: [],
     horizon: [],
@@ -148,7 +154,7 @@ describe('the worked example (spec §4.4, recomputed in review R22)', () => {
   const wednesday = master(a, S.MA, 3, { extraGroupIds: [fd.id] });
   const friday = master(a, S.MA, 5);
   const shared = { extraGroupIds: [fd.id] };
-  const input: Partial<DeliveredCoverageInput> & { planned: Partial<DeliveredCoverageInput['planned']> } = {
+  const input: Overrides & { planned: Partial<DeliveredCoverageInput['planned']> } = {
     planned: {
       groups: [a, fd],
       requirements: [req(a, S.MA, 3, 60), req(fd, S.MA, 1, 60)],
@@ -296,7 +302,7 @@ describe('a bulk avbokning (Publicering)', () => {
   const monday = master(a, S.MA, 1);
   const wednesday = master(a, S.MA, 3);
   const friday = master(a, S.MA, 5);
-  const base: Partial<DeliveredCoverageInput> & { planned: Partial<DeliveredCoverageInput['planned']> } = {
+  const base: Overrides & { planned: Partial<DeliveredCoverageInput['planned']> } = {
     planned: { groups: [a], requirements: [req(a, S.MA, 3, 60)], pupils: [pupil(a)] },
     audiences: [
       row(a, S.MA, 'DELIVERED', 19),

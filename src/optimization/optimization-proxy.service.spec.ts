@@ -14,9 +14,11 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type {
+  AiEngineLesson,
   AiEngineLunch,
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
+  DayOfWeek,
 } from './interfaces/ai-engine-payload.interface';
 import {
   OptimizationProxyService,
@@ -201,7 +203,7 @@ describe('OptimizationProxyService', () => {
     );
 
   /** A placement of `ANON_REQ`, as the engine words it. */
-  const placement = (requirementId = ANON_REQ) => ({
+  const placement = (requirementId = ANON_REQ): AiEngineLesson => ({
     requirementId,
     roomId: null,
     dayOfWeek: 1,
@@ -408,7 +410,7 @@ describe('OptimizationProxyService', () => {
       );
     });
 
-    const sitting = (groupId = 'g-7a', dayOfWeek = 1) => ({
+    const sitting = (groupId = 'g-7a', dayOfWeek: DayOfWeek = 1): AiEngineLunch => ({
       studentGroupId: groupId,
       dayOfWeek,
       startTime: '11:30:00',
@@ -2718,7 +2720,7 @@ describe('OptimizationProxyService', () => {
 
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-      expect(postedPayload().constraints.map((c: { dayOfWeek: number }) => c.dayOfWeek).sort()).toEqual([1, 2, 4]);
+      expect(postedPayload().constraints.map((c) => c.dayOfWeek).sort()).toEqual([1, 2, 4]);
     });
 
     it('formats date-bound constraints as YYYY-MM-DD', async () => {
@@ -3826,7 +3828,7 @@ describe('OptimizationProxyService', () => {
         'as the second class of a locked lesson',
         (group: string) =>
           lockedLesson({ subjectId: 'another-subject', extraGroups: [{ studentGroupId: group }] }),
-        (fixed: AiEngineScheduleRequest['fixedLessons'][number]) => fixed.extraGroupIds[0]!,
+        (fixed: AiEngineScheduleRequest['fixedLessons'][number]) => fixed.extraGroupIds?.[0],
       ],
     ])('keeps a class apart from a teaching group it shares a pupil with only %s', async (_label, locked, tokenOf) => {
       // The pupil cannot be in two places: the class's requirement and the

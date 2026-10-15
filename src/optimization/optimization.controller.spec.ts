@@ -128,7 +128,7 @@ describe('OptimizationController', () => {
               endTime: '11:00:00',
             },
           ],
-          conflicts: { summary: 'internal detail', conflicts: [] },
+          conflicts: { summary: 'internal detail', summaryCode: 'CONFLICT_CORE_SUMMARY', summaryParams: {}, conflicts: [] },
         }),
       );
 
