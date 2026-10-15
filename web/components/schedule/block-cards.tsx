@@ -87,6 +87,14 @@ export interface BlockActions {
       endDate?: string | null;
     },
   ) => Promise<SavedLesson>;
+  /**
+   * The page's drop: asked first when the lessons reach more than one class,
+   * by the dialog that names them; `go` moves them (else the page's own move
+   * of the first), `block` names a card in that dialog.
+   */
+  drop: (moved: MasterLesson[], change: LessonChange, go?: () => void, block?: string) => void;
+  /** The page's validateChange: may this lesson stand there, `without` the lessons moving with it. */
+  validate: (id: string, change: LessonChange, without?: ReadonlySet<string>) => boolean;
   history: { push: (entry: HistoryEntry) => void };
   showError: (error: unknown) => void;
   /** The page's saved toast. */
@@ -112,8 +120,10 @@ export interface BlockKit {
   move: (id: string, change: LessonChange) => boolean;
   /** Opens a card's dialog; false: not a card. */
   open: (id: string) => boolean;
-  /** A card's lessons, for the page's bulk actions; undefined: not a card. */
-  lessonIdsOf: (id: string) => string[] | undefined;
+  /** A card's lessons, or with `whole` its block's placed lessons, for the bulk actions; undefined: not a card. */
+  lessonIdsOf: (id: string, whole?: boolean) => string[] | undefined;
+  /** Says why a card was not moved there, or not set aside; false: not a card. */
+  refuse: (id: string, tray: boolean) => boolean;
   /** Says a save that split a block, with the way back; false: the page's own toast. */
   announce: (before: MasterLesson, result: SavedLesson) => boolean;
 }
@@ -136,7 +146,15 @@ export function cardsOf(
   lessons: readonly MasterLesson[],
   requirements: readonly TeachingRequirement[],
   names: ReadonlyMap<string, string>,
-): { cards: Map<string, BlockCard>; cardOf: Map<string, BlockCard>; apart: Map<string, string> } {
+  /** A block whose name has not been read (yet). */
+  unnamed = "",
+): {
+  cards: Map<string, BlockCard>;
+  cardOf: Map<string, BlockCard>;
+  apart: Map<string, string>;
+  /** Each block's placed lessons. */
+  byBlock: Map<string, MasterLesson[]>;
+} {
   const blockOfKey = new Map(
     requirements.flatMap((post) => (post.blockId ? [[keyOf(post), post.blockId] as const] : [])),
   );
@@ -149,7 +167,7 @@ export function cardsOf(
   const cardOf = new Map<string, BlockCard>();
   const apart = new Map<string, string>();
   for (const [blockId, placed] of byBlock) {
-    const name = names.get(blockId) ?? "";
+    const name = names.get(blockId) ?? unnamed;
     const standing = new Set(placed.map(keyOf)).size;
     const slots = new Map<string, MasterLesson[]>();
     for (const lesson of [...placed].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -175,7 +193,7 @@ export function cardsOf(
       for (const lesson of here) if (!inCard.includes(lesson)) apart.set(lesson.id, name);
     }
   }
-  return { cards, cardOf, apart };
+  return { cards, cardOf, apart, byBlock };
 }
 
 /** The year's block names, as the requirements page reads them (same key). */
@@ -224,7 +242,12 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
   const [busy, setBusy] = useState(false);
 
   const names = useMemo(() => new Map((blocks ?? []).map((block) => [block.id, block.name])), [blocks]);
-  const { cards, cardOf, apart } = useMemo(() => cardsOf(lessons, requirements, names), [lessons, requirements, names]);
+  // A string, so the cards change with its text and not with the translator.
+  const unnamed = t("unnamed");
+  const { cards, cardOf, apart, byBlock } = useMemo(
+    () => cardsOf(lessons, requirements, names, unnamed),
+    [lessons, requirements, names, unnamed],
+  );
 
   // The writes the kit and the dialogs share. They read the page's actions
   // through the ref, so they do not change when the page re-renders.
@@ -298,11 +321,12 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
         const out: TimetableLesson[] = [];
         for (const lesson of shown) {
           const card = cardOf.get(lesson.id);
-          const members = card ? card.lessons.filter((member) => visible.has(member.id)) : [];
-          if (card && members.length > 1) {
+          if (card && card.lessons.filter((member) => visible.has(member.id)).length > 1) {
             if (drawn.has(card.id)) continue;
             drawn.add(card.id);
-            const parts = members.map(toGrid);
+            // Every member, not only those the filter shows: a drag of the
+            // card moves them all, so the card names them all.
+            const parts = card.lessons.map(toGrid);
             out.push({
               ...parts[0]!,
               id: card.id,
@@ -351,7 +375,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       move: (id, change) => {
         const card = cards.get(id);
         if (card) {
-          void writes.moveCard(card, change);
+          acts.current.drop(card.lessons, change, () => void writes.moveCard(card, change), card.name);
           return true;
         }
         const own = cardOf.get(id);
@@ -366,10 +390,20 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
         setOpened(card);
         return true;
       },
-      lessonIdsOf: (id) => cards.get(id)?.lessons.map((lesson) => lesson.id),
+      lessonIdsOf: (id, whole) => {
+        const card = cards.get(id);
+        if (!card) return undefined;
+        return (whole ? (byBlock.get(card.blockId) ?? card.lessons) : card.lessons).map((lesson) => lesson.id);
+      },
+      refuse: (id, tray) => {
+        const card = cards.get(id);
+        if (!card) return false;
+        toast.error(say.current.t(tray ? "refusedTray" : "refusedSlot", { name: card.name }));
+        return true;
+      },
       announce: writes.announce,
     }),
-    [cards, cardOf, apart, writes],
+    [cards, cardOf, apart, byBlock, writes],
   );
 
   useEffect(() => {
@@ -382,7 +416,10 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     try {
       const patchLock = (body: Record<string, unknown>) =>
         api
-          .patch<{ blockId: string; isLocked: boolean; lessonIds: string[] }>("/api/v1/master-lessons/block-lock", body)
+          .patch<{ blockId: string; isLocked: boolean; lessonIds: string[]; parked: number }>(
+            "/api/v1/master-lessons/block-lock",
+            body,
+          )
           .finally(() => void queryClient.invalidateQueries({ queryKey: ["masterLessons"] }));
       const result = await patchLock({ blockId: card.blockId, isLocked });
       const lessonIds = result.lessonIds;
@@ -393,7 +430,14 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
           redo: async () => void (await patchLock({ blockId: card.blockId, isLocked, lessonIds })),
         });
       }
-      toast.success(t(isLocked ? "locked" : "unlocked", { name: card.name, count: lessonIds.length }));
+      const done = t(isLocked ? "locked" : "unlocked", { name: card.name, count: lessonIds.length });
+      // A lesson on the tray takes no lock, and the generation refuses the
+      // block while one is there (lockBlock): said with the lock.
+      if (isLocked && result.parked > 0) {
+        toast.warning(done, { description: t("lockedParked", { parked: result.parked }), duration: 12_000 });
+      } else {
+        toast.success(done);
+      }
       setOpened(null);
     } catch (error) {
       actions.showError(error);
@@ -484,14 +528,8 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                 if (!splitting) return;
                 const { lesson, change } = splitting;
                 setSplitting(null);
-                void actions
-                  .update(lesson, {
-                    dayOfWeek: change.dayOfWeek,
-                    startTime: hhmm(change.startMinutes),
-                    endTime: hhmm(change.endMinutes),
-                  })
-                  .then((result) => writes.announce(lesson, result) || actions.announce(result))
-                  .catch(actions.showError);
+                // The page's own drop: its classes asked, its save said.
+                actions.drop([lesson], change);
               }}
             >
               {t("moveOne")}
@@ -501,7 +539,10 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                 if (!splitting) return;
                 const { card, change } = splitting;
                 setSplitting(null);
-                void writes.moveCard(card, change);
+                // The slot was checked for the one lesson; the card is checked
+                // as a card's drop is, every member beside the rest of the day.
+                if (kit.validate(card.id, change, actions.validate)) kit.move(card.id, change);
+                else kit.refuse(card.id, false);
               }}
             >
               {t("moveBlock")}

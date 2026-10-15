@@ -1269,6 +1269,8 @@
     "sharedMoveTitle": "This lesson belongs to several classes",
     "sharedMoveBody": "Moving it moves it for {classes}. Pupils in those classes get the new time in their timetables.",
     "sharedMoveConfirm": "Move anyway",
+    "sharedCardTitle": "The block's lessons belong to several classes",
+    "sharedCardBody": "Moving {name} moves its lessons for {classes}. Pupils in those classes get the new time in their timetables.",
     "trayTitle": "Tray",
     "trayHint": "Drag a lesson here to set it aside — to swap two, for instance. A parked lesson occupies no time, is not published and is not sent to the solver. Drag it back onto the grid, or put it back where it was.",
     "trayEmpty": "No parked lessons.",
@@ -1343,7 +1345,11 @@
       "splitBody": "{lesson} stands at the same times as {others}. If you move only this lesson the block is split: it counts as placed by hand, and unless every lesson of the block is locked the next generation reports the block as partly locked.",
       "moveOne": "Move only this one",
       "moveBlock": "Move the whole block",
-      "moveBack": "Move back with the block"
+      "moveBack": "Move back with the block",
+      "unnamed": "Parallel block",
+      "refusedSlot": "{name} cannot move there: one of the card's lessons clashes at that time. Open the card to move one lesson at a time.",
+      "refusedTray": "{name} is not set aside as a card. Open the card and set its lessons aside one at a time from their dialogs.",
+      "lockedParked": "{parked, plural, one {# of the block's lessons is on the tray and was not locked. The next generation refuses the block as partly locked until it is placed.} other {# of the block's lessons are on the tray and were not locked. The next generation refuses the block as partly locked until they are placed.}}"
     }
   },
   "roomOptimization": {

@@ -2365,9 +2365,18 @@ describe("a parallel block (Block i schemat)", () => {
     blockNames.read.mockClear();
     toasts.warning.mockClear();
     toasts.success.mockClear();
+    toasts.error.mockClear();
   });
 
   const card = () => screen.findByRole("button", { name: /Språkval åk 4/ });
+  // 4ma1 holds pupils of 4.1 and 4.2, so a move of the card reaches both
+  // classes and is asked first, as a shared lesson's drag is.
+  const confirmClasses = async () =>
+    userEvent.setup().click(await screen.findByRole("button", { name: "timetable.sharedMoveConfirm" }));
+  /** Karin teaches 7.1 on Tuesday 13:00: the card's Slöjd cannot go there, its Musik can. */
+  const karinOnTuesday = () => {
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, { ...lesson("l-tue", "s-ma", "g-71", "13:00"), dayOfWeek: 2 }];
+  };
   // The block module reads its names through react-query, as the app does;
   // the page's own reads are the mocks above.
   const showPage = () =>
@@ -2396,6 +2405,11 @@ describe("a parallel block (Block i schemat)", () => {
     await card();
 
     dragToTuesday("Språkval åk 4");
+    // The classes by name, and the block's, before anything moves.
+    expect(await screen.findByText("timetable.sharedCardTitle")).toBeInTheDocument();
+    expect(screen.getByText("timetable.sharedCardBody(Språkval åk 4|4.1, 4.2)")).toBeInTheDocument();
+    expect(blockApi.patch).not.toHaveBeenCalled();
+    await confirmClasses();
 
     await waitFor(() =>
       expect(blockApi.patch).toHaveBeenCalledWith("/api/v1/master-lessons/block-card", {
@@ -2462,6 +2476,7 @@ describe("a parallel block (Block i schemat)", () => {
     dragToTuesday("Musik");
     const dialog = await screen.findByRole("dialog");
     await userEvent.setup().click(within(dialog).getByRole("button", { name: "timetable.blocks.moveBlock" }));
+    await confirmClasses();
 
     await waitFor(() =>
       expect(blockApi.patch).toHaveBeenCalledWith(
@@ -2488,11 +2503,29 @@ describe("a parallel block (Block i schemat)", () => {
     expect(toasts.success).toHaveBeenCalledWith("timetable.blocks.locked(Språkval åk 4|2)");
   });
 
+  it("says with the lock that the block's lessons on the tray were not locked", async () => {
+    blockApi.patch.mockResolvedValue({ blockId: "b-sv", isLocked: true, lessonIds: ["l-sv1", "l-sv2"], parked: 1 });
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(await card());
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "timetable.blocks.lock" }));
+
+    await waitFor(() =>
+      expect(toasts.warning).toHaveBeenCalledWith(
+        "timetable.blocks.locked(Språkval åk 4|2)",
+        expect.objectContaining({ description: "timetable.blocks.lockedParked(1)" }),
+      ),
+    );
+    expect(toasts.success).not.toHaveBeenCalled();
+  });
+
   it("moves the card with the keyboard as a drag does", async () => {
     blockApi.patch.mockResolvedValue({ lessons: [], propagatedLessons: 0, removedCalendarLessons: 0, warnings: [] });
     showPage();
 
     fireEvent.keyDown(await card(), { key: "ArrowRight" });
+    await confirmClasses();
 
     await waitFor(() =>
       expect(blockApi.patch).toHaveBeenCalledWith(
@@ -2518,18 +2551,172 @@ describe("a parallel block (Block i schemat)", () => {
     ).toHaveLength(2);
   });
 
-  it("selects a card's lessons with it, for the bulk actions", async () => {
+  it("selects a card's lessons with it: counted as lessons, locked as a whole block, deleted as the card", async () => {
+    // Slöjd's second lesson stands apart at 15:00: the block's, not the card's.
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, lesson("l-sv3", "s-sl", "g-ma1", "15:00")];
+    const user = userEvent.setup();
+    const ids = () =>
+      noMutation.mutateAsync.mock.calls.map(([body]) => (typeof body === "string" ? body : (body as { id: string }).id)).sort();
+    showPage();
+    // The apart lesson names the block too; the card is the one with 4ma2.
+    const drawn = (await screen.findAllByRole("button", { name: /Språkval åk 4/ })).find((el) =>
+      el.textContent?.includes("4ma2"),
+    )!;
+
+    fireEvent.keyDown(drawn, { key: "Enter", shiftKey: true });
+    expect(await screen.findByText("timetable.bulkSelected(2)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "timetable.bulkLock" }));
+    // A lock on one card of a block is refused by the next generation.
+    await waitFor(() => expect(ids()).toEqual(["l-sv1", "l-sv2", "l-sv3"]));
+
+    noMutation.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "timetable.bulkDelete" }));
+    await waitFor(() => expect(ids()).toEqual(["l-sv1", "l-sv2"]));
+  });
+
+  it("drops the selection when the view changes, as a filter does", async () => {
+    const user = userEvent.setup();
     showPage();
 
     fireEvent.keyDown(await card(), { key: "Enter", shiftKey: true });
-    await userEvent.setup().click(await screen.findByRole("button", { name: "timetable.bulkLock" }));
+    expect(await screen.findByText("timetable.bulkSelected(2)")).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "timetable.viewLabel" }));
+    await user.click(await screen.findByRole("option", { name: "timetable.viewByTeacher" }));
+
+    await waitFor(() => expect(screen.queryByText(/timetable\.bulkSelected/)).toBeNull());
+  });
+
+  it("names every member on a card a filter shows two of, since the drag moves them all", async () => {
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, lesson("l-sv5", "s-id", "g-71", "13:00", { teacherId: "t-3" })];
+    state.requirements = [
+      ...state.requirements,
+      { id: "r-sv3", studentGroupId: "g-71", subjectId: "s-id", blockId: "b-sv" },
+    ];
+    showPage();
+    await card();
+
+    await filterTo("4ma1", "4ma2");
+
+    expect((await card()).textContent).toContain("7.1");
+  });
+
+  it("asks of a card whose lessons reach one class each and two together", async () => {
+    // 4ma2's Musik reaches 4.1 only, 4.2's own Slöjd 4.2 only.
+    state.lessons = [
+      ...LESSONS,
+      lesson("l-sva", "s-mu", "g-ma2", "13:00", { teacherId: "t-2" }),
+      lesson("l-svb", "s-sl", "g-42", "13:00"),
+    ];
+    state.requirements = [
+      { id: "r-sva", studentGroupId: "g-ma2", subjectId: "s-mu", blockId: "b-sv" },
+      { id: "r-svb", studentGroupId: "g-42", subjectId: "s-sl", blockId: "b-sv" },
+    ];
+    showPage();
+    await card();
+
+    dragToTuesday("Språkval åk 4");
+
+    expect(await screen.findByText("timetable.sharedCardBody(Språkval åk 4|4.1, 4.2)")).toBeInTheDocument();
+    expect(blockApi.patch).not.toHaveBeenCalled();
+  });
+
+  it("names the block under its lessons on the boards per teacher", async () => {
+    const user = userEvent.setup();
+    showPage();
+    await card();
+
+    await user.click(screen.getByRole("combobox", { name: "timetable.viewLabel" }));
+    await user.click(await screen.findByRole("option", { name: "timetable.viewByTeacher" }));
+
+    // Karin's Slöjd and Nils's Musik, each on its own board, each named.
+    await waitFor(() =>
+      expect(screen.queryAllByRole("button").filter((el) => el.textContent?.includes("Språkval åk 4"))).toHaveLength(2),
+    );
+  });
+
+  it("refuses a card dropped where one of its lessons clashes, and says why", async () => {
+    karinOnTuesday();
+    showPage();
+    await card();
+
+    dragToTuesday("Språkval åk 4");
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.blocks.refusedSlot(Språkval åk 4)"));
+    expect(blockApi.patch).not.toHaveBeenCalled();
+    expect(screen.queryByText("timetable.suggestTitle")).toBeNull();
+  });
+
+  it("checks the whole card before the question's move-the-block, though the one lesson fits", async () => {
+    karinOnTuesday();
+    showPage();
+    await card();
+    await filterToTeacher("Nils Berg");
+
+    dragToTuesday("Musik");
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "timetable.blocks.moveBlock" }));
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.blocks.refusedSlot(Språkval åk 4)"));
+    expect(blockApi.patch).not.toHaveBeenCalled();
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("asks the classes question of one member moved alone, as of any lesson", async () => {
+    showPage();
+    await card();
+    // 4ma1's Slöjd alone: its pupils are in 4.1 and 4.2.
+    await filterTo("4ma1");
+
+    dragToTuesday("Slöjd");
+    await userEvent
+      .setup()
+      .click(within(await screen.findByRole("dialog")).getByRole("button", { name: "timetable.blocks.moveOne" }));
+    expect(await screen.findByText("timetable.sharedMoveTitle")).toBeInTheDocument();
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    await confirmClasses();
 
     await waitFor(() =>
-      expect(noMutation.mutateAsync.mock.calls.map(([body]) => (body as { id: string }).id).sort()).toEqual([
-        "l-sv1",
-        "l-sv2",
-      ]),
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-sv1", dayOfWeek: 2 })),
     );
+  });
+
+  it("says a card is not set aside on the tray, and sets nothing aside", async () => {
+    showPage();
+    const drawn = await card();
+
+    fireEvent.pointerDown(drawn, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 700, clientY: 100 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 700, clientY: 100 });
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("timetable.blocks.refusedTray(Språkval åk 4)"));
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("offers the way back when a refused member's suggestion splits the block", async () => {
+    noMutation.mutateAsync.mockResolvedValueOnce({
+      id: "l-sv2",
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      warnings: [{ code: "BLOCK_SPLIT", params: { block: "Språkval åk 4" } }],
+    });
+    const user = userEvent.setup();
+    showPage();
+    await card();
+    await filterToTeacher("Nils Berg");
+    // Musik onto Monday 09:00, where Nils has 4ma2's Matematik: refused, so
+    // the free times are offered (13:00 is y 330, 09:00 is 240 min earlier).
+    const musik = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Musik"))!;
+    fireEvent.pointerDown(musik, { pointerId: 1, button: 0, clientX: 100, clientY: 330 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 66 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 66 });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("timetable.suggestTitle");
+    await user.click(Array.from(dialog.querySelectorAll("button")).find((button) => button.textContent?.includes("–"))!);
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalled());
+    const [, options] = toasts.warning.mock.calls.at(-1)! as [string, { action?: { label: string } }];
+    expect(options.action?.label).toBe("timetable.blocks.moveBack");
   });
 
   it("offers the way back when a member's own dialog splits the block", async () => {
