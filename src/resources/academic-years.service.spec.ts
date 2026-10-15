@@ -880,6 +880,8 @@ describe('AcademicYearsService', () => {
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);
       tx.teacherDuty.count.mockResolvedValue(0);
+      // A post's periods are dated against the year too (20261022120000).
+      tx.teacherEmploymentPeriod.count.mockResolvedValue(0);
     });
 
     const told = () => queryRaw.mock.calls.filter((call) => rawSql(call).includes(TELL));
