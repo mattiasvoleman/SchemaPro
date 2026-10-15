@@ -150,6 +150,11 @@ export interface MoveBlockCardResult {
   removedCalendarLessons: number;
   /** The ämnesfördelning a member breaks on its new day; never a refusal. */
   warnings: LessonWarning[];
+  /**
+   * Lessons of the block that stood where the card landed and stand on it
+   * now, with the owner each had before: what an undo leaves behind (`leave`).
+   */
+  joined: { id: string; isGenerated: boolean }[];
 }
 
 /** A block locked or unlocked (lockBlock): the lessons whose lock changed. */
@@ -512,6 +517,10 @@ export class MasterLessonsService {
        * "flytta tillbaka med blocket", puts the block back as the generation
        * will place it. A move from no card to no card is any move.
        *
+       * A lesson put back from Parkering is judged from the slot it remembers:
+       * set aside from its card and placed somewhere else, it has left the card
+       * as surely as a drag would have taken it.
+       *
        * Asked of a move that leaves the lesson placed — another slot or other
        * weeks, or put back from the tray — and of weeks written as they stood,
        * which the lesson dialog does on every save and an undo on every
@@ -542,7 +551,7 @@ export class MasterLessonsService {
         movesTheLesson || (writesWindow && placedAfter) ? await readLessonBlock(tx, lesson) : null;
       const inBlock = block !== null && block.siblings.length > 0;
       const blockMove =
-        inBlock && movesTheLesson ? blockMoveOf(block, lesson.isParked ? null : origin, landing) : null;
+        inBlock && movesTheLesson ? blockMoveOf(block, origin, landing) : null;
       // The weeks written as they stood, on a block's lesson that does not
       // move: the dialog's every save. Handing it to the school here would
       // leave its whole block refused as partly locked by a room change.
@@ -742,6 +751,11 @@ export class MasterLessonsService {
    * are written; weeks, rooms, teachers and locks are each member's own. A
    * lesson of the block the card lands beside joins it and takes its owner.
    *
+   * AN UNDO LEAVES BEHIND what the move took in. A card that landed beside a
+   * lesson of its block answers it in `joined`, with the owner it had; the
+   * undo names it in `leave`, so it may stand with the card without the card
+   * being stale, and it gets that owner back where the card leaves it.
+   *
    * The UPDATE is held to the slot the card was read in, so a member moved by
    * someone else between the read and the write refuses the card as stale.
    * Then per member what the PATCH does after its write: the published
@@ -819,15 +833,17 @@ export class MasterLessonsService {
         throw notACard();
       }
       // One block's lessons that no longer stand together, or a card that has
-      // more lessons than the page named: stale. A card moved without one of
-      // its lessons would split the block unasked.
+      // more lessons than the page named, moved or left: stale. A card moved
+      // without one of its lessons would split the block unasked.
       const origin = slotOf(leader);
       const block = await readLessonBlock(tx, leader);
       const named = new Set(dto.lessonIds);
+      const leaving = new Map((dto.leave ?? []).map((left) => [left.id, left.isGenerated]));
+      if ([...leaving.keys()].some((id) => named.has(id))) throw notACard();
       const standing = (block?.siblings ?? []).filter((sibling) => sameSlot(sibling, origin));
       if (
         lessons.some((lesson) => lesson.isParked || !sameSlot(slotOf(lesson), origin)) ||
-        standing.some((sibling) => !named.has(sibling.id))
+        standing.some((sibling) => !named.has(sibling.id) && !leaving.has(sibling.id))
       ) {
         throw blockCardStale();
       }
@@ -894,14 +910,28 @@ export class MasterLessonsService {
         : lessons.every((lesson) => !lesson.isGenerated)
           ? false
           : null;
-      const joining = (block?.siblings ?? []).filter(
-        (sibling) => !named.has(sibling.id) && sameSlot(sibling, landing) && owner !== null && sibling.isGenerated !== owner,
+      const besideLanding = (block?.siblings ?? []).filter(
+        (sibling) => !named.has(sibling.id) && sameSlot(sibling, landing),
       );
+      const joining = besideLanding.filter((sibling) => owner !== null && sibling.isGenerated !== owner);
       if (joining.length > 0) {
         await tx.masterLesson.updateMany({
           where: { id: { in: joining.map((sibling) => sibling.id) } },
           data: { isGenerated: owner! },
         });
+      }
+      // The lessons an undo leaves where the card stood get the owner they
+      // had before the move it undoes took them in.
+      for (const isGenerated of [true, false]) {
+        const restored = standing.filter(
+          (sibling) => leaving.get(sibling.id) === isGenerated && sibling.isGenerated !== isGenerated,
+        );
+        if (restored.length > 0) {
+          await tx.masterLesson.updateMany({
+            where: { id: { in: restored.map((sibling) => sibling.id) } },
+            data: { isGenerated },
+          });
+        }
       }
 
       let propagatedLessons = 0;
@@ -959,7 +989,13 @@ export class MasterLessonsService {
           },
         });
       }
-      return { lessons: results, propagatedLessons, removedCalendarLessons, warnings };
+      return {
+        lessons: results,
+        propagatedLessons,
+        removedCalendarLessons,
+        warnings,
+        joined: besideLanding.map((sibling) => ({ id: sibling.id, isGenerated: sibling.isGenerated })),
+      };
     });
   }
 

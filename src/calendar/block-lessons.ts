@@ -154,11 +154,13 @@ export type BlockMove =
   | null;
 
 /**
- * What moving ONE member of a block from `from` (null: off the tray) to `to`
- * does to the lesson:
- * - it LEAVES A CARD — members of its block stood beside it at `from` — and
- *   the block is split: the lesson is the school's from now on, wherever it
- *   lands, and the save says so;
+ * What moving ONE member of a block from `from` to `to` does to the lesson.
+ * `from` is the slot it stood in, or for a lesson put back from Parkering the
+ * slot it remembers: it was set aside from there, and the card it left is
+ * still left if it comes back anywhere else.
+ * - it LEAVES A CARD — members of its block stood beside it at `from` and it
+ *   lands elsewhere — and the block is split: the lesson is the school's from
+ *   now on, wherever it lands, and the save says so;
  * - it comes from no card and LANDS BESIDE members of its block: it joins
  *   their card and takes the card's owner and, when they agree, its lock —
  *   which is what an undo of a split, or "flytta tillbaka med blocket", is;
@@ -166,8 +168,8 @@ export type BlockMove =
  *   lessons of a block made over a timetable that never placed them
  *   together, change no owner and say nothing: there was no card to leave.
  */
-export function blockMoveOf(block: LessonBlock, from: BlockSlot | null, to: BlockSlot): BlockMove {
-  if (from !== null && block.siblings.some((sibling) => sameSlot(sibling, from))) return { kind: 'split' };
+export function blockMoveOf(block: LessonBlock, from: BlockSlot, to: BlockSlot): BlockMove {
+  if (!sameSlot(from, to) && block.siblings.some((sibling) => sameSlot(sibling, from))) return { kind: 'split' };
   const card = block.siblings.filter((sibling) => sameSlot(sibling, to));
   if (card.length === 0) return null;
   const locked = card.every((sibling) => sibling.isLocked)
