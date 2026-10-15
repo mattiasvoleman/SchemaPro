@@ -32,7 +32,7 @@ Paginated responses: `{ totalCount, limit, offset, data: [...] }` with
 | `GET /ss12000/v1/groups` | Group (groupType Klass) incl. memberships | StudentGroups |
 | `GET /ss12000/v1/activities` | Activity (Undervisning) — weekly template | MasterLessons (active year), incl. co-teacher, extra classes, individual participants |
 | `GET /ss12000/v1/calendarEvents?from=YYYY-MM-DD&to=YYYY-MM-DD` | CalendarEvent — dated lessons (**lesson export**) | CalendarLessons incl. cancelled flag, room, teacher assignments, participants |
-| `GET /ss12000/v1/duties` | Duty (**SS12000 2.1.0 property names**) — one per teaching post of the active year | TeacherEmployments (active users), their MENTORSKAP TeacherDuties, StaffingPolicies (the opt-in) |
+| `GET /ss12000/v1/duties` | Duty (**SS12000 2.1.0 property names**) — one per teaching post of the active year, one per stretch of its grad for a post that changes during the year (with the opt-in) | TeacherEmployments (active users), their TeacherEmploymentPeriods (with the opt-in), their MENTORSKAP TeacherDuties, StaffingPolicies (the opt-in) |
 
 Field notes: `eduPersonPrincipalNames` carries the school email;
 `personRole` is Elev/Lärare/Vårdnadshavare/Personal; `responsibles` /
@@ -53,7 +53,7 @@ schemas do not define, at any depth.
 
 | 2.1.0 property | Required | Emitted | Source |
 |---|---|---|---|
-| `id` | yes | always | the post's id (`TeacherEmployments.id`) |
+| `id` | yes | always | the post's id (`TeacherEmployments.id`); a later stretch of a changing post has its own (below) |
 | `meta` `{created, modified}` | yes | always | the post's `createdAt`; `modified` = the latest `updatedAt` of the post and its mentorships (best effort: a deleted mentorship does not move it; and it moves when a field this feed never sends changes — see below) |
 | `person` `{id}` | — | always | the teacher's `Users.id`, the id `/persons` uses |
 | `assignmentRole[]` `{group, assignmentRoleType, startDate, endDate}` | — | when the teacher has a MENTORSKAP uppdrag on a class of the active year | `{group: {id}, assignmentRoleType: "Mentor"}`, dated with the läsår. Other uppdrag kinds have no `AssignmentRoleType` value and are left out; the standard says teaching is not an assignment |
@@ -63,8 +63,8 @@ schemas do not define, at any depth.
 | `signature` | — | when set | `TeacherEmployments.signature` |
 | `dutyPercent` (integer) | — | **only with the opt-in** | `round(employmentPercent)` |
 | `hoursPerYear` (integer) | — | **only with the opt-in, ferietjänst only** | `round(StaffingPolicies.fullTimeAnnualHours × employmentPercent / 100)` |
-| `startDate` | yes | always | the active läsår's start |
-| `endDate` | — | always | the active läsår's end |
+| `startDate` | yes | always | the active läsår's start; a stretch's first day |
+| `endDate` | — | always | the active läsår's end; a stretch's last day |
 
 Deviations from the standard, stated: paging is the house's
 `{totalCount, limit, offset, data}` ordered by the post's id, not `pageToken`;
@@ -72,6 +72,23 @@ no `expand`, `expandReferenceNames` or filters (no `modifiedAfter`: `meta.modifi
 is best effort). `startDate`/`endDate` mean "employment at the skolenhet" in
 the standard; SchemaPro holds no employment date, so the läsår's bounds are
 sent, and a teacher gets a **new Duty id every läsår** (posts are per year).
+
+**A post that changes during the year** (`TeacherEmploymentPeriods`,
+20261022120000) is, **with the opt-in**, one Duty per stretch of the year in
+which its grad stays the same: "50 % from 11 January" is the autumn's Duty and
+the spring's, each with its own `dutyPercent`, `hoursPerYear` (of its grad),
+`startDate` and `endDate`, and its mentorships clipped to those dates. Every
+day of the läsår is in exactly one of them. `meta.created` is when the stretch
+first existed; `meta.modified` is the latest of the post's, its periods' and
+its mentorships'. The first stretch keeps the post's id, so a reference to the
+post's Duty still resolves. A period's stretch has the period's id. The post's
+own figures after a period have `UUIDv3(SchemaPro's SS12000 namespace,
+"duty-after:" + the period's id)`. A period that changes only the nedsättning
+or the riktmärke splits nothing: the Duty carries neither, and its dates
+would publish when they changed. Without the opt-in, a post is one Duty for
+the läsår whatever its periods, and no period is read. With the opt-in and
+periods, a page counts Duties, not posts, ordered by the post's id and then
+by date. A school with no periods pages exactly as before.
 
 **The opt-in.** `dutyPercent` and `hoursPerYear` are standard fields, but a
 school's keys are often held by systems that need nobody's tjänstgöringsgrad,
@@ -303,14 +320,21 @@ exclusive end is turned into S1's inclusive one, and an open segment has no
 `expand=assignmentRoles` gives the MENTORSKAP uppdrag as `Mentor`.
 
 **Duties** (`duties.read`): the active year's posts of active teachers, built
-by the same `toSs12000Duty` as v1's `/duties`. `dutyPercent` and
+by the same `toSs12000Duties` as v1's `/duties`, a changing post as one Duty
+per stretch of its grad, with the opt-in, as described there. `dutyPercent` and
 `hoursPerYear` are sent only when the school turned
 `shareEmploymentWithIntegrations` on. The nedsättning, the target and the note
 are never selected. The ids are then translated as above. When the Duty is
 served under the **source's** duty id (a linked teacher), it carries the
 source's `dutyRole`, `startDate` and `endDate` as the link stored them, and no
 `dutyPercent` or `hoursPerYear`: S1 has one namespace for ids (L5061), and the
-source holds its own figures under that id. A deactivated teacher's Duty
+source holds its own figures under that id. Such a teacher's post is never
+split. Activities and events reference a teacher's Duty by the id above,
+the post's first stretch, for the whole year. When a stretch stops being
+emitted (a period removed or changed, the opt-in turned off, the teacher
+linked), its id is listed by `/deletedEntities`. The database derives the
+stretch ids itself (`app.ss12000_split_duty_ids`, `app.ss12000_after_id`), so
+the versions and tombstones follow them. A deactivated teacher's Duty
 leaves `/duties` and is listed by `/deletedEntities`; the activities and
 events naming it get a new `meta.modified`. An HR-only edit (employment
 percent, contract kind) moves no Duty's `meta.modified` unless the school
@@ -359,7 +383,8 @@ S1's own spellings, `activitites` included. The response has only the
 categories asked for that the key may read, with the ids removed after
 `after`. "Removed" means: a person deactivated or deleted, a group, room,
 subject or lesson deleted, a master deleted or parked (DIRECT) or absent from
-a new publication (DRAFT), a post deleted, an id superseded by a link, and
+a new publication (DRAFT), a post deleted, an id superseded by a link, a
+stretch of a changing post that is no longer emitted, and
 the activities and duties of a year that stops being active. A future year's
 rows are never recorded. Tombstones are kept 400 days. A guardian's id may
 appear under `persons` for a key without `responsibles.read`: an id and
@@ -744,6 +769,7 @@ What the principal is granted, always on the key's school only:
 | `StudentGroups` | SELECT, INSERT |
 | `GuardianStudents` | SELECT, INSERT, UPDATE — the import upserts links |
 | `TeacherEmployments`, `TeacherDuties` | SELECT — what `/duties` reads (`20261006100000`, `20261007090000`); the query names only the Duty's columns |
+| `TeacherEmploymentPeriods` | SELECT — a changing post's periods, read by `/duties` only with the opt-in (`20261022120000`); the query names only their dates and grad |
 | `StaffingPolicies` | SELECT — the `/duties` opt-in and `fullTimeAnnualHours`: the school's configuration, no person's data (`20261010110000`) |
 
 Each write policy has a `WITH CHECK` on the same school, so a write can
