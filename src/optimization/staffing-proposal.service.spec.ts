@@ -831,6 +831,37 @@ describe('StaffingProposalService.propose', () => {
         expect(again.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
       });
 
+      it('names the post also where the engine finds no one with a target: a leave from January plans it at 0', async () => {
+        // Anna on leave from 11 January (a target of 0 there), the only one holding Ma: planned on the
+        // spring she is no candidate with a target, but the autumn is hers.
+        const onLeave = (autumnToo = false) => {
+          const rows = springOnly();
+          rows['teacherEmploymentPeriod'] = [periodOf(ANNA, { teachingTargetMinutesPerWeek: 0 })];
+          if (autumnToo) rows['teacherEmployment']!.find((row) => row['userId'] === ANNA)!['teachingTargetMinutesPerWeek'] = 0;
+          rows['teacherSubjectQualification'] = [
+            { userId: ANNA, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+          ];
+          return rows;
+        };
+        const noOneWithTarget = (payload: StaffRequest): StaffResponse => {
+          const answer = engineAnswer(payload);
+          const ma8 = sentRow(payload, R_MA8, sentIn8A()).id;
+          return {
+            ...answer,
+            assignments: answer.assignments.filter((x) => x.requirementId !== ma8),
+            unstaffed: [...answer.unstaffed.filter((x) => x.requirementId !== ma8), { requirementId: ma8, reason: 'NO_TEACHER_WITH_TARGET' }],
+          };
+        };
+        const proposal = await setup(onLeave(), noOneWithTarget).service.propose(ask({ respectQualifications: true }), admin());
+        expect(proposal.unstaffed.find((row) => row.requirementId === R_MA8)).toMatchObject({
+          reason: 'NO_TEACHER_WITH_TARGET',
+          excludedChanging: [ANNA],
+        });
+        // On leave the whole year — a target of 0 in every stretch — she could not have taken it, and is not named.
+        const allYear = await setup(onLeave(true), noOneWithTarget).service.propose(ask({ respectQualifications: true }), admin());
+        expect(allYear.unstaffed.find((row) => row.requirementId === R_MA8)?.excludedChanging).toBeUndefined();
+      });
+
       it('refuses (502) an answer that gives it to such a post anyway, though it would fit, and asks nothing more', async () => {
         // One lesson a week: 180 + 60 fits the spring, so only the exclusion refuses it.
         const small = springOnly();

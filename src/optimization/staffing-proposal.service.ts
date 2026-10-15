@@ -164,11 +164,13 @@ export interface ProposalUnstaffed {
   /** NO_QUALIFIED_TEACHER where the row's own co-teacher is the only one qualified. */
   onlyCoTeacherQualified: boolean;
   /**
-   * NO_CAPACITY_LEFT on a dated row: the posts that change during the year
-   * which could otherwise have taken it — a target above 0, and under
-   * respect a covering behörighet — and which the row excludes whatever
-   * their room (planOf). The engine counts them as candidates without room;
-   * this says why, so the dialog does not claim only that nobody has room.
+   * NO_CAPACITY_LEFT or NO_TEACHER_WITH_TARGET on a dated row: the posts
+   * that change during the year which could otherwise have taken it — a
+   * target above 0 in some stretch with teaching weeks, and under respect a
+   * covering behörighet — and which the row excludes whatever their room
+   * (planOf). The engine counts them as candidates without room, or, planned
+   * on a stretch with a target of 0 (a leave from January), as having no
+   * target at all; this says why, so the dialog does not claim only that.
    * Absent when there are none.
    */
   excludedChanging?: string[];
@@ -952,14 +954,22 @@ export class StaffingProposalService {
     return { assignments, teachers, unstaffed: unstaffedRows };
 
     function excludedChangingOf(plannedRow: RowPlan, reason: StaffUnstaffedReason): Pick<ProposalUnstaffed, 'excludedChanging'> {
-      if (reason !== 'NO_CAPACITY_LEFT' || plannedRow.excluded.length === 0) return {};
+      if ((reason !== 'NO_CAPACITY_LEFT' && reason !== 'NO_TEACHER_WITH_TARGET') || plannedRow.excluded.length === 0) {
+        return {};
+      }
       const could = plannedRow.excluded.filter(
-        (id) =>
-          id !== plannedRow.co &&
-          (plan.teacherById.get(id)?.target ?? 0) > 0 &&
-          (!plan.respect || plannedRow.eligible.includes(id)),
+        (id) => id !== plannedRow.co && targetSomewhere(id) && (!plan.respect || plannedRow.eligible.includes(id)),
       );
       return could.length > 0 ? { excludedChanging: could } : {};
+    }
+
+    // Whether a changing post has room in some part of the year: a target
+    // above 0 in a stretch with teaching weeks. Not the planned target, which
+    // is the tightest stretch's and 0 for a post on leave from January.
+    function targetSomewhere(userId: string): boolean {
+      const employment = plan.teacherById.get(userId)?.changing?.employment;
+      if (!employment) return (plan.teacherById.get(userId)?.target ?? 0) > 0;
+      return stretchLoads(input, employment).some((stretch) => stretch.weeks > 0 && (stretch.target ?? 0) > 0);
     }
   }
 }
