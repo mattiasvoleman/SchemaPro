@@ -64,6 +64,7 @@
       <li><span>7.3 API-nycklar, omfång och prenumerationer</span><span class="dots"></span><span class="pg" data-pg="s73"></span></li>
       <li><span>7.4 Dataskydd och gallring</span><span class="dots"></span><span class="pg" data-pg="s74"></span></li>
       <li><span>7.5 Logga in med skolkonto</span><span class="dots"></span><span class="pg" data-pg="s75"></span></li>
+      <li><span>7.6 Kalenderprenumeration</span><span class="dots"></span><span class="pg" data-pg="s76"></span></li>
     </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
@@ -4153,7 +4154,13 @@
     inte heller siffror som inte nämner någon, som antalet elever på
     översikten eller publiceringens kontroll av undervisningstiden, som
     säger att en elev i en klass får för lite tid utan att säga vem. Också en vårdnadshavares läsning om sitt eget barn skrivs, så
-    att den ena vårdnadshavaren kan få veta om den andra har läst.
+    att den ena vårdnadshavaren kan få veta om den andra har läst. Det gäller
+    också vårdnadshavarens kalenderprenumeration (7.6): den skrivs som en
+    läsning av barnets veckoschema, med <em>Kalenderprenumeration</em> i
+    kolumnen <span class="ui">Hur</span>, en gång per dag som kalendern hämtar
+    den, och inte varje gång kalendern frågar. Öppnar vårdnadshavaren sedan
+    barnets vecka i webben eller appen skrivs det som en egen läsning, även
+    inom samma kvart. En lärares och en elevs egen prenumeration skrivs inte.
   </p>
   <ol>
     <li>Öppna <span class="path">Dataskydd</span> och gå till
@@ -4258,6 +4265,71 @@
       <span class="ui">Logga in med skolkonto</span>. Du ska komma till din
       startsida, och på fliken <span class="ui">Inloggning</span> ska det stå
       att du är inloggad med ett skolkonto.
+    </p>
+  </div>
+
+  <h3 id="s76"><span class="num">7.6</span>Kalenderprenumeration</h3>
+  <p>
+    Lärare, elever och vårdnadshavare kan se sitt publicerade schema i sin
+    egen kalenderapp, i mobilen, i Google Kalender eller i Outlook. Var och en
+    skapar en personlig adress som kalenderappen hämtar schemat från, och
+    kalendern uppdateras varje gång appen hämtar adressen igen. En
+    vårdnadshavare skapar en adress per barn. Allt är avstängt tills skolan
+    slår på det under <span class="path">Schemaläggning ›
+    Kalenderprenumeration</span>, för <span class="ui">Lärare</span>,
+    <span class="ui">Elever</span> och <span class="ui">Vårdnadshavare</span>
+    var för sig.
+  </p>
+  <ul>
+    <li><strong>En lärare</strong> får sina lektioner med grupp, sal och
+      kollegor, också de lektioner hen är vikarie på. En kollega som står
+      bland <strong>Lärare som aldrig visas</strong> (7.1) namnges aldrig, inte
+      heller en som har slutat, och en lektion för namngivna elever namnger
+      ingen elev.</li>
+    <li><strong>En elev och en vårdnadshavare</strong> får elevens lektioner
+      så som familjen ser dem i SchemaPro: lärarna som skolan visar dem för
+      familjer i Schemavisaren, och en lektion med vikarie eller en inställd
+      lektion utan namn. Andra elever syns aldrig.</li>
+    <li><strong>Lov och studiedagar</strong> står som heldagar: hela skolans
+      för lärare, och de som gäller elevens årskurs för elever och
+      vårdnadshavare.</li>
+    <li><strong>Vilka veckor</strong>: det publicerade schemat från förra
+      veckan och ett år framåt, för elever och vårdnadshavare till och med
+      veckan då läsåret slutar, som i SchemaPro. Ett utkast syns aldrig (5.7).
+      En lektion som flyttas flyttas också i kalendern. En inställd lektion
+      står kvar, med <em>Inställd</em> före ämnet, i de kalenderappar som visar
+      inställda händelser; en del kalenderappar döljer dem i stället.</li>
+  </ul>
+  <p>
+    Var och en skapar sin prenumeration under
+    <span class="path">Kalenderprenumeration</span> i sin meny, och du själv
+    under <span class="ui">Din egen prenumeration</span> på skolans sida för
+    kalenderprenumeration. Adressen visas en enda gång, när den skapas. Var och en kan skapa en ny adress, som gör
+    att den gamla slutar fungera, eller sluta prenumerera när som helst. Sidan
+    säger när en kalender senast hämtade adressen.
+  </p>
+  <div class="warn">
+    <span class="label">Att stänga av går inte att ångra</span>
+    <p>
+      Stänger skolan av en grupp slutar alla gruppens prenumerationer att
+      fungera direkt, och de kommer inte tillbaka när gruppen slås på igen: då
+      får var och en skapa en ny adress. Sidan säger hur många prenumerationer
+      det gäller och frågar först. På samma sätt slutar en prenumeration för
+      gott när ägaren slutar på skolan eller får en roll som prenumerationen
+      inte gäller för (en lärare som blir administratör behåller sin), när
+      eleven slutar, och när kopplingen mellan vårdnadshavaren och barnet tas
+      bort.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Adressen är personlig</span>
+    <p>
+      Den som har adressen kan läsa schemat utan att logga in, tills ägaren
+      skapar en ny eller slutar prenumerera. SchemaPro sparar inte adressen,
+      bara ett avtryck av den, så skolan kan inte se den. Kalendertjänster
+      som Google hämtar adressen själva några gånger om dygnet, så en ändring
+      kan dröja innan den syns där. En vårdnadshavares prenumeration skrivs i
+      läsloggen (7.4) en gång per dag som kalendern hämtar barnets schema.
     </p>
   </div>
 </section>
@@ -4631,6 +4703,11 @@
         <td class="k">En länk till Schemavisaren visar ”Schemat finns inte”</td>
         <td>Länken är återkallad, Schemavisaren eller länkens sort är avstängd, gruppen är för liten eller läraren visas aldrig.</td>
         <td>Kontrollera under <span class="path">Publicering › Schemavisaren</span>. Svaret är detsamma i alla fallen, så att en gissad adress inte avslöjar något.</td>
+      </tr>
+      <tr>
+        <td class="k">En kalenderprenumeration visar inget nytt</td>
+        <td>Skolan har stängt av gruppen, adressen har bytts ut eller avslutats, ägaren eller eleven har slutat eller bytt roll, kopplingen mellan vårdnadshavare och barn är borttagen, eller kalendertjänsten har inte hämtat adressen än. En adress som hämtas mycket ofta, oftare än var halvminut under tio minuter, till exempel för att den har spridits, svarar inte på en stund.</td>
+        <td>Kontrollera under <span class="path">Schemaläggning › Kalenderprenumeration</span>. På personens egen sida under <span class="path">Kalenderprenumeration</span> står om prenumerationen finns kvar; annars skapar hen en ny och lägger in den i kalenderappen. Google hämtar några gånger om dygnet (7.6).</td>
       </tr>
       <tr>
         <td class="k">Schemat visas inte i ramen på skolans webbplats</td>
