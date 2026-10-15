@@ -2301,6 +2301,35 @@
     och göra om. Dialogen visar överst vilken lektion den gäller — ämne, klass,
     lärare och sal — så tre matematiklektioner samma dag går att hålla isär.
   </p>
+  <h4>Parallella block i grundschemat</h4>
+  <p>
+    Ett parallellt block (4.2), till exempel <em>Språkval åk 7</em>, visas som
+    ett kort för varje tid blockets lektioner står på. Kortet har blockets namn
+    och visar posternas grupper och lärare och salarna. Drar du kortet, eller
+    flyttar det med piltangenterna, flyttas alla blockets lektioner i den tiden
+    tillsammans. Flytten kontrolleras som en flytt: varje lektion mot resten av
+    schemat, och ingen av dem är i vägen för de andra. Den går att ångra, och
+    blocket är fortfarande genereringens, så nästa generering lägger det igen.
+  </p>
+  <p>
+    Klicka på kortet för att se blockets lektioner. Där öppnar
+    <span class="ui">Ändra</span> en enskild lektion, och
+    <span class="ui">Lås blocket</span> låser alla blockets lektioner, i varje
+    tid och inte bara den här, eftersom genereringen vägrar ett block som är
+    delvis låst. <span class="ui">Lås upp blocket</span> gör det omvända.
+  </p>
+  <p>
+    Flyttar du en enskild lektion i blocket, i ett filtrerat schema, på en tavla
+    per lärare eller i lektionens dialog, delas blocket. En dragning frågar
+    först och erbjuder <span class="ui">Flytta hela blocket</span> i stället.
+    Flyttar du ändå räknas lektionen som lagd för hand, och nästa generering
+    säger att blocket är delvis låst. Sparningen säger det, med
+    <span class="ui">Flytta tillbaka med blocket</span> bredvid. Att ångra
+    flytten gör detsamma: lektionen ansluter till blockets kort igen och är
+    genereringens som förut. En lektion som står utanför sitt block har
+    blockets namn och <em>delat</em> under sig, och publiceringen nämner
+    blocket (5.6).
+  </p>
   <h4>Lägga lunchen själv</h4>
   <p>
     Ibland kan motorn inte lägga en klass lunch — oftast för att låsta lektioner
@@ -2362,12 +2391,13 @@
     om, och låt motorn arbeta vidare med resten.
   </p>
   <p>
-    Ett parallellt block (4.2) låser du helt eller inte alls. Drar du en av
-    blockets lektioner till en annan tid flyttas bara den, men den är
-    fortfarande genereringens: nästa generering lägger den igen tillsammans med
-    resten av blocket. Låser du den, eller sparar du en ändring av den i
-    lektionens dialog, som gör lektionen till din, säger nästa generering att
-    blocket är delvis låst och ber dig låsa upp eller låsa resten.
+    Ett parallellt block (4.2) låser du helt eller inte alls, med
+    <span class="ui">Lås blocket</span> på blockets kort. En av blockets
+    lektioner som du låser ensam, flyttar ensam eller sparar i lektionens
+    dialog blir din. Nästa generering säger då att blocket är delvis låst och
+    ber dig låsa upp eller låsa resten. Flytta lektionen tillbaka med blocket,
+    eller lås hela blocket. Drar du blockets kort flyttas alla dess lektioner
+    i den tiden, och blocket är fortfarande genereringens.
   </p>
 
   <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
@@ -2513,7 +2543,10 @@
       giltighet som delar period med ett annat publicerat schema, skoldagar utan
       publicerat schema, en giltighet som börjar före i dag eller mitt i en
       vecka, lunch som inte är inställd, och dagsändringar som försvinner. Varje
-      kontroll visar upp till 20 av de lektioner eller dagar den gäller.</li>
+      kontroll visar upp till 20 av de lektioner eller dagar den gäller. Ett
+      parallellt block som delats för hand nämns också, med de lektioner som
+      står utanför blocket, men bara som information: det varnar inte och
+      stoppar inte, eftersom delningen var skolans val.</li>
   </ul>
   <p>
     En kontroll <em>varnar</em> eller <em>stoppar</em>, efter vad skolan valt
