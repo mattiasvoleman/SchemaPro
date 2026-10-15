@@ -8,6 +8,6 @@
     - listitem:
       - text: Moderna språk · Moderna språk franska 7 · E. Holm · Sal 201
       - button "Ändra Moderna språk · Moderna språk franska 7 · E. Holm · Sal 201": Ändra
-  - paragraph: Lås blocket låser alla blockets lagda lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst. En lektion på brickan låses inte.
+  - paragraph: Lås blocket låser alla blockets lagda lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst. En parkerad lektion låses inte.
   - button "Lås blocket"
   - button "Stäng"

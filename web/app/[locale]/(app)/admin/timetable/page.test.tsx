@@ -2378,13 +2378,19 @@ describe("a parallel block (Block i schemat)", () => {
     state.lessons = [...LESSONS, ...BLOCK_LESSONS, { ...lesson("l-tue", "s-ma", "g-71", "13:00"), dayOfWeek: 2 }];
   };
   // The block module reads its names through react-query, as the app does;
-  // the page's own reads are the mocks above.
-  const showPage = () =>
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+  // the page's own reads are the mocks above. `again` draws the page anew,
+  // as a refetch after a write does.
+  const showPage = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = () => (
+      <QueryClientProvider client={client}>
         <TimetablePage />
-      </QueryClientProvider>,
+      </QueryClientProvider>
     );
+    const view = render(page());
+    return { ...view, again: () => view.rerender(page()) };
+  };
+  const focusedId = () => document.activeElement?.getAttribute("data-lesson-id");
 
   it("draws the block as one card naming the block and its members", async () => {
     showPage();
@@ -2738,6 +2744,187 @@ describe("a parallel block (Block i schemat)", () => {
     await waitFor(() => expect(toasts.warning).toHaveBeenCalled());
     const [, options] = toasts.warning.mock.calls.at(-1)! as [string, { action?: { label: string } }];
     expect(options.action?.label).toBe("timetable.blocks.moveBack");
+  });
+
+  it("says a split when a lesson of the block is placed from Parkering elsewhere, with the way back", async () => {
+    // Musik's second lesson for 4ma2 is parked; it goes to Tuesday, and the
+    // gateway says it left its card (BLOCK_SPLIT).
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, { ...lesson("l-sv4", "s-mu", "g-ma2", "15:00", { teacherId: "t-2" }), isParked: true }];
+    noMutation.mutateAsync.mockResolvedValueOnce({
+      id: "l-sv4",
+      isParked: false,
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      warnings: [{ code: "BLOCK_SPLIT", params: { block: "Språkval åk 4" } }],
+    });
+    showPage();
+    await card();
+
+    const handle = screen.getByRole("button", { name: /timetable\.dragToPlace\(Musik/ });
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 700, clientY: 100 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 200, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 60 });
+
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-sv4", isParked: false, dayOfWeek: 2 })),
+    );
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalled());
+    const [, options] = toasts.warning.mock.calls.at(-1)! as [string, { action: { label: string; onClick: () => void } }];
+    expect(options.action.label).toBe("timetable.blocks.moveBack");
+    // Back to the slot it was parked from, beside its card.
+    options.action.onClick();
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "l-sv4", dayOfWeek: 1, startTime: "15:00", endTime: "16:00" }),
+      ),
+    );
+  });
+
+  it("leaves behind on undo what a card move took in where it landed, with the owner it had, after a redo too", async () => {
+    const answer = (joined: { id: string; isGenerated: boolean }[]) => ({
+      lessons: [],
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      warnings: [],
+      joined,
+    });
+    blockApi.patch
+      .mockResolvedValueOnce(answer([{ id: "l-sv5", isGenerated: false }]))
+      .mockResolvedValueOnce(answer([]))
+      // The redo lands beside another lesson of the block by then.
+      .mockResolvedValueOnce(answer([{ id: "l-sv6", isGenerated: true }]))
+      .mockResolvedValueOnce(answer([]));
+    const user = userEvent.setup();
+    const back = (leave: { id: string; isGenerated: boolean }[]) => ({
+      lessonIds: ["l-sv1", "l-sv2"],
+      dayOfWeek: 1,
+      startTime: "13:00",
+      endTime: "14:00",
+      leave,
+    });
+    showPage();
+    await card();
+
+    dragToTuesday("Språkval åk 4");
+    await confirmClasses();
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenLastCalledWith("/api/v1/master-lessons/block-card", back([{ id: "l-sv5", isGenerated: false }])),
+    );
+
+    await user.click(screen.getByRole("button", { name: /timetable\.redo/ }));
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalledTimes(3));
+    await user.click(screen.getByRole("button", { name: /timetable\.undo/ }));
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenLastCalledWith("/api/v1/master-lessons/block-card", back([{ id: "l-sv6", isGenerated: true }])),
+    );
+  });
+
+  it("offers to lock the block from a card whose own lessons are locked while another lesson of it is not", async () => {
+    // The card's two lessons are locked; Slöjd's 15:00 lesson is not.
+    state.lessons = [
+      ...LESSONS,
+      ...BLOCK_LESSONS.map((row) => ({ ...row, isLocked: true })),
+      lesson("l-sv3", "s-sl", "g-ma1", "15:00"),
+    ];
+    blockApi.patch.mockResolvedValue({ blockId: "b-sv", isLocked: true, lessonIds: ["l-sv3"], parked: 0 });
+    const user = userEvent.setup();
+    showPage();
+
+    const drawn = (await screen.findAllByRole("button", { name: /Språkval åk 4/ })).find((el) =>
+      el.textContent?.includes("4ma2"),
+    )!;
+    await user.click(drawn);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("button", { name: "timetable.blocks.unlock" })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "timetable.blocks.lock" }));
+
+    await waitFor(() =>
+      expect(blockApi.patch).toHaveBeenCalledWith("/api/v1/master-lessons/block-lock", { blockId: "b-sv", isLocked: true }),
+    );
+  });
+
+  it("gives focus back to the card when the lesson editor its dialog opened is closed", async () => {
+    const user = userEvent.setup();
+    showPage();
+    const drawn = await card();
+
+    drawn.focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: /timetable\.blocks\.editMemberNamed\(Slöjd/ }),
+    );
+    await screen.findByRole("button", { name: "common.save" });
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(focusedId()).toBe("block:l-sv1"));
+  });
+
+  it("gives focus back to the lesson when the classes question after the split question is cancelled", async () => {
+    const user = userEvent.setup();
+    showPage();
+    await card();
+    // 4ma1's Slöjd alone, dragged by the pointer: nothing of the grid's own
+    // keyboard refocus is at work.
+    await filterTo("4ma1");
+
+    dragToTuesday("Slöjd");
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "timetable.blocks.moveOne" }));
+    await screen.findByText("timetable.sharedMoveTitle");
+    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(focusedId()).toBe("l-sv1"));
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("gives focus back to the lesson when the classes question after moving the whole block is cancelled", async () => {
+    const user = userEvent.setup();
+    showPage();
+    await card();
+    await filterToTeacher("Nils Berg");
+
+    dragToTuesday("Musik");
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "timetable.blocks.moveBlock" }));
+    await screen.findByText("timetable.sharedCardTitle");
+    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(focusedId()).toBe("l-sv2"));
+    expect(blockApi.patch).not.toHaveBeenCalled();
+  });
+
+  it("follows a card moved with the keyboard onto a lesson of its block to the card they make together", async () => {
+    // A third member, Idrott för 7.1, split off to Tuesday 13:00 and with the
+    // lowest id: the card the move makes is named after it.
+    const third = { ...lesson("l-sv0", "s-id", "g-71", "13:00", { teacherId: "t-3" }), dayOfWeek: 2 };
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS, third];
+    state.requirements = [
+      ...state.requirements,
+      { id: "r-sv3", studentGroupId: "g-71", subjectId: "s-id", blockId: "b-sv" },
+    ];
+    blockApi.patch.mockResolvedValue({
+      lessons: [],
+      propagatedLessons: 0,
+      removedCalendarLessons: 0,
+      warnings: [],
+      joined: [{ id: "l-sv0", isGenerated: false }],
+    });
+    const view = showPage();
+    await screen.findAllByRole("button", { name: /Språkval åk 4/ });
+    const drawn = document.querySelector<HTMLElement>('[data-lesson-id="block:l-sv1"]')!;
+
+    drawn.focus();
+    fireEvent.keyDown(drawn, { key: "ArrowRight" });
+    await confirmClasses();
+    await waitFor(() => expect(blockApi.patch).toHaveBeenCalled());
+    // The refetch: all three on Tuesday 13:00, one card.
+    state.lessons = [...LESSONS, ...BLOCK_LESSONS.map((row) => ({ ...row, dayOfWeek: 2 })), third];
+    view.again();
+
+    await waitFor(() => expect(focusedId()).toBe("block:l-sv0"));
   });
 
   it("fetches nothing of it for a year whose timplan names no block", async () => {

@@ -68,6 +68,8 @@ export interface SavedWrite {
   propagatedLessons: number;
   removedCalendarLessons?: number;
   warnings?: StaffingWarning[];
+  /** PATCH block-card: the block's lessons the card landed beside, with the owner each had. */
+  joined?: { id: string; isGenerated: boolean }[];
 }
 
 /** A lesson's PATCH as it answers: the write, and the lesson as written. */
@@ -133,6 +135,9 @@ const slotOf = (lesson: MasterLesson): string =>
 const keyOf = (lesson: Pick<MasterLesson, "studentGroupId" | "subjectId">): string =>
   `${lesson.studentGroupId}:${lesson.subjectId}`;
 const clock = (time: string): string => time.slice(0, 5);
+/** A lesson's or a card's button on the grid (timetable-grid.tsx marks each with its id). */
+const onGrid = (id: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-lesson-id="${CSS.escape(id)}"]`);
 const hhmm = (minutes: number): string =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
@@ -240,6 +245,35 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     null,
   );
   const [busy, setBusy] = useState(false);
+  /*
+   * What a dialog of the kit hands on to once it has closed: the lesson
+   * editor from a card's Ändra, the page's drop from the split question. Run
+   * from its onCloseAutoFocus with focus put back on the card or the lesson
+   * on the grid first, so the next dialog takes that as the place to give
+   * focus back to; opened while the first was still closing it took a button
+   * inside it, and a keyboard user ended on <body>.
+   */
+  const handOff = useRef<{ focus: string; run: () => void } | null>(null);
+  const afterClose = (event: Event) => {
+    const next = handOff.current;
+    handOff.current = null;
+    if (!next) return;
+    const target = onGrid(next.focus);
+    if (target) {
+      event.preventDefault();
+      target.focus();
+    }
+    next.run();
+  };
+  /*
+   * A card moved with the keyboard whose lessons stand on another card after
+   * the move — it took in a lesson of the block, and the card took that
+   * lesson's lower id — or a lesson apart that a move put on a card: the
+   * grid follows the id it moved (timetable-grid.tsx, refocusRef), which is
+   * gone. This follows a lesson of it to whatever card it is on now, on the
+   * same terms: only while focus is lost, and for ten seconds.
+   */
+  const follow = useRef<{ lessonId: string; until: number } | null>(null);
 
   const names = useMemo(() => new Map((blocks ?? []).map((block) => [block.id, block.name])), [blocks]);
   // A string, so the cards change with its text and not with the translator.
@@ -272,10 +306,15 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       const from = { lessonIds, dayOfWeek: lead.dayOfWeek, startTime: clock(lead.startTime), endTime: clock(lead.endTime) };
       try {
         const result = await patchCard(to);
+        // What the card took in where it landed: its undo leaves it there,
+        // with the owner it had, or the card would be stale for good.
+        let joined = result.joined ?? [];
         acts.current.history.push({
           label: "block-move",
-          undo: async () => void (await patchCard(from)),
-          redo: async () => void (await patchCard(to)),
+          undo: async () => void (await patchCard(joined.length > 0 ? { ...from, leave: joined } : from)),
+          redo: async () => {
+            joined = (await patchCard(to)).joined ?? [];
+          },
         });
         acts.current.announce(result);
       } catch (error) {
@@ -374,10 +413,13 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       },
       move: (id, change) => {
         const card = cards.get(id);
+        const focused = document.activeElement === onGrid(id) && document.activeElement !== null;
         if (card) {
+          if (focused) follow.current = { lessonId: card.lessons[0]!.id, until: Date.now() + 10_000 };
           acts.current.drop(card.lessons, change, () => void writes.moveCard(card, change), card.name);
           return true;
         }
+        if (focused && apart.has(id)) follow.current = { lessonId: id, until: Date.now() + 10_000 };
         const own = cardOf.get(id);
         const lesson = own?.lessons.find((member) => member.id === id);
         if (!own || !lesson) return false;
@@ -405,7 +447,24 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
     }),
     [cards, cardOf, apart, byBlock, writes],
   );
+  // The block's placed lessons, which Lås blocket acts on: its label is theirs, not the card's.
+  const blockLocked = opened ? (byBlock.get(opened.blockId) ?? opened.lessons).every((lesson) => lesson.isLocked) : false;
 
+  useEffect(() => {
+    const pending = follow.current;
+    if (!pending) return;
+    if (Date.now() > pending.until) {
+      follow.current = null;
+      return;
+    }
+    const button = onGrid(cardOf.get(pending.lessonId)?.id ?? pending.lessonId);
+    if (!button || button === document.activeElement) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) {
+      button.focus();
+      follow.current = null;
+    }
+  });
   useEffect(() => {
     onKit(kit);
   }, [kit, onKit]);
@@ -456,7 +515,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       <Dialog open={opened !== null} onOpenChange={(next) => !next && !busy && setOpened(null)}>
         {/* Closed by its own X or Escape, as the app's dialogs are: a second
             "Stäng" in the footer read twice to a screen reader. */}
-        <DialogContent className="max-w-lg" closeDisabled={busy}>
+        <DialogContent className="max-w-lg" closeDisabled={busy} onCloseAutoFocus={afterClose}>
           <DialogHeader>
             <DialogTitle>{opened?.name ?? ""}</DialogTitle>
             <DialogDescription>
@@ -480,8 +539,8 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                       size="sm"
                       aria-label={t("editMemberNamed", { lesson: actions.name(lesson) })}
                       onClick={() => {
+                        handOff.current = { focus: opened.id, run: () => actions.openEditor(lesson.id) };
                         setOpened(null);
-                        actions.openEditor(lesson.id);
                       }}
                     >
                       {t("editMember")}
@@ -497,9 +556,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
             {opened ? (
               <Button
                 disabled={busy}
-                onClick={() => void lock(opened, !opened.lessons.every((lesson) => lesson.isLocked))}
+                onClick={() => void lock(opened, !blockLocked)}
               >
-                {opened.lessons.every((lesson) => lesson.isLocked) ? t("unlock") : t("lock")}
+                {blockLocked ? t("unlock") : t("lock")}
               </Button>
             ) : null}
           </DialogFooter>
@@ -507,7 +566,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
       </Dialog>
 
       <Dialog open={splitting !== null} onOpenChange={(next) => !next && setSplitting(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" onCloseAutoFocus={afterClose}>
           <DialogHeader>
             <DialogTitle>{t("splitTitle", { name: splitting?.card.name ?? "" })}</DialogTitle>
             <DialogDescription>
@@ -525,9 +584,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               onClick={() => {
                 if (!splitting) return;
                 const { lesson, change } = splitting;
-                setSplitting(null);
                 // The page's own drop: its classes asked, its save said.
-                actions.drop([lesson], change);
+                handOff.current = { focus: lesson.id, run: () => actions.drop([lesson], change) };
+                setSplitting(null);
               }}
             >
               {t("moveOne")}
@@ -535,12 +594,15 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
             <Button
               onClick={() => {
                 if (!splitting) return;
-                const { card, change } = splitting;
-                setSplitting(null);
+                const { card, lesson, change } = splitting;
                 // The slot was checked for the one lesson; the card is checked
                 // as a card's drop is, every member beside the rest of the day.
-                if (kit.validate(card.id, change, actions.validate)) kit.move(card.id, change);
-                else kit.refuse(card.id, false);
+                handOff.current = {
+                  focus: lesson.id,
+                  run: () =>
+                    kit.validate(card.id, change, actions.validate) ? kit.move(card.id, change) : kit.refuse(card.id, false),
+                };
+                setSplitting(null);
               }}
             >
               {t("moveBlock")}
