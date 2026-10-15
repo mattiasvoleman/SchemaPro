@@ -1,17 +1,18 @@
 import type { AccessLogAnswer } from "../../../app/[locale]/(app)/admin/dataskydd/use-access-log";
 import type { GuardianChild } from "../../../lib/guardian-queries";
 import type { GroupAttendanceRow, GroupMembershipRow } from "../../../lib/queries";
-import type { AbsenceReport, AttendanceRecordRow, LeaveRequest, Person } from "../../../lib/types";
+import type { AbsenceReport, AttendanceRecordRow, Person } from "../../../lib/types";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
 import type { SignedInPerson } from "../sessions";
 import { CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
-import { ABSENCE_REPORTS, ATTENDANCE_RECORDS, GROUP_MEMBERS, LEAVE_REQUESTS } from "./school-days";
+import { ABSENCE_REPORTS, ATTENDANCE_RECORDS, GROUP_MEMBERS } from "./school-days";
 import { ALL_PEOPLE, byId, GUARDIAN_LINKS, SCHOOL, STUDENT_LIST } from "./world";
 
 /**
  * The reads of other people's data that the läslogg moved from PostgREST to
  * the gateway (src/access-log): the school's people, group memberships,
- * attendance, absence reports, leave requests and guardians. The gateway
+ * attendance, absence reports and guardians. Leave requests, which #142
+ * made the mentor's and rektor's inbox too, are in gateway-leave.ts. The gateway
  * scopes them by role as RLS did, so these do too: a guardian gets their
  * own children's rows, a pupil their own, staff the school's.
  *
@@ -85,13 +86,6 @@ export const readRoutes: GatewayRoute[] = [
     return scoped(context, rows);
   }),
 
-  route("GET", "/api/v1/leave-requests", (context): LeaveRequest[] | Reply => {
-    const status = context.query.get("status");
-    const rows = LEAVE_REQUESTS.filter((row) => !status || row.status === status).sort((a, b) =>
-      a.createdAt < b.createdAt ? 1 : -1,
-    );
-    return scoped(context, rows);
-  }),
 
   route("GET", "/api/v1/attendance/lessons/:lessonId/records", (context): { records: AttendanceRecordRow[] } | Reply => {
     const refused = staffOnly(context);

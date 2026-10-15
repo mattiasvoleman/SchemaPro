@@ -119,6 +119,7 @@ Skriv också upp sådant som manuset inte frågar efter: ett fokus som hoppar ti
 | 2.6 | Välj ett alternativ med piltangenterna och välj "Spara närvaro" | "Närvaro sparad" |
 | 2.7 | Öppna Vikariepass och frånvaro | Rubrikerna "Mina vikariepass" och "Min frånvaro". Varje frånvaro har knappar som säger vilken period de gäller, till exempel "Återkalla ons 14 okt". |
 | 2.8 | Välj "Anmäl frånvaro" | En dialog med rubrik, fokus i första fältet, fält med namn. När du skickar sägs "Frånvaron är registrerad". |
+| 2.9 | Öppna Ledighet, mentorns inkorg | Rubrik nivå 1 "Ledighet" och flikgruppen Väntar, Beviljad, Avslagen. Varje ansökan läses med elevens namn, klass, period, antal skoldagar och vem som beslutar. Knapparna "Bevilja", "Avslå" och "Skicka till rektor" säger vilken elev de gäller. |
 
 ## 3. Elev
 

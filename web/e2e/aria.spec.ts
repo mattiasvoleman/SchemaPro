@@ -54,6 +54,8 @@ const SCREENS: Screen[] = [
   { name: "teacher-schema", url: "/sv/teacher", persona: "teacher", scope: "main" },
   { name: "teacher-narvaro", url: `/sv/teacher/attendance/${annasLesson.id}`, persona: "teacher", scope: "main" },
   { name: "teacher-franvaro", url: "/sv/teacher/franvaro", persona: "teacher", scope: "main" },
+  // The mentor's inbox (#142): Ella's three days are Anna's to decide.
+  { name: "teacher-ledighet", url: "/sv/teacher/ledighet", persona: "teacher", scope: "main" },
   { name: "student-schema", url: "/sv/student", persona: "student", scope: "main" },
   { name: "student-narvaro", url: "/sv/student/attendance", persona: "student", scope: "main" },
   { name: "guardian-barn", url: "/sv/guardian", persona: "guardian", scope: "main" },

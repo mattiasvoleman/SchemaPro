@@ -19,6 +19,9 @@
       - listitem:
         - link "Vikariepass och frånvaro":
           - /url: /sv/teacher/franvaro
+      - listitem:
+        - link "Ledighet":
+          - /url: /sv/teacher/ledighet
   - link "Tillgänglighetsredogörelse":
     - /url: /sv/tillganglighet
 - banner:

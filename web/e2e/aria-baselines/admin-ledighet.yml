@@ -1,23 +1,34 @@
 - main:
   - heading "Ledighetsansökningar" [level=1]
-  - paragraph: Besluta om vårdnadshavarnas ledighetsansökningar
+  - paragraph: Besluta om ledighet och bestäm vad elevens mentor får besluta om
+  - status:
+    - paragraph: Mentorn beslutar om ledighet på högst 3 skoldagar
+    - text: Rektor har delegerat beslut om kortare ledighet till elevens mentor. Längre ansökningar, och en elev utan mentor de dagarna, beslutar rektor. Beslutat <datum> av Rut Rektorsson, Delegationsordning, punkt 4.2.
+    - button "Ändra delegering"
   - tablist "Visa ansökningar":
     - tab "Väntar" [selected]
     - tab "Beviljad"
     - tab "Avslagen"
-  - region "Väntar på beslut":
-    - heading "Väntar på beslut" [level=2]
+  - region "Väntar på rektor":
+    - heading "Väntar på rektor" [level=2]
     - list:
       - listitem:
-        - paragraph: Ines Vik <datum>–<datum>
+        - paragraph: Ines Vik (7A) <datum>–<datum>
+        - paragraph: "5 skoldagar · Rektor beslutar: mer än 3 skoldagar"
+        - paragraph: "Läsåret <läsår>: ingen ledighet beviljad, 1 ansökan till väntar"
         - paragraph: Resa
         - paragraph: Ansökt av Tom Vik · <datum>
         - text: Kommentar till vårdnadshavaren , Ines Vik, <datum>–<datum> (valfritt)
         - textbox "Kommentar till vårdnadshavaren , Ines Vik, <datum>–<datum> (valfritt)"
         - button "Bevilja Ines Vik, <datum>–<datum>": Bevilja
         - button "Avslå Ines Vik, <datum>–<datum>": Avslå
+  - region "Hos elevens mentor":
+    - heading "Hos elevens mentor" [level=2]
+    - list:
       - listitem:
-        - paragraph: Ella Nord <datum>–<datum>
+        - paragraph: Ella Nord (7A) <datum>–<datum>
+        - paragraph: "3 skoldagar · Mentorn beslutar: Anna Lind"
+        - paragraph: "Läsåret <läsår>: ingen ledighet beviljad, 1 ansökan till väntar"
         - paragraph: Familjeresa till mormor
         - paragraph: Ansökt av Sara Nord · <datum>
         - text: Kommentar till vårdnadshavaren , Ella Nord, <datum>–<datum> (valfritt)

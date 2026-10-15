@@ -51,7 +51,7 @@
         - button "Ta bort anmälan för Hugo Nord, ons <datum>"
   - region "Ansök om ledighet":
     - heading "Ansök om ledighet" [level=2]
-    - text: Ledighetsansökningar beslutas av skolans administration. Barn
+    - text: Rektor beslutar, eller elevens mentor när rektor har delegerat beslut om kortare ledighet. Barn
     - combobox "Barn":
       - option "Ella Nord" [selected]
       - option "Hugo Nord"
@@ -79,6 +79,7 @@
         - text: Hugo Nord Beviljad
         - paragraph: <datum>
         - paragraph: Uppkörning för moped
+        - paragraph: Beslutad av rektor
   - region "Undervisningstid – Ella":
     - heading "Undervisningstid – Ella" [level=2]
     - text: Uppdaterad <datum>
