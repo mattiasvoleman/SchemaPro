@@ -85,6 +85,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   },
   'src/resources/academic-years.service.ts': { basis: 'CURRENT', why: 'YEAR_HAS_HOME_PUPILS guards real rows' },
   'src/resources/student-groups.service.ts': { basis: 'CURRENT', why: 'shows and writes a group’s members as facts' },
+  'src/import/import.service.ts': {
+    basis: 'CURRENT',
+    why: 'a membership file’s rows placing pupils in a half (Halvklasser): each pupil’s class and placement as written, the facts the half trigger holds them to',
+  },
   'src/users/users.service.ts': { basis: 'CURRENT', why: 'a user’s own class, read before it is written' },
   'src/timplan/timplan-stage.service.ts': {
     basis: 'CURRENT',

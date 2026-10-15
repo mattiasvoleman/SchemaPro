@@ -858,6 +858,344 @@
         "pupilBuffers": []
       },
       "clashes": {}
+    },
+    {
+      "name": "a class’s halves before placement: the class and its groups clash with both, the halves never with each other",
+      "input": {
+        "lessons": [
+          {
+            "id": "slojd",
+            "subjectId": "s-slojd",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a1",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "no",
+            "subjectId": "s-no",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a2",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "svenska",
+            "subjectId": "s-svenska",
+            "dayOfWeek": 1,
+            "startTime": "08:30",
+            "endTime": "09:30",
+            "teacherId": "t3",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "ma",
+            "subjectId": "s-ma",
+            "dayOfWeek": 1,
+            "startTime": "08:30",
+            "endTime": "09:30",
+            "teacherId": "t4",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "ma7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "engelska",
+            "subjectId": "s-engelska",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t5",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "ma7"
+          }
+        ],
+        "pupilBuffers": [],
+        "halves": [
+          {
+            "id": "7a1",
+            "halfOfId": "7a"
+          },
+          {
+            "id": "7a2",
+            "halfOfId": "7a"
+          }
+        ]
+      },
+      "clashes": {
+        "ma": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "slojd"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "no"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "svenska"
+          }
+        ],
+        "no": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "svenska"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          }
+        ],
+        "slojd": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "svenska"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          }
+        ],
+        "svenska": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "slojd"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "no"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a class’s halves once its pupils are placed: a group clashes only with the half its pupils are in",
+      "input": {
+        "lessons": [
+          {
+            "id": "slojd",
+            "subjectId": "s-slojd",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a1",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "no",
+            "subjectId": "s-no",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t2",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a2",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "svenska",
+            "subjectId": "s-svenska",
+            "dayOfWeek": 1,
+            "startTime": "08:30",
+            "endTime": "09:30",
+            "teacherId": "t3",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "ma",
+            "subjectId": "s-ma",
+            "dayOfWeek": 1,
+            "startTime": "08:30",
+            "endTime": "09:30",
+            "teacherId": "t4",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "ma7",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          },
+          {
+            "id": "engelska",
+            "subjectId": "s-engelska",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t5",
+            "coTeacherId": null,
+            "roomId": null,
+            "studentGroupId": "7b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null
+          }
+        ],
+        "constraints": [],
+        "studentGroupOf": [
+          [
+            "alva",
+            "7a"
+          ],
+          [
+            "bo",
+            "7a"
+          ],
+          [
+            "eva",
+            "7b"
+          ]
+        ],
+        "memberships": [
+          {
+            "studentId": "alva",
+            "studentGroupId": "ma7"
+          },
+          {
+            "studentId": "alva",
+            "studentGroupId": "7a1"
+          },
+          {
+            "studentId": "bo",
+            "studentGroupId": "7a2"
+          }
+        ],
+        "pupilBuffers": [],
+        "halves": [
+          {
+            "id": "7a1",
+            "halfOfId": "7a"
+          },
+          {
+            "id": "7a2",
+            "halfOfId": "7a"
+          }
+        ]
+      },
+      "clashes": {
+        "ma": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "slojd"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "svenska"
+          }
+        ],
+        "no": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "svenska"
+          }
+        ],
+        "slojd": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "svenska"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          }
+        ],
+        "svenska": [
+          {
+            "kind": "GROUP",
+            "otherLessonId": "slojd"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "no"
+          },
+          {
+            "kind": "GROUP",
+            "otherLessonId": "ma"
+          }
+        ]
+      }
     }
   ]
 }

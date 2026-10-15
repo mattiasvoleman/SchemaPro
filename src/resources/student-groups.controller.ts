@@ -22,7 +22,9 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { StudentGroupsService } from './student-groups.service';
 import {
   CreateStudentGroupDto,
+  PlaceHalvesDto,
   SetGroupMembersDto,
+  SplitClassDto,
   UpdateStudentGroupDto,
 } from './dto/student-group.dto';
 
@@ -68,6 +70,26 @@ export class StudentGroupsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.studentGroups.listMembers(id, user);
+  }
+
+  /** "Dela klassen": the class split in two halves (Halvklasser). */
+  @Post(':id/halves')
+  split(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: SplitClassDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studentGroups.split(id, dto, user);
+  }
+
+  /** Which pupil of the class is in which half, every half at once. */
+  @Put(':id/halves/members')
+  placeHalves(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: PlaceHalvesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studentGroups.placeHalves(id, dto, user);
   }
 
   @Put(':id/members')

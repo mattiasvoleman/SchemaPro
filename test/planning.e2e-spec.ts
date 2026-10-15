@@ -290,6 +290,69 @@ describe('Planning surface (e2e)', () => {
         .set('x-test-user', admin())
         .expect(200);
     });
+
+    // Halvklasser: "Dela klassen" and placing pupils, round-tripped as the
+    // admin, so the handlers and not only the guard are covered.
+    it('splits a class in two halves', async () => {
+      harness.tx['studentGroup']!['findUnique']!.mockResolvedValue({
+        name: '7A',
+        kind: 'CLASS',
+        academicYearId: YEAR_ID,
+        gradeLevel: 7,
+        _count: { halves: 0 },
+      });
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+      harness.tx['studentGroup']!['createManyAndReturn']!.mockResolvedValue([{ id: 'h1' }, { id: 'h2' }]);
+
+      await request(http())
+        .post(`/api/v1/student-groups/${GROUP_ID}/halves`)
+        .set('x-test-user', admin())
+        .send({ names: ['7A:1', '7A:2'] })
+        .expect(201);
+      expect(harness.tx['studentGroup']!['createManyAndReturn']).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({ name: '7A:1', kind: 'TEACHING_GROUP', halfOfId: GROUP_ID }),
+          expect.objectContaining({ name: '7A:2', kind: 'TEACHING_GROUP', halfOfId: GROUP_ID }),
+        ],
+      });
+    });
+
+    it('refuses three names for two halves', async () => {
+      await request(http())
+        .post(`/api/v1/student-groups/${GROUP_ID}/halves`)
+        .set('x-test-user', admin())
+        .send({ names: ['A', 'B', 'C'] })
+        .expect(400);
+    });
+
+    it('places the pupils of a class in its halves', async () => {
+      const H1 = '7a000001-0000-4000-8000-000000000001';
+      const H2 = '7a000002-0000-4000-8000-000000000002';
+      harness.tx['studentGroup']!['findUnique']!.mockResolvedValue({
+        id: GROUP_ID,
+        name: '7A',
+        predecessorId: null,
+        halves: [{ id: H1 }, { id: H2 }],
+      });
+      harness.tx['user']!['findMany']!.mockResolvedValue([{ id: STUDENT_ID }]);
+      harness.tx['studentGroupMember']!['deleteMany']!.mockResolvedValue({ count: 0 });
+      harness.tx['studentGroupMember']!['createMany']!.mockResolvedValue({ count: 1 });
+
+      const response = await request(http())
+        .put(`/api/v1/student-groups/${GROUP_ID}/halves/members`)
+        .set('x-test-user', admin())
+        .send({ halves: [{ groupId: H1, studentIds: [STUDENT_ID] }, { groupId: H2, studentIds: [] }] })
+        .expect(200);
+      expect(response.body).toEqual({ placed: 1, unplaced: 0 });
+    });
+
+    it('refuses a placement whose half is no uuid', async () => {
+      await request(http())
+        .put(`/api/v1/student-groups/${GROUP_ID}/halves/members`)
+        .set('x-test-user', admin())
+        .send({ halves: [{ groupId: '7A:1', studentIds: [] }] })
+        .expect(400);
+    });
   });
 
   describe('parallella block (teaching blocks)', () => {
@@ -5807,6 +5870,9 @@ describe('Planning surface (e2e)', () => {
       ['POST', '/api/v1/room-types'],
       ['GET', '/api/v1/room-types'],
       ['POST', '/api/v1/student-groups'],
+      // Halvklasser: a class split, and its pupils placed.
+      ['POST', `/api/v1/student-groups/${GROUP_ID}/halves`],
+      ['PUT', `/api/v1/student-groups/${GROUP_ID}/halves/members`],
       ['POST', '/api/v1/teaching-requirements'],
       ['POST', '/api/v1/availability-constraints'],
       // Both verbs for ramtider. The GET is the one that would go missing in a
@@ -5840,7 +5906,7 @@ describe('Planning surface (e2e)', () => {
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {
       const agent = request(http());
-      const call = method === 'GET' ? agent.get(path) : agent.post(path);
+      const call = method === 'GET' ? agent.get(path) : method === 'PUT' ? agent.put(path) : agent.post(path);
 
       await call
         .set('x-test-user', asUser({ role: 'TEACHER' as never }))

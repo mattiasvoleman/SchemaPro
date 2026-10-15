@@ -147,6 +147,16 @@ export async function clashFinding(
     where: { academicYearId, OR: [{ minutesBefore: { gt: 0 } }, { minutesAfter: { gt: 0 } }] },
     select: { studentGroupId: true, subjectId: true, minutesBefore: true, minutesAfter: true },
   });
+  // Halvklasser: a half among the groups, or a class with halves, brings the
+  // class and its halves into the reads below — a half answers for the pupils
+  // it may hold, a question about its whole class (class-halves.ts).
+  const yearHalves = await readHalves(tx, academicYearId);
+  const inPlay = new Set(groupIds);
+  const halves = yearHalves.filter((half) => inPlay.has(half.id) || inPlay.has(half.halfOfId));
+  const classes = [...new Set(halves.map((half) => half.halfOfId))];
+  const halfClassIds = new Set(classes);
+  const allHalves = yearHalves.filter((half) => halfClassIds.has(half.halfOfId));
+  groupIds.push(...[...classes, ...allHalves.map((half) => half.id)].filter((id) => !inPlay.has(id)));
   const memberships = await tx.studentGroupMember.findMany({
     where: { studentGroupId: { in: groupIds } },
     select: { studentId: true, studentGroupId: true },
@@ -180,6 +190,7 @@ export async function clashFinding(
     studentGroupOf: homes,
     memberships,
     pupilBuffers: buffers,
+    halves: allHalves,
   });
   const byId = new Map(placed.map((lesson) => [lesson.id, lesson]));
   const pairs = clashPairs(clashes);
@@ -292,6 +303,53 @@ export async function blockSplitFinding(
         : [],
     ),
   );
+}
+
+/** The year's halves (Halvklasser), with their class. */
+async function readHalves(tx: PrismaClient, academicYearId: string) {
+  const rows = await tx.studentGroup.findMany({
+    where: { academicYearId, halfOfId: { not: null } },
+    select: { id: true, name: true, halfOfId: true, halfOf: { select: { name: true } } },
+    orderBy: { name: 'asc' },
+  });
+  return rows.flatMap((row) =>
+    row.halfOfId ? [{ id: row.id, name: row.name, halfOfId: row.halfOfId, className: row.halfOf?.name ?? '' }] : [],
+  );
+}
+
+/**
+ * PUB_EMPTY_HALF (Halvklasser): a half of a class that has lessons in the
+ * timetable and no pupil placed in it. Its lessons would reach nobody's
+ * week, while the pupils who are meant to have them see nothing — so it is
+ * named before the calendar takes it, by the half and its class, and the
+ * school's policy says whether that warns or refuses (gateEmptyHalf). A half
+ * with no lessons is no business of the publish.
+ */
+export async function emptyHalfFinding(
+  tx: PrismaClient,
+  academicYearId: string,
+  lessons: readonly GateLesson[],
+): Promise<GateFinding> {
+  const taught = new Set(
+    lessons.filter((lesson) => !lesson.isParked).flatMap((lesson) => [lesson.studentGroupId, ...lesson.extraGroupIds]),
+  );
+  const halves = (await readHalves(tx, academicYearId)).filter((half) => taught.has(half.id));
+  // The active pupils placed in each, as the memberships stand: a pupil who
+  // left holds no half.
+  const placed =
+    halves.length === 0
+      ? []
+      : await tx.studentGroupMember.findMany({
+          where: { studentGroupId: { in: halves.map((half) => half.id) }, student: { role: 'STUDENT', isActive: true } },
+          select: { studentGroupId: true },
+        });
+  const held = new Set(placed.map((row) => row.studentGroupId));
+  const empty = halves.filter((half) => !held.has(half.id));
+  return {
+    code: 'PUB_EMPTY_HALF',
+    count: empty.length,
+    entries: empty.map((half) => ({ label: `${half.name} (halva av ${half.className})` })),
+  };
 }
 
 /** PUB_LUNCH_NOT_SET: the publish dialog's old warning, now a named check. */

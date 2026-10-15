@@ -1043,6 +1043,71 @@ describe('ImportService', () => {
     });
   });
 
+  describe('importMemberships: a half of a class (Halvklasser)', () => {
+    const HALF_1 = '7a000001-0000-4000-8000-000000000001';
+    const HALF_2 = '7a000002-0000-4000-8000-000000000002';
+    const BO = 'aaaaaaa2-0000-4000-8000-000000000002';
+    const EVA = 'aaaaaaa3-0000-4000-8000-000000000003';
+    const CLASS_7B = '77777777-7777-4777-8777-777777777777';
+    const arrangeHalves = (placed: { studentId: string; studentGroupId: string; halfOfId: string }[] = []) => {
+      tx.user.findMany.mockResolvedValue([
+        { id: STUDENT_ID, email: 'alma@example.com', studentGroupId: GROUP_7A },
+        { id: BO, email: 'bo@example.com', studentGroupId: GROUP_7A },
+        { id: EVA, email: 'eva@example.com', studentGroupId: CLASS_7B },
+      ]);
+      arrangeRows(tx.studentGroup.findMany, [
+        { id: GROUP_7A, name: '7A', halfOfId: null, predecessorId: null },
+        { id: CLASS_7B, name: '7B', halfOfId: null, predecessorId: null },
+        { id: HALF_1, name: '7A:1', halfOfId: GROUP_7A, predecessorId: null },
+        { id: HALF_2, name: '7A:2', halfOfId: GROUP_7A, predecessorId: null },
+      ]);
+      tx.studentGroupMember.findMany.mockResolvedValue(placed);
+      tx.studentGroupMember.createMany.mockImplementation(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
+    };
+    const rows = (...pairs: [string, string][]) => ({
+      academicYearId: YEAR_ID,
+      rows: pairs.map(([groupName, email]) => ({ groupName, email })),
+    });
+
+    it('places the class’s pupils, and says by row who is of another class or in the other half already', async () => {
+      arrangeHalves([{ studentId: BO, studentGroupId: HALF_2, halfOfId: GROUP_7A }]);
+
+      const report = await service.importMemberships(
+        rows(
+          ['7A:1', 'alma@example.com'],
+          ['7A:2', 'alma@example.com'],
+          ['7A:1', 'bo@example.com'],
+          ['7A:1', 'eva@example.com'],
+        ),
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([
+        { row: 2, message: 'Eleven med e-postadressen "alma@example.com" är redan placerad i 7A:1.' },
+        { row: 3, message: 'Eleven med e-postadressen "bo@example.com" är redan placerad i 7A:2.' },
+        { row: 4, message: 'Eleven med e-postadressen "eva@example.com" går inte i 7A och kan inte placeras i 7A:1.' },
+      ]);
+      expect(tx.studentGroupMember.createMany).toHaveBeenCalledWith({
+        data: [{ schoolId: testUser().schoolId, studentGroupId: HALF_1, studentId: STUDENT_ID }],
+        skipDuplicates: true,
+      });
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith({
+        where: { studentId: { in: [STUDENT_ID, BO, EVA] }, halfOfId: { not: null } },
+        select: { studentId: true, studentGroupId: true, halfOfId: true },
+      });
+    });
+
+    it('asks nothing of placements in a year with no halves', async () => {
+      tx.user.findMany.mockResolvedValue([{ id: STUDENT_ID, email: 'alma@example.com', studentGroupId: GROUP_7A }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: 'Ma71', halfOfId: null, predecessorId: null }]);
+      tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
+
+      await service.importMemberships(rows(['Ma71', 'alma@example.com']), testUser());
+
+      expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('importMemberships: matching and side effects', () => {
     it('matches a row email in UPPER case against a lower-case stored student', async () => {
       tx.user.findMany.mockResolvedValue([
@@ -1071,7 +1136,8 @@ describe('ImportService', () => {
             mode: 'insensitive',
           }),
         },
-        select: { id: true, email: true },
+        // The class too, for a row placing the pupil in a half (Halvklasser).
+        select: { id: true, email: true, studentGroupId: true },
       });
     });
 

@@ -25,6 +25,7 @@ export const GATE_CODES = [
   'PUB_STAFFING_REFUSE',
   'PUB_TIMPLAN',
   'PUB_BLOCK_SPLIT',
+  'PUB_EMPTY_HALF',
   'PUB_RANGE_OVERLAP',
   'PUB_RANGE_GAP',
   'PUB_WEEK_SPLIT',
@@ -54,6 +55,7 @@ export interface GatePolicy {
   gateWeekSplit: GateMode;
   gateGap: GateMode;
   gateDayOpsLost: GateMode;
+  gateEmptyHalf: GateMode;
 }
 
 export const GATE_POLICY_KEYS = [
@@ -71,6 +73,7 @@ export const GATE_POLICY_KEYS = [
   'gateWeekSplit',
   'gateGap',
   'gateDayOpsLost',
+  'gateEmptyHalf',
 ] as const satisfies readonly (keyof GatePolicy)[];
 
 /** No row: every check WARNs. */
@@ -92,6 +95,9 @@ export const GATE_COLUMN: Record<GateCode, keyof GatePolicy | null> = {
   // A parallel block the school split by hand (Block i schemat): named, never
   // asked about — the board warned when it was split.
   PUB_BLOCK_SPLIT: null,
+  // A half of a class with lessons and no pupils (Halvklasser): its lessons
+  // would reach nobody's week.
+  PUB_EMPTY_HALF: 'gateEmptyHalf',
   PUB_RANGE_OVERLAP: 'gateOverlap',
   PUB_RANGE_GAP: 'gateGap',
   PUB_WEEK_SPLIT: 'gateWeekSplit',

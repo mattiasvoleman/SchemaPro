@@ -304,10 +304,16 @@ function pupilsOverlap(a: Placement, b: Placement): boolean {
  */
 export type GroupConflictMap = Map<string, Set<string>>;
 
-/** Build the relation from home classes and teaching-group memberships. */
+/**
+ * Build the relation from home classes and teaching-group memberships, and
+ * from a class's halves (Halvklasser, src/common/class-halves.ts): a half
+ * pairs with its class and with every group of the class's pupils placed in
+ * no half, and never with another half of its class.
+ */
 export function buildGroupConflictMap(
   studentGroupOf: Map<string, string | null>,
   memberships: Array<{ studentId: string; studentGroupId: string }>,
+  halves: ReadonlyArray<{ id: string; halfOfId?: string | null }> = [],
 ): GroupConflictMap {
   const groupsByStudent = new Map<string, Set<string>>();
   const add = (studentId: string, groupId: string | null) => {
@@ -320,15 +326,28 @@ export function buildGroupConflictMap(
   for (const row of memberships) add(row.studentId, row.studentGroupId);
 
   const relation: GroupConflictMap = new Map();
+  const relate = (a: string, b: string) => {
+    let set = relation.get(a);
+    if (!set) relation.set(a, (set = new Set()));
+    set.add(b);
+  };
   for (const groups of groupsByStudent.values()) {
-    if (groups.size < 2) continue;
     for (const a of groups) {
-      for (const b of groups) {
-        if (a === b) continue;
-        let set = relation.get(a);
-        if (!set) relation.set(a, (set = new Set()));
-        set.add(b);
-      }
+      for (const b of groups) if (a !== b) relate(a, b);
+    }
+  }
+  for (const half of halves) {
+    const classId = half.halfOfId;
+    if (!classId) continue;
+    const own = new Set(halves.filter((other) => other.halfOfId === classId).map((other) => other.id));
+    const pair = (group: string) => {
+      if (own.has(group)) return;
+      relate(group, half.id);
+      relate(half.id, group);
+    };
+    pair(classId);
+    for (const groups of groupsByStudent.values()) {
+      if (groups.has(classId) && ![...groups].some((group) => own.has(group))) groups.forEach(pair);
     }
   }
   return relation;

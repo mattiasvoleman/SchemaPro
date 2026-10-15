@@ -941,21 +941,34 @@ export class ImportService {
             mode: 'insensitive',
           },
         },
-        select: { id: true, email: true },
+        select: { id: true, email: true, studentGroupId: true },
       });
       const studentByEmail = new Map(
         students.map((student) => [student.email.toLowerCase(), student.id]),
       );
+      const homeOf = new Map(students.map((student) => [student.id, student.studentGroupId]));
 
       // Groups by name; a missing teaching group is created on the fly — the
       // group IS what this file defines, unlike a student class reference.
       const existing = await tx.studentGroup.findMany({
         where: { academicYearId: dto.academicYearId },
-        select: { id: true, name: true },
+        select: { id: true, name: true, halfOfId: true, predecessorId: true },
       });
       const groupByName = new Map(
         existing.map((group) => [this.normalizeName(group.name), group.id]),
       );
+      const groupById = new Map(existing.map((group) => [group.id, group]));
+      // Halvklasser: where each pupil is placed in a half already, by class,
+      // so a row placing them in the class's other half is told so rather than
+      // skipped by the one-half index (createMany skips every duplicate).
+      const placedIn = new Map<string, string>();
+      if (existing.some((group) => group.halfOfId)) {
+        const placed = await tx.studentGroupMember.findMany({
+          where: { studentId: { in: students.map((student) => student.id) }, halfOfId: { not: null } },
+          select: { studentId: true, studentGroupId: true, halfOfId: true },
+        });
+        for (const row of placed) placedIn.set(`${row.halfOfId}:${row.studentId}`, row.studentGroupId);
+      }
 
       const memberships: { studentGroupId: string; studentId: string }[] = [];
       for (const [index, row] of dto.rows.entries()) {
@@ -969,6 +982,30 @@ export class ImportService {
         }
         const key = this.normalizeName(row.groupName);
         let groupId = groupByName.get(key);
+        // A half of a class takes its class's pupils, one half each — the
+        // rules the database holds every writer to (20261113090000), said per
+        // row with the names in them.
+        const half = groupId ? groupById.get(groupId) : undefined;
+        const theClass = half?.halfOfId ? groupById.get(half.halfOfId) : undefined;
+        if (half && theClass) {
+          const home = homeOf.get(studentId) ?? null;
+          if (home === null || (home !== theClass.id && home !== theClass.predecessorId)) {
+            report.errors.push({
+              row: index + 1,
+              message: `Eleven med e-postadressen "${row.email}" går inte i ${theClass.name} och kan inte placeras i ${half.name}.`,
+            });
+            continue;
+          }
+          const other = placedIn.get(`${theClass.id}:${studentId}`);
+          if (other && other !== half.id) {
+            report.errors.push({
+              row: index + 1,
+              message: `Eleven med e-postadressen "${row.email}" är redan placerad i ${groupById.get(other)?.name ?? 'den andra halvan'}.`,
+            });
+            continue;
+          }
+          placedIn.set(`${theClass.id}:${studentId}`, half.id);
+        }
         if (!groupId) {
           const created = await tx.studentGroup.create({
             data: {
