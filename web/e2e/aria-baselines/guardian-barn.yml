@@ -10,6 +10,7 @@
     - group "Välj barn":
       - button "Ella" [pressed]
       - button "Hugo"
+    - button "Skriv ut veckan"
     - region "Onsdag <datum>":
       - heading "Onsdag <datum>" [level=3]
       - list:
