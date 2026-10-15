@@ -1935,7 +1935,8 @@
       "empty": "Välj minst ett omfång.",
       "groups": {
         "v1": "SchemaPros eget format (/ss12000/v1)",
-        "v2": "SS12000 2.1 (/ss12000/v2.0)"
+        "v2": "SS12000 2.1 (/ss12000/v2.0)",
+        "attendance": "Närvaro och frånvaro (SS12000 2.1)"
       },
       "names": {
         "ss12000_v1": "/ss12000/v1: elever, grupper, aktiviteter och lektioner i SchemaPros eget format",
@@ -1949,8 +1950,40 @@
         "calendarEvents_read": "Lektioner i det publicerade schemat (CalendarEvents)",
         "rooms_read": "Salar (Rooms)",
         "syllabuses_read": "Ämnen (Syllabuses)",
-        "subscriptions_write": "Prenumerera på ändringar (webhooks)"
-      }
+        "subscriptions_write": "Prenumerera på ändringar (webhooks)",
+        "attendances_read": "Närvaro per lektion: minuter närvaro, giltig och ogiltig frånvaro (Attendances)",
+        "absences_read": "Anmäld frånvaro och beviljad ledighet, med tid (Absences)"
+      },
+      "attendanceNotShared": "Skolan delar inte närvaro och frånvaro med integrationer. En nyckel med de här omfången kan inte läsa något förrän skolan har beslutat det under Närvaro och frånvaro till integrationer."
+    },
+    "attendanceSharing": {
+      "title": "Närvaro och frånvaro till integrationer",
+      "body": "Skolans beslut om ett annat system får läsa elevernas närvaro och frånvaro i SS12000-format, med en nyckel som har omfånget attendances.read eller absences.read. Utan beslut delas ingenting.",
+      "loadFailed": "Det gick inte att läsa skolans beslut.",
+      "state": "Läge:",
+      "shared": "Delas",
+      "notShared": "Delas inte",
+      "decided": "Beslutat {when} av {who}.",
+      "neverDecided": "Skolan har inte fattat något beslut, så ingen närvaro eller frånvaro lämnas ut.",
+      "referenceShown": "Diarienummer eller underlag: {reference}",
+      "leaves": "Lämnas ut: minuter närvaro och frånvaro per lektion, om frånvaron är giltig eller ogiltig, och anmäld frånvaro och beviljad ledighet med tid.",
+      "never": "Lämnas aldrig ut: orsaken till frånvaron, anteckningar, skälet till en ledighet, vilken sorts anmälan det är eller vem som anmälde frånvaron.",
+      "logged": "Läsningarna skrivs i läsloggen under Dataskydd, med integrationens nyckel som läsare.",
+      "gallring": "Det som har gallrats lämnas inte ut, och systemet får veta att det är borttaget.",
+      "reference": "Diarienummer eller underlag",
+      "referenceHint": "Till exempel skolans konsekvensbedömning eller beslutets diarienummer. Högst 200 tecken.",
+      "share": "Börja dela",
+      "stop": "Sluta dela",
+      "confirmShareTitle": "Dela närvaro och frånvaro med integrationer?",
+      "confirmShareBody": "Från nästa anrop kan varje nyckel med omfånget läsa elevernas närvaro och frånvaro. Beslutet sparas med ditt namn och kan inte ändras i efterhand, bara ersättas av ett nytt.",
+      "confirmStopTitle": "Sluta dela närvaro och frånvaro?",
+      "confirmStopBody": "Från nästa anrop får ingen nyckel läsa närvaro eller frånvaro, och prenumerationer får inga fler notiser om dem. Ett system som har hämtat närvaro och frånvaro ska då radera den. Beslutet sparas med ditt namn.",
+      "savedShared": "Skolan delar nu närvaro och frånvaro med integrationer.",
+      "savedStopped": "Skolan delar inte längre närvaro och frånvaro med integrationer.",
+      "history": "Tidigare beslut",
+      "historyShared": "{when}: delas ({who})",
+      "historyStopped": "{when}: delas inte ({who})",
+      "historyLimit": "Här visas de {count} senaste besluten."
     },
     "subscriptions": {
       "none": "Inga prenumerationer.",

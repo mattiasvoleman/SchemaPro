@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { INTEGRATION_KEYS } from "./query-keys";
-import type { ProviderKey, Scope } from "./ss12000-types";
+import type { AttendanceSharing, AttendanceSharingDecision, ProviderKey, Scope } from "./ss12000-types";
 
 /*
  * The integration keys as the provider sees them
@@ -60,6 +60,29 @@ export function useCreateWebhookSecret() {
     mutationFn: (id: string) =>
       api.post<{ id: string; secret: string; setAt: string | null }>(`/api/v1/integration-keys/${id}/webhook-secret`),
     onSuccess: invalidate,
+  });
+}
+
+/**
+ * The school's decision whether integrations may read pupils' attendance
+ * and absence (src/integration/attendance-sharing.controller.ts): in force
+ * from the next request a key makes, and kept, every one, as the record.
+ */
+export function useAttendanceSharing(enabled: boolean) {
+  return useQuery({
+    queryKey: INTEGRATION_KEYS.attendanceSharing,
+    enabled,
+    retry: false,
+    queryFn: () => api.get<AttendanceSharing>("/api/v1/integrations/attendance-sharing"),
+  });
+}
+
+export function useDecideAttendanceSharing() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { shares: boolean; reference?: string }) =>
+      api.post<AttendanceSharingDecision>("/api/v1/integrations/attendance-sharing", body),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.attendanceSharing }),
   });
 }
 

@@ -1935,7 +1935,8 @@
       "empty": "Choose at least one scope.",
       "groups": {
         "v1": "SchemaPro's own format (/ss12000/v1)",
-        "v2": "SS12000 2.1 (/ss12000/v2.0)"
+        "v2": "SS12000 2.1 (/ss12000/v2.0)",
+        "attendance": "Attendance and absence (SS12000 2.1)"
       },
       "names": {
         "ss12000_v1": "/ss12000/v1: pupils, groups, activities and lessons in SchemaPro's own format",
@@ -1949,8 +1950,40 @@
         "calendarEvents_read": "Lessons of the published timetable (CalendarEvents)",
         "rooms_read": "Rooms (Rooms)",
         "syllabuses_read": "Subjects (Syllabuses)",
-        "subscriptions_write": "Subscribe to changes (webhooks)"
-      }
+        "subscriptions_write": "Subscribe to changes (webhooks)",
+        "attendances_read": "Attendance per lesson: minutes present, excused and unexcused absence (Attendances)",
+        "absences_read": "Reported absence and granted leave, with times (Absences)"
+      },
+      "attendanceNotShared": "The school does not share attendance and absence with integrations. A key with these scopes is refused until the school has decided so under Attendance and absence for integrations."
+    },
+    "attendanceSharing": {
+      "title": "Attendance and absence for integrations",
+      "body": "The school's decision whether another system may read pupils' attendance and absence in SS12000 format, with a key that has the scope attendances.read or absences.read. Without a decision nothing is shared.",
+      "loadFailed": "The school's decision could not be read.",
+      "state": "State:",
+      "shared": "Shared",
+      "notShared": "Not shared",
+      "decided": "Decided {when} by {who}.",
+      "neverDecided": "The school has made no decision, so no attendance or absence is shared.",
+      "referenceShown": "Reference: {reference}",
+      "leaves": "Shared: minutes present and absent per lesson, whether the absence is excused or unexcused, and reported absence and granted leave with their times.",
+      "never": "Never shared: the reason for an absence, notes, the reason for a leave, what kind of report it is, or who reported the absence.",
+      "logged": "The reads are written to the read log under Data protection, with the integration's key as the reader.",
+      "gallring": "What has been purged is not shared, and the system is told it is gone.",
+      "reference": "Reference",
+      "referenceHint": "For example the school's impact assessment or the decision's registration number. At most 200 characters.",
+      "share": "Start sharing",
+      "stop": "Stop sharing",
+      "confirmShareTitle": "Share attendance and absence with integrations?",
+      "confirmShareBody": "From the next request, every key with the scope can read pupils' attendance and absence. The decision is saved with your name and cannot be changed afterwards, only replaced by a new one.",
+      "confirmStopTitle": "Stop sharing attendance and absence?",
+      "confirmStopBody": "From the next request, no key may read attendance or absence, and subscriptions get no more notices about them. A system that has fetched attendance and absence should then delete it. The decision is saved with your name.",
+      "savedShared": "The school now shares attendance and absence with integrations.",
+      "savedStopped": "The school no longer shares attendance and absence with integrations.",
+      "history": "Earlier decisions",
+      "historyShared": "{when}: shared ({who})",
+      "historyStopped": "{when}: not shared ({who})",
+      "historyLimit": "The {count} most recent decisions are shown here."
     },
     "subscriptions": {
       "none": "No subscriptions.",
