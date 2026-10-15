@@ -342,6 +342,32 @@ describe("RolloverWizard", () => {
     );
   });
 
+  it("lets a class's half follow its class or stay behind, and nothing the class's choice would override", async () => {
+    groups.push(
+      { id: "h-7a1", academicYearId: "y26", name: "7A:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+      { id: "h-7a2", academicYearId: "y26", name: "7A:2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+    );
+    try {
+      const user = userEvent.setup();
+      renderWizard();
+      await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+      await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
+
+      expect(screen.getAllByText(/halva av 7A/, { selector: "div" })).toHaveLength(2);
+      // The half is named after its class's successor.
+      expect(screen.getByLabelText("Nytt namn för 7A:1")).toHaveAttribute("placeholder", "8A:1");
+      await user.click(screen.getByRole("combobox", { name: "Vad 7A:1 blir" }));
+      expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Följer 7A", "Följer inte med"]);
+      await user.click(screen.getByRole("option", { name: "Följer inte med" }));
+      expect(screen.queryByLabelText("Nytt namn för 7A:1")).toBeNull();
+      await waitFor(() =>
+        expect(previewCalls().at(-1)?.groups).toEqual([{ sourceGroupId: "h-7a1", outcome: "SKIP" }]),
+      );
+    } finally {
+      groups.splice(-2, 2);
+    }
+  });
+
   it("carries no lov until one is ticked, and then with the proposed dates", async () => {
     const user = userEvent.setup();
     renderWizard();

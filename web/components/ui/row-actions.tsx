@@ -20,6 +20,13 @@ export interface RowAction {
   /** The whole accessible name, when "{label} {name}" does not read as a sentence. */
   ariaLabel?: string;
   disabled?: boolean;
+  /**
+   * What keeps the button the same button when its label changes ("Dela
+   * klassen" becomes "Placera elever" once the split is saved): keyed by the
+   * label alone, React would unmount the very button a closing dialog hands
+   * focus back to, and focus would fall to the page.
+   */
+  key?: string;
 }
 
 export interface RowActionsProps {
@@ -84,7 +91,7 @@ export function RowActions({
     <div className={cn("flex items-center justify-end gap-1", className)}>
       {inline.map((action) => (
         <Button
-          key={action.label}
+          key={action.key ?? action.label}
           type="button"
           variant="ghost"
           size="icon"

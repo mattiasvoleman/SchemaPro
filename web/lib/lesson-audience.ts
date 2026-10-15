@@ -33,6 +33,14 @@
 export interface RosterIndex {
   /** groupId → the pupils in it, home classes and teaching groups alike. */
   membersOf: Map<string, Set<string>>;
+  /**
+   * half → the class it is cut from (Halvklasser). A half's lesson is its
+   * class's business by name, as a lesson naming the class is: before anyone
+   * is placed it holds none of the class's pupils, yet it keeps the whole
+   * class off the hour, and a 7A view without it would show the slöjd hour
+   * free and refuse the drag into it for a lesson nobody can see.
+   */
+  halfOf?: Map<string, string>;
 }
 
 /** The three fields of a lesson that decide who is in the room. */
@@ -66,10 +74,12 @@ export interface Audience {
 export function buildRosterIndex(
   studentGroupOf: Map<string, string | null> | undefined,
   memberships: Array<{ studentId: string; studentGroupId: string }> | undefined,
+  groups: ReadonlyArray<{ id: string; halfOfId?: string | null }> = [],
 ): RosterIndex {
   const membersOf = new Map<string, Set<string>>();
+  const halfOf = new Map(groups.flatMap((group) => (group.halfOfId ? [[group.id, group.halfOfId] as const] : [])));
   if (studentGroupOf === undefined || memberships === undefined) {
-    return { membersOf };
+    return { membersOf, halfOf };
   }
 
   const add = (groupId: string, studentId: string) => {
@@ -86,7 +96,17 @@ export function buildRosterIndex(
   }
   for (const row of memberships) add(row.studentGroupId, row.studentId);
 
-  return { membersOf };
+  return { membersOf, halfOf };
+}
+
+/** The groups a lesson names, and the classes of any halves among them. */
+function namedBy(lesson: LessonAudienceInput, index: RosterIndex): Set<string> {
+  const named = new Set([lesson.studentGroupId, ...lesson.extraGroupIds]);
+  for (const groupId of [...named]) {
+    const theClass = index.halfOf?.get(groupId);
+    if (theClass) named.add(theClass);
+  }
+  return named;
 }
 
 /**
@@ -102,9 +122,7 @@ export function audienceFor(
   viewGroupId: string,
   index: RosterIndex,
 ): Audience | null {
-  const named =
-    lesson.studentGroupId === viewGroupId ||
-    lesson.extraGroupIds.includes(viewGroupId);
+  const named = namedBy(lesson, index).has(viewGroupId);
 
   const cohort = index.membersOf.get(viewGroupId);
   if (!cohort || cohort.size === 0) {
@@ -161,7 +179,7 @@ export function homeClassesReached(
   index: RosterIndex,
 ): string[] {
   const attendees = attendeesOf(lesson, index);
-  const named = new Set([lesson.studentGroupId, ...lesson.extraGroupIds]);
+  const named = namedBy(lesson, index);
   const reached: string[] = [];
   for (const groupId of homeClasses) {
     if (named.has(groupId)) {

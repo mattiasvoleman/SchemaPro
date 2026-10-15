@@ -214,3 +214,30 @@ describe("homeClassesReached", () => {
     expect(homeClassesReached(lesson("4ma2"), CLASSES, index)).toHaveLength(1);
   });
 });
+
+describe("a class's halves (Halvklasser)", () => {
+  const groups = [
+    { id: "4.1:1", halfOfId: "4.1" },
+    { id: "4.1:2", halfOfId: "4.1" },
+  ];
+
+  it("keeps a half's lesson in its class's week before anyone is placed, and in no other class's", () => {
+    const halves = buildRosterIndex(HOME, MEMBERS, groups);
+
+    expect(audienceFor(lesson("4.1:1"), "4.1", halves)).toEqual({ attending: 0, cohortSize: 4, named: true });
+    expect(audienceFor(lesson("4.1:1"), "4.2", halves)).toBeNull();
+    expect(homeClassesReached(lesson("4.1:2"), ["4.1", "4.2"], halves)).toEqual(["4.1"]);
+    // Without the halves the lesson reaches nobody: what the class's view used to hide.
+    expect(audienceFor(lesson("4.1:1"), "4.1", index)).toBeNull();
+  });
+
+  it("counts the placed half of the class once they are placed", () => {
+    const placed = buildRosterIndex(
+      HOME,
+      [...MEMBERS, { studentId: "a1", studentGroupId: "4.1:1" }, { studentId: "a2", studentGroupId: "4.1:1" }],
+      groups,
+    );
+
+    expect(audienceFor(lesson("4.1:1"), "4.1", placed)).toEqual({ attending: 2, cohortSize: 4, named: true });
+  });
+});

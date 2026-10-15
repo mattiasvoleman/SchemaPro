@@ -137,12 +137,19 @@ export function RolloverGroupsStep({
               const graduates = byDefault.outcome === "GRADUATE";
               const canPromote = group.gradeLevel !== null && !graduates;
               const canIntake = group.kind === "CLASS" && group.gradeLevel !== null && group.gradeLevel === lowest;
-              const outcomes: ("PROMOTE" | "CARRY" | "SKIP" | "INTAKE")[] = [
-                ...(canPromote ? (["PROMOTE"] as const) : []),
-                "CARRY",
-                "SKIP",
-                ...(canIntake ? (["INTAKE"] as const) : []),
-              ];
+              // A half follows its class wherever the class goes (resolveGroups),
+              // so the one choice of its own is to stay behind; a promotion or
+              // a carry offered here would be ignored without a word.
+              const halfOf = group.halfOfId ? sourceGroups.find((other) => other.id === group.halfOfId) : undefined;
+              const outcomes: ("PROMOTE" | "CARRY" | "SKIP" | "INTAKE")[] = halfOf
+                ? ["SKIP"]
+                : [
+                    ...(canPromote ? (["PROMOTE"] as const) : []),
+                    "CARRY",
+                    "SKIP",
+                    ...(canIntake ? (["INTAKE"] as const) : []),
+                  ];
+              const chosen = halfOf && choice.outcome !== "SKIP" ? undefined : choice.outcome;
               const nameId = `rollover-name-${group.id}`;
               return (
                 <TableRow key={group.id}>
@@ -150,12 +157,16 @@ export function RolloverGroupsStep({
                     <div className="font-medium">{group.name}</div>
                     <div className="text-xs text-muted-foreground">
                       {group.gradeLevel !== null ? t("gradeShort", { grade: group.gradeLevel }) : t("noGrade")}
-                      {group.kind === "TEACHING_GROUP" ? ` · ${t("teachingGroup")}` : ""}
+                      {halfOf
+                        ? ` · ${t("halfOf", { name: halfOf.name })}`
+                        : group.kind === "TEACHING_GROUP"
+                          ? ` · ${t("teachingGroup")}`
+                          : ""}
                     </div>
                   </TableCell>
                   <TableCell className="min-w-44">
                     <Select
-                      value={choice.outcome ?? DEFAULT}
+                      value={chosen ?? DEFAULT}
                       onValueChange={(value) =>
                         choose(group.id, {
                           outcome: value === DEFAULT ? undefined : (value as GroupChoiceState["outcome"]),
@@ -167,7 +178,9 @@ export function RolloverGroupsStep({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value={DEFAULT}>
-                          {t("outcomeDefault", { outcome: t(`outcome.${byDefault.outcome}`) })}
+                          {halfOf
+                            ? t("outcomeFollowsClass", { name: halfOf.name })
+                            : t("outcomeDefault", { outcome: t(`outcome.${byDefault.outcome}`) })}
                         </SelectItem>
                         {outcomes.map((outcome) => (
                           <SelectItem key={outcome} value={outcome}>

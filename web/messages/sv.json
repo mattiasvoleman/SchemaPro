@@ -419,9 +419,13 @@
       "halfFor": "Halva för {name}",
       "evenly": "Dela jämnt",
       "summary": "{placed, plural, one {# placerad} other {# placerade}}, {unplaced} utan halva",
-      "placeDone": "Eleverna i {name} är placerade.",
+      "placeDone": "Placeringen i {name} är sparad: {placed} i halvorna, {unplaced} utan halva.",
       "noPupils": "Klassen har inga elever än. Lägg in eleverna, så kan de placeras i halvorna.",
-      "badge": "halva av {name}"
+      "badge": "halva av {name}",
+      "placeLoading": "Hämtar klassens elever och placeringen …",
+      "placeLoadFailed": "Klassens elever eller placeringen kunde inte hämtas. Inget har ändrats; stäng och öppna igen för att försöka på nytt.",
+      "deleteClass": "Halvorna {halves} tas bort med klassen, med sina timplansposter och lektioner.",
+      "deleteHalf": "{name} blir kvar med en halva, och kan inte delas på nytt förrän den också är borttagen."
     }
   },
   "people": {
@@ -2257,6 +2261,7 @@
       "SS12000_UNEXPECTED": "Ett oväntat fel inträffade.",
       "SS12000_DEPENDENCY_NOT_APPLIED": "Hoppades över: ändringen den bygger på valdes inte.",
       "SS12000_TARGET_CHANGED": "Hoppades över: raden hade ändrats i SchemaPro.",
+      "SS12000_HALF_MEMBER_NOT_IN_CLASS": "Hoppades över: eleven går inte i halvklassens klass, eller står redan i klassens andra halva.",
       "STALE": "Körningen avbröts (servern startades om) och markerades som misslyckad.",
       "EXPIRED": "Diffen granskades inte inom 30 dagar och kastades.",
       "REVIEW_PENDING": "Nattens synk hoppades över eftersom en manuell diff väntar på granskning.",
@@ -3315,9 +3320,11 @@
     "gradeShort": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}",
     "noGrade": "Ingen årskurs",
     "teachingGroup": "undervisningsgrupp",
+    "halfOf": "halva av {name}",
     "outcomeFor": "Vad {name} blir",
     "newNameFor": "Nytt namn för {name}",
     "outcomeDefault": "Standard: {outcome}",
+    "outcomeFollowsClass": "Följer {name}",
     "outcome": {
       "PROMOTE": "Flyttas upp",
       "CARRY": "Följer med oförändrad",
