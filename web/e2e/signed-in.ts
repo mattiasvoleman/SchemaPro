@@ -33,19 +33,29 @@ export async function signInAs(context: BrowserContext, person: SignedInPerson, 
 }
 
 /**
- * Collects what the page asked the stub for and got no fixture: each a
- * `METHOD /path` line. A page that read nothing it lacked rendered its real
- * content, not an error state — which is what makes its axe result mean
- * something.
+ * Collects what the page asked the stub for and did not get: a read with no
+ * fixture, one whose handler threw, and one that never got an answer at all,
+ * each a `METHOD /path — what to do` line. A page that got every read it
+ * made rendered its real content, not an error state — which is what makes
+ * its axe result mean something.
  */
 export function watchStubMisses(page: Page): string[] {
   const misses: string[] = [];
   page.on("response", (response) => {
     if (!response.url().startsWith(STUB_ORIGIN)) return;
-    if (response.headers()["x-stub"] !== "miss") return;
+    const kind = response.headers()["x-stub"];
+    if (kind !== "miss" && kind !== "error") return;
     const url = new URL(response.url());
     const where = response.headers()["x-stub-where"];
     misses.push(`${response.request().method()} ${url.pathname}${where ? ` — ${where}` : ""}`);
+  });
+  // The stub crashed or the connection broke. A request the page gave up on
+  // itself (a navigation, a cancelled query) is net::ERR_ABORTED, and no miss.
+  page.on("requestfailed", (request) => {
+    if (!request.url().startsWith(STUB_ORIGIN)) return;
+    const error = request.failure()?.errorText ?? "unknown";
+    if (error === "net::ERR_ABORTED") return;
+    misses.push(`${request.method()} ${new URL(request.url()).pathname} — the stub never answered (${error})`);
   });
   return misses;
 }
