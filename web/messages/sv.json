@@ -1336,7 +1336,7 @@
       "editMember": "Ändra",
       "editMemberNamed": "Ändra {lesson}",
       "splitNote": "Blocket är delat: någon av dess lektioner står inte här. Flytta tillbaka den med blocket, eller lås alla blockets lektioner, innan du genererar igen.",
-      "lockHint": "Lås blocket låser alla blockets lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst.",
+      "lockHint": "Lås blocket låser alla blockets lagda lektioner, inte bara de här, eftersom genereringen vägrar ett block som är delvis låst. En lektion på brickan låses inte.",
       "lock": "Lås blocket",
       "unlock": "Lås upp blocket",
       "locked": "{count, plural, =0 {Blocket {name} var redan låst.} one {Blocket {name} är låst: # lektion låstes.} other {Blocket {name} är låst: # lektioner låstes.}}",

@@ -454,7 +454,9 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
   return (
     <>
       <Dialog open={opened !== null} onOpenChange={(next) => !next && !busy && setOpened(null)}>
-        <DialogContent className="max-w-lg">
+        {/* Closed by its own X or Escape, as the app's dialogs are: a second
+            "Stäng" in the footer read twice to a screen reader. */}
+        <DialogContent className="max-w-lg" closeDisabled={busy}>
           <DialogHeader>
             <DialogTitle>{opened?.name ?? ""}</DialogTitle>
             <DialogDescription>
@@ -494,16 +496,12 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
           <DialogFooter>
             {opened ? (
               <Button
-                variant="outline"
                 disabled={busy}
                 onClick={() => void lock(opened, !opened.lessons.every((lesson) => lesson.isLocked))}
               >
                 {opened.lessons.every((lesson) => lesson.isLocked) ? t("unlock") : t("lock")}
               </Button>
             ) : null}
-            <Button disabled={busy} onClick={() => setOpened(null)}>
-              {tCommon("close")}
-            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
