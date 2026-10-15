@@ -4056,6 +4056,51 @@
     frånvaroorsak, anteckning eller personnummer lämnas någonsin ut, och
     tjänstgöringsgrader bara när skolan har valt att dela dem (se ovan).
   </p>
+  <h4>Närvaro och frånvaro till integrationer</h4>
+  <p>
+    Elevernas närvaro och frånvaro lämnas bara ut om skolan har
+    <strong>beslutat det</strong>. Beslutet fattar du överst under
+    <span class="path">Integrationer › API-nycklar</span>, i rutan
+    <span class="ui">Närvaro och frånvaro till integrationer</span>, med
+    <span class="ui">Börja dela</span>. Skriv gärna in skolans
+    konsekvensbedömning eller beslutets diarienummer. SchemaPro frågar en
+    gång till innan beslutet sparas, och varje beslut sparas med ditt namn
+    och tidpunkten. Ett beslut ändras aldrig i efterhand. Vill skolan sluta
+    dela fattar du ett nytt beslut med <span class="ui">Sluta dela</span>, och
+    de tidigare besluten finns kvar under <span class="ui">Tidigare
+    beslut</span>. Utan beslut delas ingenting.
+  </p>
+  <p>
+    När skolan delar kan ett system läsa närvaron och frånvaron med en nyckel
+    som har omfånget <code>attendances.read</code> (närvaro per lektion) eller
+    <code>absences.read</code> (anmäld frånvaro och beviljad ledighet). Ge
+    omfånget bara till ett system som behöver det, till exempel kommunens
+    frånvarostatistik. Så här lämnas uppgifterna ut:
+  </p>
+  <ul>
+    <li><strong>Närvaro:</strong> för varje lektion och elev minuter närvaro,
+      minuter giltig frånvaro och minuter ogiltig frånvaro, räknade som i
+      närvarorapporten (6.9). Sen ankomst räknas som 15 minuter ogiltig
+      frånvaro.</li>
+    <li><strong>Frånvaro:</strong> när eleven är borta, och om det är
+      <em>beviljad ledighet</em> eller <em>anmäld frånvaro</em>. En hel dags
+      anmälan gäller hela dagen.</li>
+    <li><strong>Lämnas aldrig ut:</strong> orsaken till frånvaron, typen av
+      anmälan (sjuk, besök, annat), anteckningar, skälet till en ledighet och
+      vem som anmälde.</li>
+    <li>Varje läsning skrivs i läsloggen under
+      <span class="path">Dataskydd</span> (7.4), med integrationens nyckel som
+      läsare.</li>
+    <li>Det som gallras (7.4) lämnas inte längre ut, och systemet får veta att
+      det är borttaget. Detsamma gäller en elev som slutar.</li>
+  </ul>
+  <p>
+    Slutar skolan dela får ingen nyckel läsa närvaro eller frånvaro från
+    nästa anrop, och prenumerationer på dem får inga fler notiser. Systemet
+    ska då radera den närvaro och frånvaro det har hämtat från skolan, för
+    medan skolan inte delar får det inte veta vad som ändras eller tas bort.
+    Börjar skolan dela igen läser systemet allt på nytt.
+  </p>
   <h4>Prenumerationer och signeringshemlighet</h4>
   <p>
     Ett system med omfånget <code>subscriptions.write</code> kan prenumerera
