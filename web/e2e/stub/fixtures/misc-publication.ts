@@ -39,7 +39,7 @@ import {
  * Publicering for Exempelskolan: utkastläge, a timetable published before
  * the term, a starting point when the school switched to drafts, one refused
  * attempt and the publish that followed it. The grundschema in world.ts is
- * the draft, three changes ahead of what is published. Ids are KIND.misc
+ * the draft, five changes ahead of what is published. Ids are KIND.misc
  * 9101–9199.
  */
 
@@ -200,9 +200,9 @@ export function publicationTimeline(year: AcademicYear): PublicationTimeline {
 }
 
 /**
- * The grundschema against what is published: 9A's co-taught Matematik is new,
- * 7B's Matematik moved from Thursday to Tuesday, and a Friday Engelska for 7B
- * is gone.
+ * The grundschema against what is published: 9A's co-taught Matematik and
+ * Språkval åk 7's two lessons are new, 7B's Matematik moved from Thursday to
+ * Tuesday, and a Friday Engelska for 7B is gone.
  */
 export function draftState(year: AcademicYear): DraftState {
   if (year.id !== YEAR.id) {
@@ -213,7 +213,7 @@ export function draftState(year: AcademicYear): DraftState {
     academicYearId: year.id,
     publishMode: "DRAFT",
     publicationId: uid(KIND.misc, 9104),
-    added: [draftLesson(master(12))],
+    added: [draftLesson(master(12)), draftLesson(master(14)), draftLesson(master(15))],
     changed: [{ before: { ...moved, dayOfWeek: 4, startTime: "10:40", endTime: "11:40" }, after: moved }],
     removed: [
       {
@@ -236,7 +236,7 @@ export function draftState(year: AcademicYear): DraftState {
 const weeksIn = (from: string, to: string) =>
   Math.max(0, Math.floor((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / (7 * 86_400_000)) + 1);
 
-/** The dry run of a publish: the draft's three changes, week after week, and the two warnings on 8A's Bild. */
+/** The dry run of a publish: the draft's five changes, week after week, and the two warnings on 8A's Bild. */
 export function publicationPreview(window: { academicYearId: string; validFrom: string; validTo: string }): PublicationPreview {
   const digest = `stub-${window.academicYearId}-${window.validFrom}-${window.validTo}`;
   const base = { academicYearId: window.academicYearId, publishMode: "DRAFT" as const, validFrom: window.validFrom, validTo: window.validTo, digest };
@@ -253,7 +253,7 @@ export function publicationPreview(window: { academicYearId: string; validFrom: 
   const fromInPast = window.validFrom < TODAY;
   return {
     ...base,
-    result: { created: 2 * weeks, cancelled: 0, skipped: 0, fromDate: window.validFrom, toDate: window.validTo },
+    result: { created: 4 * weeks, cancelled: 0, skipped: 0, fromDate: window.validFrom, toDate: window.validTo },
     draft: { moved: weeks, removed: weeks, adopted: 0, cancelledByMove: 0, cancelledByBatch: 0 },
     gates: [
       gate("PUB_PARKED", "WARN", [BILD_8A]),

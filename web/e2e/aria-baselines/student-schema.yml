@@ -55,9 +55,9 @@
           - cell "13 h"
           - cell "275,5 h"
           - cell "280 h"
-        - row "Språkval 0 h 259,7 h 272 h":
+        - row "Språkval 8 h 259,7 h 272 h":
           - rowheader "Språkval"
-          - cell "0 h"
+          - cell "8 h"
           - cell "259,7 h"
           - cell "272 h"
         - row "Matematik 16 h 399 h 400 h":
