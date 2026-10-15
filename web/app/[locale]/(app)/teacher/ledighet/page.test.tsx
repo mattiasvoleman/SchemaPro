@@ -199,4 +199,31 @@ describe("Ledighet, the mentor's inbox", () => {
     expect(screen.getByText("Kommentar: Trevlig resa")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Bevilja/ })).not.toBeInTheDocument();
   });
+
+  it("says nothing of the pupil's year on the mentor's own decision, whatever the answer carries", () => {
+    // The gateway sends no year there (20261101090000): the pupil may have
+    // changed class, and later leave is another mentor's. An answer that
+    // still carries one, from a gateway before it, is not shown either.
+    const decided = {
+      ...REQUEST,
+      status: "APPROVED",
+      decides: null,
+      decidingMentors: [],
+      decidedById: "t-anna",
+      decidedAt: "2027-02-02T08:00:00.000Z",
+      decidedAs: "MENTOR",
+      decidedByName: "Anna Mentor",
+    };
+    state.inbox = {
+      data: [
+        { ...decided, year: { ...REQUEST.year, approvedDays: 4, approvedRequests: 2, pendingRequests: 1 } },
+        { ...decided, id: "l-2", year: null },
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    renderPage();
+    expect(screen.getAllByText("2 skoldagar · Beslutad av mentorn Anna Mentor")).toHaveLength(2);
+    expect(screen.queryByText(/läsåret 2026\/27|Läsåret 2026\/27/)).not.toBeInTheDocument();
+  });
 });

@@ -1716,6 +1716,8 @@
     "reason": "Reason",
     "leaveSubmit": "Submit request",
     "leaveSubmitted": "Leave request submitted",
+    "leaveTooLong": "A request can cover at most a year, {days} days. Choose an earlier To date.",
+    "leaveEndsBeforeStart": "The leave ends before it starts. In To, choose the From date or a later one.",
     "leavesTitle": "Leave requests",
     "leavesEmpty": "No leave requests yet.",
     "statusPENDING": "Pending",

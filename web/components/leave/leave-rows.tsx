@@ -10,9 +10,10 @@ import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
  * One leave request as a DecisionList row, for rektor's inbox and the
  * mentor's. Both show the same facts, because both decide on them: the
  * request's skoldagar (weekends and lov not counted), who decides it now and
- * why, the pupil's leave so far this läsår, the family's reason and who
- * asked. Rektor also reads which mentor holds a request, and the mentor which
- * co-mentor may decide it first.
+ * why, the pupil's leave so far this läsår (on the mentor's own decisions it
+ * is left out), the family's reason and who asked. Rektor also reads which
+ * mentor holds a request, and the mentor which co-mentor may decide it
+ * first.
  */
 
 /** "Ella Elev (7A)" and the period, as the row's first line. */
@@ -63,7 +64,12 @@ export function useLeaveRows(view: "admin" | "mentor", delegation: LeaveDelegati
       who.push(t("decidedByAdmin", { name: request.decidedByName ?? "—" }));
     }
 
-    const year = request.year
+    // The pupil's year is what the decider weighs: rektor on every request,
+    // the mentor only while it waits for them. A mentor's decided request
+    // says nothing of the pupil's later leave, which may be another
+    // mentor's to decide (the gateway sends none there either).
+    const weighs = view === "admin" || request.status === "PENDING";
+    const year = weighs && request.year
       ? request.year.approvedRequests === 0 && request.year.pendingRequests === 0
         ? t("yearNone", { year: request.year.name })
         : t("yearSoFar", {

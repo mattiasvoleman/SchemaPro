@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type { GuardianChild } from "@/lib/guardian-queries";
 import GuardianPage from "./page";
 
@@ -21,6 +22,7 @@ const state = vi.hoisted(() => ({
   childrenAskedFor: [] as (string | null)[],
   reports: [] as Record<string, unknown>[],
   leaves: [] as Record<string, unknown>[],
+  requestLeave: vi.fn(),
 }));
 
 vi.mock("@/components/profile-context", () => ({
@@ -48,7 +50,7 @@ vi.mock("@/lib/guardian-queries", () => ({
   useAbsenceReports: () => ({ data: state.reports }),
   useLeaveRequests: () => ({ data: state.leaves }),
   useAbsenceReportActions: () => ({ report: { isPending: false }, remove: { isPending: false } }),
-  useLeaveRequestActions: () => ({ request: { isPending: false } }),
+  useLeaveRequestActions: () => ({ request: { isPending: false, mutateAsync: state.requestLeave } }),
 }));
 vi.mock("@/components/teaching-time-card", () => ({
   TeachingTimeCard: ({ studentId, childName }: { studentId: string; childName?: string }) => (
@@ -61,6 +63,20 @@ vi.mock("@/components/guardian/child-schedule", () => ({
   ),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The calendar is its own spec's (components/ui/date-field.test.tsx); here a
+// field is the bounds the page gives it.
+vi.mock("@/components/ui/date-field", () => ({
+  DateField: (props: { id: string; label?: string; value: string; min?: string; max?: string; onChange: (value: string) => void }) => (
+    <input
+      id={props.id}
+      aria-label={props.label}
+      value={props.value}
+      data-min={props.min ?? ""}
+      data-max={props.max ?? ""}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  ),
+}));
 // The delete confirmation is a lazy chunk; here it never arrives.
 vi.mock("@/components/ui/confirm-dialog", () => {
   throw new Error("Failed to fetch dynamically imported module: /_next/static/chunks/confirm-dialog.js");
@@ -109,6 +125,28 @@ describe("the guardian's leave requests", () => {
     expect(await screen.findByText("Resa l-mentor")).toBeInTheDocument();
     expect(screen.getAllByText("guardian.decidedByMentor")).toHaveLength(1);
     expect(screen.getAllByText("guardian.decidedByRektor")).toHaveLength(1);
+  });
+
+  it.each([
+    ["more than a year", new ApiError(400, "A leave request covers at most 366 days.", "LEAVE_REQUEST_TOO_LONG", { days: 366 }), "guardian.leaveTooLong"],
+    ["an end before the start", new ApiError(400, "endDate must not be before startDate.", "LEAVE_REQUEST_ENDS_BEFORE_START"), "guardian.leaveEndsBeforeStart"],
+  ])("says in the guardian's language what the gateway refused for %s, never its English", async (_what, error, said) => {
+    state.requestLeave.mockRejectedValue(error);
+    const user = userEvent.setup();
+    render(<GuardianPage />);
+    await user.type(screen.getByRole("textbox", { name: "guardian.reason" }), "Familjeresa");
+    await user.click(screen.getByRole("button", { name: /guardian.leaveSubmit/ }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(said));
+    expect(toast.error).not.toHaveBeenCalledWith(error.message);
+  });
+
+  it("offers no last day before the first, or more than a year after it", () => {
+    render(<GuardianPage />);
+    const start = (document.getElementById("leave-start") as HTMLInputElement).value;
+    const end = document.getElementById("leave-end") as HTMLInputElement;
+    const year = new Date(Date.parse(`${start}T00:00:00Z`) + 365 * 86_400_000).toISOString().slice(0, 10);
+    expect(end.dataset["min"]).toBe(start);
+    expect(end.dataset["max"]).toBe(year);
   });
 });
 
