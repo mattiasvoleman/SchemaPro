@@ -8,8 +8,8 @@
  * so a school that never opens the settings is refused nothing it can do
  * today. Two checks never follow the policy: PUB_CALENDAR_REFUSED is a
  * refusal the database already made in the dry run (fixed REFUSE), and the
- * INFO findings (nothing to publish, a range that replaces another cleanly)
- * are information and ask for nothing.
+ * INFO findings (nothing to publish, a range that replaces another cleanly,
+ * a parallel block split by hand) are information and ask for nothing.
  *
  * PURE. The service collects the findings; this file settles them.
  */
@@ -24,6 +24,7 @@ export const GATE_CODES = [
   'PUB_NO_ROOM',
   'PUB_STAFFING_REFUSE',
   'PUB_TIMPLAN',
+  'PUB_BLOCK_SPLIT',
   'PUB_RANGE_OVERLAP',
   'PUB_RANGE_GAP',
   'PUB_WEEK_SPLIT',
@@ -88,6 +89,9 @@ export const GATE_COLUMN: Record<GateCode, keyof GatePolicy | null> = {
   PUB_NO_ROOM: 'gateMissingRoom',
   PUB_STAFFING_REFUSE: 'gateStaffing',
   PUB_TIMPLAN: 'gateTimplan',
+  // A parallel block the school split by hand (Block i schemat): named, never
+  // asked about — the board warned when it was split.
+  PUB_BLOCK_SPLIT: null,
   PUB_RANGE_OVERLAP: 'gateOverlap',
   PUB_RANGE_GAP: 'gateGap',
   PUB_WEEK_SPLIT: 'gateWeekSplit',

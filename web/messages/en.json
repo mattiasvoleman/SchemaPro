@@ -3977,6 +3977,7 @@
       "PUB_NO_ROOM": "{count, plural, one {# lesson has} other {# lessons have}} no room.",
       "PUB_STAFFING_REFUSE": "The staffing stop rules find {count, plural, one {# thing} other {# things}}.",
       "PUB_TIMPLAN": "{count, plural, one {# line of the timplan is} other {# lines of the timplan are}} below level.",
+      "PUB_BLOCK_SPLIT": "{count, plural, one {# parallel block is split} other {# parallel blocks are split}}: the lessons below do not stand at the same times as the rest of their block. The next generation refuses the block as partly locked.",
       "PUB_RANGE_OVERLAP": "The validity shares its period with {count, plural, one {a published timetable} other {# published timetables}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# school day ahead has} other {# school days ahead have}} no published timetable.",
       "PUB_WEEK_SPLIT": "The validity starts or ends mid-week: {count, plural, one {# lesson} other {# lessons}} may disappear or be held twice that week.",

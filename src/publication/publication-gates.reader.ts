@@ -210,6 +210,90 @@ export async function unstaffedFinding(tx: PrismaClient, academicYearId: string)
   };
 }
 
+/** A post of a parallel block, as blockSplitFinding reads it. */
+export interface BlockPost {
+  studentGroupId: string;
+  subjectId: string;
+  blockId: string;
+  blockName: string;
+}
+
+/**
+ * PUB_BLOCK_SPLIT: the parallel blocks whose lessons do not all stand
+ * together — a member moved by hand away from the others (Block i schemat,
+ * src/calendar/block-lessons.ts). Information, never asked about: the board
+ * warned when the block was split, and the generation refuses it as partly
+ * locked; the publish names it so a split nobody meant is seen before the
+ * calendar takes it.
+ *
+ * A block stands together when every slot (day, clock, weeks) holding a
+ * lesson of one of its members holds one of every member that has a placed
+ * lesson. A member with none is unplaced, which PUB_UNPLACED says; it splits
+ * nothing. Counted per block; each entry a lesson standing apart, after its
+ * block's name.
+ */
+export function blockSplits(lessons: readonly GateLesson[], posts: readonly BlockPost[]): GateFinding {
+  const blocks = new Map<string, { name: string; keys: Set<string> }>();
+  for (const post of posts) {
+    const block = blocks.get(post.blockId) ?? { name: post.blockName, keys: new Set<string>() };
+    block.keys.add(`${post.studentGroupId}:${post.subjectId}`);
+    blocks.set(post.blockId, block);
+  }
+  const placed = new Map<string, GateLesson[]>();
+  for (const lesson of lessons) {
+    if (lesson.isParked) continue;
+    const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
+    placed.set(key, [...(placed.get(key) ?? []), lesson]);
+  }
+  let count = 0;
+  const entries: GateEntry[] = [];
+  for (const { name, keys } of [...blocks.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv'))) {
+    const standing = [...keys].filter((key) => (placed.get(key) ?? []).length > 0);
+    if (standing.length < 2) continue;
+    const slots = new Map<string, { keys: Set<string>; lessons: GateLesson[] }>();
+    for (const key of standing) {
+      for (const lesson of placed.get(key)!) {
+        const slot = [lesson.dayOfWeek, lesson.startTime, lesson.endTime, lesson.recurrence, lesson.startDate, lesson.endDate].join('|');
+        const entry = slots.get(slot) ?? { keys: new Set<string>(), lessons: [] };
+        entry.keys.add(key);
+        entry.lessons.push(lesson);
+        slots.set(slot, entry);
+      }
+    }
+    const apart = [...slots.values()]
+      .filter((slot) => slot.keys.size < standing.length)
+      .flatMap((slot) => slot.lessons);
+    if (apart.length === 0) continue;
+    count += 1;
+    entries.push(
+      ...apart
+        .map((lesson) => ({ label: `${name}: ${lessonLabel(lesson)}`, masterLessonId: lesson.id }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'sv')),
+    );
+  }
+  return { code: 'PUB_BLOCK_SPLIT', count, entries, info: true };
+}
+
+/** PUB_BLOCK_SPLIT over the year's blocks, read once. */
+export async function blockSplitFinding(
+  tx: PrismaClient,
+  academicYearId: string,
+  lessons: readonly GateLesson[],
+): Promise<GateFinding> {
+  const rows = await tx.teachingRequirement.findMany({
+    where: { academicYearId, blockId: { not: null } },
+    select: { studentGroupId: true, subjectId: true, blockId: true, block: { select: { name: true } } },
+  });
+  return blockSplits(
+    lessons,
+    rows.flatMap((row) =>
+      row.blockId && row.block
+        ? [{ studentGroupId: row.studentGroupId, subjectId: row.subjectId, blockId: row.blockId, blockName: row.block.name }]
+        : [],
+    ),
+  );
+}
+
 /** PUB_LUNCH_NOT_SET: the publish dialog's old warning, now a named check. */
 export async function lunchFinding(tx: PrismaClient, schoolId: string): Promise<GateFinding> {
   const setting = await tx.lunchSetting.findUnique({
