@@ -72,6 +72,15 @@ describe("tillgänglighetsredogörelsen", () => {
     expect(text).not.toContain("inte inlagda");
   });
 
+  // DEPLOYMENT.md §6 accepts a phone without an e-mail: the page then gives
+  // the phone in both places and never also says the details are missing.
+  it("with only a phone, reports to that phone and does not say the details are missing", () => {
+    const text = toMarkdown(contactFromEnv({ ACCESSIBILITY_PHONE: "000-00 00 00" }));
+    expect(text).toContain("- Telefon: 000-00 00 00");
+    expect(text).toContain("meddela oss så att vi får veta att problemet finns: ring 000-00 00 00.");
+    expect(text).not.toContain("inte inlagda");
+  });
+
   it("names Schemavisaren in its scope", () => {
     expect(JSON.stringify(intro)).toContain("Schemavisaren");
   });

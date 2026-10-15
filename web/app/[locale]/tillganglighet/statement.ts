@@ -125,7 +125,11 @@ export function statement(contact: Contact): { intro: Block[]; sections: Section
               email,
               ".",
             )
-          : p(
+          : contact.phone
+            ? p(
+                `Vi strävar hela tiden efter att förbättra tjänstens tillgänglighet. Om du upptäcker problem som inte beskrivs på den här sidan, eller om du anser att vi inte uppfyller lagens krav, meddela oss så att vi får veta att problemet finns: ring ${contact.phone}.`,
+              )
+            : p(
               "Vi strävar hela tiden efter att förbättra tjänstens tillgänglighet. Om du upptäcker problem som inte beskrivs på den här sidan, eller om du anser att vi inte uppfyller lagens krav, meddela din skola så att problemet blir känt. Kontaktuppgifterna för tillgänglighetsfrågor är inte inlagda ännu.",
             ),
       ],
