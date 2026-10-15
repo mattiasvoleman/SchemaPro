@@ -149,6 +149,11 @@ export class StudentGroupsService {
             ...(dto.gradeLevel !== undefined ? { gradeLevel: dto.gradeLevel } : {}),
           },
         });
+        // A half is cut from its class (Halvklasser) and reads its class's
+        // årskurs: frames, rasts, timplan and behörighet ask the half's own.
+        if (dto.gradeLevel !== undefined && group.kind === 'CLASS') {
+          await tx.studentGroup.updateMany({ where: { halfOfId: id }, data: { gradeLevel: dto.gradeLevel } });
+        }
         if (this.notifications && dto.gradeLevel !== undefined) {
           await tellNewMentors(this.notifications, tx, group.schoolId);
         }
@@ -299,10 +304,22 @@ export class StudentGroupsService {
    * index halfway. A pupil in no list is unplaced, which is allowed: the
    * generator plans a half for the pupils it may still get (class-halves.ts).
    *
+   * What is replaced is the placement of the pupils it judges, the class's
+   * active pupils (pupilsOfTheClass), and nobody else's: the halves of a past
+   * läsår keep their pupils, who are now in next year's class, as that year's
+   * history (the Users trigger keeps them too), and an inactive pupil keeps
+   * the half they were in. A list sent from a screen that never saw them
+   * cannot take them out.
+   *
    * Refused, before anything is written: a half not of this class, a half
    * left out, a pupil in two lists, and a pupil not of the class (see
    * pupilsOfTheClass). Answers counts only, so it is no read of anyone in the
    * läslogg's sense.
+   *
+   * The class is held FOR NO KEY UPDATE first, as split holds it: two
+   * placements of one class saved at the same moment would each delete what
+   * it saw and both insert, leaving a placement neither sent. The second
+   * waits, and then replaces the first's.
    */
   async placeHalves(
     classId: string,
@@ -312,6 +329,7 @@ export class StudentGroupsService {
     const schoolId = requireSchoolId(user);
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "StudentGroups" WHERE "id" = ${classId}::uuid FOR NO KEY UPDATE`;
         const theClass = await tx.studentGroup.findUnique({
           where: { id: classId },
           select: { id: true, name: true, predecessorId: true, halves: { select: { id: true } } },
@@ -341,7 +359,9 @@ export class StudentGroupsService {
         const strangers = placing.filter((id) => !pupils.has(id));
         if (strangers.length > 0) throw pupilsNotInClass(strangers.length, theClass.name);
 
-        await tx.studentGroupMember.deleteMany({ where: { studentGroupId: { in: named } } });
+        await tx.studentGroupMember.deleteMany({
+          where: { studentGroupId: { in: named }, studentId: { in: [...pupils] } },
+        });
         const rows = dto.halves.flatMap((half) =>
           half.studentIds.map((studentId) => ({ schoolId, studentGroupId: half.groupId, studentId })),
         );
@@ -381,9 +401,10 @@ export class StudentGroupsService {
         }
         // A half takes pupils of its class only (Halvklasser); a pupil
         // already in the class's other half meets the one-half index (409).
-        if (group.halfOf && unique.length > 0) {
-          const pupils = await pupilsOfTheClass(tx, group.halfOf);
-          const strangers = unique.filter((id) => !pupils.has(id));
+        // And it replaces only those pupils' rows, as placeHalves does.
+        const classPupils = group.halfOf ? await pupilsOfTheClass(tx, group.halfOf) : null;
+        if (group.halfOf && classPupils) {
+          const strangers = unique.filter((id) => !classPupils.has(id));
           if (strangers.length > 0) throw pupilsNotInClass(strangers.length, group.halfOf.name);
         }
 
@@ -402,7 +423,7 @@ export class StudentGroupsService {
         }
 
         await tx.studentGroupMember.deleteMany({
-          where: { studentGroupId: groupId },
+          where: classPupils ? { studentGroupId: groupId, studentId: { in: [...classPupils] } } : { studentGroupId: groupId },
         });
         if (unique.length > 0) {
           await tx.studentGroupMember.createMany({

@@ -1877,6 +1877,21 @@ describe('YearRolloverService — a class split in halves (Halvklasser)', () => 
     ).toHaveLength(1);
   });
 
+  it('carries only the class’s pupils of a half: one placed there from another class is stranded, not refused', async () => {
+    const rows = withHalves();
+    // 8A's pupil, left in 7A:1 by a path that bypassed the rule: copied, the
+    // member trigger would refuse it in 8A:1 and with it the whole rollover.
+    rows['studentGroupMember']!.push({ studentGroupId: H1, studentId: IDS.p8a1, student: { studentGroupId: IDS.g8a } });
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, OPTIONS);
+    const next = world.rows['studentGroup']!.filter((group) => group['academicYearId'] === result.academicYear.id);
+    const half = next.find((group) => group['name'] === '8A:1')!;
+
+    expect(
+      world.rows['studentGroupMember']!.filter((member) => member['studentGroupId'] === half['id']).map((member) => member['studentId']),
+    ).toEqual([IDS.p7a1]);
+  });
+
   it('writes the halves after the classes, in a second statement, only when there are halves', async () => {
     const { world, service } = setup(withHalves());
     await previewAndExecute(world, service, OPTIONS);

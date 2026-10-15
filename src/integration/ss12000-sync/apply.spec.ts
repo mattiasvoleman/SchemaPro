@@ -212,6 +212,56 @@ describe('applyChanges, op by op', () => {
     expect(outcome.skipped.map((s) => s.id)).toEqual([orphan.id]);
   });
 
+  it('skips a member the source puts in a half of a class they are not in, or in its other half, and adds the rest', async () => {
+    const H1 = loc(51);
+    const H2 = loc(52);
+    const CLASS = loc(50);
+    tx.user.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      'ss12000Id' in where
+        ? [1, 2, 3, 4].map((n) => ({ id: loc(n), ss12000Id: ext(n) }))
+        : [
+            { id: loc(1), studentGroupId: CLASS },
+            { id: loc(2), studentGroupId: loc(60) },
+            { id: loc(3), studentGroupId: CLASS },
+            { id: loc(4), studentGroupId: CLASS },
+          ],
+    );
+    tx.studentGroup.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      'ss12000Id' in where
+        ? [
+            { id: H1, ss12000Id: ext(91) },
+            { id: H2, ss12000Id: ext(92) },
+          ]
+        : [
+            { id: H1, halfOfId: CLASS, halfOf: { predecessorId: null } },
+            { id: H2, halfOfId: CLASS, halfOf: { predecessorId: null } },
+          ],
+    );
+    // Pupil 3 is in 7A:2 already.
+    tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: loc(3), studentGroupId: H2, halfOfId: CLASS }]);
+    const add = (n: number, group: number) =>
+      change({ entity: 'GROUP_MEMBERSHIP', op: 'ADD', externalId: ext(n), localId: loc(n), after: { groupExternalId: ext(group) } });
+    const inClass = add(1, 91);
+    const otherClass = add(2, 91);
+    const otherHalf = add(3, 91);
+    const both = [add(4, 91), add(4, 92)];
+
+    const outcome = await run([inClass, otherClass, otherHalf, ...both]);
+
+    expect(outcome.skipped.map((s) => [s.id, s.code])).toEqual([
+      [otherClass.id, 'SS12000_HALF_MEMBER_NOT_IN_CLASS'],
+      [otherHalf.id, 'SS12000_HALF_MEMBER_NOT_IN_CLASS'],
+      [both[1]!.id, 'SS12000_HALF_MEMBER_NOT_IN_CLASS'],
+    ]);
+    expect(tx.studentGroupMember.createMany).toHaveBeenCalledWith({
+      data: [
+        { schoolId: SCHOOL, studentGroupId: H1, studentId: loc(1) },
+        { schoolId: SCHOOL, studentGroupId: H1, studentId: loc(4) },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
   it('adds and updates duty links, re-opening an ended one, and skips what it cannot place', async () => {
     tx.user.findMany.mockResolvedValue([{ id: loc(5), ss12000Id: ext(5) }]);
     const add = change({

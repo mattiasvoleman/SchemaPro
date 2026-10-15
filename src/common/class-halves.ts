@@ -114,10 +114,15 @@ export function halfPairs(
 }
 
 /**
- * How many of the class's unplaced pupils a half is expected to take: an even
- * share, rounded up. For the room a half needs before its pupils are placed —
- * a half of nobody needs one chair by the head count alone, and would be put
- * in a room too small for the fourteen it will hold.
+ * How many of the class's unplaced pupils a half is expected to take: what
+ * fills it to an even share of the whole class, rounded up, and no more than
+ * are unplaced. For the room a half needs before its pupils are placed — a
+ * half of nobody needs one chair by the head count alone, and would be put in
+ * a room too small for the fourteen it will hold. Filled towards the even
+ * share rather than given an equal cut of the unplaced on top of what it has:
+ * with 16 of 32 placed in 7A:1 and none in 7A:2, 7A:2 is the one that will
+ * take the other 16, and 7A:1 sent as 24 would ask a slöjdsal for 16 to seat
+ * 24 and be refused.
  */
 export function unplacedShareOf(
   groups: Iterable<GroupHalf>,
@@ -125,8 +130,10 @@ export function unplacedShareOf(
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const [classId, halves] of halvesByClass(groups)) {
-    const share = Math.ceil(unplacedPupils(classId, halves, membersOf).length / halves.length);
-    for (const half of halves) out.set(half, share);
+    const unplaced = unplacedPupils(classId, halves, membersOf).length;
+    const placedIn = (half: string) => membersOf.get(half)?.size ?? 0;
+    const even = Math.ceil((unplaced + halves.reduce((sum, half) => sum + placedIn(half), 0)) / halves.length);
+    for (const half of halves) out.set(half, Math.min(unplaced, Math.max(0, even - placedIn(half))));
   }
   return out;
 }

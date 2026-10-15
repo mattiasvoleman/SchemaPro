@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -924,6 +925,21 @@ export class ImportService {
     user: AuthenticatedUser,
   ): Promise<ImportReport> {
     const schoolId = requireSchoolId(user);
+    try {
+      return await this.importMembershipRows(dto, user, schoolId);
+    } catch (error) {
+      // The rows are judged above as the database judges them; a class change
+      // committing in between is the database's to refuse (HC409, 409).
+      if (error instanceof HttpException) throw error;
+      rethrowPrismaError(error);
+    }
+  }
+
+  private importMembershipRows(
+    dto: ImportMembershipsDto,
+    user: AuthenticatedUser,
+    schoolId: string,
+  ): Promise<ImportReport> {
     return this.prisma.withRls(user, async (tx) => {
       const report: ImportReport = { created: 0, skipped: 0, errors: [] };
 

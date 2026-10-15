@@ -92,17 +92,35 @@
 -- class's predecessor: läsårsrullning copies last year's halves' members into
 -- next year's halves before activation moves the pupils (7A:1's pupils into
 -- 8A:1 while they are still in 7A). AFTER, for 20261006120000's reason: it
--- only ever sees rows that passed every RLS WITH CHECK.
+-- only ever sees rows that passed every RLS WITH CHECK. The pupil's row is
+-- read FOR SHARE: a class change committing beside the placement would
+-- otherwise clean up before the placement is visible to it, and leave the
+-- pupil placed in the class they just left. Either the change waits for the
+-- placement and then removes it, or the placement waits for the change and
+-- then judges the new class.
 --
 -- ## A pupil who changes class leaves its halves
 --
 -- app.users_leave_the_old_class_halves, AFTER UPDATE OF "studentGroupId" ON
--- "Users": a pupil moved from 7A to 7B in the same läsår, or out of any
--- class, is deleted from 7A's halves. Every writer of a home class goes
--- through it: the people page, the SS12000 sync, the import. A move into
--- another läsår — activation moving 7A's pupils into 8A — keeps last year's
--- halves as they were: they are that year's history, and the pupils' lessons
--- that year were taught in them.
+-- "Users". The member trigger judges a membership when it is written, not
+-- when its pupil moves, so a class change re-judges the pupil's halves by
+-- the same rule: a membership in a half whose class is neither the pupil's
+-- new class nor that class's predecessor is deleted. Moved from 7A to 7B in
+-- the läsår, or out of any class, the pupil leaves 7A's halves — and next
+-- year's 8A's, which took them as 7A's pupil before activation; left there
+-- they would go into 8B at activation still placed in 8A:1, and the next
+-- rollover would copy a member its trigger refuses. Moved straight into
+-- next year's 8B, the same. Moved by activation into 8A, they keep 8A:1.
+--
+-- Except history: a half of a läsår that started before the active one is
+-- left as it was. Activation makes the new year active before it moves
+-- anyone, so 7A's halves stay with the pupils it moves to 8A, and 9A's with
+-- the graduates it moves out of any class — the pupils' lessons that year
+-- were taught in them. The rule asks no foreign key what it is doing, so a
+-- class deleted under its pupils (its successor's link and the pupils' class
+-- cleared by two SET NULL actions, in an order nobody chose) leaves them in
+-- none of next year's halves either way. Every writer of a home class goes
+-- through it: the people page, the SS12000 sync, the import, activation.
 --
 -- All three functions are SECURITY DEFINER, owned by the migration owner, in
 -- schema "app" with a pinned search_path and EXECUTE taken from PUBLIC: they
@@ -240,7 +258,8 @@ BEGIN
   END IF;
   SELECT u."studentGroupId" INTO home
     FROM "Users" u
-   WHERE u."id" = NEW."studentId" AND u."schoolId" = NEW."schoolId";
+   WHERE u."id" = NEW."studentId" AND u."schoolId" = NEW."schoolId"
+     FOR SHARE;
   SELECT c."predecessorId" INTO class_predecessor
     FROM "StudentGroups" c
    WHERE c."id" = NEW."halfOfId" AND c."schoolId" = NEW."schoolId";
@@ -267,22 +286,22 @@ CREATE TRIGGER "StudentGroupMembers_in_the_class"
 CREATE FUNCTION app.users_leave_the_old_class_halves() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
+  -- A pupil with no class had no half to leave: the member trigger refuses one.
   IF OLD."studentGroupId" IS NULL OR OLD."studentGroupId" IS NOT DISTINCT FROM NEW."studentGroupId" THEN
     RETURN NULL;
   END IF;
-  -- Into another läsår (activation): last year's halves are that year's history.
-  IF NEW."studentGroupId" IS NOT NULL
-     AND (SELECT n."academicYearId" FROM "StudentGroups" n
-           WHERE n."id" = NEW."studentGroupId" AND n."schoolId" = NEW."schoolId")
-         IS DISTINCT FROM
-         (SELECT o."academicYearId" FROM "StudentGroups" o
-           WHERE o."id" = OLD."studentGroupId" AND o."schoolId" = OLD."schoolId") THEN
-    RETURN NULL;
-  END IF;
   DELETE FROM "StudentGroupMembers" m
+   USING "StudentGroups" c, "AcademicYears" y
    WHERE m."studentId" = NEW."id"
      AND m."schoolId" = NEW."schoolId"
-     AND m."halfOfId" = OLD."studentGroupId";
+     AND c."id" = m."halfOfId" AND c."schoolId" = m."schoolId"
+     AND y."id" = c."academicYearId" AND y."schoolId" = c."schoolId"
+     -- Not of the class any more, by the member trigger's own rule.
+     AND (NEW."studentGroupId" IS NULL
+          OR (c."id" <> NEW."studentGroupId" AND c."predecessorId" IS DISTINCT FROM NEW."studentGroupId"))
+     -- And not history: no active läsår began after the half's.
+     AND NOT EXISTS (SELECT 1 FROM "AcademicYears" a
+                      WHERE a."schoolId" = y."schoolId" AND a."isActive" AND a."startDate" > y."startDate");
   RETURN NULL;
 END
 $$;
