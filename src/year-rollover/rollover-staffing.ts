@@ -378,7 +378,9 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       ) ?? null;
     const figures = open ?? employment;
     if (open) preview.employments.fromPeriod.push({ userId: employment.userId, validFrom: open.validFrom });
-    const ended = periods.filter((period) => period !== open).length;
+    // The periods that ended matter where they leave the post as the card
+    // has it; beside a period carried, the card is not what follows.
+    const ended = open ? 0 : periods.length;
     if (ended > 0) preview.employments.periodsEnded.push({ userId: employment.userId, periods: ended });
     writes.employments.push({
       sourceEmploymentId: employment.id,
