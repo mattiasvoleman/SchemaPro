@@ -153,7 +153,34 @@ describe("EmploymentCard", () => {
       teachingTargetMinutesPerWeek: null,
       signature: "ANN",
       note: null,
+      employmentForm: null,
+      firstTeacherPercent: null,
+      lecturerPercent: null,
     });
+  });
+
+  it("sends the karriärtjänst shares typed, and says a share above the post beside the fields", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    type("employmentPercent", "100");
+    type("firstTeacherPercent", "60");
+    type("lecturerPercent", "50");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_careerAbovePost(60|50)");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    type("lecturerPercent", "10");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ firstTeacherPercent: 60, lecturerPercent: 10, employmentForm: null });
+  });
+
+  it("keeps a stored anställningsform and share when the admin edits only the percentage", async () => {
+    const user = userEvent.setup();
+    renderCard({ employment: { ...employment, employmentForm: "VISSTID", firstTeacherPercent: 20 } });
+    expect(screen.getByText("employmentSummaryFormVISSTID")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "editEmployment" }));
+    type("employmentPercent", "100");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save.mock.calls[0]?.[0]).toMatchObject({ employmentForm: "VISSTID", firstTeacherPercent: 20, lecturerPercent: null });
   });
 
   it("keeps the stored note when the admin edits only the percentage", async () => {

@@ -20539,4 +20539,112 @@ BEGIN
     RAISE EXCEPTION 'deactivated: still decides';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 144: en tjänsts anställningsform och karriärtjänst är tjänstens
+-- (20261111090000).
+--
+-- In the läslogg school. Through the API's role the admin writes teacher
+-- 122's anställningsform, förstelärare and lektor shares. The table refuses
+-- a share outside 1–100 whole per cent, and the two shares together above
+-- the post, each by its own named CHECK (prisma-errors.ts turns each name
+-- into a 400), and an anställningsform that is not one of the two. The
+-- version the write makes carries the three in its history, the note still
+-- out. Teacher 122 reads the three on their own post, directly and through
+-- the API; teacher 126 reads nothing of 122's post either way, as 129 holds
+-- for the row.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000121')::text, true);
+SET LOCAL ROLE app_authenticated;
+DO $$
+DECLARE
+  teacher uuid := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000122');
+  post uuid;
+  refused text;
+  attempt record;
+  logged jsonb;
+BEGIN
+  SELECT id INTO post FROM "TeacherEmployments" WHERE "userId" = teacher;
+  IF post IS NULL THEN RAISE EXCEPTION 'career: teacher 122 has no post to write'; END IF;
+
+  UPDATE "TeacherEmployments"
+     SET "employmentForm" = 'VISSTID', "firstTeacherPercent" = 20, "lecturerPercent" = 80, note = 'rls144 anteckning'
+   WHERE id = post;
+  IF NOT FOUND THEN RAISE EXCEPTION 'career: the admin could not write the post through the API'; END IF;
+
+  FOR attempt IN
+    SELECT * FROM (VALUES
+      ('"firstTeacherPercent" = 0', 'TeacherEmployments_firstTeacherPercent_check'),
+      -- Above 100 is above the post too, and PostgreSQL checks by name.
+      ('"firstTeacherPercent" = 101', 'TeacherEmployments_career_share_check'),
+      ('"firstTeacherPercent" = -1, "lecturerPercent" = NULL', 'TeacherEmployments_firstTeacherPercent_check'),
+      ('"lecturerPercent" = 0', 'TeacherEmployments_lecturerPercent_check'),
+      ('"lecturerPercent" = 81', 'TeacherEmployments_career_share_check'),
+      ('"firstTeacherPercent" = 100, "lecturerPercent" = 1', 'TeacherEmployments_career_share_check')
+    ) AS t(assignment, constraint_name)
+  LOOP
+    BEGIN
+      EXECUTE format('UPDATE "TeacherEmployments" SET %s WHERE id = $1', attempt.assignment) USING post;
+      RAISE EXCEPTION 'career: % was written', attempt.assignment;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS refused = CONSTRAINT_NAME;
+      IF refused IS DISTINCT FROM attempt.constraint_name THEN
+        RAISE EXCEPTION 'career: % was refused by %, not %', attempt.assignment, refused, attempt.constraint_name;
+      END IF;
+    END;
+  END LOOP;
+  BEGIN
+    UPDATE "TeacherEmployments" SET "employmentForm" = 'LEDIG' WHERE id = post;
+    RAISE EXCEPTION 'career: an anställningsform outside the two was written';
+  EXCEPTION WHEN invalid_text_representation THEN NULL;
+  END;
+
+  SELECT after INTO logged FROM "TeacherEmploymentLogs"
+   WHERE "entityId" = post ORDER BY version DESC LIMIT 1;
+  IF logged->>'employmentForm' IS DISTINCT FROM 'VISSTID'
+     OR (logged->>'firstTeacherPercent')::int IS DISTINCT FROM 20
+     OR (logged->>'lecturerPercent')::int IS DISTINCT FROM 80 THEN
+    RAISE EXCEPTION 'career: the version holds %', logged;
+  END IF;
+  IF logged ? 'note' OR NOT (logged->>'noteChanged')::boolean THEN
+    RAISE EXCEPTION 'career: the version carries the note or does not say it changed: %', logged;
+  END IF;
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000122')::text, true);
+DO $$
+DECLARE
+  via text;
+  got text;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT string_agg(coalesce("employmentForm"::text, '-') || ' ' || coalesce("firstTeacherPercent"::text, '-')
+                      || ' ' || coalesce("lecturerPercent"::text, '-'), ',')
+      INTO got FROM "TeacherEmployments" WHERE "userId" = app.current_user_id();
+    IF got IS DISTINCT FROM 'VISSTID 20 80' THEN
+      RAISE EXCEPTION 'career: as % teacher 122 reads % of their own post', via, got;
+    END IF;
+  END LOOP;
+END $$;
+
+SET LOCAL ROLE app_authenticated;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000126')::text, true);
+DO $$
+DECLARE
+  via text;
+  n bigint;
+BEGIN
+  FOREACH via IN ARRAY ARRAY['authenticated', 'app_authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "firstTeacherPercent" IS NOT NULL OR "employmentForm" IS NOT NULL;
+    IF n <> 0 THEN RAISE EXCEPTION 'career: as % teacher 126 reads % colleague''s anställningsform or share', via, n; END IF;
+    SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+     WHERE "userId" <> app.current_user_id();
+    IF n <> 0 THEN RAISE EXCEPTION 'career: as % teacher 126 reads % versions of a colleague''s post', via, n; END IF;
+  END LOOP;
+END $$;
+SET LOCAL ROLE app_authenticated;
 ROLLBACK;

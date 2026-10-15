@@ -66,6 +66,7 @@ export function EmploymentHistoryCard({
   const labels: HistoryLabels = {
     field: (_entity, field) => (t.has(`field.${field}`) ? t(`field.${field}`) : null),
     contract: (kind) => (tStaffing.has(`contract${kind}`) ? tStaffing(`contract${kind}`) : kind),
+    employmentForm: (form) => (tStaffing.has(`employmentForm${form}`) ? tStaffing(`employmentForm${form}`) : form),
     dutyKind: (kind) => (tStaffing.has(`dutyKind${kind}`) ? tStaffing(`dutyKind${kind}`) : kind),
     subject: subjectName,
     group: groupName,

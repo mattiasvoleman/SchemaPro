@@ -526,6 +526,9 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       teachingTargetMinutesPerWeek: true,
       signature: true,
       note: true,
+      employmentForm: true,
+      firstTeacherPercent: true,
+      lecturerPercent: true,
     },
     orderBy: { id: 'asc' },
   });

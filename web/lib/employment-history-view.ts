@@ -20,6 +20,8 @@ export interface HistoryLabels {
   /** The field's name in the card, or null when the catalogue has none. */
   field: (entity: HistoryEntry["entity"], field: string) => string | null;
   contract: (kind: string) => string;
+  /** TILLSVIDARE or VISSTID (20261111090000) in words. */
+  employmentForm: (form: string) => string;
   dutyKind: (kind: string) => string;
   subject: (id: string) => string | null;
   group: (id: string) => string | null;
@@ -76,6 +78,12 @@ export function formatHistoryValue(
       return typeof value === "number" ? labels.minutes(value) : String(value);
     case "contractKind":
       return labels.contract(String(value));
+    case "employmentForm":
+      return labels.employmentForm(String(value));
+    case "firstTeacherPercent":
+    case "lecturerPercent":
+      // Whole per cent of the post (20261111090000).
+      return labels.percent(String(value));
     case "kind":
       return entity === "DUTY" ? labels.dutyKind(String(value)) : String(value);
     case "countsAsTeaching":

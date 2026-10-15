@@ -13,8 +13,12 @@ Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.scrollIntoView ??= () => {};
 
 const download = vi.hoisted(() => vi.fn());
+const downloadText = vi.hoisted(() => vi.fn());
 const apiGet = vi.hoisted(() => vi.fn());
+const YEAR_1 = { id: "y1", name: "2026/27", isActive: true, startDate: "2026-08-17", endDate: "2027-06-11" };
+const YEAR_2 = { id: "y2", name: "2027/28", isActive: false, startDate: "2027-08-16", endDate: "2028-06-09" };
 const state = vi.hoisted(() => ({
+  years: [] as unknown[],
   rec: { data: undefined as unknown, isLoading: false, isError: false, error: null as unknown },
   recArgs: [] as unknown[][],
 }));
@@ -22,6 +26,10 @@ const state = vi.hoisted(() => ({
 vi.mock("@/lib/csv-export", async (original) => ({
   ...(await original<typeof import("@/lib/csv-export")>()),
   downloadCsv: download,
+}));
+vi.mock("@/lib/scb-file", async (original) => ({
+  ...(await original<typeof import("@/lib/scb-file")>()),
+  downloadScbText: downloadText,
 }));
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
@@ -41,9 +49,7 @@ vi.mock("@/lib/staffing-queries", () => ({
   }),
 }));
 vi.mock("@/lib/queries", () => ({
-  useAcademicYears: () => ({
-    data: [{ id: "y1", name: "2026/27", isActive: true, startDate: "2026-08-17", endDate: "2027-06-11" }],
-  }),
+  useAcademicYears: () => ({ data: state.years }),
   usePeople: () => ({
     data: [
       { id: "t-anna", role: "TEACHER", firstName: "Anna", lastName: "Öberg" },
@@ -118,6 +124,7 @@ describe("Rapporter › Tjänstefördelning", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.recArgs = [];
+    state.years = [YEAR_1];
     state.rec = { data: response(), isLoading: false, isError: false, error: null };
   });
 
@@ -274,33 +281,100 @@ describe("Rapporter › Tjänstefördelning", () => {
     expect(download.mock.calls[1]![1]).toContain("Behörigheter");
   });
 
-  it("builds the SCB underlag from the year's plan and timplans, and lists what to check", async () => {
+  it("saves the gateway's SCB file as it came, and lists PersonNr, the rows that lack more, and the notices", async () => {
     const user = userEvent.setup();
+    const file = {
+      filename: "scb-pedagogisk-personal-2026-27.txt",
+      matdatum: "2026-10-15",
+      specVersionDate: "2026-05-07",
+      columns: ["System", "Datum", "PersonNamn"],
+      rows: [
+        ["SchemaPro", "2026-10-16", "Bo Alm"],
+        ["SchemaPro", "2026-10-16", "Anna Öberg"],
+      ],
+      text: "SchemaPro;2026-10-16;Bo Alm\r\nSchemaPro;2026-10-16;Anna Öberg\r\n",
+      missing: [{ line: 1, name: "Bo Alm", unit: "Norra skolan", verksamhetstyp: "", fields: ["ANSTFORM", "VERKSAMHETSTYP"] }],
+      notices: [{ code: "REDUCTION", params: { name: "Anna Öberg" } }],
+    };
     apiGet.mockImplementation(async (path: string) => {
-      if (path.startsWith("/api/v1/teacher-duties")) return [{ userId: "t-anna", kind: "FORSTELARARE" }];
-      if (path.endsWith("/timplans")) return [{ gradeLevel: 7, localTimplanId: "p1", planName: "G", planStatus: "DECIDED" }];
-      if (path === "/api/v1/local-timplans") return [{ id: "p1", schoolForm: "GRUNDSKOLA" }];
-      if (path === "/api/v1/school-units") {
-        return [{ id: "u1", name: "Norra skolan", code: "12345678", schoolTypes: ["GR"], gradeFrom: 0, gradeTo: 9, fromSource: false }];
-      }
+      if (path === "/api/v1/staffing/scb-file?academicYearId=y1") return file;
       throw new Error(path);
     });
     render(<StaffingReport />);
     expect(screen.getByText("scbNotice")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "exportScb" }));
-    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
-    expect(apiGet).toHaveBeenCalledWith("/api/v1/teacher-duties?academicYearId=y1");
-    const [filename, csv] = download.mock.calls[0] as [string, string];
-    expect(filename).toBe("scb-pedagogisk-personal-underlag-2026-27.csv");
-    expect(csv.split("\r\n")[0]).toMatch(/^﻿System;Datum;Version;SkolenhetsKod;PersonNr;PersonNamn;/);
-    // The skolenhet's code, from GET /api/v1/school-units asked on the click.
-    expect(csv.split("\r\n")[1]!.split(";")[3]).toBe("12345678");
-    // What SchemaPro cannot fill is listed beside the button, never silently.
-    expect(await screen.findByText("scb.notice.FORSTELARARE(Anna Öberg)")).toBeInTheDocument();
-    expect(screen.getByText(/^scbNoticesTitle\(/).textContent).toBe("scbNoticesTitle(3)");
-    // Slöjd is not among the subjects this school maps: left out, and named.
-    expect(screen.getByText("scb.notice.LEFT_OUT(Anna Öberg|Slöjd 7B)")).toBeInTheDocument();
+    await waitFor(() => expect(downloadText).toHaveBeenCalledTimes(1));
+    // One read: the gateway built it; the browser asks nothing else.
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    expect(downloadText).toHaveBeenCalledWith(file);
+    expect(download).not.toHaveBeenCalled();
+
+    expect(await screen.findByText("scbFileSummary(scb-pedagogisk-personal-2026-27.txt|2|2026-10-15)")).toBeInTheDocument();
+    expect(screen.getByText("scbPersonNr(2)")).toBeInTheDocument();
+    expect(screen.getByText("scbMissingTitle(1)")).toBeInTheDocument();
+    expect(
+      screen.getByText("scbMissingRow(1|Bo Alm|Norra skolan|none|scb.missing.ANSTFORM, scb.missing.VERKSAMHETSTYP)"),
+    ).toBeInTheDocument();
     expect(screen.getByText("scb.notice.REDUCTION(Anna Öberg)")).toBeInTheDocument();
+
+    // The CSV is the same rows, from the answer held: no second read.
+    await user.click(screen.getByRole("button", { name: "exportScbCsv" }));
+    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    const [filename, csv] = download.mock.calls[0] as [string, string];
+    expect(filename).toBe("scb-pedagogisk-personal-2026-27.csv");
+    expect(csv.split("\r\n")[0]).toBe("\uFEFFSystem;Datum;PersonNamn");
+    expect(csv.split("\r\n")[2]).toBe("SchemaPro;2026-10-16;Anna Öberg");
+  });
+
+  it("says a refusal in its own words, never Nest's English, and leaves no older file's panel standing", async () => {
+    const user = userEvent.setup();
+    const { toast } = await import("sonner");
+    const file = {
+      filename: "f.txt", matdatum: "2026-10-15", specVersionDate: "2026-05-07", columns: ["System"],
+      rows: [["SchemaPro"]], text: "SchemaPro\r\n", missing: [], notices: [],
+    };
+    apiGet.mockResolvedValueOnce(file);
+    render(<StaffingReport />);
+    await user.click(screen.getByRole("button", { name: "exportScb" }));
+    expect(await screen.findByText("scbFileSummary(f.txt|1|2026-10-15)")).toBeInTheDocument();
+
+    // A 403 is Nest's English: the tab says the export failed. A 409 says its reason.
+    apiGet.mockRejectedValueOnce(new ApiError(403, "Forbidden resource"));
+    await user.click(screen.getByRole("button", { name: "exportScb" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("exportFailed"));
+    expect(screen.queryByText(/^scbFileSummary/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "exportScbCsv" })).not.toBeInTheDocument();
+    expect(downloadText).toHaveBeenCalledTimes(1);
+
+    apiGet.mockRejectedValueOnce(new ApiError(409, "läsåret: klasserna går inte att räkna ut än"));
+    await user.click(screen.getByRole("button", { name: "exportScb" }));
+    await waitFor(() => expect(toast.error).toHaveBeenLastCalledWith("Läsåret: klasserna går inte att räkna ut än"));
+  });
+
+  it("shows a file only under the year it was asked for, when the year changes while it is fetched", async () => {
+    state.years = [YEAR_1, YEAR_2];
+    const user = userEvent.setup();
+    let answer: (file: unknown) => void = () => {};
+    apiGet.mockImplementation(
+      (path: string) =>
+        new Promise((resolve, reject) =>
+          path.startsWith("/api/v1/staffing/scb-file") ? (answer = resolve) : reject(new Error(path)),
+        ),
+    );
+    render(<StaffingReport />);
+    await user.click(screen.getByRole("button", { name: "exportScb" }));
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/staffing/scb-file?academicYearId=y1");
+    await user.click(screen.getByRole("combobox", { name: "year" }));
+    await user.click(screen.getByRole("option", { name: /2027\/28/ }));
+    answer({
+      filename: "scb-pedagogisk-personal-2026-27.txt", matdatum: "2026-10-15", specVersionDate: "2026-05-07",
+      columns: ["System"], rows: [["SchemaPro"]], text: "SchemaPro\r\n", missing: [], notices: [],
+    });
+    // The file asked for is saved under its own year's name; its lists stay with that year.
+    await waitFor(() => expect(downloadText).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/^scbFileSummary/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "exportScbCsv" })).not.toBeInTheDocument();
   });
 });
 
@@ -325,11 +399,33 @@ describe("the tab's sentences, formatted by the real catalogues", () => {
     expect(en("STAFFING_RANGE_HAS_GAPS", gap(1))).toContain("1 day between");
   });
 
-  it("writes hours in the reader's decimal mark, and never calls the SCB underlag SCB's file", () => {
+  it("says PersonNr, the rows that lack more, and a row without a verksamhetstyp in both languages", async () => {
+    const { createTranslator } = await vi.importActual<typeof import("next-intl")>("next-intl");
+    const sv = createTranslator({ locale: "sv", messages: svMessages, namespace: "reports.staffing" });
+    const en = createTranslator({ locale: "en", messages: enMessages, namespace: "reports.staffing" });
+    const row = { line: 3, name: "Bo Alm", unit: "Norra 7–9", fields: "anställningsform" };
+    expect(sv("scbMissingRow", { ...row, type: "none" })).toBe("Rad 3: Bo Alm, Norra 7–9. Saknar anställningsform.");
+    expect(sv("scbMissingRow", { ...row, type: "6" })).toBe("Rad 3: Bo Alm, Norra 7–9, verksamhetstyp 6. Saknar anställningsform.");
+    expect(en("scbMissingRow", { ...row, type: "6" })).toContain("type of activity 6");
+    expect(sv("scbMissingTitle", { count: 0 })).toBe("Ingen rad saknar något mer än personnummer.");
+    expect(sv("scbMissingTitle", { count: 1 })).toBe("1 rad saknar mer än personnummer:");
+    expect(sv("scbPersonNr", { count: 1 })).toMatch(/^PersonNr är tomt på filens rad\./);
+    expect(sv("scbPersonNr", { count: 12 })).toMatch(/^PersonNr är tomt på alla 12 rader\./);
+    expect(en("scbFileSummary", { filename: "f.txt", count: 1, matdatum: "2026-10-15" })).toBe(
+      "f.txt is downloaded: 1 row, the posts as they are on the reference date 2026-10-15.",
+    );
+    expect(sv("scb.notice.LEAVE", { name: "Anna", from: "2026-10-12", to: "2026-12-18" })).toContain("AnstForm L");
+  });
+
+  it("writes hours in the reader's decimal mark, and calls SCB's file the file everywhere", () => {
     expect(hoursText(1290, "sv")).toBe("21,5");
     expect(hoursText(1290, "en")).toBe("21.5");
     expect(hoursText(-90, "sv")).toBe("-1,5");
     expect(hoursText(1200, "en")).toBe("20");
-    expect(enMessages.staffing.unitHintPercentFactor).not.toMatch(/the SCB file/);
+    expect(enMessages.staffing.unitHintPercentFactor).toMatch(/the SCB file/);
+    expect(svMessages.staffing.unitHintPercentFactor).toMatch(/SCB-filen/);
+    // The browser-built underlag is gone: no sentence still names it.
+    expect(JSON.stringify(svMessages)).not.toMatch(/SCB-underlag/);
+    expect(JSON.stringify(enMessages)).not.toMatch(/SCB working file/);
   });
 });

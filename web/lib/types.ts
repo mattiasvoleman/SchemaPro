@@ -602,6 +602,13 @@ export type StaffingCheckMode = "OFF" | "WARN" | "REFUSE";
 export type StaffingLoadModel = "MINUTES" | "FACTOR";
 /** Ferietjänst (Bilaga M) or semestertjänst (40 h weeks all year). */
 export type TeacherContractKind = "FERIE" | "SEMESTER";
+
+/**
+ * Anställningsform as SCB's Pedagogisk personal asks it (AnstForm T or V,
+ * migration 20261111090000). Tjänstledig is no form but the post on SCB's
+ * mätdatum, which the SCB file reads from the nedsättning.
+ */
+export type TeacherEmploymentForm = "TILLSVIDARE" | "VISSTID";
 /**
  * Legitimerad och behörig, behörig utan legitimation, or får undervisa enligt
  * rektors beslut. Never defaulted: which of the three a teacher holds is a fact
@@ -659,6 +666,14 @@ export interface TeacherEmployment {
   note: string | null;
   /** True when the gateway left tjänst % and nedsättning out for this reader. */
   hrHidden?: true;
+  /**
+   * SCB's three (migration 20261111090000): the anställningsform, and the
+   * share of the post the förstelärare and lektor karriärtjänster take, whole
+   * per cent. Null: not said. Absent from a gateway before them.
+   */
+  employmentForm?: TeacherEmploymentForm | null;
+  firstTeacherPercent?: number | null;
+  lecturerPercent?: number | null;
   /**
    * The post from a date (migration 20261022120000), by Från. Absent from a
    * gateway before it; empty for a post that is the same all year, and for a

@@ -45,7 +45,7 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string; via?: string }> = 
   "lib/employment-period-forms.ts": { basis: "PERIODS", why: "the period form: its draft, its rules, its body" },
   "lib/staffing-exports.ts": {
     basis: "PERIODS",
-    why: "SCB on its mätdatum (postOn, 15 oktober); samverkan with the post on the first day and each stretch in its own column",
+    why: "samverkan with the post on the first day (postOn) and each stretch in its own column; SCB's file is the gateway's (src/staffing/scb)",
   },
   "lib/staffing-compare.ts": {
     basis: "PERIODS",

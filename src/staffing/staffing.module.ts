@@ -9,6 +9,8 @@ import { StaffingLoadController } from './staffing-load.controller';
 import { StaffingLoadService } from './staffing-load.service';
 import { TeacherDutiesController } from './teacher-duties.controller';
 import { TeacherDutiesService } from './teacher-duties.service';
+import { ScbFileController } from './scb/scb-file.controller';
+import { ScbFileService } from './scb/scb-file.service';
 
 /**
  * Tjänstefördelning: the layer between the timplan and the solver that says
@@ -37,6 +39,7 @@ import { TeacherDutiesService } from './teacher-duties.service';
     TeacherQualificationsController,
     StaffingLoadController,
     TeacherDutiesController,
+    ScbFileController,
   ],
   providers: [
     StaffingPolicyService,
@@ -44,6 +47,7 @@ import { TeacherDutiesService } from './teacher-duties.service';
     TeacherQualificationsService,
     StaffingLoadService,
     TeacherDutiesService,
+    ScbFileService,
   ],
   // The publish gate PUB_STAFFING_REFUSE reads the load report (src/publication).
   exports: [StaffingLoadService],

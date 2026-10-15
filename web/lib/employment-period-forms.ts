@@ -1,5 +1,6 @@
 import { postStretches } from "@/lib/employment-periods";
 import {
+  EMPTY_EMPLOYMENT_DRAFT,
   PERCENT_DECIMALS,
   parseDecimal,
   validateEmploymentDraft,
@@ -100,12 +101,10 @@ export function validatePeriodDraft(
   if (to !== null && to < from) return { reason: "periodDatesReversed", from, to };
 
   const figures = validateEmploymentDraft({
+    ...EMPTY_EMPLOYMENT_DRAFT,
     employmentPercent: draft.employmentPercent,
     reductionPercent: draft.reductionPercent,
-    contractKind: "FERIE",
     teachingTargetMinutesPerWeek: draft.teachingTargetMinutesPerWeek,
-    signature: "",
-    note: "",
   });
   if (figures) return figures;
 

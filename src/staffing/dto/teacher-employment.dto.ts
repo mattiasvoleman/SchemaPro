@@ -1,4 +1,4 @@
-import { TeacherContractKind } from '@prisma/client';
+import { TeacherContractKind, TeacherEmploymentForm } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
@@ -90,6 +90,32 @@ export class UpsertTeacherEmploymentDto {
   @IsString({ message: 'Anteckningen anges som text.' })
   @MaxLength(500, { message: 'Anteckningen kan vara högst 500 tecken.' })
   note?: string | null;
+
+  /**
+   * Anställningsform, as SCB's Pedagogisk personal asks it: tillsvidare or
+   * visstid. Null or absent: not said (the SCB file names the row).
+   */
+  @IsOptional()
+  @IsEnum(TeacherEmploymentForm, { message: 'Anställningsformen är TILLSVIDARE eller VISSTID.' })
+  employmentForm?: TeacherEmploymentForm | null;
+
+  /**
+   * How large a share of the post the förstelärare karriärtjänst takes,
+   * whole per cent as SCB counts it (ForsteLarare). Null or absent: no
+   * förstelärare.
+   */
+  @IsOptional()
+  @IsInt({ message: 'Försteläraruppdragets andel anges i hela procent.' })
+  @Min(1, { message: 'Försteläraruppdragets andel är minst 1 % — lämna fältet tomt för en lärare som inte är förstelärare.' })
+  @Max(100, { message: 'Försteläraruppdragets andel kan vara högst hela tjänsten.' })
+  firstTeacherPercent?: number | null;
+
+  /** The same for lektor (SCB's Lektor). */
+  @IsOptional()
+  @IsInt({ message: 'Lektorsuppdragets andel anges i hela procent.' })
+  @Min(1, { message: 'Lektorsuppdragets andel är minst 1 % — lämna fältet tomt för en lärare som inte är lektor.' })
+  @Max(100, { message: 'Lektorsuppdragets andel kan vara högst hela tjänsten.' })
+  lecturerPercent?: number | null;
 }
 
 /**

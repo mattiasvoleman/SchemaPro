@@ -711,7 +711,7 @@ describe("People page", () => {
     });
 
     it("prefills the dialog from the stored post and sends the whole row with the two fields replaced", async () => {
-      state.employments = [{ ...employment, reductionPercent: 20, note: "Mentor 7B" }];
+      state.employments = [{ ...employment, reductionPercent: 20, note: "Mentor 7B", employmentForm: "VISSTID", firstTeacherPercent: 10 }];
       const user = userEvent.setup();
       render(<PeoplePage />);
 
@@ -722,7 +722,7 @@ describe("People page", () => {
       await user.type(percent, "100");
       await user.click(screen.getByRole("button", { name: "save" }));
 
-      // The nedsättning and the note set on the card survive a change made here.
+      // The nedsättning, the note and SCB's fields set on the card survive a change made here.
       expect(saveEmployment).toHaveBeenCalledWith({
         userId: "t-1",
         academicYearId: "year-1",
@@ -732,6 +732,9 @@ describe("People page", () => {
         teachingTargetMinutesPerWeek: null,
         signature: "KEK",
         note: "Mentor 7B",
+        employmentForm: "VISSTID",
+        firstTeacherPercent: 10,
+        lecturerPercent: null,
       });
     });
 
@@ -783,6 +786,9 @@ describe("People page", () => {
         teachingTargetMinutesPerWeek: null,
         signature: "NYL",
         note: null,
+        employmentForm: null,
+        firstTeacherPercent: null,
+        lecturerPercent: null,
       });
     });
   });

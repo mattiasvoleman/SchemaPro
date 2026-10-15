@@ -379,7 +379,9 @@ describe('the roster-reader inventory', () => {
       // it for the planned column of the reconciliation. The staffing
       // proposal (Fas 4) reads it for every row's grade span, in propose and
       // again under apply's locks, so a rolled year two steps ahead is refused
-      // there as everywhere else.
+      // there as everywhere else. SCB:s Pedagogisk personal
+      // (ScbFileController.file) is the report's planned load written as
+      // SCB's file, so it answers the report's 409 for the same year.
       //
       // Publicering's gates ask the timplan layers and, under a REFUSE staffing
       // mode, the load report, so a preview or a publish of a year two steps
@@ -416,6 +418,7 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.trigger',
         'PublicationsController.preview',
         'PublicationsController.publish',
+        'ScbFileController.file',
         'StaffingLoadController.delivered',
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',

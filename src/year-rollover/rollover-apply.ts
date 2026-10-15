@@ -296,6 +296,9 @@ export async function applyStaffingWrites(
         teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
         signature: row.signature,
         note: row.note,
+        ...(row.employmentForm ? { employmentForm: row.employmentForm } : {}),
+        ...(row.firstTeacherPercent ? { firstTeacherPercent: row.firstTeacherPercent } : {}),
+        ...(row.lecturerPercent ? { lecturerPercent: row.lecturerPercent } : {}),
       })),
     });
     counts.employments = count;

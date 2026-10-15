@@ -7,6 +7,7 @@ import { Briefcase } from "lucide-react";
 import { useAcademicYears } from "@/lib/queries";
 import { useTeacherEmploymentActions } from "@/lib/staffing-queries";
 import {
+  EMPLOYMENT_FORMS,
   EMPTY_EMPLOYMENT_DRAFT,
   NOTE_MAX,
   SIGNATURE_MAX,
@@ -27,7 +28,12 @@ import {
 import { formatPercent } from "@/lib/staffing-view";
 import { profileDecides } from "@/lib/admin-areas";
 import { useProfile } from "@/components/profile-context";
-import type { StaffingPolicy, TeacherContractKind, TeacherEmployment } from "@/lib/types";
+import type {
+  StaffingPolicy,
+  TeacherContractKind,
+  TeacherEmployment,
+  TeacherEmploymentForm,
+} from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -45,6 +51,8 @@ import {
 } from "@/components/ui/select";
 
 const CONTRACT_KINDS: TeacherContractKind[] = ["FERIE", "SEMESTER"];
+/** The Select's value for an anställningsform not said: Radix takes no "". */
+const FORM_NOT_SAID = "__none__";
 
 export interface EmploymentCardProps {
   teacher: { id: string; firstName: string; lastName: string };
@@ -103,7 +111,10 @@ function derived(
 
 /**
  * A teacher's post for one läsår: tjänst, nedsättning, avtal, signatur, an
- * optional own riktmärke, and what the policy makes of them.
+ * optional own riktmärke, and what the policy makes of them — and what SCB's
+ * Pedagogisk personal asks besides (migration 20261111090000): the
+ * anställningsform and the share of the post a förstelärare or lektor
+ * karriärtjänst takes, which the SCB file states as they are saved here.
  *
  * SUMMARY FIRST, FORM ON REQUEST. The card sits in a drawer and on every
  * teacher's row under Personer, where most visits are to read, and six empty
@@ -249,6 +260,13 @@ export function EmploymentCard({
             {visible.signature ? (
               <li>{t("employmentSummarySignature", { signature: visible.signature })}</li>
             ) : null}
+            {stored.employmentForm ? <li>{t(`employmentSummaryForm${stored.employmentForm}`)}</li> : null}
+            {stored.firstTeacherPercent ? (
+              <li>{t("employmentSummaryFirstTeacher", { percent: stored.firstTeacherPercent })}</li>
+            ) : null}
+            {stored.lecturerPercent ? (
+              <li>{t("employmentSummaryLecturer", { percent: stored.lecturerPercent })}</li>
+            ) : null}
             <li>
               {storedTarget === null
                 ? t("derivedNoTarget")
@@ -337,6 +355,52 @@ export function EmploymentCard({
               <p className="text-xs text-muted-foreground">{t("signatureHint")}</p>
             </div>
           </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor={`emp-form-${teacher.id}`}>{t("employmentForm")}</Label>
+              <Select
+                value={draft.employmentForm === "" ? FORM_NOT_SAID : draft.employmentForm}
+                onValueChange={(value) =>
+                  patch({ employmentForm: value === FORM_NOT_SAID ? "" : (value as TeacherEmploymentForm) })
+                }
+              >
+                <SelectTrigger id={`emp-form-${teacher.id}`} aria-describedby={`emp-scb-${teacher.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={FORM_NOT_SAID}>{t("employmentFormNone")}</SelectItem>
+                  {EMPLOYMENT_FORMS.map((form) => (
+                    <SelectItem key={form} value={form}>
+                      {t(`employmentForm${form}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`emp-first-${teacher.id}`}>{t("firstTeacherPercent")}</Label>
+              <Input
+                id={`emp-first-${teacher.id}`}
+                inputMode="numeric"
+                aria-describedby={`emp-scb-${teacher.id}`}
+                value={draft.firstTeacherPercent}
+                onChange={(event) => patch({ firstTeacherPercent: event.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`emp-lecturer-${teacher.id}`}>{t("lecturerPercent")}</Label>
+              <Input
+                id={`emp-lecturer-${teacher.id}`}
+                inputMode="numeric"
+                aria-describedby={`emp-scb-${teacher.id}`}
+                value={draft.lecturerPercent}
+                onChange={(event) => patch({ lecturerPercent: event.target.value })}
+              />
+            </div>
+          </div>
+          <p id={`emp-scb-${teacher.id}`} className="text-xs text-muted-foreground">
+            {t("scbFieldsHint")}
+          </p>
           <div className="space-y-1.5">
             <Label htmlFor={`emp-target-${teacher.id}`}>{t("targetOverride")}</Label>
             <Input

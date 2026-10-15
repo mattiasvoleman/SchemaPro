@@ -347,6 +347,11 @@ const NAMED_CHECKS: Record<string, string> = {
     'teacherLoadPercent: andelen som räknas för läraren är 0 till 200 %.',
   TeachingRequirements_co_teacher_load_percent_is_sane:
     'coTeacherLoadPercent: andelen som räknas för medläraren är 0 till 200 %.',
+  TeacherEmployments_firstTeacherPercent_check:
+    'firstTeacherPercent: försteläraruppdragets andel är 1 till 100 % av tjänsten, i hela procent.',
+  TeacherEmployments_lecturerPercent_check: 'lecturerPercent: lektorsuppdragets andel är 1 till 100 % av tjänsten, i hela procent.',
+  TeacherEmployments_career_share_check:
+    'firstTeacherPercent: förstelärar- och lektorsuppdraget kan tillsammans vara högst hela tjänsten.',
   TeacherDuties_label_is_sane: 'label: uppdraget behöver ett namn på högst 80 tecken.',
   TeacherDuties_minutesPerWeek_is_sane: 'minutesPerWeek: ett uppdrag är 1 till 2400 minuter per vecka.',
   TeacherDuties_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',

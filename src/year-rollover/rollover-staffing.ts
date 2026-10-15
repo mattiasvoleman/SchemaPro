@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { TeacherContractKind, TeacherDutyKind, UserRole } from '@prisma/client';
+import type { TeacherContractKind, TeacherDutyKind, TeacherEmploymentForm, UserRole } from '@prisma/client';
 import { normalizeDutyLabel } from '../staffing/duty-identity';
 import { isOnSolverGrid, slotsOverlap, sortSlots, type DutySlot } from '../staffing/duty-slot';
 
@@ -78,6 +78,10 @@ export interface SourceEmployment {
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
   note: string | null;
+  /** 20261111090000; absent in a source read before it (treated as not said). */
+  employmentForm?: TeacherEmploymentForm | null;
+  firstTeacherPercent?: number | null;
+  lecturerPercent?: number | null;
   /** The post's periods (20261022120000), by Från; [] for a post the same all year. */
   periods: SourcePeriod[];
 }
@@ -153,6 +157,10 @@ export interface StaffingWrites {
     teachingTargetMinutesPerWeek: number | null;
     signature: string | null;
     note: string | null;
+    /** Present only when set (COPY_UNLESS_DEFAULT): see the registry. */
+    employmentForm?: TeacherEmploymentForm;
+    firstTeacherPercent?: number;
+    lecturerPercent?: number;
   }[];
   duties: {
     sourceDutyId: string;
@@ -391,6 +399,9 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       teachingTargetMinutesPerWeek: figures.teachingTargetMinutesPerWeek,
       signature,
       note: employment.note,
+      ...(employment.employmentForm ? { employmentForm: employment.employmentForm } : {}),
+      ...(employment.firstTeacherPercent ? { firstTeacherPercent: employment.firstTeacherPercent } : {}),
+      ...(employment.lecturerPercent ? { lecturerPercent: employment.lecturerPercent } : {}),
     });
     preview.employments.carried++;
     employmentOf.set(employment.userId, 'CARRIED');

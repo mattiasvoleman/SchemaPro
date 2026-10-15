@@ -18,6 +18,7 @@ import {
   transactionsOf,
   type LockedTable,
 } from '../../test/utils/locking-read';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import { Role } from '../auth/enums/role.enum';
 import { TeacherEmploymentsService } from './teacher-employments.service';
@@ -179,6 +180,8 @@ describe('TeacherEmploymentsService', () => {
         teachingTargetMinutesPerWeek: null,
         signature: 'KOL',
         note: null,
+        // SCB's three (20261111090000) are not sent, so not written: a new
+        // row takes the columns' null, a stored one keeps what it holds.
       };
       expect(tx.teacherEmployment.upsert).toHaveBeenCalledWith({
         where: KEY,
@@ -187,6 +190,49 @@ describe('TeacherEmploymentsService', () => {
         include: { periods: { orderBy: { validFrom: 'asc' } } },
       });
       expect(answer).toMatchObject({ userId: COLLEAGUE, employmentPercent: 80, signature: 'KOL' });
+    });
+
+    it('writes the anställningsform and the karriärtjänst shares, and refuses shares above the whole post', async () => {
+      tx.teacherEmployment.upsert.mockResolvedValue(storedRow());
+      await service.upsert(
+        COLLEAGUE,
+        YEAR_ID,
+        { employmentPercent: 100, employmentForm: 'TILLSVIDARE', firstTeacherPercent: 20, lecturerPercent: 10 },
+        testUser(),
+      );
+      expect(tx.teacherEmployment.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ employmentForm: 'TILLSVIDARE', firstTeacherPercent: 20, lecturerPercent: 10 }),
+        }),
+      );
+      await expect(
+        service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 100, firstTeacherPercent: 60, lecturerPercent: 50 }, testUser()),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('clears one of SCB’s fields sent as null, and keeps the ones a PUT leaves out', async () => {
+      tx.teacherEmployment.upsert.mockResolvedValue(storedRow());
+      await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 100, employmentForm: null }, testUser());
+      const [{ update }] = tx.teacherEmployment.upsert.mock.calls[0] as [{ update: Record<string, unknown> }];
+      expect(update).toMatchObject({ employmentForm: null });
+      // A web from before the fields, open over the release, clears nothing.
+      expect('firstTeacherPercent' in update).toBe(false);
+      expect('lecturerPercent' in update).toBe(false);
+    });
+
+    it('records a kept SCB field it hands back unsent, and nothing for a PUT that sent all three', async () => {
+      tx.teacherEmployment.upsert.mockResolvedValue(storedRow({ firstTeacherPercent: 20 }));
+      await service.upsert(COLLEAGUE, YEAR_ID, { employmentPercent: 100 }, testUser({ channel: 'WEB' }));
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: [COLLEAGUE] }]);
+
+      tx.$executeRaw.mockClear();
+      await service.upsert(
+        COLLEAGUE,
+        YEAR_ID,
+        { employmentPercent: 100, employmentForm: null, firstTeacherPercent: 20, lecturerPercent: null },
+        testUser({ channel: 'WEB' }),
+      );
+      expect(recordedReads(tx)).toEqual([]);
     });
 
     it('turns an empty signature and note into null, not into an empty string', async () => {

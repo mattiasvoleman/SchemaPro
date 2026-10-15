@@ -27,7 +27,7 @@ import { join, relative } from 'node:path';
  *     "Perioder i export och rullning" moved the SS12000 Duty there is none;
  *     one that joins the list is a decision, so the list is written out.
  *
- * The web half, for the screens and the files built in the browser, is
+ * The web half, for the screens and the file built in the browser, is
  * web/lib/employment-readers.inventory.test.ts.
  */
 
@@ -92,6 +92,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   'src/optimization/staffing-proposal.service.ts': {
     basis: 'PERIODS',
     why: 'plans a changing post on its tightest stretch and realises every stretch as its apply is judged; the periods are in the basis',
+  },
+  'src/staffing/scb/scb-pedpers.ts': {
+    basis: 'PERIODS',
+    why: 'SCB’s Pedagogisk personal: the post on the mätdatum (postOn, 15 oktober), a full leave measured over the periods around it',
   },
   'src/publication/publications.service.ts': {
     basis: 'PERIODS',

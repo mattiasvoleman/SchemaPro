@@ -62,6 +62,10 @@ const employment = (
   teachingTargetMinutesPerWeek: null,
   signature,
   note: null,
+  // SCB's three (20261111090000): not said unless a post below says them.
+  employmentForm: null,
+  firstTeacherPercent: null,
+  lecturerPercent: null,
   // The gateway lists every post with its periods (20261022120000).
   periods: [],
   ...extra,
@@ -85,15 +89,21 @@ export const ANNA_SPRING: TeacherEmploymentPeriod = {
   teachingTargetMinutesPerWeek: null,
 };
 
-/** This läsår's posts, by userId as the gateway orders them. David has none. */
+/**
+ * This läsår's posts, by userId as the gateway orders them. David has none.
+ * Anna is a tillsvidareanställd förstelärare, Bo and Cecilia state their
+ * anställningsform, and Eva's is not said yet: the SCB file would list her.
+ */
 export const EMPLOYMENTS: TeacherEmployment[] = [
   employment(1, TEACHERS.anna.id, 75, "FERIE", "ALI", {
     reductionPercent: 15,
     note: "Nedsättning för försteläraruppdraget.",
     periods: [ANNA_SPRING],
+    employmentForm: "TILLSVIDARE",
+    firstTeacherPercent: 15,
   }),
-  employment(2, TEACHERS.bo.id, 40, "FERIE", "BEK"),
-  employment(3, TEACHERS.cecilia.id, 30, "SEMESTER", "CÅS"),
+  employment(2, TEACHERS.bo.id, 40, "FERIE", "BEK", { employmentForm: "VISSTID" }),
+  employment(3, TEACHERS.cecilia.id, 30, "SEMESTER", "CÅS", { employmentForm: "TILLSVIDARE" }),
   // 80 %, as her Friday constraint in school-days.ts says.
   employment(5, TEACHERS.eva.id, 80, "FERIE", "EHO", { note: "Ledig fredagar." }),
 ];
@@ -243,6 +253,9 @@ export function historyOf(userId: string): HistoryEntry[] {
           // Every post starts without one; Anna's is a later version.
           ["reductionPercent", 0],
           ["contractKind", post.contractKind],
+          ["employmentForm", post.employmentForm],
+          ["firstTeacherPercent", post.firstTeacherPercent],
+          ["lecturerPercent", post.lecturerPercent],
           ["teachingTargetMinutesPerWeek", post.teachingTargetMinutesPerWeek],
           ["signature", post.signature],
           ["noteChanged", post.note && post.reductionPercent === 0 ? true : null],

@@ -4,6 +4,7 @@ import { AxiosError } from 'axios';
 import { of, throwError } from 'rxjs';
 import { lockingRead, rawSql, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
+import { recordedReads } from './utils/recorded-reads';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
 import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, staffingRows, type Row } from './utils/rollover-world';
 import { rolloverRowsAtFa4a3d6 } from './utils/rollover-rows-fa4a3d6';
@@ -2588,6 +2589,110 @@ describe('Planning surface (e2e)', () => {
             expect.objectContaining({ userId: TEACHER_ID, assignedMinutesPerWeek: 0 }),
           ]),
         );
+      });
+
+      describe('SCB:s Pedagogisk personal (GET /staffing/scb-file)', () => {
+        const UNIT_ID = 'abababab-abab-4bab-8bab-abababababab';
+        const path = `/api/v1/staffing/scb-file?academicYearId=${YEAR_ID}`;
+        const givenSchool = () => {
+          // One row answers both reads of the year: its bounds, its name and school.
+          harness.tx['academicYear']!['findUnique']!.mockResolvedValue({
+            ...yearRow(),
+            name: '2026/27',
+            school: { name: 'Norra skolan', timezone: 'Europe/Stockholm' },
+          });
+          harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+            storedEmployment(COLLEAGUE_ID, { employmentForm: 'TILLSVIDARE', firstTeacherPercent: 10, lecturerPercent: null }),
+            storedEmployment(TEACHER_ID, {
+              signature: 'ME',
+              employmentPercent: new Prisma.Decimal('100.000'),
+              employmentForm: null,
+              firstTeacherPercent: null,
+              lecturerPercent: null,
+            }),
+          ]);
+          harness.tx['subject']!['findMany']!.mockResolvedValue([
+            { id: SUBJECT_ID, nationalCode: 'MA', code: 'MA', name: 'Matematik' },
+          ]);
+          harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValue([
+            { gradeLevel: 7, localTimplan: { schoolForm: 'GRUNDSKOLA' } },
+          ]);
+          harness.tx['schoolUnit']!['findMany']!.mockResolvedValue([
+            { id: UNIT_ID, name: 'Norra skolan', code: '12345678', gradeFrom: 0, gradeTo: 9 },
+          ]);
+          harness.tx['teacherDuty']!['findMany']!.mockResolvedValue([]);
+          // The roster reads ask Users too; only the names read selects firstName.
+          harness.tx['user']!['findMany']!.mockImplementation((args: { select?: Record<string, unknown> }) =>
+            Promise.resolve(
+              args?.select && 'firstName' in args.select
+                ? [
+                    { id: COLLEAGUE_ID, firstName: 'Karin', lastName: 'Ols', role: 'TEACHER' },
+                    { id: TEACHER_ID, firstName: 'Mats', lastName: 'Ek', role: 'TEACHER' },
+                  ]
+                : [],
+            ),
+          );
+        };
+
+        // clearAllMocks keeps answers: the tables this section filled answer
+        // empty again, as the auto-vivified mock does, for the suites after it.
+        afterEach(() => {
+          for (const model of ['user', 'subject', 'academicYearTimplan', 'schoolUnit', 'teacherDuty']) {
+            harness.tx[model]!['findMany']!.mockReset();
+            harness.tx[model]!['findMany']!.mockResolvedValue([]);
+          }
+          harness.tx['academicYear']!['findUnique']!.mockReset();
+        });
+
+        it('an admin downloads the file: SCB’s text, the rows for a CSV, what is missing, and a läslogg entry per kind', async () => {
+          givenSchool();
+          const response = await request(http()).get(path).set('x-test-user', admin()).expect(200);
+
+          expect(response.headers['cache-control']).toBe('no-store');
+          expect(response.body).toMatchObject({
+            filename: 'scb-pedagogisk-personal-2026-27.txt',
+            matdatum: '2026-10-15',
+            specVersionDate: '2026-05-07',
+          });
+          expect(response.body.columns).toHaveLength(80);
+          const lines = (response.body.text as string).split('\r\n');
+          expect(lines.pop()).toBe('');
+          // No header row: Ek before Ols, each a person.
+          expect(lines).toHaveLength(2);
+          expect(lines.map((line) => line.split(';')[5])).toEqual(['Mats Ek', 'Karin Ols']);
+          const [ek, ols] = response.body.rows as string[][];
+          const at = (row: string[], name: string) => row[(response.body.columns as string[]).indexOf(name)];
+          expect([at(ols!, 'SkolenhetsKod'), at(ols!, 'PersonNr'), at(ols!, 'AnstForm'), at(ols!, 'OmfLarare'), at(ols!, 'ForsteLarare'), at(ols!, 'OmfMatematik')]).toEqual(
+            ['12345678', '', 'T', '80', '10', '100'],
+          );
+          expect(at(ek!, 'AnstForm')).toBe('');
+          expect(response.body.missing).toEqual([
+            { line: 1, name: 'Mats Ek', unit: 'Norra skolan', verksamhetstyp: '6', fields: ['ANSTFORM'] },
+          ]);
+          // Every teacher the file names, as EMPLOYMENT and as PEOPLE, in the read's transaction.
+          const reads = recordedReads(harness.tx);
+          expect(reads.map((read) => read.kind)).toEqual(['EMPLOYMENT', 'PEOPLE']);
+          for (const read of reads) expect([...read.ids].sort()).toEqual([COLLEAGUE_ID, TEACHER_ID].sort());
+        });
+
+        it('is the admin’s alone: a teacher is refused at the guard, and nothing is read or recorded', async () => {
+          givenSchool();
+          await request(http()).get(path).set('x-test-user', teacher()).expect(403);
+          await request(http()).get(path).expect(401);
+          expect(harness.tx['teacherEmployment']!['findMany']).not.toHaveBeenCalled();
+          expect(recordedReads(harness.tx)).toEqual([]);
+        });
+
+        it('400s a year that is not a uuid, and a missing one', async () => {
+          await request(http()).get('/api/v1/staffing/scb-file?academicYearId=nope').set('x-test-user', admin()).expect(400);
+          await request(http()).get('/api/v1/staffing/scb-file').set('x-test-user', admin()).expect(400);
+        });
+
+        it('404s a year RLS does not show, before anything is recorded', async () => {
+          harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+          await request(http()).get(path).set('x-test-user', admin()).expect(404);
+          expect(recordedReads(harness.tx)).toEqual([]);
+        });
       });
 
       describe('genomfört (GET /staffing/delivered)', () => {
