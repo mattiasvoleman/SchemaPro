@@ -167,8 +167,8 @@ export interface ProposalUnstaffed {
    * NO_CAPACITY_LEFT or NO_TEACHER_WITH_TARGET on a dated row: the posts
    * that change during the year which could otherwise have taken it — a
    * target above 0 in some stretch with teaching weeks, and under respect a
-   * covering behörighet — and which the row excludes whatever their room
-   * (planOf). The engine counts them as candidates without room, or, planned
+   * covering behörighet — and which the row excludes because it does not
+   * fit their periods (allowedDatedRows). The engine counts them as candidates without room, or, planned
    * on a stretch with a target of 0 (a leave from January), as having no
    * target at all; this says why, so the dialog does not claim only that.
    * Absent when there are none.
@@ -268,8 +268,9 @@ interface RowPlan {
   /** Free rows only: last year's teachers among the staff, sorted. */
   lastYear: string[];
   /**
-   * Free dated rows only: every post that changes during the year, which the
-   * row is never newly given whatever eligible says (planOf), sorted.
+   * Free dated rows only: the posts that change during the year which the
+   * row does not fit (allowedDatedRows), never newly given it whatever
+   * eligible says, sorted.
    */
   excluded: string[];
 }
@@ -804,11 +805,11 @@ export class StaffingProposalService {
       if (teacher.changing) {
         // A post that changes during the year: every stretch with teaching
         // weeks, as overTargetFindingByStretch asks the apply. planOf planned
-        // it on its tightest stretch and every dated row excludes it, so the
-        // only rows it can gain are undated. An undated row charges every
-        // stretch the flat figure it charges the year — stretchWeight and
-        // standardWeekWeight both give 1, or 0.5 on odd or even weeks — and
-        // both sides of the room are rounded up. So an answer inside the
+        // it on its tightest stretch, and offered it only the dated rows that
+        // fit each stretch's slack (allowedDatedRows). An undated row charges
+        // every stretch the flat figure it charges the year — stretchWeight
+        // and standardWeekWeight both give 1, or 0.5 on odd or even weeks —
+        // and both sides of the room are rounded up. So an answer inside the
         // tightest stretch's limit is inside every stretch's, and one past a
         // stretch broke the question it was asked, as for any teacher.
         if (growsPastAStretch(input, afterInput, teacher.changing.employment, plan.tolerance)) {
@@ -1036,20 +1037,20 @@ export function planOf(
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   // Posts that change during the year (20261022120000). The engine counts a
-  // year's standardvecka; such a post is held to each stretch. So the plan
-  // keeps every row such a teacher can gain or lose undated — a dated row
-  // they lead stays where it is, and every dated row excludes them — because
-  // an undated row charges the same minutes in every stretch, and then the
-  // tightest stretch is the one constraint that holds them all (below).
-  // The exclusion is the engine's hard rule whether behörigheter are
-  // respected or not, so the eligibility set stays who holds one (or
+  // year's standardvecka; such a post is held to each stretch. A dated row
+  // such a teacher leads stays where it is, so its charge in each stretch is
+  // exact, and the plan holds the teacher to the tightest stretch: an
+  // undated row charges the same minutes in every stretch, so that one
+  // constraint holds them all. A free dated row is offered to the teacher
+  // only where it fits the other stretches' slack (allowedDatedRows), and
+  // excludes them otherwise — the engine's hard rule whether behörigheter
+  // are respected or not, so the eligibility set stays who holds one (or
   // teaches the subject), and a line saying nobody does stays true.
   const changingPost = new Map<string, LoadEmployment>();
   for (const userId of staffIds) {
     const employment = employmentByUser.get(userId);
     if (employment && changesDuringYear(employment, input.year)) changingPost.set(userId, employment);
   }
-  const isDatedRow = (row: LoadRequirement) => Boolean(row.startDate) || Boolean(row.endDate);
   const targetOf = new Map(
     staffIds.map((userId) => [userId, targetMinutesPerWeek(employmentByUser.get(userId) ?? null, loadPolicy)]),
   );
@@ -1089,7 +1090,8 @@ export function planOf(
     const charged = chargedMinutes(row, input.year, input.closures);
     let eligible: string[] = [];
     let lastYear: string[] = [];
-    let excluded: string[] = [];
+    // Filled below, once the changing posts are planned (allowedDatedRows).
+    const excluded: string[] = [];
     if (free) {
       const holders = recorded
         ? new Set(
@@ -1101,7 +1103,6 @@ export function planOf(
       eligible = staffIds.filter((id) => holders.has(id));
       const taught = new Set(state.lastYear.get(row.id)?.teacherIds ?? []);
       lastYear = staffIds.filter((id) => taught.has(id)).slice(0, MAX_LAST_YEAR);
-      if (isDatedRow(row)) excluded = staffIds.filter((id) => changingPost.has(id));
     }
     return {
       row,
@@ -1153,6 +1154,18 @@ export function planOf(
       keepOrShed: target === null || target <= 0 || currentTenths > limitTenths!,
     };
   });
+
+  // A changing post is offered a dated row only where the row fits the post
+  // on the dates it runs (allowedDatedRows); every other free dated row
+  // excludes it, whatever behörighet says. Teachers in staffIds order, so
+  // each row's list is sorted.
+  for (const teacher of teachers) {
+    if (!teacher.changing) continue;
+    const allowed = allowedDatedRows(teacher, rows, fixedInput, tolerance);
+    for (const row of rows) {
+      if (row.kind !== 'FIXED' && isDatedRow(row.row) && !allowed.has(row.row.id)) row.excluded.push(teacher.userId);
+    }
+  }
 
   return {
     recorded,
@@ -1231,6 +1244,67 @@ function changingTeacherPlan(
       to: stretches[index]?.stretch.to ?? fixedInput.year.endDate,
     },
   };
+}
+
+/**
+ * The free dated rows a changing post may be offered: the post read on the
+ * dates each row runs.
+ *
+ * The plan holds the post to its tightest stretch S with every row at its
+ * charge over the year (changingTeacherPlan), so whatever the engine gives
+ * it, the year charges it keeps and gains add up to at most S's room. For an
+ * undated row that is exact in every stretch. A dated row charges a stretch
+ * by the share of the stretch's weeks it runs, which can be more than its
+ * share of the year. Every other stretch s has slack, its own room less
+ * S's. A dated row is offered while what it could charge each stretch above
+ * its year charge, added to the rows offered before it, fits in that
+ * stretch's slack; then no choice of rows the engine makes takes a stretch
+ * past its limit, and the realise guard (growsPastAStretch) only confirms
+ * it. In S itself the slack is 0, so a row that runs more of S than of the
+ * year is not offered: a spring course to a post that halves in January. An
+ * autumn course is, while the autumn has room. Rows are taken by id, so the
+ * answer is the same for the same school. A post that keeps or sheds, or
+ * whose room is unknown, gains nothing and is offered none.
+ */
+function allowedDatedRows(
+  teacher: TeacherPlan,
+  rows: readonly RowPlan[],
+  fixedInput: LoadInput,
+  tolerance: number,
+): Set<string> {
+  const allowed = new Set<string>();
+  const changing = teacher.changing;
+  if (!changing || teacher.keepOrShed || teacher.limitTenths === null) return allowed;
+  const room = teacher.limitTenths - teacher.fixedTenths;
+  const slack = stretchLoads(fixedInput, changing.employment).map((stretch) =>
+    stretch.weeks > 0 && stretch.target !== null
+      ? limitTenthsOf(stretch.target, tolerance) - Math.min(MAX_FIXED_TENTHS, toTenthsUp(stretch.counted)) - room
+      : null,
+  );
+  const used = slack.map(() => 0);
+  for (const row of rows) {
+    if (row.kind === 'FIXED' || !isDatedRow(row.row) || row.co === teacher.userId) continue;
+    // The row alone, led by this teacher: what it charges each stretch.
+    const alone = stretchLoads(
+      { ...fixedInput, requirements: [{ ...row.row, teacherId: teacher.userId, coTeacherId: null }], duties: [] },
+      changing.employment,
+    );
+    const over = alone.map((stretch, index) =>
+      slack[index] === null ? 0 : Math.max(0, toTenthsUp(stretch.counted) - row.chargeTenths),
+    );
+    if (over.every((tenths, index) => slack[index] === null || used[index]! + tenths <= slack[index]!)) {
+      over.forEach((tenths, index) => {
+        used[index] = used[index]! + tenths;
+      });
+      allowed.add(row.row.id);
+    }
+  }
+  return allowed;
+}
+
+/** A row with dates of its own: it runs part of the year. */
+function isDatedRow(row: LoadRequirement): boolean {
+  return Boolean(row.startDate) || Boolean(row.endDate);
 }
 
 /**

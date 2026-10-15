@@ -71,7 +71,8 @@ export interface AnonymousStaffRequirement {
   lastYearTeacherIds: string[];
   /**
    * Teachers the row is never newly given, whatever their behörighet or
-   * room: on a dated row, every post that changes during the year (planOf).
+   * room: on a dated row, the posts that change during the year which it
+   * does not fit (planOf, allowedDatedRows).
    * Sent only when it names somebody, so a school without such posts sends
    * exactly what an engine that predates the field accepts.
    */

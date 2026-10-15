@@ -969,13 +969,14 @@ def unstaffed_reason(problem: StaffProblem, row: int, load: list[int]) -> str:
     (answer_loads).
 
     A teacher the row excludes counts as a candidate WITHOUT room. Today the
-    gateway excludes every post that changes during the year from every
-    dated row, whatever its room: the row's charge is its average over the
-    year, and such a post is held to each of its periods, where a dated row
-    charges more. The engine cannot see that, so it reads the exclusion as
-    no room for the row, asked of a teacher who may well hold a covering
-    qualification and a target: a row only such teachers could take is
-    NO_CAPACITY_LEFT, and the gateway names the excluded posts beside it.
+    gateway excludes a post that changes during the year from a dated row
+    that does not fit it: the row's charge is its average over the year,
+    and such a post is held to each of its periods, where a dated row can
+    charge more than the period has room for. The engine cannot see that,
+    so it reads the exclusion as no room for the row, asked of a teacher
+    who may well hold a covering qualification and a target: a row only
+    such teachers could take is NO_CAPACITY_LEFT, and the gateway names the
+    excluded posts beside it.
     Never NOT_REACHED, which would say the search stopped short of a teacher
     it was never allowed to use, and never NO_QUALIFIED_TEACHER, which the
     dialog reads as "nobody holds one".
