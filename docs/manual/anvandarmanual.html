@@ -1461,6 +1461,15 @@
     varnas eller vägras med periodens datum, även om läraren är under målet
     sett över hela året.
   </p>
+  <p>
+    Tjänsten som gäller på ett datum används också utanför
+    tjänstefördelningen. Förslaget till bemanning ger en post med datum till
+    en sådan lärare bara om den ryms i lärarens perioder (nedan).
+    Vikarieförslagen bedömer lektionens vecka med tjänsten som gäller då
+    (6.3). SCB-underlaget läser tjänsten på mätdatum (6.9). Anslutna system
+    får en lärartjänst per period med egen tjänstgöringsgrad, om skolan delar
+    den (7). Rullningen tar med tjänsten som den står vid läsårets slut (8.1).
+  </p>
 
   <h4>Bemanna en post</h4>
   <p>
@@ -1524,13 +1533,18 @@
       medläraren räknas som redan i klassen.</li>
     <li>En lärare vars tjänst ändras under läsåret planeras på sin trängsta
       period, den period som lämnar minst plats under sin gräns; dialogen
-      säger vilken. En post med datum, som bara går en del av läsåret, ges
-      aldrig en sådan lärare, och en post med datum som hen redan har
-      behåller hen. Blir en post med datum obemannad fast en sådan lärare
-      annars hade kunnat ta den, namnger dialogen läraren vid posten.
-      Bemanna den för hand; skrivningen prövas mot varje period. Saknar en
-      period med undervisningsveckor mål behåller läraren sina poster, som
-      en lärare utan mål.</li>
+      säger vilken. En post med datum, som bara går en del av läsåret, läses
+      på de datum den går. Varje annan period har plats över jämfört med den
+      trängsta, och posten erbjuds läraren så länge det den belastar
+      perioderna utöver sin andel av året ryms i den platsen, tillsammans
+      med andra poster med datum som redan erbjudits. En höstkurs kan alltså
+      ges en lärare som går ned till 50 % i januari, men inte en vårkurs. En
+      post med datum som läraren redan har behåller hen. Blir en post med
+      datum obemannad fast en sådan lärare annars hade kunnat ta den,
+      namnger dialogen läraren vid posten. Bemanna den då för hand;
+      skrivningen prövas mot varje period. Saknar en period med
+      undervisningsveckor mål behåller läraren sina poster, som en lärare
+      utan mål.</li>
   </ul>
   <p>
     Förslaget bemannar först så många poster som möjligt. Det vägs aldrig mot
@@ -2920,7 +2934,9 @@
     klassen (undervisar den, är mentor), om hen ändå är på skolan eller har en
     håltimme, hur många vikariepass hen redan har haft den här veckan och
     terminen, hur nära veckans riktmärke hen ligger, och skolans val för
-    vikariepoolen. Den vars egen lektion då är inställd räknas som ledig och på
+    vikariepoolen. Riktmärket är det som gäller lektionens vecka: för en
+    lärare vars tjänst ändras under läsåret är det tjänsten som gäller på
+    veckans måndag (4.3). Den vars egen lektion då är inställd räknas som ledig och på
     plats — utom när lektionen är inställd för en aktivitet (prao, friluftsdag,
     studiedag): då hamnar hen längre ner, eftersom hen kan vara med klassen.
     Varje förslag säger sina skäl i klartext med poängen bredvid.
@@ -3481,6 +3497,21 @@
     av från början: många anslutna system är lärplattformar som inte behöver
     några procentsatser. Årsarbetstiden räknas på tjänsten utan nedsättning,
     så att nedsättningen inte går att räkna fram ur det som delas.
+  </p>
+  <p>
+    En tjänst vars <strong>tjänstgöringsgrad ändras under läsåret</strong>
+    (4.3) lämnas med brytaren på ut som en tjänst per sträcka med samma
+    grad. Går läraren ned till 50 % från 11 januari blir det två: hösten
+    med sin grad och våren med 50 %, var och en med sina datum och sin
+    årsarbetstid, och med mentorskapen inom sina datum. Den första behåller
+    tjänstens id, så ett anslutet system hittar tjänsten som förut. En
+    period som bara ändrar nedsättningen eller riktmärket delar inte
+    tjänsten, eftersom datumen då skulle visa när nedsättningen ändrades.
+    Med brytaren av, och för en lärare vars tjänst kommer från elevregistret
+    (7.2), är tjänsten en enda, som förut. Ändras eller tas en period bort
+    försvinner de sträckor som inte längre finns, och systemet får veta det
+    som en borttagning. En lektion pekar fortfarande på tjänstens första
+    sträcka.
   </p>
   <p>
     Två saker kan ett anslutet system ändå sluta sig till. Med brytaren på
@@ -4201,12 +4232,17 @@
     <li>En nedsättning och ett eget riktmärke följer med, men gäller ofta bara
       ett år. Granska-steget namnger lärarna; ändra dem på
       tjänstefördelningssidan om de upphör.</li>
-    <li>En tjänsts perioder följer <strong>inte</strong> med. Det nya läsåret
-      får tjänsten som den står i lärarens kort, utan perioderna, och
-      granska-steget namnger inte de lärare som hade perioder. Har en lärare
-      gått ned till 50 % från januari får hen alltså sin tjänst från kortet,
-      inte 50 %. Kontrollera dem, och lägg in perioder i det nya läsåret om
-      tjänsten ändras även då.</li>
+    <li>En tjänst som ändras under läsåret (4.3) följer med <strong>som den
+      står vid läsårets slut</strong>. Har tjänsten en period utan
+      <em>Till</em>, till exempel 50 % från januari tills vidare, blir
+      periodens tjänstgöringsgrad, nedsättning och eget riktmärke tjänsten i
+      det nya läsåret. Avtal, signatur och anteckning följer med från
+      tjänsten som förut. En period med <em>Till</em> slutade under läsåret
+      och följer inte med, och tjänsten följer då med som den står i
+      lärarens kort. Inga perioder kopieras till det nya läsåret.
+      Granska-steget namnger de lärare vars tjänst kommer från en period,
+      med periodens <em>Från</em>, och de vars perioder slutade. Lägg in
+      perioder i det nya läsåret om tjänsten ändras även då.</li>
     <li>Behörigheter hör inte till något läsår och påverkas inte.</li>
   </ul>
   <p>
