@@ -957,6 +957,10 @@ export interface StaffingCarryPreview {
     withTargetOverride: string[];
     notCarried: { userId: string; reason: "INACTIVE" | "NOT_STAFF" | "ALREADY_PRESENT" }[];
     signaturesDropped: { userId: string; signature: string }[];
+    /** A period with no Till ran to the year's end: its figures are the carried post (absent from an older gateway). */
+    fromPeriod?: { userId: string; validFrom: string }[];
+    /** A post whose periods had a Till: they ended with the year and are not carried. */
+    periodsEnded?: { userId: string; periods: number }[];
   };
   duties: {
     carried: number;

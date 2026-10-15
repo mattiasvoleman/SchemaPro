@@ -1202,6 +1202,8 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       withTargetOverride: [IDS.cecilia],
       notCarried: [{ userId: IDS.bo, reason: 'INACTIVE' }],
       signaturesDropped: [],
+      fromPeriod: [],
+      periodsEnded: [],
     });
     const duties = preview.staffing!.duties;
     expect(duties).toMatchObject({ carried: 5, slots: 2, followedGroup: 1 });
@@ -1308,6 +1310,42 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       ),
     );
     expect(sourceNow).toBe(before);
+  });
+
+  it('carries a period with no Till as the new year’s post, and names it in the preview', async () => {
+    // Anna goes down to 60 % from January, with no Till: the new year gets 60 %, without her 20 % nedsättning.
+    const rows = withBlock(staffingRows());
+    rows['teacherEmploymentPeriod'] = [
+      {
+        id: 'f4000000-0000-4000-8000-00000000000a',
+        schoolId: IDS.school,
+        employmentId: IDS.empAnna,
+        userId: IDS.anna,
+        academicYearId: IDS.yearA,
+        validFrom: new Date('2027-01-11T00:00:00.000Z'),
+        validTo: null,
+        employmentPercent: new Prisma.Decimal('60.000'),
+        reductionPercent: new Prisma.Decimal('0.000'),
+        teachingTargetMinutesPerWeek: null,
+      },
+    ];
+    const { world, service } = setup(rows);
+    const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
+    expect(preview.staffing!.employments).toMatchObject({
+      fromPeriod: [{ userId: IDS.anna, validFrom: '2027-01-11' }],
+      periodsEnded: [],
+      withReduction: [],
+    });
+    expect(preview.problems).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'STAFFING_POST_FROM_PERIOD', params: { teachers: 1 } })]),
+    );
+    const { result } = await previewAndExecute(world, service, { ...OPTIONS, carryStaffing: true, breaks: [{ sourceBreakId: IDS.jullov }] });
+    const anna = world.rows['teacherEmployment']!.find(
+      (row) => row['academicYearId'] === result.academicYear.id && row['userId'] === IDS.anna,
+    )!;
+    expect([anna['employmentPercent'], anna['reductionPercent'], anna['signature']]).toEqual(['60.000', '0.000', 'AN']);
+    // No period row is written into the new year: the period is the post now.
+    expect(world.rows['teacherEmploymentPeriod']!.filter((row) => row['academicYearId'] === result.academicYear.id)).toEqual([]);
   });
 
   it('refuses a stale preview before any write when a carried row changed, and says tjänster', async () => {

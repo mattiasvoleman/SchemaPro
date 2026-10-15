@@ -109,16 +109,25 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'builds both SS12000 Duty shapes from a post: dutyPercent and hoursPerYear of the year-start post',
   },
   'src/year-rollover/rollover-staffing.ts': {
-    basis: 'NEXT',
-    why: 'plans the carried posts, copying the year-start figures',
+    basis: 'PERIODS',
+    why: 'plans the carried post as it stands at the year’s end: a period with no Till gives its figures, one with a Till ended',
   },
   'src/year-rollover/rollover-source.ts': {
-    basis: 'NEXT',
-    why: 'the rollover carries the year-start post into the next year; what a period at the year’s end means for the carried post is the next release’s',
+    basis: 'PERIODS',
+    why: 'reads the source year’s posts with their periods for the carry',
   },
-  'src/year-rollover/staffing-rollover.service.ts': { basis: 'NEXT', why: 'the same carry, into a year rolled without it' },
-  'src/year-rollover/year-rollover.service.ts': { basis: 'NEXT', why: 'locks and counts the source year’s posts for the carry' },
-  'src/year-rollover/rollover-apply.ts': { basis: 'NEXT', why: 'writes the carried posts, without periods' },
+  'src/year-rollover/staffing-rollover.service.ts': {
+    basis: 'POST',
+    why: 'the same carry into a year rolled without it, through rollover-source and rollover-staffing; it reads the target’s posts only for who has one and their signatures',
+  },
+  'src/year-rollover/year-rollover.service.ts': {
+    basis: 'POST',
+    why: 'locks and counts the source year’s posts for the carry; a period write locks its post first, so the posts’ lock holds them',
+  },
+  'src/year-rollover/rollover-apply.ts': {
+    basis: 'WRITES',
+    why: 'writes the carried posts with the figures the plan gave them; no period row is copied',
+  },
 };
 
 /** The readers left on the year-start post, written out: see 5. */
@@ -126,11 +135,6 @@ const NEXT_RELEASE = [
   'src/integration/ss12000-duties.ts',
   'src/integration/ss12000-v2/slice.ts',
   'src/integration/ss12000.service.ts',
-  'src/year-rollover/rollover-apply.ts',
-  'src/year-rollover/rollover-source.ts',
-  'src/year-rollover/rollover-staffing.ts',
-  'src/year-rollover/staffing-rollover.service.ts',
-  'src/year-rollover/year-rollover.service.ts',
 ];
 
 const TABLE_READ =

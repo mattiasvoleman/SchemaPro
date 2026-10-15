@@ -89,6 +89,19 @@ export function StaffingCarrySummary({
           followed: duties.followedGroup,
         })}
       </p>
+      <Section
+        title={t("fromPeriod")}
+        items={(employments.fromPeriod ?? []).map((row) =>
+          t("fromPeriodLine", { teacher: teacherName(row.userId), from: row.validFrom }),
+        )}
+        warn
+      />
+      <Section
+        title={t("periodsEnded")}
+        items={(employments.periodsEnded ?? []).map((row) =>
+          t("periodsEndedLine", { teacher: teacherName(row.userId), count: row.periods }),
+        )}
+      />
       <Section title={t("withReduction")} items={names(employments.withReduction)} warn />
       <Section title={t("withTargetOverride")} items={names(employments.withTargetOverride)} warn />
       <Section title={t("mentorskapLeft")} items={notCarried("GROUP_LEAVES").map(duty)} warn />
