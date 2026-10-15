@@ -76,7 +76,12 @@ describe("compareYears", () => {
     const unionTime = load("t-b", {
       periods: [stretch("2026-08-17", "2027-01-10", 100), stretch("2027-01-11", "2027-06-11", 100, 20)],
     });
-    expect(compareYears([unionTime], [load("t-b")])[0]!.change).toBe("CHANGED");
+    const [union] = compareYears([unionTime], [load("t-b")]);
+    expect(union!.change).toBe("CHANGED");
+    // What the row shows for it: the nedsättning's steps, the year starting as last year did.
+    expect(union!.thisYear).toMatchObject({ reductionPercent: 0, reductionSteps: [0, 20], employmentSteps: [100] });
+    expect(union!.lastYear!.reductionSteps).toEqual([0]);
+    expect(union!.reductionChanged).toBe(false);
     const halving = (from: string, to: string, spring: string) =>
       load("t-b", { periods: [stretch(from, to, 100), stretch(spring, "2027-06-11", 50)] });
     expect(
@@ -100,6 +105,7 @@ describe("compareYears", () => {
       employmentPercent: 80,
       employmentSteps: [80],
       reductionPercent: 0,
+      reductionSteps: [0],
       postSteps: ["80000/0"],
       countedMinutesPerWeek: 840,
       percentOfTarget: 88.9,

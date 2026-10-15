@@ -2846,6 +2846,7 @@
       "changeLEFT": "no longer here",
       "changedOnly": "Changed only",
       "reductionChange": "reduction {from} → {to} %",
+      "reductionSteps": "reduction during the year {steps} %",
       "noChanges": "No teacher has a changed post or changed minutes.",
       "footnote": "Counted teaching is the curriculum entries' minutes in a standard week plus duties counted as teaching. Both years are counted with the school's settings as they are today.",
       "failed": "The staffing for {year} could not be read, so no comparison is shown.",
