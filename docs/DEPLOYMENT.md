@@ -403,6 +403,23 @@ Walk the full product loop once, in order:
   `Ss12000EntityVersions` row each) and lists the school's own Organisation
   id in `/deletedEntities`, so a consumer subscribed to the school sees one
   large notice. The SCB file reads the units when the export is made.
+- **SCB-filen**: 20261111090000 adds the enum `TeacherEmploymentForm` and
+  three nullable columns to `TeacherEmployments` (`employmentForm`,
+  `firstTeacherPercent`, `lecturerPercent`, with their CHECKs). Prisma names
+  every column it reads, and every read of a post (the load report, the
+  staffing checks on each timplan write, the rollover) now names these, so
+  the migration must be in the database before the API: the migration
+  first, then the merge. It is additive and changes no row. The new
+  `GET /api/v1/staffing/scb-file` (admin only) builds SCB's Pedagogisk
+  personal text file on the server and writes one `EMPLOYMENT` and one
+  `PEOPLE` läslogg row per download; the browser no longer builds the SCB
+  underlag. A PUT of a post that leaves the three fields out keeps them, so
+  a web from before the release, open in a tab, clears nothing. The other
+  way round does not hold: the new web sends the three keys on every save
+  of a post, and the API before this release refuses a key it does not know
+  (400, `forbidNonWhitelisted`), and has no `/staffing/scb-file` (404). So
+  the API goes out before, or with, the web: the migration, then the API,
+  then the web.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
