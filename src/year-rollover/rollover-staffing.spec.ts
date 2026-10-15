@@ -183,15 +183,21 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
       expect(staffNamedBy(plan.preview)).toContain(T1);
     });
 
-    it('carries the post as it stands when its periods have a Till: they end with the year', () => {
-      // Leave in the autumn, and 50 % until the very last day — written with a Till, so it ends there.
+    it('carries the period in force on the last day whether its Till is empty or that day, as the form says they are the same', () => {
+      const plan = planStaffingCarry(input([post(T1, { periods: [period({ validTo: '2027-06-11', employmentPercent: '60.000' })] })], []));
+      expect(plan.writes.employments[0]!.employmentPercent).toBe('60.000');
+      expect(plan.preview.employments).toMatchObject({ fromPeriod: [{ userId: T1, validFrom: '2027-01-11' }], periodsEnded: [] });
+    });
+
+    it('carries the post as it stands when its periods end before the last day', () => {
+      // Leave in the autumn, and 50 % until a week before the year ends.
       const plan = planStaffingCarry(
         input(
           [
             post(T1, {
               periods: [
                 period({ validFrom: '2026-09-01', validTo: '2026-12-20', employmentPercent: '25.000' }),
-                period({ validTo: '2027-06-11' }),
+                period({ validTo: '2027-06-04' }),
               ],
             }),
             post(T2),
