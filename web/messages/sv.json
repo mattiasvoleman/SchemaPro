@@ -1716,6 +1716,8 @@
     "reason": "Anledning",
     "leaveSubmit": "Skicka ansökan",
     "leaveSubmitted": "Ledighetsansökan skickad",
+    "leaveTooLong": "En ansökan kan gälla högst ett år, {days} dagar. Välj ett tidigare datum i Till.",
+    "leaveEndsBeforeStart": "Ledigheten slutar innan den börjar. I Till väljer du samma dag som Från eller en senare.",
     "leavesTitle": "Ledighetsansökningar",
     "leavesEmpty": "Inga ledighetsansökningar ännu.",
     "statusPENDING": "Väntar",

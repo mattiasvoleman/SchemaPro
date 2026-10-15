@@ -12,6 +12,7 @@ import {
   useLeaveRequests,
   useMyChildren,
 } from "@/lib/guardian-queries";
+import { lastLeaveDay, leaveRequestError } from "@/lib/leave-errors";
 import { LEAVE_STATUS_VARIANT } from "@/lib/status-variants";
 import type { AbsenceReport, AbsenceReportType } from "@/lib/types";
 import { toDateString } from "@/lib/utils";
@@ -177,7 +178,13 @@ export default function GuardianPage() {
       toast.success(t("leaveSubmitted"));
       setLeaveReason("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : tCommon("error"));
+      toast.error(
+        leaveRequestError(error, {
+          tooLong: (days) => t("leaveTooLong", { days }),
+          endsBeforeStart: t("leaveEndsBeforeStart"),
+          fallback: tCommon("error"),
+        }),
+      );
     }
   };
 
@@ -412,6 +419,7 @@ export default function GuardianPage() {
                   label={t("to")}
                   id="leave-end"
                   min={leaveStart}
+                  max={lastLeaveDay(leaveStart)}
                   value={leaveEnd}
                   onChange={(value) => setLeaveEnd(value)}
                 />

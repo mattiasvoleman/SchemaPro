@@ -50,7 +50,13 @@ function mentorsOf(studentId: string): Array<{ id: string; name: string }> {
   }));
 }
 
-function inboxRow(request: LeaveRequest, family: boolean): LeaveInboxRequest {
+/**
+ * One request as the inbox answers it. The läsår's totals go to whoever
+ * weighs them (20261101090000, app.leave_request_facts): rektor on every
+ * request, a mentor only on a pending one theirs to decide; a mentor's
+ * decided request carries none, and a family's list has no facts at all.
+ */
+function inboxRow(request: LeaveRequest, family: boolean, weighs = true): LeaveInboxRequest {
   const student = byId(STUDENT_LIST, request.studentId)!;
   const mentors = mentorsOf(request.studentId);
   const days = schoolDays(request.startDate, request.endDate);
@@ -73,7 +79,7 @@ function inboxRow(request: LeaveRequest, family: boolean): LeaveInboxRequest {
     decides: pending ? (toMentor ? "MENTOR" : "ADMIN") : null,
     mentors: family ? [] : mentors,
     decidingMentors: family || !toMentor ? [] : mentors,
-    year: family
+    year: family || !weighs
       ? null
       : {
           name: YEAR.name,
@@ -113,10 +119,11 @@ export const leaveRoutes: GatewayRoute[] = [
     if (!context.person) return new Reply(401, { message: "Not authenticated." });
     const status = context.query.get("status");
     const family = context.person.persona === "student" || context.person.persona === "guardian";
+    const admin = context.person.persona === "admin";
     return visible(context.person)
       .filter((row) => !status || row.status === status)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-      .map((row) => inboxRow(row, family));
+      .map((row) => inboxRow(row, family, admin || row.status === "PENDING"));
   }),
   route("GET", "/api/v1/leave-delegation", (context) => {
     if (!context.person) return new Reply(401, { message: "Not authenticated." });
