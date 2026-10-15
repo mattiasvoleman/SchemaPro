@@ -2,7 +2,7 @@ import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock'
 import { recordedReads } from '../../../test/utils/recorded-reads';
 import { ALL_V2_SCOPES, ProviderWorld, W } from '../../../test/utils/ss12000-provider-world';
 import type { PrismaService } from '../../database/prisma.service';
-import { adhocActivityId } from './ids';
+import { adhocActivityId, dutyStretchId } from './ids';
 import type { Scope } from './scopes';
 import { Ss12000V2Service, type V2Caller } from './ss12000-v2.service';
 
@@ -221,6 +221,41 @@ describe('groups', () => {
     expect(duty!['assignmentRole']).toEqual([
       expect.objectContaining({ assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2026-12-18' }),
     ]);
+  });
+
+  it('a post cut where its grad changes: the class names each Duty the mentorship falls in, and no reader without duties.read sees a cut', async () => {
+    const world = new ProviderWorld();
+    const tx = createTxMock();
+    world.install(tx);
+    const service = new Ss12000V2Service(createPrismaMock(tx) as unknown as PrismaService);
+    // 50 % from 11 January, in a school that shares: the autumn's Duty and the spring's.
+    world.policy['shareEmploymentWithIntegrations'] = true;
+    world.periods.push({
+      schoolId: W.school, employmentId: W.emp1, userId: W.t1, academicYearId: W.year,
+      validFrom: new Date('2027-01-11T00:00:00.000Z'), validTo: null, employmentPercent: 50, updatedAt: new Date('2026-10-02T08:00:00Z'),
+    });
+    const spring = dutyStretchId(W.emp1, '2027-01-11');
+    const roles = [
+      { duty: { id: W.emp1 }, assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2027-01-10' },
+      { duty: { id: spring }, assignmentRoleType: 'Mentor', startDate: '2027-01-11', endDate: '2027-06-11' },
+    ];
+    expect((await service.getGroup(caller(), W.c7aSource, { expand: 'assignmentRoles' }))['_embedded']).toEqual({ assignmentRoles: roles });
+    // The Duties carry the same, each its own part; the läslogg finds the teacher behind the spring's id.
+    const duties = (await service.listDuties(caller(), { person: W.t1, sortkey: 'StartDateAsc' })).data;
+    expect(duties.map((d) => [d.id, (d['assignmentRole'] as Array<{ startDate: string; endDate: string }>).map((r) => [r.startDate, r.endDate])])).toEqual([
+      [W.emp1, [['2026-08-17', '2027-01-10']]],
+      [spring, [['2027-01-11', '2027-06-11']]],
+    ]);
+    expect(recordedReads(tx).flatMap((read) => read.ids)).toContain(W.t1);
+    // A reader of persons alone: the teacher's duty spans the post, from its first day to its last.
+    const persons = caller(['persons.read']);
+    expect(ids(await service.listPersons(persons, { 'relationship.entity.type': 'duty', 'relationship.startDate.onOrAfter': '2027-01-01' }))).toEqual([]);
+    expect(ids(await service.listPersons(persons, { 'relationship.entity.type': 'duty', 'relationship.endDate.onOrBefore': '2027-01-31' }))).toEqual([]);
+    expect(ids(await service.listPersons(persons, { 'relationship.entity.type': 'duty', 'relationship.startDate.onOrBefore': '2026-08-17' }))).toContain(W.t1);
+    // A teacher filter matches the post's own Duty, never a stretch's: activities and events name the post's.
+    const events = caller(['calendarEvents.read']);
+    expect(await service.lookupCalendarEvents(events, { teacher: [spring] }, {})).toEqual([]);
+    expect((await service.lookupCalendarEvents(events, { teacher: [W.emp1] }, {})).length).toBeGreaterThan(0);
   });
 });
 

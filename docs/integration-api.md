@@ -76,18 +76,19 @@ sent, and a teacher gets a **new Duty id every läsår** (posts are per year).
 **A post that changes during the year** (`TeacherEmploymentPeriods`,
 20261022120000) is, **with the opt-in**, one Duty per stretch of the year in
 which its grad stays the same whole percent: "50 % from 11 January" is the
-autumn's Duty and the spring's, each with its own `dutyPercent`, `hoursPerYear` (of its grad),
-`startDate` and `endDate`, and its mentorships clipped to those dates. Every
-day of the läsår is in exactly one of them. `meta.created` is when the stretch
-first existed; `meta.modified` is the latest of the post's, its periods' and
-its mentorships'. The first stretch keeps the post's id, so a reference to the
-post's Duty still resolves. A period's stretch has the period's id. The post's
-own figures after a period have `UUIDv3(SchemaPro's SS12000 namespace,
-"duty-after:" + the period's id)`. A period that changes only the nedsättning
-or the riktmärke splits nothing: the Duty carries neither, and its dates
-would publish when they changed. Nor does a grad that rounds to the same
-whole percent: `dutyPercent` is an integer, and the stretch keeps its first
-part's grad, which its `hoursPerYear` is computed from. Without the opt-in, a post is one Duty for
+autumn's Duty and the spring's, each with its own `dutyPercent`,
+`hoursPerYear` (of its grad), `startDate` and `endDate`, and its mentorships
+clipped to those dates. Every day of the läsår is in exactly one of them.
+`meta.created` is the post's; `meta.modified` is the latest of the post's,
+its periods' and its mentorships'. The first stretch keeps the post's id, so
+a reference to the post's Duty still resolves. Every other stretch is
+`UUIDv3(SchemaPro's SS12000 namespace, "duty-from:" + the post's id + ":" +
+its first day)`: named by what a reader of the Duties sees, so a period no
+Duty shows names nothing and moves no id. A period that changes only the
+nedsättning or the riktmärke splits nothing: the Duty carries neither, and
+its dates would publish when they changed. Nor does a grad that rounds to
+the same whole percent: `dutyPercent` is an integer, and the stretch keeps
+its first part's grad, which its `hoursPerYear` is computed from. Without the opt-in, a post is one Duty for
 the läsår whatever its periods, and no period is read. With the opt-in and
 periods, a page counts Duties, not posts, ordered by the post's id and then
 by date. A school with no periods pages exactly as before.
@@ -334,15 +335,21 @@ source's `dutyRole`, `startDate` and `endDate` as the link stored them, and no
 `dutyPercent` or `hoursPerYear`: S1 has one namespace for ids (L5061), and the
 source holds its own figures under that id. Such a teacher's post is never
 split. Activities and events reference a teacher's Duty by the id above,
-the post's first stretch, for the whole year. When a stretch stops being
-emitted (a period removed or changed, the opt-in turned off, the teacher
-linked), its id is listed by `/deletedEntities`. The database derives the
-stretch ids itself (`app.ss12000_split_duty_ids`, `app.ss12000_after_id`), so
-the versions and tombstones follow them. A write to a period moves a Duty's
-`meta.modified` only when the stretches it makes change (ids, dates, grad):
-a nedsättning or a target written in a period moves none. What moves the
-post's Duty moves every stretch of it. Posts already split when the
-migration ran were versioned then. A deactivated teacher's Duty
+the post's first stretch, for the whole year, and a teacher filter matches
+that id only: nothing a key without `duties.read` reads moves with a period.
+The same holds for persons: a person's `duty` relationship spans the whole
+post, so `relationship.startDate.*` and `.endDate.*` tell nothing about a
+stretch. `groups?expand=assignmentRoles`, which needs `duties.read`, names
+each stretch a mentorship falls in, clipped to it, as the Duties' own
+`assignmentRole` do. When a stretch stops being emitted (a period removed or
+changed, the opt-in turned off, the teacher linked), its id is listed by
+`/deletedEntities`. The database derives the stretch ids itself
+(`app.ss12000_split_duty_ids`, `app.ss12000_stretch_id`), so the versions
+and tombstones follow them. A write to a period moves a Duty's
+`meta.modified` only when the stretches it makes change (dates, grad): a
+nedsättning or a target written in a period moves none. What moves the
+post's Duty moves every stretch of it. Posts already cut when the migration
+ran were versioned then. A deactivated teacher's Duty
 leaves `/duties` and is listed by `/deletedEntities`; the activities and
 events naming it get a new `meta.modified`. An HR-only edit (employment
 percent, contract kind) moves no Duty's `meta.modified` unless the school

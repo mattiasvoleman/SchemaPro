@@ -13,9 +13,11 @@
  * an HR-only edit without the Fas 3 opt-in moves no Duty, and the helpers
  * that read across schools are no API role's to call (sp-f,
  * 20261014140000); a changing post is a Duty per stretch only while the
- * school shares, the database and the gateway derive the same ids, and a
- * stretch that ends is buried (sp-g, 20261104090000). In a school of its own (slug
- * <marker>-ss12000-provider), swept whole before and after.
+ * school shares, the database and the gateway derive the same ids from what
+ * a Duty shows, and a stretch that ends is buried (sp-g, 20261104090000); a
+ * key without duties.read sees nothing a period adds, moves or takes away
+ * (sp-h). In a school of its own (slug <marker>-ss12000-provider), swept
+ * whole before and after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -31,7 +33,7 @@ import type { PrismaService } from '../../src/database/prisma.service';
 import { IntegrationKeysController } from '../../src/integration/integration.controller';
 import type { ClientOptions } from '../../src/integration/ss12000-sync/client';
 import { Ss12000Outbound, Ss12000Secrets } from '../../src/integration/ss12000-sync/ss12000-sync.providers';
-import { dutyAfterPeriodId } from '../../src/integration/ss12000-v2/ids';
+import { dutyStretchId } from '../../src/integration/ss12000-v2/ids';
 import { verifySignature } from '../../src/integration/ss12000-v2/signing';
 import type { Scope } from '../../src/integration/ss12000-v2/scopes';
 import { Ss12000V2Service, type V2Caller } from '../../src/integration/ss12000-v2/ss12000-v2.service';
@@ -335,17 +337,20 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       assert.equal(((await provider.getDuty(caller, post.id, {}))['meta'] as { modified: string }).modified, d0, 'a period moved the Duty while the school shares nothing');
       assert.deepEqual(await splitIds(), []);
 
-      // The opt-in: the post is two Duties, each with its grad and dates, and the database names the same ids.
+      // The opt-in: the post is two Duties, each with its grad and dates, and the database names the same ids:
+      // the post's, and the post's with the spring's first day.
       await owner.query(`INSERT INTO "StaffingPolicies" ("schoolId", "shareEmploymentWithIntegrations", "updatedAt") VALUES ($1, true, now())`, [school.id]);
+      const springDuty = dutyStretchId(post.id, day(30));
       let duties = await listed();
       assert.deepEqual(
         duties.map((duty) => [duty['id'], duty['startDate'], duty['endDate'], duty['dutyPercent']]),
         [
           [post.id, day(-60), day(29), 60],
-          [spring.id, day(30), day(240), 50],
+          [springDuty, day(30), day(240), 50],
         ],
       );
-      assert.deepEqual(await splitIds(), [spring.id]);
+      assert.deepEqual(await splitIds(), [springDuty]);
+      assert.equal((await one<{ id: string }>(`SELECT app.ss12000_stretch_id($1::uuid, $2::date)::text AS id`, [post.id, day(30)])).id, springDuty);
       checkSchema('Duty', duties[1]);
 
       // What no Duty shows moves none: the spring's nedsättning, an autumn period with the post's
@@ -359,31 +364,53 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "reductionPercent" = 25, "updatedAt" = now() WHERE id = $1`, [sameGrad.id]);
       await period(day(-40), day(-35), 60.4);
       assert.deepEqual(await modifiedOf(), quiet, 'a write no Duty shows moved one');
-      assert.deepEqual((await listed()).map((duty) => [duty['id'], duty['dutyPercent']]), [[post.id, 60], [spring.id, 50]]);
-      assert.deepEqual(await splitIds(), [spring.id]);
+      assert.deepEqual((await listed()).map((duty) => [duty['id'], duty['dutyPercent']]), [[post.id, 60], [springDuty, 50]]);
+      assert.deepEqual(await splitIds(), [springDuty]);
 
       // What every Duty of the post shows moves them all: the signature reaches the spring's.
       await pause();
       await owner.query(`UPDATE "TeacherEmployments" SET "signature" = 'SPG', "updatedAt" = now() WHERE id = $1`, [post.id]);
       const signed = await modifiedOf();
-      assert.ok(signed[post.id]! > quiet[post.id]! && signed[spring.id]! > quiet[spring.id]!, 'the signature moved the post’s Duty but not its spring');
+      assert.ok(signed[post.id]! > quiet[post.id]! && signed[springDuty]! > quiet[springDuty]!, 'the signature moved the post’s Duty but not its spring');
 
-      // A leave inside the autumn: the post's own figures after it are a Duty named by it, in both.
+      // A leave inside the autumn: it and the post's own figures after it are Duties named by their first days.
       const leave = await period(day(10), day(20), 40);
       duties = await listed();
-      const after = dutyAfterPeriodId(leave.id);
-      assert.deepEqual(duties.map((duty) => duty['id']), [post.id, leave.id, after, spring.id]);
-      assert.deepEqual(await splitIds(), [leave.id, after, spring.id].sort());
-      assert.equal((await one<{ id: string }>(`SELECT app.ss12000_after_id($1::uuid)::text AS id`, [leave.id])).id, after);
+      const leaveDuty = dutyStretchId(post.id, day(10));
+      const after = dutyStretchId(post.id, day(21));
+      assert.deepEqual(duties.map((duty) => duty['id']), [post.id, leaveDuty, after, springDuty]);
+      assert.deepEqual(await splitIds(), [leaveDuty, after, springDuty].sort());
       assert.equal((await provider.getDuty(caller, after, {}))['startDate'], day(21));
 
+      // A period at the post's grad straight after the leave — a nedsättning on return — is no Duty's:
+      // no id moves, no Duty moves, before it is written or after it is taken back.
+      const settled = await modifiedOf();
+      await pause();
+      const back = await period(day(21), day(25), 60);
+      await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "reductionPercent" = 30, "updatedAt" = now() WHERE id = $1`, [back.id]);
+      assert.deepEqual(await modifiedOf(), settled, 'a period at the post’s grad after the leave moved a Duty');
+      assert.deepEqual(await splitIds(), [leaveDuty, after, springDuty].sort());
+      await owner.query(`DELETE FROM "TeacherEmploymentPeriods" WHERE id = $1`, [back.id]);
+      assert.deepEqual(await modifiedOf(), settled, 'taking it back moved a Duty');
+      // The leave cut in two at its grad, in two writes: the Duties end as they were, under the same ids.
+      await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "validTo" = $2::date, "updatedAt" = now() WHERE id = $1`, [leave.id, day(15)]);
+      const leaveRest = await period(day(16), day(20), 40);
+      assert.deepEqual((await listed()).map((duty) => [duty['id'], duty['startDate'], duty['endDate']]), [
+        [post.id, day(-60), day(9)],
+        [leaveDuty, day(10), day(20)],
+        [after, day(21), day(29)],
+        [springDuty, day(30), day(240)],
+      ]);
+      await owner.query(`DELETE FROM "TeacherEmploymentPeriods" WHERE id = $1`, [leaveRest.id]);
+      await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "validTo" = $2::date, "updatedAt" = now() WHERE id = $1`, [leave.id, day(20)]);
+
       // The leave is taken back: it and the stretch after it are buried, and gone from /duties.
-      const before = new Date().toISOString();
+      const before = (await one<{ at: Date }>(`SELECT clock_timestamp() AS at`)).at.toISOString();
       await pause();
       await owner.query(`DELETE FROM "TeacherEmploymentPeriods" WHERE id = $1`, [leave.id]);
       const gone = await provider.deletedEntities(caller, { after: before, entities: 'Duty' });
-      assert.deepEqual([...(gone.data['duties'] ?? [])].sort(), [leave.id, after].sort());
-      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, spring.id]);
+      assert.deepEqual([...(gone.data['duties'] ?? [])].sort(), [leaveDuty, after].sort());
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, springDuty]);
 
       // The teacher is linked to a source's Duty (A5.5): one Duty under the source's id, nothing
       // cut, and the spring buried with the post's own. The link ends: both are back, unburied.
@@ -397,10 +424,10 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       assert.deepEqual((await listed()).map((duty) => duty['id']), [link.source]);
       assert.deepEqual(await splitIds(), []);
       const buried = (await provider.deletedEntities(caller, { after: linkedAt, entities: 'Duty' })).data['duties'] ?? [];
-      assert.deepEqual([...buried].sort(), [post.id, spring.id].sort());
+      assert.deepEqual([...buried].sort(), [post.id, springDuty].sort());
       await owner.query(`UPDATE "Ss12000DutyLinks" SET "endedAt" = now(), "updatedAt" = now() WHERE id = $1`, [link.id]);
-      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, spring.id]);
-      assert.deepEqual(await splitIds(), [spring.id]);
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, springDuty]);
+      assert.deepEqual(await splitIds(), [springDuty]);
       const after_link = (await provider.deletedEntities(caller, { after: linkedAt, entities: 'Duty' })).data['duties'] ?? [];
       assert.deepEqual(after_link, [link.source], 'the post’s Duties are still buried after the link ended');
 
@@ -410,7 +437,7 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       const off = (await one<{ at: Date }>(`SELECT clock_timestamp() AS at`)).at.toISOString();
       await pause();
       await owner.query(`UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = false, "updatedAt" = now() WHERE "schoolId" = $1`, [school.id]);
-      assert.deepEqual((await provider.deletedEntities(caller, { after: off, entities: 'Duty' })).data, { duties: [spring.id] });
+      assert.deepEqual((await provider.deletedEntities(caller, { after: off, entities: 'Duty' })).data, { duties: [springDuty] });
       duties = await listed();
       assert.deepEqual(duties.map((duty) => [duty['id'], duty['startDate'], duty['endDate']]), [[post.id, day(-60), day(240)]]);
       assert.equal(duties[0]!['dutyPercent'], undefined);
@@ -429,12 +456,110 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       // The opt-in on again, and the post deleted: both its Duties are buried, the spring's by
       // the cascade that takes its period, when the post can no longer be asked how it was cut.
       await owner.query(`UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = true, "updatedAt" = now() WHERE "schoolId" = $1`, [school.id]);
-      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, spring.id]);
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, springDuty]);
       const deletedAt = (await one<{ at: Date }>(`SELECT clock_timestamp() AS at`)).at.toISOString();
       await pause();
       await owner.query(`DELETE FROM "TeacherEmployments" WHERE id = $1`, [post.id]);
       const deleted = (await provider.deletedEntities(caller, { after: deletedAt, entities: 'Duty' })).data['duties'] ?? [];
-      assert.deepEqual([...deleted].sort(), [post.id, spring.id].sort());
+      assert.deepEqual([...deleted].sort(), [post.id, springDuty].sort());
+    });
+
+    await check('(sp-h) a key without duties.read sees nothing a period adds, moves or takes away', async () => {
+      // A post again, in a school that shares: each read scope alone, and every one but duties.read together.
+      const post2 = await one<{ id: string }>(
+        `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+         VALUES ($1, $2, $3, 100, now()) RETURNING id`,
+        [school.id, teacher.id, year.id],
+      );
+      const reads = V2_SCOPES.filter((scope) => scope !== 'duties.read' && scope !== 'subscriptions.write');
+      const keyFor = async (scopes: Scope[]) => {
+        const made = await one<{ id: string }>(
+          `INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes) VALUES ($1, $2, $3, $4::text[]) RETURNING id`,
+          [school.id, `probe sp-h ${scopes.join(' ')}`, `${marker}-sp-h-${scopes.join('-')}`.padEnd(64, '2').slice(0, 64), scopes],
+        );
+        return { schoolId: school.id, keyId: made.id, scopes: new Set(scopes) } as V2Caller;
+      };
+      const readers: Array<[string, V2Caller]> = [];
+      for (const scope of reads) readers.push([scope, await keyFor([scope])]);
+      const all = await keyFor([...reads, 'subscriptions.write']);
+      readers.push(['every read scope but duties.read', all]);
+
+      const snapshot = async (who: V2Caller): Promise<Record<string, string>> => {
+        const out: Record<string, string> = {};
+        const read = async (name: string, call: () => Promise<unknown>) => {
+          try {
+            out[name] = JSON.stringify(await call());
+          } catch (error) {
+            out[name] = `refused: ${String((error as { message?: string }).message ?? error)}`;
+          }
+        };
+        await read('organisations', () => provider.listOrganisations(who, {}));
+        await read('persons', () => provider.listPersons(who, {}));
+        for (const [name, params] of [
+          ['duty', { 'relationship.entity.type': 'duty' }],
+          ['duty from', { 'relationship.entity.type': 'duty', 'relationship.startDate.onOrAfter': day(29) }],
+          ['duty until', { 'relationship.entity.type': 'duty', 'relationship.endDate.onOrBefore': day(200) }],
+          ['any from', { 'relationship.startDate.onOrAfter': day(29) }],
+          ['any until', { 'relationship.endDate.onOrBefore': day(200) }],
+        ] as Array<[string, Record<string, string>]>) {
+          await read(`persons by ${name}`, () => provider.listPersons(who, params));
+        }
+        await read('the teacher', () => provider.getPerson(who, teacher.id, {}));
+        await read('persons expanded', () => provider.listPersons(who, { expand: ['groupMemberships', 'responsibleFor'] }));
+        await read('groups', () => provider.listGroups(who, {}));
+        await read('activities', () => provider.listActivities(who, { expand: ['groups'] }));
+        await read('activities by teacher', () => provider.listActivities(who, { teacher: post2.id }));
+        await read('events', () => provider.listCalendarEvents(who, window));
+        await read('events by teacher', () =>
+          provider.lookupCalendarEvents(who, { teacher: [post2.id, dutyStretchId(post2.id, day(30)), dutyStretchId(post2.id, day(60))] }, {}),
+        );
+        await read('rooms', () => provider.listRooms(who, {}));
+        await read('syllabuses', () => provider.listSyllabuses(who, {}));
+        await read('deleted', () => provider.deletedEntities(who, {}));
+        return out;
+      };
+      const look = async () => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const [name, who] of readers) out[name] = await snapshot(who);
+        return out;
+      };
+      const same = (now: Record<string, Record<string, string>>, was: Record<string, Record<string, string>>, step: string) => {
+        for (const [reader, reads] of Object.entries(was)) {
+          for (const [name, body] of Object.entries(reads)) {
+            assert.equal(now[reader]![name], body, `${step}: ${reader} reads ${name} differently`);
+          }
+        }
+      };
+      const dutiesNow = async () =>
+        JSON.stringify((await provider.listDuties(caller, { sortkey: 'StartDateAsc' })).data.map((duty) => [duty['id'], duty['startDate'], duty['dutyPercent']]));
+
+      // Its subscription to every resource it reads: nothing is due once the post's own changes are out.
+      await keys.webhookSecret(all.keyId, admin);
+      await subscriptions.create(all, {
+        name: 'probe sp-h',
+        target,
+        resourceTypes: ['Organisation', 'Person', 'Group', 'Activity', 'CalendarEvent', 'Room', 'Syllabus'].map((resource) => ({ resource })),
+      } as never);
+      await delivery.tick();
+      const notices = received.length;
+
+      const seen = await look();
+      const whole = await dutiesNow();
+      const spring = await one<{ id: string }>(
+        `INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5::date, NULL, 50, now()) RETURNING id`,
+        [school.id, post2.id, teacher.id, year.id, day(30)],
+      );
+      assert.notEqual(await dutiesNow(), whole, 'the period moved no Duty: the check below would prove nothing');
+      same(await look(), seen, 'a period added');
+      await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "validFrom" = $2::date, "updatedAt" = now() WHERE id = $1`, [spring.id, day(60)]);
+      assert.ok((await dutiesNow()).includes(day(60)), 'the period moved, its Duty did not');
+      same(await look(), seen, 'a period moved');
+      await owner.query(`DELETE FROM "TeacherEmploymentPeriods" WHERE id = $1`, [spring.id]);
+      assert.equal(await dutiesNow(), whole);
+      same(await look(), seen, 'a period taken away');
+      await delivery.tick();
+      assert.equal(received.length, notices, 'a key without duties.read was told something moved');
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());

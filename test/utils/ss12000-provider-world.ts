@@ -213,6 +213,8 @@ export class ProviderWorld {
   readonly dutyLinks: Row[] = [
     { id: W.link2, schoolId: W.school, userId: W.t2, academicYearId: W.year, ss12000DutyId: W.duty2Source, dutyRole: 'Lärare', startDate: d('2026-08-17'), endDate: null, endedAt: null },
   ];
+  /** TeacherEmploymentPeriods (20261022120000): none, unless a spec cuts a post. */
+  readonly periods: Row[] = [];
   readonly mentorships: Row[] = [
     { schoolId: W.school, userId: W.t1, academicYearId: W.year, kind: 'MENTORSKAP', studentGroupId: W.c7a, updatedAt: t('2026-08-20T08:00:00Z'), minutesPerWeek: 60, note: 'Mentor 7A' },
   ];
@@ -326,6 +328,7 @@ export class ProviderWorld {
       teacherEmployment: table(this.employments),
       ss12000DutyLink: table(this.dutyLinks),
       teacherDuty: table(this.mentorships),
+      teacherEmploymentPeriod: table(this.periods),
       room: table(this.rooms),
       subject: table(this.subjects),
       masterLesson: table(this.masters),

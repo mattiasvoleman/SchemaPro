@@ -8,6 +8,7 @@ import {
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { Ss12000Service } from './ss12000.service';
+import { dutyStretchId } from './ss12000-v2/ids';
 
 /**
  * A row as Prisma returns it: only the fields the query selected. The shared
@@ -467,14 +468,14 @@ describe('Ss12000Service', () => {
       // emp-1 is two Duties and emp-2 one: the page counts Duties, not posts.
       expect(page.totalCount).toBe(3);
       expect(page.data.map((duty) => [duty.id, duty.startDate, duty.endDate, duty.dutyPercent])).toEqual([
-        ['per-1', '2027-01-11', '2027-06-11', 50],
+        [dutyStretchId('emp-1', '2027-01-11'), '2027-01-11', '2027-06-11', 50],
         ['emp-2', '2026-08-17', '2027-06-11', 100],
       ]);
-      // The spring's own hours, its mentorship within its dates, and created when the period was.
+      // The spring's own hours and its mentorship within its dates; created with the post.
       expect(page.data[0]).toMatchObject({
         hoursPerYear: 884,
         assignmentRole: [{ group: { id: 'g-7b' }, assignmentRoleType: 'Mentor', startDate: '2027-01-11', endDate: '2027-06-11' }],
-        meta: { created: '2026-10-01T00:00:00.000Z', modified: '2026-10-02T00:00:00.000Z' },
+        meta: { created: '2026-08-01T00:00:00.000Z', modified: '2026-10-02T00:00:00.000Z' },
       });
       // Every post is read, the page is cut from the Duties.
       expect(tx.teacherEmployment.findMany.mock.calls.at(-1)![0]).not.toHaveProperty('take');
