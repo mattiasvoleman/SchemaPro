@@ -48,6 +48,8 @@ function selected(
       const nested = (value as { select?: Selection }).select;
       const related = row[field];
       if (!nested) return [field, related];
+      // A to-one relation that is not there reads null, as Prisma gives it.
+      if (related === null || related === undefined) return [field, null];
       return [
         field,
         Array.isArray(related)
@@ -539,6 +541,223 @@ describe('StudentGroupsService — teaching-group members', () => {
       await service.update(GROUP_ID, { name: '7B' }, testUser());
       expect(told()).toEqual([]);
       expect(deliver).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('StudentGroupsService — Halvklasser', () => {
+  let service: StudentGroupsService;
+  let tx: TxMock;
+  let prisma: PrismaMock;
+  const H1 = '7a000001-0000-4000-8000-000000000001';
+  const H2 = '7a000002-0000-4000-8000-000000000002';
+  const PREDECESSOR = '6a000000-0000-4000-8000-000000000000';
+  const pupil = (n: number) => `aaaaaaa${n}-0000-4000-8000-00000000000${n}`;
+
+  beforeEach(() => {
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    service = new StudentGroupsService(prisma as unknown as PrismaService);
+    Object.assign(tx, { $queryRaw: jest.fn(() => Promise.resolve([])) });
+  });
+
+  describe('split ("Dela klassen")', () => {
+    const theClass = (overrides: Record<string, unknown> = {}) => ({
+      name: '7A',
+      kind: 'CLASS',
+      academicYearId: YEAR_ID,
+      gradeLevel: 7,
+      _count: { halves: 0 },
+      ...overrides,
+    });
+
+    it('holds the class, then makes two halves named after it, in its year and årskurs', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue(theClass());
+      tx.studentGroup.createManyAndReturn.mockResolvedValue([{ id: H1 }, { id: H2 }]);
+
+      await expect(service.split(GROUP_ID, {}, testUser())).resolves.toEqual([{ id: H1 }, { id: H2 }]);
+
+      const [held] = (tx.$queryRaw as jest.Mock).mock.calls[0] as [string[]];
+      expect(held.join('?')).toContain('FOR NO KEY UPDATE');
+      expect((tx.$queryRaw as jest.Mock).mock.invocationCallOrder[0]!).toBeLessThan(
+        tx.studentGroup.findUnique.mock.invocationCallOrder[0]!,
+      );
+      expect(tx.studentGroup.createManyAndReturn).toHaveBeenCalledWith({
+        data: ['7A:1', '7A:2'].map((name) => ({
+          schoolId: SCHOOL_ID,
+          academicYearId: YEAR_ID,
+          name,
+          kind: 'TEACHING_GROUP',
+          gradeLevel: 7,
+          halfOfId: GROUP_ID,
+        })),
+      });
+    });
+
+    it('takes the school’s names, trimmed', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue(theClass());
+
+      await service.split(GROUP_ID, { names: [' Grupp A ', 'Grupp B'] }, testUser());
+
+      expect(tx.studentGroup.createManyAndReturn).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ name: 'Grupp A' }), expect.objectContaining({ name: 'Grupp B' })],
+      });
+    });
+
+    it.each([
+      ['a teaching group', { kind: 'TEACHING_GROUP' }, BadRequestException, 'NOT_A_CLASS'],
+      ['a class already split', { _count: { halves: 2 } }, ConflictException, 'CLASS_ALREADY_SPLIT'],
+    ])('refuses %s and writes nothing', async (_what, overrides, kind, code) => {
+      tx.studentGroup.findUnique.mockResolvedValue(theClass(overrides));
+
+      const error = await service.split(GROUP_ID, {}, testUser()).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(kind);
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code });
+      expect(tx.studentGroup.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('refuses two names alike, and a name the year has, naming it', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue(theClass());
+      await expect(service.split(GROUP_ID, { names: ['A', 'a'] }, testUser())).rejects.toThrow(BadRequestException);
+
+      tx.studentGroup.findMany.mockResolvedValue([{ name: '7a:1' }]);
+      const error = await service.split(GROUP_ID, {}, testUser()).catch((thrown: unknown) => thrown);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'GROUP_NAME_TAKEN',
+        message: expect.stringContaining('7a:1'),
+      });
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            academicYearId: YEAR_ID,
+            OR: [
+              { name: { equals: '7A:1', mode: 'insensitive' } },
+              { name: { equals: '7A:2', mode: 'insensitive' } },
+            ],
+          },
+        }),
+      );
+      expect(tx.studentGroup.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for a class it cannot see', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue(null);
+
+      await expect(service.split(GROUP_ID, {}, testUser())).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('placeHalves', () => {
+    const arrange = (pupils: string[], predecessorId: string | null = null) => {
+      tx.studentGroup.findUnique.mockResolvedValue({
+        id: GROUP_ID,
+        name: '7A',
+        predecessorId,
+        halves: [{ id: H1 }, { id: H2 }],
+      });
+      tx.user.findMany.mockResolvedValue(pupils.map((id) => ({ id })));
+    };
+
+    it('replaces the class’s placement in both halves in one transaction, and counts who is left', async () => {
+      arrange([pupil(1), pupil(2), pupil(3)]);
+
+      const result = await service.placeHalves(
+        GROUP_ID,
+        { halves: [{ groupId: H1, studentIds: [pupil(1)] }, { groupId: H2, studentIds: [pupil(2)] }] },
+        testUser(),
+      );
+
+      expect(result).toEqual({ placed: 2, unplaced: 1 });
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { role: 'STUDENT', isActive: true, studentGroupId: { in: [GROUP_ID] } },
+        select: { id: true },
+      });
+      expect(tx.studentGroupMember.deleteMany).toHaveBeenCalledWith({ where: { studentGroupId: { in: [H1, H2] } } });
+      expect(tx.studentGroupMember.createMany).toHaveBeenCalledWith({
+        data: [
+          { schoolId: SCHOOL_ID, studentGroupId: H1, studentId: pupil(1) },
+          { schoolId: SCHOOL_ID, studentGroupId: H2, studentId: pupil(2) },
+        ],
+      });
+      expect(tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!).toBeLessThan(
+        tx.studentGroupMember.createMany.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('reads the predecessor’s pupils too, for a rolled läsår not yet activated', async () => {
+      arrange([pupil(1)], PREDECESSOR);
+
+      await service.placeHalves(GROUP_ID, { halves: [{ groupId: H1, studentIds: [pupil(1)] }, { groupId: H2, studentIds: [] }] }, testUser());
+
+      expect(tx.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ studentGroupId: { in: [GROUP_ID, PREDECESSOR] } }) }),
+      );
+    });
+
+    it.each([
+      ['a half left out', [{ groupId: H1, studentIds: [] }], 'NOT_THE_CLASS_HALVES'],
+      ['a group that is not the class’s half', [{ groupId: H1, studentIds: [] }, { groupId: GROUP_ID, studentIds: [] }], 'NOT_THE_CLASS_HALVES'],
+      ['one half twice', [{ groupId: H1, studentIds: [] }, { groupId: H1, studentIds: [] }], 'NOT_THE_CLASS_HALVES'],
+      ['a pupil in both lists', [{ groupId: H1, studentIds: ['P1'] }, { groupId: H2, studentIds: ['P1'] }], 'PUPIL_IN_TWO_HALVES'],
+      ['a pupil of another class', [{ groupId: H1, studentIds: ['STRANGER'] }, { groupId: H2, studentIds: [] }], 'PUPIL_NOT_IN_CLASS'],
+    ])('refuses %s and writes nothing', async (_what, halves, code) => {
+      arrange([pupil(1)]);
+      const named = halves.map((half) => ({
+        ...half,
+        studentIds: half.studentIds.map((id) => (id === 'P1' ? pupil(1) : id === 'STRANGER' ? pupil(9) : id)),
+      }));
+
+      const error = await service.placeHalves(GROUP_ID, { halves: named }, testUser()).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code });
+      expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
+      expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a class with no halves', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue({ id: GROUP_ID, name: '7A', predecessorId: null, halves: [] });
+
+      await expect(service.placeHalves(GROUP_ID, { halves: [{ groupId: H1, studentIds: [] }] }, testUser())).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('turns the one-half index met by a concurrent placement into a 409', async () => {
+      arrange([pupil(1)]);
+      tx.studentGroupMember.createMany.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { target: 'StudentGroupMembers_one_half_per_class' },
+        }),
+      );
+
+      const error = await service
+        .placeHalves(GROUP_ID, { halves: [{ groupId: H1, studentIds: [pupil(1)] }, { groupId: H2, studentIds: [] }] }, testUser())
+        .catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'HALF_MEMBER_IN_OTHER_HALF' });
+    });
+  });
+
+  describe('setMembers on a half', () => {
+    it('takes the class’s pupils only, saying how many are not', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue({ id: H1, halfOf: { id: GROUP_ID, name: '7A', predecessorId: null } });
+      tx.user.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+        'studentGroupId' in where ? [{ id: pupil(1) }] : [{ id: pupil(1) }, { id: pupil(2) }],
+      );
+
+      const error = await service.setMembers(H1, { studentIds: [pupil(1), pupil(2)] }, testUser()).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        code: 'PUPIL_NOT_IN_CLASS',
+        message: expect.stringContaining('går inte i 7A'),
+      });
+      expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

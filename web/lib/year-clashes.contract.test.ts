@@ -27,6 +27,7 @@ interface FixtureCase {
     studentGroupOf: Array<[string, string | null]>;
     memberships: Array<{ studentId: string; studentGroupId: string }>;
     pupilBuffers: Array<{ studentGroupId: string; subjectId: string; minutesBefore: number; minutesAfter: number }>;
+    halves?: Array<{ id: string; halfOfId: string }>;
   };
   clashes: Record<string, ConflictHit[]>;
 }
@@ -46,7 +47,7 @@ describe("the board paints what the publish gate counts", () => {
         ...row,
       })) as unknown as AvailabilityConstraint[],
       studentGroupOf,
-      buildGroupConflictMap(studentGroupOf, c.input.memberships),
+      buildGroupConflictMap(studentGroupOf, c.input.memberships, c.input.halves),
       undefined,
       undefined,
       undefined,

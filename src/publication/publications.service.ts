@@ -40,6 +40,7 @@ import {
   clashFinding,
   lessonFindings,
   blockSplitFinding,
+  emptyHalfFinding,
   lunchFinding,
   readGateLessons,
   unstaffedFinding,
@@ -800,6 +801,7 @@ export class PublicationsService {
       await unstaffedFinding(tx, context.year.id),
       await lunchFinding(tx, context.schoolId),
       await blockSplitFinding(tx, context.year.id, context.lessons),
+      await emptyHalfFinding(tx, context.year.id, context.lessons),
     ];
     if (context.mode === 'DIRECT' && context.validFrom < context.today) {
       findings.push({

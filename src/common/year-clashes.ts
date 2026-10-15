@@ -19,6 +19,8 @@
  * PURE. Times are 'HH:MM' (or 'HH:MM:SS'), dates 'YYYY-MM-DD'.
  */
 
+import { halfPairs, type GroupHalf } from './class-halves';
+
 export type YearClashKind = 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
 
 export interface YearClashLesson {
@@ -59,6 +61,11 @@ export interface YearClashInput {
   memberships: Array<{ studentId: string; studentGroupId: string }>;
   /** Requirement rows with a pupil buffer (ombyte, dusch). */
   pupilBuffers: Array<{ studentGroupId: string; subjectId: string; minutesBefore: number; minutesAfter: number }>;
+  /**
+   * The halves among the groups, with their class (Halvklasser): a half
+   * answers for the pupils it may hold (class-halves.ts). Absent: no halves.
+   */
+  halves?: GroupHalf[];
 }
 
 export interface YearClashHit {
@@ -115,15 +122,33 @@ function groupConflictMap(input: YearClashInput): Map<string, Set<string>> {
   for (const [studentId, home] of input.studentGroupOf) add(studentId, home);
   for (const row of input.memberships) add(row.studentId, row.studentGroupId);
   const relation = new Map<string, Set<string>>();
+  const relate = (a: string, b: string) => {
+    let set = relation.get(a);
+    if (!set) relation.set(a, (set = new Set()));
+    set.add(b);
+  };
   for (const groups of groupsByStudent.values()) {
     if (groups.size < 2) continue;
     for (const a of groups) {
       for (const b of groups) {
-        if (a === b) continue;
-        let set = relation.get(a);
-        if (!set) relation.set(a, (set = new Set()));
-        set.add(b);
+        if (a !== b) relate(a, b);
       }
+    }
+  }
+  // The pairs a class's halves add, the rule the generator and the hand edit
+  // keep (class-halves.ts): never two halves of one class.
+  if (input.halves && input.halves.length > 0) {
+    const membersOf = new Map<string, Set<string>>();
+    for (const [studentId, groups] of groupsByStudent) {
+      for (const group of groups) {
+        const set = membersOf.get(group);
+        if (set) set.add(studentId);
+        else membersOf.set(group, new Set([studentId]));
+      }
+    }
+    for (const [a, b] of halfPairs(input.halves, membersOf, groupsByStudent)) {
+      relate(a, b);
+      relate(b, a);
     }
   }
   return relation;
