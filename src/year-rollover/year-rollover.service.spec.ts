@@ -853,7 +853,7 @@ describe('YearRolloverService — rollover execute', () => {
   describe('a språkval block over groups without an årskurs', () => {
     // "Tyska A": Ma7 grupp 1's row, recast as a språkval group the school
     // gave no årskurs, in "Språkval åk 7" — what Skapa timplansposter makes.
-    const withLanguageBlock = (pupils: string[]) => {
+    const withLanguageBlock = (pupils: string[], blockName = 'Språkval åk 7') => {
       const rows = defaultRolloverRows();
       const group = rows['studentGroup']!.find((row) => row['id'] === IDS.gMa7)!;
       Object.assign(group, { name: 'Tyska A', gradeLevel: null });
@@ -863,7 +863,7 @@ describe('YearRolloverService — rollover execute', () => {
         studentId,
         student: { studentGroupId: homeOf(studentId) },
       }));
-      rows['teachingBlock'] = [{ id: BLOCK_ID, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 7' }];
+      rows['teachingBlock'] = [{ id: BLOCK_ID, schoolId: IDS.school, academicYearId: IDS.yearA, name: blockName }];
       for (const requirement of rows['teachingRequirement']!) {
         if (requirement['studentGroupId'] === IDS.gMa7) requirement['blockId'] = BLOCK_ID;
       }
@@ -940,6 +940,18 @@ describe('YearRolloverService — rollover execute', () => {
       expect(blocksIn(world, result.academicYear.id).map((block) => block['name'])).toEqual([
         'Språkval åk 7 (2026/27)',
       ]);
+    });
+
+    // Only a name "Skapa timplansposter" upserts by can take a new årskurs'
+    // språkval in: any other name keeps what the school called it.
+    it.each([
+      ['an elevens val over several årskurser', 'Elevens val åk 7–9'],
+      ['a block that took a year\'s name at the last rollover', 'Språkval åk 7 (2025/26)'],
+    ])('keeps the name of %s when its pupils\' årskurs is unknown', async (_what, name) => {
+      const { world, service } = setup(withLanguageBlock([IDS.p7a1, IDS.p8a1], name));
+      const { result } = await previewAndExecute(world, service, OPTIONS);
+
+      expect(blocksIn(world, result.academicYear.id).map((block) => block['name'])).toEqual([name]);
     });
   });
 

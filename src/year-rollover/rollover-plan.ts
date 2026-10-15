@@ -22,6 +22,7 @@ import {
   type VolumeFinding,
 } from '../common/year-rollover';
 import { isMixed } from '../common/lesson-lengths';
+import { isLanguageBlockName } from '../timplan/generate-requirements';
 import { qualificationFinding } from '../staffing/staffing-checks';
 import type { GradeSpan } from '../staffing/teacher-load';
 import { skippedModels } from './rollover-registry';
@@ -919,8 +920,11 @@ export function hashWrites(writes: RolloverWrites): string {
  * several — would keep "Språkval åk 7" over last year's cohort, and next
  * year's "Skapa timplansposter" for åk 7 upserts its block by that name and
  * would put the new språkval in it, with nothing left to say the groups are
- * another årskurs'. So such a name, when it has a digit in it, takes the
- * source year's name: "Språkval åk 7 (2026/27)".
+ * another årskurs'. So such a name takes the source year's name: "Språkval
+ * åk 7 (2026/27)". Only a name "Skapa timplansposter" could upsert by
+ * (isLanguageBlockName) is at risk, so only that one takes it: "Elevens val
+ * åk 7–9" over pupils of several årskurser keeps its name, and a name that
+ * already took a year's is not given another at the next rollover.
  *
  * The rows carried to the intake twins make a second copy under the source's
  * own name, as the twins keep theirs. A copy holding no carried row is not
@@ -951,7 +955,7 @@ function planBlocks(
       const unknown = moves.some((move) => move.from === null || move.to === null);
       const name = promoted
         ? promoteName(block.name, from).name
-        : unknown && /\d/.test(block.name)
+        : unknown && isLanguageBlockName(block.name)
           ? withSuffix(block.name, ` (${source.year.name})`)
           : block.name;
       sides.push({ key: block.id, sourceBlockId: block.id, name, intake: false });
