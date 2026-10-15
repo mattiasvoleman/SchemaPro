@@ -352,11 +352,19 @@ export const MASTER_LESSONS: MasterLesson[] = [
   master(11, SUBJECTS.so.id, g8A.id, eva.id, ROOMS.r201.id, 2, "08:10:00", "09:10:00"),
   master(12, SUBJECTS.ma.id, g9A.id, bo.id, ROOMS.r201.id, 4, "09:25:00", "10:25:00", { coTeacherId: cecilia.id }),
   master(13, SUBJECTS.bl.id, g8A.id, null, ROOMS.art.id, 5, "10:40:00", "12:00:00", { isParked: true }),
+  // Språkval åk 7's hour, both groups at once (Block i schemat): one card on
+  // the grundschema. Laid after the last publication, so the draft has them
+  // and no dated lesson does (UNPUBLISHED).
+  master(14, SUBJECTS.m2.id, GROUPS.m2.id, cecilia.id, ROOMS.r102.id, 4, "10:40:00", "11:40:00"),
+  master(15, SUBJECTS.m2.id, GROUPS.m2fr.id, eva.id, ROOMS.r201.id, 4, "10:40:00", "11:40:00"),
 ];
 
-/** This week's dated lessons, published from the weekly schedule (the parked one never is). */
+/** Grundschema lessons the draft adds and no publication has dated yet (misc-publication.ts). */
+export const UNPUBLISHED = new Set([uid(KIND.masterLesson, 14), uid(KIND.masterLesson, 15)]);
+
+/** This week's dated lessons, published from the weekly schedule (the parked and the unpublished never are). */
 export const CALENDAR_LESSONS: Array<CalendarLessonRow & { masterLessonId: string; academicYearId: string }> =
-  MASTER_LESSONS.filter((lesson) => !lesson.isParked).map((lesson, index) => {
+  MASTER_LESSONS.filter((lesson) => !lesson.isParked && !UNPUBLISHED.has(lesson.id)).map((lesson, index) => {
     const date = thisWeek(lesson.dayOfWeek);
     return {
       id: uid(KIND.calendarLesson, index + 1),

@@ -122,3 +122,22 @@ test("the parallel blocks panel on Timplansposter names its block and what each 
   await expectAriaBaseline(panel, "admin-block");
   expect((await scanBothSchemes(page, "blocks open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
 });
+
+test("a parallel block on the grundschema is one card, and its dialog names each lesson and the lock, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/timetable", persona: "admin" }, baseURL!);
+  // Språkval åk 7's hour on Thursday: both groups' lessons on one card, which
+  // its module draws once the timplan names a block (Block i schemat).
+  const card = page.getByRole("button", { name: /Språkval åk 7/ });
+  await expect(card).toHaveCount(1);
+  await card.click();
+  const dialog = page.getByRole("dialog", { name: "Språkval åk 7" });
+  await expect(dialog.getByRole("button", { name: "Lås blocket" })).toBeVisible();
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  await expectAriaBaseline(dialog, "admin-blockkort");
+  expect((await scanBothSchemes(page, "block card open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+});
