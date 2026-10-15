@@ -32,7 +32,7 @@ import { ApiError } from "@/lib/api";
 import { plusDays } from "@/lib/print-sheet";
 import { defaultDisplay, usePrintSet, type PrintSet } from "@/lib/print-queries";
 import { usePublicationSettings } from "@/lib/publication-queries";
-import type { PublicKind } from "@/lib/public-timetable";
+import { isCalendarDay, type PublicKind } from "@/lib/public-timetable";
 import type { TeacherDisplay } from "@/lib/publication-types";
 import { SHEET_PAGE_STYLE, WeekSheet, type Translate } from "@/components/timetable-sheet/week-sheet";
 import { Page } from "@/components/layout/page";
@@ -51,7 +51,6 @@ const KINDS: PublicKind[] = ["GROUP", "TEACHER", "ROOM"];
 
 const pad = (value: number) => String(value).padStart(2, "0");
 const todayOf = (now = new Date()) => `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 
 export default function PrintTimetablesPage() {
   const t = useTranslations("printTimetables");
@@ -62,6 +61,10 @@ export default function PrintTimetablesPage() {
 
   const [kind, setKind] = useState<PublicKind>("GROUP");
   const [date, setDate] = useState(todayOf);
+  // What the field holds, which is the week asked for only when it is a day
+  // the gateway takes: typing a year goes through 0002, 0020 and 0202 first,
+  // and each would be a refused read and an error where the sheets were.
+  const [typed, setTyped] = useState(date);
   const [chosenDisplay, setChosenDisplay] = useState<TeacherDisplay | null>(null);
   const [chosenMeals, setChosenMeals] = useState<boolean | null>(null);
   const [left, setLeft] = useState<Set<string>>(() => new Set());
@@ -81,7 +84,11 @@ export default function PrintTimetablesPage() {
   const chosen = useMemo(() => (data ? data.sheets.filter((sheet) => !left.has(sheet.id)) : []), [data, left]);
   const outOfYears = set.error instanceof ApiError && set.error.code === "PRINT_WEEK_OUTSIDE_YEARS";
 
-  const step = (weeks: number) => setDate((current) => plusDays(isDay(current) ? current : todayOf(), 7 * weeks));
+  const step = (weeks: number) => {
+    const next = plusDays(date, 7 * weeks);
+    setDate(next);
+    setTyped(next);
+  };
   const toggle = (id: string) =>
     setLeft((current) => {
       const next = new Set(current);
@@ -130,9 +137,10 @@ export default function PrintTimetablesPage() {
                 <FormField id="print-date" label={t("dateLabel")} hint={t("dateHint")}>
                   <Input
                     type="date"
-                    value={date}
+                    value={typed}
                     onChange={(event) => {
-                      if (isDay(event.target.value)) setDate(event.target.value);
+                      setTyped(event.target.value);
+                      if (isCalendarDay(event.target.value)) setDate(event.target.value);
                     }}
                     className="w-44"
                   />

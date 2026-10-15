@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
@@ -123,6 +123,22 @@ describe("/admin/publishing/print", () => {
     await user.click(screen.getByRole("button", { name: "Nästa vecka" }));
     await user.click(screen.getByRole("checkbox", { name: "Visa klassens lunch" }));
     await waitFor(() => expect(askedFor().at(-1)).toEqual({ kind: "GROUP", date: "2026-10-21", teachers: "NONE", meals: "false" }));
+  });
+
+  it("asks for a typed week only once its year is whole, so a year being typed reads nothing", async () => {
+    renderPage();
+    await screen.findByRole("heading", { level: 2, name: "7A" });
+    const field = screen.getByLabelText(/^Vecka/);
+    // A browser's date field writes each digit of the year as it is typed.
+    for (const value of ["0002-10-15", "0020-10-15", "0202-10-15", "2027-10-15"]) fireEvent.change(field, { target: { value } });
+    expect(field).toHaveValue("2027-10-15");
+    await waitFor(() => expect(askedFor().at(-1)).toEqual({ kind: "GROUP", date: "2027-10-15", teachers: "NONE", meals: "true" }));
+    expect(askedFor().map((query) => query.date)).toEqual(["2026-10-14", "2027-10-15"]);
+    // A day that is no day is not asked for either, and the week steps from the last one asked.
+    fireEvent.change(field, { target: { value: "2027-02-30" } });
+    await userEvent.setup({ advanceTimers: () => undefined }).click(screen.getByRole("button", { name: "Nästa vecka" }));
+    await waitFor(() => expect(askedFor().at(-1)?.date).toBe("2027-10-22"));
+    expect(field).toHaveValue("2027-10-22");
   });
 
   it("prints the sheets chosen, and leaves the others off paper", async () => {

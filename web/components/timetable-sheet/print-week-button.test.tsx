@@ -72,7 +72,7 @@ describe("PrintWeekButton", () => {
     expect(root).toHaveTextContent("Giltig fr.o.m. 17 aug. 2026 t.o.m. 11 juni 2027");
     expect(root).toHaveTextContent("7A · Vikarie");
     expect(document.documentElement).toHaveClass("printing-sheet");
-    expect(screen.getByRole("button", { name: "Förbereder utskriften …" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Förbereder utskriften …" })).toHaveAttribute("aria-disabled", "true");
 
     act(() => {
       window.dispatchEvent(new Event("afterprint"));
@@ -145,8 +145,36 @@ describe("PrintWeekButton", () => {
     vi.mocked(console.error).mockRestore();
   });
 
-  it("is not offered while the week is not read", () => {
-    renderButton(() => SHEET, true);
-    expect(screen.getByRole("button", { name: "Skriv ut veckan" })).toBeDisabled();
+  it("is not offered while the week is not read: it says so, and a press does nothing", async () => {
+    const user = userEvent.setup();
+    const build = vi.fn(() => SHEET);
+    renderButton(build, true);
+    const button = screen.getByRole("button", { name: "Skriv ut veckan" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    await user.click(button);
+    expect(build).not.toHaveBeenCalled();
+    expect(validity).not.toHaveBeenCalled();
+  });
+
+  it("keeps the keyboard's focus on the button while the print is prepared, and after it", async () => {
+    let answer!: (periods: unknown) => void;
+    validity.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const user = userEvent.setup();
+    renderButton();
+    await user.tab();
+    await user.keyboard("{Enter}");
+    // Preparing: the button keeps the focus and says so, and a second press does nothing.
+    // Never natively disabled, which a browser answers by moving the focus to <body> (jsdom does not).
+    expect(screen.getByRole("button", { name: "Förbereder utskriften …" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Förbereder utskriften …" })).toBeEnabled();
+    await user.keyboard("{Enter}");
+    await act(async () => answer([{ from: "2026-08-17", to: "2027-06-11" }]));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    expect(validity).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.dispatchEvent(new Event("afterprint"));
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Skriv ut veckan" })).toHaveFocus());
+    expect(print).toHaveBeenCalledTimes(1);
   });
 });

@@ -195,16 +195,16 @@ describe("WeekSchedule", () => {
       rerender(
         <WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[makeLesson()]} isLoading={false} printSheet={sheet} />,
       );
-      expect(screen.getByRole("button", { name: "print" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "print" })).toHaveAttribute("aria-disabled", "false");
     });
 
     it("is not offered for a week that is loading or could not be read", () => {
       const { rerender } = render(
         <WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[]} isLoading printSheet={sheet} />,
       );
-      expect(screen.getByRole("button", { name: "print" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "print" })).toHaveAttribute("aria-disabled", "true");
       rerender(<WeekSchedule weekStart={WEEK_START} onWeekChange={vi.fn()} lessons={[]} isLoading={false} isError printSheet={sheet} />);
-      expect(screen.getByRole("button", { name: "print" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "print" })).toHaveAttribute("aria-disabled", "true");
     });
   });
 });
