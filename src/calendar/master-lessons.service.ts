@@ -157,6 +157,8 @@ export interface LockBlockResult {
   blockId: string;
   isLocked: boolean;
   lessonIds: string[];
+  /** The block's lessons on the tray, which no lock reaches: the generation refuses a block while they are there. */
+  parked: number;
 }
 
 /** The problem `code` of a card whose lessons no longer stand together. */
@@ -500,17 +502,23 @@ export class MasterLessonsService {
           : [];
 
       /*
-       * A PARALLEL BLOCK'S LESSON MOVED BY HAND (block-lessons.ts). Onto a
-       * slot where other members of its block stand, it joins their card and
-       * takes the card's owner, and its lock when this PATCH names none — an
-       * undo of a split, or "flytta tillbaka med blocket", puts the block back
-       * as the generation will place it. Anywhere else it splits the block:
-       * the lesson is the school's from now on, so the next generation refuses
-       * the block as partly locked instead of undoing the move unasked, and the
-       * save says so. Asked only of a move — another slot or other weeks, or a
-       * lesson put back from the tray — one statement; a lesson set aside on
-       * the tray occupies nothing and is no move of a block's.
+       * A PARALLEL BLOCK'S LESSON MOVED BY HAND (block-lessons.ts, blockMoveOf).
+       * Out of its card — other members of its block stood beside it — it
+       * splits the block: the lesson is the school's from now on, so the next
+       * generation refuses the block as partly locked instead of undoing the
+       * move unasked, and the save says so. From no card onto a slot where
+       * members stand, it joins their card and takes the card's owner, and its
+       * lock unless this PATCH changes the lesson's — an undo of a split, or
+       * "flytta tillbaka med blocket", puts the block back as the generation
+       * will place it. A move from no card to no card is any move.
+       *
+       * Asked of a move that leaves the lesson placed — another slot or other
+       * weeks, or put back from the tray — and of weeks written as they stood,
+       * which the lesson dialog does on every save and an undo on every
+       * restore: one statement. A lesson set aside, or edited while it stays
+       * on the tray, occupies nothing and is no move of a block's.
        */
+      const placedAfter = dto.isParked === false || (!lesson.isParked && dto.isParked !== true);
       const landing: BlockSlot = {
         dayOfWeek: candidate.dayOfWeek,
         startTime: clockOf(candidate.startMinutes),
@@ -519,20 +527,27 @@ export class MasterLessonsService {
         startDate: toDateStringOrNull(candidate.startDate),
         endDate: toDateStringOrNull(candidate.endDate),
       };
-      const movesTheLesson =
-        !parking &&
-        ((lesson.isParked && dto.isParked === false) ||
-          !sameSlot(landing, {
-            dayOfWeek: lesson.dayOfWeek,
-            startTime: toHHMM(lesson.startTime),
-            endTime: toHHMM(lesson.endTime),
-            recurrence: lesson.recurrence,
-            startDate: toDateStringOrNull(lesson.startDate),
-            endDate: toDateStringOrNull(lesson.endDate),
-          }));
-      const block = movesTheLesson ? await readLessonBlock(tx, lesson) : null;
-      const blockMove = block ? blockMoveOf(block, landing) : null;
-      if (block && blockMove && !blockMove.joins) {
+      const origin: BlockSlot = {
+        dayOfWeek: lesson.dayOfWeek,
+        startTime: toHHMM(lesson.startTime),
+        endTime: toHHMM(lesson.endTime),
+        recurrence: lesson.recurrence,
+        startDate: toDateStringOrNull(lesson.startDate),
+        endDate: toDateStringOrNull(lesson.endDate),
+      };
+      const movesTheLesson = placedAfter && (lesson.isParked || !sameSlot(landing, origin));
+      const writesWindow =
+        dto.recurrence !== undefined || dto.startDate !== undefined || dto.endDate !== undefined;
+      const block =
+        movesTheLesson || (writesWindow && placedAfter) ? await readLessonBlock(tx, lesson) : null;
+      const inBlock = block !== null && block.siblings.length > 0;
+      const blockMove =
+        inBlock && movesTheLesson ? blockMoveOf(block, lesson.isParked ? null : origin, landing) : null;
+      // The weeks written as they stood, on a block's lesson that does not
+      // move: the dialog's every save. Handing it to the school here would
+      // leave its whole block refused as partly locked by a room change.
+      const restatesWindow = inBlock && !movesTheLesson;
+      if (block && blockMove?.kind === 'split') {
         warnings.push({ code: BLOCK_SPLIT, params: { block: block.name } });
       }
 
@@ -578,23 +593,20 @@ export class MasterLessonsService {
            * make each nudge a second, invisible lock and leave the padlock
            * meaning nothing.
            */
-          ...(dto.recurrence !== undefined ||
-          dto.startDate !== undefined ||
-          dto.endDate !== undefined
-            ? { isGenerated: false }
-            : {}),
+          ...(writesWindow && !restatesWindow ? { isGenerated: false } : {}),
           // The block's say comes last: joining a card makes the lesson the
           // card's, whatever the window above said (the window is the card's
           // own, or the slot would not be the card's), and a split is the
           // school's.
-          ...(blockMove?.joins === true
+          ...(blockMove?.kind === 'join'
             ? {
                 isGenerated: blockMove.isGenerated,
-                ...(dto.isLocked === undefined && blockMove.isLocked !== null
+                ...((dto.isLocked === undefined || dto.isLocked === lesson.isLocked) &&
+                blockMove.isLocked !== null
                   ? { isLocked: blockMove.isLocked }
                   : {}),
               }
-            : blockMove?.joins === false
+            : blockMove?.kind === 'split'
               ? { isGenerated: false }
               : {}),
           ...(dto.extraGroupIds !== undefined
@@ -710,11 +722,13 @@ export class MasterLessonsService {
    * Moves a block card — the lessons of a parallel block's members that stand
    * in one slot — to another slot, as ONE move.
    *
-   * THE LESSONS MUST BE A CARD. One block (by each lesson's post, the key
-   * block-lessons.ts reads it by), one lesson per member, all in one slot and
-   * none on the tray. A page that no longer shows what it was asked about
-   * gets a 409 BLOCK_CARD_STALE rather than a move of lessons it did not see;
-   * lessons that were never a card are a 400 NOT_A_BLOCK_CARD.
+   * THE LESSONS MUST BE THE WHOLE CARD. One läsår and one block (by each
+   * lesson's post, the key block-lessons.ts reads it by), one lesson per
+   * member — else a 400 NOT_A_BLOCK_CARD — and every lesson of the block in
+   * that slot, all placed, read under a row lock: else a 409
+   * BLOCK_CARD_STALE, because a page that no longer shows what it was asked
+   * about would move lessons it did not see, or leave one behind and split
+   * the block unasked.
    *
    * JUDGED AS ONE MOVE by the PATCH's own clash check (findConflicts): each
    * member against the rest of the new day with the card's lessons left out
@@ -725,7 +739,8 @@ export class MasterLessonsService {
    * THE OWNER STAYS: the engine places a block's lessons together, so a card
    * it placed is still its own after a move it could have made, and the next
    * generation places the block again (block-lessons.ts). Only day and clock
-   * are written; weeks, rooms, teachers and locks are each member's own.
+   * are written; weeks, rooms, teachers and locks are each member's own. A
+   * lesson of the block the card lands beside joins it and takes its owner.
    *
    * The UPDATE is held to the slot the card was read in, so a member moved by
    * someone else between the read and the write refuses the card as stale.
@@ -741,10 +756,18 @@ export class MasterLessonsService {
     }
     return this.prisma.withRls(user, async (tx) => {
       const mode = await enterGrundschemaWrite(tx, requireSchoolId(user));
+      // The card's rows held to COMMIT before they are read, so the room,
+      // teacher and weeks propagated below are the ones written, not ones a
+      // concurrent PATCH has since replaced. NO KEY UPDATE: calendar lessons
+      // reference these rows, and FOR UPDATE would wait out every writer of
+      // one (prisma.service.ts, Isolation).
+      await tx.$queryRaw`
+        SELECT 1 FROM "MasterLessons" WHERE "id" = ANY(${dto.lessonIds}::uuid[]) FOR NO KEY UPDATE`;
       const lessons = await tx.masterLesson.findMany({
         where: { id: { in: dto.lessonIds } },
         select: {
           ...LESSON_SELECT,
+          isGenerated: true,
           subject: { select: { name: true } },
           studentGroup: { select: { name: true } },
           school: {
@@ -764,10 +787,16 @@ export class MasterLessonsService {
         },
         orderBy: { id: 'asc' },
       });
-      if (lessons.length !== dto.lessonIds.length) {
-        throw new NotFoundException('Master lesson not found.');
-      }
+      // A lesson gone since the page read it is a stale card, not a 404.
+      if (lessons.length !== dto.lessonIds.length) throw blockCardStale();
       const leader = lessons[0]!;
+      const notACard = () =>
+        new BadRequestException({
+          message:
+            'lessonIds: lektionerna är inte ett parallellt blocks lektioner i samma tid, en per post i blocket.',
+          code: NOT_A_BLOCK_CARD,
+        });
+      if (lessons.some((lesson) => lesson.academicYearId !== leader.academicYearId)) throw notACard();
       const slotOf = (lesson: (typeof lessons)[number]): BlockSlot => ({
         dayOfWeek: lesson.dayOfWeek,
         startTime: toHHMM(lesson.startTime),
@@ -776,16 +805,6 @@ export class MasterLessonsService {
         startDate: toDateStringOrNull(lesson.startDate),
         endDate: toDateStringOrNull(lesson.endDate),
       });
-      if (
-        lessons.some(
-          (lesson) =>
-            lesson.isParked ||
-            lesson.academicYearId !== leader.academicYearId ||
-            !sameSlot(slotOf(lesson), slotOf(leader)),
-        )
-      ) {
-        throw blockCardStale();
-      }
       const posts = await tx.teachingRequirement.findMany({
         where: {
           academicYearId: leader.academicYearId,
@@ -797,11 +816,20 @@ export class MasterLessonsService {
       const keys = lessons.map((lesson) => `${lesson.studentGroupId}:${lesson.subjectId}`);
       const blockId = blockOf.get(keys[0]!) ?? null;
       if (blockId === null || new Set(keys).size !== keys.length || keys.some((key) => blockOf.get(key) !== blockId)) {
-        throw new BadRequestException({
-          message:
-            'lessonIds: lektionerna är inte ett parallellt blocks lektioner i samma tid, en per post i blocket.',
-          code: NOT_A_BLOCK_CARD,
-        });
+        throw notACard();
+      }
+      // One block's lessons that no longer stand together, or a card that has
+      // more lessons than the page named: stale. A card moved without one of
+      // its lessons would split the block unasked.
+      const origin = slotOf(leader);
+      const block = await readLessonBlock(tx, leader);
+      const named = new Set(dto.lessonIds);
+      const standing = (block?.siblings ?? []).filter((sibling) => sameSlot(sibling, origin));
+      if (
+        lessons.some((lesson) => lesson.isParked || !sameSlot(slotOf(lesson), origin)) ||
+        standing.some((sibling) => !named.has(sibling.id))
+      ) {
+        throw blockCardStale();
       }
 
       const rosters = await rostersOfYear(tx, user, leader.academicYearId, {
@@ -847,11 +875,34 @@ export class MasterLessonsService {
           dayOfWeek: leader.dayOfWeek,
           startTime: leader.startTime,
           endTime: leader.endTime,
+          recurrence: leader.recurrence,
+          startDate: leader.startDate,
+          endDate: leader.endDate,
           isParked: false,
         },
         data: { dayOfWeek: dto.dayOfWeek, startTime, endTime },
       });
       if (count !== lessons.length) throw blockCardStale();
+      // Lessons of the block the card lands beside — a member moved there
+      // alone before — join it, as a single lesson moved onto a card does: the
+      // card's owner, when its lessons agree on one. Without it the block
+      // stands whole on the board while the next generation refuses it as
+      // partly locked for an owner nothing on screen shows.
+      const landing: BlockSlot = { ...origin, dayOfWeek: dto.dayOfWeek, startTime: dto.startTime, endTime: dto.endTime };
+      const owner = lessons.every((lesson) => lesson.isGenerated)
+        ? true
+        : lessons.every((lesson) => !lesson.isGenerated)
+          ? false
+          : null;
+      const joining = (block?.siblings ?? []).filter(
+        (sibling) => !named.has(sibling.id) && sameSlot(sibling, landing) && owner !== null && sibling.isGenerated !== owner,
+      );
+      if (joining.length > 0) {
+        await tx.masterLesson.updateMany({
+          where: { id: { in: joining.map((sibling) => sibling.id) } },
+          data: { isGenerated: owner! },
+        });
+      }
 
       let propagatedLessons = 0;
       let removedCalendarLessons = 0;
@@ -919,7 +970,9 @@ export class MasterLessonsService {
    * WHOLE BLOCKS, because the generation refuses a block with some lessons
    * locked while the rest are still to place (BLOCK_PARTLY_LOCKED): a lock on
    * one card of a block would only move the refusal to the next generation.
-   * Parked lessons are the block's too and are locked with it.
+   * The placed lessons only: a lesson on the tray is no placement to keep,
+   * and while one is there its post still has a lesson to place, which the
+   * answer's `parked` says.
    *
    * A lock changes no slot, so nothing is held against the week and the
    * published calendar has nothing to follow; the change log has a row per
@@ -938,7 +991,7 @@ export class MasterLessonsService {
         },
       });
       if (!block) throw new NotFoundException('Blocket finns inte.');
-      const lessons =
+      const all =
         block.requirements.length === 0
           ? []
           : await tx.masterLesson.findMany({
@@ -951,6 +1004,12 @@ export class MasterLessonsService {
               },
               select: LESSON_SELECT,
             });
+      // The placed lessons only. A lesson on the tray is neither sent to the
+      // engine nor counted against its post, so a lock on it would keep it on
+      // the tray through the next generation beside the lesson the engine
+      // places for it; it is counted instead, and the page says so.
+      const lessons = all.filter((lesson) => !lesson.isParked);
+      const parked = all.length - lessons.length;
       if (dto.lessonIds) {
         const ofBlock = new Set(lessons.map((lesson) => lesson.id));
         if (dto.lessonIds.some((id) => !ofBlock.has(id))) {
@@ -980,7 +1039,7 @@ export class MasterLessonsService {
         this.logger.log(`Block ${dto.isLocked ? 'locked' : 'unlocked'} [block=${block.id}, lessons=${targets.length}]`);
         this.announce(block.schoolId, mode);
       }
-      return { blockId: block.id, isLocked: dto.isLocked, lessonIds: targets.map((lesson) => lesson.id) };
+      return { blockId: block.id, isLocked: dto.isLocked, lessonIds: targets.map((lesson) => lesson.id), parked };
     });
   }
 
