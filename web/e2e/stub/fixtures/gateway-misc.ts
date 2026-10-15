@@ -28,6 +28,7 @@ import {
   RETENTION_OVERVIEW,
   retentionPreview,
   ROOM_PREFERENCES,
+  SCHOOL_UNITS,
   roomProposal,
   yearRosters,
 } from "./misc-school";
@@ -57,6 +58,8 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/optimization/jobs/:id", ({ params }) => byId(OPTIMIZATION_JOBS, params.id) ?? notFound("Optimization job not found.")),
   route("GET", "/api/v1/room-types", () => ROOM_TYPES),
   route("GET", "/api/v1/room-preferences", () => ROOM_PREFERENCES),
+  // Klasser's skolenheter card.
+  route("GET", "/api/v1/school-units", () => SCHOOL_UNITS),
   // A solve the timetable's Salar dialog asks for; it writes nothing.
   route("POST", "/api/v1/optimization/rooms/proposal", ({ body }) => {
     const { academicYearId } = body as { academicYearId: string };

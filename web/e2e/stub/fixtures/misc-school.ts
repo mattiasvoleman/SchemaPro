@@ -8,6 +8,7 @@ import type {
   RetentionOverview,
   RetentionPreview,
 } from "../../../lib/retention-types";
+import type { SchoolUnit } from "../../../lib/school-units";
 import type { AcademicYear, LunchSettings, YearRosters } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
 import { addDays, stockholmInstant, TODAY } from "./calendar";
@@ -15,8 +16,9 @@ import { ADMIN, MASTER_LESSONS, NEXT_CLASSES, ROOM_LIST, ROOM_TYPES, ROOMS, SCHO
 
 /**
  * The school's own settings and the admin tools that read them: lunch rules,
- * solver runs, gallring, room rules, and the year tools' planners. Ids are
- * KIND.misc 9001–9399, clear of the other fixture files.
+ * solver runs, gallring, room rules, the year tools' planners and the
+ * school's skolenheter. Ids are KIND.misc 9001–9399 and 9501–9599, clear of
+ * the other fixture files.
  */
 
 /** An instant `days` before today, at a Stockholm wall-clock time: always in the past. */
@@ -316,3 +318,19 @@ export function yearRosters(year: AcademicYear): YearRosters {
     membershipsOutOfDate: { missing: 1, stale: 0 },
   };
 }
+
+/**
+ * The school's skolenheter (GET /api/v1/school-units, 20261031090000): one,
+ * 7–9, as a högstadieskola is, so every class of the year is in it.
+ */
+export const SCHOOL_UNITS: SchoolUnit[] = [
+  {
+    id: uid(KIND.misc, 9501),
+    name: "Exempelskolan 7–9",
+    code: "12345678",
+    schoolTypes: ["GR"],
+    gradeFrom: 7,
+    gradeTo: 9,
+    fromSource: false,
+  },
+];
