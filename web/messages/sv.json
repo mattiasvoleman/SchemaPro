@@ -3977,6 +3977,7 @@
       "PUB_NO_ROOM": "{count, plural, one {# lektion saknar} other {# lektioner saknar}} sal.",
       "PUB_STAFFING_REFUSE": "Tjänstefördelningens stoppregler hittar {count, plural, one {# sak} other {# saker}}.",
       "PUB_TIMPLAN": "{count, plural, one {# rad} other {# rader}} i timplanen ligger under nivån.",
+      "PUB_BLOCK_SPLIT": "{count, plural, one {# parallellt block är delat} other {# parallella block är delade}}: lektionerna nedan står inte på samma tider som resten av sitt block. Nästa generering vägrar blocket som delvis låst.",
       "PUB_RANGE_OVERLAP": "Giltigheten delar period med {count, plural, one {ett publicerat schema} other {# publicerade scheman}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# skoldag} other {# skoldagar}} framåt saknar publicerat schema.",
       "PUB_WEEK_SPLIT": "Giltigheten börjar eller slutar mitt i en vecka: {count, plural, one {# lektion} other {# lektioner}} kan försvinna eller hållas två gånger den veckan.",
