@@ -66,12 +66,30 @@ export function YearComparison({
       : percent(year?.employmentPercent);
   // A nedsättning that changes during the year, under the post: what makes a
   // row CHANGED when the grad and the first day are the same as last year.
-  const reductionSteps = (year: YearFigures | null) =>
-    year && year.reductionSteps.length > 1 ? (
+  // When the grad steps and the nedsättning steps read the same both years
+  // and only their order differs, each year's post prints its steps with
+  // the two together, so the row shows what makes it CHANGED.
+  const stepsUnder = (row: ComparisonRow, year: YearFigures | null) => {
+    if (!year) return null;
+    if (row.stepsInAnotherOrder) {
+      const steps = year.stretchSteps
+        .map((step) =>
+          step.reductionPercent > 0
+            ? t("postStepReduction", {
+                percent: formatPercent(step.employmentPercent),
+                reduction: formatPercent(step.reductionPercent),
+              })
+            : `${formatPercent(step.employmentPercent)} %`,
+        )
+        .join(" → ");
+      return <span className="block text-xs text-muted-foreground">{t("postSteps", { steps })}</span>;
+    }
+    return year.reductionSteps.length > 1 ? (
       <span className="block text-xs text-muted-foreground">
         {t("reductionSteps", { steps: year.reductionSteps.map(formatPercent).join(" → ") })}
       </span>
     ) : null;
+  };
   const minutes = (value: number | null | undefined) => (value == null ? "—" : String(value));
   const delta = (value: number | null, unit: string) =>
     value === null || value === 0 ? "" : `${value > 0 ? "+" : "−"}${formatPercent(Math.abs(value))}${unit}`;
@@ -122,11 +140,11 @@ export function YearComparison({
                 </th>
                 <TableCell className="text-right tabular-nums">
                   {grad(row.lastYear)}
-                  {reductionSteps(row.lastYear)}
+                  {stepsUnder(row, row.lastYear)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {grad(row.thisYear)}
-                  {reductionSteps(row.thisYear)}
+                  {stepsUnder(row, row.thisYear)}
                   {row.employmentDelta ? (
                     <span className="ml-1 text-xs text-muted-foreground">({delta(row.employmentDelta, " %")})</span>
                   ) : null}
