@@ -75,8 +75,8 @@ sent, and a teacher gets a **new Duty id every läsår** (posts are per year).
 
 **A post that changes during the year** (`TeacherEmploymentPeriods`,
 20261022120000) is, **with the opt-in**, one Duty per stretch of the year in
-which its grad stays the same: "50 % from 11 January" is the autumn's Duty and
-the spring's, each with its own `dutyPercent`, `hoursPerYear` (of its grad),
+which its grad stays the same whole percent: "50 % from 11 January" is the
+autumn's Duty and the spring's, each with its own `dutyPercent`, `hoursPerYear` (of its grad),
 `startDate` and `endDate`, and its mentorships clipped to those dates. Every
 day of the läsår is in exactly one of them. `meta.created` is when the stretch
 first existed; `meta.modified` is the latest of the post's, its periods' and
@@ -85,7 +85,9 @@ post's Duty still resolves. A period's stretch has the period's id. The post's
 own figures after a period have `UUIDv3(SchemaPro's SS12000 namespace,
 "duty-after:" + the period's id)`. A period that changes only the nedsättning
 or the riktmärke splits nothing: the Duty carries neither, and its dates
-would publish when they changed. Without the opt-in, a post is one Duty for
+would publish when they changed. Nor does a grad that rounds to the same
+whole percent: `dutyPercent` is an integer, and the stretch keeps its first
+part's grad, which its `hoursPerYear` is computed from. Without the opt-in, a post is one Duty for
 the läsår whatever its periods, and no period is read. With the opt-in and
 periods, a page counts Duties, not posts, ordered by the post's id and then
 by date. A school with no periods pages exactly as before.
@@ -110,8 +112,10 @@ switch knowing it:
 * **That a hidden field changed, and when — never to what.** `meta.modified`
   is the post's `updatedAt`, which moves on every save of the post: a changed
   nedsättning, riktmärke, note or avtalsform moves it while every field the
-  feed sends stays the same. A system polling the feed can see that something
-  it is not shown changed on that teacher's post at that time. SchemaPro has
+  feed sends stays the same. For a post split into stretches it is also the
+  latest `updatedAt` of the post's periods, which moves the same way. A system
+  polling the feed can see that something it is not shown changed on that
+  teacher's post at that time. SchemaPro has
   no per-column timestamp to narrow it to the sent fields; the post's own
   version history (TeacherEmploymentLogs) is deliberately not readable by the
   service principal.
@@ -334,7 +338,11 @@ the post's first stretch, for the whole year. When a stretch stops being
 emitted (a period removed or changed, the opt-in turned off, the teacher
 linked), its id is listed by `/deletedEntities`. The database derives the
 stretch ids itself (`app.ss12000_split_duty_ids`, `app.ss12000_after_id`), so
-the versions and tombstones follow them. A deactivated teacher's Duty
+the versions and tombstones follow them. A write to a period moves a Duty's
+`meta.modified` only when the stretches it makes change (ids, dates, grad):
+a nedsättning or a target written in a period moves none. What moves the
+post's Duty moves every stretch of it. Posts already split when the
+migration ran were versioned then. A deactivated teacher's Duty
 leaves `/duties` and is listed by `/deletedEntities`; the activities and
 events naming it get a new `meta.modified`. An HR-only edit (employment
 percent, contract kind) moves no Duty's `meta.modified` unless the school

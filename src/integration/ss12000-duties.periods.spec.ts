@@ -52,6 +52,16 @@ describe('dutySegments: the year cut where the grad changes', () => {
     expect(dutySegments(post, [period(SPRING, '2027-01-11', null, 100)], YEAR)).toHaveLength(1);
   });
 
+  it('makes stretches whose grad is the same whole percent one Duty, with the first stretch’s grad', () => {
+    // 66.667 % and 66.9 % both read 67: two Duties would differ in their dates alone.
+    const thirds = { ...post, employmentPercent: 66.667 };
+    expect(dutySegments(thirds, [period(SPRING, '2027-01-11', null, 66.9)], YEAR)).toEqual([
+      { id: POST, startDate: YEAR.startDate, endDate: YEAR.endDate, employmentPercent: 66.667, created: post.createdAt },
+    ]);
+    // 66.4 % reads 66: a Duty of its own.
+    expect(dutySegments(thirds, [period(SPRING, '2027-01-11', null, 66.4)], YEAR)).toHaveLength(2);
+  });
+
   it('gives the post’s id to the first stretch and the period’s to its own', () => {
     expect(dutySegments(post, [period(SPRING, '2027-01-11', null, 50)], YEAR).map(({ id, startDate, endDate, employmentPercent }) => [id, startDate, endDate, employmentPercent])).toEqual([
       [POST, '2026-08-17', '2027-01-10', 100],

@@ -2,41 +2,59 @@
 --
 -- The SS12000 providers emit a post that changes during the year
 -- (TeacherEmploymentPeriods, 20261022120000) as one Duty per stretch of the
--- year in which its grad stays the same — where the school shares employment
--- with integrations (src/integration/ss12000-duties.ts, toSs12000Duties).
--- The first stretch keeps the post's id; a period's stretch is the period's
--- id; the post's own figures after a period are app.ss12000_after_id(that
--- period). This migration makes the versions and the tombstones
--- (20261014130000) follow those ids: an id that starts being emitted is
--- unburied and versioned, one that stops is buried, and every change to
--- what they carry moves their meta.modified. Nothing in an existing table,
--- function or trigger changes; the new triggers sit beside the old.
+-- year in which its grad stays the same whole percent — where the school
+-- shares employment with integrations (src/integration/ss12000-duties.ts,
+-- toSs12000Duties). The first stretch keeps the post's id; a period's
+-- stretch is the period's id; the post's own figures after a period are
+-- app.ss12000_after_id(that period). This migration makes the versions and
+-- the tombstones (20261014130000) follow those ids: an id that starts being
+-- emitted is unburied and versioned, one that stops is buried, and every
+-- change to what they carry moves their meta.modified — and nothing else
+-- does. No table changes. One existing function does: app.ss12000_bump,
+-- which every trigger calls with a post's id when the post's Duty changes,
+-- now bumps the post's stretches with it. The new triggers sit beside the
+-- old.
 --
 -- ## The ids, the database's and the gateway's
 --
--- app.ss12000_split_duty_ids walks a post's periods exactly as dutySegments
--- does: clamped to the läsår, by Från, stretches with the same grad next to
--- each other made one, the first stretch the post's own. Empty when the
--- post is emitted as one Duty: no periods that change the grad, the school
--- not sharing, the year not active, the teacher inactive, or the teacher
--- under a source's Duty id (app.ss12000_duty_id is not the post's).
--- app.ss12000_uuid_v3 is src/integration/ss12000-v2/ids.ts uuidV3: RFC 4122
--- version 3, MD5 over SchemaPro's SS12000 namespace and the name, since
--- md5() needs no extension. scripts/test/probe-ss12000-provider.ts compares
--- the two through a real database.
+-- app.ss12000_duty_stretches walks a post's periods exactly as dutySegments
+-- does: clamped to the läsår, by Från, stretches next to each other whose
+-- grad rounds to the same whole percent made one (a Duty's dutyPercent is an
+-- integer), the first stretch the post's own. app.ss12000_split_duty_ids is
+-- its ids beyond the first, and empty when the post is emitted as one Duty:
+-- no periods that change the grad, the school not sharing, the year not
+-- active, the teacher inactive, or the teacher under a source's Duty id
+-- (app.ss12000_duty_id is not the post's). app.ss12000_uuid_v3 is
+-- src/integration/ss12000-v2/ids.ts uuidV3: RFC 4122 version 3, MD5 over
+-- SchemaPro's SS12000 namespace and the name, since md5() needs no
+-- extension. scripts/test/probe-ss12000-provider.ts compares the two
+-- through a real database.
 --
 -- ## When the set of ids moves
 --
 -- app.ss12000_reconcile_split_duties takes the posts that may have moved:
 -- it buries every derived id of theirs the provider has versioned and no
 -- longer emits (never one it never emitted, and never one already buried),
--- unburies what it emits now, and bumps those and, where the post can be
--- split at all, the post's own Duty, whose end date moves with its first
--- period. It is called after a write to: a period; a post's grad, teacher
--- or year; the school's opt-in or its annual hours; a teacher's isActive; a
--- duty link; a year's activation or dates; a mentorskap (the Duties carry
--- it, clipped to their dates). A school that does not share bumps nothing
--- here: a period is HR data, and with the opt-in off no Duty moves for it.
+-- unburies what it emits now, and bumps the post's Duty and so its
+-- stretches. A write to a period calls it only when the post's stretches —
+-- ids, dates, grad — are not what they were before the write: a period that
+-- changes only the nedsättning or the target, or adds a stretch with the
+-- grad around it, moves no Duty, so meta.modified tells nobody that it was
+-- written (20261014140000 keeps the same promise for the post itself); a
+-- post deleted with its periods has their stretches buried. A
+-- post's grad, teacher or year, the school's opt-in or annual hours, a
+-- teacher's isActive, a duty link and a year's activation or dates call it
+-- too. Everything else a Duty carries — the signature, the avtalsform, the
+-- person, the skolenhet, the mentorskap — is the post's, and the triggers
+-- that bump the post's Duty for it bump its stretches through
+-- app.ss12000_bump. A school that does not share bumps nothing here.
+--
+-- ## The posts split already
+--
+-- The periods are on main before this migration. A post a period already
+-- splits gets its stretches versioned as this migration runs, and its own
+-- Duty bumped (its end date moves), so a consumer reading what changed
+-- since its last sync is told.
 --
 -- ## Grants
 --
@@ -71,58 +89,126 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
        AND app.ss12000_duty_id(e."schoolId", e."userId", e."academicYearId") = e."id")
 $$;
 
--- The Duty ids the post emits beside its own: dutySegments, in SQL.
-CREATE FUNCTION app.ss12000_split_duty_ids(p_employment uuid) RETURNS uuid[]
+-- A post's periods as app.ss12000_duty_stretches reads them, but those named.
+CREATE FUNCTION app.ss12000_periods_json(p_employment uuid, p_except uuid[]) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'id', q."id", 'f', q."validFrom"::date, 't', q."validTo"::date, 'pct', q."employmentPercent")), '[]'::jsonb)
+    FROM "TeacherEmploymentPeriods" q
+   WHERE q."employmentId" = p_employment
+     AND NOT (q."id" = ANY (coalesce(p_except, ARRAY[]::uuid[])))
+$$;
+
+-- A post's stretches as the gateway emits them (dutySegments), each
+-- 'id|from|to|grad', from periods given as jsonb [{id, f, t, pct}]: so a
+-- trigger can ask what they were before a write as well as what they are.
+-- A merged stretch keeps its first part's grad, as dutySegments does.
+CREATE FUNCTION app.ss12000_duty_stretches(p_employment uuid, p_periods jsonb) RETURNS text[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   e record;
   y record;
   p record;
-  ids uuid[] := ARRAY[]::uuid[];
+  piece_id uuid[] := ARRAY[]::uuid[];
+  piece_from date[] := ARRAY[]::date[];
+  piece_to date[] := ARRAY[]::date[];
+  piece_pct numeric[] := ARRAY[]::numeric[];
   cursor_day date;
-  last_percent numeric;
   after_period uuid := NULL;
-  started boolean := false;
+  stretches text[] := ARRAY[]::text[];
+  cur_id uuid := NULL;
+  cur_from date;
+  cur_to date;
+  cur_pct numeric;
 BEGIN
-  IF NOT app.ss12000_split_capable(p_employment) THEN
-    RETURN ids;
+  SELECT x."employmentPercent" AS pct, x."academicYearId" AS yr INTO e FROM "TeacherEmployments" x WHERE x."id" = p_employment;
+  IF NOT FOUND THEN
+    RETURN stretches;
   END IF;
-  SELECT x."employmentPercent", x."academicYearId" INTO e FROM "TeacherEmployments" x WHERE x."id" = p_employment;
-  SELECT a."startDate"::date s, a."endDate"::date t INTO y FROM "AcademicYears" a WHERE a."id" = e."academicYearId";
+  SELECT a."startDate"::date AS s, a."endDate"::date AS t INTO y FROM "AcademicYears" a WHERE a."id" = e.yr;
   cursor_day := y.s;
+  -- The pieces: the post's own figures between and around its periods, and each period.
   FOR p IN
-    SELECT q."id", greatest(q."validFrom"::date, y.s) f, least(coalesce(q."validTo"::date, y.t), y.t) t, q."employmentPercent" pct
-      FROM "TeacherEmploymentPeriods" q
-     WHERE q."employmentId" = p_employment
-     ORDER BY 2
+    SELECT q.id, greatest(q.f, y.s) AS f, least(coalesce(q.t, y.t), y.t) AS t, q.pct
+      FROM jsonb_to_recordset(coalesce(p_periods, '[]'::jsonb)) AS q(id uuid, f date, t date, pct numeric)
+     ORDER BY 2, 1
   LOOP
     CONTINUE WHEN p.f > p.t;
-    -- The post's own figures before this period.
     IF p.f > cursor_day THEN
-      IF NOT started THEN
-        started := true;
-        last_percent := e."employmentPercent";
-      ELSIF e."employmentPercent" IS DISTINCT FROM last_percent THEN
-        ids := ids || app.ss12000_after_id(after_period);
-        last_percent := e."employmentPercent";
-      END IF;
+      piece_id := piece_id || coalesce(app.ss12000_after_id(after_period), p_employment);
+      piece_from := piece_from || cursor_day;
+      piece_to := piece_to || (p.f - 1);
+      piece_pct := piece_pct || e.pct;
     END IF;
-    -- The period.
-    IF NOT started THEN
-      started := true;
-      last_percent := p.pct;
-    ELSIF p.pct IS DISTINCT FROM last_percent THEN
-      ids := ids || p."id";
-      last_percent := p.pct;
-    END IF;
-    after_period := p."id";
+    piece_id := piece_id || p.id;
+    piece_from := piece_from || p.f;
+    piece_to := piece_to || p.t;
+    piece_pct := piece_pct || p.pct;
+    after_period := p.id;
     cursor_day := p.t + 1;
   END LOOP;
-  -- The post's own figures after the last period.
-  IF started AND cursor_day <= y.t AND e."employmentPercent" IS DISTINCT FROM last_percent THEN
-    ids := ids || app.ss12000_after_id(after_period);
+  IF cursor_day <= y.t THEN
+    piece_id := piece_id || coalesce(app.ss12000_after_id(after_period), p_employment);
+    piece_from := piece_from || cursor_day;
+    piece_to := piece_to || y.t;
+    piece_pct := piece_pct || e.pct;
   END IF;
-  RETURN ids;
+  -- Pieces next to each other whose grad is the same whole percent are one;
+  -- the first stretch is the post's own.
+  FOR i IN 1 .. coalesce(array_length(piece_id, 1), 0) LOOP
+    IF cur_id IS NOT NULL AND round(cur_pct) = round(piece_pct[i]) THEN
+      cur_to := piece_to[i];
+    ELSE
+      IF cur_id IS NOT NULL THEN
+        stretches := stretches || concat_ws('|', cur_id, cur_from, cur_to, trim_scale(cur_pct));
+      END IF;
+      cur_id := CASE WHEN cur_id IS NULL THEN p_employment ELSE piece_id[i] END;
+      cur_from := piece_from[i];
+      cur_to := piece_to[i];
+      cur_pct := piece_pct[i];
+    END IF;
+  END LOOP;
+  IF cur_id IS NOT NULL THEN
+    stretches := stretches || concat_ws('|', cur_id, cur_from, cur_to, trim_scale(cur_pct));
+  END IF;
+  RETURN stretches;
+END
+$$;
+
+-- The Duty ids the post emits beside its own: dutySegments' ids, in SQL.
+CREATE FUNCTION app.ss12000_split_duty_ids(p_employment uuid) RETURNS uuid[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT CASE WHEN app.ss12000_split_capable(p_employment) THEN ARRAY(
+           SELECT split_part(s.v, '|', 1)::uuid
+             FROM unnest(app.ss12000_duty_stretches(p_employment, app.ss12000_periods_json(p_employment, NULL)))
+                  WITH ORDINALITY AS s(v, i)
+            WHERE s.i > 1
+            ORDER BY s.i)
+         ELSE ARRAY[]::uuid[] END
+$$;
+
+-- A post's Duty is every Duty it is emitted as: what moves the post's moves
+-- its stretches. 20261014130000's function, with that one addition.
+CREATE OR REPLACE FUNCTION app.ss12000_bump(p_school uuid, p_resource text, p_ids uuid[]) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  ids uuid[] := p_ids;
+BEGIN
+  IF p_school IS NULL OR p_ids IS NULL OR cardinality(p_ids) = 0
+     OR NOT EXISTS (SELECT 1 FROM "Schools" s WHERE s."id" = p_school) THEN
+    RETURN;
+  END IF;
+  IF p_resource = 'Duty' THEN
+    ids := ids || ARRAY(
+      SELECT i FROM "TeacherEmployments" e, unnest(app.ss12000_split_duty_ids(e."id")) i
+       WHERE e."id" = ANY (p_ids) AND e."schoolId" = p_school);
+  END IF;
+  INSERT INTO "Ss12000EntityVersions" AS v ("schoolId", "resource", "entityId", "createdAt", "modifiedAt", "xid")
+  SELECT p_school, p_resource, d.id, now(), now(), pg_current_xact_id()
+    FROM (SELECT DISTINCT x AS id FROM unnest(ids) x WHERE x IS NOT NULL) d
+  ON CONFLICT ("schoolId", "resource", "entityId") DO UPDATE
+     SET "modifiedAt" = EXCLUDED."modifiedAt", "xid" = EXCLUDED."xid"
+   WHERE v."xid" IS DISTINCT FROM EXCLUDED."xid";
 END
 $$;
 
@@ -150,7 +236,8 @@ BEGIN
          SELECT 1 FROM "Ss12000Tombstones" t
           WHERE t."schoolId" = p_school AND t."resource" = 'Duty' AND t."emittedId" = v."entityId")));
   PERFORM app.ss12000_unbury(p_school, 'Duty', now_ids);
-  PERFORM app.ss12000_bump(p_school, 'Duty', now_ids || ARRAY(SELECT x FROM unnest(posts) x WHERE app.ss12000_split_capable(x)));
+  -- The post's Duty, and through app.ss12000_bump its stretches.
+  PERFORM app.ss12000_bump(p_school, 'Duty', ARRAY(SELECT x FROM unnest(posts) x WHERE app.ss12000_split_capable(x)));
 END
 $$;
 
@@ -168,24 +255,51 @@ $$;
 -- The trigger functions.
 -- ---------------------------------------------------------------------------
 
+-- A write to periods: for each post it touched that can be split, the
+-- stretches before the write (the periods now, those written taken out and
+-- what they were put back) against the stretches now. Only a post whose
+-- stretches differ is reconciled; what it emitted before is what may be
+-- buried. A post that cannot be split — deleted, its periods going with
+-- it — has what its written periods named buried, if it was emitted.
 CREATE FUNCTION app.ss12000_v_split_periods() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-DECLARE r record;
+DECLARE
+  r record;
+  written uuid[] := ARRAY[]::uuid[];
+  was jsonb := '[]'::jsonb;
+  before_stretches text[];
 BEGIN
   IF TG_OP <> 'DELETE' THEN
-    FOR r IN SELECT x."schoolId" s, array_agg(DISTINCT x."employmentId") posts FROM n x GROUP BY 1 LOOP
-      PERFORM app.ss12000_reconcile_split_duties(r.s, r.posts, NULL);
-    END LOOP;
+    SELECT coalesce(array_agg(x."id"), ARRAY[]::uuid[]) INTO written FROM n x;
   END IF;
   IF TG_OP <> 'INSERT' THEN
-    FOR r IN
-      SELECT x."schoolId" s, array_agg(DISTINCT x."employmentId") posts,
-             array_agg(x."id") || array_agg(app.ss12000_after_id(x."id")) gone
-        FROM o x GROUP BY 1
-    LOOP
-      PERFORM app.ss12000_reconcile_split_duties(r.s, r.posts, r.gone);
-    END LOOP;
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
+             'id', x."id", 'post', x."employmentId", 'school', x."schoolId",
+             'f', x."validFrom"::date, 't', x."validTo"::date, 'pct', x."employmentPercent")), '[]'::jsonb)
+      INTO was FROM o x;
   END IF;
+  FOR r IN
+    SELECT DISTINCT q.school, q.post FROM (
+      SELECT x."schoolId" AS school, x."employmentId" AS post FROM "TeacherEmploymentPeriods" x WHERE x."id" = ANY (written)
+      UNION SELECT (j->>'school')::uuid, (j->>'post')::uuid FROM jsonb_array_elements(was) j) q
+  LOOP
+    IF NOT app.ss12000_split_capable(r.post) THEN
+      -- Nothing it emits moves. But a post deleted takes its periods with
+      -- it, and what they emitted while it could be split is buried here:
+      -- only an id with a version, so a school that never shared buries
+      -- nothing.
+      PERFORM app.ss12000_reconcile_split_duties(r.school, ARRAY[r.post], ARRAY(
+        SELECT (j->>'id')::uuid FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post
+        UNION SELECT app.ss12000_after_id((j->>'id')::uuid) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post));
+      CONTINUE;
+    END IF;
+    before_stretches := app.ss12000_duty_stretches(r.post,
+      app.ss12000_periods_json(r.post, written)
+      || coalesce((SELECT jsonb_agg(j) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post), '[]'::jsonb));
+    CONTINUE WHEN before_stretches IS NOT DISTINCT FROM app.ss12000_duty_stretches(r.post, app.ss12000_periods_json(r.post, NULL));
+    PERFORM app.ss12000_reconcile_split_duties(r.school, ARRAY[r.post], ARRAY(
+      SELECT split_part(s.v, '|', 1)::uuid FROM unnest(before_stretches) WITH ORDINALITY AS s(v, i) WHERE s.i > 1));
+  END LOOP;
   RETURN NULL;
 END
 $$;
@@ -261,26 +375,6 @@ BEGIN
 END
 $$;
 
--- A mentorskap is the one uppdrag a Duty carries (its assignmentRole); no
--- other uppdrag moves a Duty, here as in app.ss12000_v_teacher_duties.
-CREATE FUNCTION app.ss12000_v_split_mentorships() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-DECLARE r record;
-BEGIN
-  IF TG_OP <> 'DELETE' THEN
-    FOR r IN SELECT x."schoolId" s, array_agg(DISTINCT x."userId") users FROM n x WHERE x."kind" = 'MENTORSKAP' GROUP BY 1 LOOP
-      PERFORM app.ss12000_reconcile_split_duties(r.s, app.ss12000_posts_with_periods(r.s, NULL, r.users), NULL);
-    END LOOP;
-  END IF;
-  IF TG_OP <> 'INSERT' THEN
-    FOR r IN SELECT x."schoolId" s, array_agg(DISTINCT x."userId") users FROM o x WHERE x."kind" = 'MENTORSKAP' GROUP BY 1 LOOP
-      PERFORM app.ss12000_reconcile_split_duties(r.s, app.ss12000_posts_with_periods(r.s, NULL, r.users), NULL);
-    END LOOP;
-  END IF;
-  RETURN NULL;
-END
-$$;
-
 CREATE FUNCTION app.ss12000_v_split_years() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE r record;
@@ -305,7 +399,6 @@ BEGIN
       ('StaffingPolicies', 'app.ss12000_v_split_policies()', true, true, false),
       ('Users', 'app.ss12000_v_split_users()', false, true, false),
       ('Ss12000DutyLinks', 'app.ss12000_v_split_teachers()', true, true, true),
-      ('TeacherDuties', 'app.ss12000_v_split_mentorships()', true, true, true),
       ('AcademicYears', 'app.ss12000_v_split_years()', false, true, false)
     ) AS t(tbl, fn, on_insert, on_update, on_delete)
   LOOP
@@ -326,6 +419,28 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
+-- The posts split already: their stretches versioned, their own Duty bumped.
+-- Outside a trigger, so under app.ss12000_housekeeping, for this transaction.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE r record;
+BEGIN
+  PERFORM set_config('app.ss12000_housekeeping', 'on', true);
+  FOR r IN
+    SELECT e."schoolId" AS s, array_agg(e."id") AS posts
+      FROM "TeacherEmployments" e
+     WHERE EXISTS (SELECT 1 FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = e."id")
+       AND cardinality(app.ss12000_split_duty_ids(e."id")) > 0
+     GROUP BY 1
+  LOOP
+    PERFORM app.ss12000_bump(r.s, 'Duty', r.posts);
+  END LOOP;
+  PERFORM set_config('app.ss12000_housekeeping', 'off', true);
+END
+$$;
+
+-- ---------------------------------------------------------------------------
 -- The helpers and trigger functions are the triggers' alone.
 -- ---------------------------------------------------------------------------
 
@@ -336,7 +451,10 @@ BEGIN
     'app.ss12000_uuid_v3(text)',
     'app.ss12000_after_id(uuid)',
     'app.ss12000_split_capable(uuid)',
+    'app.ss12000_periods_json(uuid, uuid[])',
+    'app.ss12000_duty_stretches(uuid, jsonb)',
     'app.ss12000_split_duty_ids(uuid)',
+    'app.ss12000_bump(uuid, text, uuid[])',
     'app.ss12000_reconcile_split_duties(uuid, uuid[], uuid[])',
     'app.ss12000_posts_with_periods(uuid, uuid, uuid[])',
     'app.ss12000_v_split_periods()',
@@ -344,7 +462,6 @@ BEGIN
     'app.ss12000_v_split_policies()',
     'app.ss12000_v_split_users()',
     'app.ss12000_v_split_teachers()',
-    'app.ss12000_v_split_mentorships()',
     'app.ss12000_v_split_years()'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
@@ -365,10 +482,11 @@ BEGIN
     JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
     CROSS JOIN pg_roles r
    WHERE r.rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated')
-     AND p.proname IN ('ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_split_duty_ids',
+     AND p.proname IN ('ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_periods_json',
+                       'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
                        'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_v_split_periods',
                        'ss12000_v_split_employments', 'ss12000_v_split_policies', 'ss12000_v_split_users',
-                       'ss12000_v_split_teachers', 'ss12000_v_split_mentorships', 'ss12000_v_split_years')
+                       'ss12000_v_split_teachers', 'ss12000_v_split_years')
      AND has_function_privilege(r.oid, p.oid, 'EXECUTE');
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'SS12000_PROVIDER_HELPERS_REACH: these provider helpers are executable by an API role: %', bad;

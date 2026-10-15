@@ -49,9 +49,9 @@
  *
  * A POST THAT CHANGES DURING THE YEAR (20261022120000) is one Duty per
  * stretch of the year in which its grad — the one HR figure a Duty carries —
- * stays the same (toSs12000Duties, dutySegments): "75 % from 11 January" is
- * two Duties, the autumn's and the spring's, each with its own dutyPercent
- * and dates. Only where the school shares employment with integrations:
+ * stays the same whole percent (toSs12000Duties, dutySegments): "75 % from
+ * 11 January" is two Duties, the autumn's and the spring's, each with its
+ * own dutyPercent and dates. Only where the school shares employment with integrations:
  * without the opt-in no figure leaves, and the dates alone would tell that
  * the post changed. A period that changes only the nedsättning or the
  * target changes nothing a Duty carries, so it splits nothing — a split
@@ -225,11 +225,15 @@ const shiftDay = (day: string, days: number): string =>
 
 /**
  * The year cut where the grad changes: the post's own figures between and
- * around its periods, each period its own, then stretches with the same
- * grad next to each other made one. The dates are the ones the school
- * stated (postStretches' `from` and `to`), clamped to the läsår. One
- * segment, with the post's id and the year's bounds, for a post whose grad
- * never changes. app.ss12000_split_duty_ids walks the periods the same way.
+ * around its periods, each period its own, then stretches next to each
+ * other whose grad is the same whole percent made one — a Duty's
+ * dutyPercent is an integer, and two Duties that read the same would only
+ * publish the date of a change the feed does not show. A merged segment
+ * keeps its first stretch's grad (hoursPerYear is computed from it). The
+ * dates are the ones the school stated (postStretches' `from` and `to`),
+ * clamped to the läsår. One segment, with the post's id and the year's
+ * bounds, for a post whose grad never changes. app.ss12000_duty_stretches
+ * walks the periods the same way.
  */
 export function dutySegments(
   employment: { id: string; employmentPercent: number; createdAt: Date },
@@ -247,7 +251,7 @@ export function dutySegments(
   const segments: DutySegment[] = [];
   const add = (id: string, startDate: string, endDate: string, employmentPercent: number, created: Date) => {
     const last = segments[segments.length - 1];
-    if (last && last.employmentPercent === employmentPercent) {
+    if (last && Math.round(last.employmentPercent) === Math.round(employmentPercent)) {
       last.endDate = endDate;
       return;
     }

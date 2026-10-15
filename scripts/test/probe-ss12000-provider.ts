@@ -348,6 +348,26 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       assert.deepEqual(await splitIds(), [spring.id]);
       checkSchema('Duty', duties[1]);
 
+      // What no Duty shows moves none: the spring's nedsättning, an autumn period with the post's
+      // grad and its own nedsättning, and one whose grad rounds to the post's 60.
+      const modifiedOf = async () =>
+        Object.fromEntries((await listed()).map((duty) => [duty['id'], (duty['meta'] as { modified: string }).modified]));
+      const quiet = await modifiedOf();
+      await pause();
+      await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "reductionPercent" = 20, "updatedAt" = now() WHERE id = $1`, [spring.id]);
+      const sameGrad = await period(day(-50), day(-45), 60);
+      await owner.query(`UPDATE "TeacherEmploymentPeriods" SET "reductionPercent" = 25, "updatedAt" = now() WHERE id = $1`, [sameGrad.id]);
+      await period(day(-40), day(-35), 60.4);
+      assert.deepEqual(await modifiedOf(), quiet, 'a write no Duty shows moved one');
+      assert.deepEqual((await listed()).map((duty) => [duty['id'], duty['dutyPercent']]), [[post.id, 60], [spring.id, 50]]);
+      assert.deepEqual(await splitIds(), [spring.id]);
+
+      // What every Duty of the post shows moves them all: the signature reaches the spring's.
+      await pause();
+      await owner.query(`UPDATE "TeacherEmployments" SET "signature" = 'SPG', "updatedAt" = now() WHERE id = $1`, [post.id]);
+      const signed = await modifiedOf();
+      assert.ok(signed[post.id]! > quiet[post.id]! && signed[spring.id]! > quiet[spring.id]!, 'the signature moved the post’s Duty but not its spring');
+
       // A leave inside the autumn: the post's own figures after it are a Duty named by it, in both.
       const leave = await period(day(10), day(20), 40);
       duties = await listed();
@@ -405,6 +425,16 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
           await owner.query('ROLLBACK');
         }
       }
+
+      // The opt-in on again, and the post deleted: both its Duties are buried, the spring's by
+      // the cascade that takes its period, when the post can no longer be asked how it was cut.
+      await owner.query(`UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = true, "updatedAt" = now() WHERE "schoolId" = $1`, [school.id]);
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, spring.id]);
+      const deletedAt = (await one<{ at: Date }>(`SELECT clock_timestamp() AS at`)).at.toISOString();
+      await pause();
+      await owner.query(`DELETE FROM "TeacherEmployments" WHERE id = $1`, [post.id]);
+      const deleted = (await provider.deletedEntities(caller, { after: deletedAt, entities: 'Duty' })).data['duties'] ?? [];
+      assert.deepEqual([...deleted].sort(), [post.id, spring.id].sort());
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());

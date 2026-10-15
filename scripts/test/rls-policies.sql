@@ -19487,20 +19487,23 @@ ROLLBACK;
 --
 -- The catalogue: the helpers that derive a changing post's Duty ids and the
 -- trigger functions that keep their versions and tombstones are no API
--- role's to execute (they read across schools as their owner); the ones
--- that read rows are SECURITY DEFINER; and each table that can move the set
--- of ids has its statement triggers, enabled. What the triggers write, and
--- that the database derives the gateway's ids, is the provider probe's
--- (sp-g), through the API.
+-- role's to execute (they read across schools as their owner), nor is
+-- app.ss12000_bump, which now reaches a post's stretches; the ones that read
+-- rows are SECURITY DEFINER; each table that can move the set of ids has its
+-- statement triggers, enabled; and a mentorskap has none of its own, since
+-- the post's bump reaches its stretches. What the triggers write, and that
+-- the database derives the gateway's ids, is the provider probe's (sp-g),
+-- through the API.
 -- ---------------------------------------------------------------------------
 
 DO $$
 DECLARE
   bad text;
-  helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_split_duty_ids',
+  helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_periods_json',
+                          'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
                           'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_v_split_periods',
                           'ss12000_v_split_employments', 'ss12000_v_split_policies', 'ss12000_v_split_users',
-                          'ss12000_v_split_teachers', 'ss12000_v_split_mentorships', 'ss12000_v_split_years'];
+                          'ss12000_v_split_teachers', 'ss12000_v_split_years'];
   n integer;
 BEGIN
   SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
@@ -19525,8 +19528,9 @@ BEGIN
       'TeacherEmploymentPeriods_ss12000_split_del', 'TeacherEmployments_ss12000_split_upd',
       'StaffingPolicies_ss12000_split_ins', 'StaffingPolicies_ss12000_split_upd', 'Users_ss12000_split_upd',
       'Ss12000DutyLinks_ss12000_split_ins', 'Ss12000DutyLinks_ss12000_split_upd', 'Ss12000DutyLinks_ss12000_split_del',
-      'TeacherDuties_ss12000_split_ins', 'TeacherDuties_ss12000_split_upd', 'TeacherDuties_ss12000_split_del',
       'AcademicYears_ss12000_split_upd']) AS want
    WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgname = want AND t.tgenabled = 'O' AND NOT t.tgisinternal);
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'split duties: triggers missing or disabled: %', bad; END IF;
+  SELECT count(*) INTO n FROM pg_trigger t WHERE t.tgname LIKE '%\_ss12000\_split\_%' AND NOT t.tgisinternal;
+  IF n <> 11 THEN RAISE EXCEPTION 'split duties: % split triggers, not 11', n; END IF;
 END $$;
