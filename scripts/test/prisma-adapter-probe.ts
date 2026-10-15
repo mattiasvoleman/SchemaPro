@@ -2115,7 +2115,7 @@ async function runChecks(
   });
 
   // ---- (u2c) Block i schemat through the real adapter: a card, a split, a rejoin, a lock
-  await check('(u2c) a block card moves as one and keeps its owner, a member moved alone splits the block and rejoins it moved back, and the block locks whole', async () => {
+  await check('(u2c) a block card moves as one and keeps its owner, a member moved alone splits the block and rejoins it moved back, and the block locks whole but for its lessons on the tray', async () => {
     const requirements = new TeachingRequirementsService(api);
     const blocks = new TeachingBlocksService(api);
     const subjects = new SubjectsService(api);
@@ -2221,9 +2221,16 @@ async function runChecks(
       // The whole block locked, and the lock undone for exactly what it changed.
       const locked = await lessons.lockBlock({ blockId: block.id, isLocked: true }, admin);
       assert.deepEqual([...locked.lessonIds].sort(), ids);
+      assert.equal(locked.parked, 0);
       assert.deepEqual((await stateOf(ids)).map((row) => row.isLocked), [true, true]);
       await lessons.lockBlock({ blockId: block.id, isLocked: false, lessonIds: locked.lessonIds }, admin);
       assert.deepEqual((await stateOf(ids)).map((row) => row.isLocked), [false, false]);
+
+      // A lesson on the tray takes no lock, and is counted.
+      await lessons.update(frLesson.id, { isParked: true }, admin);
+      const withTray = await lessons.lockBlock({ blockId: block.id, isLocked: true }, admin);
+      assert.deepEqual([withTray.lessonIds, withTray.parked], [[tyLesson.id], 1]);
+      assert.equal((await stateOf([frLesson.id]))[0]?.isLocked, false);
     } finally {
       // The year takes its groups, posts, blocks and lessons with it.
       await years.remove(year.id, admin);
