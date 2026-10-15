@@ -18,6 +18,9 @@ const labels: HistoryLabels = {
       employmentPercent: "Tjänstgöringsgrad",
       reductionPercent: "Nedsättning",
       contractKind: "Avtalsform",
+      employmentForm: "Anställningsform",
+      firstTeacherPercent: "Förstelärare",
+      lecturerPercent: "Lektor",
       label: "Benämning",
       minutesPerWeek: "Tid",
       countsAsTeaching: "Räknas",
@@ -30,6 +33,7 @@ const labels: HistoryLabels = {
       slotCount: "Fasta tider",
     })[field] ?? null,
   contract: (kind) => (kind === "FERIE" ? "Ferietjänst" : "Semestertjänst"),
+  employmentForm: (form) => (form === "TILLSVIDARE" ? "Tillsvidare" : "Visstid"),
   dutyKind: (kind) => (kind === "MENTORSKAP" ? "Mentorskap" : kind),
   subject: (id) => (id === "s-ma" ? "Matematik" : null),
   group: (id) => (id === "g-7b" ? "7B" : null),
@@ -109,6 +113,21 @@ describe("historyLines", () => {
     expect(historyLines(entry({ action: "CREATE", changes: [{ field: "reductionPercent", ...hidden }] }), labels)).toEqual([
       "Nedsättning: dolt",
     ]);
+  });
+
+  it("says SCB's anställningsform in words and the karriärtjänst shares as per cent (20261111090000)", () => {
+    expect(
+      historyLines(
+        entry({
+          changes: [
+            { field: "employmentForm", before: null, after: "VISSTID" },
+            { field: "firstTeacherPercent", before: 10, after: 20 },
+            { field: "lecturerPercent", before: 5, after: null },
+          ],
+        }),
+        labels,
+      ),
+    ).toEqual(["Anställningsform: — → Visstid", "Förstelärare: 10 % → 20 %", "Lektor: 5 % → —"]);
   });
 
   it("states what an uppdrag was created with and what a deleted one had", () => {

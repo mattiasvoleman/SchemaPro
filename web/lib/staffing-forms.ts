@@ -3,6 +3,7 @@ import type {
   StaffingLoadModel,
   TeacherContractKind,
   TeacherEmployment,
+  TeacherEmploymentForm,
   TeacherQualification,
   TeacherQualificationKind,
   UnstaffedGenerationMode,
@@ -45,6 +46,11 @@ export interface EmploymentDraft {
   teachingTargetMinutesPerWeek: string;
   signature: string;
   note: string;
+  /** "" = not said; SCB's AnstForm T or V (20261111090000). */
+  employmentForm: TeacherEmploymentForm | "";
+  /** Whole per cent of the post, "" for none: SCB's ForsteLarare and Lektor. */
+  firstTeacherPercent: string;
+  lecturerPercent: string;
 }
 
 export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
@@ -54,7 +60,13 @@ export const EMPTY_EMPLOYMENT_DRAFT: EmploymentDraft = {
   teachingTargetMinutesPerWeek: "",
   signature: "",
   note: "",
+  employmentForm: "",
+  firstTeacherPercent: "",
+  lecturerPercent: "",
 };
+
+/** The anställningsformer the form offers, in SCB's order (T, V). */
+export const EMPLOYMENT_FORMS: TeacherEmploymentForm[] = ["TILLSVIDARE", "VISSTID"];
 
 /** The body PUT /teacher-employments/:userId takes. Every key always present. */
 export interface EmploymentBody {
@@ -64,6 +76,9 @@ export interface EmploymentBody {
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
   note: string | null;
+  employmentForm: TeacherEmploymentForm | null;
+  firstTeacherPercent: number | null;
+  lecturerPercent: number | null;
 }
 
 export type EmploymentProblem =
@@ -73,7 +88,10 @@ export type EmploymentProblem =
   | { reason: "reductionAbovePercent"; reduction: number; percent: number }
   | { reason: "targetOutOfRange"; max: number }
   | { reason: "signatureTooLong"; max: number }
-  | { reason: "noteTooLong"; max: number };
+  | { reason: "noteTooLong"; max: number }
+  | { reason: "firstTeacherOutOfRange" }
+  | { reason: "lecturerOutOfRange" }
+  | { reason: "careerAbovePost"; first: number; lecturer: number };
 
 /**
  * A number with at most `decimals` decimals, or null for anything else.
@@ -136,7 +154,24 @@ export function validateEmploymentDraft(draft: EmploymentDraft): EmploymentProbl
   if (draft.note.trim().length > NOTE_MAX) {
     return { reason: "noteTooLong", max: NOTE_MAX };
   }
+
+  // The karriärtjänst shares: whole per cent 1–100, together at most the
+  // post — the table's CHECKs, said beside the two fields.
+  const first = careerShare(draft.firstTeacherPercent);
+  if (first === undefined) return { reason: "firstTeacherOutOfRange" };
+  const lecturer = careerShare(draft.lecturerPercent);
+  if (lecturer === undefined) return { reason: "lecturerOutOfRange" };
+  if ((first ?? 0) + (lecturer ?? 0) > 100) {
+    return { reason: "careerAbovePost", first: first ?? 0, lecturer: lecturer ?? 0 };
+  }
   return null;
+}
+
+/** A karriärtjänst share: null for an empty field, undefined when it is not 1–100 whole. */
+function careerShare(value: string): number | null | undefined {
+  if (value.trim() === "") return null;
+  const share = wholeNumber(value);
+  return share === null || share < 1 || share > 100 ? undefined : share;
 }
 
 /**
@@ -160,6 +195,9 @@ export function employmentDraftToBody(draft: EmploymentDraft): EmploymentBody {
         : wholeNumber(draft.teachingTargetMinutesPerWeek),
     signature: signature === "" ? null : signature,
     note: note === "" ? null : note,
+    employmentForm: draft.employmentForm === "" ? null : draft.employmentForm,
+    firstTeacherPercent: careerShare(draft.firstTeacherPercent) ?? null,
+    lecturerPercent: careerShare(draft.lecturerPercent) ?? null,
   };
 }
 
@@ -174,6 +212,9 @@ export function employmentToDraft(row: TeacherEmployment | null | undefined): Em
       row.teachingTargetMinutesPerWeek === null ? "" : String(row.teachingTargetMinutesPerWeek),
     signature: row.signature ?? "",
     note: row.note ?? "",
+    employmentForm: row.employmentForm ?? "",
+    firstTeacherPercent: row.firstTeacherPercent == null ? "" : String(row.firstTeacherPercent),
+    lecturerPercent: row.lecturerPercent == null ? "" : String(row.lecturerPercent),
   };
 }
 

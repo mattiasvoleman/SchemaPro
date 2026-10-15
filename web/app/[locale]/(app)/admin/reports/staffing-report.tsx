@@ -5,25 +5,20 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Download, Scale } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { useProfile } from "@/components/profile-context";
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useStaffingLoad } from "@/lib/staffing-queries";
 import { compareSwedish } from "@/lib/sorting";
 import { cn } from "@/lib/utils";
 import { formatPercent } from "@/lib/staffing-view";
 import { percentStepsIn } from "@/lib/period-view";
-import { formatStamp } from "@/lib/employment-history-view";
 import {
   LOST_CAUSES,
   groupLossMinutes,
   hoursText,
   type StaffingNotice,
 } from "@/lib/staffing-reconciliation";
-import type { ScbNotice } from "@/lib/staffing-exports";
-import type { SchoolUnit } from "@/lib/school-units";
-import type { YearTimplanRow } from "@/lib/year-timplan-queries";
-import type { LocalTimplanListItem } from "@/lib/timplan-queries";
-import type { SchoolForm, TeacherDuty, TeacherQualification } from "@/lib/types";
+import { downloadScbText, scbFilePath, type ScbFile, type ScbMissing, type ScbNotice } from "@/lib/scb-file";
+import type { TeacherQualification } from "@/lib/types";
 import { YearSelect } from "@/components/schedule/year-select";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
@@ -62,10 +57,12 @@ import { useStaffingReconciliation } from "./use-staffing-reconciliation";
  * "Vikarierad av andra" reads the CURRENT grundschema, the grade convention,
  * "avrundat per rad", and the Faktor model when it is on.
  *
- * THE EXPORTS are built in the browser on click (lib/staffing-exports.ts,
- * an import() so no route carries it). The SCB file is an UNDERLAG and is
- * never called SCB's file: the text beside its button says what to complete,
- * what to check and where SCB's columns came from.
+ * THE EXPORTS. Samverkan is built in the browser on click
+ * (lib/staffing-exports.ts, an import() so no route carries it). SCB's
+ * Pedagogisk personal is built by the gateway (GET /staffing/scb-file, one
+ * read in the läslogg): the click saves its .txt, and the panel under the
+ * button says what the school still fills in — PersonNr on every row, once,
+ * and each row that lacks more — with a CSV of the same rows for Excel.
  */
 /**
  * The refusals the admin can act on: a period the gateway will not read
@@ -84,8 +81,6 @@ export function StaffingReport() {
   const locale = useLocale();
   const tCause = useTranslations("timplanCoverage.delivered.cause");
   const tCommon = useTranslations("common");
-  const { school } = useProfile();
-  const timeZone = school?.timezone ?? "Europe/Stockholm";
 
   const { data: years } = useAcademicYears();
   const [chosenYearId, setChosenYearId] = useState<string | null>(null);
@@ -107,7 +102,13 @@ export function StaffingReport() {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [includeQualifications, setIncludeQualifications] = useState(false);
   const [exporting, setExporting] = useState<"samverkan" | "scb" | null>(null);
-  const [scbNotices, setScbNotices] = useState<ScbNotice[] | null>(null);
+  /**
+   * The last SCB file fetched, with the year it was asked for: its lists and
+   * the rows for the CSV are shown only while that year is the chosen one, so
+   * an answer that arrives after the year changed never sits under another.
+   */
+  const [scbAnswer, setScbAnswer] = useState<{ yearId: string; file: ScbFile } | null>(null);
+  const scbFile = scbAnswer && scbAnswer.yearId === yearId ? scbAnswer.file : null;
 
   const personOf = useMemo(() => new Map((people ?? []).map((person) => [person.id, person])), [people]);
   const loadOf = useMemo(
@@ -149,7 +150,7 @@ export function StaffingReport() {
     setRange({ from: null, to: null });
     setAsked({ from: null, to: null });
     setOpen(new Set());
-    setScbNotices(null);
+    setScbAnswer(null);
   };
   /*
    * One edited field fixes the other at what it shows: the gateway's default
@@ -173,8 +174,6 @@ export function StaffingReport() {
       else next.add(userId);
       return next;
     });
-
-  const exportDate = () => formatStamp(new Date().toISOString(), timeZone).slice(0, 10);
 
   const exportSamverkan = async () => {
     if (!data || !load.data || !year) return;
@@ -202,51 +201,37 @@ export function StaffingReport() {
         }),
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("exportFailed"));
+      toast.error(exportFailure(error));
     } finally {
       setExporting(null);
     }
   };
 
+  /*
+   * The file as the gateway built it, saved as it came (it is named for its
+   * year). The panel of the previous fetch goes first, so a refusal never
+   * leaves an older file's lists standing as if they were this one's.
+   */
   const exportScb = async () => {
-    if (!load.data || !year) return;
+    if (!year) return;
+    const asked = year.id;
     setExporting("scb");
+    setScbAnswer(null);
     try {
-      const encoded = encodeURIComponent(year.id);
-      const [{ scbUnderlag, scbFilename }, { downloadCsv }, duties, yearPlans, plans, units] = await Promise.all([
-        import("@/lib/staffing-exports"),
-        import("@/lib/csv-export"),
-        api.get<TeacherDuty[]>(`/api/v1/teacher-duties?academicYearId=${encoded}`),
-        api.get<YearTimplanRow[]>(`/api/v1/academic-years/${encoded}/timplans`),
-        api.get<LocalTimplanListItem[]>("/api/v1/local-timplans"),
-        // Asked on the click, like the rest: SkolenhetsKod per row.
-        api.get<SchoolUnit[]>("/api/v1/school-units"),
-      ]);
-      const formOf = new Map(plans.map((plan) => [plan.id, plan.schoolForm]));
-      const schoolFormByGrade = new Map<number, SchoolForm>();
-      for (const row of yearPlans) {
-        const form = formOf.get(row.localTimplanId);
-        if (form) schoolFormByGrade.set(row.gradeLevel, form);
-      }
-      const result = scbUnderlag({
-        exportDate: exportDate(),
-        yearStartDate: year.startDate,
-        schoolName: school?.name ?? "",
-        load: load.data.teachers,
-        duties,
-        subjects: subjects ?? [],
-        schoolFormByGrade,
-        personOf: (id) => personOf.get(id) ?? null,
-        adminIds: new Set((people ?? []).filter((person) => person.role === "SCHOOL_ADMIN").map((p) => p.id)),
-        units,
-      });
-      downloadCsv(scbFilename(year.name), result.csv);
-      setScbNotices(result.notices);
+      const file = await api.get<ScbFile>(scbFilePath(asked));
+      downloadScbText(file);
+      setScbAnswer({ yearId: asked, file });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("exportFailed"));
+      toast.error(exportFailure(error));
     } finally {
       setExporting(null);
     }
+  };
+  /** The same rows for Excel, from the answer already held: no second read. */
+  const exportScbCsv = async () => {
+    if (!scbFile) return;
+    const { downloadScbCsv } = await import("@/lib/scb-csv");
+    downloadScbCsv(scbFile);
   };
 
   const noticeText = (notice: StaffingNotice) =>
@@ -256,13 +241,21 @@ export function StaffingReport() {
     if (typeof params.form === "string") params.form = t(`scb.form.${params.form}`);
     return t(`scb.notice.${notice.code}`, params as Record<string, string | number>);
   };
+  const scbMissingText = (row: ScbMissing) =>
+    t("scbMissingRow", {
+      line: row.line,
+      name: row.name,
+      unit: row.unit,
+      type: row.verksamhetstyp === "" ? "none" : row.verksamhetstyp,
+      fields: row.fields.map((field) => t(`scb.missing.${field}`)).join(", "),
+    });
 
   /*
    * Why the reconciliation could not be read. A refusal says its reason,
    * from the code's own sentence when there is one, else the gateway's
    * Swedish sentence; anything else says what did not change.
    */
-  const failureHint = (error: unknown): string => {
+  const refusalText = (error: unknown): string | null => {
     if (error instanceof ApiError && REFUSALS.has(error.status)) {
       if (error.code === "ROLLOVER_NOT_ACTIVATED" && error.params) {
         return tYearErrors("ROLLOVER_NOT_ACTIVATED", error.params);
@@ -270,8 +263,11 @@ export function StaffingReport() {
       const reason = error.message.replace(FIELD_TAG, "").trim();
       if (reason) return reason.charAt(0).toLocaleUpperCase(locale) + reason.slice(1);
     }
-    return t("loadFailedHint");
+    return null;
   };
+  const failureHint = (error: unknown): string => refusalText(error) ?? t("loadFailedHint");
+  /** An export's refusal in its own words when it has some, else that the export failed; never Nest's English. */
+  const exportFailure = (error: unknown): string => refusalText(error) ?? t("exportFailed");
 
   const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
   const kpis = data?.totals
@@ -552,26 +548,62 @@ export function StaffingReport() {
             <p className="text-xs text-muted-foreground">{t("exportSamverkanHint")}</p>
           </div>
           <div className="space-y-2">
-            <Button
-              variant="outline"
-              onClick={() => void exportScb()}
-              // The underlag is built on tjänst %, which this reader is not shown.
-              disabled={!load.data || load.data.hrHidden === true || exporting !== null}
-            >
+            <Button variant="outline" onClick={() => void exportScb()} disabled={!year || !mayScb || exporting !== null}>
               <Download />
-              {t("exportScb")}
+              {exporting === "scb" ? t("exportScbBusy") : t("exportScb")}
             </Button>
             <p className="text-xs text-muted-foreground">{t("scbNotice")}</p>
             <p className="text-xs text-muted-foreground">{t("scbYearNote")}</p>
           </div>
-          {scbNotices ? (
-            <Notice title={t("scbNoticesTitle", { count: scbNotices.length })}>
-              <ul className="list-disc space-y-0.5 pl-5">
-                {scbNotices.map((notice) => (
-                  <li key={`${notice.code}-${JSON.stringify(notice.params)}`}>{scbNoticeText(notice)}</li>
-                ))}
-              </ul>
-            </Notice>
+          {/*
+            One live region, mounted with the card and empty until a file is
+            saved (visually hidden while empty, never display:none, or it would
+            leave the tree): the sentence is announced once, and the lists
+            under it are read where they stand (role={null}: no region inside
+            a region).
+          */}
+          <p role="status" className={scbFile ? "text-sm" : "sr-only"}>
+            {scbFile
+              ? t("scbFileSummary", { filename: scbFile.filename, count: scbFile.rows.length, matdatum: scbFile.matdatum })
+              : null}
+          </p>
+          {scbFile ? (
+            <div className="space-y-3">
+              {scbFile.rows.length > 0 ? (
+                <Notice tone="warning" role={null} title={t("scbPersonNrTitle")}>
+                  {t("scbPersonNr", { count: scbFile.rows.length })}
+                </Notice>
+              ) : null}
+              <Notice
+                tone={scbFile.missing.length > 0 ? "warning" : "neutral"}
+                role={null}
+                title={t("scbMissingTitle", { count: scbFile.missing.length })}
+              >
+                {scbFile.missing.length > 0 ? (
+                  <ul className="list-disc space-y-0.5 pl-5">
+                    {scbFile.missing.map((row) => (
+                      <li key={row.line}>{scbMissingText(row)}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </Notice>
+              {scbFile.notices.length > 0 ? (
+                <Notice role={null} title={t("scbNoticesTitle", { count: scbFile.notices.length })}>
+                  <ul className="list-disc space-y-0.5 pl-5">
+                    {scbFile.notices.map((notice) => (
+                      <li key={`${notice.code}-${JSON.stringify(notice.params)}`}>{scbNoticeText(notice)}</li>
+                    ))}
+                  </ul>
+                </Notice>
+              ) : null}
+              <div className="space-y-1">
+                <Button variant="outline" size="sm" onClick={() => void exportScbCsv()}>
+                  <Download />
+                  {t("exportScbCsv")}
+                </Button>
+                <p className="text-xs text-muted-foreground">{t("scbCsvHint")}</p>
+              </div>
+            </div>
           ) : null}
         </SectionCard>
       ) : null}

@@ -488,6 +488,13 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       note: 'COPY',
       // A new post, a new key: the next year's Duties are named by its own (20261104090000).
       ss12000StretchKey: 'DEFAULT',
+      // Anställningsform and karriärtjänst (20261111090000) belong to the
+      // person's employment, not to the year: a tillsvidare stays one, and a
+      // förstelärare is appointed for years. Null for a school that does not
+      // record them, and then not named in the write (the planHash stays).
+      employmentForm: 'COPY_UNLESS_DEFAULT',
+      firstTeacherPercent: 'COPY_UNLESS_DEFAULT',
+      lecturerPercent: 'COPY_UNLESS_DEFAULT',
       ...timestamps,
     },
   },

@@ -234,6 +234,24 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
     });
   });
 
+  it('carries the post’s anställningsform and karriärtjänst shares when set, and adds no key to a post without them', () => {
+    const plan = planStaffingCarry(
+      input(
+        [
+          post(T1, { employmentForm: 'VISSTID', firstTeacherPercent: 20, lecturerPercent: 10 }),
+          post(T2, { employmentForm: null, firstTeacherPercent: null, lecturerPercent: null }),
+        ],
+        [],
+      ),
+    );
+    expect(plan.writes.employments[0]).toMatchObject({ userId: T1, employmentForm: 'VISSTID', firstTeacherPercent: 20, lecturerPercent: 10 });
+    // COPY_UNLESS_DEFAULT: a post that says none of the three hashes as it did before them.
+    expect(['employmentForm', 'firstTeacherPercent', 'lecturerPercent'].filter((key) => key in plan.writes.employments[1]!)).toEqual([]);
+    expect(hashStaffingCarry('s', 't', planStaffingCarry(input([post(T2)], [])).writes)).toBe(
+      hashStaffingCarry('s', 't', planStaffingCarry(input([post(T2, { employmentForm: null })], [])).writes),
+    );
+  });
+
   it('carries nobody who is inactive or not staff, and lists them', () => {
     const plan = planStaffingCarry(
       input([post(GONE), post(PUPIL)], [duty(GONE, 'RASTVAKT', 'Rastvakt'), duty(PUPIL, 'ANNAT', 'Något')]),

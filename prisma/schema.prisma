@@ -2453,6 +2453,14 @@ enum TeacherContractKind {
   SEMESTER
 }
 
+/// Anställningsform as SCB's Pedagogisk personal asks it (AnstForm T and V).
+/// Tjänstledig (L) is the post on SCB's mätdatum, read from the nedsättning,
+/// not a form of employment. See migration 20261111090000.
+enum TeacherEmploymentForm {
+  TILLSVIDARE
+  VISSTID
+}
+
 /// Legitimerad och behörig; behörig utan legitimation; får undervisa enligt
 /// rektors beslut (skollagen 2 kap. 18 §). Strongest first — the order the
 /// substitute picker ranks candidates in.
@@ -2548,6 +2556,13 @@ model TeacherEmployment {
   /// Nedsättning (partial leave). [0, employmentPercent].
   reductionPercent             Decimal             @default(0) @db.Decimal(6, 3)
   contractKind                 TeacherContractKind @default(FERIE)
+  /// Tillsvidare or visstid; null while the school has not said (SCB's AnstForm).
+  employmentForm               TeacherEmploymentForm?
+  /// Share of the post the förstelärare karriärtjänst takes, 1..100 whole per
+  /// cent; null = no förstelärare. With lecturerPercent at most 100 (CHECK).
+  firstTeacherPercent          Int?
+  /// The same for lektor.
+  lecturerPercent              Int?
   /// Per-teacher override of the policy's riktmärke × (employment − reduction)
   /// / 100. Null = derive. 0..2400.
   teachingTargetMinutesPerWeek Int?

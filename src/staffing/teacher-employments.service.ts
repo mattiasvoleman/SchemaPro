@@ -263,10 +263,15 @@ export class TeacherEmploymentsService {
         });
         // The answer is the post the caller sent and, when it has any, its
         // periods, which the caller did not: a read of them, recorded as the
-        // post's reads are (EMPLOYMENT), in the write's own transaction. A
-        // post without periods answers only what was sent, a write's echo.
+        // post's reads are (EMPLOYMENT), in the write's own transaction. So is
+        // one of SCB's three the PUT left out and the row keeps: handed back,
+        // not sent. A post with neither answers only what was sent, a write's
+        // echo.
         const answer = toEmploymentResponse(saved);
-        if (answer.periods.length > 0) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
+        const keptUnsent = (['employmentForm', 'firstTeacherPercent', 'lecturerPercent'] as const).some(
+          (field) => dto[field] === undefined && (saved[field] ?? null) !== null,
+        );
+        if (answer.periods.length > 0 || keptUnsent) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
         return answer;
       });
     } catch (error) {
@@ -381,11 +386,24 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
   note: string | null;
+  employmentForm?: NonNullable<UpsertTeacherEmploymentDto['employmentForm']> | null;
+  firstTeacherPercent?: number | null;
+  lecturerPercent?: number | null;
 } {
   const reductionPercent = dto.reductionPercent ?? 0;
   if (reductionPercent > dto.employmentPercent) {
     throw new BadRequestException(
       `Nedsättningen (${reductionPercent} %) kan inte vara större än tjänstgöringsgraden (${dto.employmentPercent} %).`,
+    );
+  }
+  // The table's CHECK, said in Swedish before the write when both are sent:
+  // SCB counts both as shares of one post. One sent beside a stored other is
+  // the CHECK's to refuse (NAMED_CHECKS, the same sentence's substance).
+  const firstTeacherPercent = dto.firstTeacherPercent ?? null;
+  const lecturerPercent = dto.lecturerPercent ?? null;
+  if ((firstTeacherPercent ?? 0) + (lecturerPercent ?? 0) > 100) {
+    throw new BadRequestException(
+      `Förstelärar- och lektorsuppdraget (${firstTeacherPercent} % och ${lecturerPercent} %) kan tillsammans vara högst hela tjänsten.`,
     );
   }
   return {
@@ -395,6 +413,13 @@ export function employmentData(dto: UpsertTeacherEmploymentDto): {
     teachingTargetMinutesPerWeek: dto.teachingTargetMinutesPerWeek ?? null,
     signature: dto.signature?.trim() || null,
     note: dto.note?.trim() || null,
+    // SCB's three (20261111090000) are written when sent — null clears — and
+    // kept when absent, unlike the fields above: the whole row is replaced on
+    // every PUT, so a web from before them, open in a tab over the release,
+    // would otherwise clear what the new form wrote on its next save.
+    ...(dto.employmentForm !== undefined ? { employmentForm: dto.employmentForm } : {}),
+    ...(dto.firstTeacherPercent !== undefined ? { firstTeacherPercent } : {}),
+    ...(dto.lecturerPercent !== undefined ? { lecturerPercent } : {}),
   };
 }
 

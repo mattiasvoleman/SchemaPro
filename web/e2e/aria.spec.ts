@@ -1,9 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { expectAriaBaseline } from "./aria-baseline";
 import { scanBothSchemes } from "./axe";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
 import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
-import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, TEACHERS } from "./stub/fixtures/world";
+import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, TEACHERS, YEAR } from "./stub/fixtures/world";
 import type { Persona } from "./stub/sessions";
 
 /**
@@ -140,4 +141,44 @@ test("a parallel block on the grundschema is one card, and its dialog names each
   expect(misses, MISSES).toEqual([]);
   await expectAriaBaseline(dialog, "admin-blockkort");
   expect((await scanBothSchemes(page, "block card open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+});
+
+test("the SCB file saves the gateway's text as it came, names what the school fills in, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/reports?tab=staffing", persona: "admin" }, baseURL!);
+  const exports = page.locator("#staffing-exports");
+  const filename = `scb-pedagogisk-personal-${YEAR.name.replace(/[^0-9A-Za-z-]+/g, "-")}`;
+
+  // The .txt is the gateway's text, byte for byte: no BOM, no header row, CRLF.
+  const [txt] = await Promise.all([
+    page.waitForEvent("download"),
+    exports.getByRole("button", { name: "SCB-fil, Pedagogisk personal (.txt)" }).click(),
+  ]);
+  expect(txt.suggestedFilename()).toBe(`${filename}.txt`);
+  const text = await readFile((await txt.path())!, "utf8");
+  expect(text.charCodeAt(0)).not.toBe(0xfeff);
+  expect(text.startsWith("SchemaPro;")).toBe(true);
+  expect(text.split("\r\n").at(-1)).toBe("");
+
+  // PersonNr once, then each row that lacks more: Eva's post says no
+  // anställningsform, David teaches without a post.
+  await expect(exports.getByText(/^PersonNr är tomt på alla \d+ rader\./)).toBeVisible();
+  await expect(exports.getByText(/^Rad \d+: Eva Holm, Exempelskolan 7–9, verksamhetstyp 6\. Saknar anställningsform/)).toBeVisible();
+  await expect(exports.getByText(/^Rad \d+: David Berg, .*Saknar tjänst och anställningsform/)).toBeVisible();
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  expect((await scanBothSchemes(page, "SCB file listed", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+
+  // The CSV is the same rows from the answer held: SCB's names as its header.
+  const [csv] = await Promise.all([
+    page.waitForEvent("download"),
+    exports.getByRole("button", { name: "Samma rader som CSV för Excel" }).click(),
+  ]);
+  expect(csv.suggestedFilename()).toBe(`${filename}.csv`);
+  const sheet = await readFile((await csv.path())!, "utf8");
+  expect(sheet.startsWith("\uFEFFSystem;Datum;Version;SkolenhetsKod;PersonNr;PersonNamn;")).toBe(true);
+  expect(sheet.split("\r\n").slice(1).join("\r\n")).toBe(text);
 });

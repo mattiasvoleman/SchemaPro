@@ -119,6 +119,9 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: null,
       signature: null,
       note: null,
+      employmentForm: null,
+      firstTeacherPercent: null,
+      lecturerPercent: null,
     });
   });
 
@@ -140,6 +143,9 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: 0,
       signature: "ANN",
       note: "mentor 7B",
+      employmentForm: null,
+      firstTeacherPercent: null,
+      lecturerPercent: null,
     });
   });
 
@@ -154,6 +160,9 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: 900,
       signature: "ANN",
       note: null,
+      employmentForm: "VISSTID" as const,
+      firstTeacherPercent: 10,
+      lecturerPercent: null,
     };
     expect(employmentDraftToBody(employmentToDraft(row))).toEqual({
       employmentPercent: 66.667,
@@ -162,8 +171,47 @@ describe("employmentDraftToBody", () => {
       teachingTargetMinutesPerWeek: 900,
       signature: "ANN",
       note: null,
+      employmentForm: "VISSTID",
+      firstTeacherPercent: 10,
+      lecturerPercent: null,
     });
     expect(employmentToDraft(null)).toBe(EMPTY_EMPLOYMENT_DRAFT);
+  });
+});
+
+describe("SCB's anställningsform and karriärtjänster on the post (20261111090000)", () => {
+  it("takes whole per cent 1–100 for each, together at most the post, and empty for none", () => {
+    expect(validateEmploymentDraft(draft({ firstTeacherPercent: "", lecturerPercent: "" }))).toBeNull();
+    expect(validateEmploymentDraft(draft({ firstTeacherPercent: "20", lecturerPercent: "80" }))).toBeNull();
+    expect(validateEmploymentDraft(draft({ firstTeacherPercent: "0" }))).toEqual({ reason: "firstTeacherOutOfRange" });
+    expect(validateEmploymentDraft(draft({ firstTeacherPercent: "10,5" }))).toEqual({ reason: "firstTeacherOutOfRange" });
+    expect(validateEmploymentDraft(draft({ lecturerPercent: "101" }))).toEqual({ reason: "lecturerOutOfRange" });
+    expect(validateEmploymentDraft(draft({ firstTeacherPercent: "60", lecturerPercent: "50" }))).toEqual({
+      reason: "careerAbovePost",
+      first: 60,
+      lecturer: 50,
+    });
+  });
+
+  it("sends a said anställningsform and the shares as numbers, an empty field as null", () => {
+    expect(
+      employmentDraftToBody(draft({ employmentForm: "TILLSVIDARE", firstTeacherPercent: " 15 ", lecturerPercent: "" })),
+    ).toMatchObject({ employmentForm: "TILLSVIDARE", firstTeacherPercent: 15, lecturerPercent: null });
+  });
+
+  it("reads a post from a gateway before the fields as not said", () => {
+    const draftOf = employmentToDraft({
+      id: "e1",
+      userId: "u1",
+      academicYearId: "y1",
+      employmentPercent: 100,
+      reductionPercent: 0,
+      contractKind: "FERIE",
+      teachingTargetMinutesPerWeek: null,
+      signature: null,
+      note: null,
+    });
+    expect(draftOf).toMatchObject({ employmentForm: "", firstTeacherPercent: "", lecturerPercent: "" });
   });
 });
 

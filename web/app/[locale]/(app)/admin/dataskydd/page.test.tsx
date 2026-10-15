@@ -197,7 +197,7 @@ describe("/admin/dataskydd", () => {
     expect(cells[1]).toBe("Klar");
     expect(cells[2]).toMatch(/^Närvaro 100\s000 · Slutade personer 2$/);
     expect(cells[3]).toBe(
-      "1 lärare väntar på SCB-underlaget · 1 inloggning kunde inte tas bort och försöks igen · Närvaro fortsätter nästa natt",
+      "1 lärare väntar på SCB-filen · 1 inloggning kunde inte tas bort och försöks igen · Närvaro fortsätter nästa natt",
     );
   });
 

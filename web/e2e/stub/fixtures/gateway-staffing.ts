@@ -1,3 +1,4 @@
+import type { ScbFile } from "../../../lib/scb-file";
 import type { HistoryResponse } from "../../../lib/staffing-history-queries";
 import type { StaffingNotice, StaffingReconciliationResponse } from "../../../lib/staffing-reconciliation";
 import type { UnstaffedRequirement } from "../../../lib/teacher-load";
@@ -13,6 +14,7 @@ import type {
 import { route, Reply, type GatewayRoute } from "../gateway-routes";
 import type { SignedInPerson } from "../sessions";
 import { addDays, TODAY } from "./calendar";
+import { scbFileOf } from "./scb-file";
 import { delivered, loadReport, ownLoad, suggestTeachers, type LoadResponse } from "./staffing-load";
 import { DUTIES, EMPLOYMENTS, historyOf, QUALIFICATIONS, STAFFING_POLICY } from "./staffing-rows";
 import { NEXT_YEAR, YEAR } from "./world";
@@ -94,6 +96,14 @@ export const staffingRoutes: GatewayRoute[] = [
       suggestTeachers(requirementId, NEXT_YEAR) ??
       new Reply(404, { statusCode: 404, message: "Timplansposten finns inte." })
     );
+  }),
+
+  // SCB:s Pedagogisk personal, the admin's alone (src/staffing/scb).
+  route("GET", "/api/v1/staffing/scb-file", ({ person, query }): ScbFile | Reply => {
+    const refused = refusal(person, ADMIN_ONLY);
+    if (refused) return refused;
+    const year = yearOf(query);
+    return year instanceof Reply ? year : scbFileOf(year);
   }),
 
   route("GET", "/api/v1/staffing/delivered", ({ person, query }): StaffingReconciliationResponse | Reply => {

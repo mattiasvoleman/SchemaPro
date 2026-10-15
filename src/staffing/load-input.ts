@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, TeacherEmploymentForm } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import { loadWeightOf, type GradeSpan, type LoadInput, type LoadModel } from './teacher-load';
@@ -29,6 +29,19 @@ export interface LoadRead {
    * MINUTES, where no factor is read at all.
    */
   weightOf(subjectId: string): number;
+  /**
+   * What SCB asks of a post besides its figures (migration 20261111090000),
+   * by teacher, from the statement that read the figures: the SCB file
+   * (src/staffing/scb) states the anställningsform and the karriärtjänst of
+   * the same row version its omfattning comes from. Undefined without a post.
+   */
+  scbPostOf(userId: string): ScbPostFields | undefined;
+}
+
+export interface ScbPostFields {
+  employmentForm: TeacherEmploymentForm | null;
+  firstTeacherPercent: number | null;
+  lecturerPercent: number | null;
 }
 
 /**
@@ -100,6 +113,16 @@ export async function readLoadInput(
           orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
         })
       : [];
+  const scbPosts = new Map<string, ScbPostFields>(
+    posts.map((post) => [
+      post.userId,
+      {
+        employmentForm: post.employmentForm,
+        firstTeacherPercent: post.firstTeacherPercent,
+        lecturerPercent: post.lecturerPercent,
+      },
+    ]),
+  );
   const employments = posts.map((post) => ({
     ...post,
     periods: (periodRows ?? []).filter((period) => period.employmentId === post.id),
@@ -270,6 +293,7 @@ export async function readLoadInput(
     groupName: (groupId) => groups.get(groupId)?.name,
     loadModel,
     weightOf,
+    scbPostOf: (userId) => scbPosts.get(userId),
   };
 }
 
