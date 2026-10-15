@@ -39,6 +39,8 @@ const SCREENS: Screen[] = [
   { name: "public-login", url: "/sv/login", persona: null, scope: "body" },
   { name: "public-tillganglighet", url: "/sv/tillganglighet", persona: null, scope: "body" },
   { name: "public-schemavisaren", url: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`, persona: null, scope: "body" },
+  // The frame's own order: the week's links, then the way out.
+  { name: "public-schemavisaren-ram", url: `/v/${SHARE_TOKEN}/embed?target=${GROUPS.g7A.id}`, persona: null, scope: "body" },
   // The shell once per role, through the one page every role has.
   { name: "admin-notiser", url: "/sv/notifications", persona: "admin", scope: "body" },
   { name: "teacher-notiser", url: "/sv/notifications", persona: "teacher", scope: "body" },

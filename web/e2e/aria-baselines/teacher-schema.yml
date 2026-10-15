@@ -5,6 +5,7 @@
   - text: Vecka <n>
   - button "Nästa vecka"
   - button "Denna vecka" [disabled]
+  - button "Skriv ut veckan"
   - text: Mån <datum> Tis <datum> Ons <datum> Tor <datum> Fre <datum> 09:00 10:00 11:00 12:00 13:00 14:00 15:00 Förmiddagsrast
   - button "Måndag 08:10–09:10, Svenska 7A Sal 101"
   - button "Måndag 10:40–11:40, Svenska 7B Sal 102"

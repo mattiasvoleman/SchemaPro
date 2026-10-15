@@ -32,7 +32,9 @@ import {
   roomProposal,
   yearRosters,
 } from "./misc-school";
-import { byId, NEXT_YEAR, ROOM_TYPES, YEAR } from "./world";
+import { byId, GROUPS, NEXT_YEAR, ROOM_TYPES, YEAR } from "./world";
+import { addDays, THIS_MONDAY } from "./calendar";
+import { weekOf } from "./gateway-public";
 
 /**
  * The school's settings and the admin tools: /admin/generate, publishing,
@@ -85,6 +87,29 @@ export const miscRoutes: GatewayRoute[] = [
     PUBLIC_LINKS.filter((link) => link.academicYearId === query.get("academicYearId")),
   ),
   route("GET", "/api/v1/teacher-public-labels", () => HIDDEN_TEACHERS),
+  // Skriv ut scheman: the classes' set of this week, each sheet the viewer's
+  // week of the class. Teachers' and rooms' sets are not modelled.
+  route("GET", "/api/v1/print/timetables", ({ query }) => {
+    const kind = query.get("kind");
+    if (kind !== "GROUP") return new Reply(200, { sheets: [] }, { miss: true });
+    const classes = Object.values(GROUPS).filter((group) => group.academicYearId === YEAR.id && group.kind === "CLASS");
+    return {
+      kind,
+      school: weekOf(classes[0]!.id).school,
+      academicYearId: YEAR.id,
+      week: { from: THIS_MONDAY, to: addDays(THIS_MONDAY, 6), isoWeek: weekOf(classes[0]!.id).week.isoWeek },
+      validity: [{ from: YEAR.startDate, to: YEAR.endDate }],
+      teachers: query.get("teachers") ?? PUBLICATION_SETTINGS.publicTeacherDisplay,
+      meals: query.get("meals") !== "false",
+      sheets: classes
+        .map((group) => ({ id: group.id, title: group.name, days: weekOf(group.id).days }))
+        .sort((a, b) => a.title.localeCompare(b.title, "sv")),
+    };
+  }),
+  route("GET", "/api/v1/timetable-validity", () => ({
+    week: { from: THIS_MONDAY, to: addDays(THIS_MONDAY, 6) },
+    validity: [{ from: YEAR.startDate, to: YEAR.endDate }],
+  })),
   route("GET", "/api/v1/schedule-versions", ({ query }) =>
     SCHEDULE_VERSIONS.filter((version) => version.academicYearId === query.get("academicYearId")).map(
       ({ lessons: _lessons, ...version }) => version,

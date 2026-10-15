@@ -32,6 +32,9 @@ const ROUTES = [
   { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}`, name: "Schemavisaren, a class's week", themed: false },
   { path: `/v/${SHARE_TOKEN}?target=${GROUPS.g7A.id}&lang=en`, name: "Schemavisaren, a class's week (en)", themed: false },
   { path: `/v/${"x".repeat(43)}`, name: "Schemavisaren, a link that does not resolve", themed: false },
+  // The frame a school puts on its website (Utskrift och inbäddning), opened on its own here.
+  { path: `/v/${SHARE_TOKEN}/embed`, name: "Schemavisaren's frame, the list of classes", themed: false },
+  { path: `/v/${SHARE_TOKEN}/embed?target=${GROUPS.g7A.id}`, name: "Schemavisaren's frame, a class's week", themed: false },
 ];
 
 /** Both widths, both schemes; a reload at phone width, so the page lays itself out there. */

@@ -1,16 +1,22 @@
 import type { PublicDay, PublicIndex, PublicWeek } from "../../../lib/public-timetable";
 import { route, Reply, type GatewayRoute } from "../gateway-routes";
 import { addDays, THIS_MONDAY } from "./calendar";
+import { PUBLICATION_SETTINGS } from "./misc-publication";
 import { byId, CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, ROOMS, SCHOOL, SUBJECTS, TEACHERS } from "./world";
 
 /**
  * Schemavisaren (app/v/[token]): one share link for the school's classes. With
  * no target it lists them; with 7A it shows 7A's week. Any other token is 404,
- * which the page turns into its not-found.
+ * which the page turns into its not-found. The link may be framed on the
+ * school's own website (/v/<token>/embed); any other token may be framed
+ * nowhere.
  */
 
 /** 43 characters of base64url, the shape TOKEN_PATTERN accepts. */
 export const SHARE_TOKEN = "ExempelskolanKlasserDelasMedVardnadshavarna";
+
+/** The website the school lets frame its classes (PublicationSettings.publicEmbedOrigins). */
+export const SCHOOL_WEBSITE = PUBLICATION_SETTINGS.publicEmbedOrigins[0]!;
 
 /** ISO week of a Monday: the week its Thursday falls in, counted from that year's first. */
 const isoWeek = (monday: string) => {
@@ -22,7 +28,7 @@ const isoWeek = (monday: string) => {
 const time = (instant: string) =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", minute: "2-digit" }).format(new Date(instant));
 
-function weekOf(groupId: string): PublicWeek {
+export function weekOf(groupId: string): PublicWeek {
   const group = byId(Object.values(GROUPS), groupId)!;
   const days: PublicDay[] = [0, 1, 2, 3, 4].map((offset) => {
     const date = addDays(THIS_MONDAY, offset);
@@ -59,6 +65,9 @@ const INDEX: PublicIndex = {
 };
 
 export const publicRoutes: GatewayRoute[] = [
+  route("GET", "/public/v1/timetables/:token/embed", ({ params }) =>
+    params.token === SHARE_TOKEN ? { frameAncestors: [SCHOOL_WEBSITE] } : new Reply(404, { message: "Not found" }),
+  ),
   route("GET", "/public/v1/timetables/:token", ({ params, query }) => {
     if (params.token !== SHARE_TOKEN) return new Reply(404, { message: "Not found" });
     const target = query.get("target");
