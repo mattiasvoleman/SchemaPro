@@ -83,6 +83,23 @@ export const GROUPS = {
 export const GROUP_LIST = Object.values(GROUPS);
 
 /**
+ * 7A split in halves for slöjd (Halvklasser), as "Dela klassen" leaves it:
+ * teaching groups of the class's year and grade with halfOfId on the class.
+ * Apart from GROUP_LIST, which the gateway fixtures (publication, sync,
+ * staffing) read as the school's groups before anyone split one; the halves
+ * have no lessons, so no screen but Klasser shows them.
+ */
+const half = (n: number, name: string, of: StudentGroup): StudentGroup => ({
+  ...group(n, name, "TEACHING_GROUP", of.gradeLevel),
+  halfOfId: of.id,
+});
+export const HALVES = {
+  h7A1: half(21, "7A:1", GROUPS.g7A),
+  h7A2: half(22, "7A:2", GROUPS.g7A),
+};
+export const HALF_LIST = Object.values(HALVES);
+
+/**
  * A parallel block (#144): Språkval åk 7, whose two language groups are
  * placed at the same times. Its posts carry its id (REQUIREMENTS 11 and 13),
  * with the same lessons and weeks, as the database requires.

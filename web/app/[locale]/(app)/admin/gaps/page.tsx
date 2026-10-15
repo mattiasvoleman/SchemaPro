@@ -400,8 +400,8 @@ export default function GapsPage() {
     [students],
   );
   const groupConflicts = useMemo(
-    () => buildGroupConflictMap(studentGroupOf, memberships ?? []),
-    [studentGroupOf, memberships],
+    () => buildGroupConflictMap(studentGroupOf, memberships ?? [], groups),
+    [studentGroupOf, memberships, groups],
   );
   /**
    * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.

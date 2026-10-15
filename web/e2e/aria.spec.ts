@@ -124,6 +124,24 @@ test("the parallel blocks panel on Timplansposter names its block and what each 
   expect((await scanBothSchemes(page, "blocks open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
 });
 
+test("a class half names its class on Klasser, and Placera elever names each pupil's half, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/groups", persona: "admin" }, baseURL!);
+  // 7A is split (HALVES): its row and both halves' place the class's pupils.
+  const half = page.getByRole("row").filter({ hasText: "7A:1" });
+  await expect(half).toContainText("halva av 7A");
+  await half.getByRole("button", { name: "Placera eleverna i 7A" }).click();
+  const dialog = page.getByRole("dialog", { name: "Placera eleverna i 7A" });
+  await expect(dialog.getByRole("combobox", { name: "Halva för Jamal Sjö" })).toHaveValue(/.+/);
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  await expectAriaBaseline(dialog, "admin-halvor");
+  expect((await scanBothSchemes(page, "class halves open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+});
+
 test("a parallel block on the grundschema is one card, and its dialog names each lesson and the lock, and passes axe open", async ({
   page,
   baseURL,

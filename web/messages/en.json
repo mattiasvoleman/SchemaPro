@@ -405,7 +405,24 @@
     "countsFailed": "The numbers of students could not be loaded",
     "countsFailedHint": "The Students column shows —, not zero. Nothing has changed; reload the page to try again.",
     "membersLoadFailed": "The group's students could not be loaded",
-    "membersLoadFailedHint": "The list cannot be saved now, since saving it would empty the group. Nothing has changed; close and open it again to retry."
+    "membersLoadFailedHint": "The list cannot be saved now, since saving it would empty the group. Nothing has changed; close and open it again to retry.",
+    "halves": {
+      "split": "Split the class",
+      "splitTitle": "Split {name} into halves",
+      "splitBody": "The halves become teaching groups in the class's school year and grade. Put timetable rows on them, such as woodwork or a science lab, and generate before the pupils are placed: a half's lessons keep the whole class busy, except when the other half has a lesson at the same time.",
+      "halfName": "Name of half {n}",
+      "splitDone": "{name} is split into {first} and {second}.",
+      "place": "Place pupils",
+      "placeTitle": "Place the pupils of {name}",
+      "placeBody": "Choose a half for each pupil. A pupil without a half is planned as if they could be in either half until they are placed.",
+      "noHalf": "No half",
+      "halfFor": "Half for {name}",
+      "evenly": "Share out evenly",
+      "summary": "{placed} placed, {unplaced} without a half",
+      "placeDone": "The pupils of {name} are placed.",
+      "noPupils": "The class has no pupils yet. Add the pupils, and they can be placed in the halves.",
+      "badge": "half of {name}"
+    }
   },
   "people": {
     "title": "People",
@@ -4037,7 +4054,8 @@
       "PUB_LUNCH_NOT_SET": "Lunch is not set up",
       "PUB_WEEK_SPLIT": "Validity starts or ends mid-week",
       "PUB_RANGE_GAP": "School days without a published timetable",
-      "PUB_DAY_OPS_LOST": "Day changes that disappear"
+      "PUB_DAY_OPS_LOST": "Day changes that disappear",
+      "PUB_EMPTY_HALF": "Class halves without pupils"
     },
     "severity": {
       "REFUSE": "Stops",
@@ -4058,6 +4076,7 @@
       "PUB_STAFFING_REFUSE": "The staffing stop rules find {count, plural, one {# thing} other {# things}}.",
       "PUB_TIMPLAN": "{count, plural, one {# line of the timplan is} other {# lines of the timplan are}} below level.",
       "PUB_BLOCK_SPLIT": "{count, plural, one {# lesson does} other {# lessons do}} not stand at the same times as the rest of its parallel block.",
+      "PUB_EMPTY_HALF": "{count, plural, one {# class half has lessons but no pupils placed in it.} other {# class halves have lessons but no pupils placed in them.}}",
       "PUB_RANGE_OVERLAP": "The validity shares its period with {count, plural, one {a published timetable} other {# published timetables}}.",
       "PUB_RANGE_GAP": "{count, plural, one {# school day ahead has} other {# school days ahead have}} no published timetable.",
       "PUB_WEEK_SPLIT": "The validity starts or ends mid-week: {count, plural, one {# lesson} other {# lessons}} may disappear or be held twice that week.",

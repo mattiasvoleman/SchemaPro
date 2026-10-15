@@ -21,6 +21,7 @@ import {
   GROUP_LIST,
   GROUPS,
   GUARDIANS,
+  HALVES,
   ROOMS,
   STUDENT_LIST,
   STUDENTS,
@@ -230,6 +231,8 @@ export const GROUP_MEMBERS = [
   { studentId: STUDENTS.olivia.id, studentGroupId: GROUPS.m2.id },
   { studentId: STUDENTS.jamal.id, studentGroupId: GROUPS.m2fr.id },
   { studentId: STUDENTS.klara.id, studentGroupId: GROUPS.m2fr.id },
+  // Jamal is placed in 7A:1; Ella and Ines are in no half yet.
+  { studentId: STUDENTS.jamal.id, studentGroupId: HALVES.h7A1.id },
 ];
 
 // --- Attendance, absence, leave ------------------------------------------------

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -112,6 +113,10 @@ vi.mock("./school-units-card", () => ({
 vi.mock("@/components/import/csv-import-dialog", () => ({
   CsvImportDialog: () => null,
 }));
+
+/** The Halvklasser dialogs write through the gateway client directly. */
+const api = vi.hoisted(() => ({ post: vi.fn(), put: vi.fn() }));
+vi.mock("@/lib/api", () => ({ api }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/i18n/navigation", () => ({
@@ -312,5 +317,103 @@ describe("Groups page", () => {
     const names = rowNames().join(" ");
     expect(names).toContain("Ma71");
     expect(names).not.toContain("7A");
+  });
+});
+
+describe("Halvklasser on Klasser", () => {
+  const halves = [
+    { id: "h-1", academicYearId: "year-1", name: "7A:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+    { id: "h-2", academicYearId: "year-1", name: "7A:2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+  ];
+  /** The dialogs invalidate through react-query, which the page's own mocks never reach. */
+  const showPage = () =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <GroupsPage />
+      </QueryClientProvider>,
+    );
+
+  beforeEach(() => {
+    yearState.years = [YEAR];
+    api.post.mockReset().mockResolvedValue([]);
+    api.put.mockReset().mockResolvedValue({ placed: 2, unplaced: 0 });
+  });
+
+  it("splits a class from its row, with the names the school gives", async () => {
+    groupState.groups = groups;
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(screen.getByRole("button", { name: "halves.splitTitle(7A)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("halfName(1)")).toHaveValue("7A:1");
+    const second = within(dialog).getByLabelText("halfName(2)");
+    await user.clear(second);
+    await user.type(second, "Grupp B");
+    await user.click(within(dialog).getByRole("button", { name: "split" }));
+
+    expect(api.post).toHaveBeenCalledWith("/api/v1/student-groups/g-7a/halves", { names: ["7A:1", "Grupp B"] });
+    // A teaching group is not split.
+    expect(screen.queryByRole("button", { name: "halves.splitTitle(Ma71)" })).toBeNull();
+  });
+
+  it("names a half's class, and places the class's pupils from the half's row, sharing out the unplaced", async () => {
+    groupState.groups = [...groups, ...halves];
+    // Alma is in 7A:1 already; Nils is placed in no half.
+    memberships.push({ studentId: "st-1", studentGroupId: "h-1" });
+    const user = userEvent.setup();
+    try {
+      showPage();
+
+      const halfRow = screen.getAllByRole("row").find((row) => row.textContent?.includes("7A:1"))!;
+      expect(halfRow).toHaveTextContent("halves.badge(7A)");
+      // A half takes its class's pupils in the class's dialog, not a member list of its own.
+      expect(within(halfRow).queryByRole("button", { name: "membersTitle(7A:1)" })).toBeNull();
+      // A class with halves is placed, not split again.
+      expect(screen.queryByRole("button", { name: "halves.splitTitle(7A)" })).toBeNull();
+
+      await user.click(within(halfRow).getByRole("button", { name: "halves.placeTitle(7A)" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByRole("combobox", { name: "halfFor(Alma Berg)" })).toHaveValue("h-1");
+      expect(within(dialog).getByRole("combobox", { name: "halfFor(Nils Ek)" })).toHaveValue("");
+      expect(dialog).toHaveTextContent("summary(1|1)");
+
+      await user.click(within(dialog).getByRole("button", { name: "evenly" }));
+      expect(within(dialog).getByRole("combobox", { name: "halfFor(Nils Ek)" })).toHaveValue("h-2");
+      await user.click(within(dialog).getByRole("button", { name: "save" }));
+
+      expect(api.put).toHaveBeenCalledWith("/api/v1/student-groups/g-7a/halves/members", {
+        halves: [
+          { groupId: "h-1", studentIds: ["st-1"] },
+          { groupId: "h-2", studentIds: ["st-2"] },
+        ],
+      });
+    } finally {
+      memberships.pop();
+    }
+  });
+
+  it("moves a pupil to the other half and leaves one in none", async () => {
+    groupState.groups = [...groups, ...halves];
+    memberships.push({ studentId: "st-1", studentGroupId: "h-1" }, { studentId: "st-2", studentGroupId: "h-2" });
+    const user = userEvent.setup();
+    try {
+      showPage();
+
+      await user.click(screen.getAllByRole("button", { name: "halves.placeTitle(7A)" })[0]!);
+      const dialog = await screen.findByRole("dialog");
+      await user.selectOptions(within(dialog).getByRole("combobox", { name: "halfFor(Alma Berg)" }), "h-2");
+      await user.selectOptions(within(dialog).getByRole("combobox", { name: "halfFor(Nils Ek)" }), "");
+      await user.click(within(dialog).getByRole("button", { name: "save" }));
+
+      expect(api.put).toHaveBeenCalledWith("/api/v1/student-groups/g-7a/halves/members", {
+        halves: [
+          { groupId: "h-1", studentIds: [] },
+          { groupId: "h-2", studentIds: ["st-1"] },
+        ],
+      });
+    } finally {
+      memberships.splice(-2, 2);
+    }
   });
 });

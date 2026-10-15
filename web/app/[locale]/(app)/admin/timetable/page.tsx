@@ -598,10 +598,10 @@ export default function TimetablePage() {
     [groups, memberships, studentGroupOf],
   );
 
-  /** Groups sharing students — the manual-edit twin of the engine's pairs. */
+  /** Groups sharing students — the manual-edit twin of the engine's pairs, halves included. */
   const groupConflictMap = useMemo(
-    () => buildGroupConflictMap(studentGroupOf, memberships ?? []),
-    [studentGroupOf, memberships],
+    () => buildGroupConflictMap(studentGroupOf, memberships ?? [], groups),
+    [studentGroupOf, memberships, groups],
   );
 
   /** The groups that are somebody's home. A teaching group is not one. */

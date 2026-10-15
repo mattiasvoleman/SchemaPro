@@ -22,6 +22,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from app.config import Settings
+from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
 from app.solver.scheduler_solver import SchedulerSolver
 
@@ -152,3 +153,31 @@ def test_a_group_cut_from_the_class_keeps_off_both_halves_until_its_pupils_are_p
     assert not _overlap(_spans(lessons, MATEMATIK), _spans(lessons, SLOJD))
     assert _overlap(_spans(lessons, MATEMATIK), _spans(lessons, NO))
     assert _validate(payload, lessons) == []
+
+
+def test_a_block_of_the_two_halves_holds_them_to_one_hour_and_is_not_refused() -> None:
+    """A school that wants the rotation, and not just allows it, blocks the two posts.
+
+    One hour of svenska leaves the day room for the halves to part, so
+    nothing but the block (4.2, Parallella block) makes them meet. The block
+    is accepted because the halves are never paired: had the gateway paired
+    them, the engine would refuse it as a block of groups sharing pupils.
+    """
+    block = str(uuid4())
+    payload = _payload(BEFORE_PLACEMENT, svenska=1)
+    for requirement in payload["requirements"]:  # type: ignore[union-attr]
+        if requirement["id"] in (SLOJD, NO):
+            requirement["blockId"] = block
+    status, lessons = _solve(payload)
+
+    assert status in {"OPTIMAL", "FEASIBLE"}
+    assert _spans(lessons, SLOJD) == _spans(lessons, NO)
+    assert _validate(payload, lessons) == []
+
+    paired = {**payload, "groupConflicts": [*BEFORE_PLACEMENT, [HALF_1, HALF_2]]}
+    try:
+        SchedulerSolver(_settings())._validate_request(OptimizeScheduleRequest.model_validate(paired))
+    except InvalidScheduleInputError as error:
+        assert error.code == "BLOCK_MEMBERS_SHARE_PUPILS"
+    else:
+        raise AssertionError("a block of paired halves was accepted")
