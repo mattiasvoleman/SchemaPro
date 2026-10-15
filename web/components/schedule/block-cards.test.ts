@@ -97,6 +97,18 @@ describe("cardsOf", () => {
     expect([...apart.keys()]).toEqual(["b-ty"]);
   });
 
+  it("names a block whose name is not read with the fallback, and keeps each block's placed lessons", () => {
+    const { cards, byBlock } = cardsOf(
+      [lesson("a-ty", "ty7", "de"), lesson("b-fr", "fr7", "fr"), lesson("c-ty", "ty7", "de", { dayOfWeek: 3 }), lesson("d-fr", "fr7", "fr", { isParked: true })],
+      posts,
+      new Map(),
+      "Parallellt block",
+    );
+
+    expect([...cards.values()][0]?.name).toBe("Parallellt block");
+    expect(byBlock.get("b")?.map((row) => row.id).sort()).toEqual(["a-ty", "b-fr", "c-ty"]);
+  });
+
   it("marks nothing apart in a block only one member has placed", () => {
     const { cards, apart } = cardsOf([lesson("a-ty", "ty7", "de")], posts, names);
 

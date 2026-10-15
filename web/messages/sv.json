@@ -1269,6 +1269,8 @@
     "sharedMoveTitle": "Lektionen tillhör flera klasser",
     "sharedMoveBody": "Flyttar du den flyttas den för {classes}. Elever i de klasserna får den nya tiden i sina scheman.",
     "sharedMoveConfirm": "Flytta ändå",
+    "sharedCardTitle": "Blockets lektioner tillhör flera klasser",
+    "sharedCardBody": "Flyttar du {name} flyttas lektionerna för {classes}. Elever i de klasserna får den nya tiden i sina scheman.",
     "trayTitle": "Parkering",
     "trayHint": "Dra en lektion hit för att lyfta ut den tillfälligt — till exempel för att byta plats på två. En parkerad lektion upptar ingen tid, publiceras inte och skickas inte till solvern. Dra tillbaka den till schemat, eller sätt tillbaka den där den stod.",
     "trayEmpty": "Inga parkerade lektioner.",
@@ -1343,7 +1345,11 @@
       "splitBody": "{lesson} ligger på samma tider som {others}. Flyttar du bara den här lektionen delas blocket: den räknas som lagd för hand, och om inte alla blockets lektioner är låsta säger nästa generering att blocket är delvis låst.",
       "moveOne": "Flytta bara den här",
       "moveBlock": "Flytta hela blocket",
-      "moveBack": "Flytta tillbaka med blocket"
+      "moveBack": "Flytta tillbaka med blocket",
+      "unnamed": "Parallellt block",
+      "refusedSlot": "{name} kan inte flyttas dit: någon av kortets lektioner krockar på den tiden. Öppna kortet för att flytta en lektion i taget.",
+      "refusedTray": "{name} läggs inte på brickan som ett kort. Öppna kortet och lägg en lektion i taget på brickan från dess dialog.",
+      "lockedParked": "{parked, plural, one {# av blockets lektioner ligger på brickan och låstes inte. Nästa generering vägrar blocket som delvis låst tills den är lagd.} other {# av blockets lektioner ligger på brickan och låstes inte. Nästa generering vägrar blocket som delvis låst tills de är lagda.}}"
     }
   },
   "roomOptimization": {

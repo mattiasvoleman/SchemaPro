@@ -370,9 +370,10 @@ export default function TimetablePage() {
    * to undo. The dialog's job is to NAME them, not to slow you down.
    */
   const [confirming, setConfirming] = useState<{
-    lesson: MasterLesson;
-    change: LessonChange;
     classes: string[];
+    go: () => void;
+    /** A parallel block's card, which moves all its lessons (block-cards.tsx). */
+    block?: string;
   } | null>(null);
 
   /*
@@ -1104,7 +1105,9 @@ export default function TimetablePage() {
     const push = (key: string, label: string, match: (l: MasterLesson) => boolean) => {
       const matching = filtered.filter(match);
       if (matching.length > 0) {
-        boards.push({ key, label, lessons: matching.map(toGridLesson) });
+        // A parallel block's lessons named as on the grid (block-cards.tsx).
+        const drawn = blockKit ? blockKit.grid(matching, toGridLesson) : matching.map(toGridLesson);
+        boards.push({ key, label, lessons: drawn });
       }
     };
     if (groupBy === "teacher") {
@@ -1134,7 +1137,7 @@ export default function TimetablePage() {
       }
     }
     return boards;
-  }, [groupBy, filtered, toGridLesson, teachers, rooms, groups, t]);
+  }, [groupBy, filtered, toGridLesson, teachers, rooms, groups, t, blockKit]);
 
   // -------------------------------------------------------------------
   // Undoable mutations
@@ -1297,22 +1300,26 @@ export default function TimetablePage() {
     [undoableUpdate, showError, t, blockKit],
   );
 
+  /** A drop of lessons, asked first when they reach more than one class; `go` moves them. */
+  const drop = useCallback(
+    (moved: MasterLesson[], change: LessonChange, go = () => applyGridChange(moved[0]!, change), block?: string) => {
+      // Asked of the LESSONS, not of the filter: which class you are looking
+      // at has no bearing on whose week just moved.
+      const classes = [...new Set(moved.flatMap((lesson) => homeClassesReached(lesson, homeClassIds, rosterIndex)))];
+      if (classes.length > 1) setConfirming({ classes, go, block });
+      else go();
+    },
+    [homeClassIds, rosterIndex, applyGridChange],
+  );
+
   const handleGridChange = useCallback(
     (id: string, change: LessonChange) => {
       // A block card, or a member moved out of one, is the block's to move.
       if (blockKit?.move(id, change)) return;
       const lesson = lessonById.get(id);
-      if (!lesson) return;
-      // Asked of the LESSON, not of the filter: which class you are looking at
-      // has no bearing on whose week just moved.
-      const classes = homeClassesReached(lesson, homeClassIds, rosterIndex);
-      if (classes.length > 1) {
-        setConfirming({ lesson, change, classes });
-        return;
-      }
-      applyGridChange(lesson, change);
+      if (lesson) drop([lesson], change);
     },
-    [lessonById, homeClassIds, rosterIndex, applyGridChange, blockKit],
+    [lessonById, drop, blockKit],
   );
 
   /**
@@ -1344,16 +1351,19 @@ export default function TimetablePage() {
     (id: string, point: { clientX: number; clientY: number }) => {
       const lesson = lessonById.get(id);
       const tray = trayRef.current;
-      if (!lesson || !tray) return;
+      if (!tray) return;
       const rect = tray.getBoundingClientRect();
       const onTray =
         point.clientX >= rect.left &&
         point.clientX <= rect.right &&
         point.clientY >= rect.top &&
         point.clientY <= rect.bottom;
-      if (onTray) park(lesson);
+      if (!onTray) return;
+      // A block's card is set aside one lesson at a time, and says so.
+      if (lesson) park(lesson);
+      else blockKit?.refuse(id, true);
     },
-    [lessonById, park],
+    [lessonById, park, blockKit],
   );
 
   /** Lift a card off the tray and hand it to the grid as a live drag. */
@@ -1374,7 +1384,8 @@ export default function TimetablePage() {
   const handleInvalidDrop = useCallback(
     (id: string, change: LessonChange) => {
       const lesson = lessonById.get(id);
-      if (!lesson) return;
+      // A block's card has no suggestions of its own: it says why.
+      if (!lesson) return void blockKit?.refuse(id, false);
       const candidate: Placement = {
         id,
         dayOfWeek: change.dayOfWeek,
@@ -1441,6 +1452,7 @@ export default function TimetablePage() {
       pupilBuffers,
       showError,
       t,
+      blockKit,
     ],
   );
 
@@ -1452,7 +1464,7 @@ export default function TimetablePage() {
         startTime: minutesToHHMM(suggestion.startMinutes),
         endTime: minutesToHHMM(suggestion.endMinutes),
       });
-      announceSaved(result);
+      if (!blockKit?.announce(suggesting.lesson, result)) announceSaved(result);
       setSuggesting(null);
     } catch (error) {
       showError(error);
@@ -1472,17 +1484,15 @@ export default function TimetablePage() {
     });
   }, []);
 
-  const selectedLessons = useMemo(
-    () =>
-      [...selectedIds]
-        .flatMap((id) => blockKit?.lessonIdsOf(id) ?? [id])
-        .map((id) => lessonById.get(id))
-        .filter((lesson): lesson is MasterLesson => Boolean(lesson)),
-    [selectedIds, lessonById, blockKit],
-  );
+  /** The selected lessons, a card's by its lessons, each once; `whole`: a card's whole block. */
+  const selectedLessons = (whole = false) =>
+    [...new Set([...selectedIds].flatMap((id) => blockKit?.lessonIdsOf(id, whole) ?? [id]))]
+      .map((id) => lessonById.get(id))
+      .filter((lesson): lesson is MasterLesson => Boolean(lesson));
 
   const bulkSetLock = async (isLocked: boolean) => {
-    const targets = selectedLessons.filter((lesson) => lesson.isLocked !== isLocked);
+    // A card's whole block: the generation refuses a block locked in part.
+    const targets = selectedLessons(true).filter((lesson) => lesson.isLocked !== isLocked);
     if (targets.length === 0) return;
     try {
       for (const lesson of targets) {
@@ -1512,7 +1522,7 @@ export default function TimetablePage() {
   };
 
   const bulkDelete = async () => {
-    const targets = [...selectedLessons];
+    const targets = selectedLessons();
     if (targets.length === 0) return;
     try {
       // The SAME fields undoableDelete restores, and for the reason its own
@@ -2160,7 +2170,14 @@ export default function TimetablePage() {
         {/* Named like the pickers beside it, inside rather than above: a
             visible label over one control of six would push the grid down
             for every school, every day. */}
-        <Select value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
+        <Select
+          value={groupBy}
+          onValueChange={(value) => {
+            // What is on screen changes, so the selection goes (pickFilter).
+            setGroupBy(value as GroupBy);
+            setSelectedIds(new Set());
+          }}
+        >
           <SelectTrigger className="w-40" aria-label={t("viewLabel")}>
             <SelectValue />
           </SelectTrigger>
@@ -2300,7 +2317,7 @@ export default function TimetablePage() {
       {selectedIds.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2">
           <span className="text-sm font-medium">
-            {t("bulkSelected", { count: selectedIds.size })}
+            {t("bulkSelected", { count: selectedLessons().length })}
           </span>
           <Button size="sm" variant="outline" onClick={() => void bulkSetLock(true)}>
             <Lock />
@@ -2504,6 +2521,8 @@ export default function TimetablePage() {
           onKit={setBlockKit}
           actions={{
             update: undoableUpdate,
+            drop,
+            validate: validateChange,
             history,
             showError,
             announce: announceSaved,
@@ -2521,10 +2540,10 @@ export default function TimetablePage() {
               classNames={(confirming?.classes ?? [])
                 .map((id) => groupById.get(id)?.name ?? id)
                 .join(", ")}
+              block={confirming?.block}
               onCancel={() => setConfirming(null)}
               onConfirm={() => {
-                if (!confirming) return;
-                applyGridChange(confirming.lesson, confirming.change);
+                confirming?.go();
                 setConfirming(null);
               }}
             />

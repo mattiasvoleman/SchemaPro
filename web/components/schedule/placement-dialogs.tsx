@@ -32,12 +32,15 @@ function minutesToHHMM(minutes: number): string {
 export function SharedMoveDialog({
   open,
   classNames,
+  block,
   onCancel,
   onConfirm,
 }: {
   open: boolean;
   /** The other classes the move reaches, by name, joined for the sentence. */
   classNames: string;
+  /** A parallel block's card: its name, for a sentence about its lessons. */
+  block?: string;
   /** Closing the dialog any way but the confirm button. */
   onCancel: () => void;
   onConfirm: () => void;
@@ -53,12 +56,14 @@ export function SharedMoveDialog({
     >
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{t("sharedMoveTitle")}</DialogTitle>
+          <DialogTitle>{block ? t("sharedCardTitle") : t("sharedMoveTitle")}</DialogTitle>
           <DialogDescription>
             {/* The classes BY NAME. "Flera klasser berörs" would be the same
                 silence the "+1" badge kept: it tells you something is at
                 stake without telling you what. */}
-            {t("sharedMoveBody", { classes: classNames })}
+            {block
+              ? t("sharedCardBody", { name: block, classes: classNames })
+              : t("sharedMoveBody", { classes: classNames })}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
