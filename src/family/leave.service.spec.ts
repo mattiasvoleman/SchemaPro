@@ -10,7 +10,14 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import { Role } from '../auth/enums/role.enum';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
-import { APPROVED_LEAVE_NOTE, LEAVE_LIST_LIMIT, LEAVE_REQUEST_DECIDED, LEAVE_REQUEST_TOO_LONG, LeaveService } from './leave.service';
+import {
+  APPROVED_LEAVE_NOTE,
+  LEAVE_LIST_LIMIT,
+  LEAVE_REQUEST_DECIDED,
+  LEAVE_REQUEST_ENDS_BEFORE_START,
+  LEAVE_REQUEST_TOO_LONG,
+  LeaveService,
+} from './leave.service';
 
 /**
  * A row as Prisma returns it: only the fields the query selected, so a field
@@ -98,10 +105,13 @@ describe('LeaveService', () => {
       tx.$queryRaw = jest.fn().mockResolvedValue(told);
     };
 
-    it('rejects an inverted date range before opening a transaction', async () => {
-      await expect(
-        service.createLeaveRequest(leaveDto({ startDate: '2027-02-16', endDate: '2027-02-15' }) as never, guardianUser()),
-      ).rejects.toThrow(new BadRequestException('endDate must not be before startDate.'));
+    it('rejects an inverted date range with its code before opening a transaction', async () => {
+      const error = await service
+        .createLeaveRequest(leaveDto({ startDate: '2027-02-16', endDate: '2027-02-15' }) as never, guardianUser())
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).message).toBe('endDate must not be before startDate.');
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code: LEAVE_REQUEST_ENDS_BEFORE_START });
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
@@ -702,6 +712,26 @@ describe('LeaveService', () => {
       const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
 
       expect(result.map((request) => request.id)).toEqual([OTHER_ID]);
+      expect(result[0]!.year).toBeNull();
+    });
+
+    it('answers no year for a mentor’s decided request, where the facts weigh none (20261101090000)', async () => {
+      // app.leave_request_facts gives a TEACHER's decided row no läsår and no
+      // totals: the pupil may no longer be theirs.
+      const none = { yearName: null, yearStart: null, yearEnd: null, yearApprovedDays: null, yearApprovedRequests: null, yearPendingRequests: null };
+      tx.$queryRaw.mockResolvedValue([fact(REQUEST_ID), fact(OTHER_ID, { ...none, decidingMentorIds: [] })]);
+
+      const result = await service.listLeaveRequests({}, testUser({ role: Role.TEACHER, userId: ANNA, schoolId: SCHOOL_ID }));
+
+      expect(result[0]!.year).toMatchObject({ approvedDays: 5, approvedRequests: 2, pendingRequests: 1 });
+      expect(result[1]!.year).toBeNull();
+    });
+
+    it('answers no year when the facts give the läsår without its totals', async () => {
+      tx.$queryRaw.mockResolvedValue([fact(OTHER_ID, { yearApprovedDays: null })]);
+
+      const result = await service.listLeaveRequests({}, testUser({ schoolId: SCHOOL_ID }));
+
       expect(result[0]!.year).toBeNull();
     });
 

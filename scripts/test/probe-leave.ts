@@ -55,9 +55,28 @@
  *       move back, tell nobody;
  *   lo  a lov written through SchoolBreaksService shortens a request of
  *       four skoldagar to three: both mentors are told of it, once;
+ *   lu  the year's totals go to whoever weighs them (20261101090000): the
+ *       mentor reads none on her own decision, rektor reads them;
+ *   lp  two catch-ups at once: the second waits on the school's lock and
+ *       tells nobody, so each mentor has one notice, one told row and one
+ *       delivery (20261101090000);
+ *   lq  a filing held after its trigger while a delegation is recorded: the
+ *       delegation's catch-up waits for the filing to commit, sees it and
+ *       tells both mentors;
+ *   lr  a delegation held after its catch-up while the guardian files: the
+ *       filing's trigger waits for the delegation to commit, sees it and
+ *       tells both mentors;
+ *   ls  an integration key's importPersons moves Gustav into 7A: the
+ *       catch-up answers the service principal, tells both mentors once,
+ *       and the delivery gets them after the commit; the same roster again
+ *       and the move back tell nobody;
+ *   lt  gallring of NOTIFICATIONS takes a pending request's old notice, the
+ *       told rows stay with the request, and the next catch-up tells nobody
+ *       again;
  *   lj  the year: a request of more than 366 days is refused by the gateway
- *       (400) and by LeaveRequests_a_year_at_most, and app.leave_school_days
- *       counts no further than a year from its first day;
+ *       (400, LEAVE_REQUEST_TOO_LONG) and by LeaveRequests_a_year_at_most,
+ *       and app.leave_school_days counts no further than a year from its
+ *       first day;
  *   lh  rektor's inbox, timed: 600 pupils and 300 requests, read as admin.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
@@ -74,6 +93,9 @@ import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-
 import type { PrismaService } from '../../src/database/prisma.service';
 import { LeaveService } from '../../src/family/leave.service';
 import { readSchoolDayBasis, schoolDaysOf, type SchoolDayBreak, type SchoolDayEnrollment, type SchoolDayYear } from '../../src/family/school-days';
+import { GallringJob } from '../../src/gallring/gallring.job';
+import { Ss12000Service } from '../../src/integration/ss12000.service';
+import { JobRunner } from '../../src/jobs/job-runner';
 import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
 import type { OutboxEntry } from '../../src/notifications/notification-outbox';
 import { NotificationsService } from '../../src/notifications/notifications.service';
@@ -129,6 +151,41 @@ function held(api: PrismaService, reached: () => void, release: Promise<void>): 
         { timeoutMs: 60_000 },
       ),
   } as unknown as PrismaService;
+}
+
+/** A parked transaction and its release, for racing a second call against it. */
+function parking(): { reached: Promise<void>; arrive: () => void; release: () => void; released: Promise<void> } {
+  let arrive!: () => void;
+  const reached = new Promise<void>((resolve) => (arrive = resolve));
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  return { reached, arrive, release, released };
+}
+
+/**
+ * Waits until a backend waits on the school's leave lock
+ * (pg_advisory_xact_lock(hashtext('leave_tell_mentors'), hashtext(school)),
+ * 20261101090000), or `settled` resolves, at most `ms`: true when one
+ * waited. A call that does not wait (no lock to wait on) settles instead,
+ * and the check judges what it then wrote.
+ */
+async function waitsOnLeaveLock(owner: Client, schoolId: string, settled: Promise<unknown>, ms = 5000): Promise<boolean> {
+  let done = false;
+  void settled.then(
+    () => (done = true),
+    () => (done = true),
+  );
+  for (const started = Date.now(); Date.now() - started < ms && !done; ) {
+    const { rows } = await owner.query<{ n: string }>(
+      `SELECT count(*) AS n FROM pg_locks
+        WHERE locktype = 'advisory' AND NOT granted AND objsubid = 2
+          AND classid = hashtext('leave_tell_mentors')::oid AND objid = hashtext($1)::oid`,
+      [schoolId],
+    );
+    if (Number(rows[0]!.n) > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
 }
 
 export async function leaveChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
@@ -279,6 +336,12 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
     override deliver(tx: PrismaClient, entry: OutboxEntry): void {
       delivered.push(entry);
       super.deliver(tx, entry);
+    }
+    // The sync's and an integration key's notices, handed over after their
+    // commit (20261101090000).
+    override deliverCommitted(entries: readonly OutboxEntry[]): void {
+      delivered.push(...entries);
+      super.deliverCommitted(entries);
     }
   })(api, delivery);
   // With the notifications, as Nest builds it: a MENTORSKAP written here
@@ -432,6 +495,23 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
     assert.equal(decided.absenceDays, 3);
     const days = await absenceDays(ella);
     assert.deepEqual(days.filter((day) => day >= from), [from, addDays(M, 11), to]);
+  });
+
+  // ---------------------------------------------------------------------
+  // (lu) the year's totals, to whoever weighs them
+  // ---------------------------------------------------------------------
+  await check('(lu) on her own decisions the mentor reads no year of the pupil’s leave, rektor does, and the mentor does on what waits for her', async () => {
+    const decided = await inbox(annaUser, 'APPROVED');
+    assert.ok(decided.length >= 2, `the mentor's decided tab holds ${decided.length} requests`);
+    for (const row of decided) assert.equal(row.year, null, `the mentor reads the pupil's year on her decided ${row.id}`);
+    for (const row of decided) {
+      const [rektors] = (await inbox(admin, 'APPROVED')).filter((candidate) => candidate.id === row.id);
+      assert.ok(rektors?.year && rektors.year.approvedDays > 0, `rektor does not read the pupil's year on ${row.id}`);
+    }
+    const waiting = await file(addDays(M, 60), addDays(M, 60), 'Probe: väntar på Anna');
+    const [mine] = (await inbox(annaUser, 'PENDING')).filter((row) => row.id === waiting.id);
+    assert.ok(mine?.year && mine.year.approvedDays >= 6, `the mentor does not read the pupil's year on what waits for her: ${JSON.stringify(mine?.year)}`);
+    await leave.decideLeaveRequest(waiting.id, { status: 'REJECTED' }, admin);
   });
 
   // ---------------------------------------------------------------------
@@ -728,10 +808,149 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
   });
 
   // ---------------------------------------------------------------------
+  // (lp)-(lr) the races, under real concurrency (20261101090000)
+  // ---------------------------------------------------------------------
+  const toldRows = async (requestId: string) =>
+    (
+      await owner.query<{ userId: string }>(
+        `SELECT "userId" FROM "LeaveRequestNotices" WHERE "leaveRequestId" = $1 ORDER BY "userId"`,
+        [requestId],
+      )
+    ).rows.map((row) => row.userId);
+  const deliveredFor = (requestId: string) =>
+    delivered.filter((entry) => entry.meta['leaveRequestId'] === requestId).map((entry) => entry.recipients.map((r) => r.userId).sort());
+  const mentors = [anna.id, bertil.id].sort();
+
+  await check('(lp) two catch-ups at once: the second waits on the school’s lock and tells nobody, so each mentor has one notice and one delivery', async () => {
+    await leave.recordDelegation({ mentorMaxSchoolDays: null }, admin);
+    const owed = await file(addDays(M, 63), addDays(M, 63), 'Probe: två på en gång');
+    assert.deepEqual(await toldOf(owed.id), [], 'a request rektor decides told a mentor');
+    delivered.length = 0;
+    const park = parking();
+    const first = new LeaveService(held(api, park.arrive, park.released), notifications)
+      .recordDelegation({ mentorMaxSchoolDays: 3 }, admin)
+      .then(() => null, (error: unknown) => error);
+    await park.reached;
+    const second = leave.recordDelegation({ mentorMaxSchoolDays: 3 }, admin).then(() => null, (error: unknown) => error);
+    const waited = await waitsOnLeaveLock(owner, s, second);
+    park.release();
+    assert.deepEqual(await Promise.all([first, second]), [null, null]);
+    assert.deepEqual(await toldOf(owed.id), mentors, 'a mentor has more or fewer than one notice');
+    assert.deepEqual(await toldRows(owed.id), mentors, 'a mentor has more or fewer than one told row');
+    assert.deepEqual(deliveredFor(owed.id), [mentors], 'the delivery got the notice more or less than once');
+    assert.ok(waited, 'the second catch-up never waited on the first’s lock');
+    await leave.decideLeaveRequest(owed.id, { status: 'REJECTED' }, admin);
+  });
+
+  await check('(lq) a filing held after its trigger while a delegation is recorded: the catch-up waits for it, sees it and tells both mentors', async () => {
+    await leave.recordDelegation({ mentorMaxSchoolDays: null }, admin);
+    delivered.length = 0;
+    const park = parking();
+    const filing = new LeaveService(held(api, park.arrive, park.released), notifications)
+      .createLeaveRequest({ studentId: ella.id, startDate: addDays(M, 64), endDate: addDays(M, 64), reason: 'Probe: före delegeringen, samtidigt' }, guardian)
+      .then((made) => made, (error: unknown) => error);
+    await park.reached;
+    const delegation = leave.recordDelegation({ mentorMaxSchoolDays: 3 }, admin).then(() => null, (error: unknown) => error);
+    const waited = await waitsOnLeaveLock(owner, s, delegation);
+    park.release();
+    const [made, recorded] = await Promise.all([filing, delegation]);
+    assert.equal(recorded, null, `the delegation failed: ${String(recorded)}`);
+    const id = (made as { id: string }).id;
+    assert.ok(id, `the filing failed: ${String(made)}`);
+    assert.deepEqual(await toldOf(id), mentors, 'the request filed beside the delegation was lost to the race');
+    assert.deepEqual(deliveredFor(id), [mentors]);
+    assert.ok(waited, 'the delegation’s catch-up never waited on the filing’s lock');
+    await leave.decideLeaveRequest(id, { status: 'REJECTED' }, admin);
+  });
+
+  await check('(lr) a delegation held after its catch-up while the guardian files: the trigger waits for it, sees it and tells both mentors', async () => {
+    await leave.recordDelegation({ mentorMaxSchoolDays: null }, admin);
+    delivered.length = 0;
+    const park = parking();
+    const delegation = new LeaveService(held(api, park.arrive, park.released), notifications)
+      .recordDelegation({ mentorMaxSchoolDays: 3 }, admin)
+      .then(() => null, (error: unknown) => error);
+    await park.reached;
+    const filing = file(addDays(M, 65), addDays(M, 65), 'Probe: under delegeringen').then((made) => made, (error: unknown) => error);
+    const waited = await waitsOnLeaveLock(owner, s, filing);
+    park.release();
+    const [recorded, made] = await Promise.all([delegation, filing]);
+    assert.equal(recorded, null, `the delegation failed: ${String(recorded)}`);
+    const id = (made as { id: string }).id;
+    assert.ok(id, `the filing failed: ${String(made)}`);
+    assert.deepEqual(await toldOf(id), mentors, 'the request filed during the delegation was lost to the race');
+    assert.deepEqual(deliveredFor(id), [mentors]);
+    assert.ok(waited, 'the filing’s trigger never waited on the delegation’s lock');
+    await leave.decideLeaveRequest(id, { status: 'REJECTED' }, admin);
+  });
+
+  // ---------------------------------------------------------------------
+  // (ls) an integration key's class move
+  // ---------------------------------------------------------------------
+  await check('(ls) importPersons moving Gustav into 7A tells both mentors once, delivered after the commit; the same roster and the move back tell nobody', async () => {
+    const integration = new Ss12000Service(api, notifications);
+    const roster = (group: string) => [{ email: `${marker}-ledighet-gustav@example.invalid`, groupDisplayName: group }];
+    const own = await file(addDays(M, 66), addDays(M, 66), 'Probe: i 7B igen', as(gustav, Role.STUDENT), gustav);
+    assert.deepEqual(await toldOf(own.id), [], 'a request with no mentor told somebody');
+    delivered.length = 0;
+    assert.equal((await integration.importPersons(s, roster('7A'))).updated, 1);
+    assert.deepEqual(await toldOf(own.id), mentors);
+    assert.deepEqual(told(delivered), [[own.id, mentors]]);
+    delivered.length = 0;
+    await integration.importPersons(s, roster('7A'));
+    await integration.importPersons(s, roster('7B'));
+    assert.deepEqual(told(delivered), [], 'a roster that gave no mentor a request told one');
+    assert.deepEqual(await toldOf(own.id), mentors);
+    await leave.decideLeaveRequest(own.id, { status: 'REJECTED' }, admin);
+  });
+
+  // ---------------------------------------------------------------------
+  // (lt) gallring of the notice
+  // ---------------------------------------------------------------------
+  await check('(lt) gallring takes a pending request’s old notice, the told rows stay, and the next catch-up tells nobody again', async () => {
+    delivered.length = 0;
+    const pending = await file(addDays(M, 70), addDays(M, 70), 'Probe: gallrad notis');
+    assert.deepEqual(await toldOf(pending.id), mentors);
+    await owner.query(
+      `UPDATE "Notifications" SET "createdAt" = now() - interval '3 months' WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = $1`,
+      [pending.id],
+    );
+    await owner.query(`ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped"`);
+    try {
+      await owner.query(
+        `INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, "decidedById", "decidedAt")
+         VALUES ($1, 'NOTIFICATIONS', 'PURGE_AFTER', 1, $2, now() - interval '2 days')`,
+        [s, rektor.id],
+      );
+    } finally {
+      await owner.query(`ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped"`);
+    }
+    const night = new GallringJob(api, { deleteUser: async () => undefined } as unknown as SupabaseAdminService, undefined, new JobRunner(api));
+    assert.ok((await night.runSchool(s)).rows >= 2, 'the night took fewer notices than the two it was given');
+    assert.deepEqual(await toldOf(pending.id), [], 'gallring left the old notice');
+    delivered.length = 0;
+    await leave.recordDelegation({ mentorMaxSchoolDays: 3 }, admin);
+    assert.deepEqual(await toldOf(pending.id), [], 'the catch-up wrote the gallrad notice again');
+    assert.deepEqual(deliveredFor(pending.id), [], 'the catch-up mailed the mentors again');
+    assert.deepEqual(await toldRows(pending.id), mentors, 'gallring took who was told with the notice');
+    assert.ok((await inbox(annaUser, 'PENDING')).some((row) => row.id === pending.id), 'the request left the mentor’s inbox with its notice');
+    await leave.decideLeaveRequest(pending.id, { status: 'REJECTED' }, admin);
+  });
+
+  // ---------------------------------------------------------------------
   // (lj) at most a year
   // ---------------------------------------------------------------------
   await check('(lj) a request of more than 366 days is refused by the gateway and by the table, and the skoldagar stop at a year', async () => {
-    await assert.rejects(file(M, addDays(M, 366), 'Probe: för lång'), BadRequestException);
+    await assert.rejects(file(M, addDays(M, 366), 'Probe: för lång'), (error: unknown) => {
+      assert.ok(error instanceof BadRequestException);
+      assert.deepEqual(error.getResponse(), { message: 'A leave request covers at most 366 days.', code: 'LEAVE_REQUEST_TOO_LONG', params: { days: 366 } });
+      return true;
+    });
+    await assert.rejects(file(addDays(M, 1), M, 'Probe: baklänges'), (error: unknown) => {
+      assert.ok(error instanceof BadRequestException);
+      assert.equal((error.getResponse() as { code?: string }).code, 'LEAVE_REQUEST_ENDS_BEFORE_START');
+      return true;
+    });
     const refused = await owner
       .query(
         `INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)

@@ -139,6 +139,25 @@ export class NotificationsService {
     outbox.push(email && this.delivery.emailConfigured() ? { ...rest, email } : rest);
   }
 
+  /**
+   * Hands notices whose transaction has COMMITTED to the delivery, for a
+   * writer with no outbox: a transaction withRls did not open, which is the
+   * SS12000 sync's (withSyncPrincipal) and an integration key's
+   * (withServicePrincipal), whose leave catch-up the database now answers
+   * (20261101090000). The caller calls this after that transaction resolved,
+   * never inside it, so a rolled-back write tells nobody. Filtered as
+   * deliver() filters, as one batch.
+   */
+  deliverCommitted(entries: readonly OutboxEntry[]): void {
+    const batch = entries.flatMap((entry) => {
+      if (entry.recipients.length === 0) return [];
+      if (!this.delivery.wants({ type: entry.type, email: entry.email })) return [];
+      const { email, ...rest } = entry;
+      return [email && this.delivery.emailConfigured() ? { ...rest, email } : rest];
+    });
+    this.delivery.enqueue(batch);
+  }
+
   /** The transaction's outbox, delivered by one hook after its commit; undefined outside withRls. */
   private outboxOf(tx: PrismaClient): OutboxEntry[] | undefined {
     return this.prisma.commitLocal<OutboxEntry[]>(tx, OUTBOX, () => {

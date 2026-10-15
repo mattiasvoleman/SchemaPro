@@ -12,7 +12,7 @@ import { recordRead } from '../../access-log/access-log';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId } from '../../common/utils/request-context';
 import { PrismaService } from '../../database/prisma.service';
-import { tellNewMentors } from '../../family/leave-notices';
+import { askNewMentors, leaveNoticeEntries, tellNewMentors, type LeaveNoticeRow } from '../../family/leave-notices';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { applyChanges, type StoredChange } from './apply';
 import { Ss12000Client, type ClientStats } from './client';
@@ -348,8 +348,15 @@ export class Ss12000SyncService {
    * not at all when the deactivations exceed max(5, 2 %) of the linked
    * active people. What is left waits for the admin; the cursors move only
    * when nothing selected is left.
+   *
+   * A class move may give a mentor a pending leave request, as the admin's
+   * apply may: the night asks app.leave_requests_tell_new_mentors too, which
+   * answers the sync principal for its own school (20261101090000). Its
+   * transaction has no outbox, so the e-mail and the push are handed to the
+   * delivery once it has committed.
    */
   async autoApply(runId: string, schoolId: string): Promise<void> {
+    let told: LeaveNoticeRow[] = [];
     const result = await this.prisma.withSyncPrincipal(
       schoolId,
       async (tx) => {
@@ -393,6 +400,9 @@ export class Ss12000SyncService {
         const outcome = auto.length > 0 ? await applyChanges(tx, schoolId, auto.map(storedOf), stamp) : { applied: [], skipped: [] };
         await this.markApplied(tx, schoolId, outcome.applied);
         const applied = new Set(outcome.applied);
+        if (this.notifications && auto.some((change) => applied.has(change.id) && MOVES_A_MENTOR.has(`${change.entity}:${change.op}`))) {
+          told = await askNewMentors(tx);
+        }
         const remaining = changes.some(
           (change) => change.selected && !change.applied && !NOTES.has(change.op) && !applied.has(change.id) && holds(change),
         );
@@ -440,7 +450,8 @@ export class Ss12000SyncService {
       },
       { timeoutMs: APPLY_TIMEOUT_MS },
     );
-    this.logger.log(`SS12000 auto-apply [school=${schoolId}, run=${runId}, outcome=${result}]`);
+    if (this.notifications && told.length > 0) this.notifications.deliverCommitted(leaveNoticeEntries(schoolId, told));
+    this.logger.log(`SS12000 auto-apply [school=${schoolId}, run=${runId}, outcome=${result}, mentorsTold=${told.length}]`);
   }
 
   private async markApplied(tx: PrismaClient, schoolId: string, ids: string[]): Promise<void> {
@@ -449,11 +460,26 @@ export class Ss12000SyncService {
     }
   }
 
-  /** The admin's apply of a DIFF_READY run, in one transaction. */
+  /**
+   * The admin's apply of a DIFF_READY run, in one transaction.
+   *
+   * A class move or a reactivation may give a mentor a pending leave
+   * request (app.leave_mentors reads the pupil's class and the teacher's
+   * isActive), so an apply that made one tells the mentors, once each, as an
+   * uppdrag's own write does. It asks in a transaction of its own once the
+   * apply has committed (20261101090000), not inside it: the apply may have
+   * changed an e-mail, which locks the person's row FOR UPDATE until its
+   * commit, and the catch-up waits for the school's leave lock. A guardian's
+   * filing that holds that lock and checks the same row would then wait on
+   * the apply while the apply waited on it. Nothing is lost if the second
+   * transaction fails: what is owed stays owed until the next catch-up.
+   */
   async apply(user: AuthenticatedUser, runId: string, dto: ApplyRunDto): Promise<RunView> {
     const schoolId = requireSchoolId(user);
+    let movedAMentor = false;
+    let applied: RunView;
     try {
-      return await this.prisma.withRls(
+      applied = await this.prisma.withRls(
         user,
         async (tx) => {
           await tx.$executeRaw`SET LOCAL lock_timeout = '10s'`;
@@ -506,19 +532,8 @@ export class Ss12000SyncService {
             }
           }
           await this.markApplied(tx, schoolId, outcome.applied);
-          // A class move or a reactivation may give a mentor a pending leave
-          // request (app.leave_mentors reads the pupil's class and the
-          // teacher's isActive): the admin's apply tells them, once each, as
-          // an uppdrag's own write does. The night's auto-apply runs as the
-          // sync principal, which app.leave_requests_tell_new_mentors answers
-          // with nothing; its moves are told at the school's next catch-up.
           const appliedIds = new Set(outcome.applied);
-          if (
-            this.notifications &&
-            chosen.some((change) => appliedIds.has(change.id) && MOVES_A_MENTOR.has(`${change.entity}:${change.op}`))
-          ) {
-            await tellNewMentors(this.notifications, tx, schoolId);
-          }
+          movedAMentor = chosen.some((change) => appliedIds.has(change.id) && MOVES_A_MENTOR.has(`${change.entity}:${change.op}`));
           const errors = [...asArray(run.errors), ...outcome.skipped.map(({ code, entity, externalId }) => ({ code, entity, externalId }))].slice(0, 200);
           const updated = await tx.ss12000SyncRun.update({
             where: { id: runId },
@@ -570,6 +585,13 @@ export class Ss12000SyncService {
       this.logger.warn(`SS12000 apply failed [school=${schoolId}, run=${runId}, code=${code}]`);
       throw new ConflictException({ message: 'Ändringarna kunde inte tillämpas; inget sparades. Hämta igen.', code: 'SS12000_APPLY_FAILED' });
     }
+    if (movedAMentor && this.notifications) {
+      const notifications = this.notifications;
+      await this.prisma.withRls(user, (tx) => tellNewMentors(notifications, tx, schoolId)).catch((error: unknown) => {
+        this.logger.warn(`SS12000 apply told no mentor [school=${schoolId}, run=${runId}, ${error instanceof Error ? error.name : 'unknown'}]`);
+      });
+    }
+    return applied;
   }
 
   async discard(user: AuthenticatedUser, runId: string): Promise<RunView> {

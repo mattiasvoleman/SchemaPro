@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
+import { askNewMentors, leaveNoticeEntries, type LeaveNoticeRow } from '../family/leave-notices';
+import { NotificationsService } from '../notifications/notifications.service';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dayOf } from '../staffing/duty-dates';
 import { dutyEmploymentSelect, toSs12000Duty, type Ss12000Duty } from './ss12000-duties';
@@ -42,7 +44,15 @@ import { dutyEmploymentSelect, toSs12000Duty, type Ss12000Duty } from './ss12000
 export class Ss12000Service {
   private readonly logger = new Logger(Ss12000Service.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  /**
+   * NotificationsService is optional for the scripts and specs that build
+   * this one by hand; without it a class move tells no mentor (Nest always
+   * injects it).
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notifications?: NotificationsService,
+  ) {}
 
   /**
    * withServicePrincipal as the key that asked, when the guard knows it: the
@@ -459,6 +469,12 @@ export class Ss12000Service {
    * safety: existing persons (matched by email) get names, group membership
    * and guardian relations synced; unknown persons are returned in
    * `needsProvisioning` for account creation via the People page.
+   *
+   * A pupil moved to another class may give a mentor a pending leave
+   * request (app.leave_mentors reads the class): the push then asks
+   * app.leave_requests_tell_new_mentors, which answers the service principal
+   * for its own school (20261101090000), and hands the e-mail and the push
+   * to the delivery once its transaction has committed.
    */
   async importPersons(
     schoolId: string,
@@ -473,7 +489,8 @@ export class Ss12000Service {
     if (!Array.isArray(persons) || persons.length === 0 || persons.length > 2000) {
       throw new BadRequestException('persons must be a non-empty array (max 2000).');
     }
-    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+    let told: LeaveNoticeRow[] = [];
+    const result = await this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const activeYear = await tx.academicYear.findFirst({
         where: { schoolId, isActive: true },
         select: { id: true, predecessorId: true, graduatingGradeLevel: true },
@@ -502,6 +519,7 @@ export class Ss12000Service {
       let groupsCreated = 0;
       let guardianLinks = 0;
       let classesKept = 0;
+      let classesMoved = 0;
       const needsProvisioning: string[] = [];
 
       for (const person of persons) {
@@ -573,19 +591,27 @@ export class Ss12000Service {
         // counted in `updated` — their row was written — and nothing new is
         // reported, as nothing is for a teacher the roster lists in a class.
         // A class created for them above stays; the roster named it.
+        //
+        // The same statement asks whether the pupil is in another class, so
+        // `moved` counts the moves that happened at the write, whatever a
+        // PATCH committed since the read: a move may give a mentor a pending
+        // leave request (20261101090000). A pupil already in the class gets
+        // their names alone, which is all the class write would have changed.
         const names = {
           ...(person.givenName ? { firstName: person.givenName } : {}),
           ...(person.familyName ? { lastName: person.familyName } : {}),
         };
-        const enrolled =
+        const moved =
           studentGroupId !== undefined &&
           (
             await tx.user.updateMany({
-              where: { id: user.id, role: 'STUDENT' },
+              where: { id: user.id, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: studentGroupId } }] },
               data: { ...names, studentGroupId },
             })
           ).count === 1;
-        if (!enrolled) {
+        if (moved) {
+          classesMoved++;
+        } else {
           await tx.user.update({ where: { id: user.id }, data: names });
         }
         updated++;
@@ -615,8 +641,10 @@ export class Ss12000Service {
         }
       }
 
+      if (classesMoved > 0 && this.notifications) told = await askNewMentors(tx);
+
       this.logger.log(
-        `SS12000 import [school=${schoolId}, updated=${updated}, groupsCreated=${groupsCreated}, classesKept=${classesKept}]`,
+        `SS12000 import [school=${schoolId}, updated=${updated}, groupsCreated=${groupsCreated}, classesKept=${classesKept}, classesMoved=${classesMoved}, mentorsTold=${told.length}]`,
       );
       return {
         updated,
@@ -626,6 +654,8 @@ export class Ss12000Service {
         needsProvisioning: [...new Set(needsProvisioning)],
       };
     });
+    if (this.notifications && told.length > 0) this.notifications.deliverCommitted(leaveNoticeEntries(schoolId, told));
+    return result;
   }
 
   /**

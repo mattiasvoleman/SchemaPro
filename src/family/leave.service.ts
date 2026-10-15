@@ -24,6 +24,7 @@ export const APPROVED_LEAVE_NOTE = 'Approved leave';
 
 export const LEAVE_REQUEST_DECIDED = 'LEAVE_REQUEST_DECIDED';
 export const LEAVE_REQUEST_TOO_LONG = 'LEAVE_REQUEST_TOO_LONG';
+export const LEAVE_REQUEST_ENDS_BEFORE_START = 'LEAVE_REQUEST_ENDS_BEFORE_START';
 
 /** The most requests one list answers with, newest first. */
 export const LEAVE_LIST_LIMIT = 200;
@@ -74,7 +75,12 @@ export interface LeaveRequestView {
   mentors: Array<{ id: string; name: string }>;
   /** The mentors who may decide it now; empty when the admin does. */
   decidingMentors: Array<{ id: string; name: string }>;
-  /** The läsår of its first day and the pupil's other leave in it; null outside every läsår, and for a family. */
+  /**
+   * The läsår of its first day and the pupil's other leave in it, for
+   * whoever weighs it: rektor on every request, the mentor on a request they
+   * are to decide. Null outside every läsår, on a mentor's decided request,
+   * and for a family.
+   */
   year: {
     name: string;
     startDate: string;
@@ -95,9 +101,10 @@ interface FactRow {
   yearName: string | null;
   yearStart: Date | null;
   yearEnd: Date | null;
-  yearApprovedDays: number;
-  yearApprovedRequests: number;
-  yearPendingRequests: number;
+  /** Null, with the läsår, on a request the caller does not weigh (20261101090000). */
+  yearApprovedDays: number | null;
+  yearApprovedRequests: number | null;
+  yearPendingRequests: number | null;
 }
 
 const nameOf = (person: { firstName: string; lastName: string } | null | undefined): string | null =>
@@ -149,8 +156,10 @@ export class LeaveService {
 
   /**
    * A guardian files for a child, a pupil for themselves, an admin for
-   * anyone; at most LEAVE_REQUEST_MAX_DAYS days (LeaveRequests_a_year_at_most
-   * holds every other path to the same bound). When the request is the
+   * anyone; at most LEAVE_REQUEST_MAX_DAYS days, and never ending before it
+   * starts (LeaveRequests_a_year_at_most holds every other path to the same
+   * bound). Both are a 400 with a code, which the family's page words in its
+   * own language. When the request is the
    * mentor's to decide, the database tells the mentors (LEAVE_REQUESTED) from
    * the row itself, by a trigger, and app.leave_request_notices hands back
    * what it wrote with the mentors' addresses: the filer may neither write a
@@ -160,7 +169,7 @@ export class LeaveService {
   async createLeaveRequest(dto: CreateLeaveRequestDto, user: AuthenticatedUser) {
     const requestedById = requireUserId(user);
     if (dto.endDate < dto.startDate) {
-      throw new BadRequestException('endDate must not be before startDate.');
+      throw new BadRequestException({ message: 'endDate must not be before startDate.', code: LEAVE_REQUEST_ENDS_BEFORE_START });
     }
     if (daysBetween(dto.startDate, dto.endDate) >= LEAVE_REQUEST_MAX_DAYS) {
       throw new BadRequestException({
@@ -345,8 +354,10 @@ export class LeaveService {
    *
    * For the admin and the mentor each comes with its facts
    * (app.leave_request_facts): skoldagar, who decides it now, the pupil's
-   * mentors, and the pupil's leave so far in the läsår, which the decider
-   * weighs. A family's list has none.
+   * mentors, and the pupil's leave so far in the läsår, which only the
+   * decider weighs: rektor on every request, the mentor on the pending ones
+   * (a mentor's decided request has none, since the pupil may no longer be
+   * theirs). A family's list has none.
    *
    * Every read is recorded in the read log (Läslogg): a mentor's as
    * LEAVE_REASON_AS_MENTOR, everybody else's as LEAVE_REQUESTS, about the
@@ -436,7 +447,12 @@ export class LeaveService {
           mentors: fact ? mentorsOf(fact.mentorIds) : [],
           decidingMentors: fact ? mentorsOf(fact.decidingMentorIds) : [],
           year:
-            fact?.yearName && fact.yearStart && fact.yearEnd
+            fact?.yearName &&
+            fact.yearStart &&
+            fact.yearEnd &&
+            fact.yearApprovedDays !== null &&
+            fact.yearApprovedRequests !== null &&
+            fact.yearPendingRequests !== null
               ? {
                   name: fact.yearName,
                   startDate: toDateString(fact.yearStart),

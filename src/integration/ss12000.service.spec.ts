@@ -6,6 +6,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { Ss12000Service } from './ss12000.service';
 
 /**
@@ -804,6 +805,64 @@ describe('Ss12000Service', () => {
       expect(result).toMatchObject({ guardianLinks: 0, needsProvisioning: [] });
     });
 
+    describe('the leave requests a class move gives a mentor (20261101090000)', () => {
+      const TELL = 'app.leave_requests_tell_new_mentors()';
+      const MENTOR = '77777777-7777-4777-8777-777777777777';
+      const NOTICE = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+      let deliverCommitted: jest.Mock;
+      let open: boolean;
+      const asks = () => tx.$queryRaw.mock.calls.filter((call) => String((call[0] as string[]).join('?')).includes(TELL));
+
+      beforeEach(() => {
+        open = false;
+        deliverCommitted = jest.fn(() => expect(open).toBe(false));
+        prisma.withServicePrincipal.mockImplementation(async (_school: string, fn: (client: unknown) => Promise<unknown>) => {
+          open = true;
+          try {
+            return await fn(tx);
+          } finally {
+            open = false;
+          }
+        });
+        tx.$queryRaw = jest.fn().mockResolvedValue([
+          { notificationId: NOTICE, userId: MENTOR, email: 'mentor@example.test', meta: { leaveRequestId: 'r1', schoolDays: 1 } },
+        ]);
+        tx.studentGroup.findFirst.mockResolvedValue({ id: 'g-new' });
+        service = new Ss12000Service(prisma as unknown as PrismaService, { deliverCommitted } as unknown as NotificationsService);
+      });
+
+      it('asks once after the writes when a pupil changed class, and delivers after the transaction', async () => {
+        // The class write found the pupil in another class, at the write.
+        tx.user.findFirst.mockResolvedValue({ id: STUDENT_ID, role: 'STUDENT' });
+
+        await service.importPersons(SCHOOL_ID, [
+          { email: 'karin@example.test', groupDisplayName: '7B' },
+          { email: 'karin@example.test', groupDisplayName: '7B' },
+        ]);
+
+        expect(asks()).toHaveLength(1);
+        const at = tx.$queryRaw.mock.invocationCallOrder[0]!;
+        expect(at).toBeGreaterThan(tx.user.updateMany.mock.invocationCallOrder.at(-1)!);
+        expect(deliverCommitted).toHaveBeenCalledWith([
+          expect.objectContaining({ schoolId: SCHOOL_ID, type: 'LEAVE_REQUESTED', recipients: [{ userId: MENTOR, notificationId: NOTICE }] }),
+        ]);
+      });
+
+      it('asks nothing when the class write found the pupil already there, or no pupil, and writes the names alone', async () => {
+        tx.user.findFirst.mockResolvedValue({ id: STUDENT_ID, role: 'STUDENT' });
+        tx.user.updateMany.mockResolvedValue({ count: 0 });
+        await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '7B', givenName: 'Karin' }]);
+
+        expect(tx.user.updateMany).toHaveBeenCalledWith({
+          where: { id: STUDENT_ID, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: 'g-new' } }] },
+          data: { firstName: 'Karin', studentGroupId: 'g-new' },
+        });
+        expect(tx.user.update).toHaveBeenCalledWith({ where: { id: STUDENT_ID }, data: { firstName: 'Karin' } });
+        expect(asks()).toEqual([]);
+        expect(deliverCommitted).not.toHaveBeenCalled();
+      });
+    });
+
     it('reuses an existing class for a student, matched within the tenant', async () => {
       arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
       tx.studentGroup.findFirst.mockResolvedValue({ id: 'g-existing' });
@@ -820,7 +879,7 @@ describe('Ss12000Service', () => {
       // Keyed on the role as well as the id: the role was read without a lock,
       // so the write is where it is judged.
       expect(tx.user.updateMany).toHaveBeenCalledWith({
-        where: { id: STUDENT_ID, role: 'STUDENT' },
+        where: { id: STUDENT_ID, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: 'g-existing' } }] },
         data: { studentGroupId: 'g-existing' },
       });
       expect(tx.user.update).not.toHaveBeenCalled();
@@ -851,7 +910,7 @@ describe('Ss12000Service', () => {
       await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '8A' }]);
 
       expect(tx.user.updateMany).toHaveBeenCalledWith({
-        where: { id: STUDENT_ID, role: 'STUDENT' },
+        where: { id: STUDENT_ID, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: 'g-this-8a' } }] },
         data: { studentGroupId: 'g-this-8a' },
       });
       expect(tx.studentGroup.create).not.toHaveBeenCalled();
@@ -935,13 +994,13 @@ describe('Ss12000Service', () => {
         homeOf = 'b-8a';
         await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '9A' }]);
         expect(tx.user.updateMany).toHaveBeenCalledWith({
-          where: { id: STUDENT_ID, role: 'STUDENT' },
+          where: { id: STUDENT_ID, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: 'b-9a' } }] },
           data: { studentGroupId: 'b-9a' },
         });
         tx.user.updateMany.mockClear();
         const same = await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '8A' }]);
         expect(tx.user.updateMany).toHaveBeenCalledWith({
-          where: { id: STUDENT_ID, role: 'STUDENT' },
+          where: { id: STUDENT_ID, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: 'b-8a' } }] },
           data: { studentGroupId: 'b-8a' },
         });
         expect(same).toMatchObject({ classesKept: 0 });
@@ -997,7 +1056,7 @@ describe('Ss12000Service', () => {
         select: { id: true },
       });
       expect(tx.user.updateMany).toHaveBeenCalledWith({
-        where: { id: STUDENT_ID, role: 'STUDENT' },
+        where: { id: STUDENT_ID, role: 'STUDENT', OR: [{ studentGroupId: null }, { studentGroupId: { not: 'g-new' } }] },
         data: { studentGroupId: 'g-new' },
       });
       expect(result.groupsCreated).toBe(1);

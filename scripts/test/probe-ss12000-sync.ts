@@ -8,7 +8,9 @@
  * segment, a guardian link, a duty link, cursors, the diff minimised —
  * (ss-c), the same roster again is NO_CHANGES (ss-d), the nightly
  * auto-apply under the sync principal's guards: a rename and a class move
- * yes, a create and a teacher's deactivation never (ss-e), the admin's rest
+ * yes, a create and a teacher's deactivation never, and the class move
+ * tells the pupil's new mentor of a pending leave request once, delivered
+ * after the commit (20261101090000) (ss-e), the admin's rest
  * and the reactivation rule (ss-f), a stale basis refused (ss-g), and no
  * credential in any table but the sealed one, or in a log line (ss-h); a
  * LINK the admin deselects leaves the matched row untouched by every change
@@ -21,6 +23,7 @@
 import { strict as assert } from 'node:assert';
 import { ConsoleLogger, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+import type { PrismaClient } from '@prisma/client';
 import type { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
@@ -29,6 +32,12 @@ import { clearTokenCache, type ClientOptions } from '../../src/integration/ss120
 import { Ss12000SourceService } from '../../src/integration/ss12000-sync/ss12000-source.service';
 import { Ss12000Outbound, Ss12000Secrets } from '../../src/integration/ss12000-sync/ss12000-sync.providers';
 import { Ss12000SyncService } from '../../src/integration/ss12000-sync/ss12000-sync.service';
+import { LeaveService } from '../../src/family/leave.service';
+import { NotificationDeliveryService } from '../../src/notifications/notification-delivery.service';
+import type { OutboxEntry } from '../../src/notifications/notification-outbox';
+import { NotificationsService } from '../../src/notifications/notifications.service';
+import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
+import { TeacherEmploymentsService } from '../../src/staffing/teacher-employments.service';
 import {
   MockSs12000Provider,
   isoDay,
@@ -114,7 +123,21 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
   const secrets = new Ss12000Secrets(config);
   const outbound = new ProbeOutbound(tls.ca);
   const sources = new Ss12000SourceService(api, secrets, outbound);
-  const sync = new Ss12000SyncService(api, secrets, outbound);
+  // With the notifications, as Nest builds it: the night's class move tells
+  // a mentor of a pending leave request (ss-e). What reaches the delivery is
+  // kept, from inside a transaction (deliver) and after one (deliverCommitted).
+  const delivered: OutboxEntry[] = [];
+  const notifications = new (class extends NotificationsService {
+    override deliver(tx: PrismaClient, entry: OutboxEntry): void {
+      delivered.push(entry);
+      super.deliver(tx, entry);
+    }
+    override deliverCommitted(entries: readonly OutboxEntry[]): void {
+      delivered.push(...entries);
+      super.deliverCommitted(entries);
+    }
+  })(api, new NotificationDeliveryService(api));
+  const sync = new Ss12000SyncService(api, secrets, outbound, notifications);
   clearTokenCache();
 
   provider.world = {
@@ -241,7 +264,7 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
       assert.equal(run.status, 'NO_CHANGES', `the second run is ${run.status} ${run.statusCode ?? ''}`);
     });
 
-    await check('(ss-e) the nightly auto-apply renames and moves under the sync principal, and never creates or deactivates staff', async () => {
+    await check('(ss-e) the nightly auto-apply renames and moves under the sync principal, never creates or deactivates staff, and its move tells the new mentor once', async () => {
       await sources.patchSchedule(admin, { scheduleEnabled: true, scheduleAutoApply: true });
       const source = await one<{ id: string }>(`SELECT id FROM "Ss12000Sources" WHERE "schoolId" = $1`, [school.id]);
       provider.world.persons[0] = s1Pupil(P1, 'Elin', 'Ek', 'ella.ek@ekskolan.example', ORG, { responsibles: [{ id: G1 }] });
@@ -250,6 +273,31 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
       provider.world.groups[1] = s1Group(C7B, '7B', 'Klass', ORG, [P1, P3]);
       provider.world.duties = [s1Duty(D1, T1, ORG)];
       const c7aBefore = await groupByExt(C7A);
+
+      // Tor mentors 7B, the school delegates three skoldagar, and the admin
+      // files a day of leave for Ella while she is still in 7A, which no one
+      // mentors: nobody is told. The night moves her into 7B.
+      const c7bBefore = await groupByExt(C7B);
+      const ellaBefore = await userByExt(P1);
+      await new TeacherEmploymentsService(api).upsert(teacherRow.id, year.id, { employmentPercent: 100, signature: 'TOLU' }, admin);
+      await new TeacherDutiesService(api, notifications).create(
+        { userId: teacherRow.id, academicYearId: year.id, kind: 'MENTORSKAP', label: 'Mentor 7B', minutesPerWeek: 60, studentGroupId: c7bBefore.id },
+        admin,
+      );
+      const leave = new LeaveService(api, notifications);
+      await leave.recordDelegation({ mentorMaxSchoolDays: 3 }, admin);
+      const leaveDay = isoDay(14 + ((8 - new Date(`${isoDay(14)}T00:00:00Z`).getUTCDay()) % 7));
+      const request = await leave.createLeaveRequest({ studentId: ellaBefore.id, startDate: leaveDay, endDate: leaveDay, reason: 'Probe: natten' }, admin);
+      const toldOfRequest = async () =>
+        (
+          await all<{ userId: string }>(
+            `SELECT "userId" FROM "Notifications" WHERE type = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = $1 ORDER BY "userId"`,
+            [request.id],
+          )
+        ).map((row) => row.userId);
+      assert.deepEqual(await toldOfRequest(), [], 'a request with no mentor told somebody');
+      delivered.length = 0;
+
       const runId = await sync.startScheduledRun(source.id, school.id, true);
       assert.ok(runId, 'the scheduled run did not start');
       const run = await latestRun();
@@ -268,6 +316,18 @@ export async function ss12000SyncChecks(owner: Client, api: PrismaService, marke
       assert.equal(tea.isActive, true, 'the nightly run deactivated a teacher');
       const ny = await owner.query(`SELECT 1 FROM "Users" WHERE "schoolId" = $1 AND "ss12000Id" = $2`, [school.id, P3]);
       assert.equal(ny.rowCount, 0, 'the nightly run created a person');
+
+      // The move gave Tor the request: told once, under the sync principal,
+      // and handed to the delivery once the night's transaction committed.
+      assert.deepEqual(await toldOfRequest(), [teacherRow.id], 'the night’s move did not tell the new mentor, or told another');
+      assert.deepEqual(
+        delivered.map((entry) => [entry.meta['leaveRequestId'], entry.recipients.map((r) => r.userId)]),
+        [[request.id, [teacherRow.id]]],
+        'the delivery did not get the night’s notice once',
+      );
+      const after = await one<{ n: number }>(`SELECT count(*)::int AS n FROM "LeaveRequestNotices" WHERE "leaveRequestId" = $1`, [request.id]);
+      assert.equal(after.n, 1, 'the night left no told row, or more than one');
+      await leave.decideLeaveRequest(request.id, { status: 'REJECTED' }, admin);
     });
 
     await check('(ss-f) the admin applies the rest; a sync deactivation is reactivated by a sync, an admin\'s is not', async () => {
