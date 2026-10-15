@@ -580,15 +580,16 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
    */
   /**
    * A post's periods (20261022120000) are this year's changes to this year's
-   * post: the carried post is the year-start post, as the school carries it,
-   * and what a period at the year's end should mean for the next year is the
-   * next release's ("Perioder i export och rullning").
+   * post, and no period row is copied: the carried post is the post as it
+   * stands at the year's end (planStaffingCarry). A period with no Till runs
+   * to the last day and on, so its three figures are the post the new year
+   * gets; one with a Till ended in this year. The preview names both.
    */
   TeacherEmploymentPeriod: {
     kind: 'SKIPPED',
     reason:
-      'A period changes this year’s post from a date; the carried tjänst is the year-start post, and the new year’s ' +
-      'periods are written there when the school agrees them.',
+      'A period changes this year’s post from a date. No period is copied: a period with no Till becomes the carried ' +
+      'post’s figures, and one with a Till ended with this year.',
   },
   TeacherEmploymentLog: {
     kind: 'SKIPPED',

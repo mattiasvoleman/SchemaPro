@@ -553,6 +553,24 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
     },
     orderBy: { id: 'asc' },
   });
+  // The posts' periods (20261022120000), read only when the year has posts.
+  // No lock of their own: every period write locks its post first, and
+  // lockSourceStaffing holds the posts FOR SHARE.
+  const periodRows =
+    (employmentRows ?? []).length > 0
+      ? ((await tx.teacherEmploymentPeriod.findMany({
+          where: { academicYearId: yearId },
+          select: {
+            employmentId: true,
+            validFrom: true,
+            validTo: true,
+            employmentPercent: true,
+            reductionPercent: true,
+            teachingTargetMinutesPerWeek: true,
+          },
+          orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
+        })) ?? [])
+      : [];
   const ids = [...new Set([...(employmentRows ?? []), ...(dutyRows ?? [])].map((row) => row.userId))].sort();
   const people =
     ids.length > 0
@@ -568,6 +586,15 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       contractKind: row.contractKind,
       teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
       signature: row.signature,
+      periods: periodRows
+        .filter((period) => period.employmentId === row.id)
+        .map((period) => ({
+          validFrom: asDay(period.validFrom),
+          validTo: period.validTo ? asDay(period.validTo) : null,
+          employmentPercent: decimal(period.employmentPercent),
+          reductionPercent: decimal(period.reductionPercent),
+          teachingTargetMinutesPerWeek: period.teachingTargetMinutesPerWeek,
+        })),
       note: row.note,
     })),
     duties: (dutyRows ?? []).map((row): SourceDuty => {

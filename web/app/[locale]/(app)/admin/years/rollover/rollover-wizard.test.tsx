@@ -75,6 +75,9 @@ const staffingPlan: StaffingCarryPreview = {
     withTargetOverride: [],
     notCarried: [{ userId: "t-gone", reason: "INACTIVE" }],
     signaturesDropped: [],
+    // Bo went down from January with no end date: that is his post next year.
+    fromPeriod: [{ userId: "t-bo", validFrom: "2027-01-11" }],
+    periodsEnded: [],
   },
   duties: {
     carried: 3,
@@ -438,6 +441,11 @@ describe("RolloverWizard", () => {
     const listUnder = (title: string) => within(section).getByText(title).nextElementSibling as HTMLElement;
     expect(within(listUnder("Nedsättningen följer med — gäller den även nästa läsår?")).getByText("Bo Alm")).toBeInTheDocument();
     expect(within(listUnder("Byter namn med gruppen")).getByText("Mentor 7A → Mentor 8A — Bo Alm")).toBeInTheDocument();
+    expect(
+      within(
+        listUnder("Tjänsten följer med som perioden utan slutdatum ger den, inte som den står i kortet:"),
+      ).getByText("Bo Alm (perioden från 2027-01-11)"),
+    ).toBeInTheDocument();
     expect(
       within(
         listUnder("Mentorskap som inte följer med, eftersom klassen går ut eller inte rullas vidare"),

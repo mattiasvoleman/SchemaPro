@@ -78,6 +78,18 @@ export interface SourceEmployment {
   teachingTargetMinutesPerWeek: number | null;
   signature: string | null;
   note: string | null;
+  /** The post's periods (20261022120000), by Från; [] for a post the same all year. */
+  periods: SourcePeriod[];
+}
+
+/** A period of a source year's post: Från and Till as yyyy-mm-dd, the percents as toFixed(3). */
+export interface SourcePeriod {
+  validFrom: string;
+  /** Null: the period has no Till and runs to the läsår's last day — and on, if the post does. */
+  validTo: string | null;
+  employmentPercent: string;
+  reductionPercent: string;
+  teachingTargetMinutesPerWeek: number | null;
 }
 
 export interface SourceDuty {
@@ -181,6 +193,13 @@ export interface StaffingCarryPreview {
     withTargetOverride: string[];
     notCarried: { userId: string; reason: EmploymentNotCarried }[];
     signaturesDropped: { userId: string; signature: string }[];
+    /**
+     * A period with no Till ran to the source year's last day: the post goes
+     * on as that period, so its figures are the post the new year gets.
+     */
+    fromPeriod: { userId: string; validFrom: string }[];
+    /** A post whose periods had a Till: they ended with the source year and are not carried. */
+    periodsEnded: { userId: string; periods: number }[];
   };
   duties: {
     carried: number;
@@ -222,6 +241,8 @@ export function staffNamedBy(preview: StaffingCarryPreview): string[] {
     ...employments.withTargetOverride,
     ...employments.notCarried.map((row) => row.userId),
     ...employments.signaturesDropped.map((row) => row.userId),
+    ...employments.fromPeriod.map((row) => row.userId),
+    ...employments.periodsEnded.map((row) => row.userId),
     ...duties.relabelled.map((row) => row.userId),
     ...[
       ...duties.groupDropped,
@@ -244,7 +265,9 @@ export type StaffingProblemCode =
   | 'STAFFING_ALREADY_PRESENT'
   | 'STAFFING_SLOTS_OVER_LESSONS'
   | 'STAFFING_DUTY_ENDED'
-  | 'STAFFING_DUTY_FROM_CLEARED';
+  | 'STAFFING_DUTY_FROM_CLEARED'
+  | 'STAFFING_POST_FROM_PERIOD'
+  | 'STAFFING_POST_PERIODS_ENDED';
 
 /** Every staffing problem is advice: none blocks. Params hold counts and group names, never a teacher's id. */
 export interface StaffingProblem {
@@ -284,7 +307,15 @@ const clockOf = (time: string) => time.slice(0, 5);
 export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan {
   const { staffing, existing } = input;
   const preview: StaffingCarryPreview = {
-    employments: { carried: 0, withReduction: [], withTargetOverride: [], notCarried: [], signaturesDropped: [] },
+    employments: {
+      carried: 0,
+      withReduction: [],
+      withTargetOverride: [],
+      notCarried: [],
+      signaturesDropped: [],
+      fromPeriod: [],
+      periodsEnded: [],
+    },
     duties: {
       carried: 0,
       slots: 0,
@@ -331,20 +362,32 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       preview.employments.signaturesDropped.push({ userId: employment.userId, signature });
       signature = null;
     }
+    // A post that changes during the year carries as it stands at the year's
+    // end. A period with no Till runs to the last day and on: its three
+    // figures are the post the new year gets (the avtalsform, signature and
+    // note are the post's own, as a period never changes them). A period with
+    // a Till ended in the source year and is not carried, nor are any of
+    // them as periods: the new year's are written there when they are agreed.
+    const periods = employment.periods;
+    const open = periods.find((period) => period.validTo === null && period.validFrom <= input.sourceYearEndDate) ?? null;
+    const figures = open ?? employment;
+    if (open) preview.employments.fromPeriod.push({ userId: employment.userId, validFrom: open.validFrom });
+    const ended = periods.filter((period) => period !== open).length;
+    if (ended > 0) preview.employments.periodsEnded.push({ userId: employment.userId, periods: ended });
     writes.employments.push({
       sourceEmploymentId: employment.id,
       userId: employment.userId,
-      employmentPercent: employment.employmentPercent,
-      reductionPercent: employment.reductionPercent,
+      employmentPercent: figures.employmentPercent,
+      reductionPercent: figures.reductionPercent,
       contractKind: employment.contractKind,
-      teachingTargetMinutesPerWeek: employment.teachingTargetMinutesPerWeek,
+      teachingTargetMinutesPerWeek: figures.teachingTargetMinutesPerWeek,
       signature,
       note: employment.note,
     });
     preview.employments.carried++;
     employmentOf.set(employment.userId, 'CARRIED');
-    if (Number(employment.reductionPercent) > 0) preview.employments.withReduction.push(employment.userId);
-    if (employment.teachingTargetMinutesPerWeek !== null) preview.employments.withTargetOverride.push(employment.userId);
+    if (Number(figures.reductionPercent) > 0) preview.employments.withReduction.push(employment.userId);
+    if (figures.teachingTargetMinutesPerWeek !== null) preview.employments.withTargetOverride.push(employment.userId);
   }
 
   // ---- uppdrag
@@ -491,6 +534,12 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
   }
   if (preview.employments.signaturesDropped.length > 0) {
     add('STAFFING_SIGNATURE_TAKEN', { teachers: preview.employments.signaturesDropped.length });
+  }
+  if (preview.employments.fromPeriod.length > 0) {
+    add('STAFFING_POST_FROM_PERIOD', { teachers: preview.employments.fromPeriod.length });
+  }
+  if (preview.employments.periodsEnded.length > 0) {
+    add('STAFFING_POST_PERIODS_ENDED', { teachers: preview.employments.periodsEnded.length });
   }
   if (existing) {
     const teachers = preview.employments.notCarried.filter((row) => row.reason === 'ALREADY_PRESENT').length;

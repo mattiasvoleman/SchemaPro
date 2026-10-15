@@ -338,6 +338,8 @@ export function staffingRows(rows: Record<string, Row[]> = defaultRolloverRows()
       note: 'cecilia',
     }),
   ];
+  // No post here changes during the year; a spec that wants one adds it.
+  rows['teacherEmploymentPeriod'] = [];
   rows['teacherDuty'] = [
     duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { note: 'rast' }),
     duty(IDS.dutyMentor7a, IDS.anna, 'MENTORSKAP', 'Mentor 7A', 60, {

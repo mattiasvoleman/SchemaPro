@@ -4,9 +4,11 @@ import {
   planStaffingCarry,
   promoteLabel,
   slotsOverLessons,
+  staffNamedBy,
   type ExistingStaffing,
   type SourceDuty,
   type SourceEmployment,
+  type SourcePeriod,
   type StaffingCarryInput,
   type StaffingWrites,
 } from './rollover-staffing';
@@ -27,6 +29,7 @@ const post = (userId: string, extra: Partial<SourceEmployment> = {}): SourceEmpl
   teachingTargetMinutesPerWeek: null,
   signature: null,
   note: null,
+  periods: [],
   ...extra,
 });
 
@@ -129,6 +132,98 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
     ]);
     expect(plan.preview.employments).toMatchObject({ carried: 2, withReduction: [T1], withTargetOverride: [T2] });
     expect(plan.problems).toEqual([{ code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1 } }]);
+  });
+
+  describe('a post that changes during the year', () => {
+    const period = (extra: Partial<SourcePeriod>): SourcePeriod => ({
+      validFrom: '2027-01-11',
+      validTo: null,
+      employmentPercent: '50.000',
+      reductionPercent: '0.000',
+      teachingTargetMinutesPerWeek: null,
+      ...extra,
+    });
+
+    it('carries a period with no Till as the new year’s post: it runs to the last day and on', () => {
+      // 100 % with an own 600 until January, then 50 % with a 10 % nedsättning and the school's target.
+      const plan = planStaffingCarry(
+        input(
+          [
+            post(T1, {
+              teachingTargetMinutesPerWeek: 600,
+              signature: 'AB',
+              note: 'n',
+              periods: [period({ reductionPercent: '10.000' })],
+            }),
+          ],
+          [],
+        ),
+      );
+      expect(plan.writes.employments).toEqual([
+        {
+          sourceEmploymentId: `e-${T1}`,
+          userId: T1,
+          employmentPercent: '50.000',
+          reductionPercent: '10.000',
+          contractKind: 'FERIE',
+          // The period's own target, none: the school's riktmärke, not the post's 600.
+          teachingTargetMinutesPerWeek: null,
+          signature: 'AB',
+          note: 'n',
+        },
+      ]);
+      expect(plan.preview.employments).toMatchObject({
+        fromPeriod: [{ userId: T1, validFrom: '2027-01-11' }],
+        periodsEnded: [],
+        // The per-year terms are the carried post's: its nedsättning, and no own target.
+        withReduction: [T1],
+        withTargetOverride: [],
+      });
+      expect(plan.problems).toContainEqual({ code: 'STAFFING_POST_FROM_PERIOD', blocking: false, params: { teachers: 1 } });
+      expect(staffNamedBy(plan.preview)).toContain(T1);
+    });
+
+    it('carries the post as it stands when its periods have a Till: they end with the year', () => {
+      // Leave in the autumn, and 50 % until the very last day — written with a Till, so it ends there.
+      const plan = planStaffingCarry(
+        input(
+          [
+            post(T1, {
+              periods: [
+                period({ validFrom: '2026-09-01', validTo: '2026-12-20', employmentPercent: '25.000' }),
+                period({ validTo: '2027-06-11' }),
+              ],
+            }),
+            post(T2),
+          ],
+          [],
+        ),
+      );
+      expect(plan.writes.employments.map((row) => [row.userId, row.employmentPercent])).toEqual([
+        [T1, '100.000'],
+        [T2, '100.000'],
+      ]);
+      expect(plan.preview.employments).toMatchObject({ fromPeriod: [], periodsEnded: [{ userId: T1, periods: 2 }] });
+      expect(plan.problems).toContainEqual({ code: 'STAFFING_POST_PERIODS_ENDED', blocking: false, params: { teachers: 1 } });
+      expect(staffNamedBy(plan.preview)).toContain(T1);
+    });
+
+    it('names both when an open period follows one that ended', () => {
+      const plan = planStaffingCarry(
+        input([post(T1, { periods: [period({ validFrom: '2026-09-01', validTo: '2026-10-31' }), period({ employmentPercent: '75.000' })] })], []),
+      );
+      expect(plan.writes.employments[0]!.employmentPercent).toBe('75.000');
+      expect(plan.preview.employments).toMatchObject({
+        fromPeriod: [{ userId: T1, validFrom: '2027-01-11' }],
+        periodsEnded: [{ userId: T1, periods: 1 }],
+      });
+    });
+
+    it('carries nothing of a post not carried, periods or not', () => {
+      const plan = planStaffingCarry(input([post(GONE, { periods: [period({})] })], []));
+      expect(plan.writes.employments).toEqual([]);
+      expect(plan.preview.employments).toMatchObject({ fromPeriod: [], periodsEnded: [] });
+    });
   });
 
   it('carries nobody who is inactive or not staff, and lists them', () => {
