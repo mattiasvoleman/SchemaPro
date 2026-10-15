@@ -2115,7 +2115,7 @@ async function runChecks(
   });
 
   // ---- (u2c) Block i schemat through the real adapter: a card, a split, a rejoin, a lock
-  await check('(u2c) a block card moves as one and keeps its owner, a member moved alone splits the block and rejoins it moved back, and the block locks whole but for its lessons on the tray', async () => {
+  await check('(u2c) a block card moves as one and keeps its owner, a member moved alone splits the block and rejoins it moved back, the block locks whole but for its lessons on the tray, and one back from the tray elsewhere splits it', async () => {
     const requirements = new TeachingRequirementsService(api);
     const blocks = new TeachingBlocksService(api);
     const subjects = new SubjectsService(api);
@@ -2231,6 +2231,16 @@ async function runChecks(
       const withTray = await lessons.lockBlock({ blockId: block.id, isLocked: true }, admin);
       assert.deepEqual([withTray.lessonIds, withTray.parked], [[tyLesson.id], 1]);
       assert.equal((await stateOf([frLesson.id]))[0]?.isLocked, false);
+
+      // Franska back from Parkering on Wednesday, not where it was parked from
+      // beside Tyska: it left the card, so the block is split and it is the
+      // school's, as a drag away would have made it.
+      const fromTray = await lessons.update(frLesson.id, { isParked: false, dayOfWeek: 3 }, admin);
+      assert.deepEqual(fromTray.warnings, [{ code: 'BLOCK_SPLIT', params: { block: `${MARKER} Språkval` } }]);
+      assert.deepEqual(
+        (await stateOf([frLesson.id])).map((row) => [row.dayOfWeek, row.isGenerated]),
+        [[3, false]],
+      );
     } finally {
       // The year takes its groups, posts, blocks and lessons with it.
       await years.remove(year.id, admin);

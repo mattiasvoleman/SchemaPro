@@ -3031,6 +3031,31 @@ describe('MasterLessonsService', () => {
         expect(written()).toMatchObject({ isParked: false, isGenerated: true });
       });
 
+      it('splits the block when a member set aside from its card comes back from the tray somewhere else', async () => {
+        // Tyska was parked from Monday 10:00, where Franska still stands, and
+        // is dragged from Parkering to Wednesday: it left the card as a drag
+        // would have taken it, so the next generation must refuse the block
+        // rather than put Tyska back beside Franska unasked.
+        arrangeStored({ isParked: true });
+        arrangeBlock([franska()]);
+
+        const result = await service.update(LESSON_ID, { isParked: false, dayOfWeek: 3 }, testUser());
+
+        expect(written()).toMatchObject({ isParked: false, dayOfWeek: 3, isGenerated: false });
+        expect(result.warnings).toContainEqual({ code: 'BLOCK_SPLIT', params: { block: 'Språkval åk 7' } });
+      });
+
+      it('changes no owner for a lesson back from the tray whose remembered slot holds none of its block', async () => {
+        // The card moved on while Tyska was parked: there is no card it left.
+        arrangeStored({ isParked: true });
+        arrangeBlock([franska({ dayOfWeek: 2 })]);
+
+        const result = await service.update(LESSON_ID, { isParked: false, dayOfWeek: 3 }, testUser());
+
+        expect(written()).not.toHaveProperty('isGenerated');
+        expect(result.warnings).toEqual([]);
+      });
+
       it('asks nothing of an edit that moves no lesson, sets one aside, or edits one on the tray', async () => {
         arrangeStored();
         const raw = arrangeBlock([franska()]);
@@ -3205,11 +3230,77 @@ describe('MasterLessonsService', () => {
           franska({ id: SPANSKA, studentGroupId: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a', dayOfWeek: 2, startTime: '09:00', endTime: '10:00', isGenerated: false }),
         ]);
 
-        await move();
+        const result = await move();
 
         expect(tx.masterLesson.updateMany).toHaveBeenLastCalledWith({
           where: { id: { in: [SPANSKA] } },
           data: { isGenerated: true },
+        });
+        // What the undo must leave behind, with the owner it had.
+        expect(result.joined).toEqual([{ id: SPANSKA, isGenerated: false }]);
+      });
+
+      it('answers a lesson it lands beside as taken in even when its owner stays, for the undo to leave', async () => {
+        const SPANSKA = '18181818-1818-4818-8818-181818181818';
+        arrangeCard([tyska(), franskaLesson()], [], posts, [
+          franska(),
+          franska({ id: SPANSKA, studentGroupId: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a', dayOfWeek: 2, startTime: '09:00', endTime: '10:00' }),
+        ]);
+
+        const result = await move();
+
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+        expect(result.joined).toEqual([{ id: SPANSKA, isGenerated: true }]);
+      });
+
+      it('lets an undo leave behind what the move took in, with its owner back, and the card is not stale', async () => {
+        const SPANSKA = '18181818-1818-4818-8818-181818181818';
+        // The card stands on Tuesday 09:00 with Spanska, which it took in: the
+        // undo moves Tyska and Franska back to Monday and leaves Spanska.
+        const here = { dayOfWeek: 2, startTime: t('09:00'), endTime: t('10:00') };
+        arrangeCard([tyska(here), franskaLesson(here)], [], posts, [
+          franska({ dayOfWeek: 2, startTime: '09:00', endTime: '10:00' }),
+          franska({ id: SPANSKA, studentGroupId: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a', dayOfWeek: 2, startTime: '09:00', endTime: '10:00' }),
+        ]);
+
+        // Without it named, Spanska is a lesson more than the page named.
+        await expect(move({ dayOfWeek: 1, startTime: '10:00', endTime: '11:00' })).rejects.toMatchObject({
+          response: { code: 'BLOCK_CARD_STALE' },
+        });
+        tx.masterLesson.updateMany.mockClear();
+
+        const result = await move({
+          dayOfWeek: 1,
+          startTime: '10:00',
+          endTime: '11:00',
+          leave: [{ id: SPANSKA, isGenerated: false }],
+        });
+
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [SPANSKA] } },
+          data: { isGenerated: false },
+        });
+        expect(result.joined).toEqual([]);
+      });
+
+      it('gives no owner back to a lesson named to leave that has since moved away from the card', async () => {
+        const SPANSKA = '18181818-1818-4818-8818-181818181818';
+        // Spanska was moved to Wednesday by hand after the move the undo reverses.
+        arrangeCard([tyska(), franskaLesson()], [], posts, [
+          franska(),
+          franska({ id: SPANSKA, studentGroupId: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a', dayOfWeek: 3 }),
+        ]);
+
+        await move({ leave: [{ id: SPANSKA, isGenerated: false }] });
+
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses a lesson both moved and left behind as no card', async () => {
+        arrangeCard([tyska(), franskaLesson()]);
+
+        await expect(move({ leave: [{ id: FR_LESSON, isGenerated: true }] })).rejects.toMatchObject({
+          response: { code: 'NOT_A_BLOCK_CARD' },
         });
       });
 

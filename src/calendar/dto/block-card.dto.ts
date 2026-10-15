@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -10,9 +11,19 @@ import {
   Matches,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}$/;
+
+/** A lesson of the block a card leaves where it stands, and the owner it gets back. */
+export class LeftLessonDto {
+  @IsUUID('4')
+  id!: string;
+
+  @IsBoolean()
+  isGenerated!: boolean;
+}
 
 /**
  * Moves a parallel block's card: the lessons of its members that stand in one
@@ -47,6 +58,18 @@ export class MoveBlockCardDto {
   @IsOptional()
   @IsBoolean()
   propagate?: boolean;
+
+  /**
+   * Lessons of the block standing with the card that it leaves behind, each
+   * with the owner it had: the undo of a card move that took them in (the
+   * move's `joined`). Named here they are no sign of a stale card.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => LeftLessonDto)
+  leave?: LeftLessonDto[];
 }
 
 /**
