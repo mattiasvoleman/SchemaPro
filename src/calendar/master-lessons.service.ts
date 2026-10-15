@@ -43,6 +43,7 @@ import {
 } from '../common/subject-distribution';
 import { requirementName } from '../optimization/optimization-proxy.service';
 import { BLOCK_SPLIT, blockMoveOf, readLessonBlock, sameSlot, type BlockSlot } from './block-lessons';
+import { groupsOfPupils, halfPairs, type GroupHalf } from '../common/class-halves';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -1213,21 +1214,43 @@ export class MasterLessonsService {
   // ---------------------------------------------------------------------
 
   /**
-   * groupId → its pupils, from BOTH sides of the roster.
+   * groupId → its pupils, from BOTH sides of the roster, and the halves in
+   * play.
    *
    * A home class holds its pupils through User.studentGroupId; a teaching group
    * holds them through StudentGroupMembers. Reading only one of the two answers
    * "no shared pupils" for every pairing that matters, since the interesting
    * pair is always one of each.
+   *
+   * A half (class-halves.ts) answers for the pupils it MAY hold, which is a
+   * question about its whole class: so a half among the groups, or a class
+   * among them that has halves, brings the class and all its halves into the
+   * read. One statement asks which groups those are, before the two roster
+   * reads; a second only for a half whose class is not in play itself, for
+   * the class's other halves.
    */
   private async rosterOf(
     tx: PrismaClient,
     basis: RosterBasis,
     groupIds: Set<string>,
-  ): Promise<Map<string, Set<string>>> {
+  ): Promise<{ membersOf: Map<string, Set<string>>; halves: GroupHalf[] }> {
     const membersOf = new Map<string, Set<string>>();
-    if (groupIds.size === 0) return membersOf;
-    const ids = [...groupIds];
+    if (groupIds.size === 0) return { membersOf, halves: [] };
+    const asked = [...groupIds];
+    const select = { id: true, halfOfId: true } as const;
+    const read = await tx.studentGroup.findMany({
+      where: { OR: [{ id: { in: asked } }, { halfOfId: { in: asked } }] },
+      select,
+    });
+    const known = new Set(read.map((group) => group.id));
+    const classes = [...new Set(read.flatMap((group) => (group.halfOfId ? [group.halfOfId] : [])))];
+    const unread = classes.filter((classId) => !groupIds.has(classId));
+    const siblings =
+      unread.length > 0 ? await tx.studentGroup.findMany({ where: { halfOfId: { in: unread } }, select }) : [];
+    const halves = [...read, ...siblings.filter((group) => !known.has(group.id))].filter(
+      (group) => group.halfOfId !== null,
+    );
+    const ids = [...new Set([...asked, ...halves.map((half) => half.id), ...classes])];
     const add = (groupId: string, studentId: string) => {
       const set = membersOf.get(groupId);
       if (set) set.add(studentId);
@@ -1247,7 +1270,7 @@ export class MasterLessonsService {
       if (pupil.studentGroupId) add(pupil.studentGroupId, pupil.id);
     }
     for (const row of teachingGroups) add(row.studentGroupId, row.studentId);
-    return membersOf;
+    return { membersOf, halves };
   }
 
   /**
@@ -1508,13 +1531,23 @@ export class MasterLessonsService {
             ...candidateGroups,
             ...clashing.flatMap(groupsAttending),
           ]);
-    const membersOf = await this.rosterOf(tx, basis, groupsInPlay);
+    const { membersOf, halves } = await this.rosterOf(tx, basis, groupsInPlay);
     const candidatePupils = new Set<string>();
     for (const groupId of candidateGroups) {
       for (const studentId of membersOf.get(groupId) ?? []) {
         candidatePupils.add(studentId);
       }
     }
+    // What a class's halves add to "these share pupils" (class-halves.ts): a
+    // half and its class, and a half and every group of the class's pupils
+    // still placed in no half — never the two halves of one class. The
+    // engine's payload adds the same pairs, so a hand edit is held to the
+    // rule the generator kept.
+    const halfPairKeys = new Set(
+      halfPairs(halves, membersOf, groupsOfPupils(membersOf)).map(([a, b]) => `${a}:${b}`),
+    );
+    const halvesPair = (a: string, b: string): boolean =>
+      halfPairKeys.has(a < b ? `${a}:${b}` : `${b}:${a}`);
 
     for (const other of clashing) {
       /**
@@ -1591,12 +1624,17 @@ export class MasterLessonsService {
         });
       } else {
         // Different groups, same pupils: 4.1 against 4ma1. The clash is the
-        // pupil's, not the group's, and it is exactly as hard.
-        const shared = [...otherGroups].some((groupId) =>
-          [...(membersOf.get(groupId) ?? [])].some((studentId) =>
-            candidatePupils.has(studentId),
-          ),
-        );
+        // pupil's, not the group's, and it is exactly as hard. A half answers
+        // for the pupils it may hold (halvesPair).
+        const shared =
+          [...otherGroups].some((groupId) =>
+            [...(membersOf.get(groupId) ?? [])].some((studentId) =>
+              candidatePupils.has(studentId),
+            ),
+          ) ||
+          [...candidateGroups].some((groupId) =>
+            [...otherGroups].some((otherId) => halvesPair(groupId, otherId)),
+          );
         if (shared) {
           conflicts.push({
             kind: 'GROUP',

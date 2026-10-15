@@ -2380,6 +2380,83 @@ describe('OptimizationProxyService', () => {
       expect(serialized).not.toContain(MA71);
     });
 
+    describe('a class split in halves (Halvklasser)', () => {
+      // 7A (four pupils) split into 7A:1 and 7A:2; Ma7 holds 7A's first pupil.
+      // Each has a requirement, in this order, so requirements[i] is group i.
+      const H1 = '7a000001-0000-4000-8000-000000000001';
+      const H2 = '7a000002-0000-4000-8000-000000000002';
+      const MA7 = '99999999-9999-4999-8999-999999999999';
+      const pupil = (n: number) => `aaaaaaa${n}-0000-4000-8000-00000000000${n}`;
+      const arrangeHalves = (teachingMembers: Row[]) =>
+        arrange({
+          requirements: [GROUP_ID, H1, H2, MA7].map((studentGroupId, index) =>
+            requirement({ id: `88888888-8888-4888-8888-88888888888${index}`, studentGroupId }),
+          ),
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null },
+            { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID },
+            { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID },
+            { id: MA7, gradeLevel: null, kind: 'TEACHING_GROUP', halfOfId: null },
+          ],
+          homeMembers: [1, 2, 3, 4].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers,
+        });
+      /** The payload's pairs, read back as indexes into [7A, 7A:1, 7A:2, Ma7]. */
+      const pairsByIndex = () => {
+        const payload = postedPayload();
+        const index = new Map(payload.requirements.map((r, i) => [r.studentGroupId, i]));
+        return payload.groupConflicts
+          .map(([a, b]) => [index.get(a)!, index.get(b)!].sort().join('-'))
+          .sort();
+      };
+
+      it('keeps a half off its class and off every group of the class before anyone is placed, and lets the two halves overlap', async () => {
+        arrangeHalves([{ studentId: pupil(1), studentGroupId: MA7 }]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        // 7A-7A:1, 7A-7A:2, 7A-Ma7, 7A:1-Ma7, 7A:2-Ma7 — and never 7A:1-7A:2.
+        expect(pairsByIndex()).toEqual(['0-1', '0-2', '0-3', '1-3', '2-3']);
+        // A half planned before placement is sized for its share of the class.
+        expect(postedPayload().requirements.map((r) => r.studentGroupSize)).toEqual([4, 2, 2, 1]);
+      });
+
+      it('pairs a half with only what its own pupils are in once everyone is placed', async () => {
+        arrangeHalves([
+          { studentId: pupil(1), studentGroupId: MA7 },
+          { studentId: pupil(1), studentGroupId: H1 },
+          { studentId: pupil(2), studentGroupId: H1 },
+          { studentId: pupil(3), studentGroupId: H2 },
+          { studentId: pupil(4), studentGroupId: H2 },
+        ]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        // Ma7's pupil is in 7A:1: 7A:2 may run beside Ma7 now.
+        expect(pairsByIndex()).toEqual(['0-1', '0-2', '0-3', '1-3']);
+        expect(postedPayload().requirements.map((r) => r.studentGroupSize)).toEqual([4, 2, 2, 1]);
+      });
+
+      it('sends a class whose only lessons are its halves’ as a class that eats', async () => {
+        arrange({
+          requirements: [requirement({ studentGroupId: H1 })],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null },
+            { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID },
+          ],
+          homeMembers: [1, 2].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers: [],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().groups).toEqual([expect.objectContaining({ lunchHeadcount: 2 })]);
+      });
+    });
+
     it('emits no pair for groups without shared students', async () => {
       const OTHER = '99999999-9999-4999-8999-999999999999';
       arrange({

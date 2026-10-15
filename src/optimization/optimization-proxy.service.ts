@@ -769,7 +769,7 @@ export class OptimizationProxyService {
      */
     const allGroups = await tx.studentGroup.findMany({
       where: { academicYearId },
-      select: { id: true, gradeLevel: true, kind: true, name: true },
+      select: { id: true, gradeLevel: true, kind: true, name: true, halfOfId: true },
     });
     // What the school calls each thing, for the refusal on its way back.
     //
@@ -902,6 +902,19 @@ export class OptimizationProxyService {
             realGroupConflicts.push([list[i], list[j]]);
           }
         }
+      }
+    }
+    // A class's halves answer for the pupils they MAY hold (class-halves.ts):
+    // each half pairs with its class, and with every group of the class's
+    // pupils still placed in no half, and never with its sibling. That is the
+    // whole of Halvklasser as the engine sees it — the same pairwise
+    // no-overlap it keeps for any two groups, so 7A:1's slöjd and 7A:2's NO
+    // may share an hour while nothing else of 7A's may. No new field.
+    for (const [first, second] of rosters.halfPairs) {
+      const key = `${first}:${second}`;
+      if (!conflictPairKeys.has(key)) {
+        conflictPairKeys.add(key);
+        realGroupConflicts.push([first, second]);
       }
     }
 
@@ -1147,6 +1160,11 @@ export class OptimizationProxyService {
         lesson.extraGroups.map((entry) => entry.studentGroupId),
       ),
     ]);
+    // A half's lessons are its class's pupils' lessons, placed in it or not:
+    // a class whose week is only its halves' slöjd still eats.
+    for (const group of allGroups) {
+      if (group.halfOfId && lessonGroupIds.has(group.id)) lessonGroupIds.add(group.halfOfId);
+    }
     const classesWithAParticipant = new Set<string>();
     for (const studentId of participantIds) {
       const homeClass = homeClassOf.get(studentId);

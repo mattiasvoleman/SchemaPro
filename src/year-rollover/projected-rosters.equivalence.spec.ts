@@ -313,7 +313,7 @@ describe('förberäknade klasslistor — every reader reads the same before and 
         const service = new MasterLessonsService(world.prisma, {} as RealtimeService, {} as NotificationsService);
         const internals = service as unknown as {
           findConflicts: (...args: unknown[]) => Promise<{ kind: string; message: string; masterLessonId?: string }[]>;
-          rosterOf: (...args: unknown[]) => Promise<Map<string, Set<string>>>;
+          rosterOf: (...args: unknown[]) => Promise<{ membersOf: Map<string, Set<string>> }>;
         };
         // As create asks for it: the flags off the year row it reads.
         const basis = await rostersOfYear(world.world.tx, schoolAdmin, world.yearB, flagsOf(world, world.yearB));
@@ -346,7 +346,11 @@ describe('förberäknade klasslistor — every reader reads the same before and 
           );
           found.push(...conflicts.map((conflict) => [index, conflict.kind, conflict.message, conflict.masterLessonId]));
         }
-        const roster = await internals.rosterOf(world.world.tx, basis, new Set(['8A', '9A', 'Ma8 grupp 1'].map(world.b)));
+        const { membersOf: roster } = await internals.rosterOf(
+          world.world.tx,
+          basis,
+          new Set(['8A', '9A', 'Ma8 grupp 1'].map(world.b)),
+        );
         return {
           conflicts: sortedBy(found, (row) => JSON.stringify(row)),
           roster: sortedBy([...roster].map(([group, ids]) => [group, [...ids].sort()]), (row) => row[0] as string),

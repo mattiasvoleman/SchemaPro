@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { halfPairs, halvesByClass, unplacedShareOf, type GroupHalf } from '../common/class-halves';
 import {
   readHomeClassesOf,
   readHomePupils,
@@ -29,6 +30,14 @@ export interface Rosters {
   homeClassOf: Map<string, string | null>;
   /** groupId -> the year the group itself carries, where it carries one. */
   gradeOfGroup: Map<string, number | null>;
+  /**
+   * The pairs a class's halves add to the shared-pupil pairs (class-halves.ts):
+   * a half and its class, and a half and every group of the class's pupils
+   * placed in no half. Empty unless the caller passed the groups' halfOfId.
+   */
+  halfPairs: [string, string][];
+  /** halfId -> the even share of its class's unplaced pupils it is expected to take. */
+  unplacedShare: Map<string, number>;
 }
 
 /**
@@ -46,19 +55,33 @@ export interface Rosters {
  * activated the home classes are the ones its activation would write, so 8A
  * holds 7A's pupils and Ma8's members have 8A as their home class. Required,
  * never defaulted — a forgotten basis would silently read empty classes.
+ *
+ * Halves (class-halves.ts) are read with their whole class: a half among
+ * `groupIds`, or a class among them that has halves, brings the class and
+ * every one of its halves into the read, because which pupils are still
+ * unplaced is a question about all of them. Only when `groups` carry
+ * `halfOfId`; a caller that does not pass it reads exactly what it asked for.
  */
 export async function loadRosters(
   tx: PrismaClient,
   basis: RosterBasis,
   groupIds: string[],
-  groups: { id: string; gradeLevel: number | null }[],
+  groups: { id: string; gradeLevel: number | null; halfOfId?: string | null }[],
   namedStudentIds: Iterable<string> = [],
 ): Promise<Rosters> {
+  const halves = halvesByClass(groups.map((group) => ({ id: group.id, halfOfId: group.halfOfId ?? null })));
+  const asked = new Set(groupIds);
+  const halfClasses = [...halves.keys()].filter(
+    (classId) => asked.has(classId) || (halves.get(classId) ?? []).some((half) => asked.has(half)),
+  );
+  const readIds = [
+    ...new Set([...groupIds, ...halfClasses, ...halfClasses.flatMap((classId) => halves.get(classId) ?? [])]),
+  ];
   const [homeMembers, teachingMembers] = await Promise.all([
-    readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, groupIds),
+    readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, readIds),
     tx.studentGroupMember.findMany({
       where: {
-        studentGroupId: { in: groupIds },
+        studentGroupId: { in: readIds },
         student: { role: 'STUDENT', isActive: true },
       },
       select: { studentId: true, studentGroupId: true },
@@ -87,6 +110,10 @@ export async function loadRosters(
       ? await readHomeClassesOf(tx, basis, involvedStudentIds)
       : ([] as { id: string; studentGroupId: string | null }[]);
 
+  const inPlay: GroupHalf[] = halfClasses.flatMap((classId) =>
+    (halves.get(classId) ?? []).map((half) => ({ id: half, halfOfId: classId })),
+  );
+
   return {
     membersByGroup,
     groupsByStudent,
@@ -95,6 +122,8 @@ export async function loadRosters(
       studentHomeClasses.map((student) => [student.id, student.studentGroupId]),
     ),
     gradeOfGroup: new Map(groups.map((group) => [group.id, group.gradeLevel])),
+    halfPairs: halfPairs(inPlay, membersByGroup, groupsByStudent),
+    unplacedShare: unplacedShareOf(inPlay, membersByGroup),
   };
 }
 
@@ -135,7 +164,12 @@ export function gradeSpanOf(
 }
 
 export interface RoomNeeds {
-  /** Distinct pupils, never below one: an empty group still needs a chair. */
+  /**
+   * Distinct pupils, never below one: an empty group still needs a chair. A
+   * half counts its even share of its class's unplaced pupils on top of the
+   * pupils placed in it, or a half planned before placement would be given a
+   * room for one.
+   */
   studentGroupSize: number;
   minGradeLevel: number | null;
   maxGradeLevel: number | null;
@@ -157,10 +191,14 @@ export function roomNeedsOf(
 ): RoomNeeds {
   const studentIds = attendance.studentIds ?? [];
   const span = gradeSpanOf(rosters, attendance.groupIds, studentIds);
+  const expected = attendance.groupIds.reduce(
+    (sum, groupId) => sum + (rosters.unplacedShare.get(groupId) ?? 0),
+    0,
+  );
   return {
     studentGroupSize: Math.max(
       1,
-      attendees(rosters, attendance.groupIds, studentIds).size,
+      attendees(rosters, attendance.groupIds, studentIds).size + expected,
     ),
     minGradeLevel: span?.min ?? null,
     maxGradeLevel: span?.max ?? null,

@@ -435,7 +435,7 @@ export class RoomOptimizationService {
     const placed = lessons.filter(sendable);
     const groups = await tx.studentGroup.findMany({
       where: { academicYearId },
-      select: { id: true, gradeLevel: true },
+      select: { id: true, gradeLevel: true, halfOfId: true },
     });
     const rosters = await loadRosters(
       tx,
