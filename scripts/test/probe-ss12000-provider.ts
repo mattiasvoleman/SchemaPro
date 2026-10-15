@@ -12,7 +12,9 @@
  * Duty and moves their activities, countsTowardTimplan moves an Activity,
  * an HR-only edit without the Fas 3 opt-in moves no Duty, and the helpers
  * that read across schools are no API role's to call (sp-f,
- * 20261014140000). In a school of its own (slug
+ * 20261014140000); a changing post is a Duty per stretch only while the
+ * school shares, the database and the gateway derive the same ids, and a
+ * stretch that ends is buried (sp-g, 20261104090000). In a school of its own (slug
  * <marker>-ss12000-provider), swept whole before and after.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
@@ -29,6 +31,7 @@ import type { PrismaService } from '../../src/database/prisma.service';
 import { IntegrationKeysController } from '../../src/integration/integration.controller';
 import type { ClientOptions } from '../../src/integration/ss12000-sync/client';
 import { Ss12000Outbound, Ss12000Secrets } from '../../src/integration/ss12000-sync/ss12000-sync.providers';
+import { dutyAfterPeriodId } from '../../src/integration/ss12000-v2/ids';
 import { verifySignature } from '../../src/integration/ss12000-v2/signing';
 import type { Scope } from '../../src/integration/ss12000-v2/scopes';
 import { Ss12000V2Service, type V2Caller } from '../../src/integration/ss12000-v2/ss12000-v2.service';
@@ -306,6 +309,98 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
         try {
           await owner.query('SET LOCAL ROLE app_authenticated');
           await assert.rejects(owner.query(sql, [school.id, teacher.id, year.id]), (error: { code?: string }) => error.code === '42501', sql);
+        } finally {
+          await owner.query('ROLLBACK');
+        }
+      }
+    });
+
+    await check('(sp-g) a changing post is a Duty per stretch while the school shares; the database derives the gateway’s ids, and buries what ends', async () => {
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 15));
+      const listed = async () => (await provider.listDuties(caller, { sortkey: 'StartDateAsc' })).data as Array<Record<string, unknown>>;
+      const splitIds = async () =>
+        ((await one<{ ids: string[] }>(`SELECT app.ss12000_split_duty_ids($1::uuid)::text[] AS ids`, [post.id])).ids ?? []).sort();
+      const period = (from: string, to: string | null, percent: number) =>
+        one<{ id: string }>(
+          `INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "validTo", "employmentPercent", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, now()) RETURNING id`,
+          [school.id, post.id, teacher.id, year.id, from, to, percent],
+        );
+
+      // Without the opt-in a period is HR data: no split, and the post's Duty does not move.
+      const d0 = ((await provider.getDuty(caller, post.id, {}))['meta'] as { modified: string }).modified;
+      await pause();
+      const spring = await period(day(30), null, 50);
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id]);
+      assert.equal(((await provider.getDuty(caller, post.id, {}))['meta'] as { modified: string }).modified, d0, 'a period moved the Duty while the school shares nothing');
+      assert.deepEqual(await splitIds(), []);
+
+      // The opt-in: the post is two Duties, each with its grad and dates, and the database names the same ids.
+      await owner.query(`INSERT INTO "StaffingPolicies" ("schoolId", "shareEmploymentWithIntegrations", "updatedAt") VALUES ($1, true, now())`, [school.id]);
+      let duties = await listed();
+      assert.deepEqual(
+        duties.map((duty) => [duty['id'], duty['startDate'], duty['endDate'], duty['dutyPercent']]),
+        [
+          [post.id, day(-60), day(29), 60],
+          [spring.id, day(30), day(240), 50],
+        ],
+      );
+      assert.deepEqual(await splitIds(), [spring.id]);
+      checkSchema('Duty', duties[1]);
+
+      // A leave inside the autumn: the post's own figures after it are a Duty named by it, in both.
+      const leave = await period(day(10), day(20), 40);
+      duties = await listed();
+      const after = dutyAfterPeriodId(leave.id);
+      assert.deepEqual(duties.map((duty) => duty['id']), [post.id, leave.id, after, spring.id]);
+      assert.deepEqual(await splitIds(), [leave.id, after, spring.id].sort());
+      assert.equal((await one<{ id: string }>(`SELECT app.ss12000_after_id($1::uuid)::text AS id`, [leave.id])).id, after);
+      assert.equal((await provider.getDuty(caller, after, {}))['startDate'], day(21));
+
+      // The leave is taken back: it and the stretch after it are buried, and gone from /duties.
+      const before = new Date().toISOString();
+      await pause();
+      await owner.query(`DELETE FROM "TeacherEmploymentPeriods" WHERE id = $1`, [leave.id]);
+      const gone = await provider.deletedEntities(caller, { after: before, entities: 'Duty' });
+      assert.deepEqual([...(gone.data['duties'] ?? [])].sort(), [leave.id, after].sort());
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, spring.id]);
+
+      // The teacher is linked to a source's Duty (A5.5): one Duty under the source's id, nothing
+      // cut, and the spring buried with the post's own. The link ends: both are back, unburied.
+      const linkedAt = (await one<{ at: Date }>(`SELECT clock_timestamp() AS at`)).at.toISOString();
+      await pause();
+      const link = await one<{ id: string; source: string }>(
+        `INSERT INTO "Ss12000DutyLinks" ("schoolId", "userId", "academicYearId", "ss12000DutyId", "dutyRole", "startDate")
+         VALUES ($1, $2, $3, gen_random_uuid(), 'Lärare', $4::date) RETURNING id, "ss12000DutyId"::text AS source`,
+        [school.id, teacher.id, year.id, day(-60)],
+      );
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [link.source]);
+      assert.deepEqual(await splitIds(), []);
+      const buried = (await provider.deletedEntities(caller, { after: linkedAt, entities: 'Duty' })).data['duties'] ?? [];
+      assert.deepEqual([...buried].sort(), [post.id, spring.id].sort());
+      await owner.query(`UPDATE "Ss12000DutyLinks" SET "endedAt" = now(), "updatedAt" = now() WHERE id = $1`, [link.id]);
+      assert.deepEqual((await listed()).map((duty) => duty['id']), [post.id, spring.id]);
+      assert.deepEqual(await splitIds(), [spring.id]);
+      const after_link = (await provider.deletedEntities(caller, { after: linkedAt, entities: 'Duty' })).data['duties'] ?? [];
+      assert.deepEqual(after_link, [link.source], 'the post’s Duties are still buried after the link ended');
+
+      // The opt-in off again: the spring's Duty is buried, and the post is one Duty with no figure.
+      // The instant is the database's: the leave's tombstones must fall before it, and a
+      // container clock a few milliseconds ahead of the host's would put them after.
+      const off = (await one<{ at: Date }>(`SELECT clock_timestamp() AS at`)).at.toISOString();
+      await pause();
+      await owner.query(`UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = false, "updatedAt" = now() WHERE "schoolId" = $1`, [school.id]);
+      assert.deepEqual((await provider.deletedEntities(caller, { after: off, entities: 'Duty' })).data, { duties: [spring.id] });
+      duties = await listed();
+      assert.deepEqual(duties.map((duty) => [duty['id'], duty['startDate'], duty['endDate']]), [[post.id, day(-60), day(240)]]);
+      assert.equal(duties[0]!['dutyPercent'], undefined);
+
+      // No API role calls the new helpers.
+      for (const sql of [`SELECT app.ss12000_split_duty_ids($1::uuid)`, `SELECT app.ss12000_split_capable($1::uuid)`]) {
+        await owner.query('BEGIN');
+        try {
+          await owner.query('SET LOCAL ROLE app_authenticated');
+          await assert.rejects(owner.query(sql, [post.id]), (error: { code?: string }) => error.code === '42501', sql);
         } finally {
           await owner.query('ROLLBACK');
         }

@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient, type SchoolForm } from '@prisma/client';
 import { inTurn } from './in-turn';
 import { readGrundschema } from '../../publication/published-grundschema';
-import { dutyEmploymentSelect } from '../ss12000-duties';
+import { dutyEmploymentSelect, type DutyPeriod } from '../ss12000-duties';
 import { adhocActivityId } from './ids';
 import type { EmittedResource } from './scopes';
 
@@ -363,6 +363,35 @@ export class SchoolSlice {
       updatedAt: row.updatedAt,
       ...('contractKind' in row ? { contractKind: row.contractKind as 'FERIE' | 'SEMESTER' } : {}),
     })) as EmploymentRow[];
+  });
+
+  /**
+   * The periods of the active year's posts (20261022120000), read only where
+   * the school shares employment: a changing post is a Duty per stretch there
+   * (toSs12000Duties), and nowhere else does a period change what leaves.
+   */
+  readonly employmentPeriods = memo(async (): Promise<Map<string, DutyPeriod[]>> => {
+    const { share } = await this.policy();
+    const byPost = new Map<string, DutyPeriod[]>();
+    if (!share) return byPost;
+    const rows = await this.tx.teacherEmploymentPeriod.findMany({
+      where: { schoolId: this.schoolId, employment: { academicYear: { isActive: true } } },
+      select: { id: true, employmentId: true, validFrom: true, validTo: true, employmentPercent: true, createdAt: true, updatedAt: true },
+      orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
+    });
+    for (const row of rows) {
+      const list = byPost.get(row.employmentId) ?? [];
+      list.push({
+        id: row.id,
+        validFrom: dayOf(row.validFrom),
+        validTo: row.validTo ? dayOf(row.validTo) : null,
+        employmentPercent: Number(row.employmentPercent),
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      });
+      byPost.set(row.employmentId, list);
+    }
+    return byPost;
   });
 
   /** Live (not ended) duty links: the source's Duty ids, no HR figure. */

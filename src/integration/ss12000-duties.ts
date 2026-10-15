@@ -46,7 +46,24 @@
  *
  * Never selected, so never emitted: reductionPercent, the teaching target,
  * the note, the qualifications.
+ *
+ * A POST THAT CHANGES DURING THE YEAR (20261022120000) is one Duty per
+ * stretch of the year in which its grad — the one HR figure a Duty carries —
+ * stays the same (toSs12000Duties, dutySegments): "75 % from 11 January" is
+ * two Duties, the autumn's and the spring's, each with its own dutyPercent
+ * and dates. Only where the school shares employment with integrations:
+ * without the opt-in no figure leaves, and the dates alone would tell that
+ * the post changed. A period that changes only the nedsättning or the
+ * target changes nothing a Duty carries, so it splits nothing — a split
+ * there would publish the nedsättning's dates. The first stretch keeps the
+ * post's id, so every reference to the post's Duty (an Activity's teachers,
+ * a CalendarEvent's exceptions) still finds one; a period's stretch is the
+ * period's id; the post's own figures after a period are
+ * dutyAfterPeriodId(that period). app.ss12000_split_duty_ids derives the
+ * same ids in the database, for the versions and the tombstones.
  */
+
+import { dutyAfterPeriodId } from './ss12000-v2/ids';
 
 export const DUTY_PROPERTIES = [
   'id',
@@ -178,4 +195,138 @@ export function toSs12000Duty(input: DutyInput): Ss12000Duty {
     startDate: year.startDate,
     endDate: year.endDate,
   };
+}
+
+/** A period of the post as a Duty reads it: its dates and grad, and its times. */
+export interface DutyPeriod {
+  id: string;
+  /** yyyy-mm-dd. */
+  validFrom: string;
+  /** yyyy-mm-dd; null: the läsår's last day. */
+  validTo: string | null;
+  employmentPercent: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** One Duty of a post that changes during the year: an id, the dates, the grad. */
+export interface DutySegment {
+  id: string;
+  startDate: string;
+  endDate: string;
+  employmentPercent: number;
+  /** When the stretch first existed: the post's or its period's creation. */
+  created: Date;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const shiftDay = (day: string, days: number): string =>
+  new Date(Date.parse(`${day}T00:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * The year cut where the grad changes: the post's own figures between and
+ * around its periods, each period its own, then stretches with the same
+ * grad next to each other made one. The dates are the ones the school
+ * stated (postStretches' `from` and `to`), clamped to the läsår. One
+ * segment, with the post's id and the year's bounds, for a post whose grad
+ * never changes. app.ss12000_split_duty_ids walks the periods the same way.
+ */
+export function dutySegments(
+  employment: { id: string; employmentPercent: number; createdAt: Date },
+  periods: readonly DutyPeriod[],
+  year: { startDate: string; endDate: string },
+): DutySegment[] {
+  const inYear = periods
+    .map((period) => ({
+      ...period,
+      from: period.validFrom > year.startDate ? period.validFrom : year.startDate,
+      to: (period.validTo ?? year.endDate) < year.endDate ? (period.validTo ?? year.endDate) : year.endDate,
+    }))
+    .filter((period) => period.from <= period.to)
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const segments: DutySegment[] = [];
+  const add = (id: string, startDate: string, endDate: string, employmentPercent: number, created: Date) => {
+    const last = segments[segments.length - 1];
+    if (last && last.employmentPercent === employmentPercent) {
+      last.endDate = endDate;
+      return;
+    }
+    // The first stretch is the post's own Duty, whatever it is.
+    const first = segments.length === 0;
+    segments.push({
+      id: first ? employment.id : id,
+      startDate,
+      endDate,
+      employmentPercent,
+      created: first ? employment.createdAt : created,
+    });
+  };
+  let cursor = year.startDate;
+  let after: DutyPeriod | null = null;
+  for (const period of inYear) {
+    if (period.from > cursor) {
+      add(
+        after ? dutyAfterPeriodId(after.id) : employment.id,
+        cursor,
+        shiftDay(period.from, -1),
+        employment.employmentPercent,
+        after ? after.createdAt : employment.createdAt,
+      );
+    }
+    add(period.id, period.from, period.to, period.employmentPercent, period.createdAt);
+    after = period;
+    cursor = shiftDay(period.to, 1);
+  }
+  if (cursor <= year.endDate) {
+    add(
+      after ? dutyAfterPeriodId(after.id) : employment.id,
+      cursor,
+      year.endDate,
+      employment.employmentPercent,
+      after ? after.createdAt : employment.createdAt,
+    );
+  }
+  return segments;
+}
+
+/**
+ * A post's Duties: toSs12000Duty's one, or — for a post whose grad changes
+ * during the year, in a school that shares employment — one per segment,
+ * each with its own id, dates and dutyPercent (hoursPerYear from it), and
+ * the mentorships clipped to its dates. meta.modified is the latest of the
+ * post's, its periods' and its mentorships': a period moved moves every
+ * Duty of the post.
+ */
+export function toSs12000Duties(input: DutyInput & { periods?: readonly DutyPeriod[] }): Ss12000Duty[] {
+  const whole = toSs12000Duty(input);
+  const periods = input.periods ?? [];
+  if (!input.share || periods.length === 0) return [whole];
+  const segments = dutySegments(input.employment, periods, input.year);
+  if (segments.length <= 1) return [whole];
+  const modified = periods
+    .map((period) => period.updatedAt)
+    .reduce((a, b) => (b.getTime() > a.getTime() ? b : a), new Date(whole.meta.modified));
+  return segments.map((segment) => {
+    const duty = toSs12000Duty({
+      ...input,
+      employment: { ...input.employment, employmentPercent: segment.employmentPercent },
+    });
+    const roles = (duty.assignmentRole ?? [])
+      .map((role) => ({
+        ...role,
+        startDate: role.startDate > segment.startDate ? role.startDate : segment.startDate,
+        endDate: role.endDate < segment.endDate ? role.endDate : segment.endDate,
+      }))
+      .filter((role) => role.startDate <= role.endDate);
+    const out: Ss12000Duty = {
+      ...duty,
+      id: segment.id,
+      meta: { created: segment.created.toISOString(), modified: modified.toISOString() },
+      startDate: segment.startDate,
+      endDate: segment.endDate,
+    };
+    delete out.assignmentRole;
+    if (roles.length > 0) out.assignmentRole = roles;
+    return out;
+  });
 }

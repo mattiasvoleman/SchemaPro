@@ -505,6 +505,33 @@ describe('computeDiff: guardians and duties', () => {
     ]);
     expect(JSON.stringify(links)).not.toMatch(/dutyPercent|hoursPerYear/);
   });
+
+  it('takes a post a provider splits into a Duty per period as consecutive duty links, and the teacher stays as they are', () => {
+    // A SchemaPro provider that shares employment splits a changing post: the
+    // post's own Duty now ends before the leave, which is a Duty of its own,
+    // and the figures after it are a third.
+    const people = [adult(ext(1), 'Förnamn', 'Efternamn', 'user1@skola.se', 'Skola personal')];
+    const local = slice({
+      users: [user(1, { role: 'TEACHER', ss12000Id: ext(1) })],
+      dutyLinks: [
+        { id: loc(500), userId: loc(1), academicYearId: YEAR, ss12000DutyId: ext(50), dutyRole: 'Lärare', startDate: '2026-08-17', endDate: null, ended: false },
+      ],
+    });
+    const split = [
+      { ...duty(ext(50), ext(1), 'Lärare', { startDate: '2026-08-17', endDate: '2026-09-30' }), dutyPercent: 60 },
+      { ...duty(ext(51), ext(1), 'Lärare', { startDate: '2026-10-01', endDate: '2026-10-31' }), dutyPercent: 40 },
+      { ...duty(ext(52), ext(1), 'Lärare', { startDate: '2026-11-01', endDate: '2027-06-11' }), dutyPercent: 60 },
+    ];
+    const result = diff(roster({ people, duties: split }), local);
+    expect(only(result.changes, 'DUTY_LINK').map((c) => [c.op, c.externalId])).toEqual([
+      ['END', ext(50)],
+      ['ADD', ext(51)],
+      ['ADD', ext(52)],
+    ]);
+    // Always one Duty in force, so the teacher is neither demoted nor deactivated.
+    expect(result.changes.filter((c) => c.entity !== 'DUTY_LINK')).toEqual([]);
+    expect(JSON.stringify(result.changes)).not.toMatch(/dutyPercent/);
+  });
 });
 
 describe('computeDiff: review findings (2026-10-11)', () => {

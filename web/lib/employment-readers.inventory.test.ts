@@ -22,10 +22,10 @@ import { describe, expect, it } from "vitest";
  *     postOn / postStretches / stretch helper of lib/period-view.ts;
  *  4. a file classified VIA whose figures do not come from the module it
  *     names (it must import it);
- *  5. a change in the set classified NEXT. The web has none: the readers left
- *     on the year-start post — SS12000, the vikarie ranking, the rollover —
- *     are the gateway's (NEXT there), and the web prints their answers
- *     without reading a figure of its own.
+ *  5. a change in the set classified NEXT. The web has none, and since
+ *     "Perioder i export och rullning" neither has the gateway: SS12000, the
+ *     vikarie ranking and the rollover read the post on a date there, and the
+ *     web prints their answers without reading a figure of its own.
  */
 
 const WEB = path.resolve(__dirname, "..");

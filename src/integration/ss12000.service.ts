@@ -6,7 +6,7 @@ import { askNewMentors, leaveNoticeEntries, type LeaveNoticeRow } from '../famil
 import { NotificationsService } from '../notifications/notifications.service';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dayOf } from '../staffing/duty-dates';
-import { dutyEmploymentSelect, toSs12000Duty, type Ss12000Duty } from './ss12000-duties';
+import { dutyEmploymentSelect, dutySegments, toSs12000Duties, type DutyPeriod, type Ss12000Duty } from './ss12000-duties';
 
 /**
  * SS12000:2020-inspired read API + roster import.
@@ -237,15 +237,56 @@ export class Ss12000Service {
       });
       const share = policy?.shareEmploymentWithIntegrations === true;
       const where = { schoolId, academicYearId: year.id, user: { isActive: true } };
+      const bounds = {
+        startDate: year.startDate.toISOString().slice(0, 10),
+        endDate: year.endDate.toISOString().slice(0, 10),
+      };
+      // A school that shares employment emits a changing post as one Duty
+      // per stretch (toSs12000Duties), so its pages count Duties, not posts:
+      // its periods are read first, and only then. A school without them
+      // pages the posts as it always has.
+      const periodRows = share
+        ? await tx.teacherEmploymentPeriod.findMany({
+            where: { schoolId, academicYearId: year.id },
+            select: { id: true, employmentId: true, validFrom: true, validTo: true, employmentPercent: true, createdAt: true, updatedAt: true },
+            orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
+          })
+        : [];
+      const periodsOf = (employmentId: string): DutyPeriod[] =>
+        periodRows
+          .filter((period) => period.employmentId === employmentId)
+          .map((period) => ({
+            id: period.id,
+            validFrom: dayOf(period.validFrom)!,
+            validTo: dayOf(period.validTo ?? null),
+            employmentPercent: Number(period.employmentPercent),
+            createdAt: period.createdAt,
+            updatedAt: period.updatedAt,
+          }));
       // One statement after another: a transaction is one connection.
-      const totalCount = await tx.teacherEmployment.count({ where });
-      const posts = await tx.teacherEmployment.findMany({
+      const select = dutyEmploymentSelect(share);
+      const paged = periodRows.length === 0;
+      const totalPosts = paged ? await tx.teacherEmployment.count({ where }) : 0;
+      const read = await tx.teacherEmployment.findMany({
         where,
         orderBy: { id: 'asc' },
-        take,
-        skip,
-        select: dutyEmploymentSelect(share),
+        ...(paged ? { take, skip } : {}),
+        select,
       });
+      // Without periods a page is posts; with them, the Duties the posts make.
+      const slice = paged
+        ? null
+        : read
+            .flatMap((post) =>
+              dutySegments(
+                { id: post.id, employmentPercent: Number(post.employmentPercent), createdAt: post.createdAt },
+                periodsOf(post.id),
+                bounds,
+              ).map((_, index) => ({ postId: post.id, index })),
+            );
+      const totalCount = slice ? slice.length : totalPosts;
+      const page = slice ? slice.slice(skip, skip + take) : null;
+      const posts = page ? read.filter((post) => page.some((entry) => entry.postId === post.id)) : read;
       const mentorships =
         posts.length === 0
           ? []
@@ -261,16 +302,8 @@ export class Ss12000Service {
               orderBy: [{ userId: 'asc' }, { studentGroupId: 'asc' }],
             });
       await recordRead(tx, 'EMPLOYMENT', posts.map((post) => post.userId));
-      const bounds = {
-        startDate: year.startDate.toISOString().slice(0, 10),
-        endDate: year.endDate.toISOString().slice(0, 10),
-      };
-      return {
-        totalCount,
-        limit: take,
-        offset: skip,
-        data: posts.map((post) =>
-          toSs12000Duty({
+      const duties = posts.flatMap((post) =>
+        toSs12000Duties({
             schoolId,
             year: bounds,
             share,
@@ -292,9 +325,14 @@ export class Ss12000Service {
                 validFrom: dayOf(duty.validFrom ?? null),
                 validTo: dayOf(duty.validTo ?? null),
               })),
-          }),
-        ),
-      };
+            periods: periodsOf(post.id),
+          }).map((duty, index) => ({ postId: post.id, index, duty })),
+      );
+      // The page's Duties, in the order the posts and their stretches run.
+      const data = page
+        ? page.map((entry) => duties.find((row) => row.postId === entry.postId && row.index === entry.index)!.duty)
+        : duties.map((row) => row.duty);
+      return { totalCount, limit: take, offset: skip, data };
     });
   }
 
