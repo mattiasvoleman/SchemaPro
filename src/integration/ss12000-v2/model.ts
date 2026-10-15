@@ -1,5 +1,5 @@
 import { compareUnits, unitForGrade } from '../../school-units/school-unit-map';
-import { toSs12000Duty, type Ss12000Duty } from '../ss12000-duties';
+import { toSs12000Duties, type Ss12000Duty } from '../ss12000-duties';
 import { inTurn } from './in-turn';
 import {
   dayBefore,
@@ -195,6 +195,13 @@ export class IdSpace {
   }
   duty(userId: string, yearId: string): string | null {
     return this.dutyOut.get(`${userId}:${yearId}`) ?? null;
+  }
+  /**
+   * A Duty of a changing post beyond its first (ss12000-duties.ts
+   * dutySegments): the läslogg and a lookup find its teacher as the post's.
+   */
+  addDutySegment(emitted: string, userId: string, yearId: string): void {
+    this.dutyIn.set(emitted.toLowerCase(), { userId, yearId });
   }
   dutyFrom(emitted: string): { userId: string; yearId: string } | null {
     return this.dutyIn.get(emitted) ?? null;
@@ -439,11 +446,12 @@ export class Model {
       const yearId = this.activeYearId;
       if (!yearId) return [];
       const bounds = this.yearBounds(yearId)!;
-      const [posts, mentorships, policy, versions] = await inTurn(
+      const [posts, mentorships, policy, versions, periods] = await inTurn(
         () => this.slice.employments(),
         () => this.slice.mentorships(),
         () => this.slice.policy(),
         () => this.slice.versions('Duty'),
+        () => this.slice.employmentPeriods(),
       );
       const out: Array<{ duty: Ss12000Duty; post: EmploymentRow }> = [];
       for (const post of posts) {
@@ -455,7 +463,10 @@ export class Model {
             duty.studentGroupId !== null &&
             this.groupsById.get(duty.studentGroupId)?.academicYearId === yearId,
         );
-        const raw = toSs12000Duty({
+        // A teacher under the source's Duty id is that one Duty, with the
+        // source's dates and no figure of SchemaPro's: nothing to cut.
+        const ownId = this.ids.duty(post.userId, post.academicYearId) === post.id;
+        const raws = toSs12000Duties({
           schoolId: this.slice.schoolId,
           year: bounds,
           share: policy.share,
@@ -467,13 +478,18 @@ export class Model {
             validFrom: duty.validFrom ? dayOf(duty.validFrom) : null,
             validTo: duty.validTo ? dayOf(duty.validTo) : null,
           })),
+          periods: ownId ? (periods.get(post.id) ?? []) : [],
         });
         // dutyAt: the skolenhet of the teacher's mentor classes when they are
         // one unit's, else the first unit (S1 Duty.dutyAt is required, and
-        // a teacher teaching across units has one Duty here).
+        // a teacher teaching across units has one post here). Every Duty of
+        // a post cut where its grad changes is at the same unit.
         const mentorUnits = new Set(own.map((duty) => this.groupOrganisation(duty.studentGroupId!)));
         const dutyAt = mentorUnits.size === 1 ? [...mentorUnits][0]! : this.ids.primaryOrganisation;
-        out.push({ duty: this.translateDuty(raw, post, versions.get(post.id), dutyAt), post });
+        for (const raw of raws) {
+          if (raw.id !== post.id) this.ids.addDutySegment(raw.id, post.userId, post.academicYearId);
+          out.push({ duty: this.translateDuty(raw, post, versions.get(raw.id), dutyAt), post });
+        }
       }
       return out;
     })());
@@ -490,7 +506,9 @@ export class Model {
       .filter((role): role is NonNullable<typeof role> => role !== null);
     const out: Ss12000Duty = {
       ...raw,
-      id: this.ids.duty(post.userId, post.academicYearId) ?? raw.id,
+      // A later stretch of a changing post keeps its own id (dutySegments);
+      // the post's own Duty is the one A5.5 names.
+      id: raw.id === post.id ? (this.ids.duty(post.userId, post.academicYearId) ?? raw.id) : raw.id,
       // Without a version row, the post's creation: its updatedAt also moves
       // on HR-only edits (employmentPercent, contractKind) that leave the
       // Duty unchanged when the Fas 3 opt-in is off.

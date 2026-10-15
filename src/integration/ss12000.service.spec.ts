@@ -450,6 +450,45 @@ describe('Ss12000Service', () => {
       );
     });
 
+    it('pages a changing post as a Duty per stretch of its grad while the school shares, and reads no period otherwise', async () => {
+      arrange(true, [post(), post({ id: 'emp-2', userId: 'user-2', employmentPercent: { toString: () => '100.000' } })]);
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([
+        {
+          id: 'per-1',
+          employmentId: 'emp-1',
+          validFrom: new Date('2027-01-11T00:00:00.000Z'),
+          validTo: null,
+          employmentPercent: '50.000',
+          createdAt: new Date('2026-10-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-10-02T00:00:00.000Z'),
+        },
+      ]);
+      const page = await service.duties(SCHOOL_ID, '2', '1');
+      // emp-1 is two Duties and emp-2 one: the page counts Duties, not posts.
+      expect(page.totalCount).toBe(3);
+      expect(page.data.map((duty) => [duty.id, duty.startDate, duty.endDate, duty.dutyPercent])).toEqual([
+        ['per-1', '2027-01-11', '2027-06-11', 50],
+        ['emp-2', '2026-08-17', '2027-06-11', 100],
+      ]);
+      // The spring's own hours, its mentorship within its dates, and created when the period was.
+      expect(page.data[0]).toMatchObject({
+        hoursPerYear: 884,
+        assignmentRole: [{ group: { id: 'g-7b' }, assignmentRoleType: 'Mentor', startDate: '2027-01-11', endDate: '2027-06-11' }],
+        meta: { created: '2026-10-01T00:00:00.000Z', modified: '2026-10-02T00:00:00.000Z' },
+      });
+      // Every post is read, the page is cut from the Duties.
+      expect(tx.teacherEmployment.findMany.mock.calls.at(-1)![0]).not.toHaveProperty('take');
+      const first = await service.duties(SCHOOL_ID, '1', '0');
+      expect(first.data.map((duty) => [duty.id, duty.endDate, duty.dutyPercent])).toEqual([['emp-1', '2027-01-10', 80]]);
+
+      // Without the opt-in no period is read, and the posts page as they always have.
+      tx.teacherEmploymentPeriod.findMany.mockClear();
+      arrange(false);
+      const off = await service.duties(SCHOOL_ID);
+      expect(tx.teacherEmploymentPeriod.findMany).not.toHaveBeenCalled();
+      expect(off.data.map((duty) => [duty.id, duty.endDate])).toEqual([['emp-1', '2027-06-11']]);
+    });
+
     it('answers an empty page for a school with no active year, asking nothing more', async () => {
       tx.academicYear.findFirst.mockResolvedValue(null);
       await expect(service.duties(SCHOOL_ID)).resolves.toEqual({ totalCount: 0, limit: 100, offset: 0, data: [] });

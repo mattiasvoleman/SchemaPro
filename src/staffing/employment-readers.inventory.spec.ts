@@ -16,15 +16,16 @@ import { join, relative } from 'node:path';
  *  2. a file that reads a post's figures — targetMinutesPerWeek(), or the
  *     employmentPercent / reductionPercent / teachingTargetMinutesPerWeek of
  *     a post — that nobody has classified;
- *  3. a file classified PERIODS that does not read them: no periods include,
- *     no stretchLoads / postStretches / postOn / changesDuringYear;
+ *  3. a file classified PERIODS that does not read them: no periods include
+ *     or read of the period rows, no stretchLoads / postStretches / postOn /
+ *     postOfWeek / changesDuringYear;
  *  4. a file classified POST that reads one of the three figures: it was
  *     classified as reading only that a post or a period exists, a period's
  *     dates, or what a period never changes (signature, avtalsform);
- *  5. a change in the set of files classified NEXT. Each of them reads the
- *     year-start post where the post on a date is the right answer, and is
- *     moved by the next release ("Perioder i export och rullning"); one that
- *     joins the list, or leaves it, is a decision, so the list is written out.
+ *  5. a change in the set of files classified NEXT: a file that reads the
+ *     year-start post where the post on a date is the right answer. Since
+ *     "Perioder i export och rullning" moved the SS12000 Duty there is none;
+ *     one that joins the list is a decision, so the list is written out.
  *
  * The web half, for the screens and the files built in the browser, is
  * web/lib/employment-readers.inventory.test.ts.
@@ -97,16 +98,16 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'the publication gate names the worst stretch of a changing post it stops on, from the report',
   },
   'src/integration/ss12000.service.ts': {
-    basis: 'NEXT',
-    why: 'SS12000 v1 Duty: dutyPercent of the year-start post; a Duty per period is the next release’s',
+    basis: 'PERIODS',
+    why: 'SS12000 v1 /duties: a changing post is a Duty per stretch of its grad while the school shares employment, paged over the Duties',
   },
   'src/integration/ss12000-v2/slice.ts': {
-    basis: 'NEXT',
-    why: 'SS12000 v2 Duty, likewise',
+    basis: 'PERIODS',
+    why: 'SS12000 v2: reads the periods of the active year’s posts, only while the school shares employment',
   },
   'src/integration/ss12000-duties.ts': {
-    basis: 'NEXT',
-    why: 'builds both SS12000 Duty shapes from a post: dutyPercent and hoursPerYear of the year-start post',
+    basis: 'PERIODS',
+    why: 'builds both SS12000 Duty shapes: one per stretch of the grad, each with its own dutyPercent, hoursPerYear and dates',
   },
   'src/year-rollover/rollover-staffing.ts': {
     basis: 'PERIODS',
@@ -131,17 +132,14 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
 };
 
 /** The readers left on the year-start post, written out: see 5. */
-const NEXT_RELEASE = [
-  'src/integration/ss12000-duties.ts',
-  'src/integration/ss12000-v2/slice.ts',
-  'src/integration/ss12000.service.ts',
-];
+const NEXT_RELEASE: string[] = [];
 
 const TABLE_READ =
   /\b(?:teacherEmployment|teacherEmploymentPeriod)\.(?:findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|create|createMany|update|updateMany|upsert|delete|deleteMany|aggregate|groupBy)\b|"TeacherEmployments"|"TeacherEmploymentPeriods"/;
 const FIGURES_READ =
   /\btargetMinutesPerWeek\(|\.(?:employmentPercent|reductionPercent|teachingTargetMinutesPerWeek)\b/;
-const PERIODS_READ = /\bperiods\b|\bstretchLoads\(|\bpostStretches\(|\bpostOn\(|\bpostOfWeek\(|\bchangesDuringYear\(/;
+const PERIODS_READ =
+  /\bperiods\b|\bteacherEmploymentPeriod\.findMany\(|\bstretchLoads\(|\bpostStretches\(|\bpostOn\(|\bpostOfWeek\(|\bchangesDuringYear\(/;
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

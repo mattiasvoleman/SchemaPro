@@ -45,6 +45,30 @@ export function uuidV5(namespace: string, name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * RFC 4122 version 3 (MD5, name-based) of `name` in `namespace`. For an id
+ * the database derives as well, in a trigger: PostgreSQL has md5() without
+ * an extension, and app.ss12000_uuid_v3 is this function, byte for byte.
+ */
+export function uuidV3(namespace: string, name: string): string {
+  const ns = Buffer.from(namespace.replace(/-/g, ''), 'hex');
+  const hash = createHash('md5').update(ns).update(Buffer.from(name, 'utf8')).digest();
+  const bytes = Buffer.from(hash.subarray(0, 16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x30;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * The Duty id of a changing post's stretch on its own figures after a
+ * period (ss12000-duties.ts dutySegments): named by the period it follows,
+ * so it lasts as long as that period does. app.ss12000_after_id is the same.
+ */
+export function dutyAfterPeriodId(periodId: string): string {
+  return uuidV3(SCHEMAPRO_SS12000_NAMESPACE, `duty-after:${periodId.toLowerCase()}`);
+}
+
 /** The Activity id of an ad-hoc lesson (a CalendarLesson with no master and no pending removal). */
 export function adhocActivityId(calendarLessonId: string): string {
   return uuidV5(SCHEMAPRO_SS12000_NAMESPACE, `adhoc-activity:${calendarLessonId}`);
