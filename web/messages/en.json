@@ -419,9 +419,13 @@
       "halfFor": "Half for {name}",
       "evenly": "Share out evenly",
       "summary": "{placed} placed, {unplaced} without a half",
-      "placeDone": "The pupils of {name} are placed.",
+      "placeDone": "The placement in {name} is saved: {placed} in the halves, {unplaced} without a half.",
       "noPupils": "The class has no pupils yet. Add the pupils, and they can be placed in the halves.",
-      "badge": "half of {name}"
+      "badge": "half of {name}",
+      "placeLoading": "Loading the class's pupils and the placement …",
+      "placeLoadFailed": "The class's pupils or the placement could not be loaded. Nothing has changed; close and open again to try again.",
+      "deleteClass": "The halves {halves} are deleted with the class, with their timetable rows and lessons.",
+      "deleteHalf": "{name} is left with one half, and cannot be split again until that one is deleted too."
     }
   },
   "people": {
@@ -2257,6 +2261,7 @@
       "SS12000_UNEXPECTED": "An unexpected error occurred.",
       "SS12000_DEPENDENCY_NOT_APPLIED": "Skipped: the change it depends on was not chosen.",
       "SS12000_TARGET_CHANGED": "Skipped: the row had changed in SchemaPro.",
+      "SS12000_HALF_MEMBER_NOT_IN_CLASS": "Skipped: the pupil is not in the class of the half, or is already in the class's other half.",
       "STALE": "The run was interrupted (the server restarted) and marked as failed.",
       "EXPIRED": "The diff was not reviewed within 30 days and was discarded.",
       "REVIEW_PENDING": "The nightly sync was skipped because a manual diff is waiting for review.",
@@ -3315,9 +3320,11 @@
     "gradeShort": "{grade, select, 0 {Preschool class} other {Grade {grade}}}",
     "noGrade": "No grade",
     "teachingGroup": "teaching group",
+    "halfOf": "half of {name}",
     "outcomeFor": "What {name} becomes",
     "newNameFor": "New name for {name}",
     "outcomeDefault": "Default: {outcome}",
+    "outcomeFollowsClass": "Follows {name}",
     "outcome": {
       "PROMOTE": "Promoted",
       "CARRY": "Carried over unchanged",

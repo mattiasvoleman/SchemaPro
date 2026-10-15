@@ -285,6 +285,16 @@ export default function GroupsPage() {
    * rather than a column of zeros that reads as empty classes.
    */
   const countsFailed = peopleQuery.isError || membershipsQuery.isError;
+  // What the placement dialog may draw from (ClassHalvesDialog's `reads`).
+  const placementReads = countsFailed
+    ? "failed"
+    : people === undefined || memberships === undefined || peopleQuery.isFetching || membershipsQuery.isFetching
+      ? "loading"
+      : "ready";
+  const pastYearIds = useMemo(() => {
+    const active = years.find((year) => year.isActive);
+    return new Set(active ? years.filter((year) => year.endDate < active.startDate).map((year) => year.id) : []);
+  }, [years]);
   const countsKnown = people !== undefined && memberships !== undefined && !countsFailed;
 
   /*
@@ -294,16 +304,35 @@ export default function GroupsPage() {
    */
   const halvesAction = (group: StudentGroup): RowAction[] => {
     const theClass = group.halfOfId ? groupById.get(group.halfOfId) : group.kind === "CLASS" ? group : undefined;
-    if (!theClass) return [];
+    // A läsår that ended before the active one began is history: its pupils
+    // are in next year's classes, and its halves keep who was in them.
+    if (!theClass || pastYearIds.has(theClass.academicYearId)) return [];
     const split = !(groups ?? []).some((other) => other.halfOfId === theClass.id);
     return [
       {
+        key: "halves",
         label: split ? t("halves.split") : t("halves.place"),
         icon: split ? Split : UserPlus,
         ariaLabel: t(split ? "halves.splitTitle" : "halves.placeTitle", { name: theClass.name }),
         onSelect: () => setHalvesFor({ mode: split ? "split" : "place", theClass }),
       },
     ];
+  };
+
+  /*
+   * What goes with a delete, said before it: a split class takes its halves,
+   * their timplansposter and lessons; a half leaves its class with one half,
+   * which is not split again until that one is gone too.
+   */
+  const deleteBody = (group: StudentGroup | null): string => {
+    if (!group) return tCommon("deleteConfirmBody");
+    const halvesOf = (groups ?? []).filter((other) => other.halfOfId === group.id).map((half) => half.name);
+    if (halvesOf.length > 0) {
+      return `${t("halves.deleteClass", { halves: halvesOf.sort((a, b) => a.localeCompare(b, "sv")).join(", ") })} ${tCommon("deleteConfirmBody")}`;
+    }
+    const theClass = group.halfOfId ? groupById.get(group.halfOfId) : undefined;
+    if (theClass) return `${t("halves.deleteHalf", { name: theClass.name })} ${tCommon("deleteConfirmBody")}`;
+    return tCommon("deleteConfirmBody");
   };
 
   const actionsOf = (group: StudentGroup): RowAction[] => [
@@ -502,6 +531,7 @@ export default function GroupsPage() {
         groups={groups ?? []}
         pupils={students}
         memberships={memberships ?? []}
+        reads={placementReads}
       />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -669,7 +699,7 @@ export default function GroupsPage() {
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
         title={tCommon("deleteConfirmTitle", { name: deleting?.name ?? "" })}
-        description={tCommon("deleteConfirmBody")}
+        description={deleteBody(deleting)}
         confirmLabel={tCommon("delete")}
         loading={mutations.remove.isPending}
         onConfirm={confirmDelete}

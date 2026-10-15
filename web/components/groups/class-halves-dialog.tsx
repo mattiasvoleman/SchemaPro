@@ -39,27 +39,72 @@ export interface HalvesPupil {
   studentGroupId: string | null;
 }
 
+export type HalvesOpened = { mode: "split" | "place"; theClass: StudentGroup };
+
 export interface ClassHalvesDialogProps {
-  /** Which dialog, for which class; null: closed. */
-  opened: { mode: "split" | "place"; theClass: StudentGroup } | null;
+  /** Which dialog, for which class; null: closed. A new object for every opening. */
+  opened: HalvesOpened | null;
   onClose: () => void;
   groups: readonly StudentGroup[];
   pupils: readonly HalvesPupil[];
   memberships: ReadonlyArray<{ studentId: string; studentGroupId: string }>;
+  /**
+   * Whether the pupils and the memberships have answered and are not being
+   * asked again. A placement is saved as each half's complete list, so one
+   * drawn before they answer — or from the answer before the last save —
+   * would take placed pupils out of their halves.
+   */
+  reads: "ready" | "loading" | "failed";
 }
 
 /** What a split or a placement changes: the groups, the counts, and who sits where. */
 const WRITTEN = [["groups"], ["people", "yearRosters"], ["groupMemberships"], ["groupMembers"], ["lessonRoster"]];
 
 export function ClassHalvesDialog(props: ClassHalvesDialogProps) {
-  const { opened, onClose } = props;
+  const { opened, onClose, reads } = props;
+  // The last opening, drawn through the close animation as well.
+  const [shown, setShown] = useState(opened);
+  if (opened !== null && opened !== shown) setShown(opened);
+  // The opening whose placement may be drawn: once the reads have answered
+  // after it opened, and from then on for that opening, so a refetch while
+  // the school is choosing never redraws over its choices.
+  const [settled, setSettled] = useState<HalvesOpened | null>(null);
+  if (opened !== null && opened.mode === "place" && settled !== opened && reads === "ready") setSettled(opened);
   return (
     <Dialog open={opened !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-lg">
-        {opened?.mode === "split" ? <Split key={opened.theClass.id} theClass={opened.theClass} onClose={onClose} /> : null}
-        {opened?.mode === "place" ? <Place key={opened.theClass.id} {...props} theClass={opened.theClass} /> : null}
+        {shown?.mode === "split" ? <Split key={shown.theClass.id} theClass={shown.theClass} onClose={onClose} /> : null}
+        {shown?.mode === "place" ? (
+          settled === shown ? (
+            <Place key={shown.theClass.id} {...props} theClass={shown.theClass} />
+          ) : (
+            <Waiting theClass={shown.theClass} failed={reads === "failed"} onClose={onClose} />
+          )
+        ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The placement's frame while its reads are out, or after one failed. */
+function Waiting({ theClass, failed, onClose }: { theClass: StudentGroup; failed: boolean; onClose: () => void }) {
+  const t = useTranslations("groups.halves");
+  const tCommon = useTranslations("common");
+  return (
+    <div className="grid gap-4">
+      <DialogHeader>
+        <DialogTitle>{t("placeTitle", { name: theClass.name })}</DialogTitle>
+        <DialogDescription>{t("placeBody")}</DialogDescription>
+      </DialogHeader>
+      <p className={failed ? "text-sm text-destructive" : "text-sm text-muted-foreground"} role={failed ? "alert" : "status"}>
+        {failed ? t("placeLoadFailed") : t("placeLoading")}
+      </p>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onClose}>
+          {tCommon("close")}
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }
 
@@ -74,7 +119,8 @@ function Split({ theClass, onClose }: { theClass: StudentGroup; onClose: () => v
   const t = useTranslations("groups.halves");
   const tCommon = useTranslations("common");
   const written = useWritten();
-  const [names, setNames] = useState([`${theClass.name}:1`, `${theClass.name}:2`]);
+  // Within the 60 characters a group's name may have, for a class whose own name is long.
+  const [names, setNames] = useState([`${theClass.name.slice(0, 58)}:1`, `${theClass.name.slice(0, 58)}:2`]);
   const [busy, setBusy] = useState(false);
   const ready = names.every((name) => name.trim().length > 0);
 
@@ -173,14 +219,17 @@ function Place({ theClass, onClose, groups, pupils, memberships }: ClassHalvesDi
   const submit = async () => {
     setBusy(true);
     try {
-      await api.put(`/api/v1/student-groups/${theClass.id}/halves/members`, {
-        halves: halves.map((half) => ({
-          groupId: half.id,
-          studentIds: classPupils.filter((pupil) => placement.get(pupil.id) === half.id).map((pupil) => pupil.id),
-        })),
-      });
+      const saved = await api.put<{ placed: number; unplaced: number }>(
+        `/api/v1/student-groups/${theClass.id}/halves/members`,
+        {
+          halves: halves.map((half) => ({
+            groupId: half.id,
+            studentIds: classPupils.filter((pupil) => placement.get(pupil.id) === half.id).map((pupil) => pupil.id),
+          })),
+        },
+      );
       written();
-      toast.success(t("placeDone", { name: theClass.name }));
+      toast.success(t("placeDone", { name: theClass.name, placed: saved.placed, unplaced: saved.unplaced }));
       onClose();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
@@ -241,7 +290,7 @@ function Place({ theClass, onClose, groups, pupils, memberships }: ClassHalvesDi
         <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
           {tCommon("cancel")}
         </Button>
-        <Button type="button" onClick={() => void submit()} disabled={busy || halves.length === 0}>
+        <Button type="button" onClick={() => void submit()} disabled={busy || halves.length === 0 || classPupils.length === 0}>
           {tCommon("save")}
         </Button>
       </DialogFooter>

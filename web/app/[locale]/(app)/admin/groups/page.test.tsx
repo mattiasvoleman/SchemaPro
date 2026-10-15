@@ -77,6 +77,8 @@ const crudKeys = vi.hoisted(() => new Map<string, string[][]>());
 const yearState = vi.hoisted(() => ({ years: [] as unknown[] }));
 /** The school's groups; a test empties it for a school that has none yet. */
 const groupState = vi.hoisted(() => ({ groups: [] as unknown[] }));
+/** The memberships read's state beyond its data, for the placement's guard. */
+const membershipsState = vi.hoisted(() => ({ isFetching: false, isError: false }));
 /** The members dialog's read of a group's stored members. */
 const membersState = vi.hoisted(() => ({
   data: [] as unknown[] | undefined,
@@ -88,7 +90,7 @@ vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: yearState.years }),
   useGroups: () => ({ data: groupState.groups, isLoading: false }),
   usePeople: () => ({ data: people }),
-  useGroupMemberships: () => ({ data: memberships }),
+  useGroupMemberships: () => ({ data: memberships, ...membershipsState }),
   useGroupMembers: () => membersState,
   useSetGroupMembers: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCrudMutations: (path: string, keys: string[][]) => {
@@ -337,6 +339,8 @@ describe("Halvklasser on Klasser", () => {
     yearState.years = [YEAR];
     api.post.mockReset().mockResolvedValue([]);
     api.put.mockReset().mockResolvedValue({ placed: 2, unplaced: 0 });
+    membershipsState.isFetching = false;
+    membershipsState.isError = false;
   });
 
   it("splits a class from its row, with the names the school gives", async () => {
@@ -415,5 +419,78 @@ describe("Halvklasser on Klasser", () => {
     } finally {
       memberships.splice(-2, 2);
     }
+  });
+});
+
+describe("Halvklasser: what the placement will not do", () => {
+  const halves = [
+    { id: "h-1", academicYearId: "year-1", name: "7A:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+    { id: "h-2", academicYearId: "year-1", name: "7A:2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+  ];
+  const showPage = () =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <GroupsPage />
+      </QueryClientProvider>,
+    );
+
+  beforeEach(() => {
+    yearState.years = [YEAR];
+    groupState.groups = [...groups, ...halves];
+    api.put.mockReset();
+    membershipsState.isFetching = false;
+    membershipsState.isError = false;
+  });
+
+  it("draws no placement, and offers no save, while the memberships are being asked again", async () => {
+    // As right after a save: the placement it would draw is the one before it.
+    membershipsState.isFetching = true;
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(screen.getAllByRole("button", { name: "halves.placeTitle(7A)" })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("status")).toHaveTextContent("placeLoading");
+    expect(within(dialog).queryByRole("combobox")).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "save" })).toBeNull();
+  });
+
+  it("says a failed read instead of drawing every pupil in no half", async () => {
+    membershipsState.isError = true;
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(screen.getAllByRole("button", { name: "halves.placeTitle(7A)" })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("placeLoadFailed");
+    expect(within(dialog).queryByRole("combobox")).toBeNull();
+  });
+
+  it("offers neither split nor placement on a läsår that ended before the active one began", () => {
+    yearState.years = [
+      { ...YEAR, startDate: "2026-08-17", endDate: "2027-06-11" },
+      { id: "year-0", name: "2025/2026", isActive: false, startDate: "2025-08-18", endDate: "2026-06-12" },
+    ];
+    groupState.groups = [
+      ...groups,
+      ...halves,
+      { id: "g-old-6a", academicYearId: "year-0", name: "6A", kind: "CLASS", gradeLevel: 6 },
+    ];
+    showPage();
+
+    expect(screen.queryByRole("button", { name: "halves.splitTitle(6A)" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "halves.placeTitle(7A)" }).length).toBeGreaterThan(0);
+  });
+
+  it("says what goes with a split class, and what a half leaves behind, before deleting", async () => {
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(screen.getByRole("button", { name: "deleteNamed(7A)" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("halves.deleteClass(7A:1, 7A:2)");
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "deleteNamed(7A:2)" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("halves.deleteHalf(7A)");
   });
 });

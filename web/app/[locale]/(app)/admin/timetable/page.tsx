@@ -620,8 +620,8 @@ export default function TimetablePage() {
    * collide", this one answers "how much of this class is in the room".
    */
   const rosterIndex = useMemo(
-    () => buildRosterIndex(studentGroupOf, memberships),
-    [studentGroupOf, memberships],
+    () => buildRosterIndex(studentGroupOf, memberships, groups),
+    [studentGroupOf, memberships, groups],
   );
 
   const subjectById = useMemo(

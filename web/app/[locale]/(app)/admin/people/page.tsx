@@ -510,7 +510,13 @@ export default function PeoplePage() {
     hrRead?: boolean;
     /** Opt-in only; see the toggle in the create dialog. */
     sendInvitation?: boolean;
-  }>("/api/v1/users", [["people"]]);
+  }>(
+    "/api/v1/users",
+    // A pupil moved to another class leaves the old class's halves
+    // (Halvklasser), which the database does as the class is written: the
+    // memberships and the rosters drawn from them are stale with the people.
+    [["people"], ["groupMemberships"], ["groupMembers"], ["lessonRoster"]],
+  );
 
   const [filter, setFilter] = useState<"ALL" | UserRole>("ALL");
   const [search, setSearch] = useState("");
