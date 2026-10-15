@@ -84,7 +84,7 @@ function school() {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 28 statements (27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 29 statements (28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -121,6 +121,10 @@ describe('the active year’s statement budget', () => {
       'user.findMany',
       'studentGroupMember.findMany',
       'user.findMany',
+      // Block i schemat: the lesson's parallel block and the other members'
+      // lessons, joined in ONE statement — asked because the lesson moved
+      // (block-lessons.ts). This school has no block, so the answer is no row.
+      '$queryRaw.$queryRaw',
       'masterLesson.update',
       'masterLesson.update › row',
       'masterLesson.update › extraGroups',
