@@ -62,4 +62,33 @@ describe("YearComparison", () => {
     // Last year's post did not change during the year: no line there.
     expect(within(bo).getAllByText(/reductionSteps/)).toHaveLength(1);
   });
+
+  it("prints both years' steps together when only the order of grad and nedsättning differs", () => {
+    lastYear.data = {
+      teachers: [
+        load("t-bo", {
+          periods: [stretch("2025-08-18", "2026-01-11", 100), stretch("2026-01-12", "2026-03-01", 80), stretch("2026-03-02", "2026-06-12", 80, 20)],
+        }),
+      ],
+    };
+    render(
+      <YearComparison
+        thisYear={{
+          name: "2026/27",
+          teachers: [
+            load("t-bo", {
+              periods: [stretch("2026-08-17", "2027-01-10", 100), stretch("2027-01-11", "2027-02-28", 100, 20), stretch("2027-03-01", "2027-06-11", 80, 20)],
+            }),
+          ],
+        }}
+        predecessor={{ id: "y-0", name: "2025/26" }}
+        teacherName={(id) => names[id] ?? id}
+      />,
+    );
+    const bo = screen.getByRole("rowheader", { name: /Bo Alm/ }).closest("tr")!;
+    expect(within(bo).getByText("postSteps(100 % → 80 % → postStepReduction(80|20))")).toBeInTheDocument();
+    expect(within(bo).getByText("postSteps(100 % → postStepReduction(100|20) → postStepReduction(80|20))")).toBeInTheDocument();
+    // The combined steps stand instead of the nedsättning's, which read the same both years.
+    expect(within(bo).queryByText(/reductionSteps/)).toBeNull();
+  });
 });

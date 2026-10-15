@@ -38,6 +38,8 @@ export interface YearFigures {
    * where the year starts the same. [] without a post.
    */
   postSteps: string[];
+  /** The same steps as figures, grad and nedsättning together: what the row prints when only their order differs. */
+  stretchSteps: { employmentPercent: number; reductionPercent: number }[];
   /** Teaching plus counted uppdrag, standardvecka — what the target is compared with. */
   countedMinutesPerWeek: number;
   percentOfTarget: number | null;
@@ -55,6 +57,13 @@ export interface ComparisonRow {
   employmentDelta: number | null;
   /** The nedsättning moved, both years having a row: the table has no column for it, so the row says it. */
   reductionChanged: boolean;
+  /**
+   * Both years' grad steps and nedsättning steps read the same, but the post
+   * is not: they change in another order (the nedsättning first one year, the
+   * grad first the other). The cells cannot tell the years apart, so the row
+   * prints each year's steps with grad and nedsättning together.
+   */
+  stepsInAnotherOrder: boolean;
   change: ComparisonChange;
 }
 
@@ -65,10 +74,14 @@ function figures(load: TeacherLoad): YearFigures {
   const stretches = (load.periods?.length ?? 0) > 0 ? load.periods! : start ? [start] : [];
   const steps = (load.periods?.length ?? 0) > 0 ? percentSteps(load.periods!) : start ? [start.employmentPercent] : [];
   const postSteps: string[] = [];
+  const stretchSteps: YearFigures["stretchSteps"] = [];
   const reductionSteps: number[] = [];
   for (const stretch of stretches) {
     const step = `${thousandths(stretch.employmentPercent)}/${thousandths(stretch.reductionPercent)}`;
-    if (postSteps[postSteps.length - 1] !== step) postSteps.push(step);
+    if (postSteps[postSteps.length - 1] !== step) {
+      postSteps.push(step);
+      stretchSteps.push({ employmentPercent: stretch.employmentPercent, reductionPercent: stretch.reductionPercent });
+    }
     const last = reductionSteps[reductionSteps.length - 1];
     if (last === undefined || thousandths(last) !== thousandths(stretch.reductionPercent)) {
       reductionSteps.push(stretch.reductionPercent);
@@ -80,6 +93,7 @@ function figures(load: TeacherLoad): YearFigures {
     reductionPercent: start?.reductionPercent ?? 0,
     reductionSteps,
     postSteps,
+    stretchSteps,
     countedMinutesPerWeek: load.countedMinutesPerWeek,
     percentOfTarget: load.percentOfTarget,
   };
@@ -121,6 +135,23 @@ export function compareYears(
     else
       change =
         countedDelta !== 0 || current.postSteps.join(" ") !== previous.postSteps.join(" ") ? "CHANGED" : "SAME";
-    return { userId, lastYear: previous, thisYear: current, countedDelta, employmentDelta, reductionChanged, change };
+    const sameSteps = (a: readonly number[], b: readonly number[]) =>
+      a.map(thousandths).join(" ") === b.map(thousandths).join(" ");
+    const stepsInAnotherOrder =
+      current !== null &&
+      previous !== null &&
+      current.postSteps.join(" ") !== previous.postSteps.join(" ") &&
+      sameSteps(current.employmentSteps, previous.employmentSteps) &&
+      sameSteps(current.reductionSteps, previous.reductionSteps);
+    return {
+      userId,
+      lastYear: previous,
+      thisYear: current,
+      countedDelta,
+      employmentDelta,
+      reductionChanged,
+      stepsInAnotherOrder,
+      change,
+    };
   });
 }

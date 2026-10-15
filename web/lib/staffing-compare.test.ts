@@ -70,6 +70,33 @@ describe("compareYears", () => {
     expect(row!.change).toBe("CHANGED");
   });
 
+  it("marks a post whose grad and nedsättning change in another order, so the row can show it", () => {
+    const stretch = (from: string, to: string, employmentPercent: number, reductionPercent = 0) =>
+      ({ from, to, employmentPercent, reductionPercent }) as NonNullable<TeacherLoad["periods"]>[number];
+    // Last year the grad went first (80 % from January, then a nedsättning from March); this year the nedsättning.
+    const gradFirst = load("t-b", {
+      periods: [stretch("2025-08-18", "2026-01-11", 100), stretch("2026-01-12", "2026-03-01", 80), stretch("2026-03-02", "2026-06-12", 80, 20)],
+    });
+    const reductionFirst = load("t-b", {
+      periods: [stretch("2026-08-17", "2027-01-10", 100), stretch("2027-01-11", "2027-02-28", 100, 20), stretch("2027-03-01", "2027-06-11", 80, 20)],
+    });
+    const [row] = compareYears([reductionFirst], [gradFirst]);
+    expect(row!.change).toBe("CHANGED");
+    // Each projection alone reads the same both years…
+    expect(row!.thisYear!.employmentSteps).toEqual(row!.lastYear!.employmentSteps);
+    expect(row!.thisYear!.reductionSteps).toEqual(row!.lastYear!.reductionSteps);
+    // …so the row says it is the order, with the steps together.
+    expect(row!.stepsInAnotherOrder).toBe(true);
+    expect(row!.thisYear!.stretchSteps).toEqual([
+      { employmentPercent: 100, reductionPercent: 0 },
+      { employmentPercent: 100, reductionPercent: 20 },
+      { employmentPercent: 80, reductionPercent: 20 },
+    ]);
+    // A post that differs in a projection shows that projection, not the combined steps.
+    const [halving] = compareYears([reductionFirst], [load("t-b")]);
+    expect(halving!.stepsInAnotherOrder).toBe(false);
+  });
+
   it("calls a nedsättning from January a change, and the same changing post in both years none", () => {
     const stretch = (from: string, to: string, employmentPercent: number, reductionPercent = 0) =>
       ({ from, to, employmentPercent, reductionPercent }) as NonNullable<TeacherLoad["periods"]>[number];
@@ -107,6 +134,7 @@ describe("compareYears", () => {
       reductionPercent: 0,
       reductionSteps: [0],
       postSteps: ["80000/0"],
+      stretchSteps: [{ employmentPercent: 80, reductionPercent: 0 }],
       countedMinutesPerWeek: 840,
       percentOfTarget: 88.9,
     });
