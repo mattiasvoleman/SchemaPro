@@ -1,6 +1,7 @@
 import { route, type GatewayRoute } from "../gateway-routes";
 import { coverRoutes } from "./gateway-cover";
 import { familyRoutes } from "./gateway-family";
+import { leaveRoutes } from "./gateway-leave";
 import { miscRoutes } from "./gateway-misc";
 import { publicRoutes } from "./gateway-public";
 import { readRoutes } from "./gateway-reads";
@@ -23,4 +24,5 @@ export const gatewayRoutes: GatewayRoute[] = [
   ...familyRoutes,
   ...publicRoutes,
   ...readRoutes,
+  ...leaveRoutes,
 ];
