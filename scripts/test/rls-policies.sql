@@ -10862,7 +10862,7 @@ BEGIN
   EXCEPTION WHEN check_violation THEN NULL;
   END;
   BEGIN
-    INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes") VALUES (school, k, 'x', 'https://hooks.example.invalid/', '{Absence}');
+    INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes") VALUES (school, k, 'x', 'https://hooks.example.invalid/', '{Grade}');
     RAISE EXCEPTION 'ss31c: a resource the provider does not emit was stored';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
@@ -21977,5 +21977,680 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM "StudentGroupMembers" WHERE "studentGroupId" = (t ->> 'h2')::uuid AND "studentId" = (t ->> 'p2')::uuid) THEN
     RAISE EXCEPTION 'halves and profiles: the move took a pupil who stayed out of a half';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 150: SS12000-närvaro, katalogen (20261114090000).
+--
+-- The school's decision (AttendanceSharingDecisions): row security on;
+-- exactly the admin's SELECT and INSERT, TO app_authenticated; PostgREST's
+-- authenticated and anon hold nothing; service_role SELECT and nothing else;
+-- the API SELECT and INSERT of schoolId, shares and reference only (who and
+-- when are the database's), no UPDATE, DELETE, TRUNCATE, REFERENCES or
+-- TRIGGER, and no API role MAINTAIN on 17. No arm of AttendanceRecords or
+-- AbsenceReports names the service principal: the integration reads them
+-- through app.ss12000_attendances and app.ss12000_absences, which are the
+-- API's alone, run as their owner, and answer exactly the emitted columns.
+-- The versions' and tombstones' service arms ask app.service_reads_attendance
+-- for the two resources. Every other function is nobody's to call, except
+-- that question, which is the API's; the fourteen triggers are in place, and
+-- the CHECKs know the two resources and scopes.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  r text;
+  p text;
+  n bigint;
+  fn text;
+  def text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"AttendanceSharingDecisions"'::regclass) THEN
+    RAISE EXCEPTION 'attendance sharing: row security is off';
+  END IF;
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'AttendanceSharingDecisions';
+  IF n <> 2
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'AttendanceSharingDecisions'
+                      AND policyname = 'attendance_sharing_decisions_admin_select' AND cmd = 'SELECT' AND roles = '{app_authenticated}')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'AttendanceSharingDecisions'
+                      AND policyname = 'attendance_sharing_decisions_admin_insert' AND cmd = 'INSERT' AND roles = '{app_authenticated}') THEN
+    RAISE EXCEPTION 'attendance sharing: the arms are not the admin''s SELECT and INSERT, TO app_authenticated';
+  END IF;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege(r, '"AttendanceSharingDecisions"', p) THEN RAISE EXCEPTION 'attendance sharing: % holds %', r, p; END IF;
+    END LOOP;
+    IF has_any_column_privilege(r, '"AttendanceSharingDecisions"', 'INSERT') THEN RAISE EXCEPTION 'attendance sharing: % may insert a column', r; END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('service_role', '"AttendanceSharingDecisions"', p) THEN RAISE EXCEPTION 'attendance sharing: service_role holds %', p; END IF;
+    END LOOP;
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', '"AttendanceSharingDecisions"', 'SELECT') THEN
+    RAISE EXCEPTION 'attendance sharing: the API cannot read the decisions';
+  END IF;
+  FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', '"AttendanceSharingDecisions"', p) THEN RAISE EXCEPTION 'attendance sharing: the API holds % on the whole table', p; END IF;
+  END LOOP;
+  FOREACH p IN ARRAY ARRAY['schoolId', 'shares', 'reference'] LOOP
+    IF NOT has_column_privilege('app_authenticated', '"AttendanceSharingDecisions"', p, 'INSERT') THEN
+      RAISE EXCEPTION 'attendance sharing: the API cannot insert %', p;
+    END IF;
+  END LOOP;
+  FOREACH p IN ARRAY ARRAY['id', 'decidedById', 'decidedAt'] LOOP
+    IF has_column_privilege('app_authenticated', '"AttendanceSharingDecisions"', p, 'INSERT') THEN
+      RAISE EXCEPTION 'attendance sharing: the API may write %, which is the database''s', p;
+    END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_table_privilege(r, '"AttendanceSharingDecisions"', 'MAINTAIN') THEN RAISE EXCEPTION 'attendance sharing: % holds MAINTAIN', r; END IF;
+    END LOOP;
+  END IF;
+
+  -- No arm of the two tables is the service principal's.
+  SELECT count(*) INTO n FROM pg_policies
+   WHERE schemaname = 'public' AND tablename IN ('AttendanceRecords', 'AbsenceReports')
+     AND (policyname LIKE '%service%' OR coalesce(qual, '') LIKE '%service%' OR coalesce(with_check, '') LIKE '%service%');
+  IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: % arms of AttendanceRecords or AbsenceReports name the service principal', n; END IF;
+
+  -- The versions' and tombstones' service arms ask the question for the two resources.
+  FOREACH p IN ARRAY ARRAY['Ss12000EntityVersions:ss12000_entity_versions_service_select', 'Ss12000Tombstones:ss12000_tombstones_service_select'] LOOP
+    SELECT qual INTO def FROM pg_policies WHERE schemaname = 'public' AND tablename = split_part(p, ':', 1) AND policyname = split_part(p, ':', 2);
+    IF def IS NULL
+       OR def NOT LIKE '%app.service_reads_attendance(''attendances.read''::text)%'
+       OR def NOT LIKE '%app.service_reads_attendance(''absences.read''::text)%' THEN
+      RAISE EXCEPTION 'attendance sharing: % does not keep Attendance and Absence to a key that may read them: %', p, def;
+    END IF;
+  END LOOP;
+
+  -- The functions: nobody's but the question and the two reads, which are the API's.
+  FOREACH fn IN ARRAY ARRAY[
+    'app.attendance_sharing_decisions_are_stamped()', 'app.attendance_sharing_decisions_are_append_only()',
+    'app.attendance_shared(uuid)', 'app.absence_reports_granted_leave_is_decided()', 'app.ss12000_emitted_years(uuid)',
+    'app.ss12000_attendance_emitted(uuid, uuid[])', 'app.ss12000_absence_emitted(uuid, uuid[])',
+    'app.ss12000_v_attendance()', 'app.ss12000_v_absences()', 'app.ss12000_v_attendance_pupils()',
+    'app.ss12000_v_attendance_lessons()', 'app.ss12000_v_absence_timezone()', 'app.ss12000_v_attendance_years()',
+    'app.ss12000_notifies(text[], text[], uuid)'
+  ] LOOP
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'attendance sharing: % may execute %', r, fn; END IF;
+    END LOOP;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'attendance sharing: % runs as its caller', fn; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY[
+    'app.service_reads_attendance(text)',
+    'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',
+    'app.ss12000_absences(uuid[], uuid[])'
+  ] LOOP
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'attendance sharing: the API may not call %', fn; END IF;
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      IF has_function_privilege(r, fn, 'EXECUTE') THEN RAISE EXCEPTION 'attendance sharing: % may call %', r, fn; END IF;
+    END LOOP;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'attendance sharing: % runs as its caller', fn; END IF;
+  END LOOP;
+  -- The two reads answer the emitted columns and nothing else: no note, no
+  -- reporter, no recordedAt, no absence type.
+  IF pg_get_function_result('app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)'::regprocedure)
+     IS DISTINCT FROM 'TABLE(id uuid, "calendarLessonId" uuid, "studentId" uuid, status text, "createdAt" timestamp with time zone, '
+                      '"startsAt" timestamp with time zone, "endsAt" timestamp with time zone, "studentGroupId" uuid, '
+                      '"versionCreatedAt" timestamp with time zone, "versionModifiedAt" timestamp with time zone)' THEN
+    RAISE EXCEPTION 'attendance sharing: app.ss12000_attendances answers %',
+      pg_get_function_result('app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)'::regprocedure);
+  END IF;
+  IF pg_get_function_result('app.ss12000_absences(uuid[], uuid[])'::regprocedure)
+     IS DISTINCT FROM 'TABLE(id uuid, "studentId" uuid, date text, "startTime" text, "endTime" text, "grantedLeave" boolean, "createdAt" timestamp with time zone)' THEN
+    RAISE EXCEPTION 'attendance sharing: app.ss12000_absences answers %', pg_get_function_result('app.ss12000_absences(uuid[], uuid[])'::regprocedure);
+  END IF;
+
+  SELECT count(*) INTO n FROM pg_trigger
+   WHERE NOT tgisinternal AND (
+         (tgrelid = '"AttendanceSharingDecisions"'::regclass AND tgname IN (
+            'AttendanceSharingDecisions_stamped', 'AttendanceSharingDecisions_append_only', 'AttendanceSharingDecisions_no_truncate'))
+      OR (tgrelid = '"AbsenceReports"'::regclass AND tgname IN (
+            'AbsenceReports_granted_leave_is_decided', 'AbsenceReports_ss12000_versions_ins',
+            'AbsenceReports_ss12000_versions_upd', 'AbsenceReports_ss12000_versions_del'))
+      OR (tgrelid = '"AttendanceRecords"'::regclass AND tgname IN (
+            'AttendanceRecords_ss12000_versions_ins', 'AttendanceRecords_ss12000_versions_upd', 'AttendanceRecords_ss12000_versions_del'))
+      OR (tgrelid = '"Users"'::regclass AND tgname = 'Users_ss12000_attendance_upd')
+      OR (tgrelid = '"CalendarLessons"'::regclass AND tgname = 'CalendarLessons_ss12000_attendance_upd')
+      OR (tgrelid = '"Schools"'::regclass AND tgname = 'Schools_ss12000_attendance_upd')
+      OR (tgrelid = '"AcademicYears"'::regclass AND tgname = 'AcademicYears_ss12000_attendance_upd'));
+  IF n <> 14 THEN RAISE EXCEPTION 'attendance sharing: % of the fourteen triggers are in place', n; END IF;
+
+  -- The CHECKs know the two resources and the two scopes.
+  FOREACH fn IN ARRAY ARRAY['Ss12000EntityVersions_resource_is_emitted', 'Ss12000Tombstones_resource_is_emitted',
+                            'Ss12000Subscriptions_resourceTypes_are_emitted', 'IntegrationApiKeys_scopes_are_known'] LOOP
+    SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = fn;
+    IF def IS NULL OR NOT (SELECT convalidated FROM pg_constraint WHERE conname = fn) THEN
+      RAISE EXCEPTION 'attendance sharing: % is missing or not validated', fn;
+    END IF;
+    IF fn = 'IntegrationApiKeys_scopes_are_known' THEN
+      IF def NOT LIKE '%attendances.read%' OR def NOT LIKE '%absences.read%' THEN RAISE EXCEPTION 'attendance sharing: % does not know the scopes', fn; END IF;
+    ELSIF def NOT LIKE '%Attendance%' OR def NOT LIKE '%Absence%' THEN
+      RAISE EXCEPTION 'attendance sharing: % does not know the resources', fn;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 151: integrationen läser närvaron och frånvaron bara genom
+-- leverantörens två funktioner, bara hos en skola som delar den, med en egen
+-- nyckel som har omfånget, och bara den skolans (app.ss12000_attendances,
+-- app.ss12000_absences).
+--
+-- Directly, under the service principal, the two tables are empty to every
+-- key, shared or not (pg_temp.nv151_reads asserts it at every call). Through
+-- the functions: a school that has not decided answers its key with both
+-- scopes nothing. The sharing school: its own key reads its own rows and no
+-- other school's; a key of one school named with the other reads nothing,
+-- and so does the service principal without a key (v1). Once the first
+-- school decides, its key reads what its scope says, function by function,
+-- and only the attendance it emits: next year's lesson's is not, and a pupil
+-- who leaves is gone from both at once. A key without the scope and a
+-- revoked key read nothing; the filters narrow and the keyset pages; the
+-- service principal writes nothing; PostgREST's role may not call them; and
+-- when the school stops, nothing again.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+SELECT set_config('app.test_nv_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_nv_full', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV hel')::text, true);
+SELECT set_config('app.test_nv_narrow', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV utan')::text, true);
+SELECT set_config('app.test_nv_revoked', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV återkallad')::text, true);
+SELECT set_config('app.test_nv_absences', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV frånvaro')::text, true);
+SELECT set_config('app.test_nv_pupil', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000153')::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000155')::text, true);
+SELECT set_config('app.test_nv_shares', app.current_school_id()::text, true);
+SELECT set_config('app.test_nv_shares_key', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'ND hel')::text, true);
+SELECT set_config('request.jwt.claims', '', true);
+CREATE FUNCTION pg_temp.nv151_as(p_school text, p_key text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', p_school, true);
+  PERFORM set_config('app.service_key_id', p_key, true);
+END
+$$;
+CREATE FUNCTION pg_temp.nv151_reads(p_school text, p_key text) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE a bigint; b bigint; da bigint; db bigint;
+BEGIN
+  PERFORM pg_temp.nv151_as(p_school, p_key);
+  SELECT count(*) INTO da FROM "AttendanceRecords";
+  SELECT count(*) INTO db FROM "AbsenceReports";
+  SELECT count(*) INTO a FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+  SELECT count(*) INTO b FROM app.ss12000_absences(NULL, NULL);
+  PERFORM pg_temp.nv151_as('', '');
+  IF da + db <> 0 THEN
+    RAISE EXCEPTION 'attendance sharing: the service principal read % attendance and % absence rows directly', da, db;
+  END IF;
+  RETURN a || '/' || b;
+END
+$$;
+DO $$
+DECLARE
+  s1 text := current_setting('app.test_nv_school');
+  s2 text := current_setting('app.test_nv_shares');
+  mine text := current_setting('app.test_nv_full');
+  theirs text := current_setting('app.test_nv_shares_key');
+  got text;
+BEGIN
+  IF s1 = '' OR s2 = '' OR mine = '' OR theirs = '' THEN RAISE EXCEPTION 'attendance sharing: the fixtures are missing'; END IF;
+  got := pg_temp.nv151_reads(s1, mine);
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a school that has not decided gave its key %', got; END IF;
+  got := pg_temp.nv151_reads(s2, theirs);
+  IF got <> '1/1' THEN RAISE EXCEPTION 'attendance sharing: the sharing school''s key read %, not its own row of each', got; END IF;
+  got := pg_temp.nv151_reads(s2, mine);
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: another school''s key read the sharing school: %', got; END IF;
+  got := pg_temp.nv151_reads(s1, theirs);
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: the sharing school''s key read another school: %', got; END IF;
+  got := pg_temp.nv151_reads(s2, '');
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: the service principal without a key read %', got; END IF;
+END $$;
+
+-- The first school decides, as its administrator.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 151');
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  s1 text := current_setting('app.test_nv_school');
+  mine text := current_setting('app.test_nv_full');
+  pupil uuid := current_setting('app.test_nv_pupil')::uuid;
+  got text;
+  n bigint;
+  first uuid;
+  lesson uuid;
+  granted record;
+BEGIN
+  -- This year's two; next year's lesson's attendance is not emitted.
+  got := pg_temp.nv151_reads(s1, mine);
+  IF got <> '2/2' THEN RAISE EXCEPTION 'attendance sharing: the key with both scopes read %, not the school''s 2 and 2', got; END IF;
+  got := pg_temp.nv151_reads(s1, current_setting('app.test_nv_absences'));
+  IF got <> '0/2' THEN RAISE EXCEPTION 'attendance sharing: an absences.read key read %', got; END IF;
+  got := pg_temp.nv151_reads(s1, current_setting('app.test_nv_narrow'));
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a key without the scopes read %', got; END IF;
+  got := pg_temp.nv151_reads(s1, current_setting('app.test_nv_revoked'));
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a revoked key read %', got; END IF;
+
+  -- The filters narrow, the keyset pages, the bounds are the version's or the creation's.
+  PERFORM pg_temp.nv151_as(s1, mine);
+  SELECT a.id, a."calendarLessonId" INTO first, lesson
+    FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1) a;
+  SELECT count(*) INTO n FROM app.ss12000_attendances(NULL, NULL, ARRAY[pupil], NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+  IF n <> 1 THEN RAISE EXCEPTION 'attendance sharing: the pupil filter answered % rows', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_attendances(NULL, ARRAY[lesson], NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+  IF n <> 2 THEN RAISE EXCEPTION 'attendance sharing: the lesson filter answered % rows', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_attendances(ARRAY[first], NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+  IF n <> 1 THEN RAISE EXCEPTION 'attendance sharing: the id filter answered % rows', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, first, NULL);
+  IF n <> 1 THEN RAISE EXCEPTION 'attendance sharing: the page after the first answered % rows, not the other one', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, now() + interval '1 day', NULL, NULL);
+  IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: % rows were modified after tomorrow', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, now() - interval '1 year', NULL, NULL, NULL, NULL, NULL);
+  IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: % rows were created a year ago', n; END IF;
+  SELECT count(*) INTO n FROM app.ss12000_absences(NULL, ARRAY[pupil]);
+  IF n <> 1 THEN RAISE EXCEPTION 'attendance sharing: the pupil''s absences are % rows', n; END IF;
+  -- The granted leave's day as the gateway reads it: the date and no times, as text.
+  SELECT * INTO granted FROM app.ss12000_absences(NULL, NULL) a WHERE a."grantedLeave";
+  IF granted.date IS DISTINCT FROM to_char(current_date + 5, 'YYYY-MM-DD') OR granted."startTime" IS NOT NULL OR granted."endTime" IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance sharing: the granted leave reads as % % %', granted.date, granted."startTime", granted."endTime";
+  END IF;
+
+  -- The service principal writes nothing here.
+  UPDATE "AttendanceRecords" SET status = 'ABSENT';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: the integration updated % attendance rows', n; END IF;
+  DELETE FROM "AbsenceReports";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: the integration removed % absences', n; END IF;
+  PERFORM pg_temp.nv151_as('', '');
+
+  -- A pupil who leaves is gone from both at once.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+  UPDATE "Users" SET "isActive" = false WHERE id = pupil;
+  got := pg_temp.nv151_reads(s1, mine);
+  IF got <> '1/1' THEN RAISE EXCEPTION 'attendance sharing: with the pupil gone the key read %', got; END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+  UPDATE "Users" SET "isActive" = true WHERE id = pupil;
+  PERFORM set_config('request.jwt.claims', '', true);
+END $$;
+-- PostgREST's role, with the same settings: the functions are not its.
+SELECT pg_temp.nv151_as(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'attendance sharing: could not act as authenticated'; END IF;
+  SELECT (SELECT count(*) FROM "AttendanceRecords") + (SELECT count(*) FROM "AbsenceReports") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: PostgREST''s role read % rows through the integration''s settings', n; END IF;
+  BEGIN
+    PERFORM count(*) FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    RAISE EXCEPTION 'attendance sharing: PostgREST''s role called the attendance read';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM count(*) FROM app.ss12000_absences(NULL, NULL);
+    RAISE EXCEPTION 'attendance sharing: PostgREST''s role called the absence read';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+SET LOCAL ROLE app_authenticated;
+SELECT pg_temp.nv151_as('', '');
+-- The school stops sharing: nothing again, from the next statement.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (app.current_school_id(), false);
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE got text;
+BEGIN
+  got := pg_temp.nv151_reads(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
+  IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a school that stopped sharing gave its key %', got; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 152: bara ett beslut om ledighet skriver en beviljad ledighet
+-- (AbsenceReports.grantedLeave, app.absence_reports_granted_leave_is_decided).
+--
+-- A guardian and a pupil file their absences as before, but one that says it
+-- is a granted leave is refused (NV403) whatever its note; a teacher's goes
+-- no further than RLS; the administrator writes it and may mark a report as
+-- one. The note decides nothing: a guardian's "Approved leave" stays false.
+-- The administrator's insert in the decision's shape without the column (an
+-- API deployed before the migration's code) is the decision's all the same.
+-- And a reported span ends after it starts (AbsenceReports_ends_after_it_starts).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+SELECT set_config('app.test_nv_pupil', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000153')::text, true);
+SELECT set_config('app.test_nv_guardian', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000152')::text, true);
+SELECT set_config('app.test_nv_teacher', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000151')::text, true);
+DO $$
+DECLARE
+  pupil uuid := current_setting('app.test_nv_pupil')::uuid;
+  guardian uuid := current_setting('app.test_nv_guardian')::uuid;
+  teacher uuid := current_setting('app.test_nv_teacher')::uuid;
+  admin uuid := app.current_user_id();
+  school uuid := app.current_school_id();
+  reported uuid;
+  marked boolean;
+  n bigint;
+BEGIN
+  -- The guardian.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000152')::text, true);
+  BEGIN
+    INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note, "grantedLeave")
+    VALUES (school, pupil, guardian, current_date + 20, 'OTHER', 'Approved leave', true);
+    RAISE EXCEPTION 'granted leave: a guardian filed a granted leave';
+  EXCEPTION WHEN SQLSTATE 'NV403' THEN NULL;
+  END;
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (school, pupil, guardian, current_date + 20, 'OTHER', 'Approved leave');
+  -- The pupil.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000153')::text, true);
+  BEGIN
+    INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "grantedLeave")
+    VALUES (school, pupil, pupil, current_date + 21, 'OTHER', true);
+    RAISE EXCEPTION 'granted leave: a pupil filed their own granted leave';
+  EXCEPTION WHEN SQLSTATE 'NV403' THEN NULL;
+  END;
+  -- A teacher who decided nothing: RLS, not the guard, says no.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000151')::text, true);
+  BEGIN
+    INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note, "grantedLeave")
+    VALUES (school, pupil, teacher, current_date + 22, 'OTHER', 'Approved leave', true);
+    RAISE EXCEPTION 'granted leave: a teacher wrote a granted leave without a decision';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- The administrator.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "grantedLeave")
+  VALUES (school, pupil, admin, current_date + 23, 'OTHER', true);
+  SELECT count(*) INTO n FROM "AbsenceReports" WHERE "studentId" = pupil AND date = current_date + 20 AND "grantedLeave";
+  IF n <> 0 THEN RAISE EXCEPTION 'granted leave: a guardian''s note made a granted leave'; END IF;
+  SELECT id INTO reported FROM "AbsenceReports" WHERE "studentId" = pupil AND date = current_date + 20;
+  UPDATE "AbsenceReports" SET "grantedLeave" = true WHERE id = reported;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'granted leave: the administrator could not mark a report as a granted leave'; END IF;
+  -- The decision's shape, without the column.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (school, pupil, admin, current_date + 24, 'OTHER', 'Approved leave') RETURNING "grantedLeave" INTO marked;
+  IF NOT marked THEN RAISE EXCEPTION 'granted leave: the administrator''s leave day without the column is not a granted leave'; END IF;
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+  VALUES (school, pupil, admin, current_date + 25, 'SICK', 'Approved leave') RETURNING "grantedLeave" INTO marked;
+  IF marked THEN RAISE EXCEPTION 'granted leave: a sick day became a granted leave by its note'; END IF;
+  -- A span that ends before it starts, or as it starts.
+  FOREACH n IN ARRAY ARRAY[0, 1] LOOP
+    BEGIN
+      INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, "startTime", "endTime", type)
+      VALUES (school, pupil, admin, current_date + 26, time '10:00', time '10:00' - n * interval '2 hours', 'APPOINTMENT');
+      RAISE EXCEPTION 'granted leave: an absence that does not end after it starts was stored';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 153: skolans beslut fattas av administratören, stämplas av
+-- databasen och ändras aldrig (AttendanceSharingDecisions).
+--
+-- The administrator inserts a decision, and who and when are stamped from
+-- the claims and the clock, whatever is sent (the API may not even name
+-- those columns); no API role updates, removes or truncates one; a decision
+-- for another school is refused, and none is seen. Teachers, guardians and
+-- pupils neither read nor write a decision, and PostgREST's role nothing.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000155')::text, true);
+SELECT set_config('app.test_nv_shares', app.current_school_id()::text, true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  other uuid := current_setting('app.test_nv_shares')::uuid;
+  row "AttendanceSharingDecisions"%ROWTYPE;
+  n bigint;
+  who text;
+BEGIN
+  SELECT count(*) INTO n FROM "AttendanceSharingDecisions";
+  IF n <> 0 THEN RAISE EXCEPTION 'decisions: the administrator reads % decisions of another school', n; END IF;
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (school, true, 'RLS 153') RETURNING * INTO row;
+  IF row."decidedById" IS DISTINCT FROM app.current_user_id() OR row."decidedAt" IS NULL THEN
+    RAISE EXCEPTION 'decisions: the decision was not stamped with its decider (%)', row."decidedById";
+  END IF;
+  BEGIN
+    INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, "decidedById") VALUES (school, true, app.current_user_id());
+    RAISE EXCEPTION 'decisions: the API named the decider';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AttendanceSharingDecisions" SET shares = false;
+    RAISE EXCEPTION 'decisions: a decision was changed';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "AttendanceSharingDecisions";
+    RAISE EXCEPTION 'decisions: a decision was removed';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE "AttendanceSharingDecisions";
+    RAISE EXCEPTION 'decisions: the decisions were truncated';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  IF other IS NOT NULL THEN
+    BEGIN
+      INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (other, false);
+      RAISE EXCEPTION 'decisions: the administrator decided for another school';
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END IF;
+  SELECT count(*) INTO n FROM "AttendanceSharingDecisions";
+  IF n <> 1 THEN RAISE EXCEPTION 'decisions: the administrator reads % decisions, not their own one', n; END IF;
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000000151', '00000000-0000-4000-8000-000000000152', '00000000-0000-4000-8000-000000000153'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "AttendanceSharingDecisions";
+    IF n <> 0 THEN RAISE EXCEPTION 'decisions: % (%) reads the decision', who, app.current_user_role(); END IF;
+    BEGIN
+      INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (school, false);
+      RAISE EXCEPTION 'decisions: % (%) decided', who, app.current_user_role();
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM 1 FROM "AttendanceSharingDecisions";
+  RAISE EXCEPTION 'decisions: PostgREST''s role reads the decisions';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 154: leverantören följer närvaron och frånvaron medan skolan delar
+-- den: en ändrad status, lektionens tider, en beviljad ledighet, en elev som
+-- kopplas till källan och ett läsår som aktiveras flyttar meta.modified, en
+-- anteckning gör det inte; en borttagen post, en borttagen lektion och en
+-- elev som slutar begravs, och nästa års lektion lämnar aldrig något
+-- (20261114090000).
+--
+-- The school decides first: the recorders write only while it shares (the
+-- probe holds a school that does not to that, as the owner; here the
+-- versions of a school that does not share are not even visible). Read back
+-- as the service principal of the school with its key (the versions' and
+-- tombstones' own arm), and a key without the scope, or with only the other
+-- one, sees no Attendance version. Everything in one transaction, so "moved"
+-- is "now carries this transaction's xid", and every such check first asserts
+-- there is a version at all.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
+SELECT set_config('app.test_nv_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_nv_pupil', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000153')::text, true);
+SELECT set_config('app.test_nv_classmate', (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000154')::text, true);
+SELECT set_config('app.test_nv_full', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV hel')::text, true);
+SELECT set_config('app.test_nv_narrow', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV utan')::text, true);
+SELECT set_config('app.test_nv_absences', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV frånvaro')::text, true);
+SELECT set_config('app.test_nv_this_year', (SELECT id FROM "AcademicYears" WHERE name = 'Närvaro i år')::text, true);
+SELECT set_config('app.test_nv_next_year', (SELECT id FROM "AcademicYears" WHERE name = 'Närvaro nästa år')::text, true);
+INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 154');
+CREATE FUNCTION pg_temp.nv154_xid(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS xid8
+LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); x xid8;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', current_setting('app.test_nv_school'), true);
+  PERFORM set_config('app.service_key_id', coalesce(p_key, current_setting('app.test_nv_full')), true);
+  SELECT v."xid" INTO x FROM "Ss12000EntityVersions" v WHERE v.resource = p_resource AND v."entityId" = p_id;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_key_id', '', true);
+  PERFORM set_config('request.jwt.claims', claims, true);
+  RETURN x;
+END
+$$;
+CREATE FUNCTION pg_temp.nv154_buried(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); found boolean;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('app.service_school_id', current_setting('app.test_nv_school'), true);
+  PERFORM set_config('app.service_key_id', coalesce(p_key, current_setting('app.test_nv_full')), true);
+  SELECT EXISTS (SELECT 1 FROM "Ss12000Tombstones" t WHERE t.resource = p_resource AND t."emittedId" = p_id) INTO found;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.service_key_id', '', true);
+  PERFORM set_config('request.jwt.claims', claims, true);
+  RETURN found;
+END
+$$;
+CREATE FUNCTION pg_temp.nv154_moved(p_resource text, p_id uuid) RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE x xid8 := pg_temp.nv154_xid(p_resource, p_id);
+BEGIN
+  RETURN x IS NOT NULL AND x = pg_current_xact_id();
+END
+$$;
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_nv_school')::uuid;
+  pupil uuid := current_setting('app.test_nv_pupil')::uuid;
+  classmate uuid := current_setting('app.test_nv_classmate')::uuid;
+  present uuid;
+  absent uuid;
+  ahead uuid;
+  sick uuid;
+  granted uuid;
+  lesson uuid;
+  later uuid;
+  fresh uuid;
+BEGIN
+  SELECT a.id, a."calendarLessonId" INTO present, lesson FROM "AttendanceRecords" a
+    JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."studentId" = pupil AND l.date < current_date;
+  SELECT a.id INTO absent FROM "AttendanceRecords" a WHERE a."studentId" = classmate;
+  SELECT a.id, a."calendarLessonId" INTO ahead, later FROM "AttendanceRecords" a
+    JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."studentId" = pupil AND l.date > current_date;
+  SELECT id INTO sick FROM "AbsenceReports" WHERE "studentId" = pupil;
+  SELECT id INTO granted FROM "AbsenceReports" WHERE "studentId" = classmate;
+  IF present IS NULL OR absent IS NULL OR ahead IS NULL OR sick IS NULL OR granted IS NULL THEN
+    RAISE EXCEPTION 'attendance versions: the fixtures are missing';
+  END IF;
+  -- Planted before the school shared: none has a version, and none was handed out.
+  IF pg_temp.nv154_xid('Attendance', present) IS NOT NULL OR pg_temp.nv154_xid('Absence', sick) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: a row written before the school shared has a version';
+  END IF;
+
+  -- Written now: this year's insert is recorded and its removal buried; next year's neither.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type)
+  VALUES (school, classmate, app.current_user_id(), current_date + 6, 'SICK') RETURNING id INTO fresh;
+  IF NOT pg_temp.nv154_moved('Absence', fresh) THEN RAISE EXCEPTION 'attendance versions: a new absence was not recorded'; END IF;
+  DELETE FROM "AbsenceReports" WHERE id = fresh;
+  IF NOT pg_temp.nv154_buried('Absence', fresh) THEN RAISE EXCEPTION 'attendance versions: a removed absence was not buried'; END IF;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  VALUES (school, later, classmate, 'PRESENT', now()) RETURNING id INTO fresh;
+  IF pg_temp.nv154_xid('Attendance', fresh) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: an attendance of next year''s lesson was recorded';
+  END IF;
+  DELETE FROM "AttendanceRecords" WHERE id = fresh;
+  IF pg_temp.nv154_buried('Attendance', fresh) THEN
+    RAISE EXCEPTION 'attendance versions: an attendance of next year''s lesson was buried';
+  END IF;
+
+  -- A note moves nothing; a status does.
+  UPDATE "AttendanceRecords" SET note = 'rls154 annan anteckning' WHERE id = absent;
+  IF pg_temp.nv154_xid('Attendance', absent) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: a note moved an attendance'; END IF;
+  UPDATE "AttendanceRecords" SET status = 'EXCUSED' WHERE id = absent;
+  IF NOT pg_temp.nv154_moved('Attendance', absent) THEN RAISE EXCEPTION 'attendance versions: a status did not move an attendance'; END IF;
+  -- The lesson's times are the minutes of every attendance of it.
+  UPDATE "CalendarLessons" SET "endsAt" = "endsAt" + interval '5 minutes' WHERE id = lesson;
+  IF NOT pg_temp.nv154_moved('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: the lesson''s times did not move its attendance'; END IF;
+  -- Only a key that may read attendance sees its version.
+  IF pg_temp.nv154_xid('Attendance', present, current_setting('app.test_nv_narrow')) IS NOT NULL
+     OR pg_temp.nv154_xid('Attendance', present, current_setting('app.test_nv_absences')) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: a key without attendances.read sees an attendance''s version';
+  END IF;
+  -- A report marked as a granted leave is another type.
+  IF pg_temp.nv154_xid('Absence', sick) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the absence moved before anything changed'; END IF;
+  UPDATE "AbsenceReports" SET "grantedLeave" = true WHERE id = sick;
+  IF NOT pg_temp.nv154_moved('Absence', sick) THEN RAISE EXCEPTION 'attendance versions: grantedLeave did not move the absence'; END IF;
+  IF pg_temp.nv154_xid('Absence', sick, current_setting('app.test_nv_absences')) IS NULL
+     OR pg_temp.nv154_xid('Absence', sick, current_setting('app.test_nv_narrow')) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: the absence''s version is not exactly the absences.read key''s';
+  END IF;
+  -- A pupil linked to the source is emitted under another id.
+  IF pg_temp.nv154_xid('Absence', granted) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the granted leave moved before anything changed'; END IF;
+  UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = classmate;
+  IF NOT pg_temp.nv154_moved('Absence', granted) THEN RAISE EXCEPTION 'attendance versions: linking the pupil did not move their absence'; END IF;
+
+  -- Removed: buried. Next year's: never recorded, never buried.
+  DELETE FROM "AttendanceRecords" WHERE id IN (absent, ahead);
+  IF NOT pg_temp.nv154_buried('Attendance', absent) THEN RAISE EXCEPTION 'attendance versions: a removed attendance was not buried'; END IF;
+  IF pg_temp.nv154_buried('Attendance', ahead) THEN RAISE EXCEPTION 'attendance versions: next year''s attendance was buried'; END IF;
+  -- Only a key that may read attendance learns of its removal.
+  IF pg_temp.nv154_buried('Attendance', absent, current_setting('app.test_nv_narrow'))
+     OR pg_temp.nv154_buried('Attendance', absent, current_setting('app.test_nv_absences')) THEN
+    RAISE EXCEPTION 'attendance versions: a key without attendances.read sees an attendance''s tombstone';
+  END IF;
+
+  -- A year activated: its lessons' attendance is emitted from now on, and versioned.
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  VALUES (school, later, classmate, 'LATE', now()) RETURNING id INTO fresh;
+  IF pg_temp.nv154_xid('Attendance', fresh) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: next year''s attendance was recorded'; END IF;
+  UPDATE "AcademicYears" SET "isActive" = false WHERE id = current_setting('app.test_nv_this_year')::uuid;
+  UPDATE "AcademicYears" SET "isActive" = true WHERE id = current_setting('app.test_nv_next_year')::uuid;
+  IF NOT pg_temp.nv154_moved('Attendance', fresh) THEN RAISE EXCEPTION 'attendance versions: activating its year did not record an attendance'; END IF;
+  UPDATE "AcademicYears" SET "isActive" = false WHERE id = current_setting('app.test_nv_next_year')::uuid;
+  UPDATE "AcademicYears" SET "isActive" = true WHERE id = current_setting('app.test_nv_this_year')::uuid;
+
+  -- A pupil who leaves takes their attendance and absences with them, and brings them back.
+  UPDATE "Users" SET "isActive" = false WHERE id = pupil;
+  IF NOT pg_temp.nv154_buried('Attendance', present) OR NOT pg_temp.nv154_buried('Absence', sick) THEN
+    RAISE EXCEPTION 'attendance versions: a pupil who left left their attendance or absence unburied';
+  END IF;
+  UPDATE "Users" SET "isActive" = true WHERE id = pupil;
+  IF pg_temp.nv154_buried('Attendance', present) OR pg_temp.nv154_buried('Absence', sick) THEN
+    RAISE EXCEPTION 'attendance versions: a pupil who came back stayed buried';
+  END IF;
+  IF NOT pg_temp.nv154_moved('Attendance', present) OR NOT pg_temp.nv154_moved('Absence', sick) THEN
+    RAISE EXCEPTION 'attendance versions: a pupil who came back brought no version';
+  END IF;
+
+  -- A lesson removed takes its attendance with it (the cascade), buried.
+  DELETE FROM "CalendarLessons" WHERE id = lesson;
+  IF NOT pg_temp.nv154_buried('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: a removed lesson''s attendance was not buried'; END IF;
 END $$;
 ROLLBACK;

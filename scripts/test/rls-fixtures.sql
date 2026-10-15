@@ -1288,6 +1288,96 @@ BEGIN
   VALUES (m, now(), teacher, 'TEACHER', 'WEB', 'ROSTER', ARRAY[pupil], 1);
 END $$;
 
+-- SS12000-närvaro (sections 150–154, 20261114090000). Two schools with a
+-- lesson, two pupils' attendance and absences and integration keys: one that
+-- has not decided (its admin decides inside the sections' transactions) and
+-- one that shares, so a key of either can be held to its own school's rows.
+-- A lesson of next year, whose attendance the provider never emits.
+DO $$
+DECLARE
+  today date := current_date;
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  nextYear uuid;
+  klass uuid;
+  nextClass uuid;
+  subj uuid;
+  lesson uuid;
+  later uuid;
+  admin uuid;
+  pupil uuid;
+  classmate uuid;
+  guardian uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-narvaro-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Närvaro', 'rls-narvaro-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Närvaro i år', today - 30, today + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Närvaro nästa år', today + 330, today + 650, false, now()) RETURNING id INTO nextYear;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'NV7A', 7, now()) RETURNING id INTO klass;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, nextYear, 'NV8A', 8, now()) RETURNING id INTO nextClass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'narvaro-admin@example.invalid', 'Närvaro', 'Admin', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000150', true, now())
+  RETURNING id INTO admin;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'narvaro-teacher@example.invalid', 'Närvaro', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000000151', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'narvaro-guardian@example.invalid', 'Närvaro', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000000152', true, now())
+  RETURNING id INTO guardian;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'narvaro-pupil@example.invalid', 'Närvaro', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000153', true, klass, now())
+  RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'narvaro-classmate@example.invalid', 'Närvaro', 'Klasskamrat', 'STUDENT', '00000000-0000-4000-8000-000000000154', true, klass, now())
+  RETURNING id INTO classmate;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, guardian, pupil);
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (s1, 'NV Matematik', now()) RETURNING id INTO subj;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (s1, subj, klass, today - 2, (today - 2) + time '08:00', (today - 2) + time '09:00', 'SCHEDULED', now()) RETURNING id INTO lesson;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (s1, subj, nextClass, today + 340, (today + 340) + time '08:00', (today + 340) + time '09:00', 'SCHEDULED', now()) RETURNING id INTO later;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, note, "updatedAt") VALUES
+    (s1, lesson, pupil, 'PRESENT', 'rls150 anteckning', now()),
+    (s1, lesson, classmate, 'ABSENT', 'rls150 anteckning', now()),
+    (s1, later, pupil, 'ABSENT', 'rls150 nästa år', now());
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note, "grantedLeave") VALUES
+    (s1, pupil, guardian, today - 2, 'SICK', 'rls150 feber', false),
+    (s1, classmate, admin, today + 5, 'OTHER', 'Approved leave', true);
+  INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes, "revokedAt") VALUES
+    (s1, 'NV hel', repeat('a1', 32), '{attendances.read,absences.read}', NULL),
+    (s1, 'NV utan', repeat('a2', 32), '{persons.read}', NULL),
+    (s1, 'NV återkallad', repeat('a3', 32), '{attendances.read,absences.read}', now()),
+    (s1, 'NV frånvaro', repeat('a4', 32), '{absences.read}', NULL);
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Närvaro delar', 'rls-narvaro-shares', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s2, 'Delar i år', today - 30, today + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s2, y, 'ND7A', 7, now()) RETURNING id INTO klass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s2, 'narvaro-delar-admin@example.invalid', 'Delar', 'Admin', 'SCHOOL_ADMIN', '00000000-0000-4000-8000-000000000155', true, now())
+  RETURNING id INTO admin;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s2, 'narvaro-delar-pupil@example.invalid', 'Delar', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000000156', true, klass, now())
+  RETURNING id INTO pupil;
+  -- Decided before its rows are written, so they are versioned as they come.
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (s2, true, 'RLS: delar');
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (s2, 'ND Matematik', now()) RETURNING id INTO subj;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (s2, subj, klass, today - 2, (today - 2) + time '08:00', (today - 2) + time '09:00', 'SCHEDULED', now()) RETURNING id INTO lesson;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s2, lesson, pupil, 'LATE', now());
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type) VALUES (s2, pupil, pupil, today - 2, 'SICK');
+  INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes) VALUES (s2, 'ND hel', repeat('b1', 32), '{attendances.read,absences.read}');
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
