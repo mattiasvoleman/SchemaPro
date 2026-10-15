@@ -19033,3 +19033,450 @@ BEGIN
   PERFORM set_config('app.service_school_id', '', true);
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 140: utskrift och inbäddning, katalogen (20261102090000).
+--
+-- The three new doors (app.print_timetables, app.timetable_validity,
+-- app.public_timetable_embed) and the viewer's own are SECURITY DEFINER with
+-- a pinned search_path and the API's role's alone. The builder they share,
+-- app.timetable_week_days, runs as its caller and is nobody's to call: it
+-- shows what the viewer shows, and a caller of it could pass any school.
+-- Both the viewer and the print set build their days with it, so a printed
+-- sheet and a viewer page cannot drift. The embed door asks the viewer
+-- itself, so it finds no link the viewer does not; the validity is a
+-- läsår's.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE fn text; r text;
+  builder text := 'app.timetable_week_days(uuid, "PublicScopeKind", uuid, date, text, "TeacherDisplay", boolean, integer)';
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['app.print_timetables("PublicScopeKind", date, "TeacherDisplay", boolean)',
+                            'app.timetable_validity(date, date, uuid)', 'app.public_timetable_embed(text)',
+                            'app.public_timetable(text, uuid, date)'] LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'print: % is not SECURITY DEFINER', fn; END IF;
+    IF NOT coalesce((SELECT 'search_path="public", "pg_temp"' = ANY (proconfig) OR 'search_path=public, pg_temp' = ANY (proconfig)
+                       FROM pg_proc WHERE oid = fn::regprocedure), false) THEN
+      RAISE EXCEPTION 'print: % has no pinned search_path', fn;
+    END IF;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'print: the API may not call %', fn; END IF;
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'print: % may call %', r, fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF (SELECT prosecdef FROM pg_proc WHERE oid = builder::regprocedure) THEN RAISE EXCEPTION 'print: the builder runs as its owner'; END IF;
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'anon', 'authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, builder, 'EXECUTE') THEN
+      RAISE EXCEPTION 'print: % may call the builder', r;
+    END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['app.public_timetable(text, uuid, date)', 'app.print_timetables("PublicScopeKind", date, "TeacherDisplay", boolean)'] LOOP
+    IF (SELECT prosrc FROM pg_proc WHERE oid = fn::regprocedure) NOT LIKE '%app.timetable_week_days(%' THEN
+      RAISE EXCEPTION 'print: % builds its days without the shared whitelist', fn;
+    END IF;
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = '"PublicationSettings"'::regclass
+                    AND conname = 'PublicationSettings_embed_origins_are_origins' AND convalidated) THEN
+    RAISE EXCEPTION 'print: the embed origins are not CHECKed';
+  END IF;
+  IF (SELECT prosrc FROM pg_proc WHERE oid = 'app.public_timetable_embed(text)'::regprocedure) NOT LIKE '%app.public_timetable(%' THEN
+    RAISE EXCEPTION 'print: the embed door answers without asking the viewer';
+  END IF;
+  IF to_regprocedure('app.timetable_validity(date, date)') IS NOT NULL THEN
+    RAISE EXCEPTION 'print: a validity that takes no läsår is still callable';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 141: rektors utskrift (app.print_timetables).
+--
+-- In the ledighet school (läsår 2095/96): its admin gets one sheet per class
+-- of the läsår (not of the next one) and per room, and per teacher as
+-- chosen — active, staff, not hidden, named by the display (a signature set
+-- leaves out a teacher with none, and draws no sheet without a title), with
+-- a tjänst in the läsår or a lesson in the week; a pupil with a tjänst row is
+-- no teacher. On a class's sheet a held lesson names its leader as chosen,
+-- never a hidden teacher and never the substitute, and a cancelled one names
+-- nobody; a teacher's sheet leaves the cancelled one out. A week two läsår
+-- share is printed by the läsår of its date. A teacher's set naming nobody,
+-- and a week in no läsår, is NULL. The school's teacher, guardian and pupil
+-- get NULL; another school's admin gets their own school's sheets and none
+-- of these; PostgREST's role cannot call it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1);
+  next_year uuid; subj uuid; g9a uuid; held uuid; cancelled uuid;
+  who record; doc jsonb; titles text; sheet jsonb;
+BEGIN
+  FOR who IN SELECT u.id, u."authId", v.sig
+               FROM (VALUES ('00000000-0000-4000-8000-000000000951'::uuid, 'ANME'), ('00000000-0000-4000-8000-000000000952'::uuid, NULL),
+                            ('00000000-0000-4000-8000-000000000954'::uuid, 'DALÄ'), ('00000000-0000-4000-8000-000000000959'::uuid, 'ERSL')) AS v(auth, sig)
+               JOIN "Users" u ON u."authId" = v.auth LOOP
+    INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+    VALUES (school, who.id, y, 100, who.sig, now());
+  END LOOP;
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden)
+  SELECT id, school, true FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000954';
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'rls141 Sal 1', now()), (school, 'rls141 Sal 2', now());
+  -- Ella is a pupil: a tjänst row of hers makes her no teacher.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+  SELECT school, id, y, 100, 'ELEV', now() FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000956';
+  -- The next läsår begins the day after this one ends, in the same week, with a class of its own.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'rls141 2096/97', DATE '2096-06-13', DATE '2097-06-11', now()) RETURNING id INTO next_year;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt") VALUES (school, next_year, 'rls141 7Ö', 'CLASS', now());
+  -- 9A's week: a held lesson led by Anna, with David (hidden) assisting and
+  -- Cecilia covering, and a cancelled one led by Anna. Cecilia has no tjänst:
+  -- she is in the week by her lesson alone.
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'rls141 Matematik', now()) RETURNING id INTO subj;
+  SELECT id INTO g9a FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y AND name = '9A';
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, subj, g9a, DATE '2096-01-17', '2096-01-17 08:00 Europe/Stockholm', '2096-01-17 09:00 Europe/Stockholm', 'SCHEDULED', now())
+  RETURNING id INTO held;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  VALUES (school, subj, g9a, DATE '2096-01-19', '2096-01-19 10:00 Europe/Stockholm', '2096-01-19 11:00 Europe/Stockholm', 'CANCELLED', now())
+  RETURNING id INTO cancelled;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
+  SELECT school, v.lesson, u.id, v.role::"TeacherAssignmentRole"
+    FROM (VALUES (held, '00000000-0000-4000-8000-000000000951'::uuid, 'LEAD'), (held, '00000000-0000-4000-8000-000000000954'::uuid, 'ASSISTANT'),
+                 (held, '00000000-0000-4000-8000-000000000953'::uuid, 'SUBSTITUTE'), (cancelled, '00000000-0000-4000-8000-000000000951'::uuid, 'LEAD'))
+         AS v(lesson, auth, role)
+    JOIN "Users" u ON u."authId" = v.auth;
+
+  doc := app.print_timetables('GROUP', DATE '2096-01-18', 'SIGNATURE', true);
+  SELECT string_agg(s ->> 'title', ',' ORDER BY s ->> 'title') INTO titles FROM jsonb_array_elements(doc -> 'sheets') s;
+  IF titles IS DISTINCT FROM '9A,9B,9C' THEN RAISE EXCEPTION 'print: the class set is %', titles; END IF;
+  IF doc ->> 'school' IS DISTINCT FROM 'RLS Ledighet' OR doc #>> '{week,from}' IS DISTINCT FROM '2096-01-16'
+     OR doc #>> '{week,to}' IS DISTINCT FROM '2096-01-22' OR doc ->> 'academicYearId' IS DISTINCT FROM y::text THEN
+    RAISE EXCEPTION 'print: the class set reads %', doc - 'sheets';
+  END IF;
+  IF (SELECT count(*) FROM jsonb_array_elements(doc -> 'sheets') s WHERE jsonb_array_length(s -> 'days') <> 7) <> 0 THEN
+    RAISE EXCEPTION 'print: a sheet is not a week of seven days';
+  END IF;
+  SELECT s INTO sheet FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'title' = '9A';
+  IF jsonb_path_query_array(sheet, '$.days[*].lessons[*].teachers') IS DISTINCT FROM '[["ANME"], []]'::jsonb
+     OR jsonb_path_query_array(sheet, '$.days[*].lessons[*].cancelled') IS DISTINCT FROM '[false, true]'::jsonb THEN
+    RAISE EXCEPTION 'print: 9A''s lessons by signature read % (Anna leads, David is hidden, Cecilia covers)', jsonb_path_query_array(sheet, '$.days[*].lessons[*]');
+  END IF;
+  doc := app.print_timetables('GROUP', DATE '2096-01-18', 'NAME', true);
+  SELECT s INTO sheet FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'title' = '9A';
+  IF jsonb_path_query_array(sheet, '$.days[*].lessons[*].teachers') IS DISTINCT FROM '[["Anna Mentor"], []]'::jsonb THEN
+    RAISE EXCEPTION 'print: 9A''s lessons by name read %', jsonb_path_query_array(sheet, '$.days[*].lessons[*].teachers');
+  END IF;
+  -- A week the next läsår shares: by the läsår of the date asked.
+  IF app.print_timetables('GROUP', DATE '2096-06-12', 'NONE', false) ->> 'academicYearId' IS DISTINCT FROM y::text
+     OR app.print_timetables('GROUP', DATE '2096-06-14', 'NONE', false) ->> 'academicYearId' IS DISTINCT FROM next_year::text THEN
+    RAISE EXCEPTION 'print: a week two läsår share is printed by another läsår than its date''s';
+  END IF;
+  doc := app.print_timetables('ROOM', DATE '2096-01-18', 'NONE', false);
+  SELECT string_agg(s ->> 'title', ',' ORDER BY s ->> 'title') INTO titles FROM jsonb_array_elements(doc -> 'sheets') s;
+  IF titles IS DISTINCT FROM 'rls141 Sal 1,rls141 Sal 2' THEN RAISE EXCEPTION 'print: the room set is %', titles; END IF;
+  doc := app.print_timetables('TEACHER', DATE '2096-01-18', 'SIGNATURE', false);
+  SELECT string_agg(s ->> 'title', ',' ORDER BY s ->> 'title') INTO titles FROM jsonb_array_elements(doc -> 'sheets') s;
+  IF titles IS DISTINCT FROM 'ANME' OR jsonb_array_length(doc -> 'sheets') <> 1 THEN
+    RAISE EXCEPTION 'print: the signature set is % in % sheets (Bertil and Cecilia have none, David is hidden, Erik has left, Ella is a pupil)',
+      titles, jsonb_array_length(doc -> 'sheets');
+  END IF;
+  SELECT s INTO sheet FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'title' = 'ANME';
+  IF jsonb_path_query_array(sheet, '$.days[*].lessons[*].start') IS DISTINCT FROM '["08:00"]'::jsonb THEN
+    RAISE EXCEPTION 'print: Anna''s week holds % (the held lesson, not the cancelled one)', jsonb_path_query_array(sheet, '$.days[*].lessons[*]');
+  END IF;
+  doc := app.print_timetables('TEACHER', DATE '2096-01-18', 'NAME', false);
+  SELECT string_agg(s ->> 'title', ',' ORDER BY s ->> 'title') INTO titles FROM jsonb_array_elements(doc -> 'sheets') s;
+  IF titles IS DISTINCT FROM 'Anna Mentor,Bertil Mentor,Cecilia Mentor' THEN RAISE EXCEPTION 'print: the name set is %', titles; END IF;
+  IF app.print_timetables('TEACHER', DATE '2096-01-18', 'NONE', false) IS NOT NULL THEN
+    RAISE EXCEPTION 'print: a teachers'' set naming nobody was answered';
+  END IF;
+  IF app.print_timetables('GROUP', DATE '2099-01-07', 'NONE', true) IS NOT NULL THEN
+    RAISE EXCEPTION 'print: a week in no läsår was answered';
+  END IF;
+  IF app.print_timetables('GROUP', NULL, 'NONE', true) IS NOT NULL OR app.print_timetables('GROUP', DATE '2096-01-18', NULL, true) IS NOT NULL THEN
+    RAISE EXCEPTION 'print: a set without a date or a display was answered';
+  END IF;
+  PERFORM set_config('app.test_rls141_9a', (SELECT id::text FROM "StudentGroups" WHERE "schoolId" = school AND name = '9A'), true);
+END $$;
+DO $$
+DECLARE sub text;
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000951', '00000000-0000-4000-8000-000000000955', '00000000-0000-4000-8000-000000000956'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    IF app.print_timetables('GROUP', DATE '2096-01-18', 'SIGNATURE', true) IS NOT NULL THEN
+      RAISE EXCEPTION 'print: % (%) got the admin''s set', sub, app.current_user_role();
+    END IF;
+  END LOOP;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE doc jsonb;
+BEGIN
+  -- A week of the other school's own läsår: its own classes, and nothing of the ledighet school's.
+  doc := app.print_timetables('GROUP', (SELECT "startDate" FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1),
+                              'SIGNATURE', true);
+  IF doc IS NULL OR jsonb_array_length(doc -> 'sheets') = 0 THEN
+    RAISE EXCEPTION 'print: another school''s admin got no set of their own to look in';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(doc -> 'sheets') s
+              WHERE NOT EXISTS (SELECT 1 FROM "StudentGroups" g WHERE g.id = (s ->> 'id')::uuid AND g."schoolId" = app.current_school_id()))
+     OR EXISTS (SELECT 1 FROM jsonb_array_elements(doc -> 'sheets') s WHERE s ->> 'id' = current_setting('app.test_rls141_9a')) THEN
+    RAISE EXCEPTION 'print: another school''s admin printed a class not of their school';
+  END IF;
+  IF app.print_timetables('GROUP', DATE '2096-01-18', 'SIGNATURE', true) IS NOT NULL THEN
+    RAISE EXCEPTION 'print: another school''s admin printed a week of the ledighet school''s läsår';
+  END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM app.print_timetables('GROUP', DATE '2096-01-18', 'SIGNATURE', true);
+  RAISE EXCEPTION 'print: PostgREST''s role may print';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 142: veckans giltighet (app.timetable_validity).
+--
+-- The ledighet school publishes the läsår, then 25–28 January over it, then
+-- 17–31 January over both, and logs a refused publish and a refill over it
+-- too, which make nothing valid. Every member of the school reads the same
+-- two periods for the week of 16 January: the läsår's up to the 16th, and
+-- the latest publication's from the 17th, whole, since an older one inside
+-- it cuts nothing. At most fourteen days are painted. A summer course, a
+-- läsår of its own over the end of this one, publishes later: this läsår's
+-- periods are this läsår's publications' alone, the course's its own, and a
+-- week both share is the latest begun's, as the print set chooses. Another
+-- school's admin reads none of them, nor does a request without a
+-- principal; PostgREST's role cannot call it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date; y_end date; course uuid;
+BEGIN
+  SELECT id, "startDate", "endDate" INTO y, y_start, y_end FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "startDate" LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'rls142 sommarkurs', DATE '2096-06-01', DATE '2096-07-31', now()) RETURNING id INTO course;
+  PERFORM set_config('app.test_rls142_year', y::text, true);
+  PERFORM set_config('app.test_rls142_course', course::text, true);
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "publishedAt")
+  VALUES (school, y, 'PUBLISH', 'PUBLISHED', 'DIRECT', y_start, y_end, now() - interval '4 hours'),
+         (school, y, 'PUBLISH', 'PUBLISHED', 'DIRECT', DATE '2096-01-25', DATE '2096-01-28', now() - interval '210 minutes'),
+         (school, y, 'PUBLISH', 'PUBLISHED', 'DIRECT', DATE '2096-01-17', DATE '2096-01-31', now() - interval '3 hours'),
+         (school, course, 'PUBLISH', 'PUBLISHED', 'DIRECT', DATE '2096-06-04', DATE '2096-07-31', now() - interval '30 minutes'),
+         (school, course, 'PUBLISH', 'PUBLISHED', 'DIRECT', DATE '2096-06-01', DATE '2096-06-02', now() - interval '20 minutes'),
+         (school, y, 'PUBLISH', 'REFUSED', 'DIRECT', DATE '2096-01-10', DATE '2096-02-20', now() - interval '2 hours'),
+         (school, y, 'REFILL', 'PUBLISHED', 'DIRECT', DATE '2096-01-12', DATE '2096-01-19', now() - interval '1 hour');
+END $$;
+SELECT set_config('app.test_rls142_other_admin', :'admin_auth_id', true);
+DO $$
+DECLARE sub text; got text;
+BEGIN
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000950', '00000000-0000-4000-8000-000000000951',
+                             '00000000-0000-4000-8000-000000000955', '00000000-0000-4000-8000-000000000956'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    SELECT string_agg(v."from" || '..' || v."to", ',' ORDER BY v."from") INTO got FROM app.timetable_validity(DATE '2096-01-16', DATE '2096-01-22', NULL) v;
+    IF got IS DISTINCT FROM '2095-08-15..2096-01-16,2096-01-17..2096-01-31' THEN
+      RAISE EXCEPTION 'validity: % (%) reads %', sub, app.current_user_role(), got;
+    END IF;
+    SELECT string_agg(v."from" || '..' || v."to", ',' ORDER BY v."from") INTO got FROM app.timetable_validity(DATE '2096-02-02', DATE '2096-02-08', NULL) v;
+    IF got IS DISTINCT FROM '2096-02-01..2096-06-12' THEN
+      RAISE EXCEPTION 'validity: after the later publication % reads %', sub, got;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  -- Fourteen days at most: two months asked are their first fortnight's periods.
+  SELECT string_agg(v."from" || '..' || v."to", ',' ORDER BY v."from") INTO got FROM app.timetable_validity(DATE '2096-01-10', DATE '2096-03-10', NULL) v;
+  IF got IS DISTINCT FROM '2095-08-15..2096-01-16,2096-01-17..2096-01-31' THEN
+    RAISE EXCEPTION 'validity: two months asked read %', got;
+  END IF;
+  -- The week of 4 June, which the summer course shares: each läsår its own.
+  SELECT string_agg(v."from" || '..' || v."to", ',' ORDER BY v."from") INTO got
+    FROM app.timetable_validity(DATE '2096-06-04', DATE '2096-06-10', current_setting('app.test_rls142_year')::uuid) v;
+  IF got IS DISTINCT FROM '2096-02-01..2096-06-12' THEN
+    RAISE EXCEPTION 'validity: the läsår reads % in a week the summer course shares', got;
+  END IF;
+  SELECT string_agg(v."from" || '..' || v."to", ',' ORDER BY v."from") INTO got
+    FROM app.timetable_validity(DATE '2096-06-04', DATE '2096-06-10', current_setting('app.test_rls142_course')::uuid) v;
+  IF got IS DISTINCT FROM '2096-06-04..2096-07-31' THEN
+    RAISE EXCEPTION 'validity: the summer course reads %', got;
+  END IF;
+  SELECT string_agg(v."from" || '..' || v."to", ',' ORDER BY v."from") INTO got FROM app.timetable_validity(DATE '2096-06-04', DATE '2096-06-10', NULL) v;
+  IF got IS DISTINCT FROM '2096-06-04..2096-07-31' THEN
+    RAISE EXCEPTION 'validity: a week two läsår share, no läsår named, reads % (the latest begun''s)', got;
+  END IF;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls142_other_admin'))::text, true);
+  IF EXISTS (SELECT 1 FROM app.timetable_validity(DATE '2096-01-16', DATE '2096-01-22', NULL))
+     OR EXISTS (SELECT 1 FROM app.timetable_validity(DATE '2096-01-16', DATE '2096-01-22', current_setting('app.test_rls142_year')::uuid)) THEN
+    RAISE EXCEPTION 'validity: another school''s admin reads the ledighet school''s periods';
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF EXISTS (SELECT 1 FROM app.timetable_validity(DATE '2096-01-16', DATE '2096-01-22', NULL)) THEN
+    RAISE EXCEPTION 'validity: a request without a principal reads periods';
+  END IF;
+END $$;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM app.timetable_validity(DATE '2096-01-16', DATE '2096-01-22', NULL);
+  RAISE EXCEPTION 'validity: PostgREST''s role may read it';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 143: inbäddning (PublicationSettings' embed columns,
+-- app.public_timetable_embed).
+--
+-- The origins are frame-ancestors sources: https, lowercase, no path, no
+-- wildcard, no NULL, a port from 1 to 65535, at most ten; each other value
+-- is refused from the side it is wrong on. A link's origins are answered,
+-- with no principal as the viewer asks, only while the viewer, the link's
+-- scope and the scope's embedding are on and there is a website, and only
+-- while the viewer answers the link itself: switching any of them off,
+-- revoking the link, hiding its teacher, a group
+-- under the school's size and a läsår that is over all answer NULL, as does
+-- an unknown hash. PostgREST's role cannot call it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid := (SELECT id FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() ORDER BY "startDate" LIMIT 1);
+  bad text[];
+BEGIN
+  INSERT INTO "PublicationSettings" ("schoolId") VALUES (school) ON CONFLICT ("schoolId") DO NOTHING;
+  FOREACH bad SLICE 1 IN ARRAY ARRAY[
+      ARRAY['http://skolan.se', 'https://ok.se'], ARRAY['https://skolan.se/schema', 'https://ok.se'],
+      ARRAY['https://Skolan.se', 'https://ok.se'], ARRAY['https://*.skolan.se', 'https://ok.se'],
+      ARRAY['https://skolan', 'https://ok.se'], ARRAY['https://skolan.se:99999x', 'https://ok.se'],
+      ARRAY['https://skolan.se:0', 'https://ok.se'], ARRAY['https://skolan.se:65536', 'https://ok.se'],
+      ARRAY['https://skolan.se:99999', 'https://ok.se'], ARRAY['https://skolan.se:08443', 'https://ok.se'],
+      ARRAY[NULL, 'https://ok.se'], ARRAY['https://ok.se ', 'https://ok.se'],
+      ARRAY['https://a.se https://b.se', 'https://ok.se']] LOOP
+    BEGIN
+      UPDATE "PublicationSettings" SET "publicEmbedOrigins" = bad WHERE "schoolId" = school;
+      RAISE EXCEPTION 'embed: the origins % were stored', bad;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  BEGIN
+    UPDATE "PublicationSettings" SET "publicEmbedOrigins" = ARRAY(SELECT 'https://s' || n || '.se' FROM generate_series(1, 11) n)
+     WHERE "schoolId" = school;
+    RAISE EXCEPTION 'embed: eleven origins were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "PublicationSettings" SET "publicEmbedOrigins" = ARRAY['https://skolan.se:1', 'https://skolan.se:65535'] WHERE "schoolId" = school;
+  UPDATE "PublicationSettings"
+     SET "publicViewerEnabled" = true, "publicGroups" = true, "publicEmbedGroups" = true,
+         "publicTeachers" = true, "publicTeacherDisplay" = 'SIGNATURE', "publicEmbedTeachers" = false,
+         "publicEmbedOrigins" = ARRAY['https://skolan.se', 'https://www.skolan.se:8443']
+   WHERE "schoolId" = school;
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "tokenHash")
+  SELECT school, y, 'GROUP', g.id, repeat('1', 64) FROM "StudentGroups" g WHERE g."schoolId" = school AND g.name = '9A';
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetTeacherId", "tokenHash")
+  SELECT school, y, 'TEACHER', u.id, repeat('2', 64) FROM "Users" u WHERE u."authId" = '00000000-0000-4000-8000-000000000951';
+  -- Anna is shown by her signature, as the viewer names a teacher's week.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+  SELECT school, id, y, 100, 'ANME', now() FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951';
+  -- A group linked while it was shown, then a teaching group of nobody,
+  -- under the school's size: the viewer shows no page of it any more.
+  WITH g AS (INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+             VALUES (school, y, 'rls143 Spanska', 'CLASS', now()) RETURNING id)
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "tokenHash")
+  SELECT school, y, 'GROUP', g.id, repeat('4', 64) FROM g;
+  UPDATE "StudentGroups" SET kind = 'TEACHING_GROUP' WHERE "schoolId" = school AND name = 'rls143 Spanska';
+  -- A room's link of this läsår, and one of a läsår long over.
+  WITH r AS (INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'rls143 Sal', now()) RETURNING id),
+       old AS (INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+               VALUES (school, 'rls143 2020/21', DATE '2020-08-17', DATE '2021-06-11', now()) RETURNING id)
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetRoomId", "tokenHash")
+  SELECT school, y, 'ROOM'::"PublicScopeKind", r.id, repeat('5', 64) FROM r
+  UNION ALL SELECT school, old.id, 'ROOM', r.id, repeat('6', 64) FROM r, old;
+END $$;
+
+CREATE FUNCTION pg_temp.rls143_embed(hash text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE claims text := current_setting('request.jwt.claims', true); got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  got := array_to_string(app.public_timetable_embed(hash), ' ');
+  PERFORM set_config('request.jwt.claims', coalesce(claims, ''), true);
+  RETURN got;
+END $$;
+CREATE FUNCTION pg_temp.rls143_set(assignment text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE format('UPDATE "PublicationSettings" SET %s WHERE "schoolId" = app.current_school_id()', assignment);
+END $$;
+
+DO $$
+BEGIN
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS DISTINCT FROM 'https://skolan.se https://www.skolan.se:8443' THEN
+    RAISE EXCEPTION 'embed: the class link frames %', pg_temp.rls143_embed(repeat('1', 64));
+  END IF;
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a teacher link frames with the teachers'' embedding off'; END IF;
+  PERFORM pg_temp.rls143_set('"publicEmbedTeachers" = true');
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS NULL THEN RAISE EXCEPTION 'embed: the teacher link does not frame with its embedding on'; END IF;
+  IF pg_temp.rls143_embed(repeat('3', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: an unknown hash frames'; END IF;
+  -- (Teachers shown and named by nobody is no state: PublicationSettings_teachers_are_named.)
+  PERFORM pg_temp.rls143_set('"publicTeachers" = false');
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a teacher link frames with the teachers'' scope off'; END IF;
+  PERFORM pg_temp.rls143_set('"publicTeachers" = true');
+  -- What the viewer does not show, the frame does not find.
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden)
+  SELECT id, app.current_school_id(), true FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951';
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the link of a teacher who is never shown frames'; END IF;
+  DELETE FROM "TeacherPublicLabels" WHERE "userId" = (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000951');
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS NULL THEN RAISE EXCEPTION 'embed: the teacher link does not frame once its teacher is shown again'; END IF;
+  IF pg_temp.rls143_embed(repeat('4', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the link of a group under the school''s size frames'; END IF;
+  IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' scope off'; END IF;
+  PERFORM pg_temp.rls143_set('"publicRooms" = true');
+  IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' embedding off'; END IF;
+  PERFORM pg_temp.rls143_set('"publicEmbedRooms" = true');
+  IF pg_temp.rls143_embed(repeat('5', 64)) IS DISTINCT FROM 'https://skolan.se https://www.skolan.se:8443' THEN
+    RAISE EXCEPTION 'embed: the room link frames %', pg_temp.rls143_embed(repeat('5', 64));
+  END IF;
+  IF pg_temp.rls143_embed(repeat('6', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the link of a läsår long over frames'; END IF;
+  PERFORM pg_temp.rls143_set('"publicRooms" = false');
+  IF pg_temp.rls143_embed(repeat('5', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a room link frames with the rooms'' scope off again'; END IF;
+
+  PERFORM pg_temp.rls143_set('"publicEmbedGroups" = false');
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the class link frames with the classes'' embedding off'; END IF;
+  PERFORM pg_temp.rls143_set('"publicEmbedGroups" = true, "publicGroups" = false');
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: the class link frames with the classes'' scope off'; END IF;
+  PERFORM pg_temp.rls143_set('"publicGroups" = true, "publicViewerEnabled" = false');
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL OR pg_temp.rls143_embed(repeat('2', 64)) IS NOT NULL THEN
+    RAISE EXCEPTION 'embed: a link frames with the viewer off';
+  END IF;
+  PERFORM pg_temp.rls143_set('"publicViewerEnabled" = true, "publicEmbedOrigins" = ''{}''');
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a link frames with no website'; END IF;
+  PERFORM pg_temp.rls143_set('"publicEmbedOrigins" = ARRAY[''https://skolan.se'']');
+  UPDATE "PublicTimetableLinks" SET "revokedAt" = now() WHERE "tokenHash" = repeat('1', 64);
+  IF pg_temp.rls143_embed(repeat('1', 64)) IS NOT NULL THEN RAISE EXCEPTION 'embed: a revoked link frames'; END IF;
+  IF pg_temp.rls143_embed(repeat('2', 64)) IS DISTINCT FROM 'https://skolan.se' THEN
+    RAISE EXCEPTION 'embed: the teacher link frames %', pg_temp.rls143_embed(repeat('2', 64));
+  END IF;
+END $$;
+-- anon's EXECUTE is section 140's catalogue; the API role may become only authenticated.
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM app.public_timetable_embed(repeat('2', 64));
+  RAISE EXCEPTION 'embed: PostgREST''s role may ask a link''s websites';
+EXCEPTION WHEN insufficient_privilege THEN NULL;
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
