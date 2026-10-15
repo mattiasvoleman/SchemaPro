@@ -38,6 +38,15 @@
 --     before: NOTIFICATIONS keeps its own meaning, and "gallrat före" for
 --     notices still says that every notice before the date is gone. RLS
 --     section 81 requires every key into LeaveRequests to cascade.
+--   * That key is checked when a told row goes in, so a request deleted
+--     under a catch-up (a pupil removed, a gallring batch) would fail the
+--     check, and with it the write that ran the catch-up. The function
+--     therefore locks the requests it reads FOR KEY SHARE, SKIP LOCKED: a
+--     request whose delete is in flight is skipped, one it has locked
+--     cannot be deleted before its commit. A decision or a referral locks
+--     the row FOR NO KEY UPDATE, which KEY SHARE passes, so neither is ever
+--     skipped. A skipped request whose delete rolls back is told at the
+--     next catch-up.
 --   * It cascades from the mentor's Users row ("userId", "schoolId"), as a
 --     notice does. The key keeps the mentor in the row's school, and
 --     app.leave_tell_mentors writes the request's school there.
@@ -156,7 +165,8 @@ COMMENT ON TABLE "LeaveRequestNotices" IS
 
 -- The LEAVE_REQUESTED notices the school's pending, not-passed-on requests
 -- still owe: one per deciding mentor not yet told of the request. One request
--- when p_request is given, every one of the school's otherwise. The told row
+-- when p_request is given, every one of the school's otherwise, each locked
+-- FOR KEY SHARE and skipped while its delete is in flight. The told row
 -- goes in first, and a notice is written only for a told row this statement
 -- inserted. The owner's: the trigger and the catch-up below call it, each
 -- holding the school's lock.
@@ -170,6 +180,7 @@ LANGUAGE sql VOLATILE AS $$
       JOIN "public"."Users" s ON s."id" = r."studentId"
      WHERE r."schoolId" = p_school AND r."status" = 'PENDING' AND r."referredAt" IS NULL
        AND (p_request IS NULL OR r."id" = p_request)
+       FOR KEY SHARE OF r SKIP LOCKED
   ),
   owed AS (
     SELECT p."id" AS request, p."schoolId" AS school, m.id AS mentor,

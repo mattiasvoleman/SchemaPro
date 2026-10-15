@@ -73,6 +73,9 @@
  *   lt  gallring of NOTIFICATIONS takes a pending request's old notice, the
  *       told rows stay with the request, and the next catch-up tells nobody
  *       again;
+ *   lv  a catch-up beside an uncommitted delete of a request it owes skips
+ *       the request, and the delegation that ran it commits (no 23503 from
+ *       the told row's key);
  *   lj  the year: a request of more than 366 days is refused by the gateway
  *       (400, LEAVE_REQUEST_TOO_LONG) and by LeaveRequests_a_year_at_most,
  *       and app.leave_school_days counts no further than a year from its
@@ -87,7 +90,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
-import type { Client } from 'pg';
+import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
@@ -935,6 +938,44 @@ export async function leaveChecks(owner: Client, api: PrismaService, marker: str
     assert.deepEqual(await toldRows(pending.id), mentors, 'gallring took who was told with the notice');
     assert.ok((await inbox(annaUser, 'PENDING')).some((row) => row.id === pending.id), 'the request left the mentor’s inbox with its notice');
     await leave.decideLeaveRequest(pending.id, { status: 'REJECTED' }, admin);
+  });
+
+  // ---------------------------------------------------------------------
+  // (lv) a request deleted under a catch-up
+  // ---------------------------------------------------------------------
+  await check('(lv) a catch-up beside an uncommitted delete of a request it owes skips it, and the delegation that ran it commits', async () => {
+    await leave.recordDelegation({ mentorMaxSchoolDays: null }, admin);
+    const doomed = await file(addDays(M, 71), addDays(M, 71), 'Probe: tas bort under ikappnotisen');
+    assert.deepEqual(await toldOf(doomed.id), [], 'a request rektor decides told a mentor');
+    // As a pupil's removal or a gallring batch deletes it: in flight.
+    const deleter = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+    await deleter.connect();
+    let recorded: unknown;
+    try {
+      await deleter.query('BEGIN');
+      await deleter.query(`DELETE FROM "LeaveRequests" WHERE id = $1`, [doomed.id]);
+      const delegation = leave.recordDelegation({ mentorMaxSchoolDays: 3 }, admin).then(() => null, (error: unknown) => error);
+      // Whether the catch-up waits on the delete or skips it, it meets the
+      // delete only once that has committed.
+      let settled = false;
+      void delegation.then(() => (settled = true));
+      for (let tries = 0; tries < 300 && !settled; tries++) {
+        const { rows } = await owner.query<{ n: string }>(
+          `SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%leave_requests_tell_new_mentors%'`,
+        );
+        if (Number(rows[0]!.n) > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await deleter.query('COMMIT');
+      recorded = await delegation;
+    } finally {
+      await deleter.query('ROLLBACK').catch(() => undefined);
+      await deleter.end();
+    }
+    assert.equal(recorded, null, `the delegation failed beside the delete: ${String(recorded)}`);
+    assert.equal((await leave.getDelegation(admin)).current?.mentorMaxSchoolDays, 3, 'the delegation did not commit');
+    assert.deepEqual(await toldOf(doomed.id), [], 'a notice was written about the deleted request');
+    assert.deepEqual(await toldRows(doomed.id), []);
   });
 
   // ---------------------------------------------------------------------
