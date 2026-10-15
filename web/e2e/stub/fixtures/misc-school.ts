@@ -91,6 +91,32 @@ const YEAR_JOBS: OptimizationJob[] = [
     createdAt: ago(10, "10:15"),
     finishedAt: ago(10, "10:16"),
   },
+  // Refused before the engine was asked (#144): one of Språkval åk 7's
+  // lessons was locked while the rest of the block was still to be placed.
+  {
+    id: uid(KIND.misc, 9013),
+    status: "SUCCEEDED",
+    solverStatus: "INFEASIBLE",
+    lessonsGenerated: 0,
+    conflictSummary:
+      "1 block has lessons locked or placed by hand while the rest of the block is still to be placed, and a block's lessons are placed together.",
+    conflictSummaryCode: "BLOCK_PARTLY_LOCKED_SUMMARY",
+    conflictSummaryParams: { count: 1 },
+    conflicts: [
+      {
+        category: "TEACHING_BLOCK",
+        message: "Språkval åk 7 has 1 lesson locked or placed by hand while the rest of it is still to be placed.",
+        code: "BLOCK_PARTLY_LOCKED",
+        params: { block: "Språkval åk 7", locked: 1 },
+        resourceNames: ["Språkval åk 7"],
+      },
+    ],
+    error: null,
+    errorCode: null,
+    errorParams: null,
+    createdAt: ago(11, "08:40"),
+    finishedAt: ago(11, "08:40"),
+  },
 ];
 
 /** Next year has never been generated. */

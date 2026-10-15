@@ -61,13 +61,17 @@ const SCREENS: Screen[] = [
   { name: "guardian-barn", url: "/sv/guardian", persona: "guardian", scope: "main" },
 ];
 
+const MISSES = "the backend stub has no fixture for these reads; each says which file to add it to";
+
+/** Opens a screen; the misses it returns keep collecting, for a test that clicks on. */
 async function open(page: Page, screen: Pick<Screen, "url" | "persona">, baseURL: string) {
   if (screen.persona) await signIn(page.context(), screen.persona, baseURL);
   await freezeClock(page);
   const misses = watchStubMisses(page);
   await page.goto(screen.url);
   await settle(page);
-  expect(misses, "the stub has no fixture for these reads (e2e/stub/fixtures/)").toEqual([]);
+  expect(misses, MISSES).toEqual([]);
+  return misses;
 }
 
 for (const screen of SCREENS) {
@@ -99,4 +103,20 @@ test("the notification menu names its unread count, lists the notices, and passe
   await expectAriaBaseline(page.getByRole("menu"), "guardian-notismeny");
   expect((await scanBothSchemes(page, "menu open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
   await expect(page.getByRole("menu")).toBeVisible();
+});
+
+test("the parallel blocks panel on Timplansposter names its block and what each action does, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/requirements", persona: "admin" }, baseURL!);
+  // The panel and its read load on the toggle, not with the page (#144).
+  await page.getByRole("button", { name: "Block", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Parallella block" });
+  await expect(panel.getByRole("button", { name: "Ändra lektionerna i blocket Språkval åk 7" })).toBeVisible();
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  await expectAriaBaseline(panel, "admin-block");
+  expect((await scanBothSchemes(page, "blocks open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
 });

@@ -228,6 +228,8 @@ export const GROUP_MEMBERS = [
   { studentId: STUDENTS.ella.id, studentGroupId: GROUPS.m2.id },
   { studentId: STUDENTS.maja.id, studentGroupId: GROUPS.m2.id },
   { studentId: STUDENTS.olivia.id, studentGroupId: GROUPS.m2.id },
+  { studentId: STUDENTS.jamal.id, studentGroupId: GROUPS.m2fr.id },
+  { studentId: STUDENTS.klara.id, studentGroupId: GROUPS.m2fr.id },
 ];
 
 // --- Attendance, absence, leave ------------------------------------------------

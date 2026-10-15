@@ -9,7 +9,8 @@ import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, TEACHERS } from "./stub/fix
  * `pagesOnDisk()` reads app/[locale]/(app) the way the router does, so a new
  * page under a known area is checked by axe from the day it lands. A page
  * outside every area below, or with a `[param]` PARAMS has no value for, is
- * not covered, and the signed-in suite's coverage test fails naming it.
+ * not covered, and the signed-in suite's coverage test fails naming it and
+ * the line to add here (see `lacks`).
  *
  * Each page is checked as the role its layout lets in: /admin/* as the
  * administrator, /teacher/* as a teacher and so on (the role layouts send
@@ -78,13 +79,35 @@ function urlFor(page: string): string | null {
   return missing ? null : url;
 }
 
-export const PAGES: Array<{ page: string; url: string | null; personas: Persona[] }> = pagesOnDisk().map((page) => ({
-  page,
-  url: urlFor(page),
-  personas: personasFor(page),
-}));
+const HERE = "e2e/app-routes.ts";
+
+/**
+ * What a page the suite cannot open lacks, one line per addition, each
+ * naming the constant and the file it is in; empty when the suite opens it.
+ * Once it opens, a read the stub cannot answer fails the page's own test
+ * with the fixture file to add it to (e2e/stub/where.ts).
+ */
+function lacks(page: string): string[] {
+  const lines: string[] = [];
+  if (personasFor(page).length === 0) {
+    const area = `/${page.split("/")[1] ?? ""}`;
+    lines.push(`add ["${area}", [<the personas its layout lets in>]] to AREAS in ${HERE}`);
+  }
+  for (const [, name] of page.matchAll(/\[([^\]]+)\]/g)) {
+    if (!PARAMS[name!]) lines.push(`add "${name}": <a fixture id from e2e/stub/fixtures/world.ts> to PARAMS in ${HERE}`);
+  }
+  return lines;
+}
+
+export const PAGES: Array<{ page: string; url: string | null; personas: Persona[]; lacks: string[] }> =
+  pagesOnDisk().map((page) => ({
+    page,
+    url: urlFor(page),
+    personas: personasFor(page),
+    lacks: lacks(page),
+  }));
 
 /** The pages the suite can open, with whom. */
-export const APP_ROUTES: AppRoute[] = PAGES.filter(
-  (entry): entry is AppRoute => entry.url !== null && entry.personas.length > 0,
+export const APP_ROUTES: AppRoute[] = PAGES.flatMap(({ page, url, personas }) =>
+  url !== null && personas.length > 0 ? [{ page, url, personas }] : [],
 );

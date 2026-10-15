@@ -29,8 +29,8 @@ function unexplained(violations: Violation[], page: string): Violation[] {
 }
 
 test("every signed-in page is covered", () => {
-  const uncovered = PAGES.filter((entry) => entry.url === null || entry.personas.length === 0).map((entry) => entry.page);
-  expect(uncovered, "add the area to AREAS, or the [param] to PARAMS, in e2e/app-routes.ts").toEqual([]);
+  const uncovered = PAGES.flatMap((entry) => entry.lacks.map((line) => `${entry.page}: ${line}`));
+  expect(uncovered, "pages axe never opens; each line says what to add, and in which file").toEqual([]);
 });
 
 for (const route of APP_ROUTES) {
@@ -49,7 +49,7 @@ for (const route of APP_ROUTES) {
       await settle(page);
       expect(page.url(), "the page sent this person somewhere else").toContain(route.url);
       // Soft, so one run names both what the stub lacks and what axe found.
-      expect.soft(misses, "the stub has no fixture for these reads (e2e/stub/fixtures/)").toEqual([]);
+      expect.soft(misses, "the backend stub has no fixture for these reads; each says which file to add it to").toEqual([]);
 
       const keep = (violations: Violation[]) => unexplained(violations, route.page);
       const results = await scanBothSchemes(page, "desktop", true, keep);
