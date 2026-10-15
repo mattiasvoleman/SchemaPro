@@ -25,6 +25,13 @@ export interface YearFigures {
   /** Nedsättning % on the läsår's first day; 0 without a post. */
   reductionPercent: number;
   /**
+   * The nedsättning as it changes over the year, each change once: [0, 20]
+   * for one from January. One step all year; [] without a post. The row
+   * shows the steps when there are several, so a post that is CHANGED by its
+   * nedsättning alone says why.
+   */
+  reductionSteps: number[];
+  /**
    * The post over the year, stretch by stretch: "grad/nedsättning" to three
    * decimals, each change once. What the CHANGED class compares, so a post
    * that halves in January, or gets a nedsättning from it, is a change even
@@ -58,14 +65,20 @@ function figures(load: TeacherLoad): YearFigures {
   const stretches = (load.periods?.length ?? 0) > 0 ? load.periods! : start ? [start] : [];
   const steps = (load.periods?.length ?? 0) > 0 ? percentSteps(load.periods!) : start ? [start.employmentPercent] : [];
   const postSteps: string[] = [];
+  const reductionSteps: number[] = [];
   for (const stretch of stretches) {
     const step = `${thousandths(stretch.employmentPercent)}/${thousandths(stretch.reductionPercent)}`;
     if (postSteps[postSteps.length - 1] !== step) postSteps.push(step);
+    const last = reductionSteps[reductionSteps.length - 1];
+    if (last === undefined || thousandths(last) !== thousandths(stretch.reductionPercent)) {
+      reductionSteps.push(stretch.reductionPercent);
+    }
   }
   return {
     employmentPercent: start?.employmentPercent ?? null,
     employmentSteps: steps,
     reductionPercent: start?.reductionPercent ?? 0,
+    reductionSteps,
     postSteps,
     countedMinutesPerWeek: load.countedMinutesPerWeek,
     percentOfTarget: load.percentOfTarget,

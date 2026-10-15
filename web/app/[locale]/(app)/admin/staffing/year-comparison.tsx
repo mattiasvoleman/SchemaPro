@@ -64,6 +64,14 @@ export function YearComparison({
     year && year.employmentSteps.length > 1
       ? `${year.employmentSteps.map(formatPercent).join(" → ")} %`
       : percent(year?.employmentPercent);
+  // A nedsättning that changes during the year, under the post: what makes a
+  // row CHANGED when the grad and the first day are the same as last year.
+  const reductionSteps = (year: YearFigures | null) =>
+    year && year.reductionSteps.length > 1 ? (
+      <span className="block text-xs text-muted-foreground">
+        {t("reductionSteps", { steps: year.reductionSteps.map(formatPercent).join(" → ") })}
+      </span>
+    ) : null;
   const minutes = (value: number | null | undefined) => (value == null ? "—" : String(value));
   const delta = (value: number | null, unit: string) =>
     value === null || value === 0 ? "" : `${value > 0 ? "+" : "−"}${formatPercent(Math.abs(value))}${unit}`;
@@ -112,9 +120,13 @@ export function YearComparison({
                     <span className="ml-2 text-xs font-normal text-muted-foreground">{change(row)}</span>
                   ) : null}
                 </th>
-                <TableCell className="text-right tabular-nums">{grad(row.lastYear)}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {grad(row.lastYear)}
+                  {reductionSteps(row.lastYear)}
+                </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {grad(row.thisYear)}
+                  {reductionSteps(row.thisYear)}
                   {row.employmentDelta ? (
                     <span className="ml-1 text-xs text-muted-foreground">({delta(row.employmentDelta, " %")})</span>
                   ) : null}
