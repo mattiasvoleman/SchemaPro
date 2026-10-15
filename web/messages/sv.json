@@ -3054,7 +3054,7 @@
       "minutesPercent": "{minutes} min/v · {percent} %",
       "keepOrShed": "Behåller eller lämnar bara sina egna poster",
       "keepsNoTarget": "Har inget mål och behåller sina poster",
-      "excludedChanging": "{names} föreslås inte: {count, plural, one {tjänsten ändras} other {tjänsterna ändras}} under läsåret, och en post med datum ges aldrig en sådan tjänst i förslaget, vilket utrymme den än har. Bemanna posten för hand; skrivningen prövas mot varje period.",
+      "excludedChanging": "{names} föreslås inte: {count, plural, one {tjänsten ändras} other {tjänsterna ändras}} under läsåret, och posten belastar en av tjänstens perioder mer än förslaget kan räkna med. Bemanna posten för hand; skrivningen prövas mot varje period.",
       "plannedOnPeriod": "Planeras på {from}–{to}, perioden där tjänsten har minst utrymme",
       "tooMany": "Förslaget skulle väga {teachers} lärare och {rows} timplansposter, men motorn tar högst {limitTeachers} lärare och {limitRows} poster åt gången. Behåll de poster som är klara som de är och försök igen.",
       "tooManyRequests": "Du har beräknat många förslag på kort tid. Vänta en minut och försök igen.",

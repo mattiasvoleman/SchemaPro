@@ -459,7 +459,7 @@ describe("StaffingProposalDialog", () => {
       await computeProposal(user);
       expect(
         screen.getByText(
-          "Anna Berg föreslås inte: tjänsten ändras under läsåret, och en post med datum ges aldrig en sådan tjänst i förslaget, vilket utrymme den än har. Bemanna posten för hand; skrivningen prövas mot varje period.",
+          "Anna Berg föreslås inte: tjänsten ändras under läsåret, och posten belastar en av tjänstens perioder mer än förslaget kan räkna med. Bemanna posten för hand; skrivningen prövas mot varje period.",
         ),
       ).toBeInTheDocument();
     });

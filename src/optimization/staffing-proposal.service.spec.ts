@@ -732,7 +732,7 @@ describe('StaffingProposalService.propose', () => {
       expect(proposal.teachers.find((t) => t.userId === BO)!.period).toBeUndefined();
     });
 
-    it('leaves a dated row such a post leads where it is, and every dated row excludes it', async () => {
+    it('leaves a dated row such a post leads where it is, and a spring row excludes a post that halves in January', async () => {
       const dated = (rows: Record<string, Row[]>) => {
         const list = rows['teachingRequirement']!;
         list.find((row) => row['id'] === R_MA7)!['endDate'] = day('2027-01-08');
@@ -769,6 +769,46 @@ describe('StaffingProposalService.propose', () => {
       expect(changing.ma8.excludedTeacherIds).toEqual([changing.payload.teachers[0]!.id]);
       // Only dated rows exclude: Sv 8A runs all year.
       expect(sentRow(changing.payload, R_SV8, schoolRows()['teachingRequirement']!).excludedTeacherIds).toBeUndefined();
+    });
+
+    describe('an autumn-only row', () => {
+      // Anna is 100 % until 10 January and 50 % after: planned on the spring
+      // (room 150 over her 180), with 330 a week to spare in the autumn.
+      const autumnOnly = (lessons = 2) => {
+        const rows = withAnnaHalfInSpring();
+        const list = rows['teachingRequirement']!;
+        Object.assign(list.find((row) => row['id'] === R_MA8)!, { endDate: day('2027-01-08'), lessonsPerWeek: lessons });
+        list.find((row) => row['id'] === R_SV7)!['teacherId'] = REKTOR;
+        return rows;
+      };
+      const sentIn8A = (rows: Record<string, Row[]>) =>
+        rows['teachingRequirement']!.filter((row) => row['studentGroupId'] === G8A);
+
+      it('is offered to a post that halves in January: it runs in the autumn, which has room for it', async () => {
+        const rows = autumnOnly();
+        const { service, sent } = setup(rows);
+        const proposal = await service.propose(ask(), admin());
+        expect(sentRow(sent()[0]!, R_MA8, sentIn8A(rows)).excludedTeacherIds).toBeUndefined();
+        expect(proposal.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
+        expect(proposal.unstaffed.find((row) => row.requirementId === R_MA8)).toBeUndefined();
+      });
+
+      it('takes rows while the autumn’s slack lasts, and excludes the post from the one past it', async () => {
+        // Three autumn rows of 240 a week: each charges the autumn 123 a week more than its year
+        // share, and 2 × 123 fits the autumn's 330 to spare while 3 × 123 does not.
+        const R_AUT = '00000000-0000-4000-8000-000000000006';
+        const rows = autumnOnly(4);
+        const list = rows['teachingRequirement']!;
+        Object.assign(list.find((row) => row['id'] === R_SV8)!, { endDate: day('2027-01-08'), lessonsPerWeek: 4 });
+        list.push(requirement(R_AUT, G8A, SV, { endDate: day('2027-01-08'), lessonsPerWeek: 4 }));
+        const { service, sent } = setup(rows);
+        await service.propose(ask(), admin());
+        const payload = sent()[0]!;
+        const anna = payload.teachers[0]!.id;
+        expect(sentRow(payload, R_MA8, sentIn8A(rows)).excludedTeacherIds).toBeUndefined();
+        expect(sentRow(payload, R_SV8, sentIn8A(rows)).excludedTeacherIds).toBeUndefined();
+        expect(sentRow(payload, R_AUT, sentIn8A(rows)).excludedTeacherIds).toEqual([anna]);
+      });
     });
 
     describe('a spring-only row', () => {
@@ -1080,6 +1120,20 @@ describe('StaffingProposalService.apply', () => {
   const changesOf = (proposal: StaffingProposal) =>
     proposal.assignments.map((a) => ({ requirementId: a.requirementId, fromTeacherId: a.fromTeacherId, toTeacherId: a.toTeacherId }));
   const leadOf = (world: RolloverWorld, id: string) => world.rows['teachingRequirement']!.find((row) => row['id'] === id)!['teacherId'];
+
+  it('applies, under REFUSE, an autumn row it proposed to a post that halves in January', async () => {
+    const rows = withAnnaHalfInSpring();
+    rows['staffingPolicy']![0]!['overAllocationMode'] = 'REFUSE';
+    const list = rows['teachingRequirement']!;
+    Object.assign(list.find((row) => row['id'] === R_MA8)!, { endDate: day('2027-01-08') });
+    list.find((row) => row['id'] === R_SV7)!['teacherId'] = REKTOR;
+    const { service, world, proposal } = await proposeThenApply(rows);
+    expect(proposal.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
+    await expect(
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+    ).resolves.toMatchObject({ warnings: [] });
+    expect(leadOf(world, R_MA8)).toBe(ANNA);
+  });
 
   it('applies, under REFUSE, what it proposed for a post that changes during the year — the apply judging each period', async () => {
     const rows = withAnnaHalfInSpring();
