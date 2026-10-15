@@ -7,6 +7,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
+import { postOfWeek } from '../staffing/employment-periods';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
 import { gradesParam } from '../staffing/staffing-checks';
 import { targetMinutesPerWeek } from '../staffing/teacher-load';
@@ -107,7 +108,12 @@ export class CoverSuggestionsService {
       if (!lesson) throw new NotFoundException('Lesson not found.');
       const timezone = await schoolTimezone(tx, schoolId);
       const year = await this.yearOf(tx, lesson.studentGroupId);
-      const read = await readPersonDays(tx, { date: lesson.date, timezone, academicYearId: year?.id ?? null });
+      const read = await readPersonDays(tx, {
+        date: lesson.date,
+        timezone,
+        academicYearId: year?.id ?? null,
+        withPeriods: true,
+      });
       const context = await this.rankContext(tx, user, schoolId, [lesson], lesson.date, year);
       const target = targetOf(lesson);
       const candidates: Candidate[] = [];
@@ -235,7 +241,7 @@ export class CoverSuggestionsService {
     if (open.length === 0) return { items: [], unassigned: [] };
     const lessons = new Map((await this.readLessons(tx, open.map((item) => item.lessonId))).map((lesson) => [lesson.id, lesson]));
     const year = await this.yearOf(tx, [...lessons.values()][0]!.studentGroupId);
-    const read = await readPersonDays(tx, { date, timezone, academicYearId: year?.id ?? null });
+    const read = await readPersonDays(tx, { date, timezone, academicYearId: year?.id ?? null, withPeriods: true });
     const context = await this.rankContext(tx, user, schoolId, [...lessons.values()], date, year);
     const excluded = new Set(excludeUserIds);
     const candidates = [...read.days.keys()].filter((id) => !excluded.has(id)).sort();
@@ -282,7 +288,10 @@ export class CoverSuggestionsService {
     );
     const released = cancelledThen.find((row) => row.cancelCause !== 'EVENT');
     const atEvent = cancelledThen.find((row) => row.cancelCause === 'EVENT');
-    const employment = read.employments.get(userId) ?? null;
+    // The post the lesson's week is judged by: a period in force then, else
+    // the post itself (postOfWeek, the load report's own week rule).
+    const post = read.employments.get(userId) ?? null;
+    const employment = post ? postOfWeek(post, lesson.date, context.year) : null;
     const target_ = targetMinutesPerWeek(employment, {
       fullTimeTeachingMinutesPerWeek: context.policy.fullTimeTeachingMinutesPerWeek,
       overAllocationTolerancePercent: context.policy.overAllocationTolerancePercent,

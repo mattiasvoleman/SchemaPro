@@ -123,6 +123,22 @@ export function postOn<T extends PostFigures & { periods?: readonly LoadPeriod[]
 }
 
 /**
+ * The post one week is judged by, by the rule postStretches cuts the year
+ * with: the post in force on the week's Monday, or on the läsår's first day
+ * for a first week that starts before it. For a reader that compares one
+ * week's minutes with the target — the vikarie ranking — so a cover in the
+ * week a period starts is judged as the load report judges that week.
+ */
+export function postOfWeek<T extends PostFigures & { periods?: readonly LoadPeriod[] }>(
+  employment: T,
+  day: string,
+  year: YearBounds | null,
+): T {
+  const monday = mondayOf(day);
+  return postOn(employment, year !== null && monday < year.startDate ? year.startDate : monday);
+}
+
+/**
  * Whether the post changes during the läsår: some period covers a day of it.
  * A post that does not is read exactly as it always was.
  */

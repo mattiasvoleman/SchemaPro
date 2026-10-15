@@ -1,4 +1,4 @@
-import { changesDuringYear, postOn, postStretches, type LoadPeriod } from './employment-periods';
+import { changesDuringYear, postOfWeek, postOn, postStretches, type LoadPeriod } from './employment-periods';
 
 const YEAR = { startDate: '2026-08-17', endDate: '2027-06-11' };
 
@@ -31,6 +31,25 @@ describe('postOn: the post on a date', () => {
   it('changes the three figures a period states and nothing else of the post', () => {
     const on = postOn({ ...post, teachingTargetMinutesPerWeek: 900, reductionPercent: 10 }, '2026-12-01');
     expect(on).toMatchObject({ employmentPercent: 80, reductionPercent: 0, teachingTargetMinutesPerWeek: null, contractKind: 'FERIE' });
+  });
+});
+
+describe('postOfWeek: the post one week is judged by', () => {
+  const post = { ...base, contractKind: 'FERIE', periods: [period({ validFrom: '2026-11-04' })] };
+
+  it('is the post in force on the week’s Monday, so a period from a Wednesday holds from the next week', () => {
+    // Monday 2 November is before the period: that week is the post's own, Wednesday or not.
+    expect(postOfWeek(post, '2026-11-06', YEAR).employmentPercent).toBe(100);
+    expect(postOfWeek(post, '2026-11-09', YEAR).employmentPercent).toBe(80);
+    expect(postOfWeek({ ...post, periods: [period({ validFrom: '2026-11-02' })] }, '2026-11-04', YEAR).employmentPercent).toBe(80);
+  });
+
+  it('judges a first week that starts before the läsår by the läsår’s first day', () => {
+    const year = { startDate: '2026-08-19', endDate: '2027-06-11' };
+    const fromTheStart = { ...post, periods: [period({ validFrom: '2026-08-19', validTo: '2026-08-30' })] };
+    expect(postOfWeek(fromTheStart, '2026-08-21', year).employmentPercent).toBe(80);
+    // Without the year, the Monday before it: no period covers that day.
+    expect(postOfWeek(fromTheStart, '2026-08-21', null).employmentPercent).toBe(100);
   });
 });
 
