@@ -115,6 +115,7 @@ import { snapshotRanges } from '../../src/publication/published-grundschema';
 import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
 import { PublicLinksService } from '../../src/publication/public-links.service';
 import { tokenHashOf } from '../../src/publication/public-token';
+import { printChecks } from './probe-print';
 import { familyPushChecks, sweepFamilySchool } from './probe-family-push';
 import { ss12000SyncChecks, sweepSs12000School } from './probe-ss12000-sync';
 import { ss12000ProviderChecks } from './probe-ss12000-provider';
@@ -7049,6 +7050,21 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
       await publications.upsertSettings({ publicViewerEnabled: false }, school.admin);
       assert.deepEqual(await agree(), { klass: 'VIEWER_OFF', room: 'VIEWER_OFF', teacher: 'VIEWER_OFF', index: 'VIEWER_OFF' });
       await publications.upsertSettings({ publicViewerEnabled: true }, school.admin);
+    });
+
+    // Utskrift och inbäddning (20261102090000), against this school's week as the checks above left it.
+    await printChecks({
+      owner,
+      api,
+      check,
+      school,
+      links,
+      publications,
+      made: { klass, room, teacher, index },
+      view,
+      secrets,
+      hiddenTeacherId: hidden.id,
+      smallGroupId: small.id,
     });
 
     await check('(pub-e) nothing for a revoked link, a scope switched off, the viewer switched off, an unknown token; and 2 s at most', async () => {
