@@ -21,6 +21,7 @@ import {
 } from "./school-days";
 import {
   ALL_PEOPLE,
+  BLOCKS,
   GROUP_LIST,
   GUARDIAN_LINKS,
   MASTER_LESSONS,
@@ -56,6 +57,7 @@ export const tables: Tables = {
   Subjects: withSchool(SUBJECT_LIST),
   Rooms: withSchool(ROOM_LIST),
   TeachingRequirements: withSchool(REQUIREMENTS),
+  TeachingBlocks: withSchool(BLOCKS),
   MasterLessons: withSchool(
     MASTER_LESSONS.map(({ extraGroupIds: _groups, studentIds: _students, ...lesson }) => lesson),
   ),

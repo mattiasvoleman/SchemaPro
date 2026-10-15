@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { read, type Row } from "./postgrest";
+import { whereToStub } from "./where";
 import { authUser, personForToken, STUB_PORT } from "./sessions";
 import { matchGateway, Reply } from "./gateway-routes";
 import { rowScopes, tables } from "./fixtures/tables";
@@ -24,7 +25,7 @@ const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
   "access-control-allow-headers": "*",
-  "access-control-expose-headers": "content-range, x-stub",
+  "access-control-expose-headers": "content-range, x-stub, x-stub-where",
   "access-control-max-age": "600",
 };
 
@@ -70,14 +71,15 @@ export const missedRequests = () => [...missed];
  * logged but fails nothing.
  */
 function miss(request: IncomingMessage, response: ServerResponse, method: string, path: string) {
-  const key = `${method} ${path}`;
+  const where = whereToStub(method, path);
+  const key = `${method} ${path} — ${where}`;
   if (!personForToken(bearer(request)) && !path.startsWith("/public/")) {
-    console.warn(`[stub] not this run's, not counted: ${key}`);
+    console.warn(`[stub] not this run's, not counted: ${method} ${path}`);
   } else if (!missed.has(key)) {
     missed.add(key);
     console.warn(`[stub] no fixture for ${key}`);
   }
-  send(response, 404, { message: `No stub fixture for ${key}` }, { "x-stub": "miss" });
+  send(response, 404, { message: `No stub fixture for ${method} ${path}: ${where}` }, { "x-stub": "miss", "x-stub-where": where });
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {

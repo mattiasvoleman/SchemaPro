@@ -30,7 +30,7 @@ export default async function globalSetup() {
     // Next.js server made while rendering (the session, /admin's counts).
     const missed = missedRequests();
     if (missed.length > 0) {
-      throw new Error(`The backend stub had no fixture for:\n  ${missed.join("\n  ")}\nAdd them under e2e/stub/fixtures/.`);
+      throw new Error(`The backend stub had no fixture for these reads; each says where to add it:\n  ${missed.join("\n  ")}`);
     }
   };
 }

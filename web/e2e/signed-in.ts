@@ -44,7 +44,8 @@ export function watchStubMisses(page: Page): string[] {
     if (!response.url().startsWith(STUB_ORIGIN)) return;
     if (response.headers()["x-stub"] !== "miss") return;
     const url = new URL(response.url());
-    misses.push(`${response.request().method()} ${url.pathname}`);
+    const where = response.headers()["x-stub-where"];
+    misses.push(`${response.request().method()} ${url.pathname}${where ? ` — ${where}` : ""}`);
   });
   return misses;
 }

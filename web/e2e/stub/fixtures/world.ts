@@ -8,6 +8,7 @@ import type {
   School,
   StudentGroup,
   Subject,
+  TeachingBlock,
   TeachingRequirement,
 } from "../../../lib/types";
 import { KIND, PEOPLE, uid } from "../sessions";
@@ -77,8 +78,16 @@ export const GROUPS = {
   g9A: group(4, "9A", "CLASS", 9),
   ma7: group(11, "Ma7 fördjupning", "TEACHING_GROUP", 7),
   m2: group(12, "Moderna språk spanska 7–9", "TEACHING_GROUP", null),
+  m2fr: group(13, "Moderna språk franska 7", "TEACHING_GROUP", 7),
 };
 export const GROUP_LIST = Object.values(GROUPS);
+
+/**
+ * A parallel block (#144): Språkval åk 7, whose two language groups are
+ * placed at the same times. Its posts carry its id (REQUIREMENTS 11 and 13),
+ * with the same lessons and weeks, as the database requires.
+ */
+export const BLOCKS: TeachingBlock[] = [{ id: uid(KIND.misc, 6001), academicYearId: uid(KIND.year, 1), name: "Språkval åk 7" }];
 
 /**
  * NEXT_YEAR's classes, as the rollover made them, keyed by the class they
@@ -282,8 +291,17 @@ export const REQUIREMENTS: TeachingRequirement[] = [
   requirement(8, SUBJECTS.so.id, GROUPS.g8A.id, TEACHERS.eva.id, 2, 60),
   requirement(9, SUBJECTS.bl.id, GROUPS.g8A.id, null, 1, 80),
   requirement(10, SUBJECTS.ma.id, GROUPS.g9A.id, TEACHERS.bo.id, 3, 60, { coTeacherId: TEACHERS.cecilia.id, coTeacherLoadPercent: 50 }),
-  requirement(11, SUBJECTS.m2.id, GROUPS.m2.id, TEACHERS.cecilia.id, 2, 50, { lessonLengths: [60, 40], minutesPerLesson: 60 }),
+  requirement(11, SUBJECTS.m2.id, GROUPS.m2.id, TEACHERS.cecilia.id, 2, 50, {
+    lessonLengths: [60, 40],
+    minutesPerLesson: 60,
+    blockId: BLOCKS[0]!.id,
+  }),
   requirement(12, SUBJECTS.mentor.id, GROUPS.g7A.id, TEACHERS.anna.id, 1, 30),
+  requirement(13, SUBJECTS.m2.id, GROUPS.m2fr.id, TEACHERS.eva.id, 2, 50, {
+    lessonLengths: [60, 40],
+    minutesPerLesson: 60,
+    blockId: BLOCKS[0]!.id,
+  }),
 ];
 
 const master = (

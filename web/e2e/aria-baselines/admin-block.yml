@@ -1,0 +1,11 @@
+- region "Parallella block":
+  - heading "Parallella block" [level=2]
+  - text: Posterna i ett block läggs på samma tider när schemat genereras, så språkvalet tar en tid i klassens vecka per lektion och inte en per språk. Posterna i ett block har samma lektioner och veckor.
+  - button "Nytt block"
+  - list:
+    - listitem:
+      - heading "Språkval åk 7" [level=3]
+      - button "Ändra lektionerna i blocket Språkval åk 7": Ändra lektioner
+      - button "Ändra blocket Språkval åk 7": Ändra
+      - button "Ta bort blocket Språkval åk 7": Ta bort
+      - paragraph: "1 lektion à 60 minuter och 1 lektion à 40 minuter: Moderna språk för Moderna språk franska 7 och Moderna språk för Moderna språk spanska 7–9"
