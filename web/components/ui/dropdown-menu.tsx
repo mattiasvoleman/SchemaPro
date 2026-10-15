@@ -8,9 +8,11 @@ import { cn } from "@/lib/utils";
 /**
  * Non-modal unless a caller asks otherwise. Radix's modal mode hides the rest
  * of the page with aria-hidden while its links and buttons stay focusable —
- * axe's aria-hidden-focus, serious, on every open menu — and a menu is not a
- * dialog: in the APG's menu button pattern Escape closes it and Tab leaves
- * it, which Radix's non-modal mode does (focus outside dismisses it).
+ * axe's aria-hidden-focus, serious, on every open menu — and traps focus, and
+ * a menu is not a dialog. Non-modal drops both. Radix still keeps Tab inside
+ * an open menu in either mode (MenuContent prevents it), so Escape, a click
+ * outside or choosing an item is the way out; the APG's "Tab leaves the menu"
+ * would need an onKeyDown on the content that closes it.
  */
 function DropdownMenu({ modal = false, ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
   return <DropdownMenuPrimitive.Root modal={modal} {...props} />;
