@@ -78,9 +78,11 @@ export function viewerQueryOf(params: { target?: string | string[]; date?: strin
 /**
  * A real day, round-tripped: `Date.parse` accepts 2026-02-30 (V8 rolls it
  * into March), and the gateway answers its one 404 for such a date. Dropped
- * here, so the page shows the current week rather than "not available".
+ * here, so the page shows the current week rather than "not available". The
+ * gateway's isViewerDate, years 2000 to 2100 included, which the admin's
+ * print set checks too.
  */
-function isCalendarDay(value: string): boolean {
+export function isCalendarDay(value: string): boolean {
   if (!DATE.test(value)) return false;
   const year = Number(value.slice(0, 4));
   if (year < 2000 || year > 2100) return false;

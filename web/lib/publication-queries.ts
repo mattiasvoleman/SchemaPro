@@ -51,6 +51,10 @@ export function useUpdatePublicationSettings() {
       queryClient.setQueryData(PUBLICATION_KEYS.settings, settings);
       // A gate's mode decides the preview's severities.
       void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.preview });
+      // And the viewer's and the embedding's switches what each link says of
+      // itself (notShownBecause, embeddable), which the gateway works out
+      // when the list is read.
+      void queryClient.invalidateQueries({ queryKey: PUBLICATION_KEYS.links });
     },
   });
 }

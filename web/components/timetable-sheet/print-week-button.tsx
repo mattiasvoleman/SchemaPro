@@ -7,6 +7,7 @@ import { Printer } from "lucide-react";
 import type { SheetDocument } from "@/lib/print-sheet";
 import { weekValidity } from "@/lib/print-queries";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /*
  * "Skriv ut veckan" on a pupil's, a guardian's or a teacher's own week
@@ -55,6 +56,7 @@ export function PrintWeekButton({ build, disabled = false }: { build: () => Shee
   const [preparing, setPreparing] = useState(false);
   const finish = useRef<(() => void) | null>(null);
   const mounted = useRef(true);
+  const blocked = disabled || preparing;
 
   // The page is the sheet alone from before the sheet can mount (a cached
   // chunk mounts it in the same commit, and its effect prints before any
@@ -107,7 +109,19 @@ export function PrintWeekButton({ build, disabled = false }: { build: () => Shee
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => void start()} disabled={disabled || preparing} className="print:hidden">
+      {/* Never `disabled`: the button has focus when it is pressed, and a
+          disabled button that has focus drops it to <body> (child-schedule.tsx
+          says the same of its steps). While the week is not read, or the
+          print is being prepared, it says so and a press does nothing. */}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          if (!blocked) void start();
+        }}
+        aria-disabled={blocked}
+        className={cn("print:hidden", blocked && "cursor-not-allowed opacity-50")}
+      >
         <Printer aria-hidden="true" />
         {preparing ? t("preparing") : t("print")}
       </Button>

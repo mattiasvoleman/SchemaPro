@@ -458,6 +458,23 @@ describe("/admin/publishing › Inbäddning", () => {
     );
   });
 
+  it("marks the links that may be framed as the saved settings say, without a reload", async () => {
+    server.links = [{ ...(server.links[0] as object), embeddable: false }];
+    put.mockImplementation(async (_path: string, body: object) => {
+      // The gateway works the mark out when the list is read, from the settings just saved.
+      server.links = [{ ...(server.links[0] as object), embeddable: true }];
+      return { ...(server.settings as object), ...body };
+    });
+    const user = userEvent.setup();
+    await openViewerTab(user);
+    await user.click(await screen.findByRole("switch", { name: "Bädda in klasser och grupper" }));
+    await user.type(screen.getByRole("textbox", { name: /Webbplatser som får visa schemat/ }), "https://www.skolan.se");
+    expect(screen.queryByText("Kan bäddas in")).not.toBeInTheDocument();
+    const card = screen.getByRole("heading", { name: "Inbäddning på skolans webbplats" }).closest("section") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Spara" }));
+    expect(await screen.findByText("Kan bäddas in")).toBeInTheDocument();
+  });
+
   it("names a website the frame cannot take, and saves nothing until it is mended", async () => {
     const user = userEvent.setup();
     await openViewerTab(user);
