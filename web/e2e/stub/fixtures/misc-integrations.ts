@@ -1,5 +1,6 @@
 import type { SignInSettings } from "../../../app/[locale]/(app)/admin/integrations/sign-in-types";
 import type {
+  AttendanceSharing,
   ChangesPage,
   ProviderKey,
   ProvisioningPerson,
@@ -10,7 +11,7 @@ import type {
 import { KIND, uid } from "../sessions";
 import { addDays, stockholmInstant, TODAY } from "./calendar";
 import { ago } from "./misc-school";
-import { ALL_PEOPLE, GROUP_LIST, GROUPS, STUDENTS, TEACHERS } from "./world";
+import { ADMIN, ALL_PEOPLE, GROUP_LIST, GROUPS, STUDENTS, TEACHERS } from "./world";
 
 /**
  * /admin/integrations: the kommun's SS12000 register as Exempelskolan's
@@ -249,7 +250,28 @@ export const PROVIDER_KEYS: ProviderKey[] = [
     webhookSecret: null,
     subscriptions: [],
   },
+  {
+    id: uid(KIND.misc, 9424),
+    name: "Kommunens frånvarostatistik",
+    scopes: ["attendances.read", "absences.read"],
+    lastUsedAt: ago(2, "03:00"),
+    revokedAt: null,
+    createdAt: ago(20, "09:30"),
+    webhookSecret: null,
+    subscriptions: [],
+  },
 ];
+
+// --- Närvaro och frånvaro till integrationer (SS12000-närvaro) --------------------------------
+
+/** Shared since the admin decided it, after an earlier decision not to. */
+export const ATTENDANCE_SHARING: AttendanceSharing = {
+  current: { shares: true, reference: "Konsekvensbedömning 2026:12", decidedAt: ago(20, "09:00"), decidedBy: `${ADMIN.firstName} ${ADMIN.lastName}` },
+  history: [
+    { shares: true, reference: "Konsekvensbedömning 2026:12", decidedAt: ago(20, "09:00"), decidedBy: `${ADMIN.firstName} ${ADMIN.lastName}` },
+    { shares: false, reference: null, decidedAt: ago(200, "11:00"), decidedBy: `${ADMIN.firstName} ${ADMIN.lastName}` },
+  ],
+};
 
 // --- Logga in med skolkonto ------------------------------------------------------------------
 

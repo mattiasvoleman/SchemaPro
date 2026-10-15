@@ -203,8 +203,8 @@ export interface ProviderKey {
 
 /**
  * The scopes a key may hold (src/integration/ss12000-v2/scopes.ts, and the
- * CHECK IntegrationApiKeys_scopes_are_known of migration 20261014120000), in
- * the gateway's order.
+ * CHECK IntegrationApiKeys_scopes_are_known of migrations 20261014120000 and
+ * 20261114090000), in the gateway's order.
  */
 export const SCOPES = [
   "ss12000.v1",
@@ -219,8 +219,25 @@ export const SCOPES = [
   "rooms.read",
   "syllabuses.read",
   "subscriptions.write",
+  "attendances.read",
+  "absences.read",
 ] as const;
 export type Scope = (typeof SCOPES)[number];
+
+/** The scopes that read only while the school shares attendance (AttendanceSharingDecisions). */
+export const ATTENDANCE_SCOPES: readonly Scope[] = ["attendances.read", "absences.read"];
+
+/** The school's decision in force, and the latest decisions (GET /api/v1/integrations/attendance-sharing). */
+export interface AttendanceSharingDecision {
+  shares: boolean;
+  reference: string | null;
+  decidedAt: string;
+  decidedBy: string | null;
+}
+export interface AttendanceSharing {
+  current: AttendanceSharingDecision | null;
+  history: AttendanceSharingDecision[];
+}
 
 /** What a key created without a choice gets: today's v1 reach. */
 export const DEFAULT_SCOPES: readonly Scope[] = ["ss12000.v1", "ss12000.v1.import"];

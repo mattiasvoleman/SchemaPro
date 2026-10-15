@@ -12,6 +12,7 @@ export const INTEGRATION_KEYS = {
   changes: ["ss12000Changes"],
   provisioning: ["ss12000Provisioning"],
   providerKeys: ["integrationKeysProvider"],
+  attendanceSharing: ["attendanceSharing"],
   signIn: ["signInMethod"],
 } as const;
 

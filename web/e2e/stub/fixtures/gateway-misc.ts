@@ -3,6 +3,7 @@ import type { CancellationSelection } from "../../../lib/publication-types";
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
 import { KIND, uid } from "../sessions";
 import {
+  ATTENDANCE_SHARING,
   PROVIDER_KEYS,
   PROVISIONING,
   runChanges,
@@ -172,6 +173,7 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/ss12000-sync/runs/:id/changes", ({ params }) => runChanges(params.id!) ?? notFound("Run not found.", "SS12000_RUN_NOT_FOUND")),
   route("GET", "/api/v1/ss12000-sync/provisioning", () => PROVISIONING),
   route("GET", "/api/v1/integration-keys/provider", () => PROVIDER_KEYS),
+  route("GET", "/api/v1/integrations/attendance-sharing", () => ATTENDANCE_SHARING),
   route("GET", "/api/v1/sign-in-method", () => SIGN_IN_SETTINGS),
 
   // --- The year tools ---------------------------------------------------------------------------

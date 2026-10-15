@@ -1,0 +1,18 @@
+- region "Närvaro och frånvaro till integrationer":
+  - heading "Närvaro och frånvaro till integrationer" [level=2]
+  - text: "Skolans beslut om ett annat system får läsa elevernas närvaro och frånvaro i SS12000-format, med en nyckel som har omfånget attendances.read eller absences.read. Utan beslut delas ingenting. Läge: Delas"
+  - paragraph: Beslutat <datum> 09:00 av Rut Rektorsson.
+  - paragraph: "Diarienummer eller underlag: Konsekvensbedömning <år>:12"
+  - list:
+    - listitem: "Lämnas ut: minuter närvaro och frånvaro per lektion, om frånvaron är giltig eller ogiltig, och anmäld frånvaro och beviljad ledighet med tid."
+    - listitem: "Lämnas aldrig ut: orsaken till frånvaron, anteckningar, skälet till en ledighet, vilken sorts anmälan det är eller vem som anmälde frånvaron."
+    - listitem: Läsningarna skrivs i läsloggen under Dataskydd, med integrationens nyckel som läsare.
+    - listitem: Det som har gallrats lämnas inte ut, och systemet får veta att det är borttaget.
+  - text: Diarienummer eller underlag (valfritt)
+  - textbox "Diarienummer eller underlag (valfritt)"
+  - paragraph: Till exempel skolans konsekvensbedömning eller beslutets diarienummer. Högst 200 tecken.
+  - button "Sluta dela"
+  - group:
+    - text: Tidigare beslut
+    - list:
+      - listitem: "<datum> 11:00: delas inte (Rut Rektorsson)"

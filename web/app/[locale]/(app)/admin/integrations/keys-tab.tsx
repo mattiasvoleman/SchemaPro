@@ -17,8 +17,10 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CHECKBOX } from "./form-styles";
 import { errorText, formatWhen } from "./ss12000-messages";
-import { DEFAULT_SCOPES, SCOPES, type ProviderKey, type ProviderSubscription, type Scope } from "./ss12000-types";
+import { AttendanceSharingCard } from "./attendance-sharing-card";
+import { ATTENDANCE_SCOPES, DEFAULT_SCOPES, SCOPES, type ProviderKey, type ProviderSubscription, type Scope } from "./ss12000-types";
 import {
+  useAttendanceSharing,
   useCreateKey,
   useCreateWebhookSecret,
   useProviderKeys,
@@ -44,29 +46,41 @@ import {
  * can pause one.
  */
 
-const SCOPE_GROUPS: Array<{ key: "v1" | "v2"; scopes: Scope[] }> = [
+const SCOPE_GROUPS: Array<{ key: "v1" | "v2" | "attendance"; scopes: Scope[] }> = [
   { key: "v1", scopes: ["ss12000.v1", "ss12000.v1.import"] },
-  { key: "v2", scopes: SCOPES.filter((scope) => !scope.startsWith("ss12000.")) },
+  { key: "v2", scopes: SCOPES.filter((scope) => !scope.startsWith("ss12000.") && !ATTENDANCE_SCOPES.includes(scope)) },
+  { key: "attendance", scopes: [...ATTENDANCE_SCOPES] },
 ];
 
 function ScopePicker({ value, onChange, idPrefix }: { value: Scope[]; onChange: (next: Scope[]) => void; idPrefix: string }) {
   const tScopes = useTranslations("integrations.scopes");
+  // The card above reads it too; one request, shared by its query key.
+  const sharing = useAttendanceSharing(true);
   const toggle = (scope: Scope, on: boolean) =>
     onChange(SCOPES.filter((entry) => (entry === scope ? on : value.includes(entry))));
+  // Said on each attendance scope's own checkbox too, where a screen reader meets it.
+  const notShared = sharing.isSuccess && sharing.data.current?.shares !== true;
+  const noteId = `${idPrefix}-attendance-not-shared`;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {SCOPE_GROUPS.map((group) => (
         <fieldset key={group.key} className="space-y-1 rounded-md border p-2">
           <legend className="px-1 text-xs font-medium">{tScopes(`groups.${group.key}`)}</legend>
+          {group.key === "attendance" && notShared ? (
+            <p id={noteId} className="text-xs text-muted-foreground">
+              {tScopes("attendanceNotShared")}
+            </p>
+          ) : null}
           {group.scopes.map((scope) => {
             const id = `${idPrefix}-${scope}`;
+            const described = group.key === "attendance" && notShared ? `${id}-what ${noteId}` : `${id}-what`;
             return (
               <div key={scope} className="flex items-start gap-2 text-sm">
                 <input
                   id={id}
                   type="checkbox"
                   className={`${CHECKBOX} mt-0.5`}
-                  aria-describedby={`${id}-what`}
+                  aria-describedby={described}
                   checked={value.includes(scope)}
                   onChange={(event) => toggle(scope, event.target.checked)}
                 />
@@ -134,6 +148,7 @@ export function KeysTab() {
 
   return (
     <div className="space-y-4">
+      <AttendanceSharingCard />
       <SectionCard id="key-create" title={t("createTitle")} description={t("createBody")}>
         <FormField id="key-name" label={t("keys.name")}>
           <Input placeholder={t("namePlaceholder")} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />

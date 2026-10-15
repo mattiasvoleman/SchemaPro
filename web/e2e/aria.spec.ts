@@ -142,6 +142,24 @@ test("a class half names its class on Klasser, and Placera elever names each pup
   expect((await scanBothSchemes(page, "class halves open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
 });
 
+test("the school's decision on attendance for integrations names its state, its decider and what never leaves, and passes axe open", async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const misses = await open(page, { url: "/sv/admin/integrations", persona: "admin" }, baseURL!);
+  // The keys tab and its chunk load on the first click (React.lazy).
+  await page.getByRole("tab", { name: "API-nycklar" }).click();
+  const card = page.getByRole("region", { name: "Närvaro och frånvaro till integrationer" });
+  await expect(card.getByRole("button", { name: "Sluta dela" })).toBeVisible();
+  // The earlier decisions, opened: what a screen reader meets there too.
+  await card.getByText("Tidigare beslut").click();
+  await settle(page);
+  expect(misses, MISSES).toEqual([]);
+  await expectAriaBaseline(card, "admin-narvaro-integrationer");
+  expect((await scanBothSchemes(page, "keys tab open", true)).join("\n"), "WCAG 2.1 AA violations").toBe("");
+});
+
 test("a parallel block on the grundschema is one card, and its dialog names each lesson and the lock, and passes axe open", async ({
   page,
   baseURL,
