@@ -70,6 +70,8 @@ export interface RolloverGroupInput {
   name: string;
   kind: GroupKind;
   gradeLevel: number | null;
+  /** The class this group is a half of (Halvklasser); a half follows its class. */
+  halfOfId?: string | null;
 }
 
 export interface GroupChoice {
@@ -153,12 +155,24 @@ export function lowestClassGrade(groups: readonly RolloverGroupInput[]): number 
  * INTAKE is the default outcome PLUS an intake twin: the lowest-grade class
  * is still promoted (its cohort needs a successor to move into), and a new
  * class with its name and grade is opened for next year's intake.
+ *
+ * A half follows its class (Halvklasser), as src/common/year-rollover.ts
+ * says; see followTheClass there.
  */
 export function resolveGroups(
   groups: readonly RolloverGroupInput[],
   graduatingGradeLevel: number,
   options: { carryTeachingGroups: boolean },
   choices: ReadonlyMap<string, GroupChoice> = new Map(),
+): ResolvedGroup[] {
+  return followTheClass(groups, resolveEachGroup(groups, graduatingGradeLevel, options, choices), choices);
+}
+
+function resolveEachGroup(
+  groups: readonly RolloverGroupInput[],
+  graduatingGradeLevel: number,
+  options: { carryTeachingGroups: boolean },
+  choices: ReadonlyMap<string, GroupChoice>,
 ): ResolvedGroup[] {
   const lowest = lowestClassGrade(groups);
   return groups.map((group) => {
@@ -230,6 +244,47 @@ export function resolveGroups(
       nameStatus,
       noGrade: g === null,
       error,
+    };
+  });
+}
+
+function halfName(half: string, className: string, successorName: string, grade: number | null): string {
+  return half.startsWith(className) && className.length > 0
+    ? `${successorName}${half.slice(className.length)}`
+    : promoteName(half, grade).name;
+}
+
+function followTheClass(
+  groups: readonly RolloverGroupInput[],
+  resolved: ResolvedGroup[],
+  choices: ReadonlyMap<string, GroupChoice>,
+): ResolvedGroup[] {
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const resolvedById = new Map(resolved.map((row) => [row.sourceGroupId, row]));
+  return resolved.map((row) => {
+    const half = byId.get(row.sourceGroupId)!;
+    const classRow = half.halfOfId ? resolvedById.get(half.halfOfId) : undefined;
+    const theClass = half.halfOfId ? byId.get(half.halfOfId) : undefined;
+    if (!classRow || !theClass) return row;
+    const choice = choices.get(half.id) ?? {};
+    if (choice.outcome === "SKIP") return { ...row, outcome: "SKIP", successor: null, intake: null, error: null };
+    const named = classRow.successor
+      ? halfName(half.name, theClass.name, classRow.successor.name, half.gradeLevel)
+      : null;
+    const override = choice.name?.trim();
+    const renamed = named !== null && Boolean(override) && override !== named;
+    const successor =
+      classRow.successor && named !== null
+        ? { name: renamed ? (override as string) : named, gradeLevel: classRow.successor.gradeLevel }
+        : null;
+    return {
+      sourceGroupId: half.id,
+      outcome: classRow.outcome === "INTAKE" ? (successor ? "PROMOTE" : "GRADUATE") : classRow.outcome,
+      successor,
+      intake: classRow.intake ? { name: half.name, gradeLevel: classRow.intake.gradeLevel } : null,
+      nameStatus: successor ? (renamed ? "OVERRIDDEN" : classRow.nameStatus) : null,
+      noGrade: half.gradeLevel === null,
+      error: null,
     };
   });
 }

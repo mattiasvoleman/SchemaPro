@@ -105,6 +105,12 @@ export interface RolloverWrites {
     kind: StudentGroupKind;
     gradeLevel: number | null;
     predecessorId: string | null;
+    /**
+     * A half's class (Halvklasser): the key its class is written under —
+     * the class's successor, or its intake twin. Absent on every other group,
+     * so a school without halves writes what it always wrote.
+     */
+    halfOfKey?: GroupKey;
   }[];
   members: { groupKey: GroupKey; studentId: string }[];
   requirements: {
@@ -396,6 +402,9 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   };
   for (const row of resolved) {
     const group = groupById.get(row.sourceGroupId)!;
+    // A half rides with its class: written under the class's successor, or
+    // under its intake twin (resolveGroups only gives a half what its class has).
+    const halfOf = group.halfOfId ?? null;
     if (row.successor) {
       writes.groups.push({
         key: group.id,
@@ -403,6 +412,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         kind: group.kind,
         gradeLevel: row.successor.gradeLevel,
         predecessorId: group.id,
+        ...(halfOf ? { halfOfKey: halfOf } : {}),
       });
     }
     if (row.intake) {
@@ -412,6 +422,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         kind: group.kind,
         gradeLevel: row.intake.gradeLevel,
         predecessorId: null,
+        ...(halfOf ? { halfOfKey: intakeKey(halfOf) } : {}),
       });
     }
   }
@@ -442,7 +453,10 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
         if (!homeLeaves) stats.stranded++;
         continue;
       }
-      if (!options.carryTeachingGroupMembers) continue;
+      // A half's pupils move up with it, whatever the option says: the half
+      // is part of the class, and its successor is next year's half of the
+      // class those pupils move into.
+      if (!options.carryTeachingGroupMembers && !group.halfOfId) continue;
       if (homeLeaves) {
         // Labelled as the activation will label the pupil: a graduate when
         // the home class is at or above G, whatever its outcome is called

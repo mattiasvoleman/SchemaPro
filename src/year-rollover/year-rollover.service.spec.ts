@@ -702,7 +702,10 @@ describe('YearRolloverService — rollover execute', () => {
           } else if (rule === 'TARGET_YEAR') {
             expect({ ...at, value: row[column] }).toEqual({ ...at, value: target });
           } else if (rule === 'MAP_GROUP') {
-            expect({ ...at, continues: sourceGroupOf(row[column]) }).toEqual({ ...at, continues: from![column] });
+            // A link that is null in the source (a group that is no half) is
+            // null in the copy, or not written at all.
+            const continues = row[column] === undefined || row[column] === null ? null : sourceGroupOf(row[column]);
+            expect({ ...at, continues }).toEqual({ ...at, continues: from![column] ?? null });
           } else if (rule === 'COHORT_GRADE') {
             const origin = timplanOrigin(row);
             const grade = (from!['gradeLevel'] as number) + (origin.kind === 'CARRIED' ? 1 : 0);
@@ -1104,7 +1107,8 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect(preview.planHash).toBe(PINNED);
     // The ONLY differences from fa4a3d6, named rather than re-recorded: the
     // source read of the timplansposter selects lessonLengths (lektionslängder,
-    // 20261008090000) and the row's own ämnesfördelning (20261019090000).
+    // 20261008090000) and the row's own ämnesfördelning (20261019090000); the
+    // source read of the groups each group's class when it is a half.
     // Asserted on their own, then taken out of that select, and every call with
     // every argument is then fa4a3d6's, byte for byte.
     const requirementReads = world.calls.filter(
@@ -1129,9 +1133,23 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     expect(slotCounts).toEqual([
       { model: 'teacherDutySlot', method: 'count', args: { where: { teacherDuty: { is: { academicYearId: IDS.yearA } } } } },
     ]);
+    // The THIRD: the source read of the groups selects each group's class when
+    // it is a half (Halvklasser, 20261113090000). Asserted, then taken out.
+    const groupReads = world.calls.filter(
+      (call) =>
+        call.model === 'studentGroup' &&
+        call.method === 'findMany' &&
+        'halfOfId' in ((call.args as { select?: Record<string, unknown> }).select ?? {}),
+    );
+    expect(groupReads).toHaveLength(1);
     const asAtFa4a3d6 = world.calls.map((call) => {
       if (call.model === 'teacherDutySlot') {
         return { model: 'teacherDuty', method: 'count', args: { where: { academicYearId: IDS.yearA, blockedConstraintId: { not: null } } } };
+      }
+      if (groupReads.includes(call)) {
+        const args = call.args as { select: Record<string, unknown> };
+        const { halfOfId: _half, ...select } = args.select;
+        return { ...call, args: { ...args, select } };
       }
       if (call.model !== 'teachingRequirement' || call.method !== 'findMany') return call;
       const args = call.args as { select: Record<string, unknown> };
@@ -1806,5 +1824,73 @@ describe('YearRolloverService, carrying tjänster', () => {
   it('lets the planner roll the year without them', async () => {
     withRls.mockRejectedValueOnce(new Error('reached the database'));
     await expect(service.previewRollover('year', OPTIONS, planner)).rejects.toThrow('reached the database');
+  });
+});
+
+describe('YearRolloverService — a class split in halves (Halvklasser)', () => {
+  const H1 = 'd7a00001-0000-4000-8000-000000000001';
+  const H2 = 'd7a00002-0000-4000-8000-000000000002';
+  /** 7A split in 7A:1 (its first pupil, and the slöjd) and 7A:2 (its second). */
+  const withHalves = (): Record<string, Row[]> => {
+    const rows = defaultRolloverRows();
+    rows['studentGroup']!.push(
+      { id: H1, academicYearId: IDS.yearA, name: '7A:1', kind: 'TEACHING_GROUP', gradeLevel: 7, predecessorId: null, halfOfId: IDS.g7a },
+      { id: H2, academicYearId: IDS.yearA, name: '7A:2', kind: 'TEACHING_GROUP', gradeLevel: 7, predecessorId: null, halfOfId: IDS.g7a },
+    );
+    rows['studentGroupMember']!.push(
+      { studentGroupId: H1, studentId: IDS.p7a1, student: { studentGroupId: IDS.g7a } },
+      { studentGroupId: H2, studentId: IDS.p7a2, student: { studentGroupId: IDS.g7a } },
+    );
+    const svenska = rows['teachingRequirement']!.find((row) => row['studentGroupId'] === IDS.g7a)!;
+    rows['teachingRequirement']!.push({ ...svenska, id: 'd7a00003-0000-4000-8000-000000000003', studentGroupId: H1 });
+    return rows;
+  };
+
+  it('carries the halves with their class into its successor, with their pupils and rows, teaching groups or not', async () => {
+    const { world, service } = setup(withHalves());
+    const { result } = await previewAndExecute(world, service, {
+      ...OPTIONS,
+      carryTeachingGroups: false,
+      carryTeachingGroupMembers: false,
+    });
+    const target = result.academicYear.id;
+    const next = world.rows['studentGroup']!.filter((group) => group['academicYearId'] === target);
+    const byName = (name: string) => next.find((group) => group['name'] === name)!;
+
+    expect(next.map((group) => group['name']).sort()).toEqual(['8A', '8A:1', '8A:2', '9A']);
+    expect(byName('8A:1')).toMatchObject({ halfOfId: byName('8A')['id'], predecessorId: H1, gradeLevel: 8, kind: 'TEACHING_GROUP' });
+    expect(byName('8A:2')).toMatchObject({ halfOfId: byName('8A')['id'], predecessorId: H2, gradeLevel: 8 });
+    // Every other group is written as it always was: no halfOfId at all.
+    expect(next.filter((group) => !String(group['name']).includes(':')).every((group) => !('halfOfId' in group))).toBe(true);
+    // Ma7 grupp 1 is left behind; the halves' pupils move up with them.
+    expect(
+      world.rows['studentGroupMember']!
+        .filter((member) => next.some((group) => group['id'] === member['studentGroupId']))
+        .map((member) => [byName('8A:1')['id'] === member['studentGroupId'] ? '8A:1' : '8A:2', member['studentId']])
+        .sort(),
+    ).toEqual([
+      ['8A:1', IDS.p7a1],
+      ['8A:2', IDS.p7a2],
+    ]);
+    expect(
+      world.rows['teachingRequirement']!.filter((row) => row['studentGroupId'] === byName('8A:1')['id']),
+    ).toHaveLength(1);
+  });
+
+  it('writes the halves after the classes, in a second statement, only when there are halves', async () => {
+    const { world, service } = setup(withHalves());
+    await previewAndExecute(world, service, OPTIONS);
+    const created = world.calls.filter((call) => call.model === 'studentGroup' && call.method === 'createManyAndReturn');
+
+    expect(created).toHaveLength(2);
+    const [classes, halves] = created.map((call) => (call.args as { data: Row[] }).data);
+    expect(classes!.some((row) => 'halfOfId' in row)).toBe(false);
+    expect(halves!.map((row) => row['name'])).toEqual(['8A:1', '8A:2']);
+
+    const plain = setup();
+    await previewAndExecute(plain.world, plain.service, OPTIONS);
+    expect(
+      plain.world.calls.filter((call) => call.model === 'studentGroup' && call.method === 'createManyAndReturn'),
+    ).toHaveLength(1);
   });
 });

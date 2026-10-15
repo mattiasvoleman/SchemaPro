@@ -86,6 +86,22 @@ describe("the rollover mirror agrees with the gateway's fixture", () => {
     },
   );
 
+  // Halvklasser: a half follows its class, in its own block of the fixture.
+  it.each(fixture.halves.cases.map((c) => [c.name, c] as const))(
+    "resolves the halves for %s, collisions included",
+    (_name, c) => {
+      const choices = new Map(Object.entries(c.choices) as [string, GroupChoice][]);
+      const resolved = resolveGroups(
+        fixture.halves.input as RolloverGroupInput[],
+        c.graduatingGradeLevel,
+        { carryTeachingGroups: c.carryTeachingGroups },
+        choices,
+      );
+      expect(resolved).toEqual(c.resolved);
+      expect(nameCollisions(resolved)).toEqual(c.collisions);
+    },
+  );
+
   it.each(fixture.periods.map((row) => [row.startDate, row.endDate, row] as const))(
     "maps the period %s – %s the same way",
     (_start, _end, row) => {
