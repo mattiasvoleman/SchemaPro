@@ -6,10 +6,11 @@ import { Ss12000SourceService } from './ss12000-source.service';
 import { Ss12000Outbound, Ss12000Secrets } from './ss12000-sync.providers';
 import { Ss12000SyncService, peopleInChanges } from './ss12000-sync.service';
 
+const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const admin = {
   authId: '11111111-1111-4111-8111-111111111111',
   userId: '22222222-2222-4222-8222-222222222222',
-  schoolId: '33333333-3333-4333-8333-333333333333',
+  schoolId: SCHOOL,
   role: 'SCHOOL_ADMIN',
 } as AuthenticatedUser;
 
@@ -78,7 +79,7 @@ describe('the läslogg of the change review and the provisioning list', () => {
       change('RESPONSIBLE', PUPIL, null, { guardianLocalId: 'not-a-uuid' }, 6),
       change('DUTY_LINK', null, { userLocalId: OLD_HOLDER }, { userLocalId: TEACHER }, 7),
       change('GROUP', GROUP, null, { name: '7A' }, 8),
-      change('ORGANISATION', admin.schoolId, null, {}, 9),
+      change('ORGANISATION', SCHOOL, null, {}, 9),
     ] as never);
     expect(named).toEqual({
       PEOPLE: [PUPIL],

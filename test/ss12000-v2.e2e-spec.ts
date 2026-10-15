@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { Logger } from '@nestjs/common';
 import request from 'supertest';
+import { Role } from '../src/auth/enums/role.enum';
 import { Ss12000Service } from '../src/integration/ss12000.service';
 import { adhocActivityId } from '../src/integration/ss12000-v2/ids';
 import { verifySignature } from '../src/integration/ss12000-v2/signing';
@@ -353,7 +354,7 @@ describe('SS12000 v2.0 provider (e2e)', () => {
     });
 
     it('refuses every key route to a TEACHER, a STUDENT and a GUARDIAN', async () => {
-      for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN'] as const) {
+      for (const role of [Role.TEACHER, Role.STUDENT, Role.GUARDIAN]) {
         const user = asUser({ role });
         await http().get('/api/v1/integration-keys/provider').set('x-test-user', user).expect(403);
         await http().patch(`/api/v1/integration-keys/${W.keyFull}`).set('x-test-user', user).send({ scopes: ['groups.read'] }).expect(403);

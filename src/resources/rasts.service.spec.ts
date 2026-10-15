@@ -520,7 +520,7 @@ describe('RastsService', () => {
 
     it('refuses a caller with no school', async () => {
       await expect(
-        service.remove(RAST_ID, testUser({ schoolId: null })),
+        service.remove(RAST_ID, testUser({ schoolId: undefined })),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.rast.delete).not.toHaveBeenCalled();
     });

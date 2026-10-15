@@ -8,6 +8,7 @@ import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './u
 import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, staffingRows, type Row } from './utils/rollover-world';
 import { rolloverRowsAtFa4a3d6 } from './utils/rollover-rows-fa4a3d6';
 import type { PrismaMock } from './utils/prisma-mock';
+import { Role } from '../src/auth/enums/role.enum';
 import { PrismaService } from '../src/database/prisma.service';
 import type { AiEngineScheduleRequest } from '../src/optimization/interfaces/ai-engine-payload.interface';
 import type { StaffRequest } from '../src/optimization/interfaces/staffing.interface';
@@ -369,7 +370,7 @@ describe('Planning surface (e2e)', () => {
     it('is the administrator’s alone', async () => {
       await request(http())
         .post('/api/v1/teaching-blocks')
-        .set('x-test-user', asUser({ role: 'TEACHER' }))
+        .set('x-test-user', asUser({ role: Role.TEACHER }))
         .send({ academicYearId: YEAR_ID, name: 'Språkval åk 7' })
         .expect(403);
       expect(harness.tx['teachingBlock']!['create']).not.toHaveBeenCalled();

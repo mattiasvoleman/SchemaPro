@@ -87,7 +87,10 @@ const writtenBy = (calls: RecordedCall[]) => {
       .map((row) => row['id'])
       .filter((id) => typeof id === 'string'),
   );
-  return (row: Row) => String(row['id'] ?? '').startsWith('90000000') || drawn.has(row['id']);
+  return (row: Row) => {
+    const id = row['id'];
+    return typeof id === 'string' && (id.startsWith('90000000') || drawn.has(id));
+  };
 };
 
 describe('YearRolloverService — rollover preview', () => {
@@ -801,7 +804,7 @@ describe('YearRolloverService — rollover execute', () => {
     rows['teachingBlock']!.push({ id: other, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 8' });
     for (const requirement of rows['teachingRequirement']!) {
       if (
-        [IDS.g7a, IDS.g8a].includes(requirement['studentGroupId'] as string) &&
+        [IDS.g7a, IDS.g8a].some((id) => id === requirement['studentGroupId']) &&
         requirement['subjectId'] === IDS.ma
       ) {
         requirement['blockId'] = other;
@@ -838,7 +841,7 @@ describe('YearRolloverService — rollover execute', () => {
     const rows = defaultRolloverRows();
     rows['teachingBlock'] = [{ id: BLOCK_ID, schoolId: IDS.school, academicYearId: IDS.yearA, name: 'Språkval åk 8' }];
     for (const requirement of rows['teachingRequirement']!) {
-      if ([IDS.g8a, IDS.g9a].includes(requirement['studentGroupId'] as string)) requirement['blockId'] = BLOCK_ID;
+      if ([IDS.g8a, IDS.g9a].some((id) => id === requirement['studentGroupId'])) requirement['blockId'] = BLOCK_ID;
     }
     const { world, service } = setup(rows);
     const { result } = await previewAndExecute(world, service, OPTIONS);

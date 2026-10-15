@@ -639,7 +639,7 @@ describe('StaffingProposalService.propose', () => {
   });
 
   it('realises conflicts itself: subjects to names, rows to "Matematik för 8A", teachers to real ids in their own field only', async () => {
-    const { service } = setup(undefined, (payload) => {
+    const { service } = setup(undefined, (payload): StaffResponse => {
       const answer = engineAnswer(payload);
       const rows = schoolRows()['teachingRequirement']!;
       const ma8 = sentRow(payload, R_MA8, rows);

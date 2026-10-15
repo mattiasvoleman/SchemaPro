@@ -434,7 +434,7 @@ describe('FrameTimesService', () => {
       await expect(
         service.create(
           { minGradeLevel: 4, maxGradeLevel: 6, startTime: '08:00', endTime: '15:00' },
-          testUser({ schoolId: null }),
+          testUser({ schoolId: undefined }),
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.frameTime.create).not.toHaveBeenCalled();
@@ -627,7 +627,7 @@ describe('FrameTimesService', () => {
 
     it('refuses a caller with no school', async () => {
       await expect(
-        service.remove(FRAME_ID, testUser({ schoolId: null })),
+        service.remove(FRAME_ID, testUser({ schoolId: undefined })),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.frameTime.delete).not.toHaveBeenCalled();
     });

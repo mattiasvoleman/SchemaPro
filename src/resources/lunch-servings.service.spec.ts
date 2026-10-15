@@ -416,7 +416,7 @@ describe('LunchServingsService', () => {
       await expect(
         service.create(
           { minGradeLevel: 4, maxGradeLevel: 6, startTime: '11:00', endTime: '12:00' },
-          testUser({ schoolId: null }),
+          testUser({ schoolId: undefined }),
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.lunchServing.create).not.toHaveBeenCalled();
@@ -648,7 +648,7 @@ describe('LunchServingsService', () => {
 
     it('refuses a caller with no school', async () => {
       await expect(
-        service.remove(SERVING_ID, testUser({ schoolId: null })),
+        service.remove(SERVING_ID, testUser({ schoolId: undefined })),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.lunchServing.delete).not.toHaveBeenCalled();
     });

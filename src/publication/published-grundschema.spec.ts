@@ -134,9 +134,11 @@ describe('the published grundschema', () => {
       extraGroups: [{ studentGroupId: '7b' }],
       participants: [],
     };
-    expect(slotChanged(base, { ...base, isParked: true })).toBe(false);
+    // The same lesson parked: not a slot change, but a different lesson.
+    const parked = { ...base, isParked: true };
+    expect(slotChanged(base, parked)).toBe(false);
     expect(slotChanged(base, { ...base, endTime: time(10) })).toBe(true);
-    expect(lessonDiffers(base, { ...base, isParked: true })).toBe(true);
+    expect(lessonDiffers(base, parked)).toBe(true);
     expect(lessonDiffers(base, { ...base, extraGroups: [] })).toBe(true);
     expect(lessonDiffers(base, { ...base })).toBe(false);
   });

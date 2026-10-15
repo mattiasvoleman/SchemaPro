@@ -3,7 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 import { createPrismaMock, createTxMock } from '../../../test/utils/prisma-mock';
 import type { PrismaService } from '../../database/prisma.service';
 import { Ss12000SourceError } from '../ss12000-sync/errors';
-import type { OutboundRequest } from '../ss12000-sync/outbound';
+import type { OutboundRequest, OutboundResponse } from '../ss12000-sync/outbound';
 import { Ss12000Outbound, Ss12000Secrets } from '../ss12000-sync/ss12000-sync.providers';
 import { JobRunner } from '../../jobs/job-runner';
 import { verifySignature, webhookSecretAad } from './signing';
@@ -14,7 +14,7 @@ const KEY = '90000000-0000-4000-8000-000000000001';
 const SUB = 'a0000000-0000-4000-8000-000000000001';
 const config = (background: boolean) => ({ get: () => ({ secretsKey: Buffer.alloc(32, 9), background }) }) as unknown as ConfigService;
 
-function setup(options: { send?: (req: OutboundRequest) => Promise<{ status: number; headers: object; body: Buffer }>; background?: boolean } = {}) {
+function setup(options: { send?: (req: OutboundRequest) => Promise<OutboundResponse>; background?: boolean } = {}) {
   const tx = createTxMock();
   const prisma = createPrismaMock(tx);
   const secrets = new Ss12000Secrets(config(options.background ?? false));
@@ -23,7 +23,7 @@ function setup(options: { send?: (req: OutboundRequest) => Promise<{ status: num
     override clientOptions() {
       return {
         policy: { allowLoopback: true },
-        send: async (req: OutboundRequest) => {
+        send: async (req: OutboundRequest): Promise<OutboundResponse> => {
           sent.push(req);
           return options.send ? options.send(req) : { status: 204, headers: {}, body: Buffer.alloc(0) };
         },

@@ -78,6 +78,7 @@ function roster(patch: Partial<FetchedRoster> & { people?: S1Person[] } = {}): F
     duties: [],
     deleted: null,
     invalid: [],
+    lookup: { refused: false, unresolved: 0 },
     ...patch,
   };
 }
