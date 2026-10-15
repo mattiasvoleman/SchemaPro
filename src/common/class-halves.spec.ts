@@ -63,11 +63,20 @@ describe('halfPairs', () => {
 });
 
 describe('the unplaced pupils and the halves’ share of them', () => {
-  it('reads the class less everyone a half holds, and shares it out rounded up', () => {
+  it('reads the class less everyone a half holds, and fills each half towards an even share', () => {
     const { membersOf } = maps({ '7A:1': ['alva'] });
 
     expect(halvesByClass(groups)).toEqual(new Map([['7A', ['7A:1', '7A:2']]]));
     expect(unplacedPupils('7A', ['7A:1', '7A:2'], membersOf)).toEqual(['bo', 'cim', 'dag']);
-    expect(unplacedShareOf(groups, membersOf)).toEqual(new Map([['7A:1', 2], ['7A:2', 2]]));
+    // Two each: 7A:1 has Alva and takes one more, 7A:2 takes two.
+    expect(unplacedShareOf(groups, membersOf)).toEqual(new Map([['7A:1', 1], ['7A:2', 2]]));
+  });
+
+  it('shares evenly before anyone is placed, and gives a half filled past its share nothing more', () => {
+    expect(unplacedShareOf(groups, maps({}).membersOf)).toEqual(new Map([['7A:1', 2], ['7A:2', 2]]));
+    // Three in 7A:1: Dag is all that is left, and 7A:2 is where he can go.
+    expect(unplacedShareOf(groups, maps({ '7A:1': ['alva', 'bo', 'cim'] }).membersOf)).toEqual(
+      new Map([['7A:1', 0], ['7A:2', 1]]),
+    );
   });
 });

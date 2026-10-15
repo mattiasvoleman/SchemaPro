@@ -455,7 +455,14 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       }
       // A half's pupils move up with it, whatever the option says: the half
       // is part of the class, and its successor is next year's half of the
-      // class those pupils move into.
+      // class those pupils move into. Only its class's pupils, though: a
+      // member whose home is elsewhere could not be placed in the successor
+      // (the member trigger's rule), and one such row would refuse the whole
+      // rollover; they are stranded, as a pupil whose class does not follow.
+      if (group.halfOfId && home !== group.halfOfId) {
+        if (!homeLeaves) stats.stranded++;
+        continue;
+      }
       if (!options.carryTeachingGroupMembers && !group.halfOfId) continue;
       if (homeLeaves) {
         // Labelled as the activation will label the pupil: a graduate when

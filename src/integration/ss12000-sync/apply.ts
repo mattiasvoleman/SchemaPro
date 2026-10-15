@@ -21,7 +21,11 @@ import type { ChangeEntity, ChangeOp } from './diff';
  * admin deselects a LINK ("not the same person"), the row the address
  * matched gets nothing — no name, no class, no guardian. A change whose
  * reference does not resolve is skipped with SS12000_DEPENDENCY_NOT_APPLIED
- * and stays unapplied.
+ * and stays unapplied. A member the source puts in a half of a class
+ * (Halvklasser, 20261113090000) who is not that class's pupil now, or who is
+ * in its other half, is skipped with SS12000_HALF_MEMBER_NOT_IN_CLASS: the
+ * database refuses such a row, and one refusal would take the whole apply
+ * with it, every night.
  *
  * Every write follows the column rules today's writers follow:
  *
@@ -71,6 +75,54 @@ function chunks<T>(rows: T[]): T[][] {
   const out: T[][] = [];
   for (let at = 0; at < rows.length; at += CHUNK) out.push(rows.slice(at, at + CHUNK));
   return out;
+}
+
+/**
+ * The member changes that would put a pupil in a half of a class they are
+ * not in — by the member trigger's rule, the half's class or its
+ * predecessor, read after this apply's own class moves — or in the class's
+ * other half, already or earlier in this apply. Two reads, and only when a
+ * change names a half.
+ */
+async function membersOutsideTheirHalf(
+  tx: PrismaClient,
+  adding: ReadonlyArray<{ change: StoredChange; groupId: string; userId: string }>,
+): Promise<Set<string>> {
+  const refused = new Set<string>();
+  if (adding.length === 0) return refused;
+  const halves = await tx.studentGroup.findMany({
+    where: { id: { in: [...new Set(adding.map((row) => row.groupId))] }, halfOfId: { not: null } },
+    select: { id: true, halfOfId: true, halfOf: { select: { predecessorId: true } } },
+  });
+  if (halves.length === 0) return refused;
+  const halfById = new Map(halves.map((half) => [half.id, half]));
+  const pupils = [...new Set(adding.filter((row) => halfById.has(row.groupId)).map((row) => row.userId))];
+  const homeOf = new Map(
+    (await tx.user.findMany({ where: { id: { in: pupils } }, select: { id: true, studentGroupId: true } })).map(
+      (user) => [user.id, user.studentGroupId],
+    ),
+  );
+  const placedIn = new Map(
+    (
+      await tx.studentGroupMember.findMany({
+        where: { studentId: { in: pupils }, halfOfId: { not: null } },
+        select: { studentId: true, studentGroupId: true, halfOfId: true },
+      })
+    ).map((row) => [`${row.halfOfId}|${row.studentId}`, row.studentGroupId]),
+  );
+  for (const { change, groupId, userId } of adding) {
+    const half = halfById.get(groupId);
+    if (!half?.halfOfId) continue;
+    const home = homeOf.get(userId) ?? null;
+    const inTheClass = home !== null && (home === half.halfOfId || home === half.halfOf?.predecessorId);
+    const placed = placedIn.get(`${half.halfOfId}|${userId}`);
+    if (!inTheClass || (placed !== undefined && placed !== groupId)) {
+      refused.add(change.id);
+      continue;
+    }
+    placedIn.set(`${half.halfOfId}|${userId}`, groupId);
+  }
+  return refused;
 }
 
 export async function applyChanges(
@@ -258,11 +310,20 @@ export async function applyChanges(
 
   // --- teaching-group members -------------------------------------------------
   const memberRows: Array<{ schoolId: string; studentGroupId: string; studentId: string }> = [];
+  const adding: Array<{ change: StoredChange; groupId: string; userId: string }> = [];
   for (const change of of('GROUP_MEMBERSHIP', 'ADD')) {
     const userId = userOf(change);
     const groupId = groupOf(change);
     if (!userId || !groupId) {
       skip(change, 'SS12000_DEPENDENCY_NOT_APPLIED');
+      continue;
+    }
+    adding.push({ change, groupId, userId });
+  }
+  const outsideTheirHalf = await membersOutsideTheirHalf(tx, adding);
+  for (const { change, groupId, userId } of adding) {
+    if (outsideTheirHalf.has(change.id)) {
+      skip(change, 'SS12000_HALF_MEMBER_NOT_IN_CLASS');
       continue;
     }
     memberRows.push({ schoolId, studentGroupId: groupId, studentId: userId });

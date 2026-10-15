@@ -79,6 +79,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'CURRENT',
     why: 'the provisioning list: linked people as they are now, with their current class',
   },
+  'src/integration/ss12000-sync/apply.ts': {
+    basis: 'CURRENT',
+    why: 'a sync apply placing pupils in a half (Halvklasser): each pupil’s class and placement as the apply leaves them, the facts the half trigger holds them to',
+  },
   'src/integration/ss12000-v2/slice.ts': {
     basis: 'CURRENT',
     why: 'the SS12000 v2.0 provider: an external export of the active and past years as they are (a future year never leaves); class memberships from the history (ENROLLED, below), teaching groups as they are — they carry no dates',

@@ -64,7 +64,7 @@ import type { CreateRastDto } from '../../src/resources/dto/rast.dto';
 import { FrameTimesService } from '../../src/resources/frame-times.service';
 import { LunchServingsService } from '../../src/resources/lunch-servings.service';
 import { RastsService } from '../../src/resources/rasts.service';
-import { StudentGroupsService } from '../../src/resources/student-groups.service';
+import { CLASS_ALREADY_SPLIT, PUPIL_NOT_IN_CLASS, StudentGroupsService } from '../../src/resources/student-groups.service';
 import type { CreateRoomBookingDto } from '../../src/room-bookings/dto/room-booking.dto';
 import { RoomBookingsService } from '../../src/room-bookings/room-bookings.service';
 import { ImportService } from '../../src/import/import.service';
@@ -79,6 +79,7 @@ import { readDeliveredRows, staffingCreditStatement } from '../../src/timplan/ti
 import type { DeliveredLineDetail } from '../../src/common/timplan-delivered';
 import {
   BLOCK_MEMBERS_DIFFER,
+  classHalfRefusal,
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
   rethrowPrismaError,
@@ -2253,6 +2254,173 @@ async function runChecks(
   });
 
   // ---- (u3) tillgodoräknad tid through the real adapter
+  // ---- (u2d) Halvklasser through the real adapter: the split's lock, and the driver's refusals
+  await check('(u2d) two splits of one class wait for each other and the second is a 409, a placement moves pupils between halves in one write, and the database\u2019s HC409 and one-half index reach the client as their 409s', async () => {
+    const years = new AcademicYearsService(api);
+    const groups = new StudentGroupsService(api);
+    const other = open(withConnectionLimit(appUrl, 1));
+    await other.onModuleInit();
+    const isCode = (Type: typeof ConflictException | typeof BadRequestException, code: string) => (error: unknown) => {
+      assert.ok(error instanceof Type, `expected ${Type.name}, got ${summarise(error)}`);
+      assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+      return true;
+    };
+    /** A write past every service, as a stray writer would send it: the error, unmapped. */
+    const direct = async (write: (tx: PrismaClient) => Promise<unknown>): Promise<unknown> => {
+      try {
+        await api.withRls(admin, write);
+      } catch (error) {
+        return error;
+      }
+      return assert.fail('the database let the write through');
+    };
+    const group = async (name: string) =>
+      (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+           VALUES ($1, $2, $3 || ' ' || $4, 'CLASS', 7, now()) RETURNING id`,
+          [fixture.schoolId, year.id, MARKER, name],
+        )
+      ).rows[0].id;
+    const pupil = async (n: string, classId: string) =>
+      (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+           VALUES ($1, $2 || '-halva-' || $3 || '@example.invalid', 'Halva', $3, 'STUDENT', gen_random_uuid(), true, $4, now())
+           RETURNING id`,
+          [fixture.schoolId, MARKER, n, classId],
+        )
+      ).rows[0].id;
+
+    const year = await years.create(
+      { name: `${MARKER} halvor`, startDate: '2097-08-16', endDate: '2098-06-10' } as never,
+      admin,
+    );
+    try {
+      const klass = await group('7A');
+      const b = await group('7B');
+      const [p1, p2, p3] = [await pupil('1', klass), await pupil('2', klass), await pupil('3', klass)];
+      const stranger = await pupil('4', b);
+
+      // Two splits of one class: the holder makes its halves and parks before
+      // COMMIT; the rival, on its own connection with other names, must wait
+      // on the class's row lock — asked of the database, not of a clock — and
+      // then find the class split. Without the lock it would make two more.
+      const touched = deferred<number>();
+      const release = deferred<void>();
+      const parked = {
+        withRls: <T>(user: AuthenticatedUser, fn: (tx: PrismaClient) => Promise<T>) =>
+          api.withRls(user, async (tx) => {
+            const result = await fn(tx);
+            const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+            touched.resolve(pid);
+            await release.promise;
+            return result;
+          }),
+      } as unknown as PrismaService;
+      const holderSettled = new StudentGroupsService(parked)
+        .split(klass, { names: ['A1', 'A2'].map((name) => `${MARKER} ${name}`) }, admin)
+        .then(
+          (halves) => halves,
+          (error: unknown) => error,
+        );
+      const pid = await Promise.race([
+        touched.promise,
+        holderSettled.then((result) => {
+          throw result instanceof Error ? result : new Error('the holder committed before it parked');
+        }),
+      ]);
+      let rivalDone = false;
+      const rivalSettled = new StudentGroupsService(other)
+        .split(klass, { names: ['B1', 'B2'].map((name) => `${MARKER} ${name}`) }, admin)
+        .then(
+          () => null,
+          (error: unknown) => error,
+        )
+        .finally(() => {
+          rivalDone = true;
+        });
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',
+          [pid],
+        );
+        if (rows[0].n > 0) break;
+        if (rivalDone || tries > 500) {
+          release.resolve();
+          await holderSettled;
+          throw new Error('the second split never waited on the first: the split takes no lock on the class');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      const [made, rivalError] = await Promise.all([holderSettled, rivalSettled]);
+      assert.ok(Array.isArray(made), `the holder failed: ${summarise(made)}`);
+      isCode(ConflictException, CLASS_ALREADY_SPLIT)(rivalError);
+      const halves = (
+        await owner.query<{ id: string; name: string }>(
+          'SELECT id, name FROM "StudentGroups" WHERE "halfOfId" = $1 ORDER BY name',
+          [klass],
+        )
+      ).rows;
+      assert.deepEqual(
+        halves.map((half) => half.name),
+        [`${MARKER} A1`, `${MARKER} A2`],
+      );
+      const [h1, h2] = halves;
+
+      // A placement, then every pupil into the other half in one write: the
+      // one-half index never sees a pupil in both halfway.
+      assert.deepEqual(
+        await groups.placeHalves(klass, { halves: [{ groupId: h1.id, studentIds: [p1, p2] }, { groupId: h2.id, studentIds: [] }] }, admin),
+        { placed: 2, unplaced: 1 },
+      );
+      assert.deepEqual(
+        await groups.placeHalves(klass, { halves: [{ groupId: h1.id, studentIds: [] }, { groupId: h2.id, studentIds: [p1, p2, p3] }] }, admin),
+        { placed: 3, unplaced: 0 },
+      );
+      await assert.rejects(
+        groups.placeHalves(klass, { halves: [{ groupId: h1.id, studentIds: [stranger] }, { groupId: h2.id, studentIds: [] }] }, admin),
+        isCode(BadRequestException, PUPIL_NOT_IN_CLASS),
+      );
+
+      // Past the services, the driver's shapes, and the 409 each maps to.
+      const twice = await direct((tx) =>
+        tx.studentGroupMember.create({ data: { schoolId: fixture.schoolId, studentGroupId: h1.id, studentId: p1 } }),
+      );
+      assert.equal(classHalfRefusal(twice), 'HALF_MEMBER_IN_OTHER_HALF', summarise(twice));
+      assert.throws(() => rethrowPrismaError(twice), isCode(ConflictException, 'HALF_MEMBER_IN_OTHER_HALF'));
+      for (const [reason, write] of [
+        [
+          'HALF_MEMBER_NOT_IN_CLASS',
+          (tx: PrismaClient) =>
+            tx.studentGroupMember.create({ data: { schoolId: fixture.schoolId, studentGroupId: h1.id, studentId: stranger } }),
+        ],
+        ['HALF_NOT_A_TEACHING_GROUP', (tx: PrismaClient) => tx.studentGroup.update({ where: { id: h1.id }, data: { kind: 'CLASS' } })],
+        ['HALF_LINK_IS_FIXED', (tx: PrismaClient) => tx.studentGroup.update({ where: { id: h1.id }, data: { halfOfId: b } })],
+        ['CLASS_HAS_HALVES', (tx: PrismaClient) => tx.studentGroup.update({ where: { id: klass }, data: { kind: 'TEACHING_GROUP' } })],
+      ] as const) {
+        const refused = await direct(write);
+        assert.equal(sqlStateOf(refused), 'HC409', `${reason}: ${summarise(refused)}`);
+        assert.equal(classHalfRefusal(refused), reason, summarise(refused));
+        assert.throws(() => rethrowPrismaError(refused), isCode(ConflictException, reason));
+      }
+
+      // A pupil who changes class leaves the halves, whoever moves them.
+      await api.withRls(admin, (tx) => tx.user.update({ where: { id: p3 }, data: { studentGroupId: b } }));
+      const left = await owner.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM "StudentGroupMembers" WHERE "studentId" = $1',
+        [p3],
+      );
+      assert.equal(left.rows[0].n, 0);
+    } finally {
+      await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email LIKE $2 || '-halva-%'`, [fixture.schoolId, MARKER]);
+      // The year takes its classes and their halves with it.
+      await years.remove(year.id, admin);
+      await other.$disconnect();
+    }
+  });
+
   await check('(u3) a timplan credit round-trips under RLS, a CHECK or key reached past the DTO is a 400 naming the field, and a teacher reads but cannot write', async () => {
     const credits = new TimplanCreditsService(api);
     const subjects = new SubjectsService(api);
@@ -4031,7 +4199,13 @@ async function runChecks(
           'assign a substitute': 34,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
-          'PATCH a new teacher': 34,
+          // +1 since Halvklasser on a PATCH that meets another group's lesson
+          // at its hour, as these two beside 8A do: before the roster reads
+          // it asks which groups in play are halves or have halves (one
+          // StudentGroups SELECT by id and by halfOfId), since an empty half
+          // has no membership row to be found by. A PATCH that meets nobody,
+          // as the drag to Monday, asks nothing.
+          'PATCH a new teacher': 35,
           // +1 each since Ämnesfördelning: a drag to another weekday asks the
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
@@ -4040,7 +4214,7 @@ async function runChecks(
           // parallel block it is in, with the other members' lessons, in one
           // joined statement (block-lessons.ts); this school has no block.
           'PATCH a drag': 23,
-          'PATCH a drag back beside 8A': 26,
+          'PATCH a drag back beside 8A': 27,
           'place a meal': 7,
           // +1 since Tjänstens perioder (20261022120000): the year has posts,
           // so the load read asks for their periods (one indexed SELECT); a
@@ -4924,6 +5098,9 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
     `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning', $1 || '-visare')`,
     [MARKER],
   );
+  // (u2d)'s pupils and year, for a run that stopped inside it.
+  await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email LIKE $2 || '-halva-%'`, [schoolId, MARKER]);
+  await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' halvor'`, [schoolId, MARKER]);
   // (u4)'s pupil, for a run that stopped before deleting it.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.

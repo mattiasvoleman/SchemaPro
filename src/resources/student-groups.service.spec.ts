@@ -196,6 +196,21 @@ describe('StudentGroupsService', () => {
       });
     });
 
+    it('moves a class’s halves to its new årskurs with it, and nothing for any other group', async () => {
+      tx.studentGroup.update.mockResolvedValueOnce({ id: GROUP_ID, kind: 'CLASS', schoolId: SCHOOL_ID });
+      tx.studentGroup.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.update(GROUP_ID, { gradeLevel: 8 }, testUser());
+      expect(tx.studentGroup.updateMany).toHaveBeenCalledWith({ where: { halfOfId: GROUP_ID }, data: { gradeLevel: 8 } });
+
+      tx.studentGroup.updateMany.mockClear();
+      tx.studentGroup.update.mockResolvedValueOnce({ id: GROUP_ID, kind: 'CLASS', schoolId: SCHOOL_ID });
+      await service.update(GROUP_ID, { name: '7B' }, testUser());
+      tx.studentGroup.update.mockResolvedValueOnce({ id: GROUP_ID, kind: 'TEACHING_GROUP', schoolId: SCHOOL_ID });
+      await service.update(GROUP_ID, { gradeLevel: 8 }, testUser());
+      expect(tx.studentGroup.updateMany).not.toHaveBeenCalled();
+    });
+
     it('clears the grade level with an explicit null', async () => {
       tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID });
 
@@ -673,7 +688,10 @@ describe('StudentGroupsService — Halvklasser', () => {
         where: { role: 'STUDENT', isActive: true, studentGroupId: { in: [GROUP_ID] } },
         select: { id: true },
       });
-      expect(tx.studentGroupMember.deleteMany).toHaveBeenCalledWith({ where: { studentGroupId: { in: [H1, H2] } } });
+      // Only the pupils it judges: a past year's placement, or an inactive pupil's, stays.
+      expect(tx.studentGroupMember.deleteMany).toHaveBeenCalledWith({
+        where: { studentGroupId: { in: [H1, H2] }, studentId: { in: [pupil(1), pupil(2), pupil(3)] } },
+      });
       expect(tx.studentGroupMember.createMany).toHaveBeenCalledWith({
         data: [
           { schoolId: SCHOOL_ID, studentGroupId: H1, studentId: pupil(1) },
@@ -683,6 +701,10 @@ describe('StudentGroupsService — Halvklasser', () => {
       expect(tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!).toBeLessThan(
         tx.studentGroupMember.createMany.mock.invocationCallOrder[0]!,
       );
+      // The class's row first, as split takes it: a second placement waits.
+      const [lock] = tx.$queryRaw.mock.calls[0]! as [readonly string[]];
+      expect(lock.join('?')).toMatch(/FROM "StudentGroups" WHERE "id" = \?::uuid FOR NO KEY UPDATE/);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.studentGroup.findUnique.mock.invocationCallOrder[0]!);
     });
 
     it('reads the predecessor’s pupils too, for a rolled läsår not yet activated', async () => {
@@ -758,6 +780,19 @@ describe('StudentGroupsService — Halvklasser', () => {
         message: expect.stringContaining('går inte i 7A'),
       });
       expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('replaces the class’s pupils’ rows only, so a past year’s placement or an inactive pupil’s stays', async () => {
+      tx.studentGroup.findUnique.mockResolvedValue({ id: H1, halfOf: { id: GROUP_ID, name: '7A', predecessorId: null } });
+      tx.user.findMany.mockResolvedValue([{ id: pupil(1) }, { id: pupil(2) }]);
+      tx.studentGroupMember.deleteMany.mockResolvedValue({ count: 0 });
+
+      await service.setMembers(H1, { studentIds: [] }, testUser());
+
+      expect(tx.studentGroupMember.deleteMany).toHaveBeenCalledWith({
+        where: { studentGroupId: H1, studentId: { in: [pupil(1), pupil(2)] } },
+      });
+      expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
     });
   });
 });

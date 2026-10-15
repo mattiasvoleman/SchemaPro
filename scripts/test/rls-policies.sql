@@ -21370,3 +21370,509 @@ EXCEPTION WHEN insufficient_privilege THEN NULL;
 END $$;
 SET LOCAL ROLE app_authenticated;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 150: halvklassernas regler står i katalogen (20261113090000).
+--
+-- What sections 151-153 prove by acting, read from the catalogue, where a
+-- later migration that loosens one shows up even on a path no section walks:
+-- the four functions are SECURITY DEFINER with a pinned search_path, owned
+-- by the migration owner and executed by no API role; each trigger fires
+-- when and on the columns the migration says; a half's class is a composite
+-- tenant key that deletes the half with the class; one half per class is a
+-- partial unique index; and the publish check warns until a school says
+-- otherwise.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  fn text;
+  f oid;
+  cols text[];
+  r record;
+  idx record;
+  fk record;
+  col record;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY[
+    'app.student_groups_half_is_of_a_class()',
+    'app.student_group_members_half_of()',
+    'app.student_group_members_in_the_class()',
+    'app.users_leave_the_old_class_halves()'
+  ] LOOP
+    f := fn::regprocedure;
+    IF has_function_privilege('app_authenticated', f, 'EXECUTE')
+       OR has_function_privilege('authenticated', f, 'EXECUTE')
+       OR has_function_privilege('anon', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'halves catalogue: an API role may execute %', fn;
+    END IF;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = f) THEN
+      RAISE EXCEPTION 'halves catalogue: % is not SECURITY DEFINER', fn;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = f AND proconfig @> ARRAY['search_path=public, pg_temp']) THEN
+      RAISE EXCEPTION 'halves catalogue: % has no pinned search_path (%)', fn, (SELECT proconfig FROM pg_proc WHERE oid = f);
+    END IF;
+    IF (SELECT proowner FROM pg_proc WHERE oid = f) IN (SELECT oid FROM pg_roles
+         WHERE rolname IN ('app_authenticated', 'authenticated', 'anon')) THEN
+      RAISE EXCEPTION 'halves catalogue: % is owned by an API role', fn;
+    END IF;
+  END LOOP;
+
+  -- name, table, function, ROW|BEFORE|INSERT|DELETE|UPDATE bits (1|2|4|8|16), columns
+  FOR r IN SELECT * FROM (VALUES
+    ('StudentGroups_half_is_of_a_class', '"StudentGroups"', 'app.student_groups_half_is_of_a_class()', 1 | 4 | 16,
+     ARRAY['academicYearId', 'halfOfId', 'kind']),
+    ('StudentGroupMembers_half_of', '"StudentGroupMembers"', 'app.student_group_members_half_of()', 1 | 2 | 4 | 16,
+     ARRAY['halfOfId', 'schoolId', 'studentGroupId']),
+    ('StudentGroupMembers_in_the_class', '"StudentGroupMembers"', 'app.student_group_members_in_the_class()', 1 | 4 | 16,
+     ARRAY['halfOfId', 'studentGroupId', 'studentId']),
+    ('Users_leave_the_old_class_halves', '"Users"', 'app.users_leave_the_old_class_halves()', 1 | 16,
+     ARRAY['studentGroupId'])
+  ) AS t(name, tbl, fn, bits, cols) LOOP
+    SELECT array_agg(a.attname::text ORDER BY a.attname) INTO cols
+      FROM pg_trigger t
+      JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = ANY (t.tgattr)
+     WHERE t.tgrelid = r.tbl::regclass AND t.tgname = r.name AND t.tgfoid = r.fn::regprocedure
+       AND (t.tgtype & (1 | 2 | 4 | 8 | 16)) = r.bits AND t.tgenabled = 'O';
+    IF cols IS DISTINCT FROM r.cols THEN
+      RAISE EXCEPTION 'halves catalogue: % fires on % (expected %, as bits %)', r.name, cols, r.cols, r.bits;
+    END IF;
+  END LOOP;
+
+  SELECT c.confdeltype AS del,
+         ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n ORDER BY k.o) AS here,
+         ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(n, o)
+                 JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n ORDER BY k.o) AS there,
+         c.confrelid::regclass::text AS target
+    INTO fk FROM pg_constraint c WHERE c.conname = 'StudentGroups_halfOfId_schoolId_fkey';
+  IF fk.del IS DISTINCT FROM 'c' OR fk.here IS DISTINCT FROM ARRAY['halfOfId', 'schoolId']
+     OR fk.there IS DISTINCT FROM ARRAY['id', 'schoolId'] OR fk.target <> '"StudentGroups"' THEN
+    RAISE EXCEPTION 'halves catalogue: a half''s class key is %', row_to_json(fk);
+  END IF;
+
+  SELECT i.indisunique AS uniq, pg_get_expr(i.indpred, i.indrelid) AS pred,
+         ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(n, o)
+                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.n ORDER BY k.o) AS cols
+    INTO idx FROM pg_index i WHERE i.indexrelid = '"StudentGroupMembers_one_half_per_class"'::regclass;
+  IF NOT idx.uniq OR idx.cols IS DISTINCT FROM ARRAY['halfOfId', 'studentId']
+     OR idx.pred IS DISTINCT FROM '("halfOfId" IS NOT NULL)' THEN
+    RAISE EXCEPTION 'halves catalogue: one half per class is %', row_to_json(idx);
+  END IF;
+
+  SELECT a.attnotnull AS notnull, pg_get_expr(d.adbin, d.adrelid) AS dflt INTO col
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"PublicationSettings"'::regclass AND a.attname = 'gateEmptyHalf';
+  IF NOT col.notnull OR col.dflt IS DISTINCT FROM '''WARN''::"PublishGateMode"' THEN
+    RAISE EXCEPTION 'halves catalogue: gateEmptyHalf is %', row_to_json(col);
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 151: en halva är en undervisningsgrupp av en klass i sitt eget
+-- läsår, och förblir det (SQLSTATE HC409).
+--
+-- Every way a half can stop being one is refused with HC409, the reason
+-- token first and only the written row's id in DETAIL — through both API
+-- roles, because PostgREST's may write StudentGroups under the admin's arm
+-- and meets no DTO. A half naming another school's class is the composite
+-- key's 23503, never an HC409 that would describe school B's row. A half of
+-- a class of its own year is let in, and deleting the class takes it along.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_group_b', :'group_b', true);
+
+-- 'sqlstate|message|detail' of a statement's refusal, or 'none'.
+CREATE FUNCTION pg_temp.rls151_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; msg text; det text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+  RETURN st || '|' || msg || '|' || coalesce(det, '');
+END $$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid;
+  later uuid;
+  cls uuid; other_cls uuid; tg uuid; half uuid; plain uuid; fresh uuid;
+  via text;
+  got text;
+  c record;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'halves: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS151 senare år', DATE '2095-08-15', DATE '2096-06-10', false, now()) RETURNING id INTO later;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, year, 'RLS151 7A', 'CLASS', 7, now()) RETURNING id INTO cls;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, year, 'RLS151 7B', 'CLASS', 7, now()) RETURNING id INTO other_cls;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS151 Ma7', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, year, 'RLS151 7A:1', 'TEACHING_GROUP', 7, cls, now()) RETURNING id INTO half;
+  IF half IS NULL THEN RAISE EXCEPTION 'halves: a half of a class of its own year was refused'; END IF;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, year, 'RLS151 Sv7', 'TEACHING_GROUP', now()) RETURNING id INTO plain;
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    IF current_user <> via THEN RAISE EXCEPTION 'halves: running as %, not %', current_user, via; END IF;
+    FOR c IN SELECT * FROM (VALUES
+      ('a half of a teaching group', 'HALF_OF_NOT_A_CLASS', true,
+       format('INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "halfOfId", "updatedAt")
+               VALUES (%%L, %L, %L, ''RLS151 x'', ''TEACHING_GROUP'', %L, now())', school, year, tg)),
+      ('a half that is a class', 'HALF_NOT_A_TEACHING_GROUP', true,
+       format('INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "halfOfId", "updatedAt")
+               VALUES (%%L, %L, %L, ''RLS151 x'', ''CLASS'', %L, now())', school, year, cls)),
+      ('a half in another year than its class', 'HALF_IN_OTHER_YEAR', true,
+       format('INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "halfOfId", "updatedAt")
+               VALUES (%%L, %L, %L, ''RLS151 x'', ''TEACHING_GROUP'', %L, now())', school, later, cls)),
+      ('a half moved to another class', 'HALF_LINK_IS_FIXED', false,
+       format('UPDATE "StudentGroups" SET "halfOfId" = %L WHERE id = %L', other_cls, half)),
+      ('a half let go of its class', 'HALF_LINK_IS_FIXED', false,
+       format('UPDATE "StudentGroups" SET "halfOfId" = NULL WHERE id = %L', half)),
+      ('a teaching group made a half after the fact', 'HALF_LINK_IS_FIXED', false,
+       format('UPDATE "StudentGroups" SET "halfOfId" = %L WHERE id = %L', cls, plain)),
+      ('a half turned into a class', 'HALF_NOT_A_TEACHING_GROUP', false,
+       format('UPDATE "StudentGroups" SET kind = ''CLASS'' WHERE id = %L', half)),
+      ('a half moved to another year', 'HALF_IN_OTHER_YEAR', false,
+       format('UPDATE "StudentGroups" SET "academicYearId" = %L WHERE id = %L', later, half)),
+      ('a class with halves turned into a teaching group', 'CLASS_HAS_HALVES', false,
+       format('UPDATE "StudentGroups" SET kind = ''TEACHING_GROUP'' WHERE id = %L', cls)),
+      ('a class with halves moved to another year', 'CLASS_HAS_HALVES', false,
+       format('UPDATE "StudentGroups" SET "academicYearId" = %L WHERE id = %L', later, cls))
+    ) AS t(what, token, inserts, statement) LOOP
+      fresh := gen_random_uuid();
+      got := pg_temp.rls151_refusal(CASE WHEN c.inserts THEN format(c.statement, fresh) ELSE c.statement END);
+      IF split_part(got, '|', 1) <> 'HC409' OR split_part(got, '|', 2) NOT LIKE c.token || ': %' THEN
+        RAISE EXCEPTION 'halves: % as % was answered "%", expected %', c.what, via, got, c.token;
+      END IF;
+      IF split_part(got, '|', 3) <> format('studentGroupId=%s',
+           CASE WHEN c.inserts THEN fresh WHEN c.token = 'CLASS_HAS_HALVES' THEN cls
+                WHEN c.what LIKE 'a teaching group%' THEN plain ELSE half END) THEN
+        RAISE EXCEPTION 'halves: % as % has the detail "%"', c.what, via, split_part(got, '|', 3);
+      END IF;
+    END LOOP;
+
+    -- Another school's class: the key's refusal, and nothing of school B's.
+    got := pg_temp.rls151_refusal(format(
+      'INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "halfOfId", "updatedAt")
+       VALUES (%L, %L, ''RLS151 x'', ''TEACHING_GROUP'', %L, now())', school, year, current_setting('app.test_group_b')));
+    IF split_part(got, '|', 1) <> '23503' THEN
+      RAISE EXCEPTION 'halves: a half of another school''s class as % was answered "%"', via, got;
+    END IF;
+    IF got LIKE '%RLS Fixture Class%' THEN
+      RAISE EXCEPTION 'halves: the refusal names school B''s class: %', got;
+    END IF;
+
+    -- Its own half: refused as itself by the CHECK, before any key.
+    fresh := gen_random_uuid();
+    got := pg_temp.rls151_refusal(format(
+      'INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, kind, "halfOfId", "updatedAt")
+       VALUES (%L, %L, %L, ''RLS151 x'', ''TEACHING_GROUP'', %L, now())', fresh, school, year, fresh));
+    IF split_part(got, '|', 1) <> '23514' THEN
+      RAISE EXCEPTION 'halves: a group that is its own half as % was answered "%"', via, got;
+    END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+
+  -- What a class with halves may still do: be renamed, change grade.
+  UPDATE "StudentGroups" SET name = 'RLS151 7A ny', "gradeLevel" = 8 WHERE id = cls;
+  IF NOT FOUND THEN RAISE EXCEPTION 'halves: a class with halves could not be renamed'; END IF;
+  UPDATE "StudentGroups" SET name = 'RLS151 7A ny:1' WHERE id = half;
+  IF NOT FOUND THEN RAISE EXCEPTION 'halves: a half could not be renamed'; END IF;
+
+  -- Deleting the class deletes its half.
+  DELETE FROM "StudentGroups" WHERE id = cls;
+  IF EXISTS (SELECT 1 FROM "StudentGroups" WHERE id = half) THEN
+    RAISE EXCEPTION 'halves: deleting the class left its half';
+  END IF;
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 152: en elev står i en halva av sin egen klass, och i högst en.
+--
+-- StudentGroupMembers."halfOfId" is the group's own, whatever the writer
+-- sends; a second half of the same class is the unique index's 23505, named;
+-- a pupil of another class, or of none, is HC409 HALF_MEMBER_NOT_IN_CLASS
+-- with only the membership's id. Next year's half takes the pupils of its
+-- class's predecessor (rollover, before activation) and nobody else's. A
+-- membership moved off a half carries no class, so the pupil may then join
+-- the other half.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+
+-- 'sqlstate|message|detail|constraint' of a membership's refusal, or 'none'.
+CREATE FUNCTION pg_temp.rls152_place(member uuid, grp uuid, pupil uuid) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text; msg text; det text; con text;
+BEGIN
+  INSERT INTO "StudentGroupMembers" (id, "schoolId", "studentGroupId", "studentId")
+  VALUES (member, app.current_school_id(), grp, pupil);
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
+  RETURN st || '|' || msg || '|' || coalesce(det, '') || '|' || coalesce(con, '');
+END $$;
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y1 uuid; y2 uuid;
+  a uuid; b uuid; a1 uuid; a2 uuid; nxt uuid; n1 uuid; tg uuid;
+  p uuid; q uuid; r uuid;
+  m uuid;
+  pupil uuid;
+  got text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'half members: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS152 år 1', DATE '2095-08-15', DATE '2096-06-10', false, now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "predecessorId", "updatedAt")
+  VALUES (school, 'RLS152 år 2', DATE '2096-08-15', DATE '2097-06-10', false, y1, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS152 7A', 'CLASS', 7, now()) RETURNING id INTO a;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS152 7B', 'CLASS', 7, now()) RETURNING id INTO b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, y1, 'RLS152 7A:1', 'TEACHING_GROUP', 7, a, now()) RETURNING id INTO a1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, y1, 'RLS152 7A:2', 'TEACHING_GROUP', 7, a, now()) RETURNING id INTO a2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, y1, 'RLS152 Ma7', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y2, 'RLS152 8A', 'CLASS', 8, a, now()) RETURNING id INTO nxt;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, y2, 'RLS152 8A:1', 'TEACHING_GROUP', 8, nxt, now()) RETURNING id INTO n1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+  VALUES (school, 'rls152-p@example.invalid', 'RLS152', 'P', 'STUDENT', gen_random_uuid(), true, now(), a) RETURNING id INTO p;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+  VALUES (school, 'rls152-q@example.invalid', 'RLS152', 'Q', 'STUDENT', gen_random_uuid(), true, now(), b) RETURNING id INTO q;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'rls152-r@example.invalid', 'RLS152', 'R', 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO r;
+
+  -- The class is the group's, not the writer's.
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId", "halfOfId")
+  VALUES (school, a1, p, b) RETURNING id INTO m;
+  IF (SELECT "halfOfId" FROM "StudentGroupMembers" WHERE id = m) IS DISTINCT FROM a THEN
+    RAISE EXCEPTION 'half members: the writer''s class was kept: %', (SELECT "halfOfId" FROM "StudentGroupMembers" WHERE id = m);
+  END IF;
+  UPDATE "StudentGroupMembers" SET "halfOfId" = NULL WHERE id = m;
+  IF (SELECT "halfOfId" FROM "StudentGroupMembers" WHERE id = m) IS DISTINCT FROM a THEN
+    RAISE EXCEPTION 'half members: a writer cleared a membership''s class';
+  END IF;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId", "halfOfId") VALUES (school, tg, q, a);
+  IF (SELECT "halfOfId" FROM "StudentGroupMembers" WHERE "studentGroupId" = tg AND "studentId" = q) IS NOT NULL THEN
+    RAISE EXCEPTION 'half members: a teaching group''s membership took the writer''s class';
+  END IF;
+
+  -- The other half of the same class: the index, by name.
+  got := pg_temp.rls152_place(gen_random_uuid(), a2, p);
+  IF split_part(got, '|', 1) <> '23505' OR split_part(got, '|', 4) <> 'StudentGroupMembers_one_half_per_class' THEN
+    RAISE EXCEPTION 'half members: the second half of a class was answered "%"', got;
+  END IF;
+
+  -- A pupil of another class, or of none: refused, with the membership's id alone.
+  FOREACH pupil IN ARRAY ARRAY[q, r] LOOP
+    m := gen_random_uuid();
+    got := pg_temp.rls152_place(m, a1, pupil);
+    IF split_part(got, '|', 1) <> 'HC409' OR split_part(got, '|', 2) NOT LIKE 'HALF_MEMBER_NOT_IN_CLASS: %'
+       OR split_part(got, '|', 3) <> format('studentGroupMemberId=%s', m) THEN
+      RAISE EXCEPTION 'half members: a pupil outside the class was answered "%"', got;
+    END IF;
+  END LOOP;
+  -- Nor moved into a half by changing the membership's pupil or group.
+  BEGIN
+    UPDATE "StudentGroupMembers" SET "studentId" = q WHERE "studentGroupId" = a1 AND "studentId" = p;
+    RAISE EXCEPTION 'half members: a membership was handed to a pupil of another class';
+  EXCEPTION WHEN SQLSTATE 'HC409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "StudentGroupMembers" SET "studentGroupId" = a1 WHERE "studentGroupId" = tg AND "studentId" = q;
+    RAISE EXCEPTION 'half members: a teaching group''s membership was moved into another class''s half';
+  EXCEPTION WHEN SQLSTATE 'HC409' THEN NULL;
+  END;
+
+  -- Next year's half: the predecessor class's pupils, before activation, and nobody else.
+  got := pg_temp.rls152_place(gen_random_uuid(), n1, p);
+  IF got <> 'none' THEN RAISE EXCEPTION 'half members: 7A''s pupil could not be placed in 8A:1 before activation: %', got; END IF;
+  got := pg_temp.rls152_place(gen_random_uuid(), n1, q);
+  IF split_part(got, '|', 1) <> 'HC409' THEN
+    RAISE EXCEPTION 'half members: 7B''s pupil was answered "%" for 8A:1', got;
+  END IF;
+
+  -- Moved off the half, the membership has no class, and the other half is free.
+  DELETE FROM "StudentGroupMembers" WHERE "studentGroupId" = tg AND "studentId" = q;
+  UPDATE "StudentGroupMembers" SET "studentGroupId" = tg WHERE "studentGroupId" = a1 AND "studentId" = p;
+  IF (SELECT "halfOfId" FROM "StudentGroupMembers" WHERE "studentGroupId" = tg AND "studentId" = p) IS NOT NULL THEN
+    RAISE EXCEPTION 'half members: a membership moved off a half kept its class';
+  END IF;
+  got := pg_temp.rls152_place(gen_random_uuid(), a2, p);
+  IF got <> 'none' THEN RAISE EXCEPTION 'half members: the other half stayed closed after the move: %', got; END IF;
+
+  -- Deleting the class takes its halves and their memberships, and leaves
+  -- its pupils with no class: so in none of next year's 8A's halves either,
+  -- whichever of the two SET NULL actions (the pupils' class, 8A's link)
+  -- the database ran first.
+  DELETE FROM "StudentGroups" WHERE id = a;
+  IF EXISTS (SELECT 1 FROM "StudentGroupMembers" WHERE "studentGroupId" IN (a1, a2)) THEN
+    RAISE EXCEPTION 'half members: deleting the class left its halves'' memberships';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "StudentGroupMembers" WHERE "studentGroupId" = n1 AND "studentId" = p) THEN
+    RAISE EXCEPTION 'half members: a pupil whose class was deleted is still placed in next year''s half';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 153: en elev som byter klass lämnar halvor hen inte längre hör
+-- till, men inte förra läsårets.
+--
+-- The Users trigger re-judges a moved pupil's halves by the member trigger's
+-- rule: a half whose class is neither the new class nor its predecessor is
+-- left. For both writers of a home class — the admin through the gateway and
+-- the SS12000 sync principal, which may not DELETE a membership itself (the
+-- trigger is SECURITY DEFINER for it); PostgREST's role moves nobody. Before
+-- activation: 7A -> 7B, 7A -> no class and 7A -> next year's 8B each leave
+-- 7A:1 and next year's 8A:1. Except history: once next year is active (as
+-- activation makes it before moving anyone), 7A -> 8A keeps 7A:1 and 8A:1,
+-- and a graduate's 7A -> no class keeps 7A:1. Only the moved pupil's rows go.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y1 uuid; y2 uuid;
+  a uuid; b uuid; a1 uuid; nxt uuid; nxt_b uuid; n1 uuid; tg uuid;
+  pupils uuid[] := '{}';
+  pupil uuid;
+  i int;
+BEGIN
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS153 år 1', DATE '2095-08-15', DATE '2096-06-10', false, now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "predecessorId", "updatedAt")
+  VALUES (school, 'RLS153 år 2', DATE '2096-08-15', DATE '2097-06-10', false, y1, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS153 7A', 'CLASS', 7, now()) RETURNING id INTO a;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS153 7B', 'CLASS', 7, now()) RETURNING id INTO b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, y1, 'RLS153 7A:1', 'TEACHING_GROUP', 7, a, now()) RETURNING id INTO a1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, y1, 'RLS153 Ma7', 'TEACHING_GROUP', now()) RETURNING id INTO tg;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y2, 'RLS153 8A', 'CLASS', 8, a, now()) RETURNING id INTO nxt;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y2, 'RLS153 8B', 'CLASS', 8, b, now()) RETURNING id INTO nxt_b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, y2, 'RLS153 8A:1', 'TEACHING_GROUP', 8, nxt, now()) RETURNING id INTO n1;
+  -- Seven pupils of 7A, each in 7A:1, 8A:1 and Ma7.
+  FOR i IN 1..7 LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+    VALUES (school, format('rls153-%s@example.invalid', i), 'RLS153', i::text, 'STUDENT', gen_random_uuid(), true, now(), a)
+    RETURNING id INTO pupil;
+    pupils := pupils || pupil;
+    INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId")
+    VALUES (school, a1, pupil), (school, n1, pupil), (school, tg, pupil);
+  END LOOP;
+  PERFORM set_config('app.test_rls153', json_build_object('a', a, 'b', b, 'nxt', nxt, 'nxt_b', nxt_b, 'y2', y2,
+    'pupils', pupils)::text, true);
+END $$;
+
+-- 'halves,other groups' a pupil is in.
+CREATE FUNCTION pg_temp.rls153_in(pupil uuid) RETURNS text LANGUAGE sql AS $$
+  SELECT count(*) FILTER (WHERE "halfOfId" IS NOT NULL) || ',' || count(*) FILTER (WHERE "halfOfId" IS NULL)
+    FROM "StudentGroupMembers" WHERE "studentId" = pupil
+$$;
+
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls153')::jsonb;
+  p uuid[] := ARRAY(SELECT jsonb_array_elements_text(t -> 'pupils')::uuid);
+  claims text := current_setting('request.jwt.claims');
+BEGIN
+  -- PostgREST's role has no arm that writes Users: nobody moves, nothing goes.
+  SET LOCAL ROLE authenticated;
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'b')::uuid WHERE id = p[1];
+  IF FOUND THEN RAISE EXCEPTION 'class change: PostgREST''s role moved a pupil'; END IF;
+  SET LOCAL ROLE app_authenticated;
+  IF pg_temp.rls153_in(p[1]) <> '2,1' THEN
+    RAISE EXCEPTION 'class change: a move that never happened left the pupil in %', pg_temp.rls153_in(p[1]);
+  END IF;
+
+  -- The admin: 7A -> 7B within the läsår.
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'b')::uuid WHERE id = p[1];
+  IF NOT FOUND THEN RAISE EXCEPTION 'class change: the admin could not move a pupil'; END IF;
+  IF pg_temp.rls153_in(p[1]) <> '0,1' THEN
+    RAISE EXCEPTION 'class change: moved to 7B by the admin, the pupil is in % (halves, other groups); expected 0,1',
+      pg_temp.rls153_in(p[1]);
+  END IF;
+
+  -- The sync principal, with no claims: the same move, and the same cleanup.
+  PERFORM set_config('app.sync_school_id', app.current_school_id()::text, true);
+  PERFORM set_config('request.jwt.claims', '', true);
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'b')::uuid WHERE id = p[2];
+  IF NOT FOUND THEN RAISE EXCEPTION 'class change: the sync principal could not move a pupil'; END IF;
+  BEGIN
+    DELETE FROM "StudentGroupMembers" WHERE "studentId" = p[7];
+    IF FOUND THEN RAISE EXCEPTION 'class change: the sync principal deleted a membership itself'; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM set_config('app.sync_school_id', '', true);
+  PERFORM set_config('request.jwt.claims', claims, true);
+  IF pg_temp.rls153_in(p[2]) <> '0,1' THEN
+    RAISE EXCEPTION 'class change: moved to 7B by the sync, the pupil is in %', pg_temp.rls153_in(p[2]);
+  END IF;
+
+  -- 7A -> no class.
+  UPDATE "Users" SET "studentGroupId" = NULL WHERE id = p[3];
+  IF pg_temp.rls153_in(p[3]) <> '0,1' THEN
+    RAISE EXCEPTION 'class change: out of any class, the pupil is in %', pg_temp.rls153_in(p[3]);
+  END IF;
+
+  -- 7A -> next year's 8B before activation: not 7A's any more, and not going to 8A.
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'nxt_b')::uuid WHERE id = p[4];
+  IF pg_temp.rls153_in(p[4]) <> '0,1' THEN
+    RAISE EXCEPTION 'class change: moved straight into next year''s 8B, the pupil is in %', pg_temp.rls153_in(p[4]);
+  END IF;
+
+  -- Not the moved pupils': untouched, and a write that keeps the class changes nothing.
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'a')::uuid, "firstName" = 'RLS153 x' WHERE id = p[7];
+  IF pg_temp.rls153_in(p[7]) <> '2,1' THEN
+    RAISE EXCEPTION 'class change: a classmate who did not move, or kept the class, is in %', pg_temp.rls153_in(p[7]);
+  END IF;
+
+  -- Activation: next year is made active first, then the pupils move.
+  UPDATE "AcademicYears" SET "isActive" = false WHERE "schoolId" = app.current_school_id() AND "isActive";
+  UPDATE "AcademicYears" SET "isActive" = true WHERE id = (t ->> 'y2')::uuid;
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'nxt')::uuid WHERE id = p[5];
+  IF pg_temp.rls153_in(p[5]) <> '2,1' THEN
+    RAISE EXCEPTION 'class change: moved by activation into 8A, the pupil is in %; expected last year''s 7A:1 and 8A:1',
+      pg_temp.rls153_in(p[5]);
+  END IF;
+  -- A graduate out of any class keeps 7A:1, which is history, and leaves 8A:1.
+  UPDATE "Users" SET "studentGroupId" = NULL WHERE id = p[6];
+  IF pg_temp.rls153_in(p[6]) <> '1,1'
+     OR NOT EXISTS (SELECT 1 FROM "StudentGroupMembers" m JOIN "StudentGroups" g ON g.id = m."studentGroupId"
+                     WHERE m."studentId" = p[6] AND g."halfOfId" = (t ->> 'a')::uuid) THEN
+    RAISE EXCEPTION 'class change: a graduate is in %; expected 7A:1 kept as history', pg_temp.rls153_in(p[6]);
+  END IF;
+END $$;
+ROLLBACK;
