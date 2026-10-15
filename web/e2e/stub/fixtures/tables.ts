@@ -22,6 +22,7 @@ import {
 import {
   ALL_PEOPLE,
   BLOCKS,
+  byId,
   GROUP_LIST,
   GUARDIAN_LINKS,
   MASTER_LESSONS,
@@ -30,6 +31,7 @@ import {
   REQUIREMENTS,
   ROOM_LIST,
   SCHOOL,
+  STUDENT_LIST,
   SUBJECT_LIST,
   YEAR,
 } from "./world";
@@ -100,10 +102,44 @@ const own = (person: SignedInPerson) => {
   return new Set(GUARDIAN_LINKS.filter((link) => link.guardianId === person.userId).map((link) => link.studentId));
 };
 
+/** The home classes of `own`: app.current_user_group_id(), app.current_guardian_class_ids(). */
+const classesOf = (person: SignedInPerson) =>
+  new Set([...own(person)].map((id) => byId(STUDENT_LIST, id)?.studentGroupId).filter((id): id is string => !!id));
+
+/** The classes and the teaching groups (StudentGroupMembers) of `own`. */
+const groupsOf = (person: SignedInPerson) =>
+  new Set([
+    ...classesOf(person),
+    ...GROUP_MEMBERS.filter((member) => own(person).has(member.studentId)).map((member) => member.studentGroupId),
+  ]);
+
+/**
+ * A dated lesson as the pupil's and the guardian's arms on CalendarLessons
+ * read it (20260822120000, 20261013090000): the lesson's group is one of
+ * theirs, an extra group on it is, or it names the pupil. A pupil's extra
+ * group is their class alone (calendar_lessons_participant_select); a
+ * guardian's is any of the children's groups. The extra groups and the
+ * named pupils are the weekly lesson's, as a publish copies them.
+ */
+function lessonReaches(row: Row, person: SignedInPerson): boolean {
+  if (groupsOf(person).has(row.studentGroupId as string)) return true;
+  const weekly = byId(MASTER_LESSONS, row.masterLessonId as string);
+  const extraGroups = person.persona === "student" ? classesOf(person) : groupsOf(person);
+  return (
+    (weekly?.extraGroupIds ?? []).some((id) => extraGroups.has(id)) ||
+    (weekly?.studentIds ?? []).some((id) => own(person).has(id))
+  );
+}
+
 export const rowScopes: Partial<Record<string, (row: Row, person: SignedInPerson) => boolean>> = {
   AbsenceReports: (row, person) => own(person).has(row.studentId as string),
   LeaveRequests: (row, person) => own(person).has(row.studentId as string),
   AttendanceRecords: (row, person) => own(person).has(row.studentId as string),
   GuardianStudents: (row, person) =>
     person.persona === "student" ? row.studentId === person.userId : row.guardianId === person.userId,
+  // The week: a pupil's lessons, lunches and raster, or the children's. Without
+  // these a 7A pupil's Mitt schema showed 7B's, 8A's and 9A's lessons too.
+  CalendarLessons: lessonReaches,
+  CalendarLunches: (row, person) => classesOf(person).has(row.studentGroupId as string),
+  CalendarRasts: (row, person) => classesOf(person).has(row.studentGroupId as string),
 };

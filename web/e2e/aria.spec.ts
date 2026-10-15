@@ -63,7 +63,7 @@ const SCREENS: Screen[] = [
   { name: "guardian-barn", url: "/sv/guardian", persona: "guardian", scope: "main" },
 ];
 
-const MISSES = "the backend stub has no fixture for these reads; each says which file to add it to";
+const MISSES = "the backend stub could not answer these reads; each says which file to add it to or fix";
 
 /** Opens a screen; the misses it returns keep collecting, for a test that clicks on. */
 async function open(page: Page, screen: Pick<Screen, "url" | "persona">, baseURL: string) {

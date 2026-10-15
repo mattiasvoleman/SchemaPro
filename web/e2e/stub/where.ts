@@ -1,4 +1,5 @@
-import { ROUTE_FILES } from "./fixtures/gateway";
+import { gatewayRoutes, ROUTE_FILES } from "./fixtures/gateway";
+import { matchGateway } from "./gateway-routes";
 
 /**
  * Where a request the stub could not answer gets its fixture, as one line a
@@ -12,6 +13,8 @@ import { ROUTE_FILES } from "./fixtures/gateway";
  *
  * The pattern it suggests writes ids as `:id`. ASCII only: the line travels
  * in a response header (x-stub-where), where Node refuses anything else.
+ * A request the stub threw on says the same about the file that threw
+ * (`whereItThrew`).
  */
 
 const FIXTURES = "e2e/stub/fixtures";
@@ -42,4 +45,30 @@ export function whereToStub(method: string, path: string): string {
       ? `${FIXTURES}/${best.file}`
       : `a new ${FIXTURES}/gateway-${resource}.ts, listed in ${FIXTURES}/gateway.ts`;
   return `add route("${method}", "${pattern}", ...) to ${into}`;
+}
+
+/** A thrown message as a header carries it: accents dropped, anything else not ASCII a "?". */
+const ascii = (text: string) =>
+  text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7e]/g, "?");
+
+/**
+ * Where to fix a request the stub threw on: the gateway file whose handler
+ * threw, or the PostgREST emulator and its rows. A 500 from the stub is a
+ * page rendering its error state, which axe would pass as readily as the
+ * page, so it fails the run as a miss does.
+ */
+export function whereItThrew(method: string, path: string, error: unknown): string {
+  const message = ascii(error instanceof Error ? error.message : String(error)).slice(0, 160);
+  let file = "e2e/stub/server.ts";
+  if (path.startsWith("/rest/v1/")) {
+    file = `e2e/stub/postgrest.ts, or the table's rows or scope in ${FIXTURES}/tables.ts`;
+  } else {
+    const match = matchGateway(gatewayRoutes, method, path);
+    const entry = match && ROUTE_FILES.find(({ routes }) => routes.includes(match.route));
+    if (entry) file = `${FIXTURES}/${entry.file}`;
+  }
+  return `the stub threw "${message}"; fix it in ${file}`;
 }

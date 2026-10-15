@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { read, type Row } from "./postgrest";
-import { whereToStub } from "./where";
+import { whereItThrew, whereToStub } from "./where";
 import { authUser, personForToken, STUB_PORT } from "./sessions";
 import { matchGateway, Reply } from "./gateway-routes";
 import { rowScopes, tables } from "./fixtures/tables";
@@ -72,14 +72,19 @@ export const missedRequests = () => [...missed];
  */
 function miss(request: IncomingMessage, response: ServerResponse, method: string, path: string) {
   const where = whereToStub(method, path);
+  count(request, method, path, where, "no fixture for");
+  send(response, 404, { message: `No stub fixture for ${method} ${path}: ${where}` }, { "x-stub": "miss", "x-stub-where": where });
+}
+
+/** Counts what the stub could not answer, once, when the request is the run's own (see `miss`). */
+function count(request: IncomingMessage, method: string, path: string, where: string, what: string) {
   const key = `${method} ${path} — ${where}`;
   if (!personForToken(bearer(request)) && !path.startsWith("/public/")) {
     console.warn(`[stub] not this run's, not counted: ${method} ${path}`);
   } else if (!missed.has(key)) {
     missed.add(key);
-    console.warn(`[stub] no fixture for ${key}`);
+    console.warn(`[stub] ${what} ${key}`);
   }
-  send(response, 404, { message: `No stub fixture for ${method} ${path}: ${where}` }, { "x-stub": "miss", "x-stub-where": where });
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
@@ -190,8 +195,14 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 export function startStub(port = STUB_PORT): Promise<Server> {
   const server = createServer((request, response) => {
     handle(request, response).catch((error: unknown) => {
-      console.error("[stub] handler failed", request.method, request.url, error);
-      if (!response.headersSent) send(response, 500, { message: String(error) }, { "x-stub": "error" });
+      const method = request.method ?? "GET";
+      const path = new URL(request.url ?? "/", "http://stub").pathname;
+      const where = whereItThrew(method, path, error);
+      console.error("[stub] handler failed", method, request.url, error);
+      count(request, method, path, where, "threw on");
+      if (!response.headersSent) {
+        send(response, 500, { message: String(error) }, { "x-stub": "error", "x-stub-where": where });
+      }
     });
   });
   return new Promise((resolve, reject) => {
