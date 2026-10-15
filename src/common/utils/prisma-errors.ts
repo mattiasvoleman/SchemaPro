@@ -50,6 +50,12 @@ import { Prisma } from '@prisma/client';
  * rest of it, and that is the 409 BLOCK_MEMBERS_DIFFER naming the block —
  * whichever writer met it: the requirements PATCH, a block's members, the
  * import, the rollover or "Skapa timplansposter". See teachingBlockRefusal.
+ *
+ * The Halvklasser triggers (migration 20261113090000) answer SQLSTATE HC409
+ * with a reason token, each a 409 of the same name, and a pupil placed in
+ * both halves of one class meets the unique index
+ * StudentGroupMembers_one_half_per_class, which is the 409
+ * HALF_MEMBER_IN_OTHER_HALF. See classHalfRefusal.
  */
 export function rethrowPrismaError(error: unknown): never {
   const area = areaRefusal(error);
@@ -74,6 +80,10 @@ export function rethrowPrismaError(error: unknown): never {
   const block = teachingBlockRefusal(error);
   if (block) {
     throw blockMembersDifferConflict(block);
+  }
+  const half = classHalfRefusal(error);
+  if (half) {
+    throw classHalfConflict(half);
   }
   const enrolmentKey = enrolmentClassKeyRefusal(error);
   if (enrolmentKey === 'CLASS_MOVED') {
@@ -525,6 +535,64 @@ export function rolloverLinkConflict(refusal: Pick<RolloverLinkRefusal, 'reason'
     message: ROLLOVER_LINK_MESSAGES[refusal.reason],
     code: refusal.reason,
   });
+}
+
+/** The reason tokens the Halvklasser triggers (migration 20261113090000) raise, each a 409 code. */
+export const CLASS_HALF_REASONS = [
+  'HALF_OF_NOT_A_CLASS',
+  'HALF_NOT_A_TEACHING_GROUP',
+  'HALF_IN_OTHER_YEAR',
+  'HALF_LINK_IS_FIXED',
+  'CLASS_HAS_HALVES',
+  'HALF_MEMBER_NOT_IN_CLASS',
+  'HALF_MEMBER_IN_OTHER_HALF',
+] as const;
+export type ClassHalfReason = (typeof CLASS_HALF_REASONS)[number];
+
+const CLASS_HALF_REASON = new RegExp(`\\b(${CLASS_HALF_REASONS.join('|')})\\b`);
+
+/**
+ * Recognises a refusal of the Halvklasser rules, and reads which. HC409, like
+ * LR409, is a SQLSTATE class PostgreSQL does not define, so the adapter hands
+ * it over as P2039 with the driver's fields under
+ * meta.driverAdapterError.cause; the rendered message ("Code: `HC409`.
+ * Message: `HALF_…`") is the fallback for both the code and the reason, and an
+ * HC409 whose reason cannot be read is still a 409, under HALF_LINK_IS_FIXED.
+ * One half per class is a unique index, not a trigger: a P2002 naming
+ * StudentGroupMembers_one_half_per_class.
+ */
+export function classHalfRefusal(error: unknown): ClassHalfReason | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  if (error.code === 'P2002') {
+    return JSON.stringify(error.meta ?? {}).includes('StudentGroupMembers_one_half_per_class') ||
+      error.message.includes('StudentGroupMembers_one_half_per_class')
+      ? 'HALF_MEMBER_IN_OTHER_HALF'
+      : null;
+  }
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const byMeta = cause?.originalCode === 'HC409';
+  const byMessage = error.code === 'P2039' && error.message.includes('Code: `HC409`');
+  if (!byMeta && !byMessage) return null;
+  const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+  return (CLASS_HALF_REASON.exec(text)?.[1] ?? 'HALF_LINK_IS_FIXED') as ClassHalfReason;
+}
+
+const CLASS_HALF_MESSAGES: Record<ClassHalfReason, string> = {
+  HALF_OF_NOT_A_CLASS: 'En halvklass är en halva av en klass, inte av en undervisningsgrupp.',
+  HALF_NOT_A_TEACHING_GROUP: 'En halvklass är en undervisningsgrupp och kan inte göras till en klass.',
+  HALF_IN_OTHER_YEAR: 'En halvklass ligger i samma läsår som sin klass.',
+  HALF_LINK_IS_FIXED:
+    'En halvklass hör till den klass den delades ur och kan inte flyttas till en annan klass.',
+  CLASS_HAS_HALVES:
+    'Klassen är delad i halvor och kan inte byta typ eller läsår. Ta bort halvorna först.',
+  HALF_MEMBER_NOT_IN_CLASS: 'En elev kan bara placeras i en halva av sin egen klass.',
+  HALF_MEMBER_IN_OTHER_HALF: 'En elev kan bara vara i en av klassens halvor.',
+};
+
+/** The 409 for a write the Halvklasser rules refused, coded by its reason. */
+export function classHalfConflict(reason: ClassHalfReason): ConflictException {
+  return new ConflictException({ message: CLASS_HALF_MESSAGES[reason], code: reason });
 }
 
 /** The problem `code` of a class with pupils' history moved to another läsår. */
