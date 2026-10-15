@@ -144,6 +144,13 @@ export interface ProposalAssignment {
   toTeacherId: string;
   /** What the row charges its lead, exact to two decimals. */
   chargeMinutesPerWeek: number;
+  /**
+   * What the row charges a changing post's planned stretch — the figure its
+   * before and after are — where that is not chargeMinutesPerWeek: a dated
+   * row, which weighs only the weeks it runs. Absent otherwise.
+   */
+  toStretchChargeMinutesPerWeek?: number;
+  fromStretchChargeMinutesPerWeek?: number;
   reasons: {
     /** The strongest covering behörighet; null when none or none recorded. */
     qualificationKind: LoadQualification['kind'] | null;
@@ -906,12 +913,25 @@ export class StaffingProposalService {
       }),
     );
 
+    // What a row charges a changing post's planned stretch, where that is not
+    // its year charge: the dialog gives that back when the row is left out.
+    const stretchCharge = (teacherId: string | null, plannedRow: RowPlan): number | undefined => {
+      const changing = teacherId === null ? undefined : plan.teacherById.get(teacherId)?.changing;
+      if (!changing || !isDatedRow(plannedRow.row)) return undefined;
+      const alone = stretchLoads(
+        { ...input, requirements: [{ ...plannedRow.row, teacherId: teacherId!, coTeacherId: null }], duties: [] },
+        changing.employment,
+      )[changing.index]?.counted ?? 0;
+      return round2(alone) === round2(plannedRow.chargeExact) ? undefined : round2(alone);
+    };
     const assignments: ProposalAssignment[] = [];
     for (const plannedRow of plan.rows) {
       const to = leads.get(plannedRow.row.id);
       if (to === undefined || to === plannedRow.row.teacherId) continue;
       const row = plannedRow.row;
       const lastYear = state.lastYear.get(row.id) ?? null;
+      const toStretch = stretchCharge(to, plannedRow);
+      const fromStretch = stretchCharge(row.teacherId, plannedRow);
       assignments.push({
         requirementId: row.id,
         subjectId: row.subjectId,
@@ -919,6 +939,8 @@ export class StaffingProposalService {
         fromTeacherId: row.teacherId,
         toTeacherId: to,
         chargeMinutesPerWeek: round2(plannedRow.chargeExact),
+        ...(toStretch !== undefined ? { toStretchChargeMinutesPerWeek: toStretch } : {}),
+        ...(fromStretch !== undefined ? { fromStretchChargeMinutesPerWeek: fromStretch } : {}),
         reasons: {
           qualificationKind: plan.recorded
             ? strongestCoveringQualification(input.qualifications, to, row, input.year)
@@ -959,18 +981,23 @@ export class StaffingProposalService {
         return {};
       }
       const could = plannedRow.excluded.filter(
-        (id) => id !== plannedRow.co && targetSomewhere(id) && (!plan.respect || plannedRow.eligible.includes(id)),
+        (id) => id !== plannedRow.co && targetWhereItRuns(id, plannedRow) && (!plan.respect || plannedRow.eligible.includes(id)),
       );
       return could.length > 0 ? { excludedChanging: could } : {};
     }
 
-    // Whether a changing post has room in some part of the year: a target
-    // above 0 in a stretch with teaching weeks. Not the planned target, which
-    // is the tightest stretch's and 0 for a post on leave from January.
-    function targetSomewhere(userId: string): boolean {
+    // Whether a changing post has room where the row runs: a target above 0
+    // in a stretch the row charges. Not the planned target, which is the
+    // tightest stretch's and 0 for a post on leave from January — an autumn
+    // row is still hers to take by hand, a spring row is not.
+    function targetWhereItRuns(userId: string, plannedRow: RowPlan): boolean {
       const employment = plan.teacherById.get(userId)?.changing?.employment;
       if (!employment) return (plan.teacherById.get(userId)?.target ?? 0) > 0;
-      return stretchLoads(input, employment).some((stretch) => stretch.weeks > 0 && (stretch.target ?? 0) > 0);
+      const alone = stretchLoads(
+        { ...input, requirements: [{ ...plannedRow.row, teacherId: userId, coTeacherId: null }], duties: [] },
+        employment,
+      );
+      return alone.some((stretch) => stretch.weeks > 0 && stretch.counted > 0 && (stretch.target ?? 0) > 0);
     }
   }
 }

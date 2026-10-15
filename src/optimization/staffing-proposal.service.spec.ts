@@ -791,6 +791,14 @@ describe('StaffingProposalService.propose', () => {
         expect(sentRow(sent()[0]!, R_MA8, sentIn8A(rows)).excludedTeacherIds).toBeUndefined();
         expect(proposal.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
         expect(proposal.unstaffed.find((row) => row.requirementId === R_MA8)).toBeUndefined();
+        // Her figures are the spring's, which an autumn row does not weigh: the dialog gives back 0, not the year's charge.
+        const ma8 = proposal.assignments.find((a) => a.requirementId === R_MA8)!;
+        expect(ma8.chargeMinutesPerWeek).toBeGreaterThan(0);
+        expect(ma8.toStretchChargeMinutesPerWeek).toBe(0);
+        const anna = proposal.teachers.find((t) => t.userId === ANNA)!;
+        expect(anna.after.countedExact).toBe(anna.before.countedExact);
+        // An undated row charges every stretch its year share: nothing beside it.
+        expect(proposal.assignments.filter((a) => a.requirementId !== R_MA8).every((a) => a.toStretchChargeMinutesPerWeek === undefined)).toBe(true);
       });
 
       it('takes rows while the autumn’s slack lasts, and excludes the post from the one past it', async () => {
@@ -871,11 +879,13 @@ describe('StaffingProposalService.propose', () => {
         expect(again.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
       });
 
-      it('names the post also where the engine finds no one with a target: a leave from January plans it at 0', async () => {
+      it('names the post where the engine finds no one with a target only for a row in a stretch it has room in: a leave from January', async () => {
         // Anna on leave from 11 January (a target of 0 there), the only one holding Ma: planned on the
-        // spring she is no candidate with a target, but the autumn is hers.
-        const onLeave = (autumnToo = false) => {
+        // spring she is no candidate with a target. The autumn is hers, so an autumn row names her;
+        // a spring row runs only in her leave, and names nobody.
+        const onLeave = (autumnToo = false, autumnRow = true) => {
           const rows = springOnly();
+          if (autumnRow) Object.assign(rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!, { startDate: null, endDate: day('2027-01-08') });
           rows['teacherEmploymentPeriod'] = [periodOf(ANNA, { teachingTargetMinutesPerWeek: 0 })];
           if (autumnToo) rows['teacherEmployment']!.find((row) => row['userId'] === ANNA)!['teachingTargetMinutesPerWeek'] = 0;
           rows['teacherSubjectQualification'] = [
@@ -897,6 +907,10 @@ describe('StaffingProposalService.propose', () => {
           reason: 'NO_TEACHER_WITH_TARGET',
           excludedChanging: [ANNA],
         });
+        // A spring row runs only in her leave: she could not take it, and is not named.
+        const spring = await setup(onLeave(false, false), noOneWithTarget).service.propose(ask({ respectQualifications: true }), admin());
+        expect(spring.unstaffed.find((row) => row.requirementId === R_MA8)).toMatchObject({ reason: 'NO_TEACHER_WITH_TARGET' });
+        expect(spring.unstaffed.find((row) => row.requirementId === R_MA8)?.excludedChanging).toBeUndefined();
         // On leave the whole year — a target of 0 in every stretch — she could not have taken it, and is not named.
         const allYear = await setup(onLeave(true), noOneWithTarget).service.propose(ask({ respectQualifications: true }), admin());
         expect(allYear.unstaffed.find((row) => row.requirementId === R_MA8)?.excludedChanging).toBeUndefined();

@@ -11,7 +11,10 @@ import type { ProposalAssignment, ProposalTeacher, StaffingChange, StaffingPropo
  * after with the left-out rows given back: a row moved TO the teacher is taken
  * off, a row moved FROM the teacher is put back. Loads are additive per row
  * (countedMinutesByTeacher sums one charge per lead), so this is the
- * gateway's own figure, not an estimate.
+ * gateway's own figure, not an estimate. A post that changes during the year
+ * is shown on its planned stretch, which a dated row weighs only for the
+ * weeks it runs there: the row's charge to that stretch, which the gateway
+ * sends beside the year's, is what is given back.
  *
  * The status is then judged with loadStatus, and only a teacher whose minutes
  * GROW is flagged — enforcement's question (overTargetFinding returns nothing
@@ -42,9 +45,11 @@ export function loadsUnderSelection(
   for (const assignment of proposal.assignments) {
     if (selected.has(assignment.requirementId)) continue;
     const charge = assignment.chargeMinutesPerWeek;
-    leftOut.set(assignment.toTeacherId, (leftOut.get(assignment.toTeacherId) ?? 0) - charge);
+    const toCharge = assignment.toStretchChargeMinutesPerWeek ?? charge;
+    const fromCharge = assignment.fromStretchChargeMinutesPerWeek ?? charge;
+    leftOut.set(assignment.toTeacherId, (leftOut.get(assignment.toTeacherId) ?? 0) - toCharge);
     if (assignment.fromTeacherId !== null) {
-      leftOut.set(assignment.fromTeacherId, (leftOut.get(assignment.fromTeacherId) ?? 0) + charge);
+      leftOut.set(assignment.fromTeacherId, (leftOut.get(assignment.fromTeacherId) ?? 0) + fromCharge);
     }
   }
   const loads = new Map<string, SelectedLoad>();

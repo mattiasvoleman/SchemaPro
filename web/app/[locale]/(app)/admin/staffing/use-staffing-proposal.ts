@@ -95,6 +95,12 @@ export interface ProposalAssignment {
   toTeacherId: string;
   /** What the row charges its lead, exact to two decimals. */
   chargeMinutesPerWeek: number;
+  /**
+   * What a dated row charges a changing post's planned stretch, the figure
+   * its before and after are, where that differs from the year charge.
+   */
+  toStretchChargeMinutesPerWeek?: number;
+  fromStretchChargeMinutesPerWeek?: number;
   reasons: {
     qualificationKind: TeacherQualificationKind | null;
     familiarWithSubject: boolean;
