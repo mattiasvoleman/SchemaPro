@@ -105,6 +105,7 @@ export class IdSpace {
   private readonly groupIn = new Map<string, string>();
   private readonly dutyOut = new Map<string, string>();
   private readonly dutyIn = new Map<string, { userId: string; yearId: string }>();
+  private readonly stretchIn = new Map<string, { userId: string; yearId: string }>();
   /** The source's own Duty behind an emitted id that is the source's (A5.5). */
   private readonly dutyLinkOut = new Map<string, { dutyRole: string; startDate: Date; endDate: Date | null }>();
 
@@ -198,13 +199,22 @@ export class IdSpace {
   }
   /**
    * A Duty of a changing post beyond its first (ss12000-duties.ts
-   * dutySegments): the läslogg and a lookup find its teacher as the post's.
+   * dutySegments), once duties() has emitted it: the läslogg finds its
+   * teacher as the post's (dutyRead). No filter does: activities and events
+   * name the post's own Duty, so a stretch's id matches nothing there, and
+   * resolving it would tell a key without duties.read where a stretch
+   * starts (its id is the post's and its first day).
    */
   addDutySegment(emitted: string, userId: string, yearId: string): void {
-    this.dutyIn.set(emitted.toLowerCase(), { userId, yearId });
+    this.stretchIn.set(emitted.toLowerCase(), { userId, yearId });
   }
+  /** The teacher of an emitted Duty id that activities and events name: the post's, or the source's. */
   dutyFrom(emitted: string): { userId: string; yearId: string } | null {
     return this.dutyIn.get(emitted) ?? null;
+  }
+  /** The teacher of any Duty the provider emitted, a stretch too: for the läslogg. */
+  dutyRead(emitted: string): { userId: string; yearId: string } | null {
+    return this.dutyIn.get(emitted) ?? this.stretchIn.get(emitted) ?? null;
   }
   /** The source's role and dates when the emitted Duty id is the source's; null for SchemaPro's own post id. */
   dutyLink(userId: string, yearId: string): { dutyRole: string; startDate: Date; endDate: Date | null } | null {
@@ -548,8 +558,22 @@ export class Model {
     for (const [userId, enrolment] of enrolments) {
       add(userId, { type: 'enrolment', organisationId: enrolment.enroledAt.id, startDate: enrolment.startDate });
     }
+    // One relation per post, over all of it, at its dutyAt (every Duty of a
+    // post is at the same unit): a reader without duties.read filters
+    // persons by these dates, and a post cut where its grad changes would
+    // tell that reader when (the opt-in is the school's, not the key's).
+    const spans = new Map<string, { userId: string; organisationId: string; startDate: string; endDate: string | undefined }>();
     for (const { duty, post } of duties) {
-      add(post.userId, { type: 'duty', organisationId: duty.dutyAt.id, startDate: duty.startDate, endDate: duty.endDate });
+      const span = spans.get(post.id);
+      const end = duty.endDate as string | undefined;
+      if (!span) spans.set(post.id, { userId: post.userId, organisationId: duty.dutyAt.id, startDate: duty.startDate, endDate: end });
+      else {
+        if (duty.startDate < span.startDate) span.startDate = duty.startDate;
+        if (span.endDate !== undefined && (end === undefined || end > span.endDate)) span.endDate = end;
+      }
+    }
+    for (const span of spans.values()) {
+      add(span.userId, { type: 'duty', organisationId: span.organisationId, startDate: span.startDate, endDate: span.endDate });
     }
     if (this.can('responsibles.read')) {
       for (const link of links) {

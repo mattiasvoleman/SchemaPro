@@ -57,13 +57,15 @@
  * target changes nothing a Duty carries, so it splits nothing — a split
  * there would publish the nedsättning's dates. The first stretch keeps the
  * post's id, so every reference to the post's Duty (an Activity's teachers,
- * a CalendarEvent's exceptions) still finds one; a period's stretch is the
- * period's id; the post's own figures after a period are
- * dutyAfterPeriodId(that period). app.ss12000_split_duty_ids derives the
- * same ids in the database, for the versions and the tombstones.
+ * a CalendarEvent's exceptions) still finds one, and nothing a reader
+ * without duties.read sees moves with a period. Every later stretch is
+ * dutyStretchId(post, its first day): named by what a reader of the Duties
+ * sees, so a period no Duty shows names nothing. app.ss12000_split_duty_ids
+ * derives the same ids in the database, for the versions and the
+ * tombstones.
  */
 
-import { dutyAfterPeriodId } from './ss12000-v2/ids';
+import { dutyStretchId } from './ss12000-v2/ids';
 
 export const DUTY_PROPERTIES = [
   'id',
@@ -197,15 +199,13 @@ export function toSs12000Duty(input: DutyInput): Ss12000Duty {
   };
 }
 
-/** A period of the post as a Duty reads it: its dates and grad, and its times. */
+/** A period of the post as a Duty reads it: its dates and grad, and when it was written. */
 export interface DutyPeriod {
-  id: string;
   /** yyyy-mm-dd. */
   validFrom: string;
   /** yyyy-mm-dd; null: the läsår's last day. */
   validTo: string | null;
   employmentPercent: number;
-  createdAt: Date;
   updatedAt: Date;
 }
 
@@ -215,8 +215,6 @@ export interface DutySegment {
   startDate: string;
   endDate: string;
   employmentPercent: number;
-  /** When the stretch first existed: the post's or its period's creation. */
-  created: Date;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -232,11 +230,12 @@ const shiftDay = (day: string, days: number): string =>
  * keeps its first stretch's grad (hoursPerYear is computed from it). The
  * dates are the ones the school stated (postStretches' `from` and `to`),
  * clamped to the läsår. One segment, with the post's id and the year's
- * bounds, for a post whose grad never changes. app.ss12000_duty_stretches
- * walks the periods the same way.
+ * bounds, for a post whose grad never changes. The first segment is the
+ * post's id, every other dutyStretchId(post, its first day).
+ * app.ss12000_duty_stretches walks the periods the same way.
  */
 export function dutySegments(
-  employment: { id: string; employmentPercent: number; createdAt: Date },
+  employment: { id: string; employmentPercent: number },
   periods: readonly DutyPeriod[],
   year: { startDate: string; endDate: string },
 ): DutySegment[] {
@@ -249,47 +248,23 @@ export function dutySegments(
     .filter((period) => period.from <= period.to)
     .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
   const segments: DutySegment[] = [];
-  const add = (id: string, startDate: string, endDate: string, employmentPercent: number, created: Date) => {
+  const add = (startDate: string, endDate: string, employmentPercent: number) => {
     const last = segments[segments.length - 1];
     if (last && Math.round(last.employmentPercent) === Math.round(employmentPercent)) {
       last.endDate = endDate;
       return;
     }
     // The first stretch is the post's own Duty, whatever it is.
-    const first = segments.length === 0;
-    segments.push({
-      id: first ? employment.id : id,
-      startDate,
-      endDate,
-      employmentPercent,
-      created: first ? employment.createdAt : created,
-    });
+    const id = segments.length === 0 ? employment.id : dutyStretchId(employment.id, startDate);
+    segments.push({ id, startDate, endDate, employmentPercent });
   };
   let cursor = year.startDate;
-  let after: DutyPeriod | null = null;
   for (const period of inYear) {
-    if (period.from > cursor) {
-      add(
-        after ? dutyAfterPeriodId(after.id) : employment.id,
-        cursor,
-        shiftDay(period.from, -1),
-        employment.employmentPercent,
-        after ? after.createdAt : employment.createdAt,
-      );
-    }
-    add(period.id, period.from, period.to, period.employmentPercent, period.createdAt);
-    after = period;
+    if (period.from > cursor) add(cursor, shiftDay(period.from, -1), employment.employmentPercent);
+    add(period.from, period.to, period.employmentPercent);
     cursor = shiftDay(period.to, 1);
   }
-  if (cursor <= year.endDate) {
-    add(
-      after ? dutyAfterPeriodId(after.id) : employment.id,
-      cursor,
-      year.endDate,
-      employment.employmentPercent,
-      after ? after.createdAt : employment.createdAt,
-    );
-  }
+  if (cursor <= year.endDate) add(cursor, year.endDate, employment.employmentPercent);
   return segments;
 }
 
@@ -297,9 +272,11 @@ export function dutySegments(
  * A post's Duties: toSs12000Duty's one, or — for a post whose grad changes
  * during the year, in a school that shares employment — one per segment,
  * each with its own id, dates and dutyPercent (hoursPerYear from it), and
- * the mentorships clipped to its dates. meta.modified is the latest of the
- * post's, its periods' and its mentorships': a period moved moves every
- * Duty of the post.
+ * the mentorships clipped to its dates. meta.created is the post's: when a
+ * stretch's period was written is not something a Duty shows.
+ * meta.modified is the latest of the post's, its periods' and its
+ * mentorships': a period moved moves every Duty of the post (v1's best
+ * effort; v2 takes both from the versions).
  */
 export function toSs12000Duties(input: DutyInput & { periods?: readonly DutyPeriod[] }): Ss12000Duty[] {
   const whole = toSs12000Duty(input);
@@ -328,7 +305,7 @@ export function toSs12000Duties(input: DutyInput & { periods?: readonly DutyPeri
     const out: Ss12000Duty = {
       ...duty,
       id: segment.id,
-      meta: { created: segment.created.toISOString(), modified: modified.toISOString() },
+      meta: { created: whole.meta.created, modified: modified.toISOString() },
       startDate: segment.startDate,
       endDate: segment.endDate,
     };

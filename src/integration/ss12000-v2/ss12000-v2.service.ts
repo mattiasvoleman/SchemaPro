@@ -198,6 +198,13 @@ export const LOOKUP_EVENTS_MAX = 5000;
 
 const iso = (value: Date) => value.toISOString();
 
+/** One Duty of a post cut where its grad changes: its id and dates. */
+interface Stretch {
+  id: string;
+  startDate: string;
+  endDate: string;
+}
+
 function need(caller: V2Caller, scope: Scope): void {
   if (!caller.scopes.has(scope)) throw v2Errors.scopeMissing(scope);
 }
@@ -309,7 +316,7 @@ export class Ss12000V2Service {
       for (const seen of read(items)) {
         const userIds = [
           ...(seen.persons ?? []).map((id) => model.ids.personFrom(id.toLowerCase())),
-          ...(seen.duties ?? []).map((id) => model.ids.dutyFrom(id.toLowerCase())?.userId ?? null),
+          ...(seen.duties ?? []).map((id) => model.ids.dutyRead(id.toLowerCase())?.userId ?? null),
         ].filter((id): id is string => id !== null);
         byKind.set(seen.kind, [...(byKind.get(seen.kind) ?? []), ...userIds]);
       }
@@ -609,6 +616,7 @@ export class Ss12000V2Service {
   private async groupObjects(model: Model, expand: Set<string>): Promise<Obj[]> {
     const [fragments, memberships] = await inTurn(() => this.groupFragments(model), () => model.memberships());
     const mentorships = expand.has('assignmentRoles') ? await model.slice.mentorships() : [];
+    const cut = expand.has('assignmentRoles') ? await this.cutPosts(model) : new Map<string, Stretch[]>();
     const out: Obj[] = [];
     for (const group of model.groups) {
       const fragment = fragments.get(group.id);
@@ -627,17 +635,28 @@ export class Ss12000V2Service {
         const bounds = model.yearBounds(group.academicYearId)!;
         item['_embedded'] = {
           // Each mentorship with its own Från and Till, the year's where it
-          // has none (ss12000-duties.ts says why).
+          // has none (ss12000-duties.ts says why). A post cut where its grad
+          // changes carries it on each Duty it falls in, clipped to that
+          // Duty, as the Duties' own assignmentRole do; only a key with
+          // duties.read expands this.
           assignmentRoles: mentorships
             .filter((duty) => duty.studentGroupId === group.id && duty.academicYearId === group.academicYearId)
             .map((duty) => ({ ref: model.dutyRef(duty.userId, group.academicYearId), duty }))
             .filter((entry): entry is { ref: Ref; duty: (typeof mentorships)[number] } => entry.ref !== null)
-            .map(({ ref, duty }) => ({
-              duty: ref,
-              assignmentRoleType: 'Mentor',
-              startDate: duty.validFrom ? dayOf(duty.validFrom) : bounds.startDate,
-              endDate: duty.validTo ? dayOf(duty.validTo) : bounds.endDate,
-            })),
+            .flatMap(({ ref, duty }) => {
+              const startDate = duty.validFrom ? dayOf(duty.validFrom) : bounds.startDate;
+              const endDate = duty.validTo ? dayOf(duty.validTo) : bounds.endDate;
+              const stretches = cut.get(`${duty.userId}:${group.academicYearId}`);
+              if (!stretches) return [{ duty: ref, assignmentRoleType: 'Mentor', startDate, endDate }];
+              return stretches
+                .filter((stretch) => stretch.startDate <= endDate && stretch.endDate >= startDate)
+                .map((stretch) => ({
+                  duty: { ...ref, id: stretch.id },
+                  assignmentRoleType: 'Mentor',
+                  startDate: stretch.startDate > startDate ? stretch.startDate : startDate,
+                  endDate: stretch.endDate < endDate ? stretch.endDate : endDate,
+                }));
+            }),
         };
       }
       out.push(item);
@@ -705,6 +724,17 @@ export class Ss12000V2Service {
   // ===========================================================================
   // Duties
   // ===========================================================================
+
+  /** The posts emitted as more than one Duty, by teacher and year: each Duty's id and dates. */
+  private async cutPosts(model: Model): Promise<Map<string, Stretch[]>> {
+    const byPost = new Map<string, { key: string; stretches: Stretch[] }>();
+    for (const { duty, post } of await model.duties()) {
+      const entry = byPost.get(post.id) ?? { key: `${post.userId}:${post.academicYearId}`, stretches: [] };
+      entry.stretches.push({ id: duty.id, startDate: duty.startDate, endDate: duty.endDate });
+      byPost.set(post.id, entry);
+    }
+    return new Map([...byPost.values()].filter((entry) => entry.stretches.length > 1).map((entry) => [entry.key, entry.stretches]));
+  }
 
   private async dutyObjects(model: Model, expand: Set<string>): Promise<Obj[]> {
     const duties = await model.duties();

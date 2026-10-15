@@ -248,7 +248,7 @@ export class Ss12000Service {
       const periodRows = share
         ? await tx.teacherEmploymentPeriod.findMany({
             where: { schoolId, academicYearId: year.id },
-            select: { id: true, employmentId: true, validFrom: true, validTo: true, employmentPercent: true, createdAt: true, updatedAt: true },
+            select: { employmentId: true, validFrom: true, validTo: true, employmentPercent: true, updatedAt: true },
             orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
           })
         : [];
@@ -256,11 +256,9 @@ export class Ss12000Service {
         periodRows
           .filter((period) => period.employmentId === employmentId)
           .map((period) => ({
-            id: period.id,
             validFrom: dayOf(period.validFrom)!,
             validTo: dayOf(period.validTo ?? null),
             employmentPercent: Number(period.employmentPercent),
-            createdAt: period.createdAt,
             updatedAt: period.updatedAt,
           }));
       // One statement after another: a transaction is one connection.
@@ -279,7 +277,7 @@ export class Ss12000Service {
         : read
             .flatMap((post) =>
               dutySegments(
-                { id: post.id, employmentPercent: Number(post.employmentPercent), createdAt: post.createdAt },
+                { id: post.id, employmentPercent: Number(post.employmentPercent) },
                 periodsOf(post.id),
                 bounds,
               ).map((_, index) => ({ postId: post.id, index })),

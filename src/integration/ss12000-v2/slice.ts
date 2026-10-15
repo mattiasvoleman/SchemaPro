@@ -376,17 +376,15 @@ export class SchoolSlice {
     if (!share) return byPost;
     const rows = await this.tx.teacherEmploymentPeriod.findMany({
       where: { schoolId: this.schoolId, employment: { academicYear: { isActive: true } } },
-      select: { id: true, employmentId: true, validFrom: true, validTo: true, employmentPercent: true, createdAt: true, updatedAt: true },
+      select: { employmentId: true, validFrom: true, validTo: true, employmentPercent: true, updatedAt: true },
       orderBy: [{ employmentId: 'asc' }, { validFrom: 'asc' }],
     });
     for (const row of rows) {
       const list = byPost.get(row.employmentId) ?? [];
       list.push({
-        id: row.id,
         validFrom: dayOf(row.validFrom),
         validTo: row.validTo ? dayOf(row.validTo) : null,
         employmentPercent: Number(row.employmentPercent),
-        createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       });
       byPost.set(row.employmentId, list);

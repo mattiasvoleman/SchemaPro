@@ -4,9 +4,11 @@
 -- (TeacherEmploymentPeriods, 20261022120000) as one Duty per stretch of the
 -- year in which its grad stays the same whole percent — where the school
 -- shares employment with integrations (src/integration/ss12000-duties.ts,
--- toSs12000Duties). The first stretch keeps the post's id; a period's
--- stretch is the period's id; the post's own figures after a period are
--- app.ss12000_after_id(that period). This migration makes the versions and
+-- toSs12000Duties). The first stretch keeps the post's id; every other is
+-- app.ss12000_stretch_id(post, its first day): named by what a reader of
+-- the Duties sees, so a period no Duty shows (a nedsättning, a target, a
+-- period cut in two at the same grad) names nothing and moves no id. This
+-- migration makes the versions and
 -- the tombstones (20261014130000) follow those ids: an id that starts being
 -- emitted is unburied and versioned, one that stops is buried, and every
 -- change to what they carry moves their meta.modified — and nothing else
@@ -75,9 +77,9 @@ LANGUAGE sql IMMUTABLE SET search_path = "public", "pg_temp" AS $$
     FROM (SELECT md5(decode('5c1e2f7a0b944d3e9a517c2d8e6f4b10', 'hex') || convert_to(p_name, 'UTF8')) AS h) x
 $$;
 
-CREATE FUNCTION app.ss12000_after_id(p_period uuid) RETURNS uuid
+CREATE FUNCTION app.ss12000_stretch_id(p_post uuid, p_from date) RETURNS uuid
 LANGUAGE sql IMMUTABLE SET search_path = "public", "pg_temp" AS $$
-  SELECT app.ss12000_uuid_v3('duty-after:' || lower(p_period::text))
+  SELECT app.ss12000_uuid_v3('duty-from:' || lower(p_post::text) || ':' || to_char(p_from, 'YYYY-MM-DD'))
 $$;
 
 -- Whether the post is emitted on its own id, by a school that shares, in the
@@ -97,28 +99,27 @@ $$;
 CREATE FUNCTION app.ss12000_periods_json(p_employment uuid, p_except uuid[]) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT coalesce(jsonb_agg(jsonb_build_object(
-           'id', q."id", 'f', q."validFrom"::date, 't', q."validTo"::date, 'pct', q."employmentPercent")), '[]'::jsonb)
+           'f', q."validFrom"::date, 't', q."validTo"::date, 'pct', q."employmentPercent")), '[]'::jsonb)
     FROM "TeacherEmploymentPeriods" q
    WHERE q."employmentId" = p_employment
      AND NOT (q."id" = ANY (coalesce(p_except, ARRAY[]::uuid[])))
 $$;
 
 -- A post's stretches as the gateway emits them (dutySegments), each
--- 'id|from|to|grad', from periods given as jsonb [{id, f, t, pct}]: so a
+-- 'id|from|to|grad', from periods given as jsonb [{f, t, pct}]: so a
 -- trigger can ask what they were before a write as well as what they are.
--- A merged stretch keeps its first part's grad, as dutySegments does.
+-- A merged stretch keeps its first part's grad, as dutySegments does; its
+-- id is the post's for the first, app.ss12000_stretch_id for every other.
 CREATE FUNCTION app.ss12000_duty_stretches(p_employment uuid, p_periods jsonb) RETURNS text[]
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   e record;
   y record;
   p record;
-  piece_id uuid[] := ARRAY[]::uuid[];
   piece_from date[] := ARRAY[]::date[];
   piece_to date[] := ARRAY[]::date[];
   piece_pct numeric[] := ARRAY[]::numeric[];
   cursor_day date;
-  after_period uuid := NULL;
   stretches text[] := ARRAY[]::text[];
   cur_id uuid := NULL;
   cur_from date;
@@ -133,40 +134,36 @@ BEGIN
   cursor_day := y.s;
   -- The pieces: the post's own figures between and around its periods, and each period.
   FOR p IN
-    SELECT q.id, greatest(q.f, y.s) AS f, least(coalesce(q.t, y.t), y.t) AS t, q.pct
-      FROM jsonb_to_recordset(coalesce(p_periods, '[]'::jsonb)) AS q(id uuid, f date, t date, pct numeric)
-     ORDER BY 2, 1
+    SELECT greatest(q.f, y.s) AS f, least(coalesce(q.t, y.t), y.t) AS t, q.pct
+      FROM jsonb_to_recordset(coalesce(p_periods, '[]'::jsonb)) AS q(f date, t date, pct numeric)
+     ORDER BY 1
   LOOP
     CONTINUE WHEN p.f > p.t;
     IF p.f > cursor_day THEN
-      piece_id := piece_id || coalesce(app.ss12000_after_id(after_period), p_employment);
       piece_from := piece_from || cursor_day;
       piece_to := piece_to || (p.f - 1);
       piece_pct := piece_pct || e.pct;
     END IF;
-    piece_id := piece_id || p.id;
     piece_from := piece_from || p.f;
     piece_to := piece_to || p.t;
     piece_pct := piece_pct || p.pct;
-    after_period := p.id;
     cursor_day := p.t + 1;
   END LOOP;
   IF cursor_day <= y.t THEN
-    piece_id := piece_id || coalesce(app.ss12000_after_id(after_period), p_employment);
     piece_from := piece_from || cursor_day;
     piece_to := piece_to || y.t;
     piece_pct := piece_pct || e.pct;
   END IF;
   -- Pieces next to each other whose grad is the same whole percent are one;
   -- the first stretch is the post's own.
-  FOR i IN 1 .. coalesce(array_length(piece_id, 1), 0) LOOP
+  FOR i IN 1 .. coalesce(array_length(piece_from, 1), 0) LOOP
     IF cur_id IS NOT NULL AND round(cur_pct) = round(piece_pct[i]) THEN
       cur_to := piece_to[i];
     ELSE
       IF cur_id IS NOT NULL THEN
         stretches := stretches || concat_ws('|', cur_id, cur_from, cur_to, trim_scale(cur_pct));
       END IF;
-      cur_id := CASE WHEN cur_id IS NULL THEN p_employment ELSE piece_id[i] END;
+      cur_id := CASE WHEN cur_id IS NULL THEN p_employment ELSE app.ss12000_stretch_id(p_employment, piece_from[i]) END;
       cur_from := piece_from[i];
       cur_to := piece_to[i];
       cur_pct := piece_pct[i];
@@ -228,10 +225,14 @@ BEGIN
   END IF;
   posts := ARRAY(SELECT DISTINCT x FROM unnest(coalesce(p_employments, ARRAY[]::uuid[])) x WHERE x IS NOT NULL);
   now_ids := ARRAY(SELECT DISTINCT i FROM unnest(posts) e, unnest(app.ss12000_split_duty_ids(e)) i);
+  -- Every id a post's stretch could have had: a stretch after the first
+  -- starts on a period's first day or on the day after its last.
   candidates := ARRAY(
     SELECT x FROM unnest(coalesce(p_gone, ARRAY[]::uuid[])) x WHERE x IS NOT NULL
-    UNION SELECT q."id" FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = ANY (posts)
-    UNION SELECT app.ss12000_after_id(q."id") FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = ANY (posts));
+    UNION SELECT app.ss12000_stretch_id(q."employmentId", q."validFrom"::date)
+            FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = ANY (posts)
+    UNION SELECT app.ss12000_stretch_id(q."employmentId", q."validTo"::date + 1)
+            FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = ANY (posts) AND q."validTo" IS NOT NULL);
   PERFORM app.ss12000_bury(p_school, 'Duty', ARRAY(
     SELECT v."entityId" FROM "Ss12000EntityVersions" v
      WHERE v."schoolId" = p_school AND v."resource" = 'Duty'
@@ -284,7 +285,7 @@ BEGIN
   END IF;
   IF TG_OP <> 'INSERT' THEN
     SELECT coalesce(jsonb_agg(jsonb_build_object(
-             'id', x."id", 'post', x."employmentId", 'school', x."schoolId",
+             'post', x."employmentId", 'school', x."schoolId",
              'f', x."validFrom"::date, 't', x."validTo"::date, 'pct', x."employmentPercent")), '[]'::jsonb)
       INTO was FROM o x;
   END IF;
@@ -298,8 +299,9 @@ BEGIN
       -- it, and what they emitted while it could be split is buried: only
       -- an id with a version, so a school that never shared buries nothing.
       ids := ARRAY(
-        SELECT (j->>'id')::uuid FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post
-        UNION SELECT app.ss12000_after_id((j->>'id')::uuid) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post);
+        SELECT app.ss12000_stretch_id(r.post, (j->>'f')::date) FROM jsonb_array_elements(was) j WHERE (j->>'post')::uuid = r.post
+        UNION SELECT app.ss12000_stretch_id(r.post, (j->>'t')::date + 1) FROM jsonb_array_elements(was) j
+               WHERE (j->>'post')::uuid = r.post AND j->>'t' IS NOT NULL);
     ELSE
       before_stretches := app.ss12000_duty_stretches(r.post,
         app.ss12000_periods_json(r.post, written)
@@ -452,11 +454,16 @@ DECLARE
   was text := current_setting('app.ss12000_housekeeping', true);
 BEGIN
   PERFORM set_config('app.ss12000_housekeeping', 'on', true);
+  -- Every post that can be cut and is not emitted as it was: several
+  -- stretches, or one on a period's grad (80 % from the first day, all year).
   FOR r IN
     SELECT e."schoolId" AS s, array_agg(e."id") AS posts
       FROM "TeacherEmployments" e
+      JOIN "AcademicYears" a ON a."id" = e."academicYearId"
      WHERE EXISTS (SELECT 1 FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = e."id")
-       AND cardinality(app.ss12000_split_duty_ids(e."id")) > 0
+       AND app.ss12000_split_capable(e."id")
+       AND app.ss12000_duty_stretches(e."id", app.ss12000_periods_json(e."id", NULL))
+           IS DISTINCT FROM ARRAY[concat_ws('|', e."id", a."startDate"::date, a."endDate"::date, trim_scale(e."employmentPercent"))]
      GROUP BY 1
   LOOP
     PERFORM app.ss12000_bump(r.s, 'Duty', r.posts);
@@ -482,7 +489,7 @@ DECLARE fn text; r text;
 BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'app.ss12000_uuid_v3(text)',
-    'app.ss12000_after_id(uuid)',
+    'app.ss12000_stretch_id(uuid, date)',
     'app.ss12000_split_capable(uuid)',
     'app.ss12000_periods_json(uuid, uuid[])',
     'app.ss12000_duty_stretches(uuid, jsonb)',
@@ -516,7 +523,7 @@ BEGIN
     JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
     CROSS JOIN pg_roles r
    WHERE r.rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated')
-     AND p.proname IN ('ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_periods_json',
+     AND p.proname IN ('ss12000_uuid_v3', 'ss12000_stretch_id', 'ss12000_split_capable', 'ss12000_periods_json',
                        'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
                        'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods',
                        'ss12000_version_split_duties', 'ss12000_v_split_periods',

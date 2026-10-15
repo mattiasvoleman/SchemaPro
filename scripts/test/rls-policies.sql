@@ -19499,7 +19499,7 @@ ROLLBACK;
 DO $$
 DECLARE
   bad text;
-  helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_after_id', 'ss12000_split_capable', 'ss12000_periods_json',
+  helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_stretch_id', 'ss12000_split_capable', 'ss12000_periods_json',
                           'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
                           'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_version_split_duties',
                           'ss12000_v_split_periods', 'ss12000_v_split_employments', 'ss12000_v_split_policies',
@@ -19521,7 +19521,7 @@ BEGIN
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'split duties: executable by an API role: %', bad; END IF;
   SELECT string_agg(p.proname, ', ' ORDER BY p.proname) INTO bad
     FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
-   WHERE p.proname = ANY (helpers) AND p.proname NOT IN ('ss12000_uuid_v3', 'ss12000_after_id') AND NOT p.prosecdef;
+   WHERE p.proname = ANY (helpers) AND p.proname NOT IN ('ss12000_uuid_v3', 'ss12000_stretch_id') AND NOT p.prosecdef;
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'split duties: not SECURITY DEFINER: %', bad; END IF;
   SELECT string_agg(want, ', ') INTO bad FROM unnest(ARRAY[
       'TeacherEmploymentPeriods_ss12000_split_ins', 'TeacherEmploymentPeriods_ss12000_split_upd',
