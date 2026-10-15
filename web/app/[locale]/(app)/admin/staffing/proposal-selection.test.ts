@@ -46,6 +46,18 @@ describe("loadsUnderSelection", () => {
     assignments: [move("r1", null, "a", 59.3), move("r2", "b", "a", 120), move("r3", "a", "b", 20)],
   };
 
+  it("gives a changing post back what a left-out dated row charges its planned stretch, not the year's charge", () => {
+    // Anna is shown on the spring, which an autumn row does not weigh: 0 there, 117 over the year.
+    const changing = {
+      teachers: [teacher("anna", 150, 180, 180, "OVER")],
+      assignments: [{ ...move("autumn", null, "anna", 117), toStretchChargeMinutesPerWeek: 0 }],
+    };
+    expect(loadsUnderSelection(changing, new Set(), 10).get("anna")?.exact).toBe(180);
+    // Without the stretch's charge the year's is given back, as for any other post.
+    const plain = { teachers: changing.teachers, assignments: [move("autumn", null, "anna", 117)] };
+    expect(loadsUnderSelection(plain, new Set(), 10).get("anna")?.exact).toBe(63);
+  });
+
   it("is the gateway's own figures, untouched, when every change is selected", () => {
     const loads = loadsUnderSelection(proposal, new Set(["r1", "r2", "r3"]), 10);
     expect(loads.get("a")).toEqual({
