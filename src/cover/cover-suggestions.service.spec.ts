@@ -104,6 +104,36 @@ describe('CoverSuggestionsService', () => {
     tx.studentGroup.findMany.mockResolvedValue([{ id: '7a', name: '7A' }]);
   });
 
+  describe('a post that changes during the year', () => {
+    const period = (validFrom: string, teachingTargetMinutesPerWeek: number) => ({
+      userId: S,
+      validFrom: new Date(`${validFrom}T00:00:00Z`),
+      validTo: null,
+      employmentPercent: 50,
+      reductionPercent: 0,
+      teachingTargetMinutesPerWeek,
+    });
+
+    it('judges the lesson’s week by the post in force on its Monday: a period from then sets the target', async () => {
+      // From Monday 12 October, a post with an own target of 30: 60 this week and the cover's 60 are over it.
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([period('2026-10-12', 30)]);
+      const s = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+      expect(s.load).toEqual({ weekMinutes: 60, targetMinutes: 30 });
+      expect(s.reasons.map((r) => r.code)).toContain('OVER_TARGET');
+      expect(tx.teacherEmploymentPeriod.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ academicYearId: expect.any(String) }) }),
+      );
+    });
+
+    it('leaves a week to the post it began with when a period starts mid-week, as the load report does', async () => {
+      // From Wednesday 14 October, the lesson's own day: its week's Monday is still the post's own 900.
+      tx.teacherEmploymentPeriod.findMany.mockResolvedValue([period('2026-10-14', 30)]);
+      const s = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+      expect(s.load).toEqual({ weekMinutes: 60, targetMinutes: 900 });
+      expect(s.reasons.map((r) => r.code)).toContain('UNDER_TARGET');
+    });
+  });
+
   it('candidates: the hard rules exclude with their codes; the rest ranked with reasons, behörig colleague before the pool', async () => {
     const answer = await service.candidates(LESSON, testUser());
     expect(answer.excluded).toEqual([

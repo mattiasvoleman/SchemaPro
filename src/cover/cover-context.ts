@@ -2,6 +2,7 @@ import type { PrismaClient, TeacherQualificationKind } from '@prisma/client';
 import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
 import { isFullDay, isoWeekday, timeToString } from '../calendar/publish-days';
 import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
+import { toLoadPeriod } from '../staffing/load-input';
 import type { LoadEmployment } from '../staffing/teacher-load';
 import type { LessonStatusValue, PersonClosure, PersonDay, PersonLesson, Span } from './cover-rules';
 
@@ -66,6 +67,12 @@ export interface DayReadOptions {
   known?: readonly { id: string; role: string; isActive: boolean }[];
   /** The caller has read and judged their absences itself. */
   skipAbsences?: boolean;
+  /**
+   * Read each post's periods too (20261022120000): the ranking judges the
+   * week by the post in force then (postOfWeek). The hard rules ask only
+   * whether a post exists, and leave them unread.
+   */
+  withPeriods?: boolean;
 }
 
 export interface DayRead {
@@ -262,8 +269,18 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
           signature: true,
         },
       })) ?? [];
+    // The posts' periods, under the same arms as the posts, asked only when
+    // there is a post to have one — a school without posts sends what it did.
+    const periodRows =
+      options.withPeriods && rows.length > 0
+        ? ((await tx.teacherEmploymentPeriod.findMany({
+            where: { academicYearId: options.academicYearId, userId: people },
+            orderBy: [{ userId: 'asc' }, { validFrom: 'asc' }],
+          })) ?? [])
+        : [];
     for (const row of rows) {
       if (!row?.userId) continue;
+      const periods = periodRows.filter((period) => period?.userId === row.userId).map(toLoadPeriod);
       employments.set(row.userId, {
         userId: row.userId,
         employmentPercent: Number(row.employmentPercent),
@@ -271,6 +288,7 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
         contractKind: row.contractKind,
         teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek ?? null,
         signature: row.signature ?? null,
+        ...(periods.length > 0 ? { periods } : {}),
       });
     }
   }

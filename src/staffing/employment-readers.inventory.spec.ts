@@ -81,12 +81,12 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'the tjänster CSV writes the base row; a period is written on the Anställning card, and a re-import leaves a post’s periods as they are',
   },
   'src/cover/cover-context.ts': {
-    basis: 'NEXT',
-    why: 'the vikarie ranking’s room left reads the year-start post; the post on the lesson’s date (postOn) is the next release’s',
+    basis: 'PERIODS',
+    why: 'reads each post with its periods for the vikarie ranking (withPeriods); the hard rules ask only whether a post exists',
   },
   'src/cover/cover-suggestions.service.ts': {
-    basis: 'NEXT',
-    why: 'the same ranking, from cover-context’s posts',
+    basis: 'PERIODS',
+    why: 'the vikarie ranking judges the lesson’s week by the post in force on its Monday (postOfWeek), as the load report does',
   },
   'src/optimization/staffing-proposal.service.ts': {
     basis: 'PERIODS',
@@ -123,8 +123,6 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
 
 /** The readers left on the year-start post, written out: see 5. */
 const NEXT_RELEASE = [
-  'src/cover/cover-context.ts',
-  'src/cover/cover-suggestions.service.ts',
   'src/integration/ss12000-duties.ts',
   'src/integration/ss12000-v2/slice.ts',
   'src/integration/ss12000.service.ts',
@@ -139,7 +137,7 @@ const TABLE_READ =
   /\b(?:teacherEmployment|teacherEmploymentPeriod)\.(?:findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|create|createMany|update|updateMany|upsert|delete|deleteMany|aggregate|groupBy)\b|"TeacherEmployments"|"TeacherEmploymentPeriods"/;
 const FIGURES_READ =
   /\btargetMinutesPerWeek\(|\.(?:employmentPercent|reductionPercent|teachingTargetMinutesPerWeek)\b/;
-const PERIODS_READ = /\bperiods\b|\bstretchLoads\(|\bpostStretches\(|\bpostOn\(|\bchangesDuringYear\(/;
+const PERIODS_READ = /\bperiods\b|\bstretchLoads\(|\bpostStretches\(|\bpostOn\(|\bpostOfWeek\(|\bchangesDuringYear\(/;
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
