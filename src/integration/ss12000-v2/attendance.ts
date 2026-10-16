@@ -100,14 +100,16 @@ export async function serviceReadsAttendance(tx: PrismaClient, scope: 'attendanc
 }
 
 /**
- * Whether the service principal's school has ever shared attendance
- * (app.service_attendance_ever_shared): one that has, and does not now, has
- * stopped, and /deletedEntities says so (403 NOT_SHARED) instead of leaving
- * the two categories out.
+ * Whether the request's key may read the removals of `scope`'s resource
+ * (app.service_reads_attendance_removals): as serviceReadsAttendance, but
+ * at a school that has ever shared rather than one that shares now. Its
+ * tombstones are an id and when it went, the instruction to delete what the
+ * integration holds, so /deletedEntities answers them also while the school
+ * has stopped, and its other categories with them.
  */
-export async function serviceEverSharedAttendance(tx: PrismaClient): Promise<boolean> {
-  const [row] = await tx.$queryRaw<Array<{ ever: boolean }>>(Prisma.sql`SELECT app.service_attendance_ever_shared() AS ever`);
-  return row?.ever === true;
+export async function serviceReadsAttendanceRemovals(tx: PrismaClient, scope: 'attendances.read' | 'absences.read'): Promise<boolean> {
+  const [row] = await tx.$queryRaw<Array<{ reads: boolean }>>(Prisma.sql`SELECT app.service_reads_attendance_removals(${scope}) AS reads`);
+  return row?.reads === true;
 }
 
 // ---------------------------------------------------------------------------

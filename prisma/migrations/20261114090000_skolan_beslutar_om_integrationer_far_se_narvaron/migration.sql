@@ -36,11 +36,14 @@
 -- app.attendance_shared(school) is the decision in force;
 -- app.attendance_shared_since(school) when the current run of sharing began
 -- (the first decision to share after the last to stop), NULL while it does
--- not share; app.attendance_ever_shared(school) whether any decision ever
--- shared. All three are the owner's (nobody's EXECUTE).
--- app.service_reads_attendance(scope), under the service principal: true
--- only when the key the request authenticated with is the school's, not
--- revoked, holds the scope, and the school shares.
+-- not share; app.attendance_run_xid(school) the transaction of that first
+-- decision (each decision carries the xid it was written in);
+-- app.attendance_ever_shared(school) whether any decision ever shared. All
+-- four are the owner's (nobody's EXECUTE). Under the service principal:
+-- app.service_reads_attendance(scope) is true only when the key the request
+-- authenticated with is the school's, not revoked, holds the scope, and the
+-- school shares; app.service_reads_attendance_removals(scope) the same with
+-- "has ever shared": the tombstones, also while the school has stopped.
 --
 -- ## The provider reads columns, not rows
 --
@@ -115,8 +118,11 @@
 --   * A tombstone is written whether or not it shares at the moment: a row
 --     deleted (gallring's too, app.gallring_purge), a pupil deactivated (or
 --     no longer a pupil), a removed lesson's cascade; and taken away when a
---     pupil comes back. So what happened while the school did not share is
---     recorded for the moment it shares again.
+--     pupil comes back. A key with the scope reads them also while the
+--     school has stopped (20261114090500): an id and when it went, the
+--     instruction to delete what the integration holds, never a row. So
+--     /deletedEntities is answered whole while the school does not share,
+--     and an integration that keeps reading it deletes what goes meanwhile.
 --   * meta.modified of every Attendance and Absence is at least the moment
 --     the current run of sharing began (app.attendance_shared_since): when a
 --     school starts, or starts again, everything reads as modified then, so
@@ -128,10 +134,6 @@
 --     at a sharing school, emitted or not, so every row created while it
 --     shares has a version from its creation and meta.modified is never
 --     before meta.created.
---   * /deletedEntities answers 403 NOT_SHARED for the two categories once a
---     school has stopped (the gateway), so an integration's cursor cannot
---     move past the tombstones it was not shown; when the school shares
---     again they are there, after that cursor.
 --
 -- The emitted years are found once per statement, never per row.
 --
@@ -180,10 +182,12 @@
 --
 -- AttendanceSharingDecisions: REVOKE ALL from every API role; SELECT and
 -- INSERT (schoolId, shares, reference) to app_authenticated; SELECT to
--- service_role. Functions: the trigger functions, the helpers,
--- app.attendance_shared, app.attendance_shared_since and
--- app.attendance_ever_shared are nobody's; app.service_reads_attendance and
--- the two read functions are app_authenticated's alone.
+-- service_role (who and when, and the xid, are the database's). Functions:
+-- the trigger functions, the helpers, app.attendance_shared,
+-- app.attendance_shared_since, app.attendance_run_xid and
+-- app.attendance_ever_shared are nobody's; app.service_reads_attendance,
+-- app.service_reads_attendance_removals and the two read functions are
+-- app_authenticated's alone.
 
 DO $$
 DECLARE
@@ -216,6 +220,7 @@ CREATE TABLE "AttendanceSharingDecisions" (
     "reference"   TEXT,
     "decidedById" UUID,
     "decidedAt"   TIMESTAMPTZ(6) NOT NULL DEFAULT clock_timestamp(),
+    "xid"         XID8 NOT NULL DEFAULT pg_current_xact_id(),
 
     CONSTRAINT "AttendanceSharingDecisions_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "AttendanceSharingDecisions_reference_is_short" CHECK ("reference" IS NULL OR char_length("reference") BETWEEN 1 AND 200)
@@ -238,6 +243,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
   NEW."decidedAt" := clock_timestamp();
   NEW."decidedById" := app.current_user_id();
+  NEW."xid" := pg_current_xact_id();
   RETURN NEW;
 END
 $$;
@@ -303,8 +309,31 @@ $$;
 COMMENT ON FUNCTION app.attendance_shared_since(uuid) IS
   'When the school''s current run of sharing attendance with integrations began (the first decision to share after the last to stop); NULL while it does not share. Every Attendance and Absence reads as modified no earlier than this.';
 
+-- The transaction of the decision that began the current run of sharing:
+-- the delivery tells a subscription of the start once, by the same snapshot
+-- rule as a version (its xid at or past the subscription's watermark and
+-- below the claim's horizon), so a notice claimed before the decision
+-- committed and settled after it does not swallow the start.
+CREATE FUNCTION app.attendance_run_xid(p_school uuid) RETURNS xid8
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT CASE WHEN app.attendance_shared(p_school) THEN (
+    SELECT d."xid"
+      FROM "AttendanceSharingDecisions" d
+     WHERE d."schoolId" = p_school
+       AND d."shares"
+       AND d."decidedAt" > coalesce((
+             SELECT max(x."decidedAt") FROM "AttendanceSharingDecisions" x
+              WHERE x."schoolId" = p_school AND NOT x."shares"), '-infinity'::timestamptz)
+     ORDER BY d."decidedAt", d."id"
+     LIMIT 1)
+  END
+$$;
+
+COMMENT ON FUNCTION app.attendance_run_xid(uuid) IS
+  'The transaction id of the decision that began the school''s current run of sharing attendance (see app.attendance_shared_since); NULL while it does not share.';
+
 -- Whether the school has ever shared: from then on a removal is recorded
--- even while it does not share, for the moment it shares again.
+-- even while it does not share, and told to the keys that may read it.
 CREATE FUNCTION app.attendance_ever_shared(p_school uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT EXISTS (SELECT 1 FROM "AttendanceSharingDecisions" d WHERE d."schoolId" = p_school AND d."shares")
@@ -331,17 +360,26 @@ $$;
 COMMENT ON FUNCTION app.service_reads_attendance(text) IS
   'True under the service principal when the request''s integration key is the school''s, not revoked, holds the scope (attendances.read or absences.read), and the school shares attendance (app.attendance_shared).';
 
--- Under the service principal, whether the service principal's school has
--- ever shared: the gateway's 403 NOT_SHARED on /deletedEntities once a
--- school has stopped (and not before it ever started).
-CREATE FUNCTION app.service_attendance_ever_shared() RETURNS boolean
+-- Under the service principal: the request's key is the school's, live,
+-- holds the scope, and the school has ever shared. Its tombstones of that
+-- resource are then the key's to read, also while the school has stopped:
+-- an id and when it went, the instruction to delete what the integration
+-- holds, never a row. (Before a school's first decision there is none.)
+CREATE FUNCTION app.service_reads_attendance_removals(p_scope text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-  SELECT app.current_service_school_id() IS NOT NULL
+  SELECT p_scope IN ('attendances.read', 'absences.read')
+     AND app.current_service_school_id() IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM "IntegrationApiKeys" k
+        WHERE k."id" = app.current_service_key_id()
+          AND k."schoolId" = app.current_service_school_id()
+          AND k."revokedAt" IS NULL
+          AND p_scope = ANY (k."scopes"))
      AND app.attendance_ever_shared(app.current_service_school_id())
 $$;
 
-COMMENT ON FUNCTION app.service_attendance_ever_shared() IS
-  'Under the service principal: whether its school has ever shared attendance with integrations.';
+COMMENT ON FUNCTION app.service_reads_attendance_removals(text) IS
+  'True under the service principal when the request''s integration key is the school''s, not revoked, holds the scope (attendances.read or absences.read), and the school has ever shared attendance: its tombstones of that resource are the key''s, also while the school does not share.';
 
 -- ---------------------------------------------------------------------------
 -- A granted leave's absence, and a span that ends after it starts
@@ -838,6 +876,7 @@ BEGIN
     'app.attendance_sharing_decisions_are_append_only()',
     'app.attendance_shared(uuid)',
     'app.attendance_shared_since(uuid)',
+    'app.attendance_run_xid(uuid)',
     'app.attendance_ever_shared(uuid)',
     'app.absence_reports_granted_leave_is_decided()',
     'app.ss12000_emitted_years(uuid)',
@@ -861,7 +900,7 @@ BEGIN
   -- The provider's questions and its two reads: the API alone.
   FOREACH fn IN ARRAY ARRAY[
     'app.service_reads_attendance(text)',
-    'app.service_attendance_ever_shared()',
+    'app.service_reads_attendance_removals(text)',
     'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',
     'app.ss12000_absences(uuid[], uuid[])'
   ] LOOP

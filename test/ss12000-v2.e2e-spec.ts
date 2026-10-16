@@ -341,13 +341,22 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       expect(Object.keys(deleted.body.data)).toEqual(['persons']);
     });
 
-    it('once the school has stopped, /deletedEntities is 403 NOT_SHARED for the two categories rather than silent', async () => {
+    it('once the school has stopped, /deletedEntities still answers every category, the two with their removals', async () => {
       world.everShared = true;
-      // Named, or implied by asking for everything the key may read.
-      expect((await v2('/deletedEntities').expect(403)).body.code).toBe('NOT_SHARED');
-      expect((await v2('/deletedEntities?entities=Attendance&entities=Person').expect(403)).body.code).toBe('NOT_SHARED');
-      // Not named: the rest is answered as before.
-      expect(Object.keys((await v2('/deletedEntities?entities=Person').expect(200)).body.data)).toEqual(['persons']);
+      world.tombstones.push(
+        { schoolId: W.school, resource: 'Attendance', emittedId: 'a0000000-0000-4000-8000-0000000000fe', removedAt: new Date('2026-10-06T08:00:00Z') },
+        { schoolId: W.school, resource: 'Absence', emittedId: 'ab000000-0000-4000-8000-0000000000fe', removedAt: new Date('2026-10-06T09:00:00Z') },
+      );
+      // S1's default, no entities: a person who left and an attendance and absence that went, ids only.
+      const all = await v2('/deletedEntities').expect(200);
+      expect(all.body.data).toMatchObject({
+        persons: [W.p5],
+        attendances: ['a0000000-0000-4000-8000-0000000000fe'],
+        absences: ['ab000000-0000-4000-8000-0000000000fe'],
+      });
+      expect(Object.keys((await v2('/deletedEntities?entities=Attendance').expect(200)).body.data)).toEqual(['attendances']);
+      // Everything else about them is still closed.
+      expect((await v2('/attendances').expect(403)).body.code).toBe('NOT_SHARED');
       // A key without either scope never had them.
       expect(Object.keys((await v2('/deletedEntities', GROUPS_ONLY).expect(200)).body.data)).toEqual(['groups']);
     });

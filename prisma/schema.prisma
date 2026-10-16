@@ -3726,6 +3726,9 @@ model AttendanceSharingDecision {
   reference   String?
   decidedById String?  @db.Uuid
   decidedAt   DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  /// The transaction the decision was written in, stamped by the database: the
+  /// webhook delivery's snapshot rule for telling a start; Prisma cannot read the type.
+  xid         Unsupported("xid8") @default(dbgenerated("pg_current_xact_id()"))
 
   @@index([schoolId, decidedAt(sort: Desc)])
   @@map("AttendanceSharingDecisions")

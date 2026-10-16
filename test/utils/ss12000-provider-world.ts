@@ -372,8 +372,17 @@ export class ProviderWorld {
 
   /** app.service_reads_attendance: the request's key, live and the school's, holds the scope, and the school shares. */
   private readsAttendance(tx: TxMock, scope: string): boolean {
+    return this.attendanceShared && this.keyHolds(tx, scope);
+  }
+
+  /** app.service_reads_attendance_removals: the same, at a school that has ever shared. */
+  private readsRemovals(tx: TxMock, scope: string): boolean {
+    return (this.attendanceShared || this.everShared) && this.keyHolds(tx, scope);
+  }
+
+  private keyHolds(tx: TxMock, scope: string): boolean {
     const key = this.keys.find((row) => row['id'] === serviceKeyOf(tx) && row['revokedAt'] === null && row['schoolId'] === W.school);
-    return this.attendanceShared && !!key && (key['scopes'] as string[]).includes(scope);
+    return !!key && (key['scopes'] as string[]).includes(scope);
   }
 
   /** app.ss12000_year_is_emitted: the active year, and those that started before it. */
@@ -531,8 +540,9 @@ export class ProviderWorld {
       const { text, values } = sqlOf(statement);
       this.rawStatements.push(text);
       if (text.includes('app.ss12000_provider_identity')) return [this.identity];
+      // Before app.service_reads_attendance, whose name begins it.
+      if (text.includes('app.service_reads_attendance_removals')) return [{ reads: this.readsRemovals(tx, values[0] as string) }];
       if (text.includes('app.service_reads_attendance')) return [{ reads: this.readsAttendance(tx, values[0] as string) }];
-      if (text.includes('app.service_attendance_ever_shared')) return [{ ever: this.everShared || this.attendanceShared }];
       if (text.includes('app.ss12000_attendances(')) return this.attendanceRows(tx, values);
       if (text.includes('app.ss12000_absences(')) return this.absenceRows(tx, values);
       if (text.includes('app.school_publish_mode')) return [{ mode: this.publishMode }];
