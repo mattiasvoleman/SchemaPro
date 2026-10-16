@@ -5173,7 +5173,7 @@
     "profileUnreadable": "Profilen kunde inte läsas. Den ändras inte när du sparar; ladda om sidan för att ändra den."
   },
   "calendarFeed": {
-    "title": "Kalenderprenumeration",
+    "title": "Min kalenderprenumeration",
     "subtitle": {
       "TEACHER": "Ditt publicerade schema i din kalenderapp, med inställda lektioner och vikariepass.",
       "STUDENT": "Ditt publicerade schema i din kalenderapp, med inställda lektioner och lov.",
@@ -5185,7 +5185,7 @@
       "TEACHER": "Skolan väljer om lärare får prenumerera på sitt schema. Fråga skolans administratör.",
       "STUDENT": "Skolan väljer om elever får prenumerera på sitt schema. Fråga skolan.",
       "GUARDIAN": "Skolan väljer om vårdnadshavare får prenumerera på sina barns scheman. Fråga skolan.",
-      "ADMIN": "Lärarnas prenumeration är avstängd. Den slås på under Schemaläggning › Kalenderprenumeration."
+      "ADMIN": "Lärarnas prenumeration är avstängd. Rektor eller en administratör som har Publicering slår på den under Schemaläggning › Kalenderprenumeration."
     },
     "noChildren": "Du har inga barn i skolan att prenumerera på.",
     "ownTitle": "Ditt schema",

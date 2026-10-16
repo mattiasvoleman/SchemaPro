@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import CalendarFeedPage from "./page";
 
 /**
- * "Kalenderprenumeration" over the real hooks and the Swedish messages, the
+ * "Min kalenderprenumeration" over the real hooks and the Swedish messages, the
  * gateway answering by path. What only this page decides: that an audience
  * the school has off is said, that the address is shown once (copyable, the
  * https address only, with the focus on it) and never read back, that making

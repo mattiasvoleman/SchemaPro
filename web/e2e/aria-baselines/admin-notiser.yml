@@ -7,6 +7,9 @@
       - listitem:
         - link "Översikt":
           - /url: /sv/admin
+      - listitem:
+        - link "Min kalenderprenumeration":
+          - /url: /sv/calendar-feed
     - text: Grunddata
     - list "Grunddata":
       - listitem:

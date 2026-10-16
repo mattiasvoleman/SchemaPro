@@ -66,8 +66,8 @@ export function ClosedPageGate({ children }: { children: React.ReactNode }) {
 /*
  * The menus of the roles that are not the admin, which AppShell renders. They
  * are here and not in app-shell.tsx for the bundle: that module's part of the
- * signed-in routes' shared chunk sits at Turbopack's minChunkSize, and this
- * module's part, which pages share, can grow (app-shell.tsx says more). The
+ * signed-in routes' shared chunk sat just under Turbopack's minChunkSize, and
+ * this module's part, which pages share, can grow (app-shell.tsx says more). The
  * icons are the admin menu's, already in that chunk.
  */
 export const TEACHER_NAV: NavSection[] = [
