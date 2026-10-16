@@ -25,6 +25,9 @@ const get = api.get as unknown as Mock;
 const post = api.post as unknown as Mock;
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+// The signed-in administrator's profile (Roller i skolan): full unless a test says otherwise.
+const me = vi.hoisted(() => ({ profile: { adminProfile: "FULL" as string | undefined } }));
+vi.mock("@/components/profile-context", () => ({ useProfile: () => me }));
 
 function renderCard(answer: AttendanceSharing) {
   get.mockImplementation(async (path: string) => {
@@ -44,6 +47,23 @@ function renderCard(answer: AttendanceSharing) {
 describe("AttendanceSharingCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    me.profile.adminProfile = "FULL";
+  });
+
+  it("is rektor's decision: a profile that does not decide reads it and is told who does, with nothing to press", async () => {
+    me.profile.adminProfile = "SCHEMALAGGARE";
+    renderCard({
+      current: { shares: true, reference: null, decidedAt: "2026-11-14T08:00:00.000Z", decidedBy: "Rolf Rektor" },
+      history: [{ shares: true, reference: null, decidedAt: "2026-11-14T08:00:00.000Z", decidedBy: "Rolf Rektor" }],
+    });
+    expect(await screen.findByText("Delas")).toBeInTheDocument();
+    expect(screen.getByText("Beslutet fattas av rektor eller en fullständig administratör.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sluta dela" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Diarienummer eller underlag/)).not.toBeInTheDocument();
+    // Rektor gets them.
+    me.profile.adminProfile = "REKTOR";
+    renderCard({ current: null, history: [] });
+    expect(await screen.findByRole("button", { name: "Börja dela" })).toBeInTheDocument();
   });
 
   it("says nothing is shared without a decision, and what would and never would leave", async () => {

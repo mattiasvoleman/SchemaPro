@@ -1983,7 +1983,8 @@
       "history": "Tidigare beslut",
       "historyShared": "{when}: delas ({who})",
       "historyStopped": "{when}: delas inte ({who})",
-      "historyLimit": "Här visas de {count} senaste besluten."
+      "historyLimit": "Här visas de {count} senaste besluten.",
+      "decidedByRektor": "Beslutet fattas av rektor eller en fullständig administratör."
     },
     "subscriptions": {
       "none": "Inga prenumerationer.",

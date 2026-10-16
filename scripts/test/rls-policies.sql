@@ -19636,6 +19636,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('AcademicYearTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('AcademicYears', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('AttendanceRecords', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('AttendanceSharingDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('AvailabilityConstraints', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('CalendarLessonGroups', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('CalendarLessonStudents', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
@@ -22445,9 +22446,11 @@ ROLLBACK;
 -- Section 153: skolans beslut fattas av administratören, stämplas av
 -- databasen och ändras aldrig (AttendanceSharingDecisions).
 --
--- The administrator inserts a decision, and who and when are stamped from
--- the claims and the clock, whatever is sent (the API may not even name
--- those columns); no API role updates, removes or truncates one; a decision
+-- The administrator (full, by the fixtures; that only rektor and full may,
+-- every other profile refused, is the role matrix's, section 116) inserts a
+-- decision, and who and when are stamped from the claims and the clock,
+-- whatever is sent (the API may not even name those columns); no API role
+-- updates, removes or truncates one; a decision
 -- for another school is refused, and none is seen. Teachers, guardians and
 -- pupils neither read nor write a decision, and PostgREST's role nothing.
 -- ---------------------------------------------------------------------------

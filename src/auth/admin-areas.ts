@@ -213,7 +213,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
 
   // The decisions. A delegation of leave decisions to the mentors is
   // rektor's (Mentorns ledighetsbeslut); a period of a post changes tjänst %
-  // like the post (Tjänstens perioder).
+  // like the post (Tjänstens perioder); sharing pupils' attendance with
+  // integrations rests on the school's konsekvensbedömning, like gallring
+  // and sharing tjänst % (SS12000-närvaro, 20261114090000).
+  AttendanceSharingDecisions: just('DECIDES', 'insert'),
   LeaveDelegationDecisions: just('DECIDES', 'insert'),
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),

@@ -94,6 +94,33 @@ describe('Administrator profiles and areas (e2e)', () => {
     }
   });
 
+  it("leaves sharing the pupils' attendance with integrations to rektor, and lets every profile read it", async () => {
+    for (const profile of ['SCHEMALAGGARE', 'EXPEDITION']) {
+      const refused = await request(http())
+        .post('/api/v1/integrations/attendance-sharing')
+        .set('x-test-user', as(profile))
+        .send({ shares: true, reference: 'Dnr 2026:12' })
+        .expect(403);
+      expect(refused.body).toMatchObject({ code: 'DECISION_NOT_YOURS' });
+      await request(http()).get('/api/v1/integrations/attendance-sharing').set('x-test-user', as(profile)).expect(200);
+    }
+    expect(harness.tx['attendanceSharingDecision']!['create']).not.toHaveBeenCalled();
+
+    harness.tx['attendanceSharingDecision']!['create']!.mockResolvedValue({
+      shares: true,
+      reference: 'Dnr 2026:12',
+      decidedAt: new Date('2026-11-14T08:00:00Z'),
+      decidedById: USER_ID,
+    });
+    const decided = await request(http())
+      .post('/api/v1/integrations/attendance-sharing')
+      .set('x-test-user', as('REKTOR'))
+      .send({ shares: true, reference: 'Dnr 2026:12' })
+      .expect(201);
+    expect(decided.body).toMatchObject({ shares: true, reference: 'Dnr 2026:12' });
+    expect(harness.tx['attendanceSharingDecision']!['create']).toHaveBeenCalledTimes(1);
+  });
+
   it("answers the school's administrators to the expedition, who may not change them", async () => {
     harness.tx['user']!['findMany']!.mockResolvedValue([{ id: USER_ID, adminProfile: 'REKTOR', hrRead: false }]);
     const response = await request(http())

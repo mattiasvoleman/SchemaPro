@@ -1983,7 +1983,8 @@
       "history": "Earlier decisions",
       "historyShared": "{when}: shared ({who})",
       "historyStopped": "{when}: not shared ({who})",
-      "historyLimit": "The {count} most recent decisions are shown here."
+      "historyLimit": "The {count} most recent decisions are shown here.",
+      "decidedByRektor": "The principal or a full administrator makes this decision."
     },
     "subscriptions": {
       "none": "No subscriptions.",
