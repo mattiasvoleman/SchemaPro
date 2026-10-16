@@ -1,0 +1,12 @@
+-- Närvaron sidas i skolans ordning: /attendances pages by id within one
+-- school (S1 gives it no window), so the keyset reads an index of the
+-- school's own rows in id order instead of walking every school's ids
+-- (20261114090000).
+--
+-- CONCURRENTLY, and so the only statement of its migration (it cannot run
+-- inside a transaction block): a register save writes AttendanceRecords all
+-- through the build, and a plain CREATE INDEX would block it for as long as
+-- the build takes. A build that fails half way leaves an invalid index of
+-- this name: drop it, mark the migration rolled back and run it again (no
+-- IF NOT EXISTS, which would take the invalid index for a built one).
+CREATE INDEX CONCURRENTLY "AttendanceRecords_schoolId_id_idx" ON "AttendanceRecords"("schoolId", "id");
