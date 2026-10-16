@@ -47,12 +47,14 @@ export function loadsUnderSelection(
   const teachersById = new Map(proposal.teachers.map((teacher) => [teacher.userId, teacher]));
   const leftOut = new Map<string, number>();
   const leftOutByStretch = new Map<string, number[]>();
+  const leftOutCount = new Map<string, number>();
   const give = (userId: string, sign: 1 | -1, charge: number, charges: number[] | undefined) => {
     const teacher = teachersById.get(userId);
     const planned = teacher?.plannedStretch;
     // The shown figure: the planned stretch's charge for a changing post, the year's otherwise.
     const shown = planned !== undefined && charges ? (charges[planned] ?? charge) : charge;
     leftOut.set(userId, (leftOut.get(userId) ?? 0) + sign * shown);
+    leftOutCount.set(userId, (leftOutCount.get(userId) ?? 0) + 1);
     if (teacher?.stretches && charges) {
       const deltas = leftOutByStretch.get(userId) ?? teacher.stretches.map(() => 0);
       charges.forEach((value, index) => {
@@ -76,14 +78,18 @@ export function loadsUnderSelection(
     const exact = delta === undefined ? teacher.after.countedExact : round2(teacher.after.countedExact + delta);
     const status =
       delta === undefined ? teacher.after.status : loadStatus(exact, teacher.targetMinutesPerWeek, tolerancePercent);
-    const grows = exact > teacher.before.countedExact + 1e-9;
+    // Each figure the gateway sends is rounded to two decimals: a sum of
+    // them can sit a hundredth off the unrounded one, and a teacher with
+    // every change left out must not grow by that.
+    const slack = (leftOutCount.get(teacher.userId) ?? 0) === 0 ? 1e-9 : 0.005 * ((leftOutCount.get(teacher.userId) ?? 0) + 1);
+    const grows = exact > teacher.before.countedExact + slack;
     // A changing post: any stretch with weeks that grows and ends over, as the apply asks.
     const deltas = leftOutByStretch.get(teacher.userId);
     const overInAStretch = (teacher.stretches ?? []).some((stretch, index) => {
       const is = round2(stretch.after + (deltas?.[index] ?? 0));
       return (
         stretch.weeks > 0 &&
-        is > stretch.before + 1e-9 &&
+        is > stretch.before + slack &&
         loadStatus(is, stretch.targetMinutesPerWeek, tolerancePercent) === "OVER"
       );
     });
