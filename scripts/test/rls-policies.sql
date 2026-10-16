@@ -22071,7 +22071,8 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- The functions: nobody's but the question and the two reads, which are the API's.
+  -- The functions: nobody's but the questions, the two reads and the register
+  -- save's wait for a running apply, which are the API's.
   FOREACH fn IN ARRAY ARRAY[
     'app.attendance_sharing_decisions_are_stamped()', 'app.attendance_sharing_decisions_are_append_only()',
     'app.attendance_shared(uuid)', 'app.attendance_shared_since(uuid)', 'app.attendance_ever_shared(uuid)',
@@ -22090,6 +22091,7 @@ BEGIN
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'attendance sharing: % runs as its caller', fn; END IF;
   END LOOP;
   FOREACH fn IN ARRAY ARRAY[
+    'app.attendance_recording_waits_for_sync()',
     'app.service_reads_attendance(text)',
     'app.service_reads_attendance_removals(text)',
     'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',

@@ -231,6 +231,26 @@ describe('AttendanceService', () => {
   // -------------------------------------------------------------------------
 
   describe('writing records', () => {
+    it('waits for a running SS12000 apply once, before its first write', async () => {
+      arrangeRoster([STUDENT_A, STUDENT_B]);
+
+      await service.reportAttendance(
+        dto([
+          { studentId: STUDENT_A, status: 'PRESENT' as never },
+          { studentId: STUDENT_B, status: 'LATE' as never },
+        ]),
+        teacher(),
+      );
+
+      // Each upsert moves a version an apply that links pupils may hold to its
+      // end; the database's wait (20261114090000) comes before the first.
+      const waits = tx.$executeRaw.mock.calls
+        .map((call, index) => ({ sql: (call[0] as Prisma.Sql).sql, order: tx.$executeRaw.mock.invocationCallOrder[index]! }))
+        .filter((call) => call.sql === 'SELECT app.attendance_recording_waits_for_sync()');
+      expect(waits).toHaveLength(1);
+      expect(waits[0]!.order).toBeLessThan(tx.attendanceRecord.upsert.mock.invocationCallOrder[0]!);
+    });
+
     it('upserts one row per entry and separates creates from updates', async () => {
       arrangeRoster([STUDENT_A, STUDENT_B]);
       tx.attendanceRecord.upsert
