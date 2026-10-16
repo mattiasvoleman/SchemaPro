@@ -12,6 +12,7 @@ import {
   SCB_COLUMNS,
   SCB_PEDPERS_2026,
   SCB_SYSTEM_VERSION,
+  type ScbAbsence,
   type ScbEmployment,
   type ScbFileInput,
   type ScbTeacher,
@@ -519,7 +520,32 @@ describe('SCB Pedagogisk personal, the rows', () => {
     expect(absenceStretches([
       { userId: 'a', from: '2026-10-01', to: '2026-10-10' },
       { userId: 'a', from: '2026-10-05', to: '2026-10-07' },
-    ])).toEqual([{ userId: 'a', from: '2026-10-01', to: '2026-10-10' }]);
+    ])).toEqual([{ userId: 'a', from: '2026-10-01', to: '2026-10-10', through: '2026-10-10' }]);
+  });
+
+  it('picks up after a weekend only from a Friday covered whole; one ended on Friday morning was a day at work', () => {
+    const sick = (userId: string, ended: Partial<ScbAbsence>) => [
+      { userId, from: '2026-09-14', to: '2026-10-09', ...ended },
+      { userId, from: '2026-10-12', to: '2026-10-30' },
+    ];
+    const file = buildScbFile(
+      input({
+        teachers: [teacher('t-anna'), teacher('t-bo'), teacher('t-vik')],
+        absences: [
+          // Ended at Friday's midnight: off all Friday, on into Monday's record.
+          ...sick('t-anna', { through: '2026-10-09' }),
+          // Ended early, Friday 07:46: Friday was worked, Monday is a new absence.
+          ...sick('t-bo', { through: '2026-10-08' }),
+          // Ended Friday morning and off again from that Friday: one absence.
+          { userId: 't-vik', from: '2026-09-14', to: '2026-10-09', through: '2026-10-08' },
+          { userId: 't-vik', from: '2026-10-09', to: '2026-10-30' },
+        ],
+      }),
+    );
+    expect(file.notices).toEqual([
+      { code: 'LONG_ABSENCE', params: { name: 'Vera Vikarie', from: '2026-09-14', to: '2026-10-30' } },
+      { code: 'LONG_ABSENCE', params: { name: 'Anna Öberg', from: '2026-09-14', to: '2026-10-30' } },
+    ]);
   });
 
   it("codes an anpassad grundskola row 10–12 from the year's timplan, where Estetisk verksamhet is collected", () => {
