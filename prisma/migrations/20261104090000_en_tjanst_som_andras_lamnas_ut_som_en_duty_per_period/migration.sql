@@ -77,6 +77,47 @@
 -- from PUBLIC and from every API role, and SS12000_PROVIDER_HELPERS_REACH
 -- below asserts it, as 20261014140000 does for the older helpers. RLS
 -- section 105 asserts the same, and what the triggers write.
+--
+-- ## Locks
+--
+-- Production migrates beside the API that is serving it. The new column
+-- rewrites TeacherEmployments under ACCESS EXCLUSIVE; the triggers take
+-- SHARE ROW EXCLUSIVE on Users, AcademicYears, StaffingPolicies,
+-- Ss12000DutyLinks and TeacherEmploymentPeriods; the versioning at the end
+-- writes Ss12000EntityVersions. Requests take those tables in both orders:
+-- some write one of them and then read a post (a teacher's ss12000Id, a
+-- year's activation, the staffing policy's arms, a period's foreign key),
+-- some read a post and then write one. A migration that waits for one lock
+-- while holding another closes a cycle with one kind or the other, whatever
+-- order it takes them in, and a request can be the one Postgres aborts. So
+-- the block below takes every lock at once or none: each LOCK is NOWAIT,
+-- a refusal rolls the subtransaction back and with it whatever it got, and
+-- it tries again 50 ms later. The migration never waits while it holds a
+-- lock, so it is in no cycle, and no request queues behind it until it
+-- holds them all; from there it runs without waiting for anything a request
+-- holds. After 30 s of refusals it stops with nothing done and can be rerun.
+-- lock_timeout bounds any wait nobody foresaw.
+
+DO $$
+DECLARE
+  give_up timestamptz := clock_timestamp() + interval '30 seconds';
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  LOOP
+    BEGIN
+      LOCK TABLE "Users", "AcademicYears", "StaffingPolicies", "Ss12000DutyLinks",
+                 "TeacherEmploymentPeriods", "Ss12000EntityVersions" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "TeacherEmployments" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      EXIT;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() > give_up THEN
+        RAISE EXCEPTION 'TeacherEmployments and the tables its Duties follow were not free at once in 30 s: nothing is changed, run the migration again';
+      END IF;
+      PERFORM pg_sleep(0.05);
+    END;
+  END LOOP;
+END
+$$;
 
 -- The post's key: random per post, from the default, for the posts there
 -- are and every one written later; nothing writes it after.
