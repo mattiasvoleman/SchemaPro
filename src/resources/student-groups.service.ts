@@ -52,6 +52,21 @@ async function pupilsOfTheClass(
   return new Set(rows.map((row) => row.id));
 }
 
+/**
+ * The pupils' rows FOR SHARE, in id order, before a placement touches a
+ * membership row. A class change takes the pupil's row first and the
+ * memberships after (the Users trigger leaves the old class's halves); a
+ * placement that deleted a pupil's half row and only then met the pupil's
+ * row (the member trigger reads it FOR SHARE) would take them the other way
+ * round, and the two could deadlock. Held first, a class change waits for
+ * the placement or the placement for it, and either sees the other's commit.
+ */
+async function holdPupils(tx: Prisma.TransactionClient, pupils: Iterable<string>): Promise<void> {
+  const ids = [...pupils].sort();
+  if (ids.length === 0) return;
+  await tx.$queryRaw`SELECT 1 FROM "Users" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR SHARE`;
+}
+
 function pupilsNotInClass(count: number, className: string): BadRequestException {
   return new BadRequestException({
     message: `${count === 1 ? 'En elev' : `${count} elever`} går inte i ${className} och kan inte placeras i klassens halvor.`,
@@ -359,6 +374,7 @@ export class StudentGroupsService {
         const strangers = placing.filter((id) => !pupils.has(id));
         if (strangers.length > 0) throw pupilsNotInClass(strangers.length, theClass.name);
 
+        await holdPupils(tx, pupils);
         await tx.studentGroupMember.deleteMany({
           where: { studentGroupId: { in: named }, studentId: { in: [...pupils] } },
         });
@@ -422,6 +438,7 @@ export class StudentGroupsService {
           }
         }
 
+        if (classPupils) await holdPupils(tx, classPupils);
         await tx.studentGroupMember.deleteMany({
           where: classPupils ? { studentGroupId: groupId, studentId: { in: [...classPupils] } } : { studentGroupId: groupId },
         });

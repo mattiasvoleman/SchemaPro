@@ -1053,6 +1053,30 @@ describe('YearRolloverService — rollover execute', () => {
     });
   });
 
+  it('answers a half member refused at the insert, a class changed since the source was read, as a stale preview', async () => {
+    const { world, service } = setup();
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    (world.tx.studentGroupMember as unknown as Record<string, unknown>)['createMany'] = async () => {
+      throw new Prisma.PrismaClientKnownRequestError('Raw query failed. Code: `HC409`', {
+        code: 'P2039',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: {
+          driverAdapterError: {
+            cause: {
+              originalCode: 'HC409',
+              originalMessage: 'HALF_MEMBER_NOT_IN_CLASS: en elev placeras bara i en halva av sin egen klass',
+            },
+          },
+        },
+      });
+    };
+    const refusal = await service
+      .executeRollover(IDS.yearA, { ...OPTIONS, graduatingGradeLevel: 9, planHash: preview.planHash }, admin)
+      .catch((e) => e);
+    expect(refusal).toBeInstanceOf(ConflictException);
+    expect(refusal.getResponse()).toMatchObject({ code: 'ROLLOVER_PREVIEW_STALE' });
+  });
+
   it('turns a P2002 on the name key into YEAR_NAME_TAKEN', async () => {
     const { world, service } = setup();
     const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);

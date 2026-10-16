@@ -423,7 +423,7 @@
       "noPupils": "The class has no pupils yet. Add the pupils, and they can be placed in the halves.",
       "badge": "half of {name}",
       "placeLoading": "Loading the class's pupils and the placement …",
-      "placeLoadFailed": "The class's pupils or the placement could not be loaded. Nothing has changed; close and open again to try again.",
+      "placeLoadFailed": "The class's pupils or the placement could not be loaded. Nothing has changed.",
       "deleteClass": "The halves {halves} are deleted with the class, with their timetable rows and lessons.",
       "deleteHalf": "{name} is left with one half, and cannot be split again until that one is deleted too."
     }

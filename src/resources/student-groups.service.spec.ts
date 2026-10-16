@@ -705,6 +705,14 @@ describe('StudentGroupsService — Halvklasser', () => {
       const [lock] = tx.$queryRaw.mock.calls[0]! as [readonly string[]];
       expect(lock.join('?')).toMatch(/FROM "StudentGroups" WHERE "id" = \?::uuid FOR NO KEY UPDATE/);
       expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.studentGroup.findUnique.mock.invocationCallOrder[0]!);
+      // Then the class's pupils, in id order, before any membership row: the
+      // order a class change takes them in, so the two cannot deadlock.
+      const [held, ids] = tx.$queryRaw.mock.calls[1]! as [readonly string[], string[]];
+      expect(held.join('?')).toMatch(/FROM "Users" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" FOR SHARE/);
+      expect(ids).toEqual([pupil(1), pupil(2), pupil(3)].sort());
+      expect(tx.$queryRaw.mock.invocationCallOrder[1]!).toBeLessThan(
+        tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!,
+      );
     });
 
     it('reads the predecessor’s pupils too, for a rolled läsår not yet activated', async () => {
@@ -793,6 +801,12 @@ describe('StudentGroupsService — Halvklasser', () => {
         where: { studentGroupId: H1, studentId: { in: [pupil(1), pupil(2)] } },
       });
       expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
+      // The class's pupils held first, as placeHalves holds them.
+      const [held] = tx.$queryRaw.mock.calls[0]! as [readonly string[]];
+      expect(held.join('?')).toMatch(/FROM "Users" .* FOR SHARE/);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(
+        tx.studentGroupMember.deleteMany.mock.invocationCallOrder[0]!,
+      );
     });
   });
 });

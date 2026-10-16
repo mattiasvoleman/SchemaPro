@@ -58,7 +58,34 @@ const school = (memberships: YearClashInput['memberships']): YearClashInput => (
   ],
 });
 
+/**
+ * Erik left 7A in no half; every active pupil is in 7A:1. Every reader takes
+ * home rows of active STUDENTs only, so Erik has none, though his Tyska row
+ * may still stand (the board's memberships carry it). Tyska at 08:00 beside
+ * 7A:2's NO.
+ */
+const withLeaver = (erikAtHome: boolean): YearClashInput => {
+  const base = school([
+    { studentId: 'alva', studentGroupId: '7a1' },
+    { studentId: 'bo', studentGroupId: '7a1' },
+    { studentId: 'erik', studentGroupId: 'ty7' },
+  ]);
+  return {
+    ...base,
+    lessons: [...base.lessons, lesson('tyska', 'ty7', '08:00', '09:00', 't6')],
+    studentGroupOf: erikAtHome ? [...base.studentGroupOf, ['erik', '7a']] : base.studentGroupOf,
+  };
+};
+
 const cases: { name: string; input: YearClashInput }[] = [
+  {
+    name: 'a pupil who left a split class in no half has no home row, so no half answers for him: Tyska runs beside 7A:2',
+    input: withLeaver(false),
+  },
+  {
+    name: 'the same pupil still in the class and in no half: Tyska clashes with both halves',
+    input: withLeaver(true),
+  },
   {
     name: 'a class’s halves before placement: the class and its groups clash with both, the halves never with each other',
     input: school([]),
