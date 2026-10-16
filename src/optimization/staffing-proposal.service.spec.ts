@@ -791,14 +791,31 @@ describe('StaffingProposalService.propose', () => {
         expect(sentRow(sent()[0]!, R_MA8, sentIn8A(rows)).excludedTeacherIds).toBeUndefined();
         expect(proposal.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
         expect(proposal.unstaffed.find((row) => row.requirementId === R_MA8)).toBeUndefined();
-        // Her figures are the spring's, which an autumn row does not weigh: the dialog gives back 0, not the year's charge.
+        // Her figures are the spring's, which an autumn row does not weigh: the dialog gives back 0 there,
+        // and to the autumn what the row charges it, which is more than its year charge.
         const ma8 = proposal.assignments.find((a) => a.requirementId === R_MA8)!;
-        expect(ma8.chargeMinutesPerWeek).toBeGreaterThan(0);
-        expect(ma8.toStretchChargeMinutesPerWeek).toBe(0);
         const anna = proposal.teachers.find((t) => t.userId === ANNA)!;
+        expect(anna.stretches?.map((stretch) => [stretch.from, stretch.to])).toEqual([
+          ['2026-08-17', '2027-01-10'],
+          ['2027-01-11', '2027-06-11'],
+        ]);
+        expect(anna.plannedStretch).toBe(1);
+        expect(ma8.toStretchCharges?.[1]).toBe(0);
+        expect(ma8.toStretchCharges?.[0]).toBeGreaterThan(ma8.chargeMinutesPerWeek);
         expect(anna.after.countedExact).toBe(anna.before.countedExact);
-        // An undated row charges every stretch its year share: nothing beside it.
-        expect(proposal.assignments.filter((a) => a.requirementId !== R_MA8).every((a) => a.toStretchChargeMinutesPerWeek === undefined)).toBe(true);
+        // Each stretch's after is its before with the charges the answer gives it.
+        for (const [index, stretch] of anna.stretches!.entries()) {
+          const gained = proposal.assignments
+            .filter((a) => a.toTeacherId === ANNA)
+            .reduce((sum, a) => sum + (a.toStretchCharges?.[index] ?? 0), 0);
+          const lost = proposal.assignments
+            .filter((a) => a.fromTeacherId === ANNA)
+            .reduce((sum, a) => sum + (a.fromStretchCharges?.[index] ?? 0), 0);
+          expect(stretch.after).toBeCloseTo(stretch.before + gained - lost, 1);
+        }
+        // A post the same all year has no stretches, and its rows no stretch charges.
+        expect(proposal.teachers.filter((t) => t.userId !== ANNA).every((t) => t.stretches === undefined)).toBe(true);
+        expect(proposal.assignments.filter((a) => a.toTeacherId !== ANNA).every((a) => a.toStretchCharges === undefined)).toBe(true);
       });
 
       it('takes rows while the autumn’s slack lasts, and excludes the post from the one past it', async () => {

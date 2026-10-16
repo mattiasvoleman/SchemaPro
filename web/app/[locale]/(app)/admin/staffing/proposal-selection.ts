@@ -12,9 +12,12 @@ import type { ProposalAssignment, ProposalTeacher, StaffingChange, StaffingPropo
  * off, a row moved FROM the teacher is put back. Loads are additive per row
  * (countedMinutesByTeacher sums one charge per lead), so this is the
  * gateway's own figure, not an estimate. A post that changes during the year
- * is shown on its planned stretch, which a dated row weighs only for the
- * weeks it runs there: the row's charge to that stretch, which the gateway
- * sends beside the year's, is what is given back.
+ * is shown on its planned stretch, and judged on every stretch, as the apply
+ * judges it: a dated row weighs each stretch only for the weeks it runs
+ * there, so each stretch gets back the row's charge to it, which the gateway
+ * sends beside the year's. Leaving out a row the post was giving away while
+ * keeping a dated one it gains can take a stretch other than the planned one
+ * over its limit; overLimit says so.
  *
  * The status is then judged with loadStatus, and only a teacher whose minutes
  * GROW is flagged — enforcement's question (overTargetFinding returns nothing
@@ -41,15 +44,28 @@ export function loadsUnderSelection(
   selected: ReadonlySet<string>,
   tolerancePercent: number,
 ): Map<string, SelectedLoad> {
+  const teachersById = new Map(proposal.teachers.map((teacher) => [teacher.userId, teacher]));
   const leftOut = new Map<string, number>();
+  const leftOutByStretch = new Map<string, number[]>();
+  const give = (userId: string, sign: 1 | -1, charge: number, charges: number[] | undefined) => {
+    const teacher = teachersById.get(userId);
+    const planned = teacher?.plannedStretch;
+    // The shown figure: the planned stretch's charge for a changing post, the year's otherwise.
+    const shown = planned !== undefined && charges ? (charges[planned] ?? charge) : charge;
+    leftOut.set(userId, (leftOut.get(userId) ?? 0) + sign * shown);
+    if (teacher?.stretches && charges) {
+      const deltas = leftOutByStretch.get(userId) ?? teacher.stretches.map(() => 0);
+      charges.forEach((value, index) => {
+        if (index < deltas.length) deltas[index] = deltas[index]! + sign * value;
+      });
+      leftOutByStretch.set(userId, deltas);
+    }
+  };
   for (const assignment of proposal.assignments) {
     if (selected.has(assignment.requirementId)) continue;
-    const charge = assignment.chargeMinutesPerWeek;
-    const toCharge = assignment.toStretchChargeMinutesPerWeek ?? charge;
-    const fromCharge = assignment.fromStretchChargeMinutesPerWeek ?? charge;
-    leftOut.set(assignment.toTeacherId, (leftOut.get(assignment.toTeacherId) ?? 0) - toCharge);
+    give(assignment.toTeacherId, -1, assignment.chargeMinutesPerWeek, assignment.toStretchCharges);
     if (assignment.fromTeacherId !== null) {
-      leftOut.set(assignment.fromTeacherId, (leftOut.get(assignment.fromTeacherId) ?? 0) + fromCharge);
+      give(assignment.fromTeacherId, 1, assignment.chargeMinutesPerWeek, assignment.fromStretchCharges);
     }
   }
   const loads = new Map<string, SelectedLoad>();
@@ -61,14 +77,24 @@ export function loadsUnderSelection(
     const status =
       delta === undefined ? teacher.after.status : loadStatus(exact, teacher.targetMinutesPerWeek, tolerancePercent);
     const grows = exact > teacher.before.countedExact + 1e-9;
+    // A changing post: any stretch with weeks that grows and ends over, as the apply asks.
+    const deltas = leftOutByStretch.get(teacher.userId);
+    const overInAStretch = (teacher.stretches ?? []).some((stretch, index) => {
+      const is = round2(stretch.after + (deltas?.[index] ?? 0));
+      return (
+        stretch.weeks > 0 &&
+        is > stretch.before + 1e-9 &&
+        loadStatus(is, stretch.targetMinutesPerWeek, tolerancePercent) === "OVER"
+      );
+    });
     loads.set(teacher.userId, {
       minutes: delta === undefined ? teacher.after.countedMinutesPerWeek : Math.round(exact),
       exact,
       percentOfTarget:
         delta === undefined ? teacher.after.percentOfTarget : percentOfTarget(exact, teacher.targetMinutesPerWeek),
       status,
-      grows,
-      overLimit: grows && status === "OVER",
+      grows: grows || overInAStretch,
+      overLimit: (grows && status === "OVER") || overInAStretch,
     });
   }
   return loads;
