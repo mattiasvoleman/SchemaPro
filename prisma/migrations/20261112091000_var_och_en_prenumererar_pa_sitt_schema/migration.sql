@@ -128,6 +128,46 @@
 -- The door, create, revoke, counts and audience_on: the API's role only. The builders and
 -- the label rule: nobody (they run inside the doors). RLS sections 144 to 147
 -- assert the catalogue and who gets what.
+--
+-- ## Beside the live API: every lock at once, or none
+--
+-- Production runs this while the API before it serves requests. The three
+-- columns take PublicationSettings ACCESS EXCLUSIVE; the triggers on Users
+-- and GuardianStudents and the feeds' foreign keys to Users and Schools take
+-- those SHARE ROW EXCLUSIVE (writes wait, reads do not). A migration that
+-- waited for one of them while it held another could close a cycle with a
+-- request that takes them in the other order (a guardian's link written,
+-- then the settings read; an FK check's KEY SHARE on Users), and a waiting
+-- ACCESS EXCLUSIVE lock queues every request behind it. So all four are
+-- taken first, NOWAIT and together, as Roller i skolan's migrations take
+-- theirs: a refusal rolls the subtransaction back and with it whatever it
+-- got, and it tries again 50 ms later. The migration never waits while it
+-- holds a lock, and no request queues behind it. After 30 s of refusals it
+-- stops with nothing done and can be rerun. lock_timeout bounds any wait
+-- nobody foresaw. (The functions it replaces take no lock a request
+-- conflicts with: a LANGUAGE sql body is parsed under ACCESS SHARE.)
+
+DO $$
+DECLARE
+  give_up timestamptz := clock_timestamp() + interval '30 seconds';
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  LOOP
+    BEGIN
+      LOCK TABLE "PublicationSettings" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "Users" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "GuardianStudents" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "Schools" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+      EXIT;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() > give_up THEN
+        RAISE EXCEPTION 'PublicationSettings, Users, GuardianStudents and Schools were not free at once in 30 s: nothing is changed, run the migration again';
+      END IF;
+      PERFORM pg_sleep(0.05);
+    END;
+  END LOOP;
+END
+$$;
 
 -- ---------------------------------------------------------------------------
 -- The school's choice, per audience.
