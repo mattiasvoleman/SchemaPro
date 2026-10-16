@@ -5,16 +5,23 @@
 -- app.ss12000_due_notifications is replaced with the same signature and
 -- grants; everything not said here is the body of 20261014130000.
 --
---   * A subscription's 'Attendance' and 'Absence' count only while the
---     school shares and its key holds the scope (app.ss12000_notifies, asked
---     once per subscription), so a receiver is never told that attendance
---     changed at a school that has stopped sharing, nor by a key that lost
---     the scope.
---   * When a school starts sharing again, every subscription to them that
---     has not been told since is told once, with deletedEntities true:
---     what happened while the school did not share (no version recorded
---     it, and its tombstones were not shown) is read on that notice, with
---     everything reading as modified since the moment it started again.
+--   * A change of 'Attendance' or 'Absence' is told only while the school
+--     shares and the subscription's key holds the scope
+--     (app.ss12000_notifies, asked once per subscription), so a receiver is
+--     never told that attendance changed at a school that has stopped
+--     sharing, nor by a key that lost the scope.
+--   * A removal of either is told once the school has ever shared, also
+--     while it has stopped (app.ss12000_notifies_removals), as
+--     /deletedEntities answers their tombstones then: the receiver deletes
+--     what went.
+--   * When a school starts sharing again, every subscription to them is
+--     told once, with deletedEntities true, everything reading as modified
+--     since the moment it started again: what changed while it did not
+--     share, which no version recorded, is read on that notice. Whether a
+--     subscription has been told is the decision's transaction against the
+--     subscription's watermark (app.attendance_run_xid), the snapshot rule
+--     of a version, so a notice in flight across the decision cannot
+--     swallow it.
 --
 -- One table, taken NOWAIT and retried every 50 ms for 30 s as
 -- 20261114090000 takes its own, so this transaction is in no cycle and no
@@ -47,9 +54,9 @@ ALTER TABLE "Ss12000Subscriptions"
         AND "resourceTypes" <@ ARRAY['Organisation', 'Person', 'Group', 'Duty', 'Activity', 'CalendarEvent', 'Room', 'Syllabus',
                                      'Attendance', 'Absence']::text[]);
 
--- The resource types of a subscription that may be notified now: all of
--- them, except Attendance and Absence unless the school shares and the key
--- holds their scope.
+-- The resource types of a subscription whose changes may be notified now:
+-- all of them, except Attendance and Absence unless the school shares and
+-- the key holds their scope.
 CREATE FUNCTION app.ss12000_notifies(p_types text[], p_scopes text[], p_school uuid) RETURNS text[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT coalesce(array_agg(t), ARRAY[]::text[])
@@ -59,10 +66,28 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
           AND (CASE t WHEN 'Attendance' THEN 'attendances.read' ELSE 'absences.read' END) = ANY (p_scopes))
 $$;
 
+-- The resource types of a subscription whose removals may be notified now:
+-- as app.ss12000_notifies, but Attendance and Absence once the school has
+-- ever shared, as /deletedEntities answers their tombstones
+-- (app.service_reads_attendance_removals).
+CREATE FUNCTION app.ss12000_notifies_removals(p_types text[], p_scopes text[], p_school uuid) RETURNS text[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT coalesce(array_agg(t), ARRAY[]::text[])
+    FROM unnest(p_types) t
+   WHERE t NOT IN ('Attendance', 'Absence')
+      OR (app.attendance_ever_shared(p_school)
+          AND (CASE t WHEN 'Attendance' THEN 'attendances.read' ELSE 'absences.read' END) = ANY (p_scopes))
+$$;
+
 -- Asked once per subscription (the lateral `nt`), never per version or
 -- tombstone scanned. `resumed`: the subscription may be told of Attendance
--- or Absence, and the school's current run of sharing began after it was
--- last told (or made).
+-- or Absence, and the decision that began the school's current run of
+-- sharing is one it has not been told of, by the snapshot rule of a version:
+-- its xid at or past the subscription's watermark, and below this claim's
+-- horizon (committed, and so seen). A notice claimed before that decision
+-- committed moves the watermark only to its own horizon, which the decision
+-- is at or past, so the next claim tells the start; the settle's time plays
+-- no part.
 CREATE OR REPLACE FUNCTION app.ss12000_due_notifications(p_limit integer)
 RETURNS TABLE (subscription_id uuid, school_id uuid, key_id uuid, target text, modified text[], deleted boolean,
                watermark_to text, attempts integer, failing_since timestamptz)
@@ -75,14 +100,16 @@ BEGIN
   END IF;
   RETURN QUERY
   WITH due AS (
-    SELECT s."id", nt.types, nt.resumed
+    SELECT s."id", nt.types, nt.removals, nt.resumed
       FROM "Ss12000Subscriptions" s
       JOIN "IntegrationApiKeys" k ON k."id" = s."keyId" AND k."schoolId" = s."schoolId"
       CROSS JOIN LATERAL (
-        SELECT x.types,
+        SELECT x.types, x.removals,
                coalesce(x.types && ARRAY['Attendance', 'Absence']
-                        AND app.attendance_shared_since(s."schoolId") > coalesce(s."lastNotifiedAt", s."createdAt"), false) AS resumed
-          FROM (SELECT app.ss12000_notifies(s."resourceTypes", k."scopes", s."schoolId") AS types) x
+                        AND x.run >= s."watermark" AND x.run < horizon, false) AS resumed
+          FROM (SELECT app.ss12000_notifies(s."resourceTypes", k."scopes", s."schoolId") AS types,
+                       app.ss12000_notifies_removals(s."resourceTypes", k."scopes", s."schoolId") AS removals,
+                       app.attendance_run_xid(s."schoolId") AS run) x
         OFFSET 0) nt
      WHERE s."endedAt" IS NULL AND s."suspendedAt" IS NULL AND s."expiresAt" > now()
        AND k."revokedAt" IS NULL
@@ -94,15 +121,15 @@ BEGIN
                           AND v."resource" = ANY (nt.types))
             OR EXISTS (SELECT 1 FROM "Ss12000Tombstones" t
                         WHERE t."schoolId" = s."schoolId" AND t."xid" >= s."watermark" AND t."xid" < horizon
-                          AND (CASE WHEN t."resource" = 'AdhocActivity' THEN 'Activity' ELSE t."resource" END) = ANY (nt.types)))
+                          AND (CASE WHEN t."resource" = 'AdhocActivity' THEN 'Activity' ELSE t."resource" END) = ANY (nt.removals)))
      ORDER BY s."nextAttemptAt", s."id"
      LIMIT greatest(least(p_limit, 200), 1)
      FOR UPDATE OF s SKIP LOCKED
   ), claimed AS (
     UPDATE "Ss12000Subscriptions" s SET "claimedAt" = now()
       FROM due WHERE s."id" = due."id"
-    RETURNING s."id", s."schoolId", s."keyId", s."target", due.types AS "types", due.resumed AS "resumed",
-              s."watermark", s."attempts", s."failingSince"
+    RETURNING s."id", s."schoolId", s."keyId", s."target", due.types AS "types", due.removals AS "removals",
+              due.resumed AS "resumed", s."watermark", s."attempts", s."failingSince"
   )
   SELECT c."id", c."schoolId", c."keyId", c."target",
          ARRAY(SELECT DISTINCT m.resource
@@ -116,7 +143,7 @@ BEGIN
          c."resumed"
            OR EXISTS (SELECT 1 FROM "Ss12000Tombstones" t
                        WHERE t."schoolId" = c."schoolId" AND t."xid" >= c."watermark" AND t."xid" < horizon
-                         AND (CASE WHEN t."resource" = 'AdhocActivity' THEN 'Activity' ELSE t."resource" END) = ANY (c."types")),
+                         AND (CASE WHEN t."resource" = 'AdhocActivity' THEN 'Activity' ELSE t."resource" END) = ANY (c."removals")),
          horizon::text, c."attempts", c."failingSince"
     FROM claimed c;
 END
@@ -124,13 +151,16 @@ $$;
 
 DO $$
 DECLARE
+  fn text;
   r text;
 BEGIN
-  REVOKE ALL ON FUNCTION app.ss12000_notifies(text[], text[], uuid) FROM PUBLIC;
-  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-      EXECUTE format('REVOKE ALL ON FUNCTION app.ss12000_notifies(text[], text[], uuid) FROM %I', r);
-    END IF;
+  FOREACH fn IN ARRAY ARRAY['app.ss12000_notifies(text[], text[], uuid)', 'app.ss12000_notifies_removals(text[], text[], uuid)'] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn);
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+        EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %I', fn, r);
+      END IF;
+    END LOOP;
   END LOOP;
 END
 $$;

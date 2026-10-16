@@ -35,11 +35,15 @@
  *         questions and two reads, which answer nothing outside a service
  *         principal, and PostgREST's role may call none of them;
  *   nv-j  a school that stops and starts again between two reads of an
- *         integration: while it is stopped /deletedEntities is 403
- *         NOT_SHARED for the two categories; afterwards the next
- *         incremental read from before the stop reads what was written
- *         meanwhile and nothing that went, /deletedEntities lists what
- *         went (a purge, a departed pupil), and a subscriber is told.
+ *         integration: while it is stopped an unfiltered /deletedEntities
+ *         still answers every category, the person who left and what went
+ *         of attendance and absence by id; afterwards the next incremental
+ *         read from before the stop reads what was written meanwhile and
+ *         nothing that went, /deletedEntities lists what went (a purge, a
+ *         departed pupil), and a subscriber is told;
+ *   nv-k  a start decided while a notice claimed during the stop is in
+ *         flight, settled after it: the next tick still tells the start,
+ *         once.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -490,14 +494,16 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
         `SELECT app.attendance_shared($1::uuid)`,
         `SELECT app.attendance_shared_since($1::uuid)`,
         `SELECT app.attendance_ever_shared($1::uuid)`,
+        `SELECT app.attendance_run_xid($1::uuid)`,
         `SELECT app.ss12000_notifies('{Attendance}'::text[], '{attendances.read}'::text[], $1::uuid)`,
+        `SELECT app.ss12000_notifies_removals('{Attendance}'::text[], '{attendances.read}'::text[], $1::uuid)`,
         `SELECT app.ss12000_emitted_years($1::uuid)`,
         `SELECT app.ss12000_attendance_emitted($1::uuid, ARRAY[$1::uuid])`,
         `SELECT app.ss12000_absence_emitted($1::uuid, ARRAY[$1::uuid])`,
       ];
       const reads = [
         `SELECT app.service_reads_attendance('attendances.read')::text AS answer`,
-        `SELECT app.service_attendance_ever_shared()::text AS answer`,
+        `SELECT app.service_reads_attendance_removals('attendances.read')::text AS answer`,
         `SELECT count(*)::text AS answer FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
         `SELECT count(*)::text AS answer FROM app.ss12000_absences(NULL, NULL)`,
       ];
@@ -540,16 +546,24 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       const cursor = await dbNow();
       await pause();
 
-      // It stops, and the integration does not look until it has started again.
+      // It stops. Meanwhile: a purge, a pupil who leaves, a register saved, an absence reported.
       await sharing.record({ shares: false }, admin);
-      await assert.rejects(provider.deletedEntities(caller, {}), code('NOT_SHARED'));
-      await assert.rejects(provider.deletedEntities(caller, { entities: 'Attendance' }), code('NOT_SHARED'));
-      assert.deepEqual(Object.keys((await provider.deletedEntities(caller, { entities: 'Person' })).data), ['persons']);
-      // Meanwhile: a purge, a pupil who leaves, a register saved, an absence reported.
       await owner.query(`DELETE FROM "AttendanceRecords" WHERE id = $1`, [present.id]);
       await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [classmate.id]);
       const meanwhile = await record(lesson.id, leaver.id, 'EXCUSED');
       const reported = await report(pupil.id, guardianRow.id, day(12), 'SICK', NOTE, false);
+      // S1's default /deletedEntities, no entities, is still answered whole while the school is
+      // stopped: the person who left, and the attendance and absence that went, by id.
+      const stopped = await provider.deletedEntities(caller, { after: cursor });
+      assert.deepEqual(stopped.data['persons'], [classmate.id], 'a person who left while the school was stopped is not told');
+      assert.deepEqual(
+        { attendances: [...stopped.data['attendances']!].sort(), absences: [...stopped.data['absences']!].sort() },
+        { attendances: [present.id, late.id].sort(), absences: [hours.id, granted.id].sort() },
+        'what went while the school was stopped is not told while it is',
+      );
+      // Nothing else of them is open meanwhile.
+      await assert.rejects(provider.listAttendances(caller, {}), code('NOT_SHARED'));
+      await assert.rejects(provider.listAbsences(caller, {}), code('NOT_SHARED'));
       // As the owner: nothing written meanwhile has a version, so only the start makes it read.
       const versioned = await one<{ n: string }>(
         `SELECT count(*)::text AS n FROM "Ss12000EntityVersions" WHERE "schoolId" = $1 AND "entityId" = ANY ($2::uuid[])`,
@@ -577,6 +591,34 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       await delivery.tick();
       assert.equal(received.length, told + 1, 'a start again was not told');
       assert.deepEqual(JSON.parse(received.at(-1)!.body), { modifiedEntites: ['Attendance'], deletedEntities: true });
+    });
+
+    await check('(nv-k) a start decided while a notice is in flight is still told once the notice is settled', async () => {
+      // Stopped, with a removal for the subscription: the delivery claims it while the school does not share.
+      await sharing.record({ shares: false }, admin);
+      const leaverRow = await one<{ id: string }>(`SELECT id FROM "AttendanceRecords" WHERE "studentId" = $1`, [leaver.id]);
+      await owner.query(`DELETE FROM "AttendanceRecords" WHERE id = $1`, [leaverRow.id]);
+      type Claimed = { subscription_id: string; school_id: string; modified: string[]; deleted: boolean; watermark_to: string };
+      const claimed = await api.withDeliveryService(
+        (tx) => tx.$queryRaw<Claimed[]>`SELECT subscription_id, school_id, modified, deleted, watermark_to FROM app.ss12000_due_notifications(50)`,
+      );
+      const inFlight = claimed.find((row) => row.school_id === s);
+      assert.ok(inFlight, 'the removal while the school was stopped did not make the subscription due');
+      assert.deepEqual([inFlight.modified, inFlight.deleted], [[], true]);
+      // The school starts again before that notice is settled, and the settle stamps a later time.
+      await sharing.record({ shares: true }, admin);
+      await pause();
+      await api.withDeliveryService(
+        (tx) => tx.$queryRaw`SELECT app.ss12000_notification_settled(${inFlight.subscription_id}::uuid, true, 200, 'DELIVERED',
+                                                                     ${inFlight.watermark_to}, 5, now())`,
+      );
+      // The next tick tells the start, once.
+      const before = received.length;
+      await delivery.tick();
+      assert.equal(received.length, before + 1, 'a start decided while a notice was in flight was never told');
+      assert.deepEqual(JSON.parse(received.at(-1)!.body), { modifiedEntites: ['Attendance'], deletedEntities: true });
+      await delivery.tick();
+      assert.equal(received.length, before + 1, 'a start was told twice');
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());

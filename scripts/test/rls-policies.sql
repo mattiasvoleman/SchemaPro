@@ -22040,7 +22040,7 @@ BEGIN
       RAISE EXCEPTION 'attendance sharing: the API cannot insert %', p;
     END IF;
   END LOOP;
-  FOREACH p IN ARRAY ARRAY['id', 'decidedById', 'decidedAt'] LOOP
+  FOREACH p IN ARRAY ARRAY['id', 'decidedById', 'decidedAt', 'xid'] LOOP
     IF has_column_privilege('app_authenticated', '"AttendanceSharingDecisions"', p, 'INSERT') THEN
       RAISE EXCEPTION 'attendance sharing: the API may write %, which is the database''s', p;
     END IF;
@@ -22059,11 +22059,13 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: % arms of AttendanceRecords or AbsenceReports name the service principal', n; END IF;
 
   -- The versions' and tombstones' service arms ask the question for the two resources.
-  FOREACH p IN ARRAY ARRAY['Ss12000EntityVersions:ss12000_entity_versions_service_select', 'Ss12000Tombstones:ss12000_tombstones_service_select'] LOOP
+  -- Versions while the school shares; tombstones once it has ever shared.
+  FOREACH p IN ARRAY ARRAY['Ss12000EntityVersions:ss12000_entity_versions_service_select:service_reads_attendance',
+                           'Ss12000Tombstones:ss12000_tombstones_service_select:service_reads_attendance_removals'] LOOP
     SELECT qual INTO def FROM pg_policies WHERE schemaname = 'public' AND tablename = split_part(p, ':', 1) AND policyname = split_part(p, ':', 2);
     IF def IS NULL
-       OR def NOT LIKE '%app.service_reads_attendance(''attendances.read''::text)%'
-       OR def NOT LIKE '%app.service_reads_attendance(''absences.read''::text)%' THEN
+       OR def NOT LIKE '%app.' || split_part(p, ':', 3) || '(''attendances.read''::text)%'
+       OR def NOT LIKE '%app.' || split_part(p, ':', 3) || '(''absences.read''::text)%' THEN
       RAISE EXCEPTION 'attendance sharing: % does not keep Attendance and Absence to a key that may read them: %', p, def;
     END IF;
   END LOOP;
@@ -22076,7 +22078,8 @@ BEGIN
     'app.ss12000_attendance_emitted(uuid, uuid[])', 'app.ss12000_absence_emitted(uuid, uuid[])',
     'app.ss12000_v_attendance()', 'app.ss12000_v_absences()', 'app.ss12000_v_attendance_pupils()',
     'app.ss12000_v_attendance_lessons()', 'app.ss12000_v_absence_timezone()', 'app.ss12000_v_attendance_years()',
-    'app.ss12000_notifies(text[], text[], uuid)'
+    'app.ss12000_notifies(text[], text[], uuid)', 'app.ss12000_notifies_removals(text[], text[], uuid)',
+    'app.attendance_run_xid(uuid)'
   ] LOOP
     FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
       CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
@@ -22086,7 +22089,7 @@ BEGIN
   END LOOP;
   FOREACH fn IN ARRAY ARRAY[
     'app.service_reads_attendance(text)',
-    'app.service_attendance_ever_shared()',
+    'app.service_reads_attendance_removals(text)',
     'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',
     'app.ss12000_absences(uuid[], uuid[])'
   ] LOOP
@@ -22524,8 +22527,9 @@ ROLLBACK;
 -- ett läsår som aktiveras flyttar meta.modified, en anteckning gör det inte;
 -- en borttagen post, en borttagen lektion och en elev som slutar begravs, och
 -- nästa års borttagna lektion begravs aldrig. När skolan har slutat dela
--- begravs en borttagen post ändå, inget versioneras, och när den delar igen
--- läses det som skrevs under tiden som ändrat då (20261114090000).
+-- begravs en borttagen post ändå och visas för nyckeln med omfånget (inte
+-- för en utan), inget versioneras, och när den delar igen läses det som
+-- skrevs under tiden som ändrat då (20261114090000).
 --
 -- The school decides first: versions are written only while it shares, and
 -- tombstones once it ever has (the probe holds a school that never shared to
@@ -22715,6 +22719,17 @@ BEGIN
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
   VALUES (school, lesson, classmate, 'ABSENT', now()) RETURNING id INTO fresh;
   DELETE FROM "AbsenceReports" WHERE id = granted;
+  -- Told while it is stopped, to the key with the scope (the instruction to
+  -- delete), not to one without it; and no version is seen meanwhile.
+  IF NOT pg_temp.nv154_buried('Absence', granted) THEN
+    RAISE EXCEPTION 'attendance versions: the absences.read key is not told of a removal while the school has stopped';
+  END IF;
+  IF pg_temp.nv154_buried('Absence', granted, current_setting('app.test_nv_narrow')) THEN
+    RAISE EXCEPTION 'attendance versions: a key without absences.read is told of a removal while the school has stopped';
+  END IF;
+  IF pg_temp.nv154_xid('Attendance', present) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: an attendance''s version is seen while the school has stopped';
+  END IF;
   INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (school, true) RETURNING "decidedAt" INTO resumed;
   IF NOT pg_temp.nv154_buried('Absence', granted) THEN
     RAISE EXCEPTION 'attendance versions: an absence removed while the school did not share was not buried';

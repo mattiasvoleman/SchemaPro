@@ -1,8 +1,11 @@
 -- Närvarons gravstenar visas för den som får läsa den: Ss12000Tombstones
 -- take 'Attendance' and 'Absence' (20261114090000), and the service
--- principal's arm answers a row of either only to a request that may read
--- that resource (app.service_reads_attendance), so a key without the scope
--- does not learn even their ids and times.
+-- principal's arm answers a row of either only to a request whose key holds
+-- that resource's scope, at a school that has ever shared
+-- (app.service_reads_attendance_removals): so a key without the scope does
+-- not learn even their ids and times, and a key with it reads them also
+-- while the school has stopped. A tombstone is an id and when it went, the
+-- instruction to delete what the integration holds; nothing of the row.
 --
 -- One table, taken NOWAIT and retried every 50 ms for 30 s as
 -- 20261114090000 takes its own, so this transaction is in no cycle and no
@@ -43,8 +46,8 @@ BEGIN
         USING (
             "schoolId" = app.current_service_school_id()
             AND ("resource" NOT IN ('Attendance', 'Absence')
-                 OR ("resource" = 'Attendance' AND (select app.service_reads_attendance('attendances.read')))
-                 OR ("resource" = 'Absence' AND (select app.service_reads_attendance('absences.read'))))
+                 OR ("resource" = 'Attendance' AND (select app.service_reads_attendance_removals('attendances.read')))
+                 OR ("resource" = 'Absence' AND (select app.service_reads_attendance_removals('absences.read'))))
         );
   END IF;
 END
