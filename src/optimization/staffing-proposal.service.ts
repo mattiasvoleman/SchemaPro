@@ -981,23 +981,39 @@ export class StaffingProposalService {
         return {};
       }
       const could = plannedRow.excluded.filter(
-        (id) => id !== plannedRow.co && targetWhereItRuns(id, plannedRow) && (!plan.respect || plannedRow.eligible.includes(id)),
+        (id) => id !== plannedRow.co && couldTakeByHand(id, plannedRow) && (!plan.respect || plannedRow.eligible.includes(id)),
       );
       return could.length > 0 ? { excludedChanging: could } : {};
     }
 
-    // Whether a changing post has room where the row runs: a target above 0
-    // in a stretch the row charges. Not the planned target, which is the
-    // tightest stretch's and 0 for a post on leave from January — an autumn
-    // row is still hers to take by hand, a spring row is not.
-    function targetWhereItRuns(userId: string, plannedRow: RowPlan): boolean {
+    // Whether the row is a changing post's to take by hand: it adds to a
+    // stretch with a target above 0, and to no stretch whose target is 0 by
+    // as much as loadStatus calls over — a leave, where the write the dialog
+    // advises would be refused or saved on a teacher who is away. Not the
+    // planned target, which is the tightest stretch's and 0 for a post on
+    // leave from January: an autumn row is still hers to take, a spring row
+    // is not, and nor is one that reaches into the leave by a week. A
+    // stretch merely tight is still named: the write is judged against it.
+    function couldTakeByHand(userId: string, plannedRow: RowPlan): boolean {
       const employment = plan.teacherById.get(userId)?.changing?.employment;
       if (!employment) return (plan.teacherById.get(userId)?.target ?? 0) > 0;
-      const alone = stretchLoads(
-        { ...input, requirements: [{ ...plannedRow.row, teacherId: userId, coTeacherId: null }], duties: [] },
-        employment,
+      const row = plannedRow.row;
+      const led = { ...row, teacherId: userId };
+      const withRow: LoadInput = {
+        ...input,
+        requirements: input.requirements.some((r) => r.id === row.id)
+          ? input.requirements.map((r) => (r.id === row.id ? led : r))
+          : [...input.requirements, led],
+      };
+      const was = stretchLoads(input, employment);
+      const added = stretchLoads(withRow, employment).filter(
+        (stretch, index) => stretch.weeks > 0 && stretch.counted > (was[index]?.counted ?? 0) + 1e-9,
       );
-      return alone.some((stretch) => stretch.weeks > 0 && stretch.counted > 0 && (stretch.target ?? 0) > 0);
+      const room = added.some((stretch) => (stretch.target ?? 0) > 0);
+      const intoLeave = added.some(
+        (stretch) => stretch.target !== null && stretch.target <= 0 && loadStatus(stretch.counted, stretch.target, plan.tolerance) === 'OVER',
+      );
+      return room && !intoLeave;
     }
   }
 }
