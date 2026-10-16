@@ -107,7 +107,9 @@
 -- every guardian's feed of them; a guardian's link to the child deleted.
 -- Triggers on Users and GuardianStudents, so no path to the change can
 -- forget it; calendar_feed_create locks the rows it decided on, so a feed
--- made in the same moment is either refused or revoked with the rest. The
+-- made in the same moment is either refused or revoked with the rest (after
+-- the school's people lock, which an SS12000 apply takes before it locks
+-- every row of the school, so the two never deadlock). The
 -- door asks all of it again on every read, and ends a live feed it refuses,
 -- for a change the triggers did not see.
 --
@@ -749,6 +751,16 @@ BEGIN
   -- pass each other, and the feed would live on, silent, until the person
   -- came back. Users before the settings and the feeds, as every other
   -- writer of the feeds takes them.
+  --
+  -- First the school's people lock, shared. A guardian's feed locks two rows
+  -- of Users one after the other, the guardian's and the child's, and an
+  -- SS12000 apply locks every row of the school in one scan, in the table's
+  -- order (readLocalSlice), which can be the child before the guardian:
+  -- each would hold a row the other waits for, and one of them would be
+  -- aborted. The apply takes this lock exclusively before its scan, so a
+  -- feed waits for the whole apply, or the apply for the feed, and neither
+  -- holds a row while the other has begun. Every audience takes it alike.
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('Users:' || v_school::text, 0));
   PERFORM 1 FROM "Users" u
    WHERE u."id" = v_me AND u."schoolId" = v_school AND u."isActive" AND u."role" = v_role
      FOR SHARE;
