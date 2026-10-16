@@ -5173,7 +5173,7 @@
     "profileUnreadable": "The profile could not be read. Saving leaves it unchanged; reload the page to change it."
   },
   "calendarFeed": {
-    "title": "Calendar subscription",
+    "title": "My calendar subscription",
     "subtitle": {
       "TEACHER": "Your published timetable in your calendar app, with cancelled lessons and the lessons you cover.",
       "STUDENT": "Your published timetable in your calendar app, with cancelled lessons and holidays.",
@@ -5185,7 +5185,7 @@
       "TEACHER": "The school chooses whether teachers may subscribe to their timetable. Ask the school's administrator.",
       "STUDENT": "The school chooses whether pupils may subscribe to their timetable. Ask the school.",
       "GUARDIAN": "The school chooses whether guardians may subscribe to their children's timetables. Ask the school.",
-      "ADMIN": "Teachers' subscriptions are off. They are turned on under Scheduling › Calendar subscriptions."
+      "ADMIN": "Teachers' subscriptions are off. The principal or an administrator who has Publishing turns them on under Scheduling › Calendar subscriptions."
     },
     "noChildren": "You have no children at the school to subscribe to.",
     "ownTitle": "Your timetable",

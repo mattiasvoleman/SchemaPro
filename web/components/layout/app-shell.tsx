@@ -180,10 +180,12 @@ const ADMIN_NAV: NavSection[] = [
  * The teacher's, the guardian's and the pupil's menus are in
  * profile-context.tsx, beside the profile they are for. Not here: every
  * signed-in route loads one chunk with this module, AppProviders and
- * ProfileProvider, and this module's part of it sits at Turbopack's
- * minChunkSize. A byte of code more here splits the chunk in two, +0.8 KB
- * on every route; ProfileProvider's part, which pages share, can grow. A
- * menu item for those three roles goes there; the admin's stay here.
+ * ProfileProvider, and on main this module's part of it sat just under
+ * Turbopack's minChunkSize: a few bytes of code more split the chunk in
+ * two, +0.7 to 0.9 KB on every route. Moving these menus out left it some
+ * 800 B under (Kalenderprenumeration, 2026-10-16); ProfileProvider's part,
+ * which pages share, can grow. A menu item for those three roles goes
+ * there; the admin's stay here, and cost that margin.
  */
 
 function navForRole(role: UserRole): NavSection[] {

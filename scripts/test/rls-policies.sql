@@ -21173,7 +21173,6 @@ BEGIN
   INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role)
   VALUES (school, lesson, anna, 'LEAD'), (school, lesson, bertil, 'ASSISTANT'), (school, lesson, david, 'ASSISTANT'),
          (school, lesson, (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000959'), 'ASSISTANT');
-  PERFORM set_config('app.test_rls148_9a', lesson::text, true);
   INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES (school, lesson, tyska);
   -- Spanska: held, cancelled, covered; and last Monday, the day before it, a year and a day on.
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")

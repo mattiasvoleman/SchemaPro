@@ -23,7 +23,7 @@
         - link "Ledighet":
           - /url: /sv/teacher/ledighet
       - listitem:
-        - link "Kalenderprenumeration":
+        - link "Min kalenderprenumeration":
           - /url: /sv/calendar-feed
   - link "Tillgänglighetsredogörelse":
     - /url: /sv/tillganglighet

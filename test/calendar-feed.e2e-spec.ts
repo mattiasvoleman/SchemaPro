@@ -168,12 +168,16 @@ describe('Kalenderprenumeration (e2e)', () => {
     });
 
     it('lets an administrator of any profile make and revoke their own, which writes nothing of an area', async () => {
-      // The expedition writes neither Publicering nor anything else a feed touches: it is the person's own.
-      const expedition = asUser({ role: Role.SCHOOL_ADMIN, schoolId: SCHOOL_ID, adminProfile: 'EXPEDITION' });
+      // A feed is the person's own. Between them the expedition and the
+      // planner lack every area but Drift, which all four profiles write, so
+      // no area requirement on these routes would let both through.
       created = { feed: { id: FEED_ID, audience: 'TEACHER', studentId: null, locale: 'sv', createdAt: '2026-10-15T08:00:00+02:00', lastUsedAt: null } };
-      await request(http()).post('/api/v1/calendar-feeds').set('x-test-user', expedition).send({}).expect(201);
-      await request(http()).delete(`/api/v1/calendar-feeds/${FEED_ID}`).set('x-test-user', expedition).expect(204);
-      await request(http()).get('/api/v1/calendar-feeds/counts').set('x-test-user', expedition).expect(200);
+      for (const adminProfile of ['EXPEDITION', 'SCHEMALAGGARE'] as const) {
+        const admin = asUser({ role: Role.SCHOOL_ADMIN, schoolId: SCHOOL_ID, adminProfile });
+        await request(http()).post('/api/v1/calendar-feeds').set('x-test-user', admin).send({}).expect(201);
+        await request(http()).delete(`/api/v1/calendar-feeds/${FEED_ID}`).set('x-test-user', admin).expect(204);
+        await request(http()).get('/api/v1/calendar-feeds/counts').set('x-test-user', admin).expect(200);
+      }
     });
 
     it('is nobody\'s without signing in', async () => {
