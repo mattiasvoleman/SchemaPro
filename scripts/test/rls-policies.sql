@@ -21876,3 +21876,106 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 154: halvorna och profilerna (Roller i skolan).
+--
+-- Halves are StudentGroups and placements StudentGroupMembers, both PLANERING
+-- (TABLE_WRITE_GATES): in the matrix school a schemaläggare places a pupil, an
+-- expedition (DRIFT, PERSONAL) can neither split a class nor place nor take a
+-- pupil out of a half. But the expedition moves a pupil to another class
+-- (Users, PERSONAL), and the pupil then leaves the old class's half all the
+-- same: the class-change cleanup is SECURITY DEFINER, so a placement never
+-- outlives the class change a profile without PLANERING made.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+
+-- 'sqlstate' of a statement's refusal, or 'none'.
+CREATE FUNCTION pg_temp.rls154_refusal(statement text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE st text;
+BEGIN
+  EXECUTE statement;
+  RETURN 'none';
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE;
+  RETURN st;
+END $$;
+
+-- FULL: 7A split in halves, a second class, the first pupil placed.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  a uuid; yr uuid; b uuid; h1 uuid; h2 uuid; p1 uuid; p2 uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true) THEN
+    RAISE EXCEPTION 'halves and profiles: expected the matrix school''s FULL administrator';
+  END IF;
+  SELECT id, "academicYearId" INTO a, yr FROM "StudentGroups" WHERE "schoolId" = school AND name = 'Roller 7A';
+  SELECT id INTO p1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000112';
+  SELECT id INTO p2 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000114';
+  IF a IS NULL OR p1 IS NULL OR p2 IS NULL THEN
+    RAISE EXCEPTION 'halves and profiles: the matrix school''s 7A or its pupils are missing; fixtures did not run';
+  END IF;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, yr, 'RLS154 7B', 'CLASS', 7, now()) RETURNING id INTO b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, yr, 'RLS154 7A:1', 'TEACHING_GROUP', 7, a, now()) RETURNING id INTO h1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+  VALUES (school, yr, 'RLS154 7A:2', 'TEACHING_GROUP', 7, a, now()) RETURNING id INTO h2;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, h1, p1);
+  PERFORM set_config('app.test_rls154', json_build_object('school', school, 'yr', yr, 'a', a, 'b', b,
+    'h1', h1, 'h2', h2, 'p1', p1, 'p2', p2)::text, true);
+END $$;
+
+-- The schemaläggare (PLANERING) places the second pupil.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls154')::jsonb;
+BEGIN
+  IF NOT app.current_user_may('PLANERING', true) THEN
+    RAISE EXCEPTION 'halves and profiles: the schemaläggare does not write PLANERING';
+  END IF;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId")
+  VALUES ((t ->> 'school')::uuid, (t ->> 'h2')::uuid, (t ->> 'p2')::uuid);
+  IF NOT EXISTS (SELECT 1 FROM "StudentGroupMembers" WHERE "studentGroupId" = (t ->> 'h2')::uuid AND "studentId" = (t ->> 'p2')::uuid) THEN
+    RAISE EXCEPTION 'halves and profiles: the schemaläggare could not place a pupil';
+  END IF;
+END $$;
+
+-- The expedition (DRIFT, PERSONAL): no split, no placement, no removal.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+DO $$
+DECLARE
+  t jsonb := current_setting('app.test_rls154')::jsonb;
+  got text;
+  n int;
+BEGIN
+  IF app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PERSONAL', true) THEN
+    RAISE EXCEPTION 'halves and profiles: expected the expedition (PERSONAL, not PLANERING)';
+  END IF;
+  got := pg_temp.rls154_refusal(format(
+    'INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+     VALUES (%L, %L, ''RLS154 7B:1'', ''TEACHING_GROUP'', 7, %L, now())', t ->> 'school', t ->> 'yr', t ->> 'b'));
+  IF got <> '42501' THEN RAISE EXCEPTION 'halves and profiles: the expedition split a class (%)', got; END IF;
+  got := pg_temp.rls154_refusal(format(
+    'INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (%L, %L, %L)',
+    t ->> 'school', t ->> 'h1', t ->> 'p2'));
+  IF got <> '42501' THEN RAISE EXCEPTION 'halves and profiles: the expedition placed a pupil (%)', got; END IF;
+  DELETE FROM "StudentGroupMembers" WHERE "studentGroupId" = (t ->> 'h2')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'halves and profiles: the expedition took % pupil(s) out of a half', n; END IF;
+
+  -- But moves the first pupil to 7B, and the pupil leaves 7A:1 with it.
+  UPDATE "Users" SET "studentGroupId" = (t ->> 'b')::uuid WHERE id = (t ->> 'p1')::uuid;
+  IF NOT FOUND THEN RAISE EXCEPTION 'halves and profiles: the expedition could not move a pupil'; END IF;
+  IF EXISTS (SELECT 1 FROM "StudentGroupMembers" WHERE "studentGroupId" = (t ->> 'h1')::uuid AND "studentId" = (t ->> 'p1')::uuid) THEN
+    RAISE EXCEPTION 'halves and profiles: a pupil the expedition moved is still placed in the old class''s half';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "StudentGroupMembers" WHERE "studentGroupId" = (t ->> 'h2')::uuid AND "studentId" = (t ->> 'p2')::uuid) THEN
+    RAISE EXCEPTION 'halves and profiles: the move took a pupil who stayed out of a half';
+  END IF;
+END $$;
+ROLLBACK;

@@ -131,14 +131,58 @@
 --
 -- ## Row-level security and grants
 --
--- No new table, so no new policy and no GRANT. The new columns are read and
--- written under the arms that already exist: StudentGroups' admin FOR ALL,
--- staff and own-class SELECT, the SS12000 principal; StudentGroupMembers'
--- arms, which 20261026100000 confined to the gateway (app_authenticated) but
--- the pupil's own. A pupil already reads their own membership rows, the half
--- among them, and the lessons of a teaching group they are in
+-- No new table, so no new policy and no GRANT, and nothing for the area
+-- split (20261110100000) to have missed: the new columns are read and
+-- written under the arms that already exist, which that migration split per
+-- area — StudentGroups' and StudentGroupMembers' admin writes ask
+-- app.current_user_may('PLANERING', true) (TABLE_WRITE_GATES), Users'
+-- PERSONAL or PLANERING — beside staff and own-class SELECT and the SS12000
+-- principal. A pupil already reads their own membership rows, the half among
+-- them, and the lessons of a teaching group they are in
 -- (calendar_lessons_teaching_group_select), so a placed pupil sees their
--- half's lessons with no new arm.
+-- half's lessons with no new arm. The class-change cleanup is SECURITY
+-- DEFINER: an expedition (PERSONAL, not PLANERING) that moves a pupil to
+-- another class takes them out of the old class's halves, which it may not
+-- write itself, as the class change implies.
+--
+-- ## Beside the live API: every lock at once, or none
+--
+-- Production runs this while the API before it serves requests. It alters
+-- StudentGroups, StudentGroupMembers and PublicationSettings (ACCESS
+-- EXCLUSIVE: columns, a CHECK, keys, indexes) and creates a trigger on Users
+-- (SHARE ROW EXCLUSIVE: it blocks writes to Users, not reads). Requests take
+-- these in both orders — a class change writes Users and then reads the
+-- groups; a group write takes StudentGroups and then a pupil's Users row —
+-- so a migration that waited for one while it held another could close a
+-- cycle with either, and a waiting ACCESS EXCLUSIVE queues every reader
+-- behind it. So all four are taken first, NOWAIT and together: a refusal
+-- rolls the subtransaction back and with it whatever it got, and it tries
+-- again 50 ms later. It never waits while it holds a lock, and no request
+-- queues behind it. After 30 s of refusals it stops with nothing done and
+-- can be rerun (prisma migrate resolve --rolled-back, then deploy).
+-- lock_timeout bounds any wait nobody foresaw.
+
+DO $$
+DECLARE
+  give_up timestamptz := clock_timestamp() + interval '30 seconds';
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  LOOP
+    BEGIN
+      LOCK TABLE "StudentGroups" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "StudentGroupMembers" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "PublicationSettings" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "Users" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+      EXIT;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() > give_up THEN
+        RAISE EXCEPTION 'StudentGroups, StudentGroupMembers, PublicationSettings and Users were not free at once in 30 s: nothing is changed, run the migration again';
+      END IF;
+      PERFORM pg_sleep(0.05);
+    END;
+  END LOOP;
+END
+$$;
 
 -- ---------------------------------------------------------------------------
 -- StudentGroups."halfOfId"
