@@ -83,7 +83,7 @@ clipped to those dates. Every day of the läsår is in exactly one of them.
 its periods' and its mentorships'. The first stretch keeps the post's id, so
 a reference to the post's Duty still resolves. Every other stretch has an
 id SchemaPro derives from its first day and a value of the post that no
-reader ever gets: the same for as long as the stretch starts on that day,
+integration ever gets: the same for as long as the stretch starts on that day,
 so a period no Duty shows names nothing and moves no id, and not one a
 reader can compute, so a stretch that is buried says nothing of when the
 grad changed. A period that changes only the

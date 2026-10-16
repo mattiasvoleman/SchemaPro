@@ -110,7 +110,7 @@ export function toPeriodResponse(row: TeacherEmploymentPeriod): TeacherEmploymen
 export function toEmploymentResponse(
   row: TeacherEmployment & { periods?: TeacherEmploymentPeriod[] },
 ): TeacherEmploymentResponse {
-  // The SS12000 stretch key is no reader's (20261104090000), not even the admin's.
+  // The SS12000 stretch key leaves through no API (20261104090000), not even to the admin.
   const { periods, ss12000StretchKey: _key, ...post } = row;
   return {
     ...post,
