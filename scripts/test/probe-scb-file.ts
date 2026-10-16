@@ -17,7 +17,11 @@
  *   scb3  the download is in the läslogg: one EMPLOYMENT and one PEOPLE row
  *         naming the teachers in the file, the admin's own id left out, in
  *         the read's own transaction — less whoever the same admin read of
- *         that kind in the last quarter-hour (Anna's post, in scb1).
+ *         that kind in the last quarter-hour (Anna's post, in scb1);
+ *   scb4  Bo's sick leave, registered a week at a time over the mätdatum,
+ *         is read under the admin's absence arm as one stretch, named
+ *         (LONG_ABSENCE) and recorded as STAFF_ABSENCES; no record alone is
+ *         30 days.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -153,6 +157,31 @@ export async function scbFileChecks(owner: Client, api: PrismaService, marker: s
           ['PEOPLE', 'WEB', admin.id, named],
         ],
       );
+    });
+
+    await check('(scb4) a sick leave registered week by week is one long absence, named and in the läslogg', async () => {
+      // Monday 24 September – Friday 26 October 2096: five weeks over the
+      // mätdatum, each its own record, Monday 00:00 to Saturday 00:00.
+      const mondays = ['2096-09-24', '2096-10-01', '2096-10-08', '2096-10-15', '2096-10-22'];
+      for (const monday of mondays) {
+        await owner.query(
+          `INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+           VALUES ($1, $2, ($3::date)::timestamp AT TIME ZONE 'Europe/Stockholm',
+                   ($3::date + 5)::timestamp AT TIME ZONE 'Europe/Stockholm')`,
+          [s, bo.id, monday],
+        );
+      }
+      const file = await scb.build(year.id, asAdmin);
+      assert.deepEqual(
+        file.notices.filter((notice) => notice.code === 'LONG_ABSENCE'),
+        [{ code: 'LONG_ABSENCE', params: { name: 'Bo Alm', from: '2096-09-24', to: '2096-10-26' } }],
+      );
+      const read = await one<{ ids: string[] }>(
+        `SELECT ARRAY(SELECT x::text FROM unnest("subjectIds") x) AS ids FROM "PersonalDataAccess"
+          WHERE "schoolId" = $1 AND kind = 'STAFF_ABSENCES' ORDER BY "at" DESC, id DESC LIMIT 1`,
+        [s],
+      );
+      assert.deepEqual(read?.ids, [bo.id], 'the long absence the file names is not in the läslogg');
     });
   } finally {
     await sweepScbSchool(owner, marker);

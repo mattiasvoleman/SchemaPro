@@ -182,7 +182,9 @@ export const SCB_COLUMNS: readonly ScbColumn[] = SCB_PEDPERS_2026.columns.map(([
  * "Leverantörens systemversion, fritext", both at most 15. The version is
  * SchemaPro's release, the root package.json's (a spec keeps them equal).
  * SCB marks column 3 "B = Bokstäver" while calling it fritext; a version has
- * digits — said in the manual, open until SCB answers or a return is checked.
+ * digits — said in the manual's "Kontrollera innan inlämning" (6.9), with
+ * what to write should SCB's check refuse it; open until SCB answers or a
+ * return is checked.
  */
 export const SCB_SYSTEM = 'SchemaPro';
 export const SCB_SYSTEM_VERSION = '0.1.0';
@@ -371,9 +373,10 @@ export interface ScbFileInput {
   /** The year's FORSTELARARE uppdrag with their dates. */
   firstTeacherDuties: readonly ({ userId: string } & DutyDates)[];
   /**
-   * The teachers' registered absences (TeacherAbsences, ACTIVE) around the
-   * mätdatum, as the school's days they run, both inclusive. Their reason is
-   * not read: a long absence is named whatever it is.
+   * The teachers' registered absences (TeacherAbsences, ACTIVE) over the
+   * läsår, as the school's days they run, both inclusive. Their reason is
+   * not read: a long absence is named whatever it is. Records that follow on
+   * from each other are one absence (absenceStretches).
    */
   absences?: readonly ScbAbsence[];
   subjects: readonly ScbSubject[];
@@ -410,6 +413,44 @@ export function scbMatdatum(yearStartDate: string): string {
  */
 export function longAbsenceOver(absence: Pick<ScbAbsence, 'from' | 'to'>, matdatum: string): boolean {
   return absence.from <= matdatum && matdatum <= absence.to && daysFrom(absence.from, absence.to) >= SCB_LEAVE_MIN_DAYS;
+}
+
+/** The day after `day`, past a Saturday and Sunday: where an absence that goes on picks up. */
+function nextWeekday(day: string): string {
+  let next = addDays(day, 1);
+  while ([0, 6].includes(new Date(`${next}T00:00:00.000Z`).getUTCDay())) next = addDays(next, 1);
+  return next;
+}
+
+/**
+ * A teacher's absences as SCB counts a leave: records that overlap, touch
+ * or pick up after a weekend are one stretch. The cover module refuses
+ * overlapping records and lets a teacher report only from today, so a sick
+ * leave that goes on is a chain of records — one per week, or per
+ * certificate — none of which is 30 days on its own. As leaveAround joins a
+ * post's periods.
+ */
+export function absenceStretches(absences: readonly ScbAbsence[]): ScbAbsence[] {
+  const sorted = [...absences].sort((a, b) =>
+    a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : a.from < b.from ? -1 : a.from > b.from ? 1 : 0,
+  );
+  const stretches: ScbAbsence[] = [];
+  for (const absence of sorted) {
+    const last = stretches[stretches.length - 1];
+    if (last && last.userId === absence.userId && absence.from <= nextWeekday(last.to)) {
+      if (absence.to > last.to) last.to = absence.to;
+    } else {
+      stretches.push({ ...absence });
+    }
+  }
+  return stretches;
+}
+
+/** The teacher's absence stretch of 30 days or more over the mätdatum, if they have one. */
+export function longAbsenceOf(absences: readonly ScbAbsence[], userId: string, matdatum: string): ScbAbsence | undefined {
+  return absenceStretches(absences.filter((absence) => absence.userId === userId)).find((stretch) =>
+    longAbsenceOver(stretch, matdatum),
+  );
 }
 
 export interface ScbFile {
@@ -670,9 +711,7 @@ export function buildScbFile(input: ScbFileInput): ScbFile {
     }
     if (input.adminIds.has(row.userId)) notice({ code: 'ADMIN', params: { name } });
     if (!employment) notice({ code: 'NO_POST', params: { name } });
-    const absence = (input.absences ?? [])
-      .filter((candidate) => candidate.userId === row.userId && longAbsenceOver(candidate, matdatum))
-      .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))[0];
+    const absence = longAbsenceOf(input.absences ?? [], row.userId, matdatum);
     if (absence) notice({ code: 'LONG_ABSENCE', params: { name, from: absence.from, to: absence.to } });
     // A post outlives its account: whether the person still worked on the
     // mätdatum is the school's to say, so the row stays and is named.
@@ -738,7 +777,8 @@ export function buildScbFile(input: ScbFileInput): ScbFile {
       // undervisningsämnen").
       const largest = [...stages].sort((a, b) => b.minutes - a.minutes)[0];
       const record = base(largest?.unit ?? unitOf(null), largest?.type ?? '');
-      const held = Math.round(post!.employmentPercent);
+      // At least 1 %: SCB "räcker det med att sätta 1 procent" for a leave.
+      const held = Math.max(1, Math.round(post!.employmentPercent));
       record.OmfLarare = String(held);
       const shares = career([held]);
       writeCareer(record, shares.first[0], shares.lecturer[0]);

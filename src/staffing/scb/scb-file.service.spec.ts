@@ -138,6 +138,27 @@ describe('ScbFileService', () => {
     expect(recordedReads(tx).find((read) => read.kind === 'STAFF_ABSENCES')).toEqual({ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [ANNA] });
   });
 
+  it('reads the läsår’s absences, so records that follow on from each other are one, and records the joined one', async () => {
+    tx.teacherEmployment.findMany.mockResolvedValue([postRow(BO)]);
+    tx.teacherAbsence.findMany.mockResolvedValue([
+      // 1–30 September and 1–28 October, Stockholm days: neither 30 days over the mätdatum alone.
+      { userId: BO, startsAt: new Date('2026-08-31T22:00:00.000Z'), endsAt: new Date('2026-09-30T22:00:00.000Z') },
+      { userId: BO, startsAt: new Date('2026-09-30T22:00:00.000Z'), endsAt: new Date('2026-10-28T23:00:00.000Z') },
+    ]);
+    const file = await service.build(YEAR_ID, testUser({ channel: 'WEB' }));
+    // The window is the läsår, 17 August – 11 June, in the school's zone.
+    expect(tx.teacherAbsence.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          startsAt: { lt: new Date('2027-06-11T22:00:00.000Z') },
+          endsAt: { gt: new Date('2026-08-16T22:00:00.000Z') },
+        }),
+      }),
+    );
+    expect(file.notices).toContainEqual({ code: 'LONG_ABSENCE', params: { name: 'Bo Alm', from: '2026-09-01', to: '2026-10-28' } });
+    expect(recordedReads(tx).find((read) => read.kind === 'STAFF_ABSENCES')).toEqual({ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [BO] });
+  });
+
   it('records nothing for a year with nobody to report', async () => {
     tx.teacherEmployment.findMany.mockResolvedValue([]);
     tx.teachingRequirement.findMany.mockResolvedValue([]);

@@ -241,7 +241,8 @@ export class TeacherEmploymentsService {
 
   /**
    * Write (or rewrite) one teacher's post for one year. The whole row is
-   * replaced, every time, for the reason the DTO gives.
+   * replaced, every time, for the reason the DTO gives — but for SCB's three,
+   * which a PUT that leaves them out keeps (employmentData).
    */
   async upsert(
     userId: string,

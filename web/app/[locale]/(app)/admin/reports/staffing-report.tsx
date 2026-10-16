@@ -227,11 +227,19 @@ export function StaffingReport() {
       setExporting(null);
     }
   };
-  /** The same rows for Excel, from the answer already held: no second read. */
+  /**
+   * The same rows for Excel, from the answer already held: no second read.
+   * Its chunk arrives on the click, so a chunk that does not (a dropped
+   * connection, a tab older than a deploy) is said, as the other exports say.
+   */
   const exportScbCsv = async () => {
     if (!scbFile) return;
-    const { downloadScbCsv } = await import("@/lib/scb-csv");
-    downloadScbCsv(scbFile);
+    try {
+      const { downloadScbCsv } = await import("@/lib/scb-csv");
+      downloadScbCsv(scbFile);
+    } catch {
+      toast.error(t("exportFailed"));
+    }
   };
 
   const noticeText = (notice: StaffingNotice) =>
