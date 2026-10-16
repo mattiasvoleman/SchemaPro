@@ -191,7 +191,7 @@
     <tbody>
       <tr>
         <td class="k">Administratör</td>
-        <td>Allt: grunddata, timplan, schemaläggning, drift och rapporter.</td>
+        <td>Läser allt utom tjänstgöringsgrad och nedsättning (se HR-läs nedan). Ändrar det som administratörens profil tillåter.</td>
         <td>Hela skolan</td>
       </tr>
       <tr>
@@ -212,11 +212,71 @@
     </tbody>
   </table>
 
+  <h4>Administratörens profil</h4>
+  <p>
+    En administratör har en av fyra profiler. Profilen styr vad hen ändrar,
+    inte vad hen läser: varje administratör läser hela skolans uppgifter.
+    Varje administratör som fanns innan profilerna infördes är fullständig
+    administratör, så ingenting ändras förrän rektor väljer något annat.
+  </p>
+  <table>
+    <thead><tr><th style="width:28%">Profil</th><th>Ändrar</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Fullständig administratör</td><td>Alla områden, och fattar besluten.</td></tr>
+      <tr><td class="k">Rektor</td><td>Alla områden, och fattar besluten.</td></tr>
+      <tr><td class="k">Schemaläggare</td><td>Planering, schemaläggning, publicering och drift.</td></tr>
+      <tr><td class="k">Expedition</td><td>Drift och personal.</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <thead><tr><th style="width:28%">Område</th><th>Vad det omfattar</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Planering</td><td>Grunddata (läsår, ämnen, salar, klasser och skolenheter), timplanen och dess block, tjänstefördelningens regler, lärarnas arbetstid, behörigheter och uppdrag.</td></tr>
+      <tr><td class="k">Schemaläggning</td><td>Grundschemat, dess versioner och genereringen.</td></tr>
+      <tr><td class="k">Publicering</td><td>Publiceringen, Schemavisaren och undervisningstiden.</td></tr>
+      <tr><td class="k">Drift</td><td>Den daterade kalendern, frånvaro, vikarier, ledighet, lokalbokningar och rapporter.</td></tr>
+      <tr><td class="k">Personal</td><td>Registret: personer och kopplingar mellan elever och vårdnadshavare.</td></tr>
+      <tr><td class="k">Integrationer</td><td>API-nycklar, SS12000 och skolans inloggning.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Besluten</strong> fattas av rektor och en fullständig
+    administratör: vem som är administratör, med vilken profil och med eller
+    utan HR-läs; tjänstgöringsgrad och nedsättning, också tjänstens perioder,
+    och att föra tjänsterna vidare till nästa läsår; att delegera beslut om
+    kortare ledighet till mentorerna; dataskydd och gallring; och läsloggen,
+    som visar vem som har läst om en person. Skolan har alltid minst en aktiv
+    rektor eller fullständig administratör: den sista kan inte få en annan
+    profil.
+  </p>
+  <p>
+    <strong>HR-läs.</strong> Tjänstgöringsgrad och nedsättning visas för
+    rektor, en fullständig administratör och en schemaläggare eller
+    expedition som rektor har gett HR-läs. För alla andra står det
+    <span class="ui">dolt</span> där procenten skulle stå, och tjänstens
+    perioder visas inte: när och hur en tjänst ändras under året räknas som
+    HR-uppgifter på samma sätt. Bemanningsförslaget, lärarförslagen vid en
+    post och vikarieförslagen redovisar då en tjänst som ändras som hela
+    läsåret, med årets riktmärke. En sådan tjänst
+    prövas ändå mot varje period när du sparar, och skulle läraren gå över
+    gränsen i en av dem säger varningen eller nejet bara det, utan minuter.
+    Målet i minuter, som tjänstefördelningen görs mot, visas för alla.
+  </p>
+  <p>
+    Menyn visar bara de sidor som profilen använder. Öppnar någon en annan
+    sida, till exempel från ett bokmärke, säger SchemaPro vilket område sidan
+    hör till och leder tillbaka till översikten. På en sida som rör flera
+    områden, som <span class="path">Grunddata › Personer</span>, visas bara
+    de knappar som profilen ändrar. Profilerna, HR-läs och rollhistoriken
+    hanteras under Personer, se 3.5.
+  </p>
+
   <div class="warn">
     <span class="label">Viktigt</span>
     <p>
-      Administratörsrollen ger tillgång till samtliga elevers uppgifter. Tilldela
-      den restriktivt, och ta bort behörigheten omgående när någon slutar.
+      Administratörsrollen ger tillgång till samtliga elevers uppgifter, vilken
+      profil personen än har. Tilldela den restriktivt, och ta bort
+      behörigheten omgående när någon slutar.
     </p>
   </div>
 </section>
@@ -564,6 +624,23 @@
       SchemaPro tar bort den gamla inloggningen för hand.
     </p>
   </div>
+  <p>
+    <strong>Roll, profil och HR-läs.</strong> När rektor eller en fullständig
+    administratör ändrar en administratör väljer hen profil, och för en
+    schemaläggare eller expedition även HR-läs, i samma dialog som namn och
+    e-post (se 2.2). Andra administratörer ser valen men kan inte ändra dem,
+    och de kan inte heller ändra, bjuda in eller ta bort en administratör.
+    Varje ändring av roll, profil eller HR-läs sparas. Fäll ut personens rad
+    för att se <span class="ui">Rollhistorik</span>: vad som ändrades, när och
+    av vem.
+  </p>
+  <p>
+    Sidan visar varje profil det den ändrar. Expeditionen lägger upp och
+    ändrar personer och kopplar vårdnadshavare. Schemaläggaren ändrar
+    lärarnas arbetstid, behörigheter och uppdrag och importerar dem från fil,
+    men lägger inte upp personer. Rektor och en fullständig administratör gör
+    båda delarna och skriver dessutom tjänsterna.
+  </p>
   <p>
     Har skolan ett elevregister som stöder SS12000 kan personerna hämtas
     därifrån i stället för att läggas in för hand — se 7.2.
@@ -1589,7 +1666,11 @@
     den och varningarna namnger lärare och post. Med Vägra sparas ingenting,
     och dialogen säger vilken lärare och vilken post som stoppade den. Har
     tjänstefördelningen ändrats sedan förslaget beräknades sparas ingenting
-    och du får beräkna om. Meddelandet efter en tillämpning har
+    och du får beräkna om. Saknar du HR-läs räknas siffrorna för varje lärare
+    över hela läsåret (2.2), medan tillämpningen prövar en tjänst som ändras
+    mot varje period. Lämnar du poster utanför kan urvalet därför vägras
+    eller ge en varning fast siffrorna visar utrymme; dialogen säger det
+    under lärarna. Meddelandet efter en tillämpning har
     <span class="ui">Ångra</span> i femton sekunder. Ångra prövas mot läget
     före tillämpningen: en lärare som får tillbaka sina poster vägras inte för
     att hen redan låg över gränsen då, men en lärare som skulle hamna över
@@ -2939,7 +3020,8 @@
     terminen, hur nära veckans riktmärke hen ligger, och skolans val för
     vikariepoolen. Riktmärket är det som gäller lektionens vecka: för en
     lärare vars tjänst ändras under läsåret är det tjänsten som gäller på
-    veckans måndag (4.3). Den vars egen lektion då är inställd räknas som ledig och på
+    veckans måndag (4.3). Saknar du HR-läs är det årets riktmärke för en
+    sådan lärare, i stället för veckans (2.2). Den vars egen lektion då är inställd räknas som ledig och på
     plats — utom när lektionen är inställd för en aktivitet (prao, friluftsdag,
     studiedag): då hamnar hen längre ner, eftersom hen kan vara med klassen.
     Varje förslag säger sina skäl i klartext med poängen bredvid.
