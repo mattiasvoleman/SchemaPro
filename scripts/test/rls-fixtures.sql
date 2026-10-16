@@ -1288,7 +1288,7 @@ BEGIN
   VALUES (m, now(), teacher, 'TEACHER', 'WEB', 'ROSTER', ARRAY[pupil], 1);
 END $$;
 
--- SS12000-närvaro (sections 150–154, 20261114090000). Two schools with a
+-- SS12000-närvaro (sections 155–159, 20261114090000). Two schools with a
 -- lesson, two pupils' attendance and absences and integration keys: one that
 -- has not decided (its admin decides inside the sections' transactions) and
 -- one that shares, so a key of either can be held to its own school's rows.
@@ -1350,11 +1350,11 @@ BEGIN
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
   VALUES (s1, subj, nextClass, today + 340, (today + 340) + time '08:00', (today + 340) + time '09:00', 'SCHEDULED', now()) RETURNING id INTO later;
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, note, "updatedAt") VALUES
-    (s1, lesson, pupil, 'PRESENT', 'rls150 anteckning', now()),
-    (s1, lesson, classmate, 'ABSENT', 'rls150 anteckning', now()),
-    (s1, later, pupil, 'ABSENT', 'rls150 nästa år', now());
+    (s1, lesson, pupil, 'PRESENT', 'rls155 anteckning', now()),
+    (s1, lesson, classmate, 'ABSENT', 'rls155 anteckning', now()),
+    (s1, later, pupil, 'ABSENT', 'rls155 nästa år', now());
   INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note, "grantedLeave") VALUES
-    (s1, pupil, guardian, today - 2, 'SICK', 'rls150 feber', false),
+    (s1, pupil, guardian, today - 2, 'SICK', 'rls155 feber', false),
     (s1, classmate, admin, today + 5, 'OTHER', 'Approved leave', true);
   INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes, "revokedAt") VALUES
     (s1, 'NV hel', repeat('a1', 32), '{attendances.read,absences.read}', NULL),

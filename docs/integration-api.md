@@ -1021,10 +1021,10 @@ as the service principal and as the key lookup, and no API role holds any
 privilege on it. The write policies' `WITH CHECK` clauses are not asserted
 there.
 
-Sections 150–154 are SS12000-närvaro's: the catalogue of the decision table,
+Sections 155–159 are SS12000-närvaro's: the catalogue of the decision table,
 its arms, grants and triggers, of the two read functions (who may call them,
 and exactly the columns they answer), of the versions' and tombstones' arms,
-and that no arm of the two tables is the service principal's (150); the
+and that no arm of the two tables is the service principal's (155); the
 tables read as empty to the service principal, and through the functions a
 school that has not decided gives its key nothing, the sharing school's key
 reads its own rows and no other school's, a key of one school named with the
@@ -1033,17 +1033,17 @@ its scope says, only this year's attendance of active pupils, every row
 reading as modified when the school started sharing (a read from before
 that moment is whole, a second decision to share is not a new start), a
 revoked or scopeless key nothing, PostgREST's role may not call them, and
-nothing again when it stops (151); only a decision writes `grantedLeave`, a
+nothing again when it stops (156); only a decision writes `grantedLeave`, a
 decider's leave day is one without the column, and a span ends after it
-starts (152); a decision is the administrator's, stamped and never changed
-(153); and the versions and tombstones follow a status, the lesson's times,
+starts (157); a decision is the administrator's, stamped and never changed
+(158); and the versions and tombstones follow a status, the lesson's times,
 a granted leave, a relink, a year activated, a removal, a removed lesson and
 a pupil who leaves and comes back, seen only by a key with the scope, and
 once the school has stopped a removal is still buried and told to the key
 with the scope (not to one without it), but not of a row created and
 removed within the stop, nor what was reported meanwhile for a pupil who
 leaves, while a row versioned as the stop was decided still is; and
-nothing is versioned (154). The
+nothing is versioned (159). The
 adapter probe's (nv-a)–(nv-k) run the same through the real services,
 including that a school that never shared records nothing, the school's
 timezone, a gallring night, a subscription that stops hearing when the

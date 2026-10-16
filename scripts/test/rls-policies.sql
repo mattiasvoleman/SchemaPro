@@ -21982,7 +21982,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 150: SS12000-närvaro, katalogen (20261114090000).
+-- Section 155: SS12000-närvaro, katalogen (20261114090000).
 --
 -- The school's decision (AttendanceSharingDecisions): row security on;
 -- exactly the admin's SELECT and INSERT, TO app_authenticated; PostgREST's
@@ -22148,13 +22148,13 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- Section 151: integrationen läser närvaron och frånvaron bara genom
+-- Section 156: integrationen läser närvaron och frånvaron bara genom
 -- leverantörens två funktioner, bara hos en skola som delar den, med en egen
 -- nyckel som har omfånget, och bara den skolans (app.ss12000_attendances,
 -- app.ss12000_absences).
 --
 -- Directly, under the service principal, the two tables are empty to every
--- key, shared or not (pg_temp.nv151_reads asserts it at every call). Through
+-- key, shared or not (pg_temp.nv156_reads asserts it at every call). Through
 -- the functions: a school that has not decided answers its key with both
 -- scopes nothing. The sharing school: its own key reads its own rows and no
 -- other school's; a key of one school named with the other reads nothing,
@@ -22179,7 +22179,7 @@ SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-
 SELECT set_config('app.test_nv_shares', app.current_school_id()::text, true);
 SELECT set_config('app.test_nv_shares_key', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'ND hel')::text, true);
 SELECT set_config('request.jwt.claims', '', true);
-CREATE FUNCTION pg_temp.nv151_as(p_school text, p_key text) RETURNS void
+CREATE FUNCTION pg_temp.nv156_as(p_school text, p_key text) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM set_config('request.jwt.claims', '', true);
@@ -22187,16 +22187,16 @@ BEGIN
   PERFORM set_config('app.service_key_id', p_key, true);
 END
 $$;
-CREATE FUNCTION pg_temp.nv151_reads(p_school text, p_key text) RETURNS text
+CREATE FUNCTION pg_temp.nv156_reads(p_school text, p_key text) RETURNS text
 LANGUAGE plpgsql AS $$
 DECLARE a bigint; b bigint; da bigint; db bigint;
 BEGIN
-  PERFORM pg_temp.nv151_as(p_school, p_key);
+  PERFORM pg_temp.nv156_as(p_school, p_key);
   SELECT count(*) INTO da FROM "AttendanceRecords";
   SELECT count(*) INTO db FROM "AbsenceReports";
   SELECT count(*) INTO a FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
   SELECT count(*) INTO b FROM app.ss12000_absences(NULL, NULL);
-  PERFORM pg_temp.nv151_as('', '');
+  PERFORM pg_temp.nv156_as('', '');
   IF da + db <> 0 THEN
     RAISE EXCEPTION 'attendance sharing: the service principal read % attendance and % absence rows directly', da, db;
   END IF;
@@ -22212,22 +22212,22 @@ DECLARE
   got text;
 BEGIN
   IF s1 = '' OR s2 = '' OR mine = '' OR theirs = '' THEN RAISE EXCEPTION 'attendance sharing: the fixtures are missing'; END IF;
-  got := pg_temp.nv151_reads(s1, mine);
+  got := pg_temp.nv156_reads(s1, mine);
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a school that has not decided gave its key %', got; END IF;
-  got := pg_temp.nv151_reads(s2, theirs);
+  got := pg_temp.nv156_reads(s2, theirs);
   IF got <> '1/1' THEN RAISE EXCEPTION 'attendance sharing: the sharing school''s key read %, not its own row of each', got; END IF;
-  got := pg_temp.nv151_reads(s2, mine);
+  got := pg_temp.nv156_reads(s2, mine);
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: another school''s key read the sharing school: %', got; END IF;
-  got := pg_temp.nv151_reads(s1, theirs);
+  got := pg_temp.nv156_reads(s1, theirs);
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: the sharing school''s key read another school: %', got; END IF;
-  got := pg_temp.nv151_reads(s2, '');
+  got := pg_temp.nv156_reads(s2, '');
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: the service principal without a key read %', got; END IF;
 END $$;
 
 -- The first school decides, as its administrator.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
 WITH d AS (
-  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 151') RETURNING "decidedAt"
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 156') RETURNING "decidedAt"
 )
 SELECT set_config('app.test_nv_since', d."decidedAt"::text, true) FROM d;
 SELECT set_config('request.jwt.claims', '', true);
@@ -22243,17 +22243,17 @@ DECLARE
   granted record;
 BEGIN
   -- This year's two; next year's lesson's attendance is not emitted.
-  got := pg_temp.nv151_reads(s1, mine);
+  got := pg_temp.nv156_reads(s1, mine);
   IF got <> '2/2' THEN RAISE EXCEPTION 'attendance sharing: the key with both scopes read %, not the school''s 2 and 2', got; END IF;
-  got := pg_temp.nv151_reads(s1, current_setting('app.test_nv_absences'));
+  got := pg_temp.nv156_reads(s1, current_setting('app.test_nv_absences'));
   IF got <> '0/2' THEN RAISE EXCEPTION 'attendance sharing: an absences.read key read %', got; END IF;
-  got := pg_temp.nv151_reads(s1, current_setting('app.test_nv_narrow'));
+  got := pg_temp.nv156_reads(s1, current_setting('app.test_nv_narrow'));
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a key without the scopes read %', got; END IF;
-  got := pg_temp.nv151_reads(s1, current_setting('app.test_nv_revoked'));
+  got := pg_temp.nv156_reads(s1, current_setting('app.test_nv_revoked'));
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a revoked key read %', got; END IF;
 
   -- The filters narrow, the keyset pages, the bounds are the version's or the creation's.
-  PERFORM pg_temp.nv151_as(s1, mine);
+  PERFORM pg_temp.nv156_as(s1, mine);
   SELECT a.id, a."calendarLessonId" INTO first, lesson
     FROM app.ss12000_attendances(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1) a;
   SELECT count(*) INTO n FROM app.ss12000_attendances(NULL, NULL, ARRAY[pupil], NULL, NULL, NULL, NULL, NULL, NULL, NULL);
@@ -22300,12 +22300,12 @@ BEGIN
   DELETE FROM "AbsenceReports";
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: the integration removed % absences', n; END IF;
-  PERFORM pg_temp.nv151_as('', '');
+  PERFORM pg_temp.nv156_as('', '');
 
   -- A pupil who leaves is gone from both at once.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
   UPDATE "Users" SET "isActive" = false WHERE id = pupil;
-  got := pg_temp.nv151_reads(s1, mine);
+  got := pg_temp.nv156_reads(s1, mine);
   IF got <> '1/1' THEN RAISE EXCEPTION 'attendance sharing: with the pupil gone the key read %', got; END IF;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
   UPDATE "Users" SET "isActive" = true WHERE id = pupil;
@@ -22314,19 +22314,19 @@ END $$;
 -- A second decision to share in a row (a new reference) is not a new
 -- beginning: nothing reads as modified again.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
-INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 151, ny referens');
+INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 156, ny referens');
 SELECT set_config('request.jwt.claims', '', true);
 DO $$
 DECLARE n bigint;
 BEGIN
-  PERFORM pg_temp.nv151_as(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
+  PERFORM pg_temp.nv156_as(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
   SELECT count(*) INTO n FROM app.ss12000_absences(NULL, NULL) a
    WHERE a."versionModifiedAt" IS DISTINCT FROM current_setting('app.test_nv_since')::timestamptz;
-  PERFORM pg_temp.nv151_as('', '');
+  PERFORM pg_temp.nv156_as('', '');
   IF n <> 0 THEN RAISE EXCEPTION 'attendance sharing: a second decision to share moved % absences', n; END IF;
 END $$;
 -- PostgREST's role, with the same settings: the functions are not its.
-SELECT pg_temp.nv151_as(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
+SELECT pg_temp.nv156_as(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
 SET LOCAL ROLE authenticated;
 DO $$
 DECLARE n bigint;
@@ -22346,7 +22346,7 @@ BEGIN
   END;
 END $$;
 SET LOCAL ROLE app_authenticated;
-SELECT pg_temp.nv151_as('', '');
+SELECT pg_temp.nv156_as('', '');
 -- The school stops sharing: nothing again, from the next statement.
 SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000150')::text, true);
 INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (app.current_school_id(), false);
@@ -22354,13 +22354,13 @@ SELECT set_config('request.jwt.claims', '', true);
 DO $$
 DECLARE got text;
 BEGIN
-  got := pg_temp.nv151_reads(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
+  got := pg_temp.nv156_reads(current_setting('app.test_nv_school'), current_setting('app.test_nv_full'));
   IF got <> '0/0' THEN RAISE EXCEPTION 'attendance sharing: a school that stopped sharing gave its key %', got; END IF;
 END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 152: bara ett beslut om ledighet skriver en beviljad ledighet
+-- Section 157: bara ett beslut om ledighet skriver en beviljad ledighet
 -- (AbsenceReports.grantedLeave, app.absence_reports_granted_leave_is_decided).
 --
 -- A guardian and a pupil file their absences as before, but one that says it
@@ -22444,7 +22444,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 153: skolans beslut fattas av administratören, stämplas av
+-- Section 158: skolans beslut fattas av administratören, stämplas av
 -- databasen och ändras aldrig (AttendanceSharingDecisions).
 --
 -- The administrator (full, by the fixtures; that only rektor and full may,
@@ -22470,7 +22470,7 @@ DECLARE
 BEGIN
   SELECT count(*) INTO n FROM "AttendanceSharingDecisions";
   IF n <> 0 THEN RAISE EXCEPTION 'decisions: the administrator reads % decisions of another school', n; END IF;
-  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (school, true, 'RLS 153') RETURNING * INTO row;
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (school, true, 'RLS 158') RETURNING * INTO row;
   IF row."decidedById" IS DISTINCT FROM app.current_user_id() OR row."decidedAt" IS NULL THEN
     RAISE EXCEPTION 'decisions: the decision was not stamped with its decider (%)', row."decidedById";
   END IF;
@@ -22526,7 +22526,7 @@ SET LOCAL ROLE app_authenticated;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Section 154: leverantören följer närvaron och frånvaron: en ändrad status,
+-- Section 159: leverantören följer närvaron och frånvaron: en ändrad status,
 -- lektionens tider, en beviljad ledighet, en elev som kopplas till källan och
 -- ett läsår som aktiveras flyttar meta.modified, en anteckning gör det inte;
 -- en borttagen post, en borttagen lektion och en elev som slutar begravs, och
@@ -22569,10 +22569,10 @@ INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId",
 SELECT "schoolId", 'narvaro-tredje@example.invalid', 'Närvaro', 'Tredje', 'STUDENT', '00000000-0000-4000-8000-000000000157', true, "studentGroupId", now()
   FROM "Users" WHERE id = current_setting('app.test_nv_classmate')::uuid;
 INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
-SELECT u."schoolId", u.id, app.current_user_id(), current_date + 10, 'SICK', 'rls154 före'
+SELECT u."schoolId", u.id, app.current_user_id(), current_date + 10, 'SICK', 'rls159 före'
   FROM "Users" u WHERE u.email = 'narvaro-tredje@example.invalid';
-INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 154');
-CREATE FUNCTION pg_temp.nv154_xid(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS xid8
+INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 159');
+CREATE FUNCTION pg_temp.nv159_xid(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS xid8
 LANGUAGE plpgsql AS $$
 DECLARE claims text := current_setting('request.jwt.claims', true); x xid8;
 BEGIN
@@ -22586,7 +22586,7 @@ BEGIN
   RETURN x;
 END
 $$;
-CREATE FUNCTION pg_temp.nv154_buried(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS boolean
+CREATE FUNCTION pg_temp.nv159_buried(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS boolean
 LANGUAGE plpgsql AS $$
 DECLARE claims text := current_setting('request.jwt.claims', true); found boolean;
 BEGIN
@@ -22600,15 +22600,15 @@ BEGIN
   RETURN found;
 END
 $$;
-CREATE FUNCTION pg_temp.nv154_moved(p_resource text, p_id uuid) RETURNS boolean
+CREATE FUNCTION pg_temp.nv159_moved(p_resource text, p_id uuid) RETURNS boolean
 LANGUAGE plpgsql AS $$
-DECLARE x xid8 := pg_temp.nv154_xid(p_resource, p_id);
+DECLARE x xid8 := pg_temp.nv159_xid(p_resource, p_id);
 BEGIN
   RETURN x IS NOT NULL AND x = pg_current_xact_id();
 END
 $$;
 -- meta.modified of an attendance as the provider reads it.
-CREATE FUNCTION pg_temp.nv154_modified(p_id uuid) RETURNS timestamptz
+CREATE FUNCTION pg_temp.nv159_modified(p_id uuid) RETURNS timestamptz
 LANGUAGE plpgsql AS $$
 DECLARE claims text := current_setting('request.jwt.claims', true); m timestamptz;
 BEGIN
@@ -22650,13 +22650,13 @@ BEGIN
     JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."studentId" = pupil AND l.date > current_date;
   SELECT id INTO sick FROM "AbsenceReports" WHERE "studentId" = pupil;
   SELECT id INTO granted FROM "AbsenceReports" WHERE "studentId" = classmate;
-  SELECT id INTO planted FROM "AbsenceReports" WHERE note = 'rls154 före';
+  SELECT id INTO planted FROM "AbsenceReports" WHERE note = 'rls159 före';
   IF present IS NULL OR absent IS NULL OR ahead IS NULL OR sick IS NULL OR granted IS NULL OR planted IS NULL THEN
     RAISE EXCEPTION 'attendance versions: the fixtures are missing';
   END IF;
   -- Planted before the school shared: none has a version, and none was handed out.
-  IF pg_temp.nv154_xid('Attendance', present) IS NOT NULL OR pg_temp.nv154_xid('Absence', sick) IS NOT NULL
-     OR pg_temp.nv154_xid('Absence', planted) IS NOT NULL THEN
+  IF pg_temp.nv159_xid('Attendance', present) IS NOT NULL OR pg_temp.nv159_xid('Absence', sick) IS NOT NULL
+     OR pg_temp.nv159_xid('Absence', planted) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: a row written before the school shared has a version';
   END IF;
 
@@ -22665,76 +22665,76 @@ BEGIN
   -- but next year's removal is not buried: it never left.
   INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type)
   VALUES (school, classmate, app.current_user_id(), current_date + 6, 'SICK') RETURNING id INTO fresh;
-  IF NOT pg_temp.nv154_moved('Absence', fresh) THEN RAISE EXCEPTION 'attendance versions: a new absence was not recorded'; END IF;
+  IF NOT pg_temp.nv159_moved('Absence', fresh) THEN RAISE EXCEPTION 'attendance versions: a new absence was not recorded'; END IF;
   DELETE FROM "AbsenceReports" WHERE id = fresh;
-  IF NOT pg_temp.nv154_buried('Absence', fresh) THEN RAISE EXCEPTION 'attendance versions: a removed absence was not buried'; END IF;
+  IF NOT pg_temp.nv159_buried('Absence', fresh) THEN RAISE EXCEPTION 'attendance versions: a removed absence was not buried'; END IF;
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
   VALUES (school, later, classmate, 'PRESENT', now()) RETURNING id INTO fresh;
-  IF NOT pg_temp.nv154_moved('Attendance', fresh) THEN
+  IF NOT pg_temp.nv159_moved('Attendance', fresh) THEN
     RAISE EXCEPTION 'attendance versions: an insert at a sharing school was not versioned';
   END IF;
   DELETE FROM "AttendanceRecords" WHERE id = fresh;
-  IF pg_temp.nv154_buried('Attendance', fresh) THEN
+  IF pg_temp.nv159_buried('Attendance', fresh) THEN
     RAISE EXCEPTION 'attendance versions: an attendance of next year''s lesson was buried';
   END IF;
 
   -- A note moves nothing; a status does.
-  UPDATE "AttendanceRecords" SET note = 'rls154 annan anteckning' WHERE id = absent;
-  IF pg_temp.nv154_xid('Attendance', absent) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: a note moved an attendance'; END IF;
+  UPDATE "AttendanceRecords" SET note = 'rls159 annan anteckning' WHERE id = absent;
+  IF pg_temp.nv159_xid('Attendance', absent) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: a note moved an attendance'; END IF;
   UPDATE "AttendanceRecords" SET status = 'EXCUSED' WHERE id = absent;
-  IF NOT pg_temp.nv154_moved('Attendance', absent) THEN RAISE EXCEPTION 'attendance versions: a status did not move an attendance'; END IF;
+  IF NOT pg_temp.nv159_moved('Attendance', absent) THEN RAISE EXCEPTION 'attendance versions: a status did not move an attendance'; END IF;
   -- The lesson's times are the minutes of every attendance of it.
   UPDATE "CalendarLessons" SET "endsAt" = "endsAt" + interval '5 minutes' WHERE id = lesson;
-  IF NOT pg_temp.nv154_moved('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: the lesson''s times did not move its attendance'; END IF;
+  IF NOT pg_temp.nv159_moved('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: the lesson''s times did not move its attendance'; END IF;
   -- Only a key that may read attendance sees its version.
-  IF pg_temp.nv154_xid('Attendance', present, current_setting('app.test_nv_narrow')) IS NOT NULL
-     OR pg_temp.nv154_xid('Attendance', present, current_setting('app.test_nv_absences')) IS NOT NULL THEN
+  IF pg_temp.nv159_xid('Attendance', present, current_setting('app.test_nv_narrow')) IS NOT NULL
+     OR pg_temp.nv159_xid('Attendance', present, current_setting('app.test_nv_absences')) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: a key without attendances.read sees an attendance''s version';
   END IF;
   -- A report marked as a granted leave is another type.
-  IF pg_temp.nv154_xid('Absence', sick) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the absence moved before anything changed'; END IF;
+  IF pg_temp.nv159_xid('Absence', sick) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the absence moved before anything changed'; END IF;
   UPDATE "AbsenceReports" SET "grantedLeave" = true WHERE id = sick;
-  IF NOT pg_temp.nv154_moved('Absence', sick) THEN RAISE EXCEPTION 'attendance versions: grantedLeave did not move the absence'; END IF;
-  IF pg_temp.nv154_xid('Absence', sick, current_setting('app.test_nv_absences')) IS NULL
-     OR pg_temp.nv154_xid('Absence', sick, current_setting('app.test_nv_narrow')) IS NOT NULL THEN
+  IF NOT pg_temp.nv159_moved('Absence', sick) THEN RAISE EXCEPTION 'attendance versions: grantedLeave did not move the absence'; END IF;
+  IF pg_temp.nv159_xid('Absence', sick, current_setting('app.test_nv_absences')) IS NULL
+     OR pg_temp.nv159_xid('Absence', sick, current_setting('app.test_nv_narrow')) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: the absence''s version is not exactly the absences.read key''s';
   END IF;
   -- A pupil linked to the source is emitted under another id.
-  IF pg_temp.nv154_xid('Absence', granted) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the granted leave moved before anything changed'; END IF;
+  IF pg_temp.nv159_xid('Absence', granted) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the granted leave moved before anything changed'; END IF;
   UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = classmate;
-  IF NOT pg_temp.nv154_moved('Absence', granted) THEN RAISE EXCEPTION 'attendance versions: linking the pupil did not move their absence'; END IF;
+  IF NOT pg_temp.nv159_moved('Absence', granted) THEN RAISE EXCEPTION 'attendance versions: linking the pupil did not move their absence'; END IF;
 
   -- A year activated: its lessons' attendance is emitted from now on, and
   -- versioned (next year's planted row had none). Deactivating this year
   -- first makes nothing newly emitted; activating next year does.
-  IF pg_temp.nv154_xid('Attendance', ahead) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: next year''s planted attendance has a version'; END IF;
+  IF pg_temp.nv159_xid('Attendance', ahead) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: next year''s planted attendance has a version'; END IF;
   UPDATE "AcademicYears" SET "isActive" = false WHERE id = current_setting('app.test_nv_this_year')::uuid;
-  IF pg_temp.nv154_xid('Attendance', ahead) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: a year left active moved next year''s attendance'; END IF;
+  IF pg_temp.nv159_xid('Attendance', ahead) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: a year left active moved next year''s attendance'; END IF;
   UPDATE "AcademicYears" SET "isActive" = true WHERE id = current_setting('app.test_nv_next_year')::uuid;
-  IF NOT pg_temp.nv154_moved('Attendance', ahead) THEN RAISE EXCEPTION 'attendance versions: activating its year did not record an attendance'; END IF;
+  IF NOT pg_temp.nv159_moved('Attendance', ahead) THEN RAISE EXCEPTION 'attendance versions: activating its year did not record an attendance'; END IF;
   UPDATE "AcademicYears" SET "isActive" = false WHERE id = current_setting('app.test_nv_next_year')::uuid;
   UPDATE "AcademicYears" SET "isActive" = true WHERE id = current_setting('app.test_nv_this_year')::uuid;
 
   -- Removed: buried. Next year's: never buried.
   DELETE FROM "AttendanceRecords" WHERE id IN (absent, ahead);
-  IF NOT pg_temp.nv154_buried('Attendance', absent) THEN RAISE EXCEPTION 'attendance versions: a removed attendance was not buried'; END IF;
-  IF pg_temp.nv154_buried('Attendance', ahead) THEN RAISE EXCEPTION 'attendance versions: next year''s attendance was buried'; END IF;
+  IF NOT pg_temp.nv159_buried('Attendance', absent) THEN RAISE EXCEPTION 'attendance versions: a removed attendance was not buried'; END IF;
+  IF pg_temp.nv159_buried('Attendance', ahead) THEN RAISE EXCEPTION 'attendance versions: next year''s attendance was buried'; END IF;
   -- Only a key that may read attendance learns of its removal.
-  IF pg_temp.nv154_buried('Attendance', absent, current_setting('app.test_nv_narrow'))
-     OR pg_temp.nv154_buried('Attendance', absent, current_setting('app.test_nv_absences')) THEN
+  IF pg_temp.nv159_buried('Attendance', absent, current_setting('app.test_nv_narrow'))
+     OR pg_temp.nv159_buried('Attendance', absent, current_setting('app.test_nv_absences')) THEN
     RAISE EXCEPTION 'attendance versions: a key without attendances.read sees an attendance''s tombstone';
   END IF;
 
   -- A pupil who leaves takes their attendance and absences with them, and brings them back.
   UPDATE "Users" SET "isActive" = false WHERE id = pupil;
-  IF NOT pg_temp.nv154_buried('Attendance', present) OR NOT pg_temp.nv154_buried('Absence', sick) THEN
+  IF NOT pg_temp.nv159_buried('Attendance', present) OR NOT pg_temp.nv159_buried('Absence', sick) THEN
     RAISE EXCEPTION 'attendance versions: a pupil who left left their attendance or absence unburied';
   END IF;
   UPDATE "Users" SET "isActive" = true WHERE id = pupil;
-  IF pg_temp.nv154_buried('Attendance', present) OR pg_temp.nv154_buried('Absence', sick) THEN
+  IF pg_temp.nv159_buried('Attendance', present) OR pg_temp.nv159_buried('Absence', sick) THEN
     RAISE EXCEPTION 'attendance versions: a pupil who came back stayed buried';
   END IF;
-  IF NOT pg_temp.nv154_moved('Attendance', present) OR NOT pg_temp.nv154_moved('Absence', sick) THEN
+  IF NOT pg_temp.nv159_moved('Attendance', present) OR NOT pg_temp.nv159_moved('Absence', sick) THEN
     RAISE EXCEPTION 'attendance versions: a pupil who came back brought no version';
   END IF;
 
@@ -22757,25 +22757,25 @@ BEGIN
   -- beginning: the stop began at the first.
   INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "createdAt")
   VALUES (school, pupil, app.current_user_id(), current_date + 8, 'SICK', clock_timestamp()) RETURNING id INTO withdrawn;
-  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (school, false, 'RLS 154 igen');
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (school, false, 'RLS 159 igen');
   DELETE FROM "AbsenceReports" WHERE id = withdrawn;
-  IF pg_temp.nv154_buried('Absence', withdrawn) THEN
+  IF pg_temp.nv159_buried('Absence', withdrawn) THEN
     RAISE EXCEPTION 'attendance versions: an absence created and removed while the school had stopped is told';
   END IF;
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt", "createdAt")
   VALUES (school, absent_lesson, classmate, 'ABSENT', now(), clock_timestamp()) RETURNING id INTO quiet;
   DELETE FROM "AttendanceRecords" WHERE id = quiet;
-  IF pg_temp.nv154_buried('Attendance', quiet) THEN
+  IF pg_temp.nv159_buried('Attendance', quiet) THEN
     RAISE EXCEPTION 'attendance versions: an attendance created and removed while the school had stopped is told';
   END IF;
   -- The raced one may have been read while the school shared: told. So is
   -- one from before the stop that nothing ever versioned.
   DELETE FROM "AbsenceReports" WHERE id = raced;
-  IF NOT pg_temp.nv154_buried('Absence', raced) THEN
+  IF NOT pg_temp.nv159_buried('Absence', raced) THEN
     RAISE EXCEPTION 'attendance versions: an absence versioned as the school stopped is not told of its removal';
   END IF;
   DELETE FROM "AbsenceReports" WHERE id = planted;
-  IF NOT pg_temp.nv154_buried('Absence', planted) THEN
+  IF NOT pg_temp.nv159_buried('Absence', planted) THEN
     RAISE EXCEPTION 'attendance versions: an absence from before the stop, never versioned, is not told of its removal';
   END IF;
   -- A pupil who leaves meanwhile takes what they had before the stop, told
@@ -22785,10 +22785,10 @@ BEGIN
   INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "createdAt")
   VALUES (school, pupil, app.current_user_id(), current_date + 9, 'SICK', clock_timestamp()) RETURNING id INTO unseen;
   UPDATE "Users" SET "isActive" = false WHERE id = pupil;
-  IF NOT pg_temp.nv154_buried('Absence', sick) OR NOT pg_temp.nv154_buried('Attendance', present) THEN
+  IF NOT pg_temp.nv159_buried('Absence', sick) OR NOT pg_temp.nv159_buried('Attendance', present) THEN
     RAISE EXCEPTION 'attendance versions: a pupil who left while the school had stopped left what they had before it unburied';
   END IF;
-  IF pg_temp.nv154_buried('Absence', unseen) THEN
+  IF pg_temp.nv159_buried('Absence', unseen) THEN
     RAISE EXCEPTION 'attendance versions: an absence reported while the school had stopped is told with the pupil who left';
   END IF;
   UPDATE "Users" SET "isActive" = true WHERE id = pupil;
@@ -22797,29 +22797,29 @@ BEGIN
   DELETE FROM "AbsenceReports" WHERE id = granted;
   -- Told while it is stopped, to the key with the scope (the instruction to
   -- delete), not to one without it; and no version is seen meanwhile.
-  IF NOT pg_temp.nv154_buried('Absence', granted) THEN
+  IF NOT pg_temp.nv159_buried('Absence', granted) THEN
     RAISE EXCEPTION 'attendance versions: the absences.read key is not told of a removal while the school has stopped';
   END IF;
-  IF pg_temp.nv154_buried('Absence', granted, current_setting('app.test_nv_narrow')) THEN
+  IF pg_temp.nv159_buried('Absence', granted, current_setting('app.test_nv_narrow')) THEN
     RAISE EXCEPTION 'attendance versions: a key without absences.read is told of a removal while the school has stopped';
   END IF;
-  IF pg_temp.nv154_xid('Attendance', present) IS NOT NULL THEN
+  IF pg_temp.nv159_xid('Attendance', present) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: an attendance''s version is seen while the school has stopped';
   END IF;
   INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (school, true) RETURNING "decidedAt" INTO resumed;
-  IF NOT pg_temp.nv154_buried('Absence', granted) THEN
+  IF NOT pg_temp.nv159_buried('Absence', granted) THEN
     RAISE EXCEPTION 'attendance versions: an absence removed while the school did not share was not buried';
   END IF;
-  IF pg_temp.nv154_xid('Attendance', fresh) IS NOT NULL THEN
+  IF pg_temp.nv159_xid('Attendance', fresh) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: an attendance written while the school did not share was versioned';
   END IF;
-  IF pg_temp.nv154_modified(fresh) IS DISTINCT FROM resumed THEN
+  IF pg_temp.nv159_modified(fresh) IS DISTINCT FROM resumed THEN
     RAISE EXCEPTION 'attendance versions: an attendance written meanwhile reads as modified at %, not when the school started again (%)',
-      pg_temp.nv154_modified(fresh), resumed;
+      pg_temp.nv159_modified(fresh), resumed;
   END IF;
 
   -- A lesson removed takes its attendance with it (the cascade), buried.
   DELETE FROM "CalendarLessons" WHERE id = lesson;
-  IF NOT pg_temp.nv154_buried('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: a removed lesson''s attendance was not buried'; END IF;
+  IF NOT pg_temp.nv159_buried('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: a removed lesson''s attendance was not buried'; END IF;
 END $$;
 ROLLBACK;
