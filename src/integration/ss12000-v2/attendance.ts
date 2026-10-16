@@ -91,8 +91,9 @@ export function minutesOf(status: AttendanceStatus, minutes: number): Attendance
  * Whether the request's key may read `scope` now: the key's own school, not
  * revoked, holding the scope, at a school whose decision in force shares
  * attendance. The database's question (app.service_reads_attendance), which
- * the two read functions and the versions' and tombstones' arms ask too, so
- * the gateway's 403 and what the database answers never disagree.
+ * the two read functions and the versions' arm ask too, so the gateway's 403
+ * and what the database answers never disagree. The tombstones' arm asks
+ * app.service_reads_attendance_removals (below).
  */
 export async function serviceReadsAttendance(tx: PrismaClient, scope: 'attendances.read' | 'absences.read'): Promise<boolean> {
   const [row] = await tx.$queryRaw<Array<{ reads: boolean }>>(Prisma.sql`SELECT app.service_reads_attendance(${scope}) AS reads`);

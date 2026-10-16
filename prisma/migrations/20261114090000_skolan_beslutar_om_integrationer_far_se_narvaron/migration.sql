@@ -43,8 +43,10 @@
 -- (the first decision to share after the last to stop), NULL while it does
 -- not share; app.attendance_run_xid(school) the transaction of that first
 -- decision (each decision carries the xid it was written in);
--- app.attendance_ever_shared(school) whether any decision ever shared. All
--- four are the owner's (nobody's EXECUTE). Under the service principal:
+-- app.attendance_stopped_since(school) when the current stop began, NULL
+-- while it shares; app.attendance_ever_shared(school) whether any decision
+-- ever shared. All five are the owner's (nobody's EXECUTE). Under the
+-- service principal:
 -- app.service_reads_attendance(scope) is true only when the key the request
 -- authenticated with is the school's, not revoked, holds the scope, and the
 -- school shares; app.service_reads_attendance_removals(scope) the same with
@@ -120,14 +122,21 @@
 --                          school's local day);
 --       AcademicYears      a change of isActive or startDate that makes a
 --                          year emitted: its attendance is versioned.
---   * A tombstone is written whether or not it shares at the moment: a row
---     deleted (gallring's too, app.gallring_purge), a pupil deactivated (or
---     no longer a pupil), a removed lesson's cascade; and taken away when a
---     pupil comes back. A key with the scope reads them also while the
---     school has stopped (20261114090500): an id and when it went, the
---     instruction to delete what the integration holds, never a row. So
---     /deletedEntities is answered whole while the school does not share,
---     and an integration that keeps reading it deletes what goes meanwhile.
+--   * A tombstone is written for a row that may have left SchemaPro, whether
+--     or not the school shares at the moment: a row deleted (gallring's too,
+--     app.gallring_purge), a pupil deactivated (or no longer a pupil), a
+--     removed lesson's cascade; and taken away when a pupil comes back. A
+--     key with the scope reads them also while the school has stopped
+--     (20261114090500): an id and when it went, the instruction to delete
+--     what the integration holds, never a row. So /deletedEntities is
+--     answered whole while the school does not share, and an integration
+--     that keeps reading it deletes what goes meanwhile. A row created and
+--     removed within a stop never left, so no tombstone tells of it
+--     (app.ss12000_may_have_left): one would tell a key only how many rows
+--     the school wrote while it chose not to share, and with a pupil who
+--     leaves, at the very instant of the pupil's own tombstone, how many
+--     absences that pupil had. After a start, what still exists is read
+--     whole (the floor below).
 --   * meta.modified of every Attendance and Absence is at least the moment
 --     the current run of sharing began (app.attendance_shared_since): when a
 --     school starts, or starts again, everything reads as modified then, so
@@ -188,8 +197,9 @@
 -- AttendanceSharingDecisions: REVOKE ALL from every API role; SELECT and
 -- INSERT (schoolId, shares, reference) to app_authenticated; SELECT to
 -- service_role (who and when, and the xid, are the database's). Functions:
--- the trigger functions, the helpers, app.attendance_shared,
--- app.attendance_shared_since, app.attendance_run_xid and
+-- the trigger functions, the helpers (app.ss12000_may_have_left among
+-- them), app.attendance_shared, app.attendance_shared_since,
+-- app.attendance_stopped_since, app.attendance_run_xid and
 -- app.attendance_ever_shared are nobody's; app.service_reads_attendance,
 -- app.service_reads_attendance_removals and the two read functions are
 -- app_authenticated's alone.
@@ -346,6 +356,55 @@ $$;
 
 COMMENT ON FUNCTION app.attendance_ever_shared(uuid) IS
   'Whether any decision of the school ever shared attendance with integrations; from then on tombstones of Attendance and Absence are written whether or not it shares at the moment.';
+
+-- When the current stop began: the first decision not to share after the
+-- last to share. NULL while the school shares, and before it ever has. A
+-- second decision not to share in a row is not a new beginning.
+CREATE FUNCTION app.attendance_stopped_since(p_school uuid) RETURNS timestamptz
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT CASE WHEN NOT app.attendance_shared(p_school) THEN (
+    SELECT min(d."decidedAt")
+      FROM "AttendanceSharingDecisions" d
+     WHERE d."schoolId" = p_school
+       AND NOT d."shares"
+       AND d."decidedAt" > (
+             SELECT max(x."decidedAt") FROM "AttendanceSharingDecisions" x
+              WHERE x."schoolId" = p_school AND x."shares"))
+  END
+$$;
+
+COMMENT ON FUNCTION app.attendance_stopped_since(uuid) IS
+  'When the school''s current stop of sharing attendance with integrations began (the first decision not to share after the last to share); NULL while it shares or before it ever has. A row created since never left SchemaPro.';
+
+-- Of the removed rows p_ids (p_created their createdAt, in the same order),
+-- the ones that may have left SchemaPro, and so are buried. While the school
+-- shares, every one. While it has stopped: one created before the stop
+-- began, which existed while it shared; or one with a version, which only a
+-- transaction that saw the school share writes, and which so marks a row
+-- whose transaction began after the decision to stop read the clock but
+-- committed before the decision did (readable, for those moments, as
+-- shared). A row created and removed within the stop is neither: it was
+-- never handed out. The other way round, a row whose transaction began
+-- before the decision and committed after it is buried though it never
+-- left: a tombstone for an id the integration does not hold deletes
+-- nothing.
+CREATE FUNCTION app.ss12000_may_have_left(p_school uuid, p_resource text, p_ids uuid[], p_created timestamptz[])
+RETURNS uuid[]
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  stopped timestamptz := app.attendance_stopped_since(p_school);
+BEGIN
+  IF stopped IS NULL THEN
+    RETURN p_ids;
+  END IF;
+  RETURN ARRAY(
+    SELECT r.id
+      FROM unnest(p_ids, p_created) AS r(id, created)
+     WHERE r.created < stopped
+        OR EXISTS (SELECT 1 FROM "Ss12000EntityVersions" v
+                    WHERE v."schoolId" = p_school AND v."resource" = p_resource AND v."entityId" = r.id));
+END
+$$;
 
 -- Under the service principal: the request's key is the school's, live, holds
 -- the scope, and the school shares. Anything else, false.
@@ -635,13 +694,14 @@ BEGIN
     END LOOP;
   ELSE
     -- A pupil already gone was buried with their leaving; a lesson of a year
-    -- not emitted never left. A lesson, group or pupil deleted in the same
-    -- statement (a cascade) is no longer there to ask, and is buried.
+    -- not emitted never left; nor did a row created while the school has
+    -- stopped. A lesson, group or pupil deleted in the same statement (a
+    -- cascade) is no longer there to ask, and is buried.
     FOR r IN SELECT DISTINCT o."schoolId" s FROM o LOOP
       CONTINUE WHEN NOT app.attendance_ever_shared(r.s);
       years := app.ss12000_emitted_years(r.s);
-      PERFORM app.ss12000_bury(r.s, 'Attendance', ARRAY(
-        SELECT o."id"
+      PERFORM app.ss12000_bury(r.s, 'Attendance', (
+        SELECT app.ss12000_may_have_left(r.s, 'Attendance', array_agg(o."id"), array_agg(o."createdAt"))
           FROM o
           LEFT JOIN "Users" u ON u."id" = o."studentId"
           LEFT JOIN "CalendarLessons" l ON l."id" = o."calendarLessonId"
@@ -678,14 +738,14 @@ BEGIN
     END LOOP;
   ELSE
     FOR r IN
-      SELECT o."schoolId" s, array_agg(o."id") ids
+      SELECT o."schoolId" s, array_agg(o."id") ids, array_agg(o."createdAt") created
         FROM o
         LEFT JOIN "Users" u ON u."id" = o."studentId"
        WHERE u."id" IS NULL OR (u."isActive" AND u."role" = 'STUDENT')
        GROUP BY 1
     LOOP
       CONTINUE WHEN NOT app.attendance_ever_shared(r.s);
-      PERFORM app.ss12000_bury(r.s, 'Absence', r.ids);
+      PERFORM app.ss12000_bury(r.s, 'Absence', app.ss12000_may_have_left(r.s, 'Absence', r.ids, r.created));
     END LOOP;
   END IF;
   RETURN NULL;
@@ -716,14 +776,19 @@ BEGIN
     CONTINUE WHEN r.gone IS NULL AND r.back IS NULL AND r.relinked IS NULL;
     CONTINUE WHEN NOT app.attendance_ever_shared(r.s);
     IF r.gone IS NOT NULL THEN
+      -- Not what was written while the school has stopped: buried with the
+      -- pupil's own tombstone, at its instant, it would count the absences
+      -- the pupil had while the school chose not to share.
       years := app.ss12000_emitted_years(r.s);
-      PERFORM app.ss12000_bury(r.s, 'Attendance', ARRAY(
-        SELECT a."id" FROM "AttendanceRecords" a
+      PERFORM app.ss12000_bury(r.s, 'Attendance', (
+        SELECT app.ss12000_may_have_left(r.s, 'Attendance', array_agg(a."id"), array_agg(a."createdAt"))
+          FROM "AttendanceRecords" a
           JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
           JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
          WHERE a."studentId" = ANY (r.gone) AND g."academicYearId" = ANY (years)));
-      PERFORM app.ss12000_bury(r.s, 'Absence', ARRAY(
-        SELECT a."id" FROM "AbsenceReports" a WHERE a."studentId" = ANY (r.gone)));
+      PERFORM app.ss12000_bury(r.s, 'Absence', (
+        SELECT app.ss12000_may_have_left(r.s, 'Absence', array_agg(a."id"), array_agg(a."createdAt"))
+          FROM "AbsenceReports" a WHERE a."studentId" = ANY (r.gone)));
     END IF;
     IF r.back IS NOT NULL THEN
       PERFORM app.ss12000_unbury(r.s, 'Attendance', ARRAY(
@@ -887,6 +952,8 @@ BEGIN
     'app.attendance_shared_since(uuid)',
     'app.attendance_run_xid(uuid)',
     'app.attendance_ever_shared(uuid)',
+    'app.attendance_stopped_since(uuid)',
+    'app.ss12000_may_have_left(uuid, text, uuid[], timestamptz[])',
     'app.absence_reports_granted_leave_is_decided()',
     'app.ss12000_emitted_years(uuid)',
     'app.ss12000_attendance_emitted(uuid, uuid[])',
