@@ -882,10 +882,10 @@ describe('StaffingProposalService.propose', () => {
       it('names the post where the engine finds no one with a target only for a row in a stretch it has room in: a leave from January', async () => {
         // Anna on leave from 11 January (a target of 0 there), the only one holding Ma: planned on the
         // spring she is no candidate with a target. The autumn is hers, so an autumn row names her;
-        // a spring row runs only in her leave, and names nobody.
-        const onLeave = (autumnToo = false, autumnRow = true) => {
+        // a spring row runs only in her leave, and names nobody; nor does a row that reaches into the leave.
+        const onLeave = (autumnToo = false, autumnRow = true, dates?: { startDate: Date | null; endDate: Date | null }) => {
           const rows = springOnly();
-          if (autumnRow) Object.assign(rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!, { startDate: null, endDate: day('2027-01-08') });
+          if (autumnRow) Object.assign(rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!, dates ?? { startDate: null, endDate: day('2027-01-08') });
           rows['teacherEmploymentPeriod'] = [periodOf(ANNA, { teachingTargetMinutesPerWeek: 0 })];
           if (autumnToo) rows['teacherEmployment']!.find((row) => row['userId'] === ANNA)!['teachingTargetMinutesPerWeek'] = 0;
           rows['teacherSubjectQualification'] = [
@@ -914,6 +914,15 @@ describe('StaffingProposalService.propose', () => {
         // On leave the whole year — a target of 0 in every stretch — she could not have taken it, and is not named.
         const allYear = await setup(onLeave(true), noOneWithTarget).service.propose(ask({ respectQualifications: true }), admin());
         expect(allYear.unstaffed.find((row) => row.requirementId === R_MA8)?.excludedChanging).toBeUndefined();
+        // From 2 November to 26 February: the autumn has room, but by hand the row would load the leave.
+        const straddling = await setup(onLeave(false, true, { startDate: day('2026-11-02'), endDate: day('2027-02-26') }), noOneWithTarget)
+          .service.propose(ask({ respectQualifications: true }), admin());
+        expect(straddling.unstaffed.find((row) => row.requirementId === R_MA8)).toMatchObject({ reason: 'NO_TEACHER_WITH_TARGET' });
+        expect(straddling.unstaffed.find((row) => row.requirementId === R_MA8)?.excludedChanging).toBeUndefined();
+        // Ending on the Tuesday of the leave's first week: that week is the leave's (its Monday's), so not hers either.
+        const intoTheWeek = await setup(onLeave(false, true, { startDate: null, endDate: day('2027-01-12') }), noOneWithTarget)
+          .service.propose(ask({ respectQualifications: true }), admin());
+        expect(intoTheWeek.unstaffed.find((row) => row.requirementId === R_MA8)?.excludedChanging).toBeUndefined();
       });
 
       it('refuses (502) an answer that gives it to such a post anyway, though it would fit, and asks nothing more', async () => {
