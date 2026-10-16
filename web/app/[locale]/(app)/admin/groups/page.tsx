@@ -286,11 +286,17 @@ export default function GroupsPage() {
    */
   const countsFailed = peopleQuery.isError || membershipsQuery.isError;
   // What the placement dialog may draw from (ClassHalvesDialog's `reads`).
-  const placementReads = countsFailed
-    ? "failed"
-    : people === undefined || memberships === undefined || peopleQuery.isFetching || membershipsQuery.isFetching
+  // Asked again, it is loading, whatever the last answer was: a retry after
+  // a failure waits for its own answer.
+  const placementReads =
+    peopleQuery.isFetching || membershipsQuery.isFetching
       ? "loading"
-      : "ready";
+      : countsFailed
+        ? "failed"
+        : people === undefined || memberships === undefined
+          ? "loading"
+          : "ready";
+  const placementReadsAt = Math.min(peopleQuery.dataUpdatedAt ?? 0, membershipsQuery.dataUpdatedAt ?? 0);
   const pastYearIds = useMemo(() => {
     const active = years.find((year) => year.isActive);
     return new Set(active ? years.filter((year) => year.endDate < active.startDate).map((year) => year.id) : []);
@@ -532,6 +538,7 @@ export default function GroupsPage() {
         pupils={students}
         memberships={memberships ?? []}
         reads={placementReads}
+        readsAt={placementReadsAt}
       />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

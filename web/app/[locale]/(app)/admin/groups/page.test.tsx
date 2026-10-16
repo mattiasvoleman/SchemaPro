@@ -77,8 +77,12 @@ const crudKeys = vi.hoisted(() => new Map<string, string[][]>());
 const yearState = vi.hoisted(() => ({ years: [] as unknown[] }));
 /** The school's groups; a test empties it for a school that has none yet. */
 const groupState = vi.hoisted(() => ({ groups: [] as unknown[] }));
-/** The memberships read's state beyond its data, for the placement's guard. */
-const membershipsState = vi.hoisted(() => ({ isFetching: false, isError: false }));
+/**
+ * The memberships read's state beyond its data, for the placement's guard;
+ * dataUpdatedAt far ahead unless a test makes the answer older than the
+ * opening that asks for it.
+ */
+const membershipsState = vi.hoisted(() => ({ isFetching: false, isError: false, dataUpdatedAt: Number.MAX_SAFE_INTEGER }));
 /** The members dialog's read of a group's stored members. */
 const membersState = vi.hoisted(() => ({
   data: [] as unknown[] | undefined,
@@ -89,7 +93,7 @@ const membersState = vi.hoisted(() => ({
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: yearState.years }),
   useGroups: () => ({ data: groupState.groups, isLoading: false }),
-  usePeople: () => ({ data: people }),
+  usePeople: () => ({ data: people, dataUpdatedAt: Number.MAX_SAFE_INTEGER }),
   useGroupMemberships: () => ({ data: memberships, ...membershipsState }),
   useGroupMembers: () => membersState,
   useSetGroupMembers: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -427,19 +431,52 @@ describe("Halvklasser: what the placement will not do", () => {
     { id: "h-1", academicYearId: "year-1", name: "7A:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
     { id: "h-2", academicYearId: "year-1", name: "7A:2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
   ];
+  let client: QueryClient;
   const showPage = () =>
     render(
-      <QueryClientProvider client={new QueryClient()}>
+      <QueryClientProvider client={client}>
         <GroupsPage />
       </QueryClientProvider>,
     );
 
   beforeEach(() => {
+    client = new QueryClient();
     yearState.years = [YEAR];
     groupState.groups = [...groups, ...halves];
     api.put.mockReset();
     membershipsState.isFetching = false;
     membershipsState.isError = false;
+    membershipsState.dataUpdatedAt = Number.MAX_SAFE_INTEGER;
+  });
+
+  it("asks the pupils and the memberships again at every opening, and draws nothing from an answer older than it", async () => {
+    // The page's memberships answered before this opening: another admin, a
+    // file or the sync may have placed pupils since.
+    membershipsState.dataUpdatedAt = 0;
+    const refetch = vi.spyOn(client, "refetchQueries");
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(screen.getAllByRole("button", { name: "halves.placeTitle(7A)" })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(refetch).toHaveBeenCalledWith({ queryKey: ["people"], exact: true });
+    expect(refetch).toHaveBeenCalledWith({ queryKey: ["groupMemberships"], exact: true });
+    expect(within(dialog).getByRole("status")).toHaveTextContent("placeLoading");
+    expect(within(dialog).queryByRole("combobox")).toBeNull();
+  });
+
+  it("offers to ask again after a failed read, rather than to close and reopen", async () => {
+    membershipsState.isError = true;
+    const refetch = vi.spyOn(client, "refetchQueries");
+    const user = userEvent.setup();
+    showPage();
+
+    await user.click(screen.getAllByRole("button", { name: "halves.placeTitle(7A)" })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    refetch.mockClear();
+    await user.click(within(dialog).getByRole("button", { name: "retry" }));
+    expect(refetch).toHaveBeenCalledWith({ queryKey: ["people"], exact: true });
+    expect(refetch).toHaveBeenCalledWith({ queryKey: ["groupMemberships"], exact: true });
   });
 
   it("draws no placement, and offers no save, while the memberships are being asked again", async () => {

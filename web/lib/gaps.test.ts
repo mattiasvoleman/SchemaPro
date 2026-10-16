@@ -972,6 +972,40 @@ describe("findIdleGaps", () => {
     });
   });
 
+  it("counts no håltimme through the hour a split class's halves rotate in, before or after placement", () => {
+    // 7A split in 7A:1 and 7A:2 (Halvklasser): slöjd and NO at 10:00, between
+    // two lessons of the class. Before anyone is placed, each pupil may end up
+    // in either half, and the hour is taught for all of them.
+    const roster = new Map([
+      ["s1", "7A"],
+      ["s2", "7A"],
+    ]);
+    const groups = [
+      { id: "7A", halfOfId: null },
+      { id: "7A:1", halfOfId: "7A" },
+      { id: "7A:2", halfOfId: "7A" },
+    ];
+    const placements = [
+      classLesson("7A", hm(9), hm(10)),
+      classLesson("7A:1", hm(10), hm(11)),
+      classLesson("7A:2", hm(10), hm(11)),
+      classLesson("7A", hm(11), hm(12)),
+    ];
+    const query = { studentGroupIds: ["7A"], placements, constraints: [], days: [1], studentGroupOf: roster };
+
+    expect(findIdleGaps({ ...query, memberships: [], groups })).toEqual([]);
+    // Without the halves, both pupils sit through the rotation as a hole.
+    expect(findIdleGaps({ ...query, memberships: [] })[0]).toMatchObject({
+      gaps: [expect.objectContaining({ startMinutes: hm(10), idleStudents: 2 })],
+    });
+    // Placed, each is busy in their own half — and the hour is still no hole.
+    const placed = [
+      { studentId: "s1", studentGroupId: "7A:1" },
+      { studentId: "s2", studentGroupId: "7A:2" },
+    ];
+    expect(findIdleGaps({ ...query, memberships: placed, groups })).toEqual([]);
+  });
+
   it("finds the hole the half of a class outside the teaching group sits in", () => {
     // Four pupils of 7A, split between two maths groups. Nothing here is a
     // clash — the class is never double-booked — and yet every pupil has three

@@ -12,7 +12,7 @@
 // Loaded the first time either dialog opens (lazy-class-halves-dialog.tsx),
 // as the CSV import is: a school that never splits a class fetches none of it.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -55,21 +55,43 @@ export interface ClassHalvesDialogProps {
    * would take placed pupils out of their halves.
    */
   reads: "ready" | "loading" | "failed";
+  /**
+   * When the older of the two answers arrived (react-query's dataUpdatedAt).
+   * The placement is drawn only from answers newer than the opening that
+   * asked for them: the page's own reads may be minutes old, and a placement
+   * another admin, a file or the sync made since would be saved away.
+   */
+  readsAt: number;
 }
+
+/** The page's reads a placement is drawn from, asked again at every opening and retry. */
+const PLACEMENT_READS = [["people"], ["groupMemberships"]];
 
 /** What a split or a placement changes: the groups, the counts, and who sits where. */
 const WRITTEN = [["groups"], ["people", "yearRosters"], ["groupMemberships"], ["groupMembers"], ["lessonRoster"]];
 
 export function ClassHalvesDialog(props: ClassHalvesDialogProps) {
-  const { opened, onClose, reads } = props;
+  const { opened, onClose, reads, readsAt } = props;
+  const queryClient = useQueryClient();
   // The last opening, drawn through the close animation as well.
   const [shown, setShown] = useState(opened);
   if (opened !== null && opened !== shown) setShown(opened);
+  // Every opening of a placement asks the reads again, and remembers when.
+  const [asked, setAsked] = useState<{ opening: HalvesOpened; at: number } | null>(null);
+  const askAgain = () => {
+    for (const queryKey of PLACEMENT_READS) void queryClient.refetchQueries({ queryKey, exact: true });
+  };
+  useEffect(() => {
+    if (opened?.mode !== "place") return;
+    setAsked({ opening: opened, at: Date.now() });
+    for (const queryKey of PLACEMENT_READS) void queryClient.refetchQueries({ queryKey, exact: true });
+  }, [opened, queryClient]);
   // The opening whose placement may be drawn: once the reads have answered
-  // after it opened, and from then on for that opening, so a refetch while
-  // the school is choosing never redraws over its choices.
+  // since it asked them, and from then on for that opening, so a refetch
+  // while the school is choosing never redraws over its choices.
   const [settled, setSettled] = useState<HalvesOpened | null>(null);
-  if (opened !== null && opened.mode === "place" && settled !== opened && reads === "ready") setSettled(opened);
+  const fresh = asked !== null && asked.opening === opened && readsAt >= asked.at;
+  if (opened !== null && opened.mode === "place" && settled !== opened && reads === "ready" && fresh) setSettled(opened);
   return (
     <Dialog open={opened !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-lg">
@@ -78,7 +100,7 @@ export function ClassHalvesDialog(props: ClassHalvesDialogProps) {
           settled === shown ? (
             <Place key={shown.theClass.id} {...props} theClass={shown.theClass} />
           ) : (
-            <Waiting theClass={shown.theClass} failed={reads === "failed"} onClose={onClose} />
+            <Waiting theClass={shown.theClass} failed={reads === "failed"} onRetry={askAgain} onClose={onClose} />
           )
         ) : null}
       </DialogContent>
@@ -86,8 +108,18 @@ export function ClassHalvesDialog(props: ClassHalvesDialogProps) {
   );
 }
 
-/** The placement's frame while its reads are out, or after one failed. */
-function Waiting({ theClass, failed, onClose }: { theClass: StudentGroup; failed: boolean; onClose: () => void }) {
+/** The placement's frame while its reads are out, or after one failed: asked again from here. */
+function Waiting({
+  theClass,
+  failed,
+  onRetry,
+  onClose,
+}: {
+  theClass: StudentGroup;
+  failed: boolean;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
   const t = useTranslations("groups.halves");
   const tCommon = useTranslations("common");
   return (
@@ -103,6 +135,11 @@ function Waiting({ theClass, failed, onClose }: { theClass: StudentGroup; failed
         <Button type="button" variant="outline" onClick={onClose}>
           {tCommon("close")}
         </Button>
+        {failed ? (
+          <Button type="button" onClick={onRetry}>
+            {tCommon("retry")}
+          </Button>
+        ) : null}
       </DialogFooter>
     </div>
   );

@@ -423,7 +423,7 @@
       "noPupils": "Klassen har inga elever än. Lägg in eleverna, så kan de placeras i halvorna.",
       "badge": "halva av {name}",
       "placeLoading": "Hämtar klassens elever och placeringen …",
-      "placeLoadFailed": "Klassens elever eller placeringen kunde inte hämtas. Inget har ändrats; stäng och öppna igen för att försöka på nytt.",
+      "placeLoadFailed": "Klassens elever eller placeringen kunde inte hämtas. Inget har ändrats.",
       "deleteClass": "Halvorna {halves} tas bort med klassen, med sina timplansposter och lektioner.",
       "deleteHalf": "{name} blir kvar med en halva, och kan inte delas på nytt förrän den också är borttagen."
     }

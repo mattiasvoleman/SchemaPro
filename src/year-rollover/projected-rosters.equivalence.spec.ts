@@ -372,10 +372,11 @@ describe('förberäknade klasslistor — every reader reads the same before and 
       [2, 'GROUP', 'A participating student already has Matematik in this slot.', SUCCESSOR.lessonNamed],
       [2, 'GROUP', 'Students of this group already have Matematik in this slot.', SUCCESSOR.lessonNamed],
     ]);
-    // rosterOf has no role or isActive filter of its own: the inactive pGone
-    // is in Ma8 before the activation as after it.
+    // rosterOf reads active STUDENTs, as the generator's loadRosters does
+    // (Halvklasser): the inactive pGone is in Ma8 neither before the
+    // activation nor after it.
     const roster = new Map(before.roster as [string, string[]][]);
-    expect(roster.get(world.b('Ma8 grupp 1'))).toContain(IDS.pGone);
+    expect(roster.get(world.b('Ma8 grupp 1'))).not.toContain(IDS.pGone);
     expect(roster.get(world.b('8A'))).toEqual([IDS.p7a1, IDS.p7a2, SUCCESSOR.p7b1, SUCCESSOR.p7c1, SUCCESSOR.pNew].sort());
   });
 

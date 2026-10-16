@@ -157,8 +157,12 @@ export async function clashFinding(
   const halfClassIds = new Set(classes);
   const allHalves = yearHalves.filter((half) => halfClassIds.has(half.halfOfId));
   groupIds.push(...[...classes, ...allHalves.map((half) => half.id)].filter((id) => !inPlay.has(id)));
+  // Active STUDENTs, on both sides, as the generator and the hand edit read
+  // them: a pupil who left a split class unplaced would otherwise pair both
+  // halves with all their groups at every publish, on the generator's own
+  // week, with no placement able to clear it (master-lessons.service rosterOf).
   const memberships = await tx.studentGroupMember.findMany({
-    where: { studentGroupId: { in: groupIds } },
+    where: { studentGroupId: { in: groupIds }, student: { role: 'STUDENT', isActive: true } },
     select: { studentId: true, studentGroupId: true },
   });
   // The pupils whose class decides a shared-pupil clash, through the year's
@@ -169,7 +173,7 @@ export async function clashFinding(
   try {
     const basis = await rostersOfYear(tx, user, academicYearId);
     const studentIds = [...new Set(memberships.map((row) => row.studentId).concat(participantIds))];
-    const home = await readHomePupils(tx, basis, {}, groupIds);
+    const home = await readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, groupIds);
     const named = studentIds.length > 0 ? await readHomeClassesOf(tx, basis, studentIds) : [];
     homes = [
       ...home.map((row) => [row.id, row.studentGroupId] as [string, string | null]),

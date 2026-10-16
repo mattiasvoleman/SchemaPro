@@ -1257,12 +1257,19 @@ export class MasterLessonsService {
       else membersOf.set(groupId, new Set([studentId]));
     };
 
-    // The home side through the year's basis (projected-rosters.ts), with
-    // this reader's own filter — none: every pupil whose class it is counts.
+    // The home side through the year's basis (projected-rosters.ts), and
+    // both sides as the generator reads them (loadRosters): active STUDENTs.
+    // Until Halvklasser this reader counted every pupil whose class it is,
+    // a filter carried over unargued (e4e91f2c), and a leaver mostly linked
+    // groups an active classmate linked anyway. A pupil who left a split
+    // class unplaced cannot be placed (pupilsOfTheClass), so counted here
+    // they would pair both halves with every group they were in for good:
+    // a 409 on a move the board and the generator allow, and no way to
+    // clear it.
     const [homeClass, teachingGroups] = await Promise.all([
-      readHomePupils(tx, basis, {}, ids),
+      readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, ids),
       tx.studentGroupMember.findMany({
-        where: { studentGroupId: { in: ids } },
+        where: { studentGroupId: { in: ids }, student: { role: 'STUDENT', isActive: true } },
         select: { studentId: true, studentGroupId: true },
       }),
     ]);

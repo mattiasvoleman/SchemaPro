@@ -649,8 +649,9 @@ export default function GapsPage() {
         teacherIds: teacherOptions.map((option) => option.id),
         lunch: lunchSettings ?? null,
         minimumMinutes: Number(gapMinimum),
+        groups: yearGroups,
       }),
-    [scheduleData, classIds, teacherOptions, lunchSettings, gapMinimum],
+    [scheduleData, classIds, teacherOptions, lunchSettings, gapMinimum, yearGroups],
   );
 
   const visibleReports = useMemo(

@@ -766,12 +766,18 @@ export function findIdleGaps(
     minimumMinutes?: number;
     /** Defaults to every weekday that carries a lesson. */
     days?: number[];
+    /**
+     * The school's groups, for the classes split in halves (Halvklasser): a
+     * pupil placed in no half yet sits in both, as buildGroupConflictMap has
+     * them — so the hour the halves rotate through is no håltimme.
+     */
+    groups?: ReadonlyArray<{ id: string; halfOfId?: string | null }>;
   },
 ): GapReport[] {
   const lunch = lunchWindowOf(options.lunch);
   const minimum = options.minimumMinutes ?? DEFAULT_MINIMUM_GAP_MINUTES;
   const days = options.days ?? daysWithLessons(options.placements);
-  const groupsOfStudent = groupsByStudent(options);
+  const groupsOfStudent = groupsByStudent(options, options.groups ?? []);
   const bookings = personalBookings(options.placements);
 
   const subjects: Array<{ id: string; kind: GapSubjectKind }> = [
@@ -958,8 +964,16 @@ function cohortsOf(
  * studentId → every group they sit in: their home class and every teaching
  * group they belong to. The relation buildGroupConflictMap derives its own
  * from, kept here as the roster it also is.
+ *
+ * And a class's halves for a pupil of it placed in none: they may end up in
+ * either (class-halves.ts), and while nobody is placed a half's lesson keeps
+ * the whole class busy. Counted in neither, every pupil of 7A would sit
+ * through the slöjd hour as a håltimme the grid then refuses to fill.
  */
-function groupsByStudent(data: ScheduleData): Map<string, Set<string>> {
+function groupsByStudent(
+  data: ScheduleData,
+  groups: ReadonlyArray<{ id: string; halfOfId?: string | null }> = [],
+): Map<string, Set<string>> {
   const byStudent = new Map<string, Set<string>>();
   const add = (studentId: string, groupId: string) => {
     const existing = byStudent.get(studentId);
@@ -974,6 +988,19 @@ function groupsByStudent(data: ScheduleData): Map<string, Set<string>> {
     add(studentId, homeId || NO_GROUP);
   }
   for (const row of data.memberships ?? []) add(row.studentId, row.studentGroupId);
+
+  const halvesOf = new Map<string, string[]>();
+  for (const group of groups) {
+    if (group.halfOfId) halvesOf.set(group.halfOfId, [...(halvesOf.get(group.halfOfId) ?? []), group.id]);
+  }
+  if (halvesOf.size > 0) {
+    for (const [studentId, homeId] of data.studentGroupOf ?? []) {
+      const halves = homeId ? halvesOf.get(homeId) : undefined;
+      const sitsIn = byStudent.get(studentId);
+      if (!halves || !sitsIn || halves.some((half) => sitsIn.has(half))) continue;
+      for (const half of halves) sitsIn.add(half);
+    }
+  }
   return byStudent;
 }
 

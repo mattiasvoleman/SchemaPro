@@ -14,7 +14,7 @@ import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
+import { classHalfRefusal, listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { todayInZone } from '../common/utils/time';
 import { readYearBoundsForShare } from '../resources/academic-year-bounds';
 import {
@@ -246,6 +246,15 @@ export class YearRolloverService {
         throw await this.yearHasSuccessor(sourceYearId, user);
       }
       if (key?.includes('AcademicYears_schoolId_name_key')) throw yearNameTaken(dto.name.trim());
+      // A half carries the pupils whose home is its class, as read above
+      // (rollover-plan.ts); the member trigger judges them again as they are
+      // inserted. A pupil whose class changed in between is refused there,
+      // and that is the source moving under the plan: preview again, as for
+      // any other change since the preview — not a placement the admin made.
+      const halfRefusal = classHalfRefusal(error);
+      if (halfRefusal === 'HALF_MEMBER_NOT_IN_CLASS' || halfRefusal === 'HALF_MEMBER_IN_OTHER_HALF') {
+        throw rolloverStale(carryStaffing);
+      }
       rethrowPrismaError(error);
     }
   }
