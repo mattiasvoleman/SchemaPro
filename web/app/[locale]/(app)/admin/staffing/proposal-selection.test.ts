@@ -46,16 +46,48 @@ describe("loadsUnderSelection", () => {
     assignments: [move("r1", null, "a", 59.3), move("r2", "b", "a", 120), move("r3", "a", "b", 20)],
   };
 
-  it("gives a changing post back what a left-out dated row charges its planned stretch, not the year's charge", () => {
-    // Anna is shown on the spring, which an autumn row does not weigh: 0 there, 117 over the year.
+  // Anna: 100 % (target 600) until January, 50 % (target 300) after, planned on the spring.
+  const changingAnna = (before: [number, number], after: [number, number]): ProposalTeacher => ({
+    ...teacher("anna", 300, before[1], after[1], "OK"),
+    period: { from: "2027-01-11", to: "2027-06-11" },
+    plannedStretch: 1,
+    stretches: [
+      { from: "2026-08-17", to: "2027-01-10", weeks: 19, targetMinutesPerWeek: 600, before: before[0], after: after[0] },
+      { from: "2027-01-11", to: "2027-06-11", weeks: 20, targetMinutesPerWeek: 300, before: before[1], after: after[1] },
+    ],
+  });
+
+  it("gives a changing post back what a left-out dated row charges each stretch, not the year's charge", () => {
+    // Shown on the spring, which an autumn row does not weigh: 0 there, 117 over the year.
     const changing = {
-      teachers: [teacher("anna", 150, 180, 180, "OVER")],
-      assignments: [{ ...move("autumn", null, "anna", 117), toStretchChargeMinutesPerWeek: 0 }],
+      teachers: [changingAnna([180, 180], [414, 180])],
+      assignments: [{ ...move("autumn", null, "anna", 117), toStretchCharges: [234, 0] }],
     };
-    expect(loadsUnderSelection(changing, new Set(), 10).get("anna")?.exact).toBe(180);
-    // Without the stretch's charge the year's is given back, as for any other post.
-    const plain = { teachers: changing.teachers, assignments: [move("autumn", null, "anna", 117)] };
+    const load = loadsUnderSelection(changing, new Set(), 5).get("anna")!;
+    expect(load.exact).toBe(180);
+    expect(load.overLimit).toBe(false);
+    // Without the stretches' charges the year's is given back, as for any other post.
+    const plain = { teachers: [teacher("anna", 150, 180, 180, "OVER")], assignments: [move("autumn", null, "anna", 117)] };
     expect(loadsUnderSelection(plain, new Set(), 10).get("anna")?.exact).toBe(63);
+  });
+
+  it("flags a changing post a selection takes over the limit in a stretch other than the planned one", () => {
+    // The engine moves U (250, undated) from Anna to Bob to give her A, an autumn row: 400 in the autumn,
+    // 0 in the spring. All of it fits; keeping A and leaving U where it is does not: the autumn goes
+    // from 250 to 650, over 630 at 5 %, though the spring she is shown on stays at 250.
+    const proposal = {
+      teachers: [changingAnna([250, 250], [400, 0]), teacher("bob", 1000, 500, 750, "OK")],
+      assignments: [
+        { ...move("U", "anna", "bob", 250), fromStretchCharges: [250, 250] },
+        { ...move("A", null, "anna", 200), toStretchCharges: [400, 0] },
+      ],
+    };
+    expect(loadsUnderSelection(proposal, new Set(["U", "A"]), 5).get("anna")?.overLimit).toBe(false);
+    const partial = loadsUnderSelection(proposal, new Set(["A"]), 5).get("anna")!;
+    expect(partial.exact).toBe(250);
+    expect(partial.overLimit).toBe(true);
+    // Leaving A out too: nothing grows, nothing to flag.
+    expect(loadsUnderSelection(proposal, new Set(), 5).get("anna")?.overLimit).toBe(false);
   });
 
   it("is the gateway's own figures, untouched, when every change is selected", () => {

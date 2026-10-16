@@ -82,8 +82,24 @@ export interface ProposalTeacher {
    * its dates, and target, limit, before and after are that period's.
    */
   period?: { from: string; to: string };
+  /**
+   * The same post stretch by stretch, the planned one at plannedStretch: the
+   * apply judges each with weeks and a target, so the dialog does too.
+   */
+  stretches?: ProposalStretch[];
+  plannedStretch?: number;
   before: TeacherLoadPoint;
   after: TeacherLoadPoint;
+}
+
+/** One stretch of a changing post, its minutes exact to two decimals. */
+export interface ProposalStretch {
+  from: string;
+  to: string;
+  weeks: number;
+  targetMinutesPerWeek: number | null;
+  before: number;
+  after: number;
 }
 
 export interface ProposalAssignment {
@@ -96,11 +112,11 @@ export interface ProposalAssignment {
   /** What the row charges its lead, exact to two decimals. */
   chargeMinutesPerWeek: number;
   /**
-   * What a dated row charges a changing post's planned stretch, the figure
-   * its before and after are, where that differs from the year charge.
+   * What the row charges each stretch of the side's post, in the order of its
+   * `stretches`, where that post changes during the year.
    */
-  toStretchChargeMinutesPerWeek?: number;
-  fromStretchChargeMinutesPerWeek?: number;
+  toStretchCharges?: number[];
+  fromStretchCharges?: number[];
   reasons: {
     qualificationKind: TeacherQualificationKind | null;
     familiarWithSubject: boolean;

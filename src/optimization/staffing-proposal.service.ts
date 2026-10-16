@@ -131,8 +131,26 @@ export interface ProposalTeacher {
    * after are that stretch's. Absent for a post that is the same all year.
    */
   period?: { from: string; to: string };
+  /**
+   * The same post stretch by stretch, the planned one at plannedStretch: the
+   * apply judges every stretch with weeks and a target, and a selection that
+   * leaves some changes out can take another stretch than the planned one
+   * over its limit, so the dialog judges them all. Absent with `period`.
+   */
+  stretches?: ProposalStretch[];
+  plannedStretch?: number;
   before: TeacherLoadPoint;
   after: TeacherLoadPoint;
+}
+
+/** One stretch of a changing post: its dates, weeks and target, and its minutes before and after, exact to two decimals. */
+export interface ProposalStretch {
+  from: string;
+  to: string;
+  weeks: number;
+  targetMinutesPerWeek: number | null;
+  before: number;
+  after: number;
 }
 
 export interface ProposalAssignment {
@@ -145,12 +163,14 @@ export interface ProposalAssignment {
   /** What the row charges its lead, exact to two decimals. */
   chargeMinutesPerWeek: number;
   /**
-   * What the row charges a changing post's planned stretch — the figure its
-   * before and after are — where that is not chargeMinutesPerWeek: a dated
-   * row, which weighs only the weeks it runs. Absent otherwise.
+   * What the row charges each stretch of the side's post, in the order of
+   * its `stretches`, where that post changes during the year: a dated row
+   * weighs only the weeks it runs, so leaving it out gives back that much
+   * to each stretch, not its year charge. Absent for a post the same all
+   * year.
    */
-  toStretchChargeMinutesPerWeek?: number;
-  fromStretchChargeMinutesPerWeek?: number;
+  toStretchCharges?: number[];
+  fromStretchCharges?: number[];
   reasons: {
     /** The strongest covering behörighet; null when none or none recorded. */
     qualificationKind: LoadQualification['kind'] | null;
@@ -895,13 +915,30 @@ export class StaffingProposalService {
     // A changing post's before and after are its planned stretch's minutes.
     const stretchMinutes = (from: LoadInput, changing: NonNullable<TeacherPlan['changing']>) =>
       stretchLoads(from, changing.employment)[changing.index]?.counted ?? 0;
+    const stretchesOf = (changing: NonNullable<TeacherPlan['changing']>): ProposalStretch[] => {
+      const is = stretchLoads(afterInput, changing.employment);
+      return stretchLoads(input, changing.employment).map((was, index) => ({
+        from: was.stretch.from,
+        to: was.stretch.to,
+        weeks: was.weeks,
+        targetMinutesPerWeek: was.target,
+        before: round2(was.counted),
+        after: round2(is[index]?.counted ?? 0),
+      }));
+    };
     const teachers = plan.teachers.map(
       (teacher): ProposalTeacher => ({
         userId: teacher.userId,
         targetMinutesPerWeek: teacher.target,
         limitMinutesPerWeek: teacher.target === null ? null : limitMinutes(teacher.target, plan.tolerance),
         keepOrShed: teacher.keepOrShed,
-        ...(teacher.changing ? { period: { from: teacher.changing.from, to: teacher.changing.to } } : {}),
+        ...(teacher.changing
+          ? {
+              period: { from: teacher.changing.from, to: teacher.changing.to },
+              stretches: stretchesOf(teacher.changing),
+              plannedStretch: teacher.changing.index,
+            }
+          : {}),
         before: point(
           teacher.changing ? stretchMinutes(input, teacher.changing) : (before.get(teacher.userId) ?? 0),
           teacher,
@@ -913,16 +950,15 @@ export class StaffingProposalService {
       }),
     );
 
-    // What a row charges a changing post's planned stretch, where that is not
-    // its year charge: the dialog gives that back when the row is left out.
-    const stretchCharge = (teacherId: string | null, plannedRow: RowPlan): number | undefined => {
+    // What a row charges each stretch of a changing post, in its stretches'
+    // order: the dialog gives that back to each when the row is left out.
+    const stretchCharges = (teacherId: string | null, plannedRow: RowPlan): number[] | undefined => {
       const changing = teacherId === null ? undefined : plan.teacherById.get(teacherId)?.changing;
-      if (!changing || !isDatedRow(plannedRow.row)) return undefined;
-      const alone = stretchLoads(
+      if (!changing) return undefined;
+      return stretchLoads(
         { ...input, requirements: [{ ...plannedRow.row, teacherId: teacherId!, coTeacherId: null }], duties: [] },
         changing.employment,
-      )[changing.index]?.counted ?? 0;
-      return round2(alone) === round2(plannedRow.chargeExact) ? undefined : round2(alone);
+      ).map((stretch) => round2(stretch.counted));
     };
     const assignments: ProposalAssignment[] = [];
     for (const plannedRow of plan.rows) {
@@ -930,8 +966,8 @@ export class StaffingProposalService {
       if (to === undefined || to === plannedRow.row.teacherId) continue;
       const row = plannedRow.row;
       const lastYear = state.lastYear.get(row.id) ?? null;
-      const toStretch = stretchCharge(to, plannedRow);
-      const fromStretch = stretchCharge(row.teacherId, plannedRow);
+      const toStretch = stretchCharges(to, plannedRow);
+      const fromStretch = stretchCharges(row.teacherId, plannedRow);
       assignments.push({
         requirementId: row.id,
         subjectId: row.subjectId,
@@ -939,8 +975,8 @@ export class StaffingProposalService {
         fromTeacherId: row.teacherId,
         toTeacherId: to,
         chargeMinutesPerWeek: round2(plannedRow.chargeExact),
-        ...(toStretch !== undefined ? { toStretchChargeMinutesPerWeek: toStretch } : {}),
-        ...(fromStretch !== undefined ? { fromStretchChargeMinutesPerWeek: fromStretch } : {}),
+        ...(toStretch !== undefined ? { toStretchCharges: toStretch } : {}),
+        ...(fromStretch !== undefined ? { fromStretchCharges: fromStretch } : {}),
         reasons: {
           qualificationKind: plan.recorded
             ? strongestCoveringQualification(input.qualifications, to, row, input.year)
