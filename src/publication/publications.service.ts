@@ -74,6 +74,10 @@ export interface PublicViewerSettings {
   publicEmbedTeachers: boolean;
   publicEmbedRooms: boolean;
   publicEmbedOrigins: string[];
+  /** Kalenderprenumeration (20261112091000): per audience; turning one off revokes its feeds. */
+  calendarFeedTeachers: boolean;
+  calendarFeedStudents: boolean;
+  calendarFeedGuardians: boolean;
 }
 
 export const DEFAULT_VIEWER_SETTINGS: PublicViewerSettings = {
@@ -88,6 +92,9 @@ export const DEFAULT_VIEWER_SETTINGS: PublicViewerSettings = {
   publicEmbedTeachers: false,
   publicEmbedRooms: false,
   publicEmbedOrigins: [],
+  calendarFeedTeachers: false,
+  calendarFeedStudents: false,
+  calendarFeedGuardians: false,
 };
 
 const VIEWER_KEYS = Object.keys(DEFAULT_VIEWER_SETTINGS) as (keyof PublicViewerSettings)[];

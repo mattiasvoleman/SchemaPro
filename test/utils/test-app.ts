@@ -50,6 +50,7 @@ import { CoverModule } from '../../src/cover/cover.module';
 import { SignInModule } from '../../src/sign-in/sign-in.module';
 import { SchoolUnitsModule } from '../../src/school-units/school-units.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
+import { CalendarFeedModule } from '../../src/calendar-feed/calendar-feed.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -156,6 +157,7 @@ const FEATURE_MODULES = [
   TimplanModule,
   YearRolloverModule,
   PublicationModule,
+  CalendarFeedModule,
   CoverModule,
   SchoolUnitsModule,
   // Without JobsModule: GallringJob takes the runner as @Optional and

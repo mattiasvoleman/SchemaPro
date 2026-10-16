@@ -58,12 +58,20 @@ function safeParams(value: unknown): Record<string, string | number> | undefined
  * keeps only its sha256. A 429 or a 500 on that route must not write it to
  * the log drain or echo it in `instance`. The path segment is replaced by the
  * first 6 hex digits of its sha256 — enough to match a line to a link's
- * stored hash, never enough to open it.
+ * stored hash, never enough to open it. A calendar feed's address
+ * (Kalenderprenumeration, 20261112091000) is one too, ".ics" or not: the
+ * token alone is hashed, as the feed's row keeps it. In any case of the
+ * path's letters, as Express routes it.
  */
 export function redactShareToken(url: string): string {
   return withoutSs12000Query(
-    url.replace(/(\/public\/v1\/timetables\/)([^/?#]+)/, (_match, prefix: string, token: string) =>
-      `${prefix}sha256:${createHash('sha256').update(token).digest('hex').slice(0, 6)}…`,
+    url.replace(
+      /(\/public\/v1\/(?:timetables|calendar-feeds)\/)([^/?#]+)/i,
+      (_match, prefix: string, segment: string) => {
+        const ics = segment.endsWith('.ics');
+        const token = ics ? segment.slice(0, -'.ics'.length) : segment;
+        return `${prefix}sha256:${createHash('sha256').update(token).digest('hex').slice(0, 6)}…${ics ? '.ics' : ''}`;
+      },
     ),
   );
 }

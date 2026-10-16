@@ -16,10 +16,28 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   EMPLOYMENT               tjänst and anställning
  *   STAFF_ABSENCES           when a member of staff is away, and why
  *   ACCESS_LOG               the log itself, read about a person
- *   SCHEDULE                 one pupil's timetable: the family's week, and an
- *                            SS12000 v2 read filtered to the pupil (20261026110000)
+ *   SCHEDULE                 one pupil's timetable: the family's week, an
+ *                            SS12000 v2 read filtered to the pupil (20261026110000),
+ *                            and a guardian's calendar feed of a child
+ *                            (Kalenderprenumeration, 20261112091000; below)
  *   TEACHING_TIME            undervisningstid per pupil: timplan coverage and
  *                            the pupil's statement (20261026110000)
+ *
+ * A GUARDIAN'S CALENDAR FEED. A feed of a child is the family's week again,
+ * delivered to the guardian's calendar app instead of their screen, so it is
+ * recorded as viewing it is: SCHEDULE, the guardian the reader, about the
+ * child. The other guardian may ask who has read about the child, and a
+ * calendar that holds the child's week is part of the answer. Not per ask,
+ * though: a calendar asks every few minutes, and a row each time would bury
+ * every person's read of the child under a machine's. So app.calendar_feed
+ * writes one row per feed per school day it answers, channel CALENDAR —
+ * "this guardian's calendar had the child's week that day" — in the door's
+ * own transaction, as recordRead would. The quarter-hour that keeps a
+ * reader's repeated reads to one row leaves those rows out: the guardian
+ * opening the week in the app after the calendar's morning fetch is a read
+ * of its own, and written. A teacher's feed is the timetable layer (below)
+ * and names no pupil; a pupil's is their own; neither is written. Making,
+ * listing and revoking a feed read nobody's schedule.
  *
  * NOT RECORDED, by decision. Each of these hands out something about other
  * people and was weighed; the reason is why a row would answer nothing:

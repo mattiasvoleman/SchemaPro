@@ -19,7 +19,8 @@ export interface AccessLogEntry {
   /** ISO instant of the read. */
   at: string;
   kind: AccessKind;
-  channel: 'WEB' | 'APP' | 'INTEGRATION' | 'OTHER';
+  /** CALENDAR: a guardian's calendar feed of their child (20261112090000). */
+  channel: 'WEB' | 'APP' | 'INTEGRATION' | 'OTHER' | 'CALENDAR';
   /** The reader: a person (their name now; null once their row is gone), or an integration key. */
   reader:
     | { type: 'PERSON'; id: string | null; name: string | null; role: UserRole | null }
