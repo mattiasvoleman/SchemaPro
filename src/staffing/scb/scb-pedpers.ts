@@ -396,8 +396,17 @@ export interface ScbFileInput {
 
 export interface ScbAbsence {
   userId: string;
+  /** The first day the absence touches. */
   from: string;
+  /** The last day it touches: its length is from..to. */
   to: string;
+  /**
+   * The last day it covers whole, where a following absence picks it up:
+   * `to` for an absence that ends at the school's midnight, the day before
+   * for one ended during the day (Avsluta i förtid on the morning the
+   * teacher is back, a day they work). Absent: `to`.
+   */
+  through?: string;
 }
 
 /** SCB's mätdatum for a läsår: 15 oktober of its autumn. */
@@ -429,6 +438,12 @@ function nextWeekday(day: string): string {
  * leave that goes on is a chain of records — one per week, or per
  * certificate — none of which is 30 days on its own. As leaveAround joins a
  * post's periods.
+ *
+ * A record picks up from the last day the one before it covers WHOLE
+ * (`through`): one ended on Friday morning was a Friday at work, so a record
+ * from Monday is a new absence, while one ended at Friday's midnight runs
+ * on into Monday's. A record that starts on a day the one before it still
+ * touches always joins it.
  */
 export function absenceStretches(absences: readonly ScbAbsence[]): ScbAbsence[] {
   const sorted = [...absences].sort((a, b) =>
@@ -437,20 +452,31 @@ export function absenceStretches(absences: readonly ScbAbsence[]): ScbAbsence[] 
   const stretches: ScbAbsence[] = [];
   for (const absence of sorted) {
     const last = stretches[stretches.length - 1];
-    if (last && last.userId === absence.userId && absence.from <= nextWeekday(last.to)) {
+    const through = absence.through ?? absence.to;
+    if (
+      last &&
+      last.userId === absence.userId &&
+      (absence.from <= last.to || absence.from <= nextWeekday(last.through ?? last.to))
+    ) {
       if (absence.to > last.to) last.to = absence.to;
+      if (through > (last.through ?? last.to)) last.through = through;
     } else {
-      stretches.push({ ...absence });
+      stretches.push({ ...absence, through });
     }
   }
   return stretches;
 }
 
 /** The teacher's absence stretch of 30 days or more over the mätdatum, if they have one. */
-export function longAbsenceOf(absences: readonly ScbAbsence[], userId: string, matdatum: string): ScbAbsence | undefined {
-  return absenceStretches(absences.filter((absence) => absence.userId === userId)).find((stretch) =>
-    longAbsenceOver(stretch, matdatum),
+export function longAbsenceOf(
+  absences: readonly ScbAbsence[],
+  userId: string,
+  matdatum: string,
+): Pick<ScbAbsence, 'userId' | 'from' | 'to'> | undefined {
+  const stretch = absenceStretches(absences.filter((absence) => absence.userId === userId)).find((candidate) =>
+    longAbsenceOver(candidate, matdatum),
   );
+  return stretch && { userId: stretch.userId, from: stretch.from, to: stretch.to };
 }
 
 export interface ScbFile {

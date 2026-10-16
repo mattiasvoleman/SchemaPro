@@ -159,6 +159,24 @@ describe('ScbFileService', () => {
     expect(recordedReads(tx).find((read) => read.kind === 'STAFF_ABSENCES')).toEqual({ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [BO] });
   });
 
+  it('reads an end during the day as a day at work: Friday ended early does not run on into Monday', async () => {
+    tx.teacherEmployment.findMany.mockResolvedValue([postRow(ANNA), postRow(BO)]);
+    const monday = { startsAt: new Date('2026-10-11T22:00:00.000Z'), endsAt: new Date('2026-10-30T23:00:00.000Z') };
+    tx.teacherAbsence.findMany.mockResolvedValue([
+      // Anna: from Monday 14 September, ended early on Friday 9 October at 07:46.
+      { userId: ANNA, startsAt: new Date('2026-09-13T22:00:00.000Z'), endsAt: new Date('2026-10-09T05:46:00.000Z') },
+      { userId: ANNA, ...monday },
+      // Bo: the same, but to Saturday's midnight: off all Friday, on into Monday.
+      { userId: BO, startsAt: new Date('2026-09-13T22:00:00.000Z'), endsAt: new Date('2026-10-09T22:00:00.000Z') },
+      { userId: BO, ...monday },
+    ]);
+    const file = await service.build(YEAR_ID, testUser({ channel: 'WEB' }));
+    expect(file.notices.filter((notice) => notice.code === 'LONG_ABSENCE')).toEqual([
+      { code: 'LONG_ABSENCE', params: { name: 'Bo Alm', from: '2026-09-14', to: '2026-10-30' } },
+    ]);
+    expect(recordedReads(tx).find((read) => read.kind === 'STAFF_ABSENCES')).toEqual({ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [BO] });
+  });
+
   it('records nothing for a year with nobody to report', async () => {
     tx.teacherEmployment.findMany.mockResolvedValue([]);
     tx.teachingRequirement.findMany.mockResolvedValue([]);

@@ -134,12 +134,16 @@ export class ScbFileService {
                 where: { userId: { in: named }, status: 'ACTIVE', startsAt: { lt: over.end }, endsAt: { gt: over.start } },
                 select: { userId: true, startsAt: true, endsAt: true },
               })
-            ).map((absence) => ({
-              userId: absence.userId,
-              from: dayIn(absence.startsAt),
-              // An end at midnight closes the day before it.
-              to: dayIn(new Date(absence.endsAt.getTime() - 1)),
-            }))
+            ).map((absence) => {
+              const endDay = dayIn(absence.endsAt);
+              // An end at the school's midnight closes the day before it, which
+              // is covered whole; an end during the day (Avsluta i förtid on the
+              // morning the teacher is back) touches that day, a day at work, so
+              // a following absence picks up from the day before it.
+              const atMidnight = zonedTimeToUtc(endDay, '00:00', timezone).getTime() === absence.endsAt.getTime();
+              const to = atMidnight ? addDays(endDay, -1) : endDay;
+              return { userId: absence.userId, from: dayIn(absence.startsAt), to, through: atMidnight ? to : addDays(endDay, -1) };
+            })
           : [];
       const file = buildScbFile({
         exportDate: dayIn(now),
