@@ -12,7 +12,7 @@ import { buildTeacherLoadReport } from '../teacher-load';
 import {
   buildScbFile,
   inScbFile,
-  longAbsenceOver,
+  longAbsenceOf,
   scbMatdatum,
   type ScbAbsence,
   type ScbFile,
@@ -37,8 +37,9 @@ import {
  *      a post outlives its account, and the file names the person whose
  *      account was closed, for the school to say whether they still worked
  *      on the mätdatum;
- *   6. their registered absences over the mätdatum, dates only: one of 30
- *      days or more is named, since SCB counts a whole such leave as L and
+ *   6. their registered absences over the läsår, dates only: a stretch of
+ *      30 days or more over the mätdatum is named, records that follow on
+ *      from each other joined, since SCB counts a whole such leave as L and
  *      SchemaPro reads L from the post alone.
  *
  * Then, in the same transaction, the läslogg: every teacher the file names,
@@ -117,10 +118,14 @@ export class ScbFileService {
       /** The school's day an instant falls on. */
       const dayIn = (at: Date): string => dayOf(todayInZone(timezone, at))!;
       const matdatum = scbMatdatum(read.year.startDate);
-      // The mätdatum as the school's day, [00:00, next 00:00).
+      // The läsår (and the mätdatum, should a year not hold it) as the
+      // school's days: every record a stretch over the mätdatum can be
+      // joined from, [first 00:00, the day after the last 00:00).
+      const first = matdatum < read.year.startDate ? matdatum : read.year.startDate;
+      const last = matdatum > read.year.endDate ? matdatum : read.year.endDate;
       const over = {
-        start: zonedTimeToUtc(matdatum, '00:00', timezone),
-        end: zonedTimeToUtc(addDays(matdatum, 1), '00:00', timezone),
+        start: zonedTimeToUtc(first, '00:00', timezone),
+        end: zonedTimeToUtc(addDays(last, 1), '00:00', timezone),
       };
       const absences: ScbAbsence[] =
         named.length > 0
@@ -170,7 +175,7 @@ export class ScbFileService {
       await recordRead(
         tx,
         'STAFF_ABSENCES',
-        absences.filter((absence) => longAbsenceOver(absence, matdatum)).map((absence) => absence.userId),
+        named.filter((userId) => longAbsenceOf(absences, userId, matdatum) !== undefined),
         user.channel,
       );
       return file;

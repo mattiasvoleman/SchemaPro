@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SchoolForm } from '@prisma/client';
 import {
+  absenceStretches,
   buildScbFile,
   inScbFile,
   largestRemainder,
@@ -17,6 +18,9 @@ import {
 } from './scb-pedpers';
 
 type Assignment = ScbTeacher['assignments'][number];
+
+const addDaysTo = (day: string, days: number): string =>
+  new Date(new Date(`${day}T00:00:00.000Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
 
 const assignment = (overrides: Partial<Assignment>): Assignment => ({
   subjectId: 's-ma',
@@ -274,6 +278,13 @@ describe('SCB Pedagogisk personal, the rows', () => {
       expect(file.notices.map((entry) => entry.code)).not.toContain('LEFT_OUT');
     });
 
+    it('writes a tiny post on leave as 1 %, never 0', () => {
+      const file = buildScbFile(
+        input({ teachers: [teacher('t-anna', { employment: post({ employmentPercent: 0.4, reductionPercent: 0.4 }) })] }),
+      );
+      expect([file.rows[0]![col('AnstForm')], file.rows[0]![col('OmfLarare')]]).toEqual(['L', '1']);
+    });
+
     it('is L for a post wholly reduced all year, measured from the läsår’s first day', () => {
       const file = buildScbFile(input({ teachers: [teacher('t-anna', { employment: post({ reductionPercent: 100 }) })] }));
       expect(file.rows[0]![col('AnstForm')]).toBe('L');
@@ -479,6 +490,36 @@ describe('SCB Pedagogisk personal, the rows', () => {
     ]);
     // The file still says what the post says: L is read from the nedsättning.
     expect(byName(file.rows).get('Anna Öberg')![col('AnstForm')]).toBe('T');
+  });
+
+  it('counts records that touch, or pick up after a weekend, as one absence; a weekday between them parts them', () => {
+    const file = buildScbFile(
+      input({
+        teachers: [teacher('t-anna'), teacher('t-bo'), teacher('t-vik')],
+        absences: [
+          // A certificate a month: 1–30 September, then 1–28 October.
+          { userId: 't-anna', from: '2026-10-01', to: '2026-10-28' },
+          { userId: 't-anna', from: '2026-09-01', to: '2026-09-30' },
+          // A week at a time, Monday to Friday, 28 September – 30 October.
+          ...['2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26'].map((monday) => ({
+            userId: 't-bo',
+            from: monday,
+            to: addDaysTo(monday, 4),
+          })),
+          // Back on Friday 9 October: two absences, neither 30 days.
+          { userId: 't-vik', from: '2026-09-14', to: '2026-10-08' },
+          { userId: 't-vik', from: '2026-10-12', to: '2026-10-30' },
+        ],
+      }),
+    );
+    expect(file.notices).toEqual([
+      { code: 'LONG_ABSENCE', params: { name: 'Bo Alm', from: '2026-09-28', to: '2026-10-30' } },
+      { code: 'LONG_ABSENCE', params: { name: 'Anna Öberg', from: '2026-09-01', to: '2026-10-28' } },
+    ]);
+    expect(absenceStretches([
+      { userId: 'a', from: '2026-10-01', to: '2026-10-10' },
+      { userId: 'a', from: '2026-10-05', to: '2026-10-07' },
+    ])).toEqual([{ userId: 'a', from: '2026-10-01', to: '2026-10-10' }]);
   });
 
   it("codes an anpassad grundskola row 10–12 from the year's timplan, where Estetisk verksamhet is collected", () => {

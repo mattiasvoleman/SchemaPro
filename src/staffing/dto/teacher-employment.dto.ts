@@ -23,11 +23,18 @@ import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
  * whole write surface; a body that could name another person or another year
  * would be a second answer to "whose post is this".
  *
- * THE WHOLE ROW IS REPLACED, every time. What is absent from the payload is the
- * column's default — no nedsättning, ferietjänst, no own target, no signature,
- * no note — which is the same reading the table gives a row created with
- * nothing stated. A PUT that mentions only employmentPercent therefore takes a
- * nedsättning away; a form sends everything it shows.
+ * THE WHOLE ROW IS REPLACED, every time, but for SCB's three. What is absent
+ * from the payload is the column's default — no nedsättning, ferietjänst, no
+ * own target, no signature, no note — which is the same reading the table
+ * gives a row created with nothing stated. A PUT that mentions only
+ * employmentPercent therefore takes a nedsättning away; a form sends
+ * everything it shows.
+ *
+ * SCB'S THREE (employmentForm, firstTeacherPercent, lecturerPercent,
+ * 20261111090000) are the exception: absent KEEPS what the row holds, null
+ * clears it, a value writes it. They came after the rest, and a web from
+ * before them, open in a tab over the release, would otherwise clear them on
+ * its next save. A new post without them has none.
  *
  * THREE DECIMALS on the two percentages, because SCB and IST report a share of
  * a post "upp till tre decimaler" and 66,667 is how a two-thirds post is
@@ -93,7 +100,8 @@ export class UpsertTeacherEmploymentDto {
 
   /**
    * Anställningsform, as SCB's Pedagogisk personal asks it: tillsvidare or
-   * visstid. Null or absent: not said (the SCB file names the row).
+   * visstid. Null: not said (the SCB file names the row). Absent: as stored
+   * (see the class comment).
    */
   @IsOptional()
   @IsEnum(TeacherEmploymentForm, { message: 'Anställningsformen är TILLSVIDARE eller VISSTID.' })
@@ -101,8 +109,8 @@ export class UpsertTeacherEmploymentDto {
 
   /**
    * How large a share of the post the förstelärare karriärtjänst takes,
-   * whole per cent as SCB counts it (ForsteLarare). Null or absent: no
-   * förstelärare.
+   * whole per cent as SCB counts it (ForsteLarare). Null: no förstelärare.
+   * Absent: as stored.
    */
   @IsOptional()
   @IsInt({ message: 'Försteläraruppdragets andel anges i hela procent.' })
@@ -110,7 +118,7 @@ export class UpsertTeacherEmploymentDto {
   @Max(100, { message: 'Försteläraruppdragets andel kan vara högst hela tjänsten.' })
   firstTeacherPercent?: number | null;
 
-  /** The same for lektor (SCB's Lektor). */
+  /** The same for lektor (SCB's Lektor): null none, absent as stored. */
   @IsOptional()
   @IsInt({ message: 'Lektorsuppdragets andel anges i hela procent.' })
   @Min(1, { message: 'Lektorsuppdragets andel är minst 1 % — lämna fältet tomt för en lärare som inte är lektor.' })

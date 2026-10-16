@@ -347,6 +347,16 @@ describe("Rapporter › Tjänstefördelning", () => {
     expect(screen.queryByRole("button", { name: "exportScbCsv" })).not.toBeInTheDocument();
     expect(downloadText).toHaveBeenCalledTimes(1);
 
+    apiGet.mockResolvedValueOnce(file);
+    await user.click(screen.getByRole("button", { name: "exportScb" }));
+    await screen.findByText("scbFileSummary(f.txt|1|2026-10-15)");
+    // The CSV's chunk or its save failing is said, not swallowed.
+    download.mockImplementationOnce(() => {
+      throw new Error("Loading chunk failed");
+    });
+    await user.click(screen.getByRole("button", { name: "exportScbCsv" }));
+    await waitFor(() => expect(toast.error).toHaveBeenLastCalledWith("exportFailed"));
+
     apiGet.mockRejectedValueOnce(new ApiError(409, "läsåret: klasserna går inte att räkna ut än"));
     await user.click(screen.getByRole("button", { name: "exportScb" }));
     await waitFor(() => expect(toast.error).toHaveBeenLastCalledWith("Läsåret: klasserna går inte att räkna ut än"));
