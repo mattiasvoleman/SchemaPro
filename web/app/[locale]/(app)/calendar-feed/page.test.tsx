@@ -16,7 +16,7 @@ import CalendarFeedPage from "./page";
  * a new address and stopping are asked first, that a refusal is said in the
  * page's words, and that a guardian has one feed per active child. Who may
  * have which feed is the gateway's (test/calendar-feed.e2e-spec.ts, RLS
- * sections 144–147).
+ * sections 145–148).
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {

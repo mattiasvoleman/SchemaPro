@@ -126,7 +126,7 @@
 -- ## Grants
 --
 -- The door, create, revoke, counts and audience_on: the API's role only. The builders and
--- the label rule: nobody (they run inside the doors). RLS sections 144 to 147
+-- the label rule: nobody (they run inside the doors). RLS sections 145 to 148
 -- assert the catalogue and who gets what.
 --
 -- ## Beside the live API: every lock at once, or none

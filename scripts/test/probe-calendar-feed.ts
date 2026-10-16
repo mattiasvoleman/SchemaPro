@@ -346,7 +346,8 @@ export async function calendarFeedChecks(owner: Client, api: PrismaService, mark
       let release!: () => void;
       const held = new Promise<void>((resolve) => (holding = resolve));
       const released = new Promise<void>((resolve) => (release = resolve));
-      const apply = api.withRls(principal(admin, Role.SCHOOL_ADMIN), async (tx) => {
+      // A hand-built administrator says its profile, as the gateway's does (Roller i skolan).
+      const apply = api.withRls({ ...principal(admin, Role.SCHOOL_ADMIN), adminProfile: 'FULL' }, async (tx) => {
         await readLocalSlice(tx, s, { lock: true });
         holding();
         await released;
