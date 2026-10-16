@@ -29,7 +29,6 @@ import { CalendarFeedsService, type CalendarFeedsView, type CreatedCalendarFeed,
  */
 @Controller('api/v1')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@AnyAdministrator("the caller's own calendar feeds")
 export class CalendarFeedsController {
   constructor(private readonly feeds: CalendarFeedsService) {}
 
@@ -47,6 +46,7 @@ export class CalendarFeedsController {
 
   @Post('calendar-feeds')
   @Roles(Role.TEACHER, Role.SCHOOL_ADMIN, Role.STUDENT, Role.GUARDIAN)
+  @AnyAdministrator("the caller's own calendar feed")
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   create(@Body() dto: CreateCalendarFeedDto, @CurrentUser() user: AuthenticatedUser): Promise<CreatedCalendarFeed> {
     return this.feeds.create(dto, user);
@@ -54,6 +54,7 @@ export class CalendarFeedsController {
 
   @Delete('calendar-feeds/:id')
   @Roles(Role.TEACHER, Role.SCHOOL_ADMIN, Role.STUDENT, Role.GUARDIAN)
+  @AnyAdministrator("the caller's own calendar feed")
   @HttpCode(204)
   revoke(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser): Promise<void> {
     return this.feeds.revoke(id, user);

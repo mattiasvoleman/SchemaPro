@@ -5,7 +5,7 @@ import { icsProblems } from './ics-check';
 /**
  * A calendar feed written down (Kalenderprenumeration, 20261112091000): what
  * app.calendar_feed answers becomes RFC 5545 lines a calendar takes. Which
- * lessons and which names are the database's (RLS sections 144–147, the
+ * lessons and which names are the database's (RLS sections 145–148, the
  * adapter probe); this is the writing.
  */
 

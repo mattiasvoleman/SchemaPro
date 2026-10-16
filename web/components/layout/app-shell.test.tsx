@@ -288,10 +288,13 @@ describe("AppShell navigation", () => {
     // Dataskydd och gallring, set up once like it, just before it.
     const all = navLinks();
     expect(all[0]).toHaveTextContent("nav.dashboard");
+    // The admin's own calendar feed beside it, which every profile may make.
+    expect(all[1]).toHaveTextContent("nav.calendarFeed");
+    expect(all[1]).toHaveAttribute("href", "/calendar-feed");
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(29);
+    expect(all).toHaveLength(30);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
@@ -553,9 +556,11 @@ describe("AppShell navigation by administrator profile", () => {
     expect(hrefs()).toEqual(
       expect.arrayContaining(["/admin", "/admin/people", "/admin/teacher-absence", "/admin/leave", "/admin/cover"]),
     );
-    for (const href of ["/admin/timetable", "/admin/generate", "/admin/publishing", "/admin/subjects", "/admin/dataskydd", "/admin/integrations"]) {
+    for (const href of ["/admin/timetable", "/admin/generate", "/admin/publishing", "/admin/calendar-feeds", "/admin/subjects", "/admin/dataskydd", "/admin/integrations"]) {
       expect(hrefs()).not.toContain(href);
     }
+    // Their own calendar feed is every profile's: the school's switches are not.
+    expect(hrefs()).toContain("/calendar-feed");
     // A group with nothing left in it goes with its pages (both hidden by
     // the layout's style rule, so out of the accessibility tree too).
     for (const group of screen.getAllByText("nav.planning")) expect(group).not.toBeVisible();

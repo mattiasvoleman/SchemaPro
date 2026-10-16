@@ -12,7 +12,7 @@ import { asUser, createTestApp, type TestHarness } from './utils/test-app';
  * iCalendar with a weak ETag, one identical 404 for every address that is
  * no live feed, no cache between, and the feed's own rate limits. What a
  * feed may hold, who may make one and the read log are the database's
- * (RLS sections 144–147, the adapter probe); here the database is mocked.
+ * (RLS sections 145–148, the adapter probe); here the database is mocked.
  */
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -167,6 +167,15 @@ describe('Kalenderprenumeration (e2e)', () => {
       }
     });
 
+    it('lets an administrator of any profile make and revoke their own, which writes nothing of an area', async () => {
+      // The expedition writes neither Publicering nor anything else a feed touches: it is the person's own.
+      const expedition = asUser({ role: Role.SCHOOL_ADMIN, schoolId: SCHOOL_ID, adminProfile: 'EXPEDITION' });
+      created = { feed: { id: FEED_ID, audience: 'TEACHER', studentId: null, locale: 'sv', createdAt: '2026-10-15T08:00:00+02:00', lastUsedAt: null } };
+      await request(http()).post('/api/v1/calendar-feeds').set('x-test-user', expedition).send({}).expect(201);
+      await request(http()).delete(`/api/v1/calendar-feeds/${FEED_ID}`).set('x-test-user', expedition).expect(204);
+      await request(http()).get('/api/v1/calendar-feeds/counts').set('x-test-user', expedition).expect(200);
+    });
+
     it('is nobody\'s without signing in', async () => {
       await request(http()).get('/api/v1/calendar-feeds').expect(401);
       await request(http()).post('/api/v1/calendar-feeds').send({}).expect(401);
@@ -188,6 +197,10 @@ describe('Kalenderprenumeration (e2e)', () => {
       expect(response.body).toMatchObject({ calendarFeedTeachers: true, calendarFeedStudents: false, calendarFeedGuardians: true });
       await request(http()).put('/api/v1/publication-settings').set('x-test-user', as(Role.SCHOOL_ADMIN)).send({ calendarFeedGuardians: 'ja' }).expect(400);
       await request(http()).put('/api/v1/publication-settings').set('x-test-user', as(Role.TEACHER)).send({ calendarFeedTeachers: true }).expect(403);
+      // The switches are Publicering's: an administrator whose profile does not write it is refused, by the area.
+      const expedition = asUser({ role: Role.SCHOOL_ADMIN, schoolId: SCHOOL_ID, adminProfile: 'EXPEDITION' });
+      const refused = await request(http()).put('/api/v1/publication-settings').set('x-test-user', expedition).send({ calendarFeedGuardians: false }).expect(403);
+      expect(refused.body.code).toBe('AREA_NOT_YOURS');
       expect(harness.tx.publicationSettings.upsert).toHaveBeenCalledTimes(1);
     });
   });

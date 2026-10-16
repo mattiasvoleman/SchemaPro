@@ -70,7 +70,12 @@ export interface NavSection {
 const ADMIN_NAV: NavSection[] = [
   {
     labelKey: null,
-    items: [{ labelKey: "dashboard", href: "/admin", icon: LayoutDashboard }],
+    items: [
+      { labelKey: "dashboard", href: "/admin", icon: LayoutDashboard },
+      // The admin's own feed, which every profile may make (the school's
+      // switches are Kalenderprenumeration under Schemaläggning, Publicering's).
+      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
+    ],
   },
   {
     labelKey: "basics",

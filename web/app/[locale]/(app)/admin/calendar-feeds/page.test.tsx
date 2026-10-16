@@ -14,7 +14,7 @@ import CalendarFeedSettingsPage from "./page";
  * setting and how many live feeds it holds, turning one on saves at once,
  * and turning one off is always asked first, saying how many stop by a
  * count read again as it asks, or that every one does when the count
- * cannot be had (the database revokes them; RLS section 146).
+ * cannot be had (the database revokes them; RLS section 147).
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
