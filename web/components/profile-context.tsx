@@ -1,7 +1,9 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, Users, UserX } from "lucide-react";
 import { usePathname } from "@/i18n/navigation";
+import type { NavSection } from "@/components/layout/app-shell";
 import type { Profile, School } from "@/lib/types";
 
 interface ProfileContextValue {
@@ -60,3 +62,55 @@ export function ClosedPageGate({ children }: { children: React.ReactNode }) {
   const path = Object.keys(closed).find((page) => pathname === page || pathname.startsWith(`${page}/`));
   return path ? closed[path] : children;
 }
+
+/*
+ * The menus of the roles that are not the admin, which AppShell renders. They
+ * are here and not in app-shell.tsx for the bundle: that module's part of the
+ * signed-in routes' shared chunk sits at Turbopack's minChunkSize, and this
+ * module's part, which pages share, can grow (app-shell.tsx says more). The
+ * icons are the admin menu's, already in that chunk.
+ */
+export const TEACHER_NAV: NavSection[] = [
+  {
+    labelKey: null,
+    items: [
+      { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
+      { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
+      { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
+      // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
+      // icon, already in the shell: the same thing seen from the other side,
+      // and a second glyph would be bytes on every route for nothing.
+      { labelKey: "myStaffing", href: "/teacher/tjanst", icon: Scale },
+      // Mina vikariepass and Min frånvaro: the admin's Lärarfrånvaro icon,
+      // the same subject from the teacher's side.
+      { labelKey: "myCover", href: "/teacher/franvaro", icon: UserX },
+      // Ledighet: the requests the teacher decides as a pupil's mentor
+      // (20261023091000). The admin's Ledighetsansökningar icon, already in
+      // the shell: the same inbox from the mentor's side.
+      { labelKey: "myLeave", href: "/teacher/ledighet", icon: ClipboardCheck },
+      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
+    ],
+
+  },
+];
+
+export const GUARDIAN_NAV: NavSection[] = [
+  {
+    labelKey: null,
+    items: [
+      { labelKey: "myChildren", href: "/guardian", icon: Users },
+      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
+    ],
+  },
+];
+
+export const STUDENT_NAV: NavSection[] = [
+  {
+    labelKey: null,
+    items: [
+      { labelKey: "mySchedule", href: "/student", icon: CalendarDays },
+      { labelKey: "myAttendance", href: "/student/attendance", icon: ClipboardCheck },
+      { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
+    ],
+  },
+];

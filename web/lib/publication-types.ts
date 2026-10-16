@@ -90,6 +90,10 @@ export interface PublicationSettings extends GatePolicy {
   publicEmbedTeachers: boolean;
   publicEmbedRooms: boolean;
   publicEmbedOrigins: string[];
+  /** Kalenderprenumeration (20261112091000): per audience; turning one off revokes its feeds. */
+  calendarFeedTeachers: boolean;
+  calendarFeedStudents: boolean;
+  calendarFeedGuardians: boolean;
 }
 
 export type PublicationSettingsInput = Partial<Omit<PublicationSettings, "publishMode" | "stored">>;

@@ -210,13 +210,14 @@ describe("AppShell navigation", () => {
     expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
     // The mentor's leave inbox (20261023091000), whether or not the school delegates.
     expect(link("nav.myLeave")).toHaveAttribute("href", "/teacher/ledighet");
+    expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "nav.coverBoard" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "nav.leaveRequests" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
     // Counted inside the nav: the skip link is a link too, and not an entry.
-    expect(navLinks()).toHaveLength(6);
+    expect(navLinks()).toHaveLength(7);
 
   });
 
@@ -226,7 +227,8 @@ describe("AppShell navigation", () => {
 
     expect(link("nav.mySchedule")).toHaveAttribute("href", "/student");
     expect(link("nav.myAttendance")).toHaveAttribute("href", "/student/attendance");
-    expect(navLinks()).toHaveLength(2);
+    expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
+    expect(navLinks()).toHaveLength(3);
   });
 
   it("guardian gets a single my-children link", () => {
@@ -234,7 +236,8 @@ describe("AppShell navigation", () => {
     renderShell({ role: "GUARDIAN" });
 
     expect(link("nav.myChildren")).toHaveAttribute("href", "/guardian");
-    expect(navLinks()).toHaveLength(1);
+    expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
+    expect(navLinks()).toHaveLength(2);
   });
 
   it("groups the admin menu by the manual's four phases, Dataskydd and Integrationer last and unlabelled", () => {
@@ -269,6 +272,7 @@ describe("AppShell navigation", () => {
       "nav.timetable",
       "nav.gaps",
       "nav.publishing",
+      "nav.calendarFeeds",
     ]);
     expect(group("nav.operations")).toEqual([
       "nav.dayPlanner",
@@ -287,7 +291,7 @@ describe("AppShell navigation", () => {
     expect(all[all.length - 2]).toHaveTextContent("nav.dataProtection");
     expect(all[all.length - 2]).toHaveAttribute("href", "/admin/dataskydd");
     expect(all[all.length - 1]).toHaveTextContent("nav.integrations");
-    expect(all).toHaveLength(28);
+    expect(all).toHaveLength(29);
   });
 
   it("writes the nav's titles with 'och', as the pages' own titles do", async () => {
@@ -343,6 +347,14 @@ describe("AppShell active item", () => {
     expect(link("nav.subjects")).toHaveAttribute("aria-current", "page");
     expect(link("nav.dashboard")).not.toHaveClass("bg-sidebar-accent");
     expect(link("nav.dashboard")).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks one item current on the school's calendar feeds, beside Publicering", () => {
+    navState.pathname = "/admin/calendar-feeds";
+    renderShell();
+    expect(link("nav.calendarFeeds")).toHaveAttribute("aria-current", "page");
+    expect(link("nav.publishing")).not.toHaveAttribute("aria-current");
+    expect(document.querySelectorAll('nav [aria-current="page"]')).toHaveLength(1);
   });
 });
 
@@ -400,13 +412,16 @@ describe("AppShell mobile drawer", () => {
     await user.click(screen.getByRole("button", { name: "common.openMenu" }));
     const drawer = screen.getByRole("dialog");
     const close = within(drawer).getByRole("button", { name: "common.close" });
-    const only = within(drawer).getByRole("link", { name: "nav.myChildren" });
+    const children = within(drawer).getByRole("link", { name: "nav.myChildren" });
+    const feed = within(drawer).getByRole("link", { name: "nav.calendarFeed" });
     // Below the menu, the tillgänglighetsredogörelse: the drawer's last stop.
     const statement = within(drawer).getByRole("link", { name: "accessibilityStatement.link" });
     expect(close).toHaveFocus();
 
     await user.tab();
-    expect(only).toHaveFocus();
+    expect(children).toHaveFocus();
+    await user.tab();
+    expect(feed).toHaveFocus();
     await user.tab();
     expect(statement).toHaveFocus();
     await user.tab();

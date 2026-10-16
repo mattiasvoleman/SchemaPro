@@ -30,6 +30,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
+import { GUARDIAN_NAV, STUDENT_NAV, TEACHER_NAV } from "@/components/profile-context";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/types";
 import { LocaleSwitcher } from "./locale-switcher";
@@ -38,13 +39,13 @@ import { NotificationBell } from "@/components/layout/notification-bell";
 import { UserMenu } from "./user-menu";
 import { Button } from "@/components/ui/button";
 
-interface NavItem {
+export interface NavItem {
   labelKey: string;
   href: string;
   icon: LucideIcon;
 }
 
-interface NavSection {
+export interface NavSection {
   labelKey: string | null;
   items: NavItem[];
 }
@@ -134,6 +135,8 @@ const ADMIN_NAV: NavSection[] = [
       // valid when, the checks, and Schemavisaren. The ramtider's icon — a
       // validity range is a range of dates too.
       { labelKey: "publishing", href: "/admin/publishing", icon: CalendarRange },
+      // Kalenderprenumeration, per audience: Publicering's icon, already in the shell.
+      { labelKey: "calendarFeeds", href: "/admin/calendar-feeds", icon: CalendarRange },
     ],
   },
   {
@@ -168,47 +171,15 @@ const ADMIN_NAV: NavSection[] = [
   },
 ];
 
-const TEACHER_NAV: NavSection[] = [
-  {
-    labelKey: null,
-    items: [
-      { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
-      { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
-      { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
-      // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
-      // icon, already in this module: the same thing seen from the other side,
-      // and a second glyph would be bytes on every route for nothing.
-      { labelKey: "myStaffing", href: "/teacher/tjanst", icon: Scale },
-      // Mina vikariepass and Min frånvaro: the admin's Lärarfrånvaro icon,
-      // the same subject from the teacher's side.
-      { labelKey: "myCover", href: "/teacher/franvaro", icon: UserX },
-      // Ledighet: the requests the teacher decides as a pupil's mentor
-      // (20261023091000). The admin's Ledighetsansökningar icon, already in
-      // the shell: the same inbox from the mentor's side.
-      { labelKey: "myLeave", href: "/teacher/ledighet", icon: ClipboardCheck },
-    ],
-
-  },
-];
-
-const GUARDIAN_NAV: NavSection[] = [
-  {
-    labelKey: null,
-    items: [
-      { labelKey: "myChildren", href: "/guardian", icon: Users },
-    ],
-  },
-];
-
-const STUDENT_NAV: NavSection[] = [
-  {
-    labelKey: null,
-    items: [
-      { labelKey: "mySchedule", href: "/student", icon: CalendarDays },
-      { labelKey: "myAttendance", href: "/student/attendance", icon: ClipboardCheck },
-    ],
-  },
-];
+/*
+ * The teacher's, the guardian's and the pupil's menus are in
+ * profile-context.tsx, beside the profile they are for. Not here: every
+ * signed-in route loads one chunk with this module, AppProviders and
+ * ProfileProvider, and this module's part of it sits at Turbopack's
+ * minChunkSize. A byte of code more here splits the chunk in two, +0.8 KB
+ * on every route; ProfileProvider's part, which pages share, can grow. A
+ * menu item for those three roles goes there; the admin's stay here.
+ */
 
 function navForRole(role: UserRole): NavSection[] {
   switch (role) {

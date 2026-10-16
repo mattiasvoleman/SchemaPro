@@ -200,7 +200,9 @@
     "basics": "Grunddata",
     "label": "Huvudmeny",
     "dataProtection": "Dataskydd",
-    "myLeave": "Ledighet"
+    "myLeave": "Ledighet",
+    "calendarFeed": "Kalenderprenumeration",
+    "calendarFeeds": "Kalenderprenumeration"
   },
   "dashboard": {
     "title": "Översikt",
@@ -4931,7 +4933,8 @@
         "WEB": "Webben",
         "APP": "Appen",
         "INTEGRATION": "Integration",
-        "OTHER": "Annat"
+        "OTHER": "Annat",
+        "CALENDAR": "Kalenderprenumeration"
       },
       "export": "Exportera som CSV",
       "exportFile": "lasningar-{name}-{date}.csv",
@@ -5168,5 +5171,94 @@
     "hrHiddenExport": "Exporter som bygger på tjänst % får tomma kolumner där.",
     "profileLoading": "Profilen läses in. Den kan ändras när den har lästs.",
     "profileUnreadable": "Profilen kunde inte läsas. Den ändras inte när du sparar; ladda om sidan för att ändra den."
+  },
+  "calendarFeed": {
+    "title": "Kalenderprenumeration",
+    "subtitle": {
+      "TEACHER": "Ditt publicerade schema i din kalenderapp, med inställda lektioner och vikariepass.",
+      "STUDENT": "Ditt publicerade schema i din kalenderapp, med inställda lektioner och lov.",
+      "GUARDIAN": "Ditt barns publicerade schema i din kalenderapp, en prenumeration per barn."
+    },
+    "loadFailed": "Prenumerationerna kunde inte hämtas",
+    "offTitle": "Skolan har inte slagit på kalenderprenumeration",
+    "offBody": {
+      "TEACHER": "Skolan väljer om lärare får prenumerera på sitt schema. Fråga skolans administratör.",
+      "STUDENT": "Skolan väljer om elever får prenumerera på sitt schema. Fråga skolan.",
+      "GUARDIAN": "Skolan väljer om vårdnadshavare får prenumerera på sina barns scheman. Fråga skolan.",
+      "ADMIN": "Lärarnas prenumeration är avstängd. Den slås på under Schemaläggning › Kalenderprenumeration."
+    },
+    "noChildren": "Du har inga barn i skolan att prenumerera på.",
+    "ownTitle": "Ditt schema",
+    "childTitle": "Schema för {name}",
+    "none": "Ingen prenumeration än.",
+    "make": "Skapa prenumeration",
+    "madeTitle": "Prenumerationen är skapad",
+    "madeBody": "Adressen visas bara nu. Kopiera den och lägg in den i kalenderappen innan du lämnar sidan. Den som har adressen kan läsa schemat, så dela den inte.",
+    "addressLabel": "Prenumerationens adress",
+    "copy": "Kopiera adressen",
+    "copied": "Adressen är kopierad",
+    "since": "Skapad {date}.",
+    "lastUsed": "Senast hämtad {date}.",
+    "neverUsed": "Ingen kalender har hämtat den än.",
+    "renew": "Skapa ny adress",
+    "renewTitle": "Skapa en ny adress?",
+    "renewBody": "Den gamla adressen slutar fungera direkt. Lägg in den nya adressen i kalenderappen i stället.",
+    "stop": "Sluta prenumerera",
+    "stopTitle": "Sluta prenumerera?",
+    "stopBody": "Adressen slutar fungera direkt, och kalendern visar inget nytt från schemat. Du kan skapa en ny prenumeration senare.",
+    "stopped": "Prenumerationen är avslutad",
+    "howTitle": "Så lägger du in den",
+    "howApple": "iPhone och iPad: Inställningar › Appar › Kalender › Kalenderkonton › Lägg till konto › Annat › Lägg till prenumererad kalender (i iOS 17 och äldre: Inställningar › Kalender › Konton), och klistra in adressen. Mac: i Kalender, välj Arkiv › Ny kalenderprenumeration.",
+    "howGoogle": "Google Kalender: välj Lägg till kalender › Från webbadress och klistra in adressen. Google hämtar den några gånger om dygnet.",
+    "howOutlook": "Outlook: välj Lägg till kalender › Prenumerera från webben och klistra in adressen.",
+    "secret": "Kalendern visar det publicerade schemat från förra veckan och framåt, ett år för lärare och läsåret ut för elever och vårdnadshavare, och uppdateras när kalenderappen hämtar adressen igen. Inställda lektioner står kvar som inställda i de kalenderappar som visar inställda händelser. Adressen är personlig: den som har den kan läsa schemat utan att logga in, tills du skapar en ny adress eller slutar prenumerera.",
+    "errors": {
+      "off": "Skolan har stängt av kalenderprenumeration.",
+      "gone": "Prenumerationen finns inte längre. Sidan visar hur det ser ut nu.",
+      "notYours": "Du kan inte prenumerera på det här barnets schema.",
+      "tooMany": "För många försök. Vänta en minut och försök igen."
+    },
+    "madeStatus": "{title}: prenumerationen är skapad, och adressen är markerad.",
+    "copyFailed": "Adressen kunde inte kopieras. Den är markerad, så du kan kopiera den själv."
+  },
+  "calendarFeedSettings": {
+    "title": "Kalenderprenumeration",
+    "subtitle": "Låt lärare, elever och vårdnadshavare se sitt publicerade schema i sin egen kalenderapp.",
+    "own": "Din egen prenumeration",
+    "loadFailed": "Inställningarna kunde inte hämtas",
+    "audiencesTitle": "Vem som får prenumerera",
+    "audiencesBody": "Allt är avstängt tills du slår på det. Stänger du av en grupp slutar alla dess prenumerationer att fungera direkt, och de kommer inte tillbaka om du slår på den igen.",
+    "audience": {
+      "TEACHER": "Lärare",
+      "STUDENT": "Elever",
+      "GUARDIAN": "Vårdnadshavare"
+    },
+    "live": "{count, plural, =0 {Inga prenumerationer} one {# prenumeration} other {# prenumerationer}}",
+    "countFailed": "Antalet kunde inte hämtas.",
+    "turnedOn": {
+      "TEACHER": "Lärare kan nu prenumerera",
+      "STUDENT": "Elever kan nu prenumerera",
+      "GUARDIAN": "Vårdnadshavare kan nu prenumerera"
+    },
+    "turnedOff": {
+      "TEACHER": "Lärarnas prenumerationer är avstängda",
+      "STUDENT": "Elevernas prenumerationer är avstängda",
+      "GUARDIAN": "Vårdnadshavarnas prenumerationer är avstängda"
+    },
+    "stopTitle": {
+      "TEACHER": "Stäng av prenumeration för lärare?",
+      "STUDENT": "Stäng av prenumeration för elever?",
+      "GUARDIAN": "Stäng av prenumeration för vårdnadshavare?"
+    },
+    "stopBody": "{count, plural, =0 {Ingen prenumeration är i bruk just nu.} one {# prenumeration slutar fungera direkt.} other {# prenumerationer slutar fungera direkt.}} Slår du på det igen får var och en skapa en ny.",
+    "stopConfirm": "Stäng av",
+    "whatTitle": "Vad en prenumeration visar",
+    "whatTeacher": "En lärare får sina lektioner med grupp, sal och kollegor, och de lektioner hen är vikarie på. En lektion för namngivna elever namnger ingen elev.",
+    "whatPupil": "En elev och en vårdnadshavare får elevens lektioner som familjen ser dem i SchemaPro: lärarna som skolan visar dem för familjer, vikarie och inställt utan namn, och elevens lov och studiedagar. Aldrig andra elever.",
+    "whatPublished": "Det publicerade schemat, från förra veckan och ett år framåt, för elever och vårdnadshavare till och med läsårets sista vecka. Ett utkast syns aldrig.",
+    "whatSecret": "Adressen är personlig och visas en gång. Var och en kan skapa en ny adress eller sluta prenumerera när som helst.",
+    "whatLog": "En vårdnadshavares prenumeration skrivs i läsloggen som en läsning av barnets veckoschema, en gång per dag som kalendern hämtar den.",
+    "stopBodyUnknown": "Alla gruppens prenumerationer slutar fungera direkt. Slår du på det igen får var och en skapa en ny.",
+    "countLoading": "Räknar prenumerationerna…"
   }
 }
