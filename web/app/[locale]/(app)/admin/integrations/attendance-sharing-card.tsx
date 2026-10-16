@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useProfile } from "@/components/profile-context";
+import { profileDecides } from "@/lib/admin-areas";
 import { INTEGRATION_KEYS } from "./query-keys";
 import { errorText, formatWhen } from "./ss12000-messages";
 import type { AttendanceSharing } from "./ss12000-types";
@@ -23,13 +25,19 @@ const HISTORY_SHOWN = 20;
 
 /*
  * Närvaro och frånvaro till integrationer: the school's decision
- * (AttendanceSharingDecisions, migration 20261114090000). Off until an admin
+ * (AttendanceSharingDecisions, migration 20261114090000). Off until rektor
  * decides; while off, a key with attendances.read or absences.read is
- * answered 403 NOT_SHARED and the database's own arms read no row. Every
- * decision is kept with who and when (the database stamps them), so the
- * card shows the one in force and the ones before it, and a change is a new
- * decision, never an edit. What is shared and what never is are said here
- * in the reader's words, as the gateway emits them (docs/integration-api.md).
+ * answered 403 NOT_SHARED and the provider's read functions answer nothing.
+ * Every decision is kept with who and when (the database stamps them), so
+ * the card shows the one in force and the ones before it, and a change is a
+ * new decision, never an edit. What is shared and what never is are said
+ * here in the reader's words, as the gateway emits them
+ * (docs/integration-api.md).
+ *
+ * It is one of the decisions (Roller i skolan): every administrator reads
+ * it, and the field and the button are a decider's (rektor, full), as the
+ * gateway's @Decides and the database's arm ask; anybody else is told who
+ * decides, as the leave page tells them.
  *
  * The dialog asks about the decision it was opened for (`asked`), not the
  * state as it is when it closes: the answer's refetch can land while it
@@ -45,6 +53,8 @@ export function AttendanceSharingCard() {
   const queryClient = useQueryClient();
   const sharing = useAttendanceSharing(true);
   const decide = useDecideAttendanceSharing();
+  const me = useProfile().profile;
+  const decides = profileDecides(me?.adminProfile === undefined ? "FULL" : me.adminProfile);
   const [reference, setReference] = useState("");
   // The decision the open dialog asks for; null while it is closed.
   const [asked, setAsked] = useState<boolean | null>(null);
@@ -102,18 +112,24 @@ export function AttendanceSharingCard() {
             <li>{t("logged")}</li>
             <li>{t("gallring")}</li>
           </ul>
-          <FormField id="attendance-sharing-reference" label={t("reference")} hint={t("referenceHint")} optional>
-            <Input value={reference} maxLength={200} onChange={(event) => setReference(event.target.value)} />
-          </FormField>
-          <Button
-            type="button"
-            size="sm"
-            variant={shares ? "outline" : "default"}
-            disabled={decide.isPending}
-            onClick={() => setAsked(!shares)}
-          >
-            {shares ? t("stop") : t("share")}
-          </Button>
+          {decides ? (
+            <>
+              <FormField id="attendance-sharing-reference" label={t("reference")} hint={t("referenceHint")} optional>
+                <Input value={reference} maxLength={200} onChange={(event) => setReference(event.target.value)} />
+              </FormField>
+              <Button
+                type="button"
+                size="sm"
+                variant={shares ? "outline" : "default"}
+                disabled={decide.isPending}
+                onClick={() => setAsked(!shares)}
+              >
+                {shares ? t("stop") : t("share")}
+              </Button>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t("decidedByRektor")}</p>
+          )}
           {earlier.length > 0 ? (
             <details className="text-xs">
               <summary className="cursor-pointer font-medium">{t("history")}</summary>

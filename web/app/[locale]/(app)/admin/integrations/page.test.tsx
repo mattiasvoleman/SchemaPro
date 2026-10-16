@@ -55,6 +55,8 @@ vi.mock("@/i18n/navigation", () => ({
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+// The attendance card on the keys tab asks who is signed in (Roller i skolan): a full administrator.
+vi.mock("@/components/profile-context", () => ({ useProfile: () => ({ profile: { adminProfile: "FULL" } }) }));
 
 const SOURCE: SourceView = {
   id: "src-1",

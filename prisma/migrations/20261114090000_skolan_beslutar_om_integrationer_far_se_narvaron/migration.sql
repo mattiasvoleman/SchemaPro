@@ -30,8 +30,13 @@
 -- SQLSTATE NV409 except a school's or a decider's referential action), so
 -- the record of who opened and who closed the school's attendance to
 -- integrations stays. The decider's key does not follow a user moved to
--- another school (ON UPDATE NO ACTION): a decision never changes school. The
--- school's SCHOOL_ADMINs read and insert; nobody else has an arm.
+-- another school (ON UPDATE NO ACTION): a decision never changes school.
+-- Every administrator of the school reads them; one who decides (rektor,
+-- full: app.current_user_decides(), Roller i skolan 20261110090000) inserts
+-- one, since sharing pupils' personal data with an integration rests on the
+-- school's konsekvensbedömning, as gallring (RetentionDecisions) and sharing
+-- tjänst % (shareEmploymentWithIntegrations) do. Its row in
+-- src/auth/admin-areas.ts is { insert: DECIDES }; nobody else has an arm.
 --
 -- app.attendance_shared(school) is the decision in force;
 -- app.attendance_shared_since(school) when the current run of sharing began
@@ -583,11 +588,15 @@ BEGIN
             AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
         );
 
+    -- Written already asking the decisions (Roller i skolan's split runs
+    -- before this migration and does not see it): sharing pupils'
+    -- attendance with integrations is rektor's, like gallring.
     CREATE POLICY "attendance_sharing_decisions_admin_insert" ON "AttendanceSharingDecisions"
         FOR INSERT TO "app_authenticated"
         WITH CHECK (
             "schoolId" = (select app.current_school_id())
             AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
+            AND (select app.current_user_decides())
         );
   END IF;
 END

@@ -1313,6 +1313,12 @@ BEGIN
   IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-narvaro-school') THEN
     RETURN;
   END IF;
+  -- Roller i skolan's matrix school (section 116) gets a decision not to share, so the role
+  -- matrix has a row of AttendanceSharingDecisions to probe and the school's recorders stay
+  -- idle. Here and not in its block: on a database that ran main's fixtures, that block has
+  -- already returned.
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference)
+  SELECT id, false, 'Roller' FROM "Schools" WHERE slug = 'rls-roller-school';
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
   VALUES ('RLS Närvaro', 'rls-narvaro-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")

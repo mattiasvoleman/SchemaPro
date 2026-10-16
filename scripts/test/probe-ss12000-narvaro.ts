@@ -145,7 +145,14 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
   const classmate = await person('STUDENT', 'Petra', 'Elev', klass.id);
   const leaver = await person('STUDENT', 'Per', 'Slutar', klass.id);
   await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3)`, [s, guardianRow.id, pupil.id]);
-  const as = (row: { id: string; authId: string }, role: Role): AuthenticatedUser => ({ authId: row.authId, userId: row.id, schoolId: s, role });
+  // An administrator is a full one (Roller i skolan): the decision is the decisions'.
+  const as = (row: { id: string; authId: string }, role: Role): AuthenticatedUser => ({
+    authId: row.authId,
+    userId: row.id,
+    schoolId: s,
+    role,
+    ...(role === Role.SCHOOL_ADMIN ? { adminProfile: 'FULL' as const } : {}),
+  });
   const admin = as(adminRow, Role.SCHOOL_ADMIN);
   const teacher = as(teacherRow, Role.TEACHER);
   const guardian = as(guardianRow, Role.GUARDIAN);

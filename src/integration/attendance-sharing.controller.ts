@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import type { PrismaClient } from '@prisma/client';
+import { Decides } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -65,7 +66,9 @@ export class AttendanceSharingController {
     });
   }
 
+  /** Rektor's (or a full administrator's): the decisions (Roller i skolan), as the arm asks too. */
   @Post()
+  @Decides()
   async record(@Body() dto: RecordAttendanceSharingDto, @CurrentUser() user: AuthenticatedUser): Promise<AttendanceSharingView> {
     const schoolId = requireSchoolId(user);
     requireUserId(user);
