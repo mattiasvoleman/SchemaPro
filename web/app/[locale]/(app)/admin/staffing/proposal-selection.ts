@@ -39,6 +39,21 @@ export interface SelectedLoad {
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
+/*
+ * Whether a figure under the selection grows past the one before it. Each
+ * figure the gateway sends is rounded to two decimals on its own: with n of a
+ * teacher's changes left out, the selection's figure is the after plus n
+ * charges, set against the before — n + 2 figures, each off by at most half a
+ * hundredth. A teacher with every change left out can therefore sit up to
+ * (n + 2) / 2 hundredths above the before without growing at all. Counted in
+ * whole hundredths, so no float addition decides the boundary. With nothing
+ * left out the figures are the gateway's own, and any hundredth is growth.
+ */
+const growsPast = (is: number, was: number, leftOutRows: number): boolean => {
+  const up = Math.round(is * 100) - Math.round(was * 100);
+  return leftOutRows === 0 ? up > 0 : 2 * up > leftOutRows + 2;
+};
+
 export function loadsUnderSelection(
   proposal: Pick<StaffingProposal, "teachers" | "assignments">,
   selected: ReadonlySet<string>,
@@ -78,18 +93,15 @@ export function loadsUnderSelection(
     const exact = delta === undefined ? teacher.after.countedExact : round2(teacher.after.countedExact + delta);
     const status =
       delta === undefined ? teacher.after.status : loadStatus(exact, teacher.targetMinutesPerWeek, tolerancePercent);
-    // Each figure the gateway sends is rounded to two decimals: a sum of
-    // them can sit a hundredth off the unrounded one, and a teacher with
-    // every change left out must not grow by that.
-    const slack = (leftOutCount.get(teacher.userId) ?? 0) === 0 ? 1e-9 : 0.005 * ((leftOutCount.get(teacher.userId) ?? 0) + 1);
-    const grows = exact > teacher.before.countedExact + slack;
+    const leftOutRows = leftOutCount.get(teacher.userId) ?? 0;
+    const grows = growsPast(exact, teacher.before.countedExact, leftOutRows);
     // A changing post: any stretch with weeks that grows and ends over, as the apply asks.
     const deltas = leftOutByStretch.get(teacher.userId);
     const overInAStretch = (teacher.stretches ?? []).some((stretch, index) => {
       const is = round2(stretch.after + (deltas?.[index] ?? 0));
       return (
         stretch.weeks > 0 &&
-        is > stretch.before + slack &&
+        growsPast(is, stretch.before, leftOutRows) &&
         loadStatus(is, stretch.targetMinutesPerWeek, tolerancePercent) === "OVER"
       );
     });
