@@ -60,7 +60,7 @@
  * a CalendarEvent's exceptions) still finds one, and nothing a reader
  * without duties.read sees moves with a period. Every later stretch is
  * dutyStretchId(post, its key, its first day): named by its first day, so a
- * period no Duty shows names nothing, and by a key no reader gets, so a
+ * period no Duty shows names nothing, and by a key no integration gets, so a
  * buried stretch's id tells nobody its day. app.ss12000_split_duty_ids
  * derives the same ids in the database, for the versions and the
  * tombstones.

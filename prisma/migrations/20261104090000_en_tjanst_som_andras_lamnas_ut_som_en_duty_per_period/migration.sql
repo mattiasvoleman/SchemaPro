@@ -9,9 +9,11 @@
 -- day — what a reader of the Duties sees — so a period no Duty shows (a
 -- nedsättning, a target, a period cut in two at the same grad) names
 -- nothing and moves no id, and by the post's ss12000StretchKey, a random
--- value no reader ever gets, so nobody can compute a stretch's id from the
--- post's and a day: a stretch buried when the school stops sharing tells
--- /deletedEntities nothing of when the grad changed. This migration adds
+-- value no integration and no other person ever gets (the teacher's own
+-- direct read of their post reaches it, and tells them only their own
+-- dates), so nobody can compute a stretch's id from the post's and a day: a
+-- stretch buried when the school stops sharing tells /deletedEntities
+-- nothing of when the grad changed. This migration adds
 -- that column and makes the versions and the tombstones (20261014130000)
 -- follow those ids: an id that starts being emitted is unburied and
 -- versioned, one that stops is buried, and every change to what they carry
@@ -91,7 +93,7 @@ DECLARE
                        ELSE 'DUTY'::"TeacherLogEntity" END;
   -- blockedConstraintId (20261017090000): an uppdrag's times are versions of
   -- their own, counted from TeacherDutySlots. ss12000StretchKey
-  -- (20261104090000): no reader's.
+  -- (20261104090000): no version's, so no reader of the history gets it.
   stripped text[] := ARRAY['schoolId', 'createdAt', 'updatedAt', 'blockedConstraintId', 'ss12000StretchKey'];
   -- The note's text never enters the log; "noteChanged" says it was written.
   -- Read through the JSON: a period has no note (20261022120000).
