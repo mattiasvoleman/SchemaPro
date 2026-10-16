@@ -20,6 +20,12 @@ interface ConfirmDialogProps {
   destructive?: boolean;
   loading?: boolean;
   onConfirm: () => void;
+  /**
+   * Where focus goes once the dialog has closed, when not back to its opener:
+   * call preventDefault() and focus it. Run after the exit animation, when
+   * the page is no longer aria-hidden, so what it focuses is also heard.
+   */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 export function ConfirmDialog({
@@ -31,6 +37,7 @@ export function ConfirmDialog({
   destructive = true,
   loading = false,
   onConfirm,
+  onCloseAutoFocus,
 }: ConfirmDialogProps) {
   const t = useTranslations("common");
 
@@ -42,6 +49,7 @@ export function ConfirmDialog({
         // the dialog cannot be left; Escape, outside clicks and the X have to
         // honour that too, or the promise only holds for the two buttons.
         closeDisabled={loading}
+        onCloseAutoFocus={onCloseAutoFocus}
         onEscapeKeyDown={(event) => {
           if (loading) event.preventDefault();
         }}

@@ -200,7 +200,9 @@
     "basics": "Basic data",
     "label": "Main menu",
     "dataProtection": "Data protection",
-    "myLeave": "Leave"
+    "myLeave": "Leave",
+    "calendarFeed": "Calendar subscription",
+    "calendarFeeds": "Calendar subscriptions"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -4931,7 +4933,8 @@
         "WEB": "Web",
         "APP": "App",
         "INTEGRATION": "Integration",
-        "OTHER": "Other"
+        "OTHER": "Other",
+        "CALENDAR": "Calendar subscription"
       },
       "export": "Export as CSV",
       "exportFile": "reads-{name}-{date}.csv",
@@ -5168,5 +5171,94 @@
     "hrHiddenExport": "Exports built on employment % have empty columns there.",
     "profileLoading": "The profile is being read. It can be changed once it has been read.",
     "profileUnreadable": "The profile could not be read. Saving leaves it unchanged; reload the page to change it."
+  },
+  "calendarFeed": {
+    "title": "Calendar subscription",
+    "subtitle": {
+      "TEACHER": "Your published timetable in your calendar app, with cancelled lessons and the lessons you cover.",
+      "STUDENT": "Your published timetable in your calendar app, with cancelled lessons and holidays.",
+      "GUARDIAN": "Your child's published timetable in your calendar app, one subscription per child."
+    },
+    "loadFailed": "The subscriptions could not be loaded",
+    "offTitle": "The school has not turned on calendar subscriptions",
+    "offBody": {
+      "TEACHER": "The school chooses whether teachers may subscribe to their timetable. Ask the school's administrator.",
+      "STUDENT": "The school chooses whether pupils may subscribe to their timetable. Ask the school.",
+      "GUARDIAN": "The school chooses whether guardians may subscribe to their children's timetables. Ask the school.",
+      "ADMIN": "Teachers' subscriptions are off. They are turned on under Scheduling › Calendar subscriptions."
+    },
+    "noChildren": "You have no children at the school to subscribe to.",
+    "ownTitle": "Your timetable",
+    "childTitle": "Timetable for {name}",
+    "none": "No subscription yet.",
+    "make": "Create a subscription",
+    "madeTitle": "Subscription created",
+    "madeBody": "The address is shown only now. Copy it and add it to your calendar app before you leave the page. Anyone with the address can read the timetable, so do not share it.",
+    "addressLabel": "The subscription's address",
+    "copy": "Copy the address",
+    "copied": "Address copied",
+    "since": "Created {date}.",
+    "lastUsed": "Last fetched {date}.",
+    "neverUsed": "No calendar has fetched it yet.",
+    "renew": "Create a new address",
+    "renewTitle": "Create a new address?",
+    "renewBody": "The old address stops working at once. Add the new address to your calendar app instead.",
+    "stop": "Stop subscribing",
+    "stopTitle": "Stop subscribing?",
+    "stopBody": "The address stops working at once, and the calendar shows nothing new from the timetable. You can create a new subscription later.",
+    "stopped": "The subscription has ended",
+    "howTitle": "How to add it",
+    "howApple": "iPhone and iPad: Settings › Apps › Calendar › Calendar Accounts › Add Account › Other › Add Subscribed Calendar (in iOS 17 and earlier: Settings › Calendar › Accounts), and paste the address. Mac: in Calendar, choose File › New Calendar Subscription.",
+    "howGoogle": "Google Calendar: choose Add calendar › From URL and paste the address. Google fetches it a few times a day.",
+    "howOutlook": "Outlook: choose Add calendar › Subscribe from web and paste the address.",
+    "secret": "The calendar shows the published timetable from last week on, a year ahead for teachers and to the end of the school year for pupils and guardians, and updates when the calendar app fetches the address again. Cancelled lessons stay, marked as cancelled, in calendar apps that show cancelled events. The address is personal: anyone who has it can read the timetable without signing in, until you create a new address or stop subscribing.",
+    "errors": {
+      "off": "The school has turned calendar subscriptions off.",
+      "gone": "The subscription no longer exists. The page shows how things stand now.",
+      "notYours": "You cannot subscribe to this child's timetable.",
+      "tooMany": "Too many attempts. Wait a minute and try again."
+    },
+    "madeStatus": "{title}: subscription created, and the address is selected.",
+    "copyFailed": "The address could not be copied. It is selected, so you can copy it yourself."
+  },
+  "calendarFeedSettings": {
+    "title": "Calendar subscriptions",
+    "subtitle": "Let teachers, pupils and guardians see their published timetable in their own calendar app.",
+    "own": "Your own subscription",
+    "loadFailed": "The settings could not be loaded",
+    "audiencesTitle": "Who may subscribe",
+    "audiencesBody": "Everything is off until you turn it on. Turning a group off stops all its subscriptions at once, and they do not come back if you turn it on again.",
+    "audience": {
+      "TEACHER": "Teachers",
+      "STUDENT": "Pupils",
+      "GUARDIAN": "Guardians"
+    },
+    "live": "{count, plural, =0 {No subscriptions} one {# subscription} other {# subscriptions}}",
+    "countFailed": "The number could not be loaded.",
+    "turnedOn": {
+      "TEACHER": "Teachers can now subscribe",
+      "STUDENT": "Pupils can now subscribe",
+      "GUARDIAN": "Guardians can now subscribe"
+    },
+    "turnedOff": {
+      "TEACHER": "Teachers' subscriptions are off",
+      "STUDENT": "Pupils' subscriptions are off",
+      "GUARDIAN": "Guardians' subscriptions are off"
+    },
+    "stopTitle": {
+      "TEACHER": "Turn subscriptions off for teachers?",
+      "STUDENT": "Turn subscriptions off for pupils?",
+      "GUARDIAN": "Turn subscriptions off for guardians?"
+    },
+    "stopBody": "{count, plural, =0 {No subscription is in use right now.} one {# subscription stops working at once.} other {# subscriptions stop working at once.}} If you turn it on again, each person creates a new one.",
+    "stopConfirm": "Turn off",
+    "whatTitle": "What a subscription shows",
+    "whatTeacher": "A teacher gets their lessons with group, room and colleagues, and the lessons they cover. A lesson for named pupils names no pupil.",
+    "whatPupil": "A pupil and a guardian get the pupil's lessons as the family sees them in SchemaPro: the teachers as the school shows them to families, substitute and cancelled without names, and the pupil's holidays and study days. Never other pupils.",
+    "whatPublished": "The published timetable, from last week to a year ahead, for pupils and guardians to the last week of the school year. A draft never shows.",
+    "whatSecret": "The address is personal and shown once. Each person can create a new address or stop subscribing at any time.",
+    "whatLog": "A guardian's subscription is written to the read log as a read of the child's weekly timetable, once for each day the calendar fetches it.",
+    "stopBodyUnknown": "All of this group's subscriptions stop working at once. If you turn it on again, each person creates a new one.",
+    "countLoading": "Counting the subscriptions…"
   }
 }

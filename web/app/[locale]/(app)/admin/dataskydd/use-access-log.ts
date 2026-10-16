@@ -28,7 +28,8 @@ export const ACCESS_KINDS = [
   "TEACHING_TIME",
 ] as const;
 export type AccessKind = (typeof ACCESS_KINDS)[number];
-export type AccessChannel = "WEB" | "APP" | "INTEGRATION" | "OTHER";
+/** CALENDAR: a guardian's calendar feed of their child (Kalenderprenumeration). */
+export type AccessChannel = "WEB" | "APP" | "INTEGRATION" | "OTHER" | "CALENDAR";
 
 export interface AccessLogEntry {
   id: string;

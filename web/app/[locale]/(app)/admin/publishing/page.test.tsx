@@ -78,6 +78,9 @@ const SETTINGS: PublicationSettings = {
   publicEmbedTeachers: false,
   publicEmbedRooms: false,
   publicEmbedOrigins: [],
+  calendarFeedTeachers: false,
+  calendarFeedStudents: false,
+  calendarFeedGuardians: false,
 };
 
 const publication = (id: string, kind: string, validFrom: string, validTo: string) => ({

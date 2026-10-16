@@ -95,6 +95,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/timetable": "SCHEMALAGGNING",
   "/admin/gaps": "SCHEMALAGGNING",
   "/admin/publishing": "PUBLICERING",
+  // Kalenderprenumeration's switches are PublicationSettings, Publicering's.
+  "/admin/calendar-feeds": "PUBLICERING",
   "/admin/lessons": "DRIFT",
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",
