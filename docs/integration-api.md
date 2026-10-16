@@ -238,8 +238,9 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
 * **Errors.** S1's `Error {code, message}`. A 404 has no body. 400 codes are
   `INVALID_FILTER`, `INVALID_ID`, `INVALID_PAGE_TOKEN`,
   `SORTKEY_NOT_SUPPORTED` and `INVALID_BODY`. 403 is `SCOPE_MISSING`, or
-  `NOT_SHARED` for attendance and absence at a school that has not decided
-  to share them. 503 `TOO_LARGE` is S1's "Svaret är förstort" (a calendar
+  `NOT_SHARED` for attendance and absence at a school that does not share
+  them (and for `/deletedEntities` naming them, or naming nothing, at a
+  school that has stopped). 503 `TOO_LARGE` is S1's "Svaret är förstort" (a calendar
   lookup over 5000 events, an attendance lookup over 5000 attendances). The message never
   echoes a value you sent. **Logs carry the method, the path and the status,
   never the query string**, so a personnummer or a name in a filter never
@@ -451,17 +452,20 @@ calendarEvents, rooms, syllabuses, organisations, attendances, absences},
 pageToken}`. The keys are S1's own spellings, `activitites` included. The
 response has only the categories asked for that the key may read, with the
 ids removed after `after`; `attendances` and `absences` only while the
-school shares (a key that could read nothing else is 403 `NOT_SHARED`).
-"Removed" means: a person deactivated or deleted, a group, room, subject or
-lesson deleted, a master deleted or parked (DIRECT) or absent from a new
-publication (DRAFT), a post deleted, an id superseded by a link, a stretch
-of a changing post that is no longer emitted, the activities and duties of a
-year that stops being active, an attendance or absence deleted (by gallring
-too), and every attendance and absence of a pupil who is deactivated
-(unburied when the pupil is active again), the last two only while the
-school shares. A future year's rows are never recorded. Tombstones are kept
-400 days. A guardian's id may appear under `persons` for a key without
-`responsibles.read`: an id and nothing more.
+school shares. At a school that has never shared they are left out (a key
+that could read nothing else is 403 `NOT_SHARED`); at one that has stopped,
+a request that names them, or names no category at all, is 403 `NOT_SHARED`
+(see "Starting, stopping, starting again"). "Removed" means: a person
+deactivated or deleted, a group, room, subject or lesson deleted, a master
+deleted or parked (DIRECT) or absent from a new publication (DRAFT), a post
+deleted, an id superseded by a link, a stretch of a changing post that is no
+longer emitted, the activities and duties of a year that stops being active,
+an attendance or absence deleted (by gallring too), and every attendance and
+absence of a pupil who is deactivated (unburied when the pupil is active
+again), the last two once the school has ever shared, whether or not it
+shares at the moment. A future year's rows are never recorded. Tombstones
+are kept 400 days. A guardian's id may appear under `persons` for a key
+without `responsibles.read`: an id and nothing more.
 
 **Lookups**: S1's bodies, at most 1000 ids in all. `persons/lookup {ids,
 civicNos}` (civicNos match nothing). `organisations/lookup {ids,
@@ -498,15 +502,28 @@ decision is not shared.**
 * **What leaves** is minutes per lesson and absence as giltig or ogiltig, and
   an absence's time and whether it is a granted leave. **Never** a reason, a
   note, a leave request's reason, the kind of report, or who reported it.
-* **Starting, stopping, starting again.** While a school does not share,
-  nothing about its attendance is recorded for the provider: no
-  `meta.modified`, no tombstone. When it starts, an integration reads
-  `/attendances` and `/absences` whole; a row not changed since it was
-  written is dated by its creation. When it stops, every read is 403
-  `NOT_SHARED`, `/deletedEntities` no longer lists the two categories, and
-  **the integration must delete the attendance and absence it holds** from
-  the school: nothing will tell it what changed meanwhile. If the school
-  starts again, the integration reads both whole again.
+* **Starting, stopping, starting again.** A school that has never shared
+  records nothing of its attendance for the provider.
+  * **When it starts**, every Attendance and Absence reads as modified at
+    that moment (`meta.modified` is never earlier than the start of the
+    current run of sharing), so an incremental read from any time before
+    it reads both whole: a first sync can ask `meta.modified.after` the
+    start of term and get every row.
+  * **While it is stopped**, every read of the two is 403 `NOT_SHARED`, and
+    so is `/deletedEntities` when it names them or names no category (name
+    the others to read only those). The integration should delete the
+    attendance and absence it holds from the school. A removal meanwhile
+    (gallring's purge, a pupil who leaves, a deleted record) is still
+    recorded; a change is not.
+  * **When it starts again**, everything reads as modified at that moment
+    again, so the integration's next incremental read from before the stop
+    reads every row as it is now, whether or not it saw the 403;
+    `/deletedEntities` after that same cursor lists what went meanwhile
+    (its cursor could not move past those tombstones, since the call was
+    refused while they were hidden); and every subscription to them that
+    has not been told since is told once, with `deletedEntities: true`,
+    even if nothing changes after the start. An integration that missed
+    the whole stop therefore ends up holding exactly what is shared.
 * **Every read is in the läslogg** (PersonalDataAccess, `/admin/dataskydd`),
   with the key as reader and the channel INTEGRATION: an attendance as
   `ATTENDANCE`, a reported absence as `ABSENCE_REPORTS`, a granted leave's
@@ -518,18 +535,22 @@ decision is not shared.**
   night removed.
 * **meta.modified** of an Attendance moves with its status, its lesson or
   pupil, the lesson's times (the minutes), the pupil's id being linked to the
-  source, and its year being activated; of an Absence with its date and
-  times, whether it is a granted leave, its pupil, the pupil's id and the
-  school's timezone. A note moves neither, nor a re-save of the register.
+  source, and its year becoming emitted (activated, or a new start date); of
+  an Absence with its date and times, whether it is a granted leave, its
+  pupil, the pupil's id and the school's timezone. A note moves neither, nor
+  a re-save of the register. Either is never earlier than the start of the
+  school's current run of sharing, and `meta.modified.after` and `.before`
+  compare exactly what is emitted, for both resources.
 * **A granted leave and a span.** Only the leave decision marks a day as
   `Beviljad ledighet` (a guardian or a pupil who tries is refused); and a
   reported span ends after it starts (a report from before 20261114090000
   that does not is served as the whole day).
 * **Subscriptions** may name `Attendance` and `Absence` (with the scope, and
   only while the school shares: else 403 `NOT_SHARED`). A school that stops
-  sharing stops their notices at once, and so does a key that loses the
-  scope; the other resource types of the same subscription are notified as
-  before.
+  sharing stops their notices at once, even of a change made just before,
+  and so does a key that loses the scope; the other resource types of the
+  same subscription are notified as before. When it starts again, each such
+  subscription is told once (above).
 
 Read only: S1's `POST /attendances`, `DELETE /attendances/{id}` and `POST
 /absences` are not served (404); a school's register is not written by an
@@ -991,18 +1012,36 @@ tables read as empty to the service principal, and through the functions a
 school that has not decided gives its key nothing, the sharing school's key
 reads its own rows and no other school's, a key of one school named with the
 other reads nothing, and once a school decides, each key reads exactly what
-its scope says, only this year's attendance of active pupils, a revoked or
-scopeless key nothing, PostgREST's role may not call them, and nothing again
-when it stops (151); only a decision writes `grantedLeave`, a decider's leave
-day is one without the column, and a span ends after it starts (152); a
-decision is the administrator's, stamped and never changed (153); and while
-the school shares, the versions and tombstones follow a status, the lesson's
-times, a granted leave, a relink, a year activated, a removal, a removed
-lesson and a pupil who leaves and comes back, seen only by a key with the
-scope (154). The adapter probe's (nv-a)–(nv-i) run the same through the real
-services, including that a school that does not share records nothing, the
-school's timezone, a gallring night, and a subscription that stops hearing
-when the school stops sharing.
+its scope says, only this year's attendance of active pupils, every row
+reading as modified when the school started sharing (a read from before
+that moment is whole, a second decision to share is not a new start), a
+revoked or scopeless key nothing, PostgREST's role may not call them, and
+nothing again when it stops (151); only a decision writes `grantedLeave`, a
+decider's leave day is one without the column, and a span ends after it
+starts (152); a decision is the administrator's, stamped and never changed
+(153); and the versions and tombstones follow a status, the lesson's times,
+a granted leave, a relink, a year activated, a removal, a removed lesson and
+a pupil who leaves and comes back, seen only by a key with the scope, and
+once the school has stopped a removal is still buried and nothing is
+versioned (154). The adapter probe's (nv-a)–(nv-j) run the same through the
+real services, including that a school that never shared records nothing,
+the school's timezone, a gallring night, a subscription that stops hearing
+when the school stops sharing, and an integration that misses a stop and a
+start between two reads and is still told everything (nv-j).
+
+The six migrations after `20261114090000` exist for production's sake: it
+migrates while the previous API serves requests, and the reviewed single
+migration deadlocked with a register save, a lesson deleted, the webhook
+tick and a provider read on a throwaway Postgres 17 (each time the request
+was the side aborted). Now each migration takes its locks first, all at
+once or none (NOWAIT, retried every 50 ms, giving up after 30 s with
+nothing changed, as `20261104090000` does), each table in the weakest mode
+it needs, so it never waits while it holds a lock and no request queues
+behind it; the index is built CONCURRENTLY; and the four tables requests
+take in contradicting orders (keys, subscriptions, versions, tombstones)
+are changed one per migration, so each needs only its own table free.
+Raced against the same five request shapes, none of the seven ends either
+side.
 
 Section 4b runs both principals on a connection where an earlier transaction
 set user claims, as a pooled connection has after any user request. PostgreSQL
