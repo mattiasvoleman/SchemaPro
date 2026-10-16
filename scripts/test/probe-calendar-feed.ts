@@ -28,7 +28,12 @@
  *         is refused, so none lives on silent until the owner or the link
  *         comes back; and a live feed the door refuses (its
  *         owner's role changed with the triggers off, as a restore runs) is
- *         ended by the door and stays ended when the role is put back.
+ *         ended by the door and stays ended when the role is put back;
+ *   kf-g  a guardian's feed made during an SS12000 apply of the school waits
+ *         for the apply (readLocalSlice holds the school's people lock), and
+ *         in the apply's scan order that deadlocked before (the child's row
+ *         locked, then the guardian's) the scan never waits for the feed:
+ *         no side is aborted, and the feed is made after.
  */
 import { strict as assert } from 'node:assert';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
@@ -41,6 +46,7 @@ import { feedIcs } from '../../src/calendar-feed/ics';
 import { icsProblems } from '../../src/calendar-feed/ics-check';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { FamilyScheduleService } from '../../src/family/family-schedule.service';
+import { readLocalSlice } from '../../src/integration/ss12000-sync/local-slice';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
@@ -103,6 +109,7 @@ export async function calendarFeedChecks(owner: Client, api: PrismaService, mark
   const pupil = await person('STUDENT', 'Kim', 'Elev', k7a);
   const sibling = await person('STUDENT', 'Kaj', 'Syskon', k7b);
   const guardian = await person('GUARDIAN', 'Kerstin', 'Förälder');
+  const admin = await person('SCHOOL_ADMIN', 'Klara', 'Rektor');
   await owner.query(`INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES ($1, $2, $3), ($1, $2, $4)`, [s, guardian.id, pupil.id, sibling.id]);
   await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, spanska, pupil.id]);
   await owner.query(
@@ -319,6 +326,65 @@ export async function calendarFeedChecks(owner: Client, api: PrismaService, mark
       assert.equal(await liveOf(teacher.id), 0, 'the door left a feed it refused live');
       await owner.query(`UPDATE "Users" SET role = 'TEACHER' WHERE id = $1`, [teacher.id]);
       assert.equal(await readFeed(api, tokens.teacher!), null, 'a feed the door ended came back with the role');
+    });
+
+    await check('(kf-g) a guardian\'s feed made during an SS12000 apply waits for it, and the apply\'s scan never waits for the feed', async () => {
+      const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const peopleLockHeld = async () =>
+        Number(
+          (
+            await one<{ n: string }>(
+              `SELECT count(*)::text AS n FROM pg_locks l, (SELECT hashtextextended($1, 0) AS k) key
+                WHERE l.locktype = 'advisory' AND l.mode = 'ExclusiveLock' AND l.granted AND l.objsubid = 1
+                  AND l.classid = ((key.k >> 32) & 4294967295)::oid AND l.objid = (key.k & 4294967295)::oid`,
+              [`Users:${s}`],
+            )
+          ).n,
+        ) > 0;
+      // The real apply's locks, held open: the school's people lock, then every row of the school.
+      let holding!: () => void;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (holding = resolve));
+      const released = new Promise<void>((resolve) => (release = resolve));
+      const apply = api.withRls(principal(admin, Role.SCHOOL_ADMIN), async (tx) => {
+        await readLocalSlice(tx, s, { lock: true });
+        holding();
+        await released;
+      });
+      await held;
+      assert.ok(await peopleLockHeld(), 'the apply does not hold the school\'s people lock');
+      let settled = false;
+      const during = feeds.create({ studentId: pupil.id }, asGuardian).finally(() => (settled = true));
+      await pause(400);
+      assert.equal(settled, false, 'a feed was made while the apply held the school');
+      release();
+      await apply;
+      assert.ok((await during).token, 'the feed made during the apply was not made after it');
+
+      // The order that deadlocked: the apply's scan has the child's row and
+      // not yet the guardian's when the feed is asked for. The feed must wait
+      // for the school's people lock without taking the guardian's row, so
+      // the scan's next row is free.
+      await owner.query('BEGIN');
+      await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`Users:${s}`]);
+      await owner.query(`SELECT 1 FROM "Users" WHERE id = $1 FOR NO KEY UPDATE`, [pupil.id]);
+      const interleaved = feeds.create({ studentId: pupil.id }, asGuardian).then(
+        () => 'made',
+        (error: unknown) => `failed: ${(error as Error).message}`,
+      );
+      await pause(400);
+      let scanned: string;
+      try {
+        await owner.query(`SET LOCAL lock_timeout = '3s'`);
+        await owner.query(`SELECT 1 FROM "Users" WHERE id = $1 FOR NO KEY UPDATE`, [guardian.id]);
+        scanned = 'free';
+      } catch (error) {
+        // A lock timeout (the feed holds the guardian) or the deadlock itself.
+        scanned = `waited: ${(error as { code?: string }).code ?? ''} ${(error as Error).message}`;
+      }
+      await owner.query(scanned === 'free' ? 'COMMIT' : 'ROLLBACK');
+      assert.equal(scanned, 'free', 'the apply\'s scan waited for the feed\'s lock on the guardian');
+      assert.equal(await interleaved, 'made', 'the feed asked for mid-scan did not survive the apply');
     });
   } finally {
     await sweepCalendarFeedSchool(owner, marker);

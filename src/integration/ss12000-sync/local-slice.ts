@@ -33,6 +33,13 @@ const day = (value: Date | null): string | null => (value ? value.toISOString().
 
 export async function readLocalSlice(tx: PrismaClient, schoolId: string, options: SliceReadOptions): Promise<SchoolSlice> {
   if (options.lock) {
+    // The school's people, before any of their rows (20261112091000): a
+    // guardian making a calendar feed takes this lock shared before it locks
+    // the guardian's row and then the child's (app.calendar_feed_create). The
+    // scan below locks in the table's order, which can be the child before
+    // the guardian; without the lock first, each side could hold the row the
+    // other waits for.
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`Users:${schoolId}`}, 0))`);
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "Users" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "StudentGroups" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);
     await tx.$executeRaw(Prisma.sql`SELECT 1 FROM "GuardianStudents" WHERE "schoolId" = ${schoolId}::uuid FOR NO KEY UPDATE`);

@@ -79,15 +79,23 @@ describe('readLocalSlice', () => {
     const tx = createTxMock();
     await readLocalSlice(tx as unknown as PrismaClient, 'school', { lock: true });
     const sql = tx.$executeRaw.mock.calls.map(([statement]) => (statement as { strings: string[] }).strings.join('?'));
-    expect(sql).toHaveLength(7);
+    expect(sql).toHaveLength(8);
     for (const table of ['Users', 'StudentGroups', 'GuardianStudents', 'StudentGroupMembers', 'Ss12000DutyLinks', 'SchoolUnits']) {
       expect(sql.some((text) => text.includes(`"${table}"`) && text.includes('FOR NO KEY UPDATE'))).toBe(true);
     }
+    const advisory = (key: string) =>
+      tx.$executeRaw.mock.calls.findIndex(
+        ([statement]) =>
+          (statement as { strings: string[] }).strings.join('?').includes('pg_advisory_xact_lock(hashtextextended(') &&
+          (statement as { values: unknown[] }).values[0] === key,
+      );
+    // The school's people lock first of all (20261112091000), before any row
+    // of Users: a guardian's calendar feed takes it shared before its two rows.
+    expect(advisory('Users:school')).toBe(0);
     // And the school's unit lock (20261031090000), before the units' row locks: a row lock queues no INSERT.
-    const unitLock = sql.findIndex((text) => text.includes('pg_advisory_xact_lock(hashtextextended('));
+    const unitLock = advisory('SchoolUnits:school');
     expect(unitLock).toBeGreaterThanOrEqual(0);
     expect(unitLock).toBeLessThan(sql.findIndex((text) => text.includes('"SchoolUnits"')));
-    expect(tx.$executeRaw.mock.calls[unitLock]![0].values).toEqual(['SchoolUnits:school']);
   });
 
   it('calls a person deactivated by an applied sync change, and untouched since, deactivatedBySync', async () => {
