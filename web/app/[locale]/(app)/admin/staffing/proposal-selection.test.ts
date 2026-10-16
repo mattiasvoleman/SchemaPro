@@ -90,6 +90,32 @@ describe("loadsUnderSelection", () => {
     expect(loadsUnderSelection(proposal, new Set(), 5).get("anna")?.overLimit).toBe(false);
   });
 
+  it("does not let the gateway's two-decimal rounding grow a teacher who gets nothing", () => {
+    // Already over in the autumn at 500, two rows of 33.3333 a week each: 566.67 with both,
+    // and 566.67 − 2 × 33.33 = 500.01 with neither, a hundredth the rounding made, not a change.
+    const proposal = {
+      teachers: [
+        {
+          ...teacher("anna", 400, 500, 566.67, "OVER"),
+          period: { from: "2027-01-11", to: "2027-06-11" },
+          plannedStretch: 1,
+          stretches: [
+            { from: "2026-08-17", to: "2027-01-10", weeks: 19, targetMinutesPerWeek: 400, before: 500, after: 566.67 },
+            { from: "2027-01-11", to: "2027-06-11", weeks: 20, targetMinutesPerWeek: 400, before: 500, after: 566.67 },
+          ],
+        },
+      ],
+      assignments: [
+        { ...move("r1", null, "anna", 33.33), toStretchCharges: [33.33, 33.33] },
+        { ...move("r2", null, "anna", 33.33), toStretchCharges: [33.33, 33.33] },
+      ],
+    };
+    const load = loadsUnderSelection(proposal, new Set(), 10).get("anna")!;
+    expect(load.exact).toBe(500.01);
+    expect(load.grows).toBe(false);
+    expect(load.overLimit).toBe(false);
+  });
+
   it("is the gateway's own figures, untouched, when every change is selected", () => {
     const loads = loadsUnderSelection(proposal, new Set(["r1", "r2", "r3"]), 10);
     expect(loads.get("a")).toEqual({
