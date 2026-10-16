@@ -170,6 +170,13 @@ export class AttendanceService {
       const studentIds = [...new Set(dto.records.map((entry) => entry.studentId))];
       await this.assertStudentsAreOnRoster(tx, lesson, studentIds);
 
+      // At a school that shares attendance with integrations each status
+      // written moves a version the SS12000 provider reads, one upsert at a
+      // time, and an SS12000 apply that links pupils moves all of theirs and
+      // holds them to its end: wait for a running apply before the first
+      // write, so neither holds one the other waits for (20261114090000).
+      await tx.$executeRaw(Prisma.sql`SELECT app.attendance_recording_waits_for_sync()`);
+
       let created = 0;
       let updated = 0;
 

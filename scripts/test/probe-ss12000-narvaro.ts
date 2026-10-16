@@ -44,7 +44,11 @@
  *         departed pupil), and a subscriber is told;
  *   nv-k  a start decided while a notice claimed during the stop is in
  *         flight, settled after it: the next tick still tells the start,
- *         once.
+ *         once;
+ *   nv-l  a register save at a sharing school while an SS12000 apply links
+ *         its pupils in the opposite order: the save waits for the apply
+ *         (app.attendance_recording_waits_for_sync) and both go through,
+ *         where each would otherwise hold a version the other waits for.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -57,6 +61,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { AttendanceService } from '../../src/attendance/attendance.service';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { GallringJob } from '../../src/gallring/gallring.job';
 import { AttendanceSharingController } from '../../src/integration/attendance-sharing.controller';
@@ -69,6 +74,7 @@ import { Ss12000V2Service, type V2Caller } from '../../src/integration/ss12000-v
 import { Ss12000SubscriptionsService } from '../../src/integration/ss12000-v2/subscriptions.service';
 import { Ss12000WebhookDeliveryService } from '../../src/integration/ss12000-v2/webhook-delivery.service';
 import { JobRunner } from '../../src/jobs/job-runner';
+import type { NotificationsService } from '../../src/notifications/notifications.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { checkSchema } from '../../test/utils/s1-contract';
 import { makeTestTls } from '../../test/utils/test-tls';
@@ -639,6 +645,57 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       assert.deepEqual(JSON.parse(received.at(-1)!.body), { modifiedEntites: ['Attendance'], deletedEntities: true });
       await delivery.tick();
       assert.equal(received.length, before + 1, 'a start was told twice');
+    });
+
+    await check('(nv-l) a register save waits for an SS12000 apply that links its pupils, and neither is aborted', async () => {
+      const shares = await one<{ shares: boolean }>(`SELECT app.attendance_shared($1::uuid) AS shares`, [s]);
+      assert.equal(shares.shares, true, 'the school does not share before the race');
+      // Two pupils marked absent in a lesson; every record has its version (written while the school shares).
+      const raceLesson = await lessonOf(klass.id, day(-1));
+      const first = await record(raceLesson.id, pupil.id, 'ABSENT');
+      const second = await record(raceLesson.id, leaver.id, 'ABSENT');
+      const notifications = { notifyUsers: async () => 0, guardiansOf: async () => [] } as unknown as NotificationsService;
+      const attendance = new AttendanceService(api, notifications);
+
+      // The apply's shape (readLocalSlice with lock, then one ss12000Id update per PERSON LINK, in
+      // change order), as the owner: the school's people lock, then the first pupil linked, which
+      // moves and holds the versions of every record of theirs until the apply ends.
+      await owner.query('BEGIN');
+      let committed = false;
+      try {
+        // As the administrator whose apply it is: only an administrator's apply writes an ss12000Id.
+        await owner.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`, [adminRow.authId]);
+        await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended('Users:' || $1::text, 0))`, [s]);
+        await owner.query(`UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = $1`, [pupil.id]);
+        // Meanwhile the register is corrected, the other pupil first: without the wait it would hold
+        // the second pupil's version while it waits for the first's, which the apply holds.
+        const saving = attendance
+          .reportAttendance(
+            { calendarLessonId: raceLesson.id, records: [{ studentId: leaver.id, status: 'LATE' }, { studentId: pupil.id, status: 'LATE' }] } as never,
+            admin,
+          )
+          .then(
+            (answer) => ({ answer, afterCommit: committed, error: null as unknown }),
+            (error: unknown) => ({ answer: null, afterCommit: committed, error }),
+          );
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        // The apply links the second pupil, which moves that pupil's versions too, and commits.
+        await owner.query(`UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = $1`, [leaver.id]);
+        committed = true;
+        await owner.query('COMMIT');
+        const saved = await saving;
+        assert.equal(saved.error, null, `the register save was aborted: ${String(saved.error)}`);
+        assert.deepEqual(saved.answer, { created: 0, updated: 2 }, 'the register save did not write both');
+        assert.equal(saved.afterCommit, true, 'the register save wrote while the apply was running');
+      } catch (error) {
+        if (!committed) await owner.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      }
+      const statuses = await owner.query<{ status: string }>(
+        `SELECT status::text AS status FROM "AttendanceRecords" WHERE id = ANY ($1::uuid[])`,
+        [[first.id, second.id]],
+      );
+      assert.deepEqual(statuses.rows.map((row) => row.status), ['LATE', 'LATE'], 'the register save is not what the records say');
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());

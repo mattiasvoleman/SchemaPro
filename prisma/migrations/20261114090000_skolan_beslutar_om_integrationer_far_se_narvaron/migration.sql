@@ -201,8 +201,8 @@
 -- them), app.attendance_shared, app.attendance_shared_since,
 -- app.attendance_stopped_since, app.attendance_run_xid and
 -- app.attendance_ever_shared are nobody's; app.service_reads_attendance,
--- app.service_reads_attendance_removals and the two read functions are
--- app_authenticated's alone.
+-- app.service_reads_attendance_removals, the two read functions and
+-- app.attendance_recording_waits_for_sync are app_authenticated's alone.
 
 DO $$
 DECLARE
@@ -375,6 +375,35 @@ $$;
 
 COMMENT ON FUNCTION app.attendance_stopped_since(uuid) IS
   'When the school''s current stop of sharing attendance with integrations began (the first decision not to share after the last to share); NULL while it shares or before it ever has. A row created since never left SchemaPro.';
+
+-- A register save at a school that shares writes a version per record whose
+-- status it changes, one statement per pupil in the client's order (the
+-- recorders below). An SS12000 apply that links or brings back pupils writes
+-- the versions of every record of each (app.ss12000_v_attendance_pupils), one
+-- statement per pupil, and holds them to its end. In opposite orders each
+-- would hold a version the other waits for, and Postgres would abort one. The
+-- apply holds the school's people lock from its start (pg_advisory_xact_lock
+-- of 'Users:<school>', readLocalSlice), so the save takes it shared before
+-- its first write, as a guardian's calendar feed does
+-- (app.calendar_feed_create): it waits for a running apply, an apply waits
+-- for it, and neither holds a version while it waits. Before the first
+-- write, never from a recorder: a trigger runs after the insert's foreign key
+-- checks, holding KEY SHARE on the pupil's row, which an apply that changes
+-- the pupil's e-mail would wait for. Only while the school shares: otherwise
+-- the save writes no version and waits for nothing.
+CREATE FUNCTION app.attendance_recording_waits_for_sync() RETURNS void
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  school uuid := app.current_school_id();
+BEGIN
+  IF school IS NOT NULL AND app.attendance_shared(school) THEN
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('Users:' || school::text, 0));
+  END IF;
+END
+$$;
+
+COMMENT ON FUNCTION app.attendance_recording_waits_for_sync() IS
+  'Called by the register save before its first write: at a school that shares attendance, waits for a running SS12000 apply (the shared side of the school''s ''Users:<school>'' lock), so the versions each writes are never held one each.';
 
 -- Of the removed rows p_ids (p_created their createdAt, in the same order),
 -- the ones that may have left SchemaPro, and so are buried. While the school
@@ -973,8 +1002,10 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- The provider's questions and its two reads: the API alone.
+  -- The provider's questions and its two reads, and the register save's
+  -- wait for a running apply: the API alone.
   FOREACH fn IN ARRAY ARRAY[
+    'app.attendance_recording_waits_for_sync()',
     'app.service_reads_attendance(text)',
     'app.service_reads_attendance_removals(text)',
     'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',
