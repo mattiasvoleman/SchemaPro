@@ -106,7 +106,9 @@ export class Ss12000SubscriptionsService {
     const input = await this.parse(caller, body);
     return this.run(caller, async (tx) => {
       // Attendance and Absence only at a school that shares them; a school
-      // that stops sharing stops their notices too (app.ss12000_notifies).
+      // that stops sharing stops the notices of their changes
+      // (app.ss12000_notifies), and goes on telling their removals
+      // (app.ss12000_notifies_removals).
       for (const resource of input.resourceTypes) {
         if (!SHARED_ONLY.has(resource)) continue;
         const scope = EMITTED_RESOURCES[resource] as 'attendances.read' | 'absences.read';

@@ -37,7 +37,8 @@
  *   nv-j  a school that stops and starts again between two reads of an
  *         integration: while it is stopped an unfiltered /deletedEntities
  *         still answers every category, the person who left and what went
- *         of attendance and absence by id; afterwards the next incremental
+ *         of attendance and absence by id, never what was reported and
+ *         went within the stop (with the person or not); afterwards the next incremental
  *         read from before the stop reads what was written meanwhile and
  *         nothing that went, /deletedEntities lists what went (a purge, a
  *         departed pupil), and a subscriber is told;
@@ -502,6 +503,8 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
         `SELECT app.attendance_shared_since($1::uuid)`,
         `SELECT app.attendance_ever_shared($1::uuid)`,
         `SELECT app.attendance_run_xid($1::uuid)`,
+        `SELECT app.attendance_stopped_since($1::uuid)`,
+        `SELECT app.ss12000_may_have_left($1::uuid, 'Absence', ARRAY[$1::uuid], ARRAY[now()])`,
         `SELECT app.ss12000_notifies('{Attendance}'::text[], '{attendances.read}'::text[], $1::uuid)`,
         `SELECT app.ss12000_notifies_removals('{Attendance}'::text[], '{attendances.read}'::text[], $1::uuid)`,
         `SELECT app.ss12000_emitted_years($1::uuid)`,
@@ -554,19 +557,29 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       await pause();
 
       // It stops. Meanwhile: a purge, a pupil who leaves, a register saved, an absence reported.
+      // And what never left: an absence reported and withdrawn, and the leaving classmate's
+      // sick days reported just before they go (told with them, they would count them).
       await sharing.record({ shares: false }, admin);
       await owner.query(`DELETE FROM "AttendanceRecords" WHERE id = $1`, [present.id]);
+      const withdrawn = await report(pupil.id, guardianRow.id, day(13), 'SICK', NOTE, false);
+      await owner.query(`DELETE FROM "AbsenceReports" WHERE id = $1`, [withdrawn.id]);
+      const unseen = await report(classmate.id, guardianRow.id, day(14), 'SICK', NOTE, false);
       await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [classmate.id]);
       const meanwhile = await record(lesson.id, leaver.id, 'EXCUSED');
       const reported = await report(pupil.id, guardianRow.id, day(12), 'SICK', NOTE, false);
       // S1's default /deletedEntities, no entities, is still answered whole while the school is
-      // stopped: the person who left, and the attendance and absence that went, by id.
+      // stopped: the person who left, and the attendance and absence that went, by id; never
+      // what was written and went within the stop.
       const stopped = await provider.deletedEntities(caller, { after: cursor });
       assert.deepEqual(stopped.data['persons'], [classmate.id], 'a person who left while the school was stopped is not told');
       assert.deepEqual(
         { attendances: [...stopped.data['attendances']!].sort(), absences: [...stopped.data['absences']!].sort() },
         { attendances: [present.id, late.id].sort(), absences: [hours.id, granted.id].sort() },
-        'what went while the school was stopped is not told while it is',
+        'what went while the school was stopped is not told while it is, or what never left is',
+      );
+      assert.ok(
+        !stopped.data['absences']!.includes(withdrawn.id) && !stopped.data['absences']!.includes(unseen.id),
+        'an absence reported while the school was stopped is told of its removal',
       );
       // Nothing else of them is open meanwhile.
       await assert.rejects(provider.listAttendances(caller, {}), code('NOT_SHARED'));

@@ -22080,7 +22080,8 @@ BEGIN
     'app.ss12000_v_attendance()', 'app.ss12000_v_absences()', 'app.ss12000_v_attendance_pupils()',
     'app.ss12000_v_attendance_lessons()', 'app.ss12000_v_absence_timezone()', 'app.ss12000_v_attendance_years()',
     'app.ss12000_notifies(text[], text[], uuid)', 'app.ss12000_notifies_removals(text[], text[], uuid)',
-    'app.attendance_run_xid(uuid)'
+    'app.attendance_run_xid(uuid)', 'app.attendance_stopped_since(uuid)',
+    'app.ss12000_may_have_left(uuid, text, uuid[], timestamptz[])'
   ] LOOP
     FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
       CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
@@ -22531,13 +22532,19 @@ ROLLBACK;
 -- en borttagen post, en borttagen lektion och en elev som slutar begravs, och
 -- nästa års borttagna lektion begravs aldrig. När skolan har slutat dela
 -- begravs en borttagen post ändå och visas för nyckeln med omfånget (inte
--- för en utan), inget versioneras, och när den delar igen läses det som
--- skrevs under tiden som ändrat då (20261114090000).
+-- för en utan), men inte en post som skapades under uppehållet och togs bort
+-- under det, och en elev som slutar under uppehållet tar med sig det hen
+-- hade före det, inte det som rapporterades under det; inget versioneras,
+-- och när skolan delar igen läses det som skrevs under tiden som ändrat då
+-- (20261114090000).
 --
 -- The school decides first: versions are written only while it shares, and
--- tombstones once it ever has (the probe holds a school that never shared to
--- writing nothing, as the owner; here the versions of a school that does not
--- share are not even visible). Read back
+-- tombstones once it ever has, of what may have left (the probe holds a
+-- school that never shared to writing nothing, as the owner; here the
+-- versions of a school that does not share are not even visible). The
+-- section is one transaction, whose now() is before every decision in it,
+-- so a row "created while the school has stopped" is planted with
+-- createdAt = clock_timestamp(). Read back
 -- as the service principal of the school with its key (the versions' and
 -- tombstones' own arm), and a key without the scope, or with only the other
 -- one, sees no Attendance version. Everything in one transaction, so "moved"
@@ -22555,6 +22562,15 @@ SELECT set_config('app.test_nv_narrow', (SELECT id FROM "IntegrationApiKeys" WHE
 SELECT set_config('app.test_nv_absences', (SELECT id FROM "IntegrationApiKeys" WHERE name = 'NV frånvaro')::text, true);
 SELECT set_config('app.test_nv_this_year', (SELECT id FROM "AcademicYears" WHERE name = 'Närvaro i år')::text, true);
 SELECT set_config('app.test_nv_next_year', (SELECT id FROM "AcademicYears" WHERE name = 'Närvaro nästa år')::text, true);
+-- A third pupil, reported sick before the school shares and left alone
+-- after (the other two are relinked, and leave and come back): an absence
+-- with no version that existed while the school shared.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+SELECT "schoolId", 'narvaro-tredje@example.invalid', 'Närvaro', 'Tredje', 'STUDENT', '00000000-0000-4000-8000-000000000157', true, "studentGroupId", now()
+  FROM "Users" WHERE id = current_setting('app.test_nv_classmate')::uuid;
+INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note)
+SELECT u."schoolId", u.id, app.current_user_id(), current_date + 10, 'SICK', 'rls154 före'
+  FROM "Users" u WHERE u.email = 'narvaro-tredje@example.invalid';
 INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (app.current_school_id(), true, 'RLS 154');
 CREATE FUNCTION pg_temp.nv154_xid(p_resource text, p_id uuid, p_key text DEFAULT NULL) RETURNS xid8
 LANGUAGE plpgsql AS $$
@@ -22620,19 +22636,27 @@ DECLARE
   lesson uuid;
   later uuid;
   fresh uuid;
+  absent_lesson uuid;
+  raced uuid;
+  withdrawn uuid;
+  quiet uuid;
+  unseen uuid;
+  planted uuid;
 BEGIN
   SELECT a.id, a."calendarLessonId" INTO present, lesson FROM "AttendanceRecords" a
     JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."studentId" = pupil AND l.date < current_date;
-  SELECT a.id INTO absent FROM "AttendanceRecords" a WHERE a."studentId" = classmate;
+  SELECT a.id, a."calendarLessonId" INTO absent, absent_lesson FROM "AttendanceRecords" a WHERE a."studentId" = classmate;
   SELECT a.id, a."calendarLessonId" INTO ahead, later FROM "AttendanceRecords" a
     JOIN "CalendarLessons" l ON l.id = a."calendarLessonId" WHERE a."studentId" = pupil AND l.date > current_date;
   SELECT id INTO sick FROM "AbsenceReports" WHERE "studentId" = pupil;
   SELECT id INTO granted FROM "AbsenceReports" WHERE "studentId" = classmate;
-  IF present IS NULL OR absent IS NULL OR ahead IS NULL OR sick IS NULL OR granted IS NULL THEN
+  SELECT id INTO planted FROM "AbsenceReports" WHERE note = 'rls154 före';
+  IF present IS NULL OR absent IS NULL OR ahead IS NULL OR sick IS NULL OR granted IS NULL OR planted IS NULL THEN
     RAISE EXCEPTION 'attendance versions: the fixtures are missing';
   END IF;
   -- Planted before the school shared: none has a version, and none was handed out.
-  IF pg_temp.nv154_xid('Attendance', present) IS NOT NULL OR pg_temp.nv154_xid('Absence', sick) IS NOT NULL THEN
+  IF pg_temp.nv154_xid('Attendance', present) IS NOT NULL OR pg_temp.nv154_xid('Absence', sick) IS NOT NULL
+     OR pg_temp.nv154_xid('Absence', planted) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: a row written before the school shared has a version';
   END IF;
 
@@ -22714,11 +22738,60 @@ BEGIN
     RAISE EXCEPTION 'attendance versions: a pupil who came back brought no version';
   END IF;
 
+  -- A row whose transaction began after the coming decision to stop read the
+  -- clock, and committed before the decision did: it saw the school share,
+  -- so it has a version, and its createdAt is after the stop began (planted
+  -- ahead here).
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "createdAt")
+  VALUES (school, classmate, app.current_user_id(), current_date + 7, 'SICK', clock_timestamp() + interval '1 hour')
+  RETURNING id INTO raced;
+
   -- The school stops. Meanwhile a removal is still buried (it has shared:
   -- the integration may hold the row), and nothing is versioned. When it
   -- shares again the tombstone is there to be told, and the row written
   -- meanwhile reads as modified at the moment it started again.
   INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares) VALUES (school, false);
+  -- What was never handed out is told to nobody: an absence and an
+  -- attendance created while the school has stopped, and removed meanwhile.
+  -- A second decision not to share in a row (a new reference) is not a new
+  -- beginning: the stop began at the first.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "createdAt")
+  VALUES (school, pupil, app.current_user_id(), current_date + 8, 'SICK', clock_timestamp()) RETURNING id INTO withdrawn;
+  INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES (school, false, 'RLS 154 igen');
+  DELETE FROM "AbsenceReports" WHERE id = withdrawn;
+  IF pg_temp.nv154_buried('Absence', withdrawn) THEN
+    RAISE EXCEPTION 'attendance versions: an absence created and removed while the school had stopped is told';
+  END IF;
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt", "createdAt")
+  VALUES (school, absent_lesson, classmate, 'ABSENT', now(), clock_timestamp()) RETURNING id INTO quiet;
+  DELETE FROM "AttendanceRecords" WHERE id = quiet;
+  IF pg_temp.nv154_buried('Attendance', quiet) THEN
+    RAISE EXCEPTION 'attendance versions: an attendance created and removed while the school had stopped is told';
+  END IF;
+  -- The raced one may have been read while the school shared: told. So is
+  -- one from before the stop that nothing ever versioned.
+  DELETE FROM "AbsenceReports" WHERE id = raced;
+  IF NOT pg_temp.nv154_buried('Absence', raced) THEN
+    RAISE EXCEPTION 'attendance versions: an absence versioned as the school stopped is not told of its removal';
+  END IF;
+  DELETE FROM "AbsenceReports" WHERE id = planted;
+  IF NOT pg_temp.nv154_buried('Absence', planted) THEN
+    RAISE EXCEPTION 'attendance versions: an absence from before the stop, never versioned, is not told of its removal';
+  END IF;
+  -- A pupil who leaves meanwhile takes what they had before the stop, told
+  -- at the instant of their own tombstone; what was reported meanwhile is
+  -- not told with them (it would count their absences while the school did
+  -- not share). They come back before the school starts again.
+  INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, "createdAt")
+  VALUES (school, pupil, app.current_user_id(), current_date + 9, 'SICK', clock_timestamp()) RETURNING id INTO unseen;
+  UPDATE "Users" SET "isActive" = false WHERE id = pupil;
+  IF NOT pg_temp.nv154_buried('Absence', sick) OR NOT pg_temp.nv154_buried('Attendance', present) THEN
+    RAISE EXCEPTION 'attendance versions: a pupil who left while the school had stopped left what they had before it unburied';
+  END IF;
+  IF pg_temp.nv154_buried('Absence', unseen) THEN
+    RAISE EXCEPTION 'attendance versions: an absence reported while the school had stopped is told with the pupil who left';
+  END IF;
+  UPDATE "Users" SET "isActive" = true WHERE id = pupil;
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
   VALUES (school, lesson, classmate, 'ABSENT', now()) RETURNING id INTO fresh;
   DELETE FROM "AbsenceReports" WHERE id = granted;

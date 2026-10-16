@@ -11,8 +11,12 @@
  *
  * attendances.read and absences.read (20261114090000) reach pupils' attendance
  * and absence, and only at a school whose decision in force shares them
- * (app.attendance_shared): with the scope and without the decision the
- * answer is 403 NOT_SHARED, and the database's own arms read nothing.
+ * (app.attendance_shared): with the scope and without the decision a read is
+ * 403 NOT_SHARED, and the database's read functions and versions answer
+ * nothing. Their removals are the exception: once the school has ever
+ * shared, a key with the scope reads the tombstones of what may have left
+ * also while it has stopped (app.service_reads_attendance_removals), the
+ * instruction to delete what the integration holds.
  */
 export const SCOPES = [
   'ss12000.v1',
@@ -70,7 +74,12 @@ export const EMITTED_RESOURCE_NAMES = Object.keys(EMITTED_RESOURCES) as EmittedR
 
 /**
  * The resources a key reads only while the school shares them (the school's
- * AttendanceSharingDecisions): /deletedEntities leaves out their categories,
- * a subscription is not told of them, and a read is 403 NOT_SHARED.
+ * AttendanceSharingDecisions): a read is 403 NOT_SHARED, a subscription to
+ * them is refused, and a subscription is not told of their changes. Their
+ * removals follow whether the school has ever shared instead: /deletedEntities
+ * answers their categories and a subscription is told of them also while the
+ * school has stopped (app.service_reads_attendance_removals,
+ * app.ss12000_notifies_removals), and leaves them out only before its first
+ * decision to share.
  */
 export const SHARED_ONLY: ReadonlySet<EmittedResource> = new Set<EmittedResource>(['Attendance', 'Absence']);
