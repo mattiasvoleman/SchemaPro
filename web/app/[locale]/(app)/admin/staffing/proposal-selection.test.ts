@@ -116,6 +116,29 @@ describe("loadsUnderSelection", () => {
     expect(load.overLimit).toBe(false);
   });
 
+  it("does not let it grow a teacher over the limit whose one row given away is kept", () => {
+    // 600.0167 after giving away 66.6667: the gateway sends 600.02, 66.67 and 666.68. Kept,
+    // 600.02 + 66.67 = 666.69, a hundredth above the before from three roundings, not a change.
+    const proposal = {
+      teachers: [teacher("eva", 600, 666.68, 600.02, "OK"), teacher("bob", 1000, 500, 566.67, "OK")],
+      assignments: [move("x", "eva", "bob", 66.67)],
+    };
+    const eva = loadsUnderSelection(proposal, new Set(), 10).get("eva")!;
+    expect(eva.exact).toBe(666.69);
+    expect(eva.status).toBe("OVER");
+    expect(eva.grows).toBe(false);
+    expect(eva.overLimit).toBe(false);
+    // The same in a stretch: Anna over in the autumn, giving away one undated row.
+    const changing = {
+      teachers: [changingAnna([666.68, 166.68], [600.02, 100.02]), teacher("bob", 1000, 500, 566.67, "OK")],
+      assignments: [{ ...move("x", "anna", "bob", 66.67), fromStretchCharges: [66.67, 66.67] }],
+    };
+    const anna = loadsUnderSelection(changing, new Set(), 10).get("anna")!;
+    expect(anna.exact).toBe(166.69);
+    expect(anna.grows).toBe(false);
+    expect(anna.overLimit).toBe(false);
+  });
+
   it("is the gateway's own figures, untouched, when every change is selected", () => {
     const loads = loadsUnderSelection(proposal, new Set(["r1", "r2", "r3"]), 10);
     expect(loads.get("a")).toEqual({
