@@ -72,7 +72,7 @@ export const HISTORY_OWN_ONLY = 'Du kan bara läsa historiken för din egen tjä
  * same numbers.
  */
 export interface TeacherEmploymentResponse
-  extends Omit<TeacherEmployment, 'employmentPercent' | 'reductionPercent'> {
+  extends Omit<TeacherEmployment, 'employmentPercent' | 'reductionPercent' | 'ss12000StretchKey'> {
   employmentPercent: number;
   reductionPercent: number;
   /**
@@ -110,7 +110,8 @@ export function toPeriodResponse(row: TeacherEmploymentPeriod): TeacherEmploymen
 export function toEmploymentResponse(
   row: TeacherEmployment & { periods?: TeacherEmploymentPeriod[] },
 ): TeacherEmploymentResponse {
-  const { periods, ...post } = row;
+  // The SS12000 stretch key is no reader's (20261104090000), not even the admin's.
+  const { periods, ss12000StretchKey: _key, ...post } = row;
   return {
     ...post,
     employmentPercent: Number(row.employmentPercent),

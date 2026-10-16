@@ -2495,6 +2495,12 @@ model TeacherEmployment {
   signature                    String?
   /// At most 500 characters.
   note                         String?
+  /// A value no reader of SchemaPro's data ever gets, which with the post's
+  /// id and a day names a changing post's SS12000 Duties after its first
+  /// (migration 20261104090000): a reader cannot compute the id of a stretch
+  /// that was buried, so /deletedEntities tells nothing of when the grad
+  /// changed. Random per post, written once by the default, never after.
+  ss12000StretchKey            String              @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)

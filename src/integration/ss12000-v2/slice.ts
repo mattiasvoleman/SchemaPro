@@ -97,6 +97,8 @@ export interface EmploymentRow {
   createdAt: Date;
   updatedAt: Date;
   contractKind?: 'FERIE' | 'SEMESTER';
+  /** Where the school shares: names a changing post's later Duties (ids.ts dutyStretchId); never emitted. */
+  stretchKey?: string;
 }
 
 export interface DutyLinkRow {
@@ -362,6 +364,7 @@ export class SchoolSlice {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       ...('contractKind' in row ? { contractKind: row.contractKind as 'FERIE' | 'SEMESTER' } : {}),
+      ...('ss12000StretchKey' in row ? { stretchKey: row.ss12000StretchKey as string } : {}),
     })) as EmploymentRow[];
   });
 

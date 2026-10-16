@@ -486,6 +486,8 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       teachingTargetMinutesPerWeek: 'COPY',
       signature: 'COPY',
       note: 'COPY',
+      // A new post, a new key: the next year's Duties are named by its own (20261104090000).
+      ss12000StretchKey: 'DEFAULT',
       ...timestamps,
     },
   },

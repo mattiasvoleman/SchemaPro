@@ -62,13 +62,15 @@ export function uuidV3(namespace: string, name: string): string {
 
 /**
  * The Duty id of a changing post's stretch after its first
- * (ss12000-duties.ts dutySegments): named by the post and the stretch's
- * first day, the two things a reader of the Duties sees. A period no Duty
- * shows — a nedsättning, a target, a period cut in two at the same grad —
- * names no stretch and moves no id. app.ss12000_stretch_id is the same.
+ * (ss12000-duties.ts dutySegments): named by the stretch's first day, which
+ * a reader of the Duties sees, so a period no Duty shows — a nedsättning, a
+ * target, a period cut in two at the same grad — names no stretch and moves
+ * no id; and by the post's ss12000StretchKey, which no reader ever gets, so
+ * nobody can compute the id of a stretch that was buried and learn from
+ * /deletedEntities when the grad changed. app.ss12000_stretch_id is the same.
  */
-export function dutyStretchId(postId: string, startDate: string): string {
-  return uuidV3(SCHEMAPRO_SS12000_NAMESPACE, `duty-from:${postId.toLowerCase()}:${startDate}`);
+export function dutyStretchId(postId: string, stretchKey: string, startDate: string): string {
+  return uuidV3(SCHEMAPRO_SS12000_NAMESPACE, `duty-from:${stretchKey.toLowerCase()}:${postId.toLowerCase()}:${startDate}`);
 }
 
 /** The Activity id of an ad-hoc lesson (a CalendarLesson with no master and no pending removal). */

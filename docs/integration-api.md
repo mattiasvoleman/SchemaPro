@@ -81,10 +81,12 @@ autumn's Duty and the spring's, each with its own `dutyPercent`,
 clipped to those dates. Every day of the läsår is in exactly one of them.
 `meta.created` is the post's; `meta.modified` is the latest of the post's,
 its periods' and its mentorships'. The first stretch keeps the post's id, so
-a reference to the post's Duty still resolves. Every other stretch is
-`UUIDv3(SchemaPro's SS12000 namespace, "duty-from:" + the post's id + ":" +
-its first day)`: named by what a reader of the Duties sees, so a period no
-Duty shows names nothing and moves no id. A period that changes only the
+a reference to the post's Duty still resolves. Every other stretch has an
+id SchemaPro derives from its first day and a value of the post that no
+reader ever gets: the same for as long as the stretch starts on that day,
+so a period no Duty shows names nothing and moves no id, and not one a
+reader can compute, so a stretch that is buried says nothing of when the
+grad changed. A period that changes only the
 nedsättning or the riktmärke splits nothing: the Duty carries neither, and
 its dates would publish when they changed. Nor does a grad that rounds to
 the same whole percent: `dutyPercent` is an integer, and the stretch keeps
@@ -343,9 +345,10 @@ stretch. `groups?expand=assignmentRoles`, which needs `duties.read`, names
 each stretch a mentorship falls in, clipped to it, as the Duties' own
 `assignmentRole` do. When a stretch stops being emitted (a period removed or
 changed, the opt-in turned off, the teacher linked), its id is listed by
-`/deletedEntities`. The database derives the stretch ids itself
-(`app.ss12000_split_duty_ids`, `app.ss12000_stretch_id`), so the versions
-and tombstones follow them. A write to a period moves a Duty's
+`/deletedEntities`; its id is opaque, so a key that reads the tombstones
+after the school stopped sharing learns no date from them. The database
+derives the stretch ids itself (`app.ss12000_split_duty_ids`), so the
+versions and tombstones follow them. A write to a period moves a Duty's
 `meta.modified` only when the stretches it makes change (dates, grad): a
 nedsättning or a target written in a period moves none. What moves the
 post's Duty moves every stretch of it. Posts already cut when the migration

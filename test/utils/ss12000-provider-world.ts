@@ -202,11 +202,13 @@ export class ProviderWorld {
     {
       id: W.emp1, schoolId: W.school, userId: W.t1, academicYearId: W.year, employmentPercent: 80, reductionPercent: 20,
       signature: 'TL', contractKind: 'FERIE', note: 'Nedsättning: föräldraledig fredagar', teachingTargetMinutesPerWeek: 900,
+      ss12000StretchKey: 'aaaabbbb-0000-4000-8000-00000000c0de',
       createdAt: t('2026-06-01T08:00:00Z'), updatedAt: t('2026-06-02T08:00:00Z'),
     },
     {
       id: W.emp1Past, schoolId: W.school, userId: W.t1, academicYearId: W.pastYear, employmentPercent: 100, reductionPercent: 0,
       signature: 'TL', contractKind: 'FERIE', note: null, teachingTargetMinutesPerWeek: null,
+      ss12000StretchKey: 'aaaabbbb-0000-4000-8000-00000000c0df',
       createdAt: t('2025-06-01T08:00:00Z'), updatedAt: t('2025-06-01T08:00:00Z'),
     },
   ];
