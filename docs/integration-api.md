@@ -452,8 +452,9 @@ pageToken}`. The keys are S1's own spellings, `activitites` included. The
 response has only the categories asked for that the key may read, with the
 ids removed after `after`; `attendances` and `absences` once the school has
 ever shared, also while it has stopped: an id and when it went is the
-instruction to delete, never anything of the row (see "Starting, stopping,
-starting again"). At a school that has never shared they are left out (a key
+instruction to delete, never anything of the row, and only of a row that
+may have been handed out (see "Starting, stopping, starting again"). At a
+school that has never shared they are left out (a key
 that could read nothing else is 403 `NOT_SHARED`). "Removed" means: a person
 deactivated or deleted, a group, room, subject or lesson deleted, a master
 deleted or parked (DIRECT) or absent from a new publication (DRAFT), a post
@@ -518,8 +519,12 @@ decision is not shared.**
     (gallring's purge, a pupil who leaves, a deleted record) is told by id,
     and so is everything else that goes, so an integration that keeps
     calling it without naming categories (S1's default) keeps deleting
-    what it must. A subscription is told of those removals too. A change
-    is not recorded.
+    what it must. A subscription is told of those removals too. Only what
+    may have left SchemaPro is told: a record or report created during the
+    stop and removed during it was never handed out, and is told to
+    nobody, also not with a pupil who leaves (told at the instant of the
+    pupil's own removal, it would count the absences the pupil had while
+    the school chose not to share). A change is not recorded.
   * **When it starts again**, everything reads as modified at that moment
     again, so the integration's next incremental read from before the stop
     reads every row as it is now, whether or not it saw the 403;
@@ -579,8 +584,10 @@ is 404); `subscriptions.write`:
   (`Organisation`, `Person`, `Group`, `Duty`, `Activity`, `CalendarEvent`,
   `Room`, `Syllabus`, `Attendance`, `Absence`), each needing its read scope;
   `Attendance` and `Absence` also the school's decision to share (403
-  `NOT_SHARED`), and their notices stop when the school stops sharing or the
-  key loses the scope (`app.ss12000_notifies`). `target` is https with no
+  `NOT_SHARED`), and the notices of their changes stop when the school stops
+  sharing or the key loses the scope (`app.ss12000_notifies`); their removals
+  are told also while the school has stopped, to a key with the scope
+  (`app.ss12000_notifies_removals`). `target` is https with no
   userinfo or fragment, at most 2048 characters, and an address that passes
   the sync's SSRF rules (no loopback, RFC 1918, CGNAT, link-local, ULA such as
   `*.railway.internal`, multicast, or mapped and NAT64 forms of them). It is
@@ -1033,12 +1040,16 @@ starts (152); a decision is the administrator's, stamped and never changed
 a granted leave, a relink, a year activated, a removal, a removed lesson and
 a pupil who leaves and comes back, seen only by a key with the scope, and
 once the school has stopped a removal is still buried and told to the key
-with the scope (not to one without it), and nothing is versioned (154). The
+with the scope (not to one without it), but not of a row created and
+removed within the stop, nor what was reported meanwhile for a pupil who
+leaves, while a row versioned as the stop was decided still is; and
+nothing is versioned (154). The
 adapter probe's (nv-a)–(nv-k) run the same through the real services,
 including that a school that never shared records nothing, the school's
 timezone, a gallring night, a subscription that stops hearing when the
 school stops sharing, an unfiltered /deletedEntities that still tells a
-departed person and what went while the school is stopped, an integration
+departed person and what went while the school is stopped and never what
+was reported and went within it, an integration
 that misses a stop and a start between two reads and is still told
 everything (nv-j), and a start decided while a notice is in flight (nv-k).
 
