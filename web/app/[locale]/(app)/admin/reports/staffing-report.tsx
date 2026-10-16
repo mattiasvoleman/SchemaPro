@@ -5,6 +5,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Download, Scale } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { profileReadsHr } from "@/lib/admin-areas";
+import { useProfile } from "@/components/profile-context";
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useStaffingLoad } from "@/lib/staffing-queries";
 import { compareSwedish } from "@/lib/sorting";
@@ -77,6 +79,15 @@ const FIELD_TAG = /^[A-Za-z]+(?:\/[A-Za-z]+)*:\s+/;
 export function StaffingReport() {
   const t = useTranslations("reports.staffing");
   const tAreas = useTranslations("adminAreas");
+  /*
+   * SCB's file is HR data through and through (every row's tjänst %,
+   * anställningsform and karriärtjänst), so the gateway hands it only to one
+   * who reads HR data (HR_NOT_YOURS). The button is shown to that reader; to
+   * any other, the sentence that says who fetches it. A profile the session
+   * does not carry reads as full, as the menu and the other pages read it.
+   */
+  const { profile: me } = useProfile();
+  const mayScb = profileReadsHr(me?.adminProfile === undefined ? "FULL" : me.adminProfile, me?.hrRead);
   const tYearErrors = useTranslations("years.errors");
   const locale = useLocale();
   const tCause = useTranslations("timplanCoverage.delivered.cause");
@@ -555,14 +566,18 @@ export function StaffingReport() {
             </div>
             <p className="text-xs text-muted-foreground">{t("exportSamverkanHint")}</p>
           </div>
-          <div className="space-y-2">
-            <Button variant="outline" onClick={() => void exportScb()} disabled={!year || !mayScb || exporting !== null}>
-              <Download />
-              {exporting === "scb" ? t("exportScbBusy") : t("exportScb")}
-            </Button>
-            <p className="text-xs text-muted-foreground">{t("scbNotice")}</p>
-            <p className="text-xs text-muted-foreground">{t("scbYearNote")}</p>
-          </div>
+          {mayScb ? (
+            <div className="space-y-2">
+              <Button variant="outline" onClick={() => void exportScb()} disabled={!year || exporting !== null}>
+                <Download />
+                {exporting === "scb" ? t("exportScbBusy") : t("exportScb")}
+              </Button>
+              <p className="text-xs text-muted-foreground">{t("scbNotice")}</p>
+              <p className="text-xs text-muted-foreground">{t("scbYearNote")}</p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("scbHrOnly")}</p>
+          )}
           {/*
             One live region, mounted with the card and empty until a file is
             saved (visually hidden while empty, never display:none, or it would

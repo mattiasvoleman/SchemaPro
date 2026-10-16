@@ -260,12 +260,12 @@ export function EmploymentCard({
             {visible.signature ? (
               <li>{t("employmentSummarySignature", { signature: visible.signature })}</li>
             ) : null}
-            {stored.employmentForm ? <li>{t(`employmentSummaryForm${stored.employmentForm}`)}</li> : null}
-            {stored.firstTeacherPercent ? (
-              <li>{t("employmentSummaryFirstTeacher", { percent: stored.firstTeacherPercent })}</li>
+            {visible.employmentForm ? <li>{t(`employmentSummaryForm${visible.employmentForm}`)}</li> : null}
+            {visible.firstTeacherPercent ? (
+              <li>{t("employmentSummaryFirstTeacher", { percent: visible.firstTeacherPercent })}</li>
             ) : null}
-            {stored.lecturerPercent ? (
-              <li>{t("employmentSummaryLecturer", { percent: stored.lecturerPercent })}</li>
+            {visible.lecturerPercent ? (
+              <li>{t("employmentSummaryLecturer", { percent: visible.lecturerPercent })}</li>
             ) : null}
             <li>
               {storedTarget === null

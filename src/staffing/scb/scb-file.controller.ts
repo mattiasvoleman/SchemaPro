@@ -11,7 +11,10 @@ import type { ScbFile } from './scb-pedpers';
 /**
  * SCB:s Pedagogisk personal, the file (scb-pedpers.ts). The admin's: it names
  * every teacher with their post, its anställningsform and its karriärtjänst,
- * and each download is in the läslogg (EMPLOYMENT and PEOPLE).
+ * and each download is in the läslogg (EMPLOYMENT and PEOPLE). Of the
+ * administrators, those who read HR data (Roller i skolan): the service
+ * refuses the rest with HR_NOT_YOURS, since RolesGuard holds an @Area only
+ * on a write and lets every administrator's GET through.
  *
  * JSON rather than the file as a body: the web saves `text` as SCB's .txt,
  * writes `rows` as a CSV for Excel, and lists `missing` and `notices` beside

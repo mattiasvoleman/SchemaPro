@@ -26,6 +26,43 @@
 -- Additive: one new type and three nullable columns; no row changes. The
 -- API selects the post's columns by name, so this runs before the API that
 -- reads them.
+--
+-- No arm. Roller i skolan (20261110100000) split every administrator's arm
+-- per area and sorts before this file; the post's arms are its, unchanged:
+-- the new columns are read and written under them like the rest of the row
+-- (written by one who decides; the gateway masks them, as it masks the tjänst
+-- %, from an administrator without HR-läs, src/staffing/hr-visibility.ts).
+-- So TABLE_WRITE_GATES and the role matrix (RLS section 116) do not move.
+--
+-- ## Locks
+--
+-- Production migrates beside the API that is serving it, and every staffing
+-- read and timplan write reads TeacherEmployments. The ALTER takes it in
+-- ACCESS EXCLUSIVE: nullable columns without a default rewrite nothing, and
+-- the CHECKs scan the table's few rows. It is the one table this file
+-- locks, so it closes no cycle with a request; but a migration WAITING for
+-- that lock queues every reader behind it. So it takes the lock as
+-- 20261104090000 takes its own: NOWAIT, again 50 ms later while a request
+-- holds the table, and after 30 s it stops with nothing done and can be run
+-- again. lock_timeout bounds any wait nobody foresaw.
+
+DO $$
+DECLARE
+  give_up timestamptz := clock_timestamp() + interval '30 seconds';
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  LOOP
+    BEGIN
+      LOCK TABLE "TeacherEmployments" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      EXIT;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() > give_up THEN
+        RAISE EXCEPTION 'TeacherEmployments was not free in 30 s: nothing is changed, run the migration again';
+      END IF;
+      PERFORM pg_sleep(0.05);
+    END;
+  END LOOP;
+END $$;
 
 CREATE TYPE "TeacherEmploymentForm" AS ENUM ('TILLSVIDARE', 'VISSTID');
 

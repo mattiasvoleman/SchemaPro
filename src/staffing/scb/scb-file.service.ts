@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { SchoolForm } from '@prisma/client';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { recordRead } from '../../access-log/access-log';
@@ -7,6 +7,7 @@ import { requireSchoolId } from '../../common/utils/request-context';
 import { todayInZone, zonedTimeToUtc } from '../../common/utils/time';
 import { addDays } from '../../common/year-rollover';
 import { dayOf } from '../duty-dates';
+import { HR_NOT_YOURS, readsHr } from '../hr-visibility';
 import { readLoadInput } from '../load-input';
 import { buildTeacherLoadReport } from '../teacher-load';
 import {
@@ -48,8 +49,14 @@ import {
  * each whose long absence the file names. Written before the response
  * leaves, so a file is never delivered unrecorded.
  *
- * Admin only (the controller). The load report's own läslogg is not written
- * here: this route records what it hands out, once.
+ * Admin only (the controller), and HR data through and through: every
+ * row's tjänst %, anställningsform and karriärtjänst. So an administrator
+ * who does not read HR data (Roller i skolan: a schemaläggare or an
+ * expedition without HR-läs) is refused with HR_NOT_YOURS before anything is
+ * read — not handed a file with holes. RolesGuard lets every GET through to
+ * an administrator, so the refusal is here, not an @Area. The load report's
+ * own läslogg is not written here: this route records what it hands out,
+ * once.
  */
 @Injectable()
 export class ScbFileService {
@@ -57,6 +64,13 @@ export class ScbFileService {
 
   async build(academicYearId: string, user: AuthenticatedUser, now: Date = new Date()): Promise<ScbFile> {
     const schoolId = requireSchoolId(user);
+    if (!readsHr(user)) {
+      throw new ForbiddenException({
+        message:
+          'SCB-filen innehåller varje lärares tjänst %, anställningsform och karriärtjänst. Den hämtas av rektor, en fullständig administratör eller den som har HR-läs.',
+        code: HR_NOT_YOURS,
+      });
+    }
     return this.prisma.withRls(user, async (tx) => {
       const read = await readLoadInput(tx, user, academicYearId, schoolId);
       if (!read) throw new NotFoundException('Academic year not found.');

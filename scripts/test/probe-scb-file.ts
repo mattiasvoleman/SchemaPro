@@ -21,7 +21,10 @@
  *   scb4  Bo's sick leave, registered a week at a time over the mätdatum,
  *         is read under the admin's absence arm as one stretch, named
  *         (LONG_ABSENCE) and recorded as STAFF_ABSENCES; no record alone is
- *         30 days.
+ *         30 days;
+ *   scb5  Roller i skolan: a schemaläggare without HR-läs is refused the file
+ *         (HR_NOT_YOURS) with nothing in the läslogg, and reads the posts
+ *         with SCB's three masked as the tjänst % is.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -59,16 +62,18 @@ export async function scbFileChecks(owner: Client, api: PrismaService, marker: s
      VALUES ($1, '2096/97', DATE '2096-08-13', DATE '2097-06-10', true, now()) RETURNING id`,
     [s],
   );
-  const person = async (role: string, first: string, last: string) => {
+  const person = async (role: string, first: string, last: string, adminProfile: string | null = null) => {
     const authId = randomUUID();
     const row = await one<{ id: string }>(
-      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
-       VALUES ($1, $2, $3, $4, $5, $6, true, now()) RETURNING id`,
-      [s, `${marker}-scb-${first.toLowerCase()}@example.invalid`, first, last, role, authId],
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true, now()) RETURNING id`,
+      [s, `${marker}-scb-${first.toLowerCase()}@example.invalid`, first, last, role, adminProfile, authId],
     );
     return { id: row.id, authId };
   };
-  const admin = await person('SCHOOL_ADMIN', 'Admin', 'Probe');
+  const admin = await person('SCHOOL_ADMIN', 'Admin', 'Probe', 'FULL');
+  // Roller i skolan: a schemaläggare without HR-läs, for the file's refusal.
+  const planner = await person('SCHOOL_ADMIN', 'Planerare', 'Probe', 'SCHEMALAGGARE');
   const anna = await person('TEACHER', 'Anna', 'Öberg');
   const bo = await person('TEACHER', 'Bo', 'Alm');
   await owner.query(
@@ -93,7 +98,23 @@ export async function scbFileChecks(owner: Client, api: PrismaService, marker: s
     [s, year.id, subject.id, a7.id, anna.id, b7.id, bo.id],
   );
 
-  const asAdmin: AuthenticatedUser = { authId: admin.authId, role: Role.SCHOOL_ADMIN, userId: admin.id, schoolId: s, channel: 'WEB' };
+  const asAdmin: AuthenticatedUser = {
+    authId: admin.authId,
+    role: Role.SCHOOL_ADMIN,
+    userId: admin.id,
+    schoolId: s,
+    channel: 'WEB',
+    adminProfile: 'FULL',
+  };
+  const asPlanner: AuthenticatedUser = {
+    authId: planner.authId,
+    role: Role.SCHOOL_ADMIN,
+    userId: planner.id,
+    schoolId: s,
+    channel: 'WEB',
+    adminProfile: 'SCHEMALAGGARE',
+    hrRead: false,
+  };
   const posts = new TeacherEmploymentsService(api);
   const scb = new ScbFileService(api);
 
@@ -182,6 +203,25 @@ export async function scbFileChecks(owner: Client, api: PrismaService, marker: s
         [s],
       );
       assert.deepEqual(read?.ids, [bo.id], 'the long absence the file names is not in the läslogg');
+    });
+
+    await check('(scb5) without HR-läs the file is refused and SCB\'s three are masked in the post list', async () => {
+      const before = Number((await one<{ n: string }>(`SELECT count(*)::text AS n FROM "PersonalDataAccess" WHERE "schoolId" = $1`, [s])).n);
+      await assert.rejects(
+        () => scb.build(year.id, asPlanner),
+        (error: { getStatus?: () => number; getResponse?: () => unknown }) => {
+          assert.equal(error.getStatus?.(), 403);
+          assert.equal((error.getResponse?.() as { code?: string }).code, 'HR_NOT_YOURS');
+          return true;
+        },
+      );
+      const after = Number((await one<{ n: string }>(`SELECT count(*)::text AS n FROM "PersonalDataAccess" WHERE "schoolId" = $1`, [s])).n);
+      assert.equal(after, before, 'a refused file wrote to the läslogg');
+      const listed = (await posts.list(year.id, asPlanner)).find((row) => row.userId === anna.id) as unknown as Record<string, unknown>;
+      assert.deepEqual(
+        [listed.employmentForm, listed.firstTeacherPercent, listed.lecturerPercent, listed.hrHidden, 'ss12000StretchKey' in listed],
+        [null, null, null, true, false],
+      );
     });
   } finally {
     await sweepScbSchool(owner, marker);

@@ -187,6 +187,29 @@ describe('ScbFileService', () => {
     expect(tx.user.findMany).not.toHaveBeenCalled();
   });
 
+  it('refuses an administrator who does not read HR data before anything is read, and hands it to one who does', async () => {
+    for (const principal of [
+      testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }),
+      testUser({ adminProfile: 'EXPEDITION' }),
+      testUser({ adminProfile: undefined }),
+    ]) {
+      await expect(service.build(YEAR_ID, principal)).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'HR_NOT_YOURS' },
+      });
+    }
+    expect(prisma.withRls).not.toHaveBeenCalled();
+    expect(recordedReads(tx)).toEqual([]);
+
+    for (const principal of [
+      testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true }),
+      testUser({ adminProfile: 'REKTOR' }),
+      testUser(),
+    ]) {
+      await expect(service.build(YEAR_ID, principal)).resolves.toMatchObject({ filename: 'scb-pedagogisk-personal-2026-27.txt' });
+    }
+  });
+
   it('answers 404 for a year RLS does not show', async () => {
     tx.academicYear.findUnique.mockResolvedValue(null);
     await expect(service.build(YEAR_ID, testUser())).rejects.toBeInstanceOf(NotFoundException);

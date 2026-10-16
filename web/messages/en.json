@@ -1625,6 +1625,7 @@
       "exportScb": "SCB file, Pedagogisk personal (.txt)",
       "scbNotice": "SCB's text file for Pedagogisk personal, per the file description for HT 2026 (version date 2026-05-07): semicolons, no header row, UTF-8. One row per teacher, school unit and type of activity, with the post as it is on the reference date 15 October. Type of employment, förstelärare and lektor come from the posts. PersonNr is left empty: SchemaPro stores no personal identity numbers. Every download is kept in the access log.",
       "scbYearNote": "The file counts the school year's planned teaching, not the period above, in teaching time without the factor. Duties are part of the teaching post. Qualifications and certification are never included.",
+      "scbHrOnly": "SCB's Pedagogisk personal file shows every teacher's employment %, type of employment and career position. It is fetched by the principal, a full administrator or anyone with HR read.",
       "scbNoticesTitle": "{count, plural, one {# thing to know before sending the file:} other {# things to know before sending the file:}}",
       "exportScbBusy": "Fetching the SCB file…",
       "scbFileSummary": "{filename} is downloaded: {count, plural, =0 {no rows} one {# row} other {# rows}}, the posts as they are on the reference date {matdatum}.",

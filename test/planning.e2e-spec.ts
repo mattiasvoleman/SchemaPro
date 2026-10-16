@@ -2679,6 +2679,23 @@ describe('Planning surface (e2e)', () => {
           givenSchool();
           await request(http()).get(path).set('x-test-user', teacher()).expect(403);
           await request(http()).get(path).expect(401);
+          // Of the administrators, the ones who read HR data: a schemaläggare
+          // without HR-läs is told so, by code, before anything is read.
+          const planner = await request(http())
+            .get(path)
+            .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false } as never))
+            .expect(403);
+          expect(planner.body.code).toBe('HR_NOT_YOURS');
+          await request(http())
+            .get(path)
+            .set('x-test-user', asUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true } as never))
+            .expect(200);
+          harness.tx['teacherEmployment']!['findMany']!.mockClear();
+          harness.tx['$executeRaw']!.mockClear();
+          await request(http())
+            .get(path)
+            .set('x-test-user', asUser({ adminProfile: 'EXPEDITION' } as never))
+            .expect(403);
           expect(harness.tx['teacherEmployment']!['findMany']).not.toHaveBeenCalled();
           expect(recordedReads(harness.tx)).toEqual([]);
         });

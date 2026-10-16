@@ -409,11 +409,17 @@ Walk the full product loop once, in order:
   every column it reads, and every read of a post (the load report, the
   staffing checks on each timplan write, the rollover) now names these, so
   the migration must be in the database before the API: the migration
-  first, then the merge. It is additive and changes no row. The new
-  `GET /api/v1/staffing/scb-file` (admin only) builds SCB's Pedagogisk
-  personal text file on the server and writes one `EMPLOYMENT` and one
-  `PEOPLE` läslogg row per download; the browser no longer builds the SCB
-  underlag. A PUT of a post that leaves the three fields out keeps them, so
+  first, then the merge. It is additive and changes no row, and takes its
+  one lock (ACCESS EXCLUSIVE on `TeacherEmployments`) NOWAIT in a loop, as
+  20261104090000 does: no request queues behind it, and if the table is
+  not free once in 30 s it stops with nothing changed —
+  `prisma migrate resolve --rolled-back
+  20261111090000_en_tjanst_har_anstallningsform_och_karriartjanst`, then
+  deploy again. The new `GET /api/v1/staffing/scb-file` builds SCB's
+  Pedagogisk personal text file on the server, for an administrator who
+  reads HR data (rektor, full, or HR-läs; anyone else gets 403
+  `HR_NOT_YOURS`), and writes one `EMPLOYMENT` and one `PEOPLE` läslogg
+  row per download; the browser no longer builds the SCB underlag. A PUT of a post that leaves the three fields out keeps them, so
   a web from before the release, open in a tab, clears nothing. The other
   way round does not hold: the new web sends the three keys on every save
   of a post, and the API before this release refuses a key it does not know

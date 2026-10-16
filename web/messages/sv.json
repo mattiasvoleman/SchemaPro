@@ -1625,6 +1625,7 @@
       "exportScb": "SCB-fil, Pedagogisk personal (.txt)",
       "scbNotice": "SCB:s textfil för Pedagogisk personal, enligt datafilsbeskrivningen för HT 2026 (versionsdatum 2026-05-07): semikolon, ingen rubrikrad, UTF-8. En rad per lärare, skolenhet och verksamhetstyp, med tjänsten som den är på mätdatum 15 oktober. Anställningsform, förstelärare och lektor kommer från tjänsterna. PersonNr lämnas tomt: SchemaPro sparar inga personnummer. Varje hämtning sparas i läsloggen.",
       "scbYearNote": "Filen räknar läsårets planerade undervisning, inte perioden ovan, i undervisningstid utan faktor. Uppdrag ingår i lärartjänsten. Behörigheter och legitimation tas aldrig med.",
+      "scbHrOnly": "SCB-filen för Pedagogisk personal visar varje lärares tjänst %, anställningsform och karriärtjänst. Den hämtas av rektor, en fullständig administratör eller den som har HR-läs.",
       "scbNoticesTitle": "{count, plural, one {# sak att känna till innan filen skickas:} other {# saker att känna till innan filen skickas:}}",
       "exportScbBusy": "Hämtar SCB-filen…",
       "scbFileSummary": "{filename} är hämtad: {count, plural, =0 {inga rader} one {# rad} other {# rader}}, tjänsterna som de är på mätdatum {matdatum}.",
