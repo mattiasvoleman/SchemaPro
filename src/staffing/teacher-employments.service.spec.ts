@@ -126,6 +126,32 @@ describe('TeacherEmploymentsService', () => {
       }
     });
 
+    it("leaves SCB's three out for a planner without HR-läs, and hands them to one with it (20261111090000)", async () => {
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        storedRow({ employmentForm: 'VISSTID', firstTeacherPercent: 20, lecturerPercent: 10 }),
+      ]);
+      const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'EXPEDITION', hrRead: false }));
+      expect(hidden).toMatchObject({ employmentForm: null, firstTeacherPercent: null, lecturerPercent: null, hrHidden: true });
+      const [shown] = await service.list(YEAR_ID, testUser({ adminProfile: 'EXPEDITION', hrRead: true }));
+      expect(shown).toMatchObject({ employmentForm: 'VISSTID', firstTeacherPercent: 20, lecturerPercent: 10 });
+      expect(shown).not.toHaveProperty('hrHidden');
+    });
+
+    it('answers a PUT by a reader without HR-läs with the post masked as the list would show it', async () => {
+      // The row as Prisma returns it, with the SS12000 stretch key no answer carries (20261104090000).
+      tx.teacherEmployment.upsert.mockResolvedValue(
+        storedRow({ employmentForm: 'VISSTID', firstTeacherPercent: 20, ss12000StretchKey: 'aaaaaaaa-0000-4000-8000-000000000001' }),
+      );
+      const answer = await service.upsert(
+        COLLEAGUE,
+        YEAR_ID,
+        { employmentPercent: 80, employmentForm: 'VISSTID', firstTeacherPercent: 20, lecturerPercent: null },
+        testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }),
+      );
+      expect(answer).toMatchObject({ employmentPercent: null, employmentForm: null, firstTeacherPercent: null, hrHidden: true });
+      expect(answer).not.toHaveProperty('ss12000StretchKey');
+    });
+
     it('leaves a changing post\'s periods out for a planner without HR-läs, and hands them to one with it', async () => {
       const period = {
         id: 'per-1', schoolId: SCHOOL_ID, employmentId: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID,
@@ -568,6 +594,22 @@ describe('TeacherEmploymentsService', () => {
       expect(hidden.entries[0]!.changes).toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
       const shown = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'REKTOR' }));
       expect(shown.entries.map((entry) => entry.entity)).toEqual(['PERIOD', 'EMPLOYMENT', 'DUTY']);
+    });
+
+    it("leaves the values of SCB's three out of a version for a planner without HR-läs, and says they changed", async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(1, { before: { employmentForm: null, firstTeacherPercent: 10 }, after: { employmentForm: 'VISSTID', firstTeacherPercent: 20 } }),
+      ]);
+      const hidden = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE' }));
+      expect(hidden.entries[0]!.changes).toEqual([
+        { field: 'employmentForm', before: null, after: null, hrHidden: true },
+        { field: 'firstTeacherPercent', before: null, after: null, hrHidden: true },
+      ]);
+      const shown = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'REKTOR' }));
+      expect(shown.entries[0]!.changes).toEqual([
+        { field: 'employmentForm', before: null, after: 'VISSTID' },
+        { field: 'firstTeacherPercent', before: 10, after: 20 },
+      ]);
     });
 
     it('says when it left the oldest versions out', async () => {

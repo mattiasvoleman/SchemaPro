@@ -19,6 +19,7 @@ const YEAR_1 = { id: "y1", name: "2026/27", isActive: true, startDate: "2026-08-
 const YEAR_2 = { id: "y2", name: "2027/28", isActive: false, startDate: "2027-08-16", endDate: "2028-06-09" };
 const state = vi.hoisted(() => ({
   years: [] as unknown[],
+  profile: { id: "u-admin" } as Record<string, unknown>,
   rec: { data: undefined as unknown, isLoading: false, isError: false, error: null as unknown },
   recArgs: [] as unknown[][],
 }));
@@ -60,7 +61,7 @@ vi.mock("@/lib/queries", () => ({
   useGroups: () => ({ data: [{ id: "g-7a", name: "7A" }, { id: "g-7b", name: "7B" }] }),
 }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: "u-admin" }, school: { name: "Norra skolan", timezone: "Europe/Stockholm" } }),
+  useProfile: () => ({ profile: state.profile, school: { name: "Norra skolan", timezone: "Europe/Stockholm" } }),
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("next-intl", () => ({
@@ -125,6 +126,7 @@ describe("Rapporter › Tjänstefördelning", () => {
     vi.clearAllMocks();
     state.recArgs = [];
     state.years = [YEAR_1];
+    state.profile = { id: "u-admin" };
     state.rec = { data: response(), isLoading: false, isError: false, error: null };
   });
 
@@ -363,6 +365,22 @@ describe("Rapporter › Tjänstefördelning", () => {
     apiGet.mockRejectedValueOnce(new ApiError(409, "läsåret: klasserna går inte att räkna ut än"));
     await user.click(screen.getByRole("button", { name: "exportScb" }));
     await waitFor(() => expect(toast.error).toHaveBeenLastCalledWith("Läsåret: klasserna går inte att räkna ut än"));
+  });
+
+  it("offers SCB's file only to a reader of HR data, and tells the others who fetches it", () => {
+    state.profile = { id: "u-admin", adminProfile: "SCHEMALAGGARE", hrRead: false };
+    const { unmount } = render(<StaffingReport />);
+    expect(screen.queryByRole("button", { name: "exportScb" })).not.toBeInTheDocument();
+    expect(screen.getByText("scbHrOnly")).toBeInTheDocument();
+    unmount();
+
+    for (const profile of [{ adminProfile: "SCHEMALAGGARE", hrRead: true }, { adminProfile: "REKTOR" }, {}]) {
+      state.profile = { id: "u-admin", ...profile };
+      const { unmount: done } = render(<StaffingReport />);
+      expect(screen.getByRole("button", { name: "exportScb" })).toBeEnabled();
+      expect(screen.queryByText("scbHrOnly")).not.toBeInTheDocument();
+      done();
+    }
   });
 
   it("shows a file only under the year it was asked for, when the year changes while it is fetched", async () => {

@@ -273,7 +273,10 @@ export class TeacherEmploymentsService {
           (field) => dto[field] === undefined && (saved[field] ?? null) !== null,
         );
         if (answer.periods.length > 0 || keptUnsent) await recordRead(tx, 'EMPLOYMENT', [userId], user.channel);
-        return answer;
+        // Only one who decides writes a post, and every decider reads HR
+        // data; masked all the same, so the answer can never say more than
+        // the list would to the same reader.
+        return readsHr(user) ? answer : (hideHr(answer) as unknown as TeacherEmploymentResponse);
       });
     } catch (error) {
       rethrowEmploymentError(error, dto, academicYearId);

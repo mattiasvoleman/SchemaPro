@@ -55,7 +55,7 @@ export function scbFileOf(year: AcademicYear): ScbFile {
       ? (EMPLOYMENTS.find((candidate) => candidate.userId === row.userId && candidate.academicYearId === year.id) ?? null)
       : null;
     const form = post?.employmentForm === "TILLSVIDARE" ? "T" : post?.employmentForm === "VISSTID" ? "V" : "";
-    const omf = post ? Math.round(post.employmentPercent - post.reductionPercent) : null;
+    const omf = post ? Math.round((post.employmentPercent ?? 0) - (post.reductionPercent ?? 0)) : null;
     rows.push([
       "SchemaPro",
       TODAY,
@@ -76,7 +76,7 @@ export function scbFileOf(year: AcademicYear): ScbFile {
     if (omf === null) fields.push("OMFATTNING");
     if (fields.length > 0) missing.push({ line: rows.length, name, unit: unit.name, verksamhetstyp: "6", fields });
     if (!post) notices.push({ code: "NO_POST", params: { name } });
-    if (post && post.reductionPercent > 0) notices.push({ code: "REDUCTION", params: { name } });
+    if (post && (post.reductionPercent ?? 0) > 0) notices.push({ code: "REDUCTION", params: { name } });
   }
   return {
     filename: `scb-pedagogisk-personal-${year.name.replace(/[^0-9A-Za-z-]+/g, "-")}.txt`,
