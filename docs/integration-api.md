@@ -552,6 +552,16 @@ decision is not shared.**
   a re-save of the register. Either is never earlier than the start of the
   school's current run of sharing, and `meta.modified.after` and `.before`
   compare exactly what is emitted, for both resources.
+* **A register save waits for a running SS12000 apply** at a school that
+  shares. Each status it writes moves a version, one pupil at a time, and an
+  administrator's apply that links or brings back pupils moves all of theirs
+  and holds them to its end; in opposite orders each would hold a version the
+  other waits for. So before its first write the save takes the school's
+  people lock shared (`app.attendance_recording_waits_for_sync`, the lock
+  `readLocalSlice` takes exclusively and a guardian's calendar feed shared):
+  during an apply it waits, at most as long as the apply, and an apply waits
+  for a save in progress. At a school that does not share, it waits for
+  nothing.
 * **A granted leave and a span.** Only the leave decision marks a day as
   `Beviljad ledighet` (a guardian or a pupil who tries is refused); and a
   reported span ends after it starts (a report from before 20261114090000
@@ -1044,14 +1054,16 @@ with the scope (not to one without it), but not of a row created and
 removed within the stop, nor what was reported meanwhile for a pupil who
 leaves, while a row versioned as the stop was decided still is; and
 nothing is versioned (159). The
-adapter probe's (nv-a)–(nv-k) run the same through the real services,
+adapter probe's (nv-a)–(nv-l) run the same through the real services,
 including that a school that never shared records nothing, the school's
 timezone, a gallring night, a subscription that stops hearing when the
 school stops sharing, an unfiltered /deletedEntities that still tells a
 departed person and what went while the school is stopped and never what
 was reported and went within it, an integration
 that misses a stop and a start between two reads and is still told
-everything (nv-j), and a start decided while a notice is in flight (nv-k).
+everything (nv-j), a start decided while a notice is in flight (nv-k), and
+a register save corrected while an apply links its pupils in the opposite
+order, which waits for the apply instead of either being aborted (nv-l).
 
 The six migrations after `20261114090000` exist for production's sake: it
 migrates while the previous API serves requests, and the reviewed single
