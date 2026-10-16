@@ -238,9 +238,8 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
 * **Errors.** S1's `Error {code, message}`. A 404 has no body. 400 codes are
   `INVALID_FILTER`, `INVALID_ID`, `INVALID_PAGE_TOKEN`,
   `SORTKEY_NOT_SUPPORTED` and `INVALID_BODY`. 403 is `SCOPE_MISSING`, or
-  `NOT_SHARED` for attendance and absence at a school that does not share
-  them (and for `/deletedEntities` naming them, or naming nothing, at a
-  school that has stopped). 503 `TOO_LARGE` is S1's "Svaret är förstort" (a calendar
+  `NOT_SHARED` for reading attendance and absence at a school that does not
+  share them. 503 `TOO_LARGE` is S1's "Svaret är förstort" (a calendar
   lookup over 5000 events, an attendance lookup over 5000 attendances). The message never
   echoes a value you sent. **Logs carry the method, the path and the status,
   never the query string**, so a personnummer or a name in a filter never
@@ -451,11 +450,11 @@ name and calendar events have it, where S1's text for `/absences` says
 calendarEvents, rooms, syllabuses, organisations, attendances, absences},
 pageToken}`. The keys are S1's own spellings, `activitites` included. The
 response has only the categories asked for that the key may read, with the
-ids removed after `after`; `attendances` and `absences` only while the
-school shares. At a school that has never shared they are left out (a key
-that could read nothing else is 403 `NOT_SHARED`); at one that has stopped,
-a request that names them, or names no category at all, is 403 `NOT_SHARED`
-(see "Starting, stopping, starting again"). "Removed" means: a person
+ids removed after `after`; `attendances` and `absences` once the school has
+ever shared, also while it has stopped: an id and when it went is the
+instruction to delete, never anything of the row (see "Starting, stopping,
+starting again"). At a school that has never shared they are left out (a key
+that could read nothing else is 403 `NOT_SHARED`). "Removed" means: a person
 deactivated or deleted, a group, room, subject or lesson deleted, a master
 deleted or parked (DIRECT) or absent from a new publication (DRAFT), a post
 deleted, an id superseded by a link, a stretch of a changing post that is no
@@ -510,20 +509,24 @@ decision is not shared.**
     it reads both whole: a first sync can ask `meta.modified.after` the
     start of term and get every row.
   * **While it is stopped**, every read of the two is 403 `NOT_SHARED`, and
-    so is `/deletedEntities` when it names them or names no category (name
-    the others to read only those). The integration should delete the
-    attendance and absence it holds from the school. A removal meanwhile
-    (gallring's purge, a pupil who leaves, a deleted record) is still
-    recorded; a change is not.
+    the integration should delete the attendance and absence it holds from
+    the school. `/deletedEntities` is answered as before, the two
+    categories included for a key with their scope: what goes meanwhile
+    (gallring's purge, a pupil who leaves, a deleted record) is told by id,
+    and so is everything else that goes, so an integration that keeps
+    calling it without naming categories (S1's default) keeps deleting
+    what it must. A subscription is told of those removals too. A change
+    is not recorded.
   * **When it starts again**, everything reads as modified at that moment
     again, so the integration's next incremental read from before the stop
     reads every row as it is now, whether or not it saw the 403;
-    `/deletedEntities` after that same cursor lists what went meanwhile
-    (its cursor could not move past those tombstones, since the call was
-    refused while they were hidden); and every subscription to them that
-    has not been told since is told once, with `deletedEntities: true`,
-    even if nothing changes after the start. An integration that missed
-    the whole stop therefore ends up holding exactly what is shared.
+    `/deletedEntities` after its cursor lists what went that it has not
+    been told (it never answered without them, so no cursor moved past
+    one); and every subscription to them is told once, with
+    `deletedEntities: true`, even if nothing changes after the start, and
+    even if a notice was in flight when the school decided. An integration
+    that missed the whole stop therefore ends up holding exactly what is
+    shared.
 * **Every read is in the läslogg** (PersonalDataAccess, `/admin/dataskydd`),
   with the key as reader and the channel INTEGRATION: an attendance as
   `ATTENDANCE`, a reported absence as `ABSENCE_REPORTS`, a granted leave's
@@ -547,10 +550,14 @@ decision is not shared.**
   that does not is served as the whole day).
 * **Subscriptions** may name `Attendance` and `Absence` (with the scope, and
   only while the school shares: else 403 `NOT_SHARED`). A school that stops
-  sharing stops their notices at once, even of a change made just before,
-  and so does a key that loses the scope; the other resource types of the
+  sharing stops the notices of their changes at once, even of a change made
+  just before, and so does a key that loses the scope; their removals are
+  still told (`deletedEntities: true`), and the other resource types of the
   same subscription are notified as before. When it starts again, each such
-  subscription is told once (above).
+  subscription is told once (above). Whether it has been told is the
+  decision's transaction against the subscription's watermark, the rule a
+  change follows, so a notice claimed before the decision and settled after
+  it does not swallow the start.
 
 Read only: S1's `POST /attendances`, `DELETE /attendances/{id}` and `POST
 /absences` are not served (404); a school's register is not written by an
@@ -939,7 +946,7 @@ What the principal is granted, always on the key's school only:
 | `TeacherEmployments`, `TeacherDuties` | SELECT — what `/duties` reads (`20261006100000`, `20261007090000`); the query names only the Duty's columns |
 | `TeacherEmploymentPeriods` | SELECT — a changing post's periods, read by `/duties` only with the opt-in (`20261022120000`); the query names only their dates and grad |
 | `StaffingPolicies` | SELECT — the `/duties` opt-in and `fullTimeAnnualHours`: the school's configuration, no person's data (`20261010110000`) |
-| `AttendanceRecords`, `AbsenceReports` | None. The provider reads them through `app.ss12000_attendances` and `app.ss12000_absences` (`20261114090000`, SECURITY DEFINER, the API's role alone), which answer the emitted columns (never a note, kind, reporter or the register's save time) only while the school's decision in force shares attendance, and only for a request whose key is the school's, live, and holds `attendances.read` or `absences.read` (`app.service_reads_attendance`). The versions' and tombstones' arms ask the same for `Attendance` and `Absence` rows |
+| `AttendanceRecords`, `AbsenceReports` | None. The provider reads them through `app.ss12000_attendances` and `app.ss12000_absences` (`20261114090000`, SECURITY DEFINER, the API's role alone), which answer the emitted columns (never a note, kind, reporter or the register's save time) only while the school's decision in force shares attendance, and only for a request whose key is the school's, live, and holds `attendances.read` or `absences.read` (`app.service_reads_attendance`). The versions' arm asks the same for `Attendance` and `Absence` rows; the tombstones' arm asks for a school that has ever shared instead (`app.service_reads_attendance_removals`), so a key with the scope is told what went also while the school has stopped |
 
 Each write policy has a `WITH CHECK` on the same school, so a write can
 neither create a row in another school nor move one there. There is no INSERT
@@ -1022,12 +1029,15 @@ starts (152); a decision is the administrator's, stamped and never changed
 (153); and the versions and tombstones follow a status, the lesson's times,
 a granted leave, a relink, a year activated, a removal, a removed lesson and
 a pupil who leaves and comes back, seen only by a key with the scope, and
-once the school has stopped a removal is still buried and nothing is
-versioned (154). The adapter probe's (nv-a)–(nv-j) run the same through the
-real services, including that a school that never shared records nothing,
-the school's timezone, a gallring night, a subscription that stops hearing
-when the school stops sharing, and an integration that misses a stop and a
-start between two reads and is still told everything (nv-j).
+once the school has stopped a removal is still buried and told to the key
+with the scope (not to one without it), and nothing is versioned (154). The
+adapter probe's (nv-a)–(nv-k) run the same through the real services,
+including that a school that never shared records nothing, the school's
+timezone, a gallring night, a subscription that stops hearing when the
+school stops sharing, an unfiltered /deletedEntities that still tells a
+departed person and what went while the school is stopped, an integration
+that misses a stop and a start between two reads and is still told
+everything (nv-j), and a start decided while a notice is in flight (nv-k).
 
 The six migrations after `20261114090000` exist for production's sake: it
 migrates while the previous API serves requests, and the reviewed single
