@@ -479,9 +479,12 @@ that are not uuids are 400 `INVALID_BODY`.
 ### Attendances and Absences (SS12000-närvaro)
 
 Pupils' attendance and absence leave SchemaPro only when **the school has
-decided so**: an administrator records the decision under Integrationer → API-nycklar →
-*Närvaro och frånvaro till integrationer*
-(`POST /api/v1/integrations/attendance-sharing {shares, reference?}`, SCHOOL_ADMIN). Each decision is
+decided so**: rektor or a full administrator records the decision under
+Integrationer → API-nycklar → *Närvaro och frånvaro till integrationer*
+(`POST /api/v1/integrations/attendance-sharing {shares, reference?}`,
+`@Decides()`; it is one of the decisions of Roller i skolan, as gallring is,
+and the database's insert arm asks `app.current_user_decides()` too; every
+administrator reads it with `GET`). Each decision is
 kept with who made it and when (AttendanceSharingDecisions, migration
 `20261114090000`, append-only: a decision is replaced by a new one, never
 changed or removed), and the latest is in force from the next request. **No
