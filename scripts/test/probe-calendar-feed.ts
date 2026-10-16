@@ -275,6 +275,63 @@ export async function calendarFeedChecks(owner: Client, api: PrismaService, mark
       assert.ok(rows.rows.length >= before);
     });
 
+    // After kf-d, which holds the guardian's read-log rows as they stand,
+    // and before kf-e switches the guardians' feeds off.
+    await check('(kf-h) a pupil placed in a half of their class has the half\'s lesson in their own feed and the guardian\'s, a pupil in no half the class\'s alone, as the family\'s week has them', async () => {
+      // K7B split (Halvklasser): Kim placed in K7B:1, Kaj in no half. Slöjd
+      // and NO rotate through one hour next week, beside K7B's own lesson.
+      // No teacher on either, so the teacher's feed is as kf-c left it.
+      const half = async (name: string) =>
+        (
+          await one<{ id: string }>(
+            `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "halfOfId", "updatedAt")
+             VALUES ($1, $2, $3, 'TEACHING_GROUP', 7, $4, now()) RETURNING id`,
+            [s, year, name, k7b],
+          )
+        ).id;
+      const h1 = await half('K7B:1');
+      const h2 = await half('K7B:2');
+      await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [s, h1, pupil.id]);
+      const day = plus(thisMonday, 9);
+      const slojd = await lesson(h1, await subject('Slöjd'), day, 14, []);
+      const no = await lesson(h2, await subject('NO'), day, 14, []);
+      const classLessons = (
+        await owner.query<{ id: string }>(`SELECT id FROM "CalendarLessons" WHERE "studentGroupId" = $1 AND date = $2::date`, [k7b, day])
+      ).rows.map((row) => row.id);
+      assert.ok(classLessons.length > 0, 'K7B has no lesson that day to compare with');
+      type Feed = NonNullable<Awaited<ReturnType<typeof readFeed>>>;
+      const idsOn = (document: Feed) => document.lessons.filter((entry) => entry.date === day).map((entry) => entry.id).sort();
+
+      for (const [label, token] of [
+        ['the pupil\'s own', tokens.pupil!],
+        ['the guardian\'s', tokens.child!],
+      ] as const) {
+        const document = await readFeed(api, token);
+        assert.ok(document, `${label} feed answered nothing`);
+        const ids = idsOn(document);
+        assert.ok(ids.includes(slojd), `${label} feed lacks the lesson of the half the pupil is placed in`);
+        assert.ok(!ids.includes(no), `${label} feed has the other half's lesson`);
+        for (const id of classLessons) assert.ok(ids.includes(id), `${label} feed lost the class's lesson`);
+      }
+      // In no half: the class's rule alone, so the class's lesson and neither half's.
+      const unplaced = await readFeed(api, tokens.sibling!);
+      assert.ok(unplaced, 'the guardian\'s feed of the pupil in no half answered nothing');
+      const ids = idsOn(unplaced);
+      assert.ok(!ids.includes(slojd) && !ids.includes(no), 'a pupil in no half has a half\'s lesson');
+      for (const id of classLessons) assert.ok(ids.includes(id), 'a pupil in no half lost the class\'s lesson');
+
+      // And both as the family's week has them that day.
+      const family = new FamilyScheduleService(api);
+      for (const [child, token] of [
+        [pupil.id, tokens.child!],
+        [sibling.id, tokens.sibling!],
+      ] as const) {
+        const week = await family.week({ studentId: child, week: mondayOf(day) }, asGuardian);
+        const fromFamily = week.lessons.filter((entry) => entry.date === day).map((entry) => entry.id).sort();
+        assert.deepEqual(idsOn((await readFeed(api, token))!), fromFamily, `the feed and the family's week disagree on ${day}`);
+      }
+    });
+
     await check('(kf-e) the school switching guardians off revokes their feeds: the list is empty, the address answers nothing', async () => {
       await owner.query(`UPDATE "PublicationSettings" SET "calendarFeedGuardians" = false WHERE "schoolId" = $1`, [s]);
       assert.deepEqual(await feeds.mine(asGuardian), { enabled: false, feeds: [] });
