@@ -101,6 +101,11 @@ export class UpsertPublicationSettingsDto {
   @IsOptional() @IsBoolean() publicEmbedGroups?: boolean;
   @IsOptional() @IsBoolean() publicEmbedTeachers?: boolean;
   @IsOptional() @IsBoolean() publicEmbedRooms?: boolean;
+  // Kalenderprenumeration (20261112091000): per audience. Turning one off
+  // revokes every live feed of it (the database's trigger).
+  @IsOptional() @IsBoolean() calendarFeedTeachers?: boolean;
+  @IsOptional() @IsBoolean() calendarFeedStudents?: boolean;
+  @IsOptional() @IsBoolean() calendarFeedGuardians?: boolean;
   @IsOptional()
   @Transform(({ value }) => normalizeEmbedOrigins(value))
   @IsArray({ message: 'publicEmbedOrigins: en lista med webbplatser.' })

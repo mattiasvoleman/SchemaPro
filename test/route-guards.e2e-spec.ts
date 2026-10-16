@@ -24,7 +24,10 @@ import { createTestApp, type TestHarness } from './utils/test-app';
 // as S1's bearer and limited per key (src/integration/ss12000-v2), like v1.
 // public/v1/sign-in-methods: /login's lookup of a domain's school-account
 // provider, before anyone has signed in (src/sign-in).
-const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'public/v1/sign-in-methods', 'ss12000/v1', 'ss12000/v2.0'];
+// public/v1/calendar-feeds: Kalenderprenumeration, a calendar app asking a
+// person's feed by its secret address, with its own rate limit
+// (src/calendar-feed/public-calendar-feed.controller.ts).
+const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'public/v1/calendar-feeds', 'public/v1/sign-in-methods', 'ss12000/v1', 'ss12000/v2.0'];
 
 interface RouteInfo {
   controller: string;

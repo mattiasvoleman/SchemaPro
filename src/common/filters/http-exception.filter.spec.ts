@@ -348,6 +348,24 @@ describe('HttpExceptionFilter', () => {
     expect(logged).toMatch(/\/public\/v1\/timetables\/sha256:[0-9a-f]{6}…\?date=2026-02-30 -> 429/);
     expect(redactShareToken('/api/v1/calendar/lessons?x=1')).toBe('/api/v1/calendar/lessons?x=1');
   });
+  it("never writes a calendar feed's address to the log or echoes it in instance, .ics or not", () => {
+    const token = 'kalenderKALENDERkalenderKALENDERkalenderKAL';
+    request.method = 'GET';
+    request.url = `/public/v1/calendar-feeds/${token}.ics`;
+    request.originalUrl = request.url;
+    filter.catch(new HttpException('Too Many Requests', HttpStatus.TOO_MANY_REQUESTS), host);
+    filter.catch(new Error('boom'), host);
+    const logged = [...logger.warn.mock.calls, ...logger.error.mock.calls].map((call) => String(call[0])).join('\n');
+    const instances = response.json.mock.calls.map((call) => (call[0] as ProblemDetails).instance).join('\n');
+    expect(logged).not.toContain(token);
+    expect(instances).not.toContain(token);
+    expect(logged).toMatch(/\/public\/v1\/calendar-feeds\/sha256:[0-9a-f]{6}…\.ics -> 429/);
+    // The same marker with or without the name: the token is what is hashed.
+    expect(redactShareToken(`/public/v1/calendar-feeds/${token}`)).toBe(redactShareToken(`/public/v1/calendar-feeds/${token}.ics`).slice(0, -4));
+    // Express routes the path in any case of its letters, and so it is redacted.
+    expect(redactShareToken(`/PUBLIC/V1/Calendar-Feeds/${token}.ics`)).not.toContain(token);
+    expect(redactShareToken(`/Public/v1/Timetables/${token}`)).not.toContain(token);
+  });
   it('never logs or echoes the query of an /ss12000/v2.0 request no v2 route matched (personnummer, name)', () => {
     request.method = 'GET';
     request.url = '/ss12000/v2.0/placements?child=bbbbbbbb-0000-4000-8000-000000000001&civicNo=201001012384&nameContains=Ella';

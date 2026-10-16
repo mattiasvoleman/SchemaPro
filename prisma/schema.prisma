@@ -1038,6 +1038,11 @@ model PublicationSettings {
   publicEmbedTeachers  Boolean        @default(false)
   publicEmbedRooms     Boolean        @default(false)
   publicEmbedOrigins   String[]       @default([])
+  /// Kalenderprenumeration (20261112091000), per audience, off by default.
+  /// Turning one off revokes that audience's live feeds (a trigger).
+  calendarFeedTeachers  Boolean      @default(false)
+  calendarFeedStudents  Boolean      @default(false)
+  calendarFeedGuardians Boolean      @default(false)
   createdAt          DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
 
@@ -3720,6 +3725,42 @@ model LeaveRequestNotice {
   @@map("LeaveRequestNotices")
 }
 
+/// A person's calendar feed (Kalenderprenumeration, 20261112091000): their
+/// published week, or a guardian's child's, behind a secret address of which
+/// only the sha256 is kept. At most one live feed per week a person may have;
+/// a new one revokes the old. The owner reads their own rows through the API;
+/// only the definer functions write (app.calendar_feed_create, _revoke, the
+/// settings', people's and links' triggers, and the door, which marks a feed
+/// used, records a guardian's day and ends a feed it refuses). The keys to
+/// Schools and to Users (userId and studentId, with schoolId, ON DELETE
+/// CASCADE) live in the migration.
+model CalendarFeed {
+  id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String               @db.Uuid
+  userId     String               @db.Uuid
+  /// The pupil whose week it is: the owner for a STUDENT feed, the child for a GUARDIAN's, null for a TEACHER's.
+  studentId  String?              @db.Uuid
+  audience   CalendarFeedAudience
+  tokenHash  String               @unique
+  /// "sv" or "en": the language the feed speaks.
+  locale     String               @default("sv")
+  createdAt  DateTime             @default(now()) @db.Timestamptz(6)
+  revokedAt  DateTime?            @db.Timestamptz(6)
+  lastUsedAt DateTime?            @db.Timestamptz(6)
+  /// The school day a guardian's feed was last written to the read log.
+  recordedOn DateTime?            @db.Date
+
+  @@index([userId, schoolId])
+  @@index([studentId, schoolId])
+  @@map("CalendarFeeds")
+}
+
+enum CalendarFeedAudience {
+  TEACHER
+  STUDENT
+  GUARDIAN
+}
+
 /// A school's decision on how long one kind of data is kept. Append-only: a
 /// trigger stamps decidedAt and decidedById and refuses UPDATE and DELETE, so
 /// the rows are the history and the latest per kind is the decision. No row
@@ -3765,6 +3806,8 @@ enum PersonalDataAccessChannel {
   APP
   INTEGRATION
   OTHER
+  /// A guardian's calendar feed of their child (20261112090000).
+  CALENDAR
 }
 
 /// Läsloggen (20261026091000): one row per request that returned other
