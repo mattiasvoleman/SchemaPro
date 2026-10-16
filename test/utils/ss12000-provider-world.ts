@@ -167,6 +167,10 @@ export class ProviderWorld {
   publishMode: 'DIRECT' | 'DRAFT' = 'DIRECT';
   /** The school's AttendanceSharingDecisions in force (none: not shared, the default). */
   attendanceShared = false;
+  /** When the current run of sharing began (app.attendance_shared_since), while it shares. */
+  sharedSince = t('2026-10-12T09:30:00Z');
+  /** Whether any decision ever shared (app.attendance_ever_shared): a school that has stopped. */
+  everShared = false;
   readonly snapshotRanges: Array<{ id: string; publishedAt: Date; validFrom: Date; validTo: Date }> = [];
   readonly webhookSecrets = new Map<string, Row>();
   /** What app.ss12000_due_notifications answers on the next call. */
@@ -379,6 +383,12 @@ export class ProviderWorld {
     return new Set(this.years.filter((row) => row['isActive'] || (row['startDate'] as Date) < horizon).map((row) => row['id'] as string));
   }
 
+  /** meta.modified as both functions reckon it: the version's or sharedSince, whichever is later. */
+  private modifiedOf(version: Row | undefined): Date {
+    const moved = version?.['modifiedAt'] as Date | undefined;
+    return moved && moved > this.sharedSince ? moved : this.sharedSince;
+  }
+
   /**
    * app.ss12000_attendances as Postgres answers it under the service
    * principal: the arguments by ATTENDANCE_ARGUMENTS' positions, a filter
@@ -404,18 +414,18 @@ export class ProviderWorld {
       if (!within('ids', record['id']) || !within('lessons', lesson['id']) || !within('students', pupil['id']) || !within('groups', group['id'])) continue;
       const version = this.versions.find((row) => row['resource'] === 'Attendance' && row['entityId'] === record['id']);
       const created = record['createdAt'] as Date;
-      const modified = (version?.['modifiedAt'] as Date | undefined) ?? created;
+      const modified = this.modifiedOf(version);
       const cb = instant('createdBefore');
       const ca = instant('createdAfter');
       const mb = instant('modifiedBefore');
       const ma = instant('modifiedAfter');
-      if ((cb && !(created <= cb)) || (ca && !(created > ca)) || (mb && !(modified <= mb)) || (ma && !(version && modified > ma))) continue;
+      if ((cb && !(created <= cb)) || (ca && !(created > ca)) || (mb && !(modified <= mb)) || (ma && !(modified > ma))) continue;
       const after = v('after') as string | null;
       if (after !== null && !((record['id'] as string) > after)) continue;
       out.push({
         id: record['id'], calendarLessonId: lesson['id'], studentId: pupil['id'], status: record['status'], createdAt: record['createdAt'],
         startsAt: lesson['startsAt'], endsAt: lesson['endsAt'], studentGroupId: group['id'],
-        versionCreatedAt: version?.['createdAt'] ?? null, versionModifiedAt: version?.['modifiedAt'] ?? null,
+        versionCreatedAt: version?.['createdAt'] ?? created, versionModifiedAt: modified,
       });
     }
     out.sort((a, b) => ((a['id'] as string) < (b['id'] as string) ? -1 : 1));
@@ -434,10 +444,14 @@ export class ProviderWorld {
         return row['schoolId'] === W.school && !!pupil && pupil['isActive'] && pupil['role'] === 'STUDENT';
       })
       .filter((row) => (ids === null || ids.includes(row['id'] as string)) && (students === null || students.includes(row['studentId'] as string)))
-      .map((row) => ({
-        id: row['id'], studentId: row['studentId'], date: (row['date'] as Date).toISOString().slice(0, 10),
-        startTime: clock(row['startTime']), endTime: clock(row['endTime']), grantedLeave: row['grantedLeave'], createdAt: row['createdAt'],
-      }));
+      .map((row) => {
+        const version = this.versions.find((entry) => entry['resource'] === 'Absence' && entry['entityId'] === row['id']);
+        return {
+          id: row['id'], studentId: row['studentId'], date: (row['date'] as Date).toISOString().slice(0, 10),
+          startTime: clock(row['startTime']), endTime: clock(row['endTime']), grantedLeave: row['grantedLeave'], createdAt: row['createdAt'],
+          versionCreatedAt: version?.['createdAt'] ?? row['createdAt'], versionModifiedAt: this.modifiedOf(version),
+        };
+      });
   }
 
   install(tx: TxMock): void {
@@ -518,6 +532,7 @@ export class ProviderWorld {
       this.rawStatements.push(text);
       if (text.includes('app.ss12000_provider_identity')) return [this.identity];
       if (text.includes('app.service_reads_attendance')) return [{ reads: this.readsAttendance(tx, values[0] as string) }];
+      if (text.includes('app.service_attendance_ever_shared')) return [{ ever: this.everShared || this.attendanceShared }];
       if (text.includes('app.ss12000_attendances(')) return this.attendanceRows(tx, values);
       if (text.includes('app.ss12000_absences(')) return this.absenceRows(tx, values);
       if (text.includes('app.school_publish_mode')) return [{ mode: this.publishMode }];

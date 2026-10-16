@@ -341,6 +341,17 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       expect(Object.keys(deleted.body.data)).toEqual(['persons']);
     });
 
+    it('once the school has stopped, /deletedEntities is 403 NOT_SHARED for the two categories rather than silent', async () => {
+      world.everShared = true;
+      // Named, or implied by asking for everything the key may read.
+      expect((await v2('/deletedEntities').expect(403)).body.code).toBe('NOT_SHARED');
+      expect((await v2('/deletedEntities?entities=Attendance&entities=Person').expect(403)).body.code).toBe('NOT_SHARED');
+      // Not named: the rest is answered as before.
+      expect(Object.keys((await v2('/deletedEntities?entities=Person').expect(200)).body.data)).toEqual(['persons']);
+      // A key without either scope never had them.
+      expect(Object.keys((await v2('/deletedEntities', GROUPS_ONLY).expect(200)).body.data)).toEqual(['groups']);
+    });
+
     it('needs its own scope whatever the school decided', async () => {
       share();
       expect((await v2('/attendances', GROUPS_ONLY).expect(403)).body.code).toBe('SCOPE_MISSING');
@@ -369,10 +380,10 @@ describe('SS12000 v2.0 provider (e2e)', () => {
         student: { id: W.p4, displayName: 'Pia Nivå' },
         isReported: false,
       });
-      // A linked pupil under the source's id; dated by its creation until a change gives it a version.
+      // A linked pupil under the source's id; modified when the school began sharing, until a change gives it a version.
       expect(byId.get(W.attPresent)).toMatchObject({
         student: { id: W.p1Source },
-        meta: { created: '2026-10-12T09:00:00.000Z', modified: '2026-10-12T09:00:00.000Z' },
+        meta: { created: '2026-10-12T09:00:00.000Z', modified: '2026-10-12T09:30:00.000Z' },
       });
 
       const absences = await v2('/absences').expect(200);
@@ -402,12 +413,18 @@ describe('SS12000 v2.0 provider (e2e)', () => {
       expect(ids((await v2(`/attendances?student=${W.p1Source}`).expect(200)).body)).toEqual([W.attPresent, W.attExcused].sort());
       expect(ids((await v2(`/attendances?calendarEvent=${W.l1}`).expect(200)).body)).toEqual([W.attPresent, W.attLate].sort());
       expect((await v2(`/attendances?student=${W.g1}`).expect(200)).body.data).toEqual([]);
-      // An incremental read is the rows changed since: those with a version after the mark.
+      // An incremental read from after sharing began is the rows changed since: those with a version after the mark.
       expect((await v2('/attendances?meta.modified.after=2026-10-12T10:00:00Z').expect(200)).body.data).toEqual([]);
       world.versions.push({ schoolId: W.school, resource: 'Attendance', entityId: W.attLate, createdAt: new Date('2026-10-12T09:00:00Z'), modifiedAt: new Date('2026-10-13T07:00:00Z') });
       const changed = await v2('/attendances?meta.modified.after=2026-10-12T10:00:00Z').expect(200);
       expect(changed.body.data).toEqual([expect.objectContaining({ id: W.attLate, meta: { created: '2026-10-12T09:00:00.000Z', modified: '2026-10-13T07:00:00.000Z' } })]);
-      expect(ids((await v2('/attendances?meta.modified.before=2026-10-12T09:00:00Z').expect(200)).body)).toEqual([W.attPresent, W.attExcused, W.attAbsent, W.attUnknown].sort());
+      expect(ids((await v2('/attendances?meta.modified.before=2026-10-12T09:30:00Z').expect(200)).body)).toEqual([W.attPresent, W.attExcused, W.attAbsent, W.attUnknown].sort());
+      expect((await v2('/attendances?meta.modified.before=2026-10-12T09:29:59.999Z').expect(200)).body.data).toEqual([]);
+      // One from before sharing began (a term's first sync) is everything, each row saying it was modified in that window.
+      const term = await v2('/attendances?meta.modified.after=2026-08-15T00:00:00Z').expect(200);
+      expect(ids(term.body)).toEqual([W.attPresent, W.attLate, W.attExcused, W.attAbsent, W.attUnknown].sort());
+      expect(term.body.data.every((item: { meta: { modified: string } }) => item.meta.modified > '2026-08-15T00:00:00Z')).toBe(true);
+      expect(ids((await v2('/absences?meta.modified.after=2026-08-15T00:00:00Z').expect(200)).body)).toEqual([W.absSick, W.absHours, W.absGranted, W.absForged].sort());
       const first = await v2('/attendances?limit=2').expect(200);
       expect(first.body.data).toHaveLength(2);
       const second = await v2(`/attendances?limit=2&pageToken=${first.body.pageToken}`).expect(200);

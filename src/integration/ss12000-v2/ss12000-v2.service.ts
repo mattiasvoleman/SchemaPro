@@ -26,6 +26,7 @@ import {
   attendanceObject,
   readAbsences,
   readAttendances,
+  serviceEverSharedAttendance,
   serviceReadsAttendance,
   type AttendanceQuery,
 } from './attendance';
@@ -1475,11 +1476,10 @@ export class Ss12000V2Service {
     });
   }
 
-  /** The school's absences as S1 objects; only those ids, or one pupil's, when asked. */
+  /** The school's absences as S1 objects, meta as the database reckons it; only those ids, or one pupil's, when asked. */
   private async absenceObjects(model: Model, only: { ids?: readonly string[]; students?: readonly string[] } = {}): Promise<Obj[]> {
     const rows = await readAbsences(model.slice.tx, only);
-    const versions = await this.versions(model, 'Absence', rows.map((row) => row.id));
-    return rows.map((row) => absenceObject(model, row, versions.get(row.id))).filter((item): item is Obj => item !== null);
+    return rows.map((row) => absenceObject(model, row)).filter((item): item is Obj => item !== null);
   }
 
   /**
@@ -1573,9 +1573,13 @@ export class Ss12000V2Service {
    * standard's spelling — with the ids buried after `after` (exclusive), of
    * the categories asked for (all the key may read when none is), and of a
    * category only when the key holds its read scope. Attendance and Absence
-   * also need the school's decision in force (SHARED_ONLY): without it they
-   * are left out, and a key that could read nothing else is 403 NOT_SHARED.
-   * Paged by (removedAt, category:id).
+   * also need the school's decision in force (SHARED_ONLY). At a school that
+   * has never shared they are left out (there is nothing of them to
+   * delete), and a key that could read nothing else is 403 NOT_SHARED. At a
+   * school that has stopped, a request that names them, or names nothing,
+   * is 403 NOT_SHARED: left out, they would let the integration's cursor
+   * move past the tombstones it was not shown, and it would never see them
+   * when the school shares again. Paged by (removedAt, category:id).
    */
   async deletedEntities(caller: V2Caller, raw: Record<string, unknown>): Promise<{ data: Record<string, string[]>; pageToken: string | null }> {
     const operation = 'GET /deletedEntities';
@@ -1598,12 +1602,17 @@ export class Ss12000V2Service {
     };
     return this.run(caller, query.params, async (model) => {
       const readable: EmittedResource[] = [];
+      const withheld: EmittedResource[] = [];
       for (const resource of scoped) {
         const scope = EMITTED_RESOURCES[resource];
         if (!SHARED_ONLY.has(resource) || (await serviceReadsAttendance(model.slice.tx, scope as 'attendances.read' | 'absences.read'))) {
           readable.push(resource);
+        } else {
+          withheld.push(resource);
         }
       }
+      const askedWithheld = withheld.some((resource) => asked === undefined || asked.includes(resource));
+      if (askedWithheld && (await serviceEverSharedAttendance(model.slice.tx))) throw v2Errors.notShared();
       if (readable.length === 0) throw v2Errors.notShared();
       const categories = (asked ?? readable).filter((entity): entity is EmittedResource => readable.includes(entity as EmittedResource));
       const stored = categories.flatMap((category) => (category === 'Activity' ? ['Activity', 'AdhocActivity'] : [category]));

@@ -33,9 +33,14 @@ import { dayOf } from './slice';
  * above all. S1's absenceReason and otherAttendanceMinutes are never written.
  *
  * WHO. A pupil who is not active is not emitted, and their rows were buried
- * with the deactivation (app.ss12000_v_attendance_pupils) while the school
- * shared. Purged rows are gone from the tables, and gallring's DELETE buried
- * them.
+ * with the deactivation (app.ss12000_v_attendance_pupils). Purged rows are
+ * gone from the tables, and gallring's DELETE buried them. Both are recorded
+ * once a school has ever shared, also while it does not, so an integration
+ * that reads again when the school starts again is told of them.
+ *
+ * WHEN. meta.modified is never before the moment the school's current run
+ * of sharing began: a school that starts, or starts again, reads as
+ * modified then, so an incremental read from before reads it whole.
  */
 
 /** LATE counts this many minutes ogiltig frånvaro, as the närvarorapport does. */
@@ -94,6 +99,17 @@ export async function serviceReadsAttendance(tx: PrismaClient, scope: 'attendanc
   return row?.reads === true;
 }
 
+/**
+ * Whether the service principal's school has ever shared attendance
+ * (app.service_attendance_ever_shared): one that has, and does not now, has
+ * stopped, and /deletedEntities says so (403 NOT_SHARED) instead of leaving
+ * the two categories out.
+ */
+export async function serviceEverSharedAttendance(tx: PrismaClient): Promise<boolean> {
+  const [row] = await tx.$queryRaw<Array<{ ever: boolean }>>(Prisma.sql`SELECT app.service_attendance_ever_shared() AS ever`);
+  return row?.ever === true;
+}
+
 // ---------------------------------------------------------------------------
 // Attendances: read and paged in SQL (a school records hundreds of thousands
 // a year, and S1 gives /attendances no window).
@@ -108,6 +124,7 @@ export interface AttendanceRow {
   startsAt: Date;
   endsAt: Date;
   studentGroupId: string;
+  /** meta, as the database reckons it: never null while the school shares. */
   versionCreatedAt: Date | null;
   versionModifiedAt: Date | null;
 }
@@ -131,10 +148,11 @@ export interface AttendanceQuery {
 /**
  * app.ss12000_attendances' arguments, in its order, a filter not asked being
  * NULL: the index of each among the statement's values, so the specs'
- * in-memory school can answer the call by position. meta.modified is the
- * version's, a row without one dated by its creation; the meta bounds
- * compare at the millisecond an ISO string carries (S1: before inclusive,
- * after exclusive). The function's comment says how it is planned.
+ * in-memory school can answer the call by position. meta.modified
+ * (versionModifiedAt) is the version's or the moment the school's current
+ * run of sharing began, whichever is later, and the meta bounds compare it
+ * at the millisecond an ISO string carries (S1: before inclusive, after
+ * exclusive). The function's comment says how it is planned.
  */
 export const ATTENDANCE_ARGUMENTS = {
   ids: 0,
@@ -163,15 +181,19 @@ export async function readAttendances(tx: PrismaClient, query: AttendanceQuery):
 
 type Obj = Record<string, unknown> & { id: string };
 
+/** The database's meta of a row (both functions answer it the same way). */
+function versionOf(row: { createdAt: Date; versionCreatedAt: Date | null; versionModifiedAt: Date | null }) {
+  return row.versionModifiedAt ? { createdAt: row.versionCreatedAt ?? row.createdAt, modifiedAt: row.versionModifiedAt } : undefined;
+}
+
 /** An S1 Attendance, or null when its pupil is not emitted. */
 export function attendanceObject(model: Model, row: AttendanceRow): Obj | null {
   const student = model.personRef(row.studentId);
   if (!student) return null;
   const minutes = minutesOf(row.status, lessonMinutes(row.startsAt, row.endsAt));
-  const version = row.versionModifiedAt ? { createdAt: row.versionCreatedAt ?? row.createdAt, modifiedAt: row.versionModifiedAt } : undefined;
   return {
     id: row.id,
-    meta: metaOf(version, row.createdAt, null),
+    meta: metaOf(versionOf(row), row.createdAt, null),
     calendarEvent: { id: row.calendarLessonId },
     student,
     isReported: minutes !== null,
@@ -194,6 +216,9 @@ export interface AbsenceRow {
   endTime: string | null;
   grantedLeave: boolean;
   createdAt: Date;
+  /** meta, as app.ss12000_attendances has it. */
+  versionCreatedAt: Date | null;
+  versionModifiedAt: Date | null;
 }
 
 /** The school's absences of active pupils; only those ids, or those pupils', when asked. */
@@ -226,17 +251,13 @@ export const ABSENCE_TYPE = {
 } as const;
 
 /** An S1 Absence, or null when its pupil is not emitted. */
-export function absenceObject(
-  model: Model,
-  row: AbsenceRow,
-  version: { createdAt: Date; modifiedAt: Date } | undefined,
-): Obj | null {
+export function absenceObject(model: Model, row: AbsenceRow): Obj | null {
   const student = model.personRef(row.studentId);
   if (!student) return null;
   const span = absenceSpan(row, model.school.timezone);
   return {
     id: row.id,
-    meta: metaOf(version, row.createdAt, null),
+    meta: metaOf(versionOf(row), row.createdAt, null),
     startTime: span.startTime.toISOString(),
     endTime: span.endTime.toISOString(),
     type: row.grantedLeave ? ABSENCE_TYPE.granted : ABSENCE_TYPE.reported,
