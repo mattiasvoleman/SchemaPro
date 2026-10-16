@@ -33,7 +33,7 @@ import type { PrismaService } from '../../src/database/prisma.service';
 import { IntegrationKeysController } from '../../src/integration/integration.controller';
 import type { ClientOptions } from '../../src/integration/ss12000-sync/client';
 import { Ss12000Outbound, Ss12000Secrets } from '../../src/integration/ss12000-sync/ss12000-sync.providers';
-import { dutyStretchId } from '../../src/integration/ss12000-v2/ids';
+import { dutyStretchId, SCHEMAPRO_SS12000_NAMESPACE, uuidV3 } from '../../src/integration/ss12000-v2/ids';
 import { verifySignature } from '../../src/integration/ss12000-v2/signing';
 import type { Scope } from '../../src/integration/ss12000-v2/scopes';
 import { Ss12000V2Service, type V2Caller } from '../../src/integration/ss12000-v2/ss12000-v2.service';
@@ -338,9 +338,12 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       assert.deepEqual(await splitIds(), []);
 
       // The opt-in: the post is two Duties, each with its grad and dates, and the database names the same ids:
-      // the post's, and the post's with the spring's first day.
+      // the post's, and the spring's from the post's key, the post and its first day.
       await owner.query(`INSERT INTO "StaffingPolicies" ("schoolId", "shareEmploymentWithIntegrations", "updatedAt") VALUES ($1, true, now())`, [school.id]);
-      const springDuty = dutyStretchId(post.id, day(30));
+      const stretchKeyOf = async (id: string) =>
+        (await one<{ key: string }>(`SELECT "ss12000StretchKey"::text AS key FROM "TeacherEmployments" WHERE id = $1`, [id])).key;
+      const key = await stretchKeyOf(post.id);
+      const springDuty = dutyStretchId(post.id, key, day(30));
       let duties = await listed();
       assert.deepEqual(
         duties.map((duty) => [duty['id'], duty['startDate'], duty['endDate'], duty['dutyPercent']]),
@@ -351,6 +354,18 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       );
       assert.deepEqual(await splitIds(), [springDuty]);
       assert.equal((await one<{ id: string }>(`SELECT app.ss12000_stretch_id($1::uuid, $2::date)::text AS id`, [post.id, day(30)])).id, springDuty);
+      // The key that names it leaves through no answer, whatever the key reading may expand.
+      const answers = JSON.stringify([
+        await provider.listDuties(caller, { expand: 'person' }),
+        await provider.getDuty(caller, springDuty, {}),
+        await provider.lookupDuties(caller, { ids: [post.id, springDuty] }, {}),
+        await provider.listPersons(caller, { expand: ['duties', 'groupMemberships', 'responsibleFor'] }),
+        await provider.listGroups(caller, { expand: 'assignmentRoles' }),
+        await provider.listActivities(caller, { expand: ['teachers', 'groups'] }),
+        await provider.listCalendarEvents(caller, window),
+        await provider.deletedEntities(caller, {}),
+      ]);
+      assert.ok(!answers.includes(key), 'the stretch key left through v2');
       checkSchema('Duty', duties[1]);
 
       // What no Duty shows moves none: the spring's nedsättning, an autumn period with the post's
@@ -376,8 +391,8 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       // A leave inside the autumn: it and the post's own figures after it are Duties named by their first days.
       const leave = await period(day(10), day(20), 40);
       duties = await listed();
-      const leaveDuty = dutyStretchId(post.id, day(10));
-      const after = dutyStretchId(post.id, day(21));
+      const leaveDuty = dutyStretchId(post.id, key, day(10));
+      const after = dutyStretchId(post.id, key, day(21));
       assert.deepEqual(duties.map((duty) => duty['id']), [post.id, leaveDuty, after, springDuty]);
       assert.deepEqual(await splitIds(), [leaveDuty, after, springDuty].sort());
       assert.equal((await provider.getDuty(caller, after, {}))['startDate'], day(21));
@@ -441,6 +456,15 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       duties = await listed();
       assert.deepEqual(duties.map((duty) => [duty['id'], duty['startDate'], duty['endDate']]), [[post.id, day(-60), day(240)]]);
       assert.equal(duties[0]!['dutyPercent'], undefined);
+      // The opt-out withdraws the day the grad changed: the tombstone is no id a reader computes from the
+      // post's id and any day of the läsår, by the formula that named it before the key or without the key.
+      const tombstones = (await provider.deletedEntities(caller, { entities: 'Duty' })).data['duties'] ?? [];
+      assert.ok(tombstones.includes(springDuty));
+      for (let offset = -60; offset <= 240; offset++) {
+        for (const name of [`duty-from:${post.id}:${day(offset)}`, `duty-from:${day(offset)}:${post.id}`, `duty-from::${post.id}:${day(offset)}`]) {
+          assert.ok(!tombstones.includes(uuidV3(SCHEMAPRO_SS12000_NAMESPACE, name)), `a buried stretch is computable from the post and ${day(offset)}`);
+        }
+      }
 
       // No API role calls the new helpers.
       for (const sql of [`SELECT app.ss12000_split_duty_ids($1::uuid)`, `SELECT app.ss12000_split_capable($1::uuid)`]) {
@@ -471,6 +495,7 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
          VALUES ($1, $2, $3, 100, now()) RETURNING id`,
         [school.id, teacher.id, year.id],
       );
+      const key2 = (await one<{ key: string }>(`SELECT "ss12000StretchKey"::text AS key FROM "TeacherEmployments" WHERE id = $1`, [post2.id])).key;
       const reads = V2_SCOPES.filter((scope) => scope !== 'duties.read' && scope !== 'subscriptions.write');
       const keyFor = async (scopes: Scope[]) => {
         const made = await one<{ id: string }>(
@@ -511,7 +536,7 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
         await read('activities by teacher', () => provider.listActivities(who, { teacher: post2.id }));
         await read('events', () => provider.listCalendarEvents(who, window));
         await read('events by teacher', () =>
-          provider.lookupCalendarEvents(who, { teacher: [post2.id, dutyStretchId(post2.id, day(30)), dutyStretchId(post2.id, day(60))] }, {}),
+          provider.lookupCalendarEvents(who, { teacher: [post2.id, dutyStretchId(post2.id, key2, day(30)), dutyStretchId(post2.id, key2, day(60))] }, {}),
         );
         await read('rooms', () => provider.listRooms(who, {}));
         await read('syllabuses', () => provider.listSyllabuses(who, {}));

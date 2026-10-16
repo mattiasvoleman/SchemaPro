@@ -277,7 +277,11 @@ export class Ss12000Service {
         : read
             .flatMap((post) =>
               dutySegments(
-                { id: post.id, employmentPercent: Number(post.employmentPercent) },
+                {
+                  id: post.id,
+                  employmentPercent: Number(post.employmentPercent),
+                  ...('ss12000StretchKey' in post ? { stretchKey: post.ss12000StretchKey as string } : {}),
+                },
                 periodsOf(post.id),
                 bounds,
               ).map((_, index) => ({ postId: post.id, index })),
@@ -314,6 +318,7 @@ export class Ss12000Service {
               createdAt: post.createdAt,
               updatedAt: post.updatedAt,
               ...('contractKind' in post ? { contractKind: post.contractKind as 'FERIE' | 'SEMESTER' } : {}),
+              ...('ss12000StretchKey' in post ? { stretchKey: post.ss12000StretchKey as string } : {}),
             },
             mentorships: mentorships
               .filter((duty) => duty.userId === post.userId && duty.studentGroupId !== null)

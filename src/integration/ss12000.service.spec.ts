@@ -364,6 +364,7 @@ describe('Ss12000Service', () => {
       teachingTargetMinutesPerWeek: 700,
       signature: 'ANN',
       note: 'Förhandlat 2026-04-14',
+      ss12000StretchKey: 'aaaabbbb-0000-4000-8000-00000000c0de',
       createdAt: new Date('2026-08-01T00:00:00.000Z'),
       updatedAt: new Date('2026-09-01T00:00:00.000Z'),
       ...overrides,
@@ -412,7 +413,7 @@ describe('Ss12000Service', () => {
         await service.duties(SCHOOL_ID);
         const select = (tx.teacherEmployment.findMany.mock.calls.at(-1)![0] as { select: Record<string, unknown> }).select;
         expect(Object.keys(select).sort()).toEqual(
-          ['createdAt', 'employmentPercent', 'id', 'signature', 'updatedAt', 'userId', ...(share ? ['contractKind'] : [])].sort(),
+          ['createdAt', 'employmentPercent', 'id', 'signature', 'updatedAt', 'userId', ...(share ? ['contractKind', 'ss12000StretchKey'] : [])].sort(),
         );
         expect(select).not.toHaveProperty('reductionPercent');
         expect(select).not.toHaveProperty('teachingTargetMinutesPerWeek');
@@ -468,7 +469,7 @@ describe('Ss12000Service', () => {
       // emp-1 is two Duties and emp-2 one: the page counts Duties, not posts.
       expect(page.totalCount).toBe(3);
       expect(page.data.map((duty) => [duty.id, duty.startDate, duty.endDate, duty.dutyPercent])).toEqual([
-        [dutyStretchId('emp-1', '2027-01-11'), '2027-01-11', '2027-06-11', 50],
+        [dutyStretchId('emp-1', 'aaaabbbb-0000-4000-8000-00000000c0de', '2027-01-11'), '2027-01-11', '2027-06-11', 50],
         ['emp-2', '2026-08-17', '2027-06-11', 100],
       ]);
       // The spring's own hours and its mentorship within its dates; created with the post.

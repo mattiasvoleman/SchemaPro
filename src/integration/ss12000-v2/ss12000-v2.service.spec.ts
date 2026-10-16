@@ -234,7 +234,7 @@ describe('groups', () => {
       schoolId: W.school, employmentId: W.emp1, userId: W.t1, academicYearId: W.year,
       validFrom: new Date('2027-01-11T00:00:00.000Z'), validTo: null, employmentPercent: 50, updatedAt: new Date('2026-10-02T08:00:00Z'),
     });
-    const spring = dutyStretchId(W.emp1, '2027-01-11');
+    const spring = dutyStretchId(W.emp1, String(world.employments[0]!['ss12000StretchKey']), '2027-01-11');
     const roles = [
       { duty: { id: W.emp1 }, assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2027-01-10' },
       { duty: { id: spring }, assignmentRoleType: 'Mentor', startDate: '2027-01-11', endDate: '2027-06-11' },

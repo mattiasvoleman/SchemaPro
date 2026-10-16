@@ -5,17 +5,21 @@
 -- year in which its grad stays the same whole percent — where the school
 -- shares employment with integrations (src/integration/ss12000-duties.ts,
 -- toSs12000Duties). The first stretch keeps the post's id; every other is
--- app.ss12000_stretch_id(post, its first day): named by what a reader of
--- the Duties sees, so a period no Duty shows (a nedsättning, a target, a
--- period cut in two at the same grad) names nothing and moves no id. This
--- migration makes the versions and
--- the tombstones (20261014130000) follow those ids: an id that starts being
--- emitted is unburied and versioned, one that stops is buried, and every
--- change to what they carry moves their meta.modified — and nothing else
--- does. No table changes. One existing function does: app.ss12000_bump,
--- which every trigger calls with a post's id when the post's Duty changes,
--- now bumps the post's stretches with it. The new triggers sit beside the
--- old.
+-- app.ss12000_stretch_id(post, its first day), named by the stretch's first
+-- day — what a reader of the Duties sees — so a period no Duty shows (a
+-- nedsättning, a target, a period cut in two at the same grad) names
+-- nothing and moves no id, and by the post's ss12000StretchKey, a random
+-- value no reader ever gets, so nobody can compute a stretch's id from the
+-- post's and a day: a stretch buried when the school stops sharing tells
+-- /deletedEntities nothing of when the grad changed. This migration adds
+-- that column and makes the versions and the tombstones (20261014130000)
+-- follow those ids: an id that starts being emitted is unburied and
+-- versioned, one that stops is buried, and every change to what they carry
+-- moves their meta.modified — and nothing else does. Two existing
+-- functions change: app.ss12000_bump, which every trigger calls with a
+-- post's id when the post's Duty changes, now bumps the post's stretches
+-- with it; and app.teacher_staffing_log keeps the key out of a post's
+-- history. The new triggers sit beside the old.
 --
 -- ## The ids, the database's and the gateway's
 --
@@ -29,8 +33,10 @@
 -- (app.ss12000_duty_id is not the post's). app.ss12000_uuid_v3 is
 -- src/integration/ss12000-v2/ids.ts uuidV3: RFC 4122 version 3, MD5 over
 -- SchemaPro's SS12000 namespace and the name, since md5() needs no
--- extension. scripts/test/probe-ss12000-provider.ts compares the two
--- through a real database.
+-- extension; the name carries the post's key, which the gateway reads with
+-- the post where the school shares and never emits.
+-- scripts/test/probe-ss12000-provider.ts compares the two through a real
+-- database, and that a buried stretch is no id a reader can compute.
 --
 -- ## When the set of ids moves
 --
@@ -42,8 +48,9 @@
 -- ids, dates, grad — are not what they were before the write: a period that
 -- changes only the nedsättning or the target, or adds a stretch with the
 -- grad around it, moves no Duty, so meta.modified tells nobody that it was
--- written (20261014140000 keeps the same promise for the post itself); a
--- post deleted with its periods has their stretches buried. A
+-- written (20261014140000 keeps the same promise for the post itself). A
+-- post about to be deleted has its stretches buried first, while its key
+-- and its periods are still there to name them. A
 -- post's grad, teacher or year, the school's opt-in or annual hours, a
 -- teacher's isActive, a duty link and a year's activation or dates call it
 -- too. Everything else a Duty carries — the signature, the avtalsform, the
@@ -69,6 +76,80 @@
 -- below asserts it, as 20261014140000 does for the older helpers. RLS
 -- section 105 asserts the same, and what the triggers write.
 
+-- The post's key: random per post, from the default, for the posts there
+-- are and every one written later; nothing writes it after.
+ALTER TABLE "TeacherEmployments" ADD COLUMN "ss12000StretchKey" UUID NOT NULL DEFAULT gen_random_uuid();
+
+-- A post's history (20261010090000, 20261022120000) is every column but a
+-- few; the key is one of them, so no version of a post carries it.
+CREATE OR REPLACE FUNCTION app.teacher_staffing_log() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  entity "TeacherLogEntity" :=
+    CASE TG_TABLE_NAME WHEN 'TeacherEmployments' THEN 'EMPLOYMENT'::"TeacherLogEntity"
+                       WHEN 'TeacherEmploymentPeriods' THEN 'PERIOD'::"TeacherLogEntity"
+                       ELSE 'DUTY'::"TeacherLogEntity" END;
+  -- blockedConstraintId (20261017090000): an uppdrag's times are versions of
+  -- their own, counted from TeacherDutySlots. ss12000StretchKey
+  -- (20261104090000): no reader's.
+  stripped text[] := ARRAY['schoolId', 'createdAt', 'updatedAt', 'blockedConstraintId', 'ss12000StretchKey'];
+  -- The note's text never enters the log; "noteChanged" says it was written.
+  -- Read through the JSON: a period has no note (20261022120000).
+  note_written constant jsonb := '{"noteChanged": true}'::jsonb;
+  old_row jsonb;
+  new_row jsonb;
+  actor uuid := app.current_user_id();
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    new_row := to_jsonb(NEW) - stripped - 'note';
+    IF COALESCE(to_jsonb(NEW) ->> 'note', '') <> '' THEN
+      new_row := new_row || note_written;
+    END IF;
+    PERFORM app.teacher_staffing_log_write(NEW."schoolId", NEW."userId", NEW."academicYearId",
+                                           entity, NEW."id", 'CREATE', NULL, new_row, actor);
+    RETURN NULL;
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    old_row := to_jsonb(OLD) - stripped - 'note';
+    PERFORM app.teacher_staffing_log_write(OLD."schoolId", OLD."userId", OLD."academicYearId",
+                                           entity, OLD."id", 'DELETE', old_row, NULL, actor);
+    RETURN NULL;
+  END IF;
+
+  IF (to_jsonb(OLD) - stripped) = (to_jsonb(NEW) - stripped) AND OLD."schoolId" = NEW."schoolId" THEN
+    -- A save that changed nothing, the note included, is no version.
+    RETURN NULL;
+  END IF;
+  old_row := to_jsonb(OLD) - stripped - 'note';
+  new_row := to_jsonb(NEW) - stripped - 'note';
+
+  IF OLD."userId" IS DISTINCT FROM NEW."userId"
+     OR OLD."academicYearId" IS DISTINCT FROM NEW."academicYearId"
+     OR OLD."schoolId" IS DISTINCT FROM NEW."schoolId"
+     OR OLD."id" IS DISTINCT FROM NEW."id" THEN
+    -- Moved to another owner: each owner gets their own half, so no teacher's
+    -- arm ever shows them a colleague's `before`.
+    PERFORM app.teacher_staffing_log_write(OLD."schoolId", OLD."userId", OLD."academicYearId",
+                                           entity, OLD."id", 'DELETE', old_row, NULL, actor);
+    IF COALESCE(to_jsonb(NEW) ->> 'note', '') <> '' THEN
+      new_row := new_row || note_written;
+    END IF;
+    PERFORM app.teacher_staffing_log_write(NEW."schoolId", NEW."userId", NEW."academicYearId",
+                                           entity, NEW."id", 'CREATE', NULL, new_row, actor);
+    RETURN NULL;
+  END IF;
+
+  IF (to_jsonb(OLD) ->> 'note') IS DISTINCT FROM (to_jsonb(NEW) ->> 'note') THEN
+    new_row := new_row || note_written;
+  END IF;
+  PERFORM app.teacher_staffing_log_write(NEW."schoolId", NEW."userId", NEW."academicYearId",
+                                         entity, NEW."id", 'UPDATE', old_row, new_row, actor);
+  -- An AFTER trigger's return value is ignored.
+  RETURN NULL;
+END
+$$;
+
 CREATE FUNCTION app.ss12000_uuid_v3(p_name text) RETURNS uuid
 LANGUAGE sql IMMUTABLE SET search_path = "public", "pg_temp" AS $$
   SELECT (substr(h, 1, 12) || '3' || substr(h, 14, 3)
@@ -77,9 +158,23 @@ LANGUAGE sql IMMUTABLE SET search_path = "public", "pg_temp" AS $$
     FROM (SELECT md5(decode('5c1e2f7a0b944d3e9a517c2d8e6f4b10', 'hex') || convert_to(p_name, 'UTF8')) AS h) x
 $$;
 
+-- A stretch's id: the post's key, the post and the day (ids.ts
+-- dutyStretchId). Null for a post that is gone, whose key went with it.
 CREATE FUNCTION app.ss12000_stretch_id(p_post uuid, p_from date) RETURNS uuid
-LANGUAGE sql IMMUTABLE SET search_path = "public", "pg_temp" AS $$
-  SELECT app.ss12000_uuid_v3('duty-from:' || lower(p_post::text) || ':' || to_char(p_from, 'YYYY-MM-DD'))
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT app.ss12000_uuid_v3('duty-from:' || lower(e."ss12000StretchKey"::text) || ':' || lower(p_post::text)
+                             || ':' || to_char(p_from, 'YYYY-MM-DD'))
+    FROM "TeacherEmployments" e WHERE e."id" = p_post
+$$;
+
+-- Every id a post's stretch could have had: a stretch after the first
+-- starts on a period's first day or on the day after its last.
+CREATE FUNCTION app.ss12000_stretch_candidates(p_post uuid) RETURNS uuid[]
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT ARRAY(
+    SELECT app.ss12000_stretch_id(p_post, q."validFrom"::date) FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = p_post
+    UNION SELECT app.ss12000_stretch_id(p_post, q."validTo"::date + 1)
+            FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = p_post AND q."validTo" IS NOT NULL)
 $$;
 
 -- Whether the post is emitted on its own id, by a school that shares, in the
@@ -225,14 +320,9 @@ BEGIN
   END IF;
   posts := ARRAY(SELECT DISTINCT x FROM unnest(coalesce(p_employments, ARRAY[]::uuid[])) x WHERE x IS NOT NULL);
   now_ids := ARRAY(SELECT DISTINCT i FROM unnest(posts) e, unnest(app.ss12000_split_duty_ids(e)) i);
-  -- Every id a post's stretch could have had: a stretch after the first
-  -- starts on a period's first day or on the day after its last.
   candidates := ARRAY(
     SELECT x FROM unnest(coalesce(p_gone, ARRAY[]::uuid[])) x WHERE x IS NOT NULL
-    UNION SELECT app.ss12000_stretch_id(q."employmentId", q."validFrom"::date)
-            FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = ANY (posts)
-    UNION SELECT app.ss12000_stretch_id(q."employmentId", q."validTo"::date + 1)
-            FROM "TeacherEmploymentPeriods" q WHERE q."employmentId" = ANY (posts) AND q."validTo" IS NOT NULL);
+    UNION SELECT i FROM unnest(posts) e, unnest(app.ss12000_stretch_candidates(e)) i WHERE i IS NOT NULL);
   PERFORM app.ss12000_bury(p_school, 'Duty', ARRAY(
     SELECT v."entityId" FROM "Ss12000EntityVersions" v
      WHERE v."schoolId" = p_school AND v."resource" = 'Duty'
@@ -341,6 +431,24 @@ BEGIN
 END
 $$;
 
+-- A post about to be deleted: its stretches are buried while its key and
+-- its periods still name them. The periods go by cascade once the row is
+-- gone, when no stretch id can be computed any more. Only an id with a
+-- version, so a school that never shared buries nothing.
+CREATE FUNCTION app.ss12000_v_split_post_gone() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  PERFORM app.ss12000_bury(OLD."schoolId", 'Duty', ARRAY(
+    SELECT v."entityId" FROM "Ss12000EntityVersions" v
+     WHERE v."schoolId" = OLD."schoolId" AND v."resource" = 'Duty'
+       AND v."entityId" = ANY (app.ss12000_stretch_candidates(OLD."id"))
+       AND NOT EXISTS (
+         SELECT 1 FROM "Ss12000Tombstones" t
+          WHERE t."schoolId" = OLD."schoolId" AND t."resource" = 'Duty' AND t."emittedId" = v."entityId")));
+  RETURN OLD;
+END
+$$;
+
 CREATE FUNCTION app.ss12000_v_split_policies() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE r record;
@@ -440,6 +548,9 @@ BEGIN
 END
 $$;
 
+CREATE TRIGGER "TeacherEmployments_ss12000_split_gone" BEFORE DELETE ON "TeacherEmployments"
+    FOR EACH ROW EXECUTE FUNCTION app.ss12000_v_split_post_gone();
+
 -- ---------------------------------------------------------------------------
 -- The posts split already: their stretches versioned, their own Duty bumped.
 -- Outside a trigger, so under app.ss12000_housekeeping for the transaction,
@@ -490,6 +601,7 @@ BEGIN
   FOREACH fn IN ARRAY ARRAY[
     'app.ss12000_uuid_v3(text)',
     'app.ss12000_stretch_id(uuid, date)',
+    'app.ss12000_stretch_candidates(uuid)',
     'app.ss12000_split_capable(uuid)',
     'app.ss12000_periods_json(uuid, uuid[])',
     'app.ss12000_duty_stretches(uuid, jsonb)',
@@ -500,6 +612,7 @@ BEGIN
     'app.ss12000_version_split_duties()',
     'app.ss12000_v_split_periods()',
     'app.ss12000_v_split_employments()',
+    'app.ss12000_v_split_post_gone()',
     'app.ss12000_v_split_policies()',
     'app.ss12000_v_split_users()',
     'app.ss12000_v_split_teachers()',
@@ -523,11 +636,11 @@ BEGIN
     JOIN pg_namespace ns ON ns.oid = p.pronamespace AND ns.nspname = 'app'
     CROSS JOIN pg_roles r
    WHERE r.rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated')
-     AND p.proname IN ('ss12000_uuid_v3', 'ss12000_stretch_id', 'ss12000_split_capable', 'ss12000_periods_json',
+     AND p.proname IN ('ss12000_uuid_v3', 'ss12000_stretch_id', 'ss12000_stretch_candidates', 'ss12000_split_capable', 'ss12000_periods_json',
                        'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
                        'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods',
                        'ss12000_version_split_duties', 'ss12000_v_split_periods',
-                       'ss12000_v_split_employments', 'ss12000_v_split_policies', 'ss12000_v_split_users',
+                       'ss12000_v_split_employments', 'ss12000_v_split_post_gone', 'ss12000_v_split_policies', 'ss12000_v_split_users',
                        'ss12000_v_split_teachers', 'ss12000_v_split_years')
      AND has_function_privilege(r.oid, p.oid, 'EXECUTE');
   IF bad IS NOT NULL THEN

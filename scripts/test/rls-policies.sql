@@ -19490,19 +19490,21 @@ ROLLBACK;
 -- role's to execute (they read across schools as their owner), nor is
 -- app.ss12000_bump, which now reaches a post's stretches; the ones that read
 -- rows are SECURITY DEFINER; each table that can move the set of ids has its
--- statement triggers, enabled; and a mentorskap has none of its own, since
--- the post's bump reaches its stretches. What the triggers write, and that
--- the database derives the gateway's ids, is the provider probe's (sp-g),
--- through the API.
+-- statement triggers, enabled; a mentorskap has none of its own, since the
+-- post's bump reaches its stretches; a post about to be deleted buries its
+-- stretches first; and the random key that names them is on every post and
+-- in no version of one. What the triggers write, that the database derives
+-- the gateway's ids, and that a buried stretch is no id a reader can
+-- compute, is the provider probe's (sp-g), through the API.
 -- ---------------------------------------------------------------------------
 
 DO $$
 DECLARE
   bad text;
-  helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_stretch_id', 'ss12000_split_capable', 'ss12000_periods_json',
+  helpers text[] := ARRAY['ss12000_uuid_v3', 'ss12000_stretch_id', 'ss12000_stretch_candidates', 'ss12000_split_capable', 'ss12000_periods_json',
                           'ss12000_duty_stretches', 'ss12000_split_duty_ids', 'ss12000_bump',
                           'ss12000_reconcile_split_duties', 'ss12000_posts_with_periods', 'ss12000_version_split_duties',
-                          'ss12000_v_split_periods', 'ss12000_v_split_employments', 'ss12000_v_split_policies',
+                          'ss12000_v_split_periods', 'ss12000_v_split_employments', 'ss12000_v_split_post_gone', 'ss12000_v_split_policies',
                           'ss12000_v_split_users', 'ss12000_v_split_teachers', 'ss12000_v_split_years'];
   n integer;
 BEGIN
@@ -19528,9 +19530,18 @@ BEGIN
       'TeacherEmploymentPeriods_ss12000_split_del', 'TeacherEmployments_ss12000_split_upd',
       'StaffingPolicies_ss12000_split_ins', 'StaffingPolicies_ss12000_split_upd', 'Users_ss12000_split_upd',
       'Ss12000DutyLinks_ss12000_split_ins', 'Ss12000DutyLinks_ss12000_split_upd', 'Ss12000DutyLinks_ss12000_split_del',
-      'AcademicYears_ss12000_split_upd']) AS want
+      'AcademicYears_ss12000_split_upd', 'TeacherEmployments_ss12000_split_gone']) AS want
    WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgname = want AND t.tgenabled = 'O' AND NOT t.tgisinternal);
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'split duties: triggers missing or disabled: %', bad; END IF;
   SELECT count(*) INTO n FROM pg_trigger t WHERE t.tgname LIKE '%\_ss12000\_split\_%' AND NOT t.tgisinternal;
-  IF n <> 11 THEN RAISE EXCEPTION 'split duties: % split triggers, not 11', n; END IF;
+  IF n <> 12 THEN RAISE EXCEPTION 'split duties: % split triggers, not 12', n; END IF;
+  -- The key that names a post's stretches is every post's, and no version of a post carries it.
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = 'TeacherEmployments' AND column_name = 'ss12000StretchKey'
+                    AND is_nullable = 'NO' AND column_default = 'gen_random_uuid()') THEN
+    RAISE EXCEPTION 'split duties: TeacherEmployments.ss12000StretchKey is not a random key on every post';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "TeacherEmploymentLogs" l WHERE l."after" ? 'ss12000StretchKey' OR l."before" ? 'ss12000StretchKey') THEN
+    RAISE EXCEPTION 'split duties: a post''s history carries its stretch key';
+  END IF;
 END $$;

@@ -59,8 +59,9 @@
  * post's id, so every reference to the post's Duty (an Activity's teachers,
  * a CalendarEvent's exceptions) still finds one, and nothing a reader
  * without duties.read sees moves with a period. Every later stretch is
- * dutyStretchId(post, its first day): named by what a reader of the Duties
- * sees, so a period no Duty shows names nothing. app.ss12000_split_duty_ids
+ * dutyStretchId(post, its key, its first day): named by its first day, so a
+ * period no Duty shows names nothing, and by a key no reader gets, so a
+ * buried stretch's id tells nobody its day. app.ss12000_split_duty_ids
  * derives the same ids in the database, for the versions and the
  * tombstones.
  */
@@ -128,7 +129,9 @@ export function dutyEmploymentSelect(share: boolean) {
     signature: true,
     createdAt: true,
     updatedAt: true,
-    ...(share ? { contractKind: true } : {}),
+    // Where the school shares: the avtalsform, and the key that names a
+    // changing post's later Duties (ids.ts dutyStretchId). Neither leaves.
+    ...(share ? { contractKind: true, ss12000StretchKey: true } : {}),
   } as const;
 }
 
@@ -145,6 +148,8 @@ export interface DutyInput {
     createdAt: Date;
     updatedAt: Date;
     contractKind?: 'FERIE' | 'SEMESTER';
+    /** ss12000StretchKey, read where the school shares: names a later stretch, never emitted. */
+    stretchKey?: string;
   };
   /**
    * The post's MENTORSKAP uppdrag of the year, on classes of the year, with
@@ -217,6 +222,12 @@ export interface DutySegment {
   employmentPercent: number;
 }
 
+/** The post's key, read with it where the school shares: a later stretch has no id without it. */
+function stretchKeyOf(employment: { id: string; stretchKey?: string }): string {
+  if (!employment.stretchKey) throw new Error(`post ${employment.id} is cut without its ss12000StretchKey`);
+  return employment.stretchKey;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const shiftDay = (day: string, days: number): string =>
   new Date(Date.parse(`${day}T00:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
@@ -231,11 +242,11 @@ const shiftDay = (day: string, days: number): string =>
  * dates are the ones the school stated (postStretches' `from` and `to`),
  * clamped to the läsår. One segment, with the post's id and the year's
  * bounds, for a post whose grad never changes. The first segment is the
- * post's id, every other dutyStretchId(post, its first day).
+ * post's id, every other dutyStretchId(post, its key, its first day).
  * app.ss12000_duty_stretches walks the periods the same way.
  */
 export function dutySegments(
-  employment: { id: string; employmentPercent: number },
+  employment: { id: string; employmentPercent: number; stretchKey?: string },
   periods: readonly DutyPeriod[],
   year: { startDate: string; endDate: string },
 ): DutySegment[] {
@@ -255,7 +266,7 @@ export function dutySegments(
       return;
     }
     // The first stretch is the post's own Duty, whatever it is.
-    const id = segments.length === 0 ? employment.id : dutyStretchId(employment.id, startDate);
+    const id = segments.length === 0 ? employment.id : dutyStretchId(employment.id, stretchKeyOf(employment), startDate);
     segments.push({ id, startDate, endDate, employmentPercent });
   };
   let cursor = year.startDate;
