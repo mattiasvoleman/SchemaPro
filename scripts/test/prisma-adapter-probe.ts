@@ -189,6 +189,12 @@ interface Fixture {
   pupilId: string;
   foreignYearId: string;
   grundskolaVersionId: string;
+  /**
+   * SFS 2025:729's grundskola total (code 'SFS2025:729': 7 424 h, HT2028, no cells). The probe's
+   * years from 2090 are reformed årskullar in a tioårig numbering, and a plan
+   * they follow is on this lydelse (planFitsCohort, planRowOf).
+   */
+  grundskola2028VersionId: string;
 }
 
 /** What a transaction can see of the settings PrismaService puts on it. */
@@ -1769,8 +1775,10 @@ async function runChecks(
     const svenska = await subjects.create({ name: `${MARKER} p2-sv`, nationalCode: 'SV_SVA' } as never, admin);
     const sva = await subjects.create({ name: `${MARKER} p2-sva`, nationalCode: 'SV_SVA' } as never, admin);
     const language = await subjects.create({ name: `${MARKER} p2-språk`, nationalCode: 'M2' } as never, admin);
+    // A 2098 läsår is tioårig and every årskull in it began åk 1 after HT
+    // 2028, so the plan it follows is on the 2028 lydelse (planFitsCohort).
     const plan = await timplans.create(
-      { name: `${MARKER} p2`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      { name: `${MARKER} p2`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskola2028VersionId },
       admin,
     );
     await timplans.replaceEntries(
@@ -1787,14 +1795,15 @@ async function runChecks(
     );
     await timplans.decide(plan.id, { decisionNote: MARKER }, admin);
 
-    // The year's create attaches grades 1–9 to the newest decided plan, in its transaction.
+    // The year's create attaches the plan's årskurser, åk 1–10 of the tioårig
+    // numbering, to the newest decided plan, in its transaction.
     const year = await years.create(
-      { name: `${MARKER} p2`, startDate: '2098-08-17', endDate: '2099-06-11' } as never,
+      { name: `${MARKER} p2`, startDate: '2098-08-17', endDate: '2099-06-11', gradeNumbering: 'TIOARIG' } as never,
       admin,
     );
     assert.deepEqual(
       year.timplans.map((row) => [row.gradeLevel, row.localTimplanId]),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9].map((grade) => [grade, plan.id]),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((grade) => [grade, plan.id]),
     );
     // The dialog narrows it to åk 7.
     await yearTimplans.replace(year.id, { timplans: [{ gradeLevel: 7, localTimplanId: plan.id }] }, admin);
@@ -1898,7 +1907,7 @@ async function runChecks(
     const generator = new TimplanRequirementsService(api);
 
     const year = await years.create(
-      { name: `${MARKER} ll`, startDate: '2097-08-17', endDate: '2098-06-11' } as never,
+      { name: `${MARKER} ll`, startDate: '2097-08-17', endDate: '2098-06-11', gradeNumbering: 'TIOARIG' } as never,
       admin,
     );
     const idrott = await subjects.create({ name: `${MARKER} ll-idrott` } as never, admin);
@@ -1961,7 +1970,7 @@ async function runChecks(
 
     // Generate with SPLIT writes 175 as 2 × 60 + 1 × 55; the same call without the mode is today's preview.
     const plan = await timplans.create(
-      { name: `${MARKER} ll`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      { name: `${MARKER} ll`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskola2028VersionId },
       admin,
     );
     await timplans.replaceEntries(plan.id, { entries: [{ subjectId: matematik.id, gradeLevel: 7, minutesPerWeek: 175 }] }, admin);
@@ -2912,7 +2921,7 @@ async function runChecks(
   // (w) and (x) run in a school of their own: the activation hands the
   // active flag over and moves pupils, which in the demo school would move
   // the seed's pupils and take its active year away from every later check.
-  const rull = await givenRolloverSchool(owner, fixture.grundskolaVersionId);
+  const rull = await givenRolloverSchool(owner, fixture.grundskola2028VersionId);
   const rullAdmin: AuthenticatedUser = {
     authId: rull.adminAuthId,
     userId: rull.adminId,
@@ -4104,16 +4113,20 @@ async function runChecks(
           await owner.query('ROLLBACK');
         }
 
-        // 2028: the rollover preview says it, blocks nothing.
-        const into2028 = await rollover.previewRollover(
-          curYear,
-          { name: `${MARKER} eh 2028`, startDate: '2028-08-14', endDate: '2029-06-08', graduatingGradeLevel: 9 },
-          ehAdmin,
+        // 2028: a school its plans and year show no form for is asked (SFS
+        // 2025:729 covers the four forms); told, the preview renumbers and says it.
+        const options2028 = { name: `${MARKER} eh 2028`, startDate: '2028-08-14', endDate: '2029-06-08', graduatingGradeLevel: 9 };
+        const asked = await rollover.previewRollover(curYear, options2028, ehAdmin);
+        assert.deepEqual(
+          asked.problems.filter((problem) => problem.code.startsWith('ROLLOVER_2028')).map((problem) => [problem.code, problem.blocking]),
+          [['ROLLOVER_2028_SCHOOL_FORM_UNKNOWN', true]],
         );
+        const into2028 = await rollover.previewRollover(curYear, { ...options2028, renumber2028: true }, ehAdmin);
         assert.deepEqual(
           into2028.problems.filter((problem) => problem.code === 'ROLLOVER_2028_RENUMBERING'),
           [{ code: 'ROLLOVER_2028_RENUMBERING', blocking: false, params: { startYear: 2028, source: 'SFS 2025:729, övergångsbestämmelse 4' } }],
         );
+        assert.deepEqual(into2028.reform2028, { renumbers: true, numbering: 'TIOARIG' });
 
         // 7: a year deleted takes its history along, nothing raised — once its
         // pupils have left its classes (YEAR_HAS_HOME_PUPILS guards that).
@@ -5088,9 +5101,16 @@ async function findFixture(owner: Client): Promise<Fixture> {
     [],
     'bilaga 1 of the national timplan (migration 20261006090000)',
   );
+  const grundskola2028 = await onlyRow<{ id: string }>(
+    owner,
+    `SELECT id FROM "NationalTimplanVersions" WHERE code = 'SFS2025:729'`,
+    [],
+    'the 2028 grundskola total (migration 20261006090000)',
+  );
 
   return {
     grundskolaVersionId: grundskola.id,
+    grundskola2028VersionId: grundskola2028.id,
     schoolId: school.id,
     admin: {
       authId: admin.authId,

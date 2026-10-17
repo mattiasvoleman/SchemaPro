@@ -25527,15 +25527,18 @@ DO $$
 DECLARE
   school uuid := app.current_school_id();
   earlier uuid; first_t uuid; kept uuid; inherited uuid; renewed uuid; next_t uuid;
-  n text; con text; st text;
+  n text; con text; st text; seeded text;
 BEGIN
   IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
     RAISE EXCEPTION 'numbering: expected to be acting as an admin, am %', app.current_user_role();
   END IF;
   -- Far from every seeded year, and in an order that makes each fill visible.
-  IF EXISTS (SELECT 1 FROM "AcademicYears" WHERE "schoolId" = school AND "startDate" >= DATE '2028-07-01') THEN
-    RAISE EXCEPTION 'numbering: the fixture school already has a läsår from HT 2028; the fills below would read it';
-  END IF;
+  -- The seed's years move with today: once one starts from HT 2028 (from the
+  -- end of 2028, or a seed backfilled NIOARIG in production order), the first
+  -- fill below takes its numbering, as the rule says; TIOARIG when there is none.
+  SELECT "gradeNumbering"::text INTO seeded FROM "AcademicYears"
+   WHERE "schoolId" = school AND "startDate" >= DATE '2028-07-01' AND "startDate" < DATE '2096-08-15'
+   ORDER BY "startDate" DESC LIMIT 1;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
   VALUES (school, 'RLS161 före', DATE '2027-08-16', DATE '2028-06-10', false, now()) RETURNING id INTO earlier;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
@@ -25550,7 +25553,7 @@ BEGIN
   VALUES (school, 'RLS161 nästa', DATE '2100-08-15', DATE '2101-06-10', false, now()) RETURNING id INTO next_t;
   SELECT string_agg("gradeNumbering"::text, ',' ORDER BY "startDate") INTO n
     FROM "AcademicYears" WHERE id IN (earlier, first_t, kept, inherited, renewed, next_t);
-  IF n IS DISTINCT FROM 'NIOARIG,TIOARIG,NIOARIG,NIOARIG,TIOARIG,TIOARIG' THEN
+  IF n IS DISTINCT FROM 'NIOARIG,' || COALESCE(seeded, 'TIOARIG') || ',NIOARIG,NIOARIG,TIOARIG,TIOARIG' THEN
     RAISE EXCEPTION 'numbering: the läsår were filled as %', n;
   END IF;
 
