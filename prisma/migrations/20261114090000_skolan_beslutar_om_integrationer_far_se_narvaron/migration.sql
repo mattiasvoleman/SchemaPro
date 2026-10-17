@@ -256,6 +256,11 @@ ALTER TABLE "AttendanceSharingDecisions"
 CREATE FUNCTION app.attendance_sharing_decisions_are_stamped() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
+  -- After the register saves already writing, before any that begins now
+  -- (app.attendance_recording_waits_for_sync): a save never writes on having
+  -- read the decision before this one. Before the row's foreign key checks,
+  -- so nothing is held while it waits.
+  PERFORM pg_advisory_xact_lock(hashtextextended('AttendanceSharing:' || NEW."schoolId"::text, 0));
   NEW."decidedAt" := clock_timestamp();
   NEW."decidedById" := app.current_user_id();
   NEW."xid" := pg_current_xact_id();
@@ -391,19 +396,37 @@ COMMENT ON FUNCTION app.attendance_stopped_since(uuid) IS
 -- checks, holding KEY SHARE on the pupil's row, which an apply that changes
 -- the pupil's e-mail would wait for. Only while the school shares: otherwise
 -- the save writes no version and waits for nothing.
+--
+-- Whether it shares is read once, so it is ordered against the decisions:
+-- the save first takes 'AttendanceSharing:<school>' shared, which a decision
+-- takes exclusively (app.attendance_sharing_decisions_are_stamped). A
+-- decision waits for the saves already writing, and a save that begins
+-- during a decision reads it once it is committed; no save that read "not
+-- shared" writes a version after a decision to share. Each wait is at most
+-- 5 s (lock_timeout, restored after, as app.enter_grundschema_write does):
+-- an apply can run for minutes, and a save still waiting answers 409
+-- ATTENDANCE_SYNC_IN_PROGRESS (55P03 in the gateway), which the phone's
+-- queue sends again, instead of holding its connection past the request.
 CREATE FUNCTION app.attendance_recording_waits_for_sync() RETURNS void
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   school uuid := app.current_school_id();
+  previous text := current_setting('lock_timeout');
 BEGIN
-  IF school IS NOT NULL AND app.attendance_shared(school) THEN
+  IF school IS NULL THEN
+    RETURN;
+  END IF;
+  PERFORM set_config('lock_timeout', '5s', true);
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('AttendanceSharing:' || school::text, 0));
+  IF app.attendance_shared(school) THEN
     PERFORM pg_advisory_xact_lock_shared(hashtextextended('Users:' || school::text, 0));
   END IF;
+  PERFORM set_config('lock_timeout', previous, true);
 END
 $$;
 
 COMMENT ON FUNCTION app.attendance_recording_waits_for_sync() IS
-  'Called by the register save before its first write: at a school that shares attendance, waits for a running SS12000 apply (the shared side of the school''s ''Users:<school>'' lock), so the versions each writes are never held one each.';
+  'Called by the register save before its first write: orders the save against the school''s sharing decisions (''AttendanceSharing:<school>'' shared) and, at a school that shares attendance, waits for a running SS12000 apply (''Users:<school>'' shared), each for at most 5 s, so the versions a save and an apply write are never held one each.';
 
 -- Of the removed rows p_ids (p_created their createdAt, in the same order),
 -- the ones that may have left SchemaPro, and so are buried. While the school
