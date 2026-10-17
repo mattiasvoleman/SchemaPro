@@ -1111,13 +1111,18 @@ function sourceCode(organisation: S1Organisation, note: UnitsDiffInput['note'], 
   return code;
 }
 
-/** Lowest to highest schoolYear (0..11) of the enrolments at the organisation active on `today`; null when none gives one. */
+/**
+ * Lowest to highest schoolYear (0..10, the nine-year numbering a unit's span
+ * is stated in) of the enrolments at the organisation active on `today`; null
+ * when none gives one. A register in the tioårig numbering from HT 2028 is a
+ * follow-up: its årskurser must be read back first.
+ */
 function sourceSpan(roster: FetchedRoster, organisationId: string, today: string): { gradeFrom: number; gradeTo: number } | null {
   const grades: number[] = [];
   for (const person of roster.persons.values()) {
     for (const enrolment of person.enrolments) {
       if (enrolment.organisationId !== organisationId || enrolment.cancelled || !activeOn(today, enrolment.startDate, enrolment.endDate)) continue;
-      if (enrolment.schoolYear !== null && enrolment.schoolYear >= 0 && enrolment.schoolYear <= 11) grades.push(enrolment.schoolYear);
+      if (enrolment.schoolYear !== null && enrolment.schoolYear >= 0 && enrolment.schoolYear <= 10) grades.push(enrolment.schoolYear);
     }
   }
   return grades.length === 0 ? null : { gradeFrom: Math.min(...grades), gradeTo: Math.max(...grades) };

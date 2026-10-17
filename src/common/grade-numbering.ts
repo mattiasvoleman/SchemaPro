@@ -23,9 +23,13 @@
  * A läsår stores its numbering (AcademicYears.gradeNumbering, 20261121091000).
  * A lokal timplan's rows are in its lydelse's numbering (one applying from HT
  * 2028 is TIOARIG). School-wide spans — frames, lunch, raster, salsregler,
- * årskursregler, behörigheter, salar — are stated in NIOARIG and never move;
- * a reader of a TIOARIG läsår reads its årskurs in NIOARIG before comparing
- * (toNioarig). Twelve is "and above" in both, as the bounds that run to 12
+ * årskursregler, behörigheter, salar, skolenheter — are stated in NIOARIG and
+ * never move; a reader of a TIOARIG läsår reads its årskurs in NIOARIG before
+ * comparing (toNioarig). A skolenhet is the one exception to come: SFS
+ * 2025:729 övergångsbestämmelse 5 moves its approval at the bottom too (an
+ * åk 1 approval also covers the new åk 1; one for förskoleklass lapses), so
+ * its TIOARIG span will be a pair of its own, confirmed by an admin — not
+ * this translation. Twelve is "and above" in both, as the bounds that run to 12
  * have always meant it: TIOARIG 12 is NIOARIG 12, and NIOARIG 11, which no
  * school form has, reads as 12.
  */
