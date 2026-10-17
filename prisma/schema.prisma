@@ -41,6 +41,9 @@ enum AdminProfile {
   REKTOR
   SCHEMALAGGARE
   EXPEDITION
+  /// Läsare (Läsbehörighet, 20261120090000): reads every area, writes none,
+  /// decides nothing; may be given HR-läs.
+  LASARE
 }
 
 /// The areas an administrator's writes fall in, the one list both the

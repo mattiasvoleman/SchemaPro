@@ -17,6 +17,10 @@ import { AdminArea, AdminProfile } from '@prisma/client';
  *
  * Every profile reads every area. Tjänst % and nedsättning are the one read
  * that is narrower: FULL, REKTOR and HR-läs (profileReadsHr).
+ *
+ * LASARE, the läsare (Läsbehörighet, 20261120100000), writes no area and
+ * decides nothing: the read-only staff role. Every write it attempts is
+ * refused by name, and the web opens every page to it read-only.
  */
 
 /** Every area, in the enum's order. */
@@ -28,6 +32,7 @@ export const PROFILE_WRITES: Readonly<Record<AdminProfile, readonly AdminArea[]>
   REKTOR: ['PLANERING', 'SCHEMALAGGNING', 'PUBLICERING', 'DRIFT', 'PERSONAL', 'INTEGRATIONER'],
   SCHEMALAGGARE: ['PLANERING', 'SCHEMALAGGNING', 'PUBLICERING', 'DRIFT'],
   EXPEDITION: ['DRIFT', 'PERSONAL'],
+  LASARE: [],
 };
 
 /**
@@ -41,6 +46,7 @@ export const PROFILE_DECIDES: Readonly<Record<AdminProfile, boolean>> = {
   REKTOR: true,
   SCHEMALAGGARE: false,
   EXPEDITION: false,
+  LASARE: false,
 };
 
 /** The areas' names in Swedish copy, as the menu and the 403s say them. */
@@ -59,7 +65,29 @@ export const PROFILE_LABELS: Readonly<Record<AdminProfile, string>> = {
   REKTOR: 'Rektor',
   SCHEMALAGGARE: 'Schemaläggare',
   EXPEDITION: 'Expedition',
+  LASARE: 'Läsare',
 };
+
+/** Each profile as the one who does something, in a Swedish sentence: "Det gör rektor eller en schemaläggare." */
+const PROFILE_DOERS: Readonly<Record<AdminProfile, string>> = {
+  REKTOR: 'rektor',
+  FULL: 'en fullständig administratör',
+  SCHEMALAGGARE: 'en schemaläggare',
+  EXPEDITION: 'expeditionen',
+  LASARE: 'en läsare',
+};
+
+/**
+ * Who writes the area, as a Swedish list: "rektor, en fullständig
+ * administratör eller en schemaläggare". Rektor first, then full, then the
+ * narrower profiles in the enum's order; read off PROFILE_WRITES, so a
+ * profile that gains an area is named without a second edit.
+ */
+export function writersOf(area: AdminArea): string {
+  const order: AdminProfile[] = ['REKTOR', 'FULL', ...Object.values(AdminProfile).filter((p) => p !== 'REKTOR' && p !== 'FULL')];
+  const names = order.filter((profile) => profileWrites(profile, area)).map((profile) => PROFILE_DOERS[profile]);
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} eller ${names[names.length - 1]}`;
+}
 
 export function profileWrites(profile: AdminProfile | null | undefined, area: AdminArea): boolean {
   return profile != null && PROFILE_WRITES[profile].includes(area);

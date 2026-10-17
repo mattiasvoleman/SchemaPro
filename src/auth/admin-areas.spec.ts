@@ -14,6 +14,7 @@ import {
   TABLE_WRITE_GATES,
   profileReadsHr,
   profileWritesTable,
+  writersOf,
 } from './admin-areas';
 
 /*
@@ -55,7 +56,8 @@ describe('admin areas: one matrix, three copies', () => {
     const fromSql: Record<string, string[]> = {};
     for (const match of body.matchAll(/WHEN '(\w+)'\s+THEN ARRAY\[([^\]]*)\]::"AdminArea"\[\]/g)) {
       if (match[1] in fromSql) break; // the next function's CASE, if any
-      fromSql[match[1]!] = match[2]!.split(',').map((area) => area.trim().replace(/'/g, ''));
+      // ARRAY[] is a profile with no area: the läsare.
+      fromSql[match[1]!] = match[2]!.trim() === '' ? [] : match[2]!.split(',').map((area) => area.trim().replace(/'/g, ''));
     }
     expect(Object.keys(fromSql).sort()).toEqual(Object.values(AdminProfile).sort());
     for (const profile of Object.values(AdminProfile)) {
@@ -116,6 +118,25 @@ describe('admin areas: one matrix, three copies', () => {
         gates: ts && { insert: [...ts.insert], update: [...ts.update], delete: [...ts.delete], read: [...(ts.read ?? [])] },
       });
     }
+  });
+
+  it('gives the läsare no area, no decision and no table, and lets it be given HR-läs (Läsbehörighet)', () => {
+    expect(PROFILE_WRITES.LASARE).toEqual([]);
+    expect(PROFILE_DECIDES.LASARE).toBe(false);
+    for (const table of Object.keys(TABLE_WRITE_GATES)) {
+      for (const command of ['insert', 'update', 'delete'] as const) {
+        expect({ table, command, writes: profileWritesTable('LASARE', table, command) }).toEqual({ table, command, writes: false });
+      }
+    }
+    expect(profileReadsHr('LASARE', false)).toBe(false);
+    expect(profileReadsHr('LASARE', true)).toBe(true);
+  });
+
+  it('names who writes each area, rektor first, as the refusals say it', () => {
+    expect(writersOf('PLANERING')).toBe('rektor, en fullständig administratör eller en schemaläggare');
+    expect(writersOf('PERSONAL')).toBe('rektor, en fullständig administratör eller expeditionen');
+    expect(writersOf('INTEGRATIONER')).toBe('rektor eller en fullständig administratör');
+    expect(writersOf('DRIFT')).toBe('rektor, en fullständig administratör, en schemaläggare eller expeditionen');
   });
 
   it('never lets a narrower profile write a table a wider one cannot', () => {

@@ -11,6 +11,12 @@
  * The menu and the /admin guard read it. Neither is what refuses a write: the
  * gateway and the database do that. They spare a person pages whose every
  * button would answer 403.
+ *
+ * Läsbehörighet adds the läsare (LASARE), who writes no area and decides
+ * nothing. It would have no page left, so it opens every page it may read
+ * read-only instead (readOnlyPages): a notice names the area and who changes
+ * it, and the page's write controls are hidden by a style rule the (app)
+ * layout writes (components/admin/area-refusal.tsx readOnlyStyle).
  */
 
 export type AdminArea =
@@ -21,7 +27,7 @@ export type AdminArea =
   | "PERSONAL"
   | "INTEGRATIONER";
 
-export type AdminProfile = "FULL" | "REKTOR" | "SCHEMALAGGARE" | "EXPEDITION";
+export type AdminProfile = "FULL" | "REKTOR" | "SCHEMALAGGARE" | "EXPEDITION" | "LASARE";
 
 export const ADMIN_AREAS: readonly AdminArea[] = [
   "PLANERING",
@@ -32,13 +38,14 @@ export const ADMIN_AREAS: readonly AdminArea[] = [
   "INTEGRATIONER",
 ];
 
-export const ADMIN_PROFILES: readonly AdminProfile[] = ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION"];
+export const ADMIN_PROFILES: readonly AdminProfile[] = ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"];
 
 export const PROFILE_WRITES: Readonly<Record<AdminProfile, readonly AdminArea[]>> = {
   FULL: ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT", "PERSONAL", "INTEGRATIONER"],
   REKTOR: ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT", "PERSONAL", "INTEGRATIONER"],
   SCHEMALAGGARE: ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT"],
   EXPEDITION: ["DRIFT", "PERSONAL"],
+  LASARE: [],
 };
 
 export const PROFILE_DECIDES: Readonly<Record<AdminProfile, boolean>> = {
@@ -46,10 +53,24 @@ export const PROFILE_DECIDES: Readonly<Record<AdminProfile, boolean>> = {
   REKTOR: true,
   SCHEMALAGGARE: false,
   EXPEDITION: false,
+  LASARE: false,
 };
 
 /** The profiles HR-läs is given to; rektor and full read tjänst % anyway. */
-export const HR_READ_PROFILES: readonly AdminProfile[] = ["SCHEMALAGGARE", "EXPEDITION"];
+export const HR_READ_PROFILES: readonly AdminProfile[] = ["SCHEMALAGGARE", "EXPEDITION", "LASARE"];
+
+/**
+ * The profiles that open a page whose area they do not write read-only, in
+ * place of the page that says why: the läsare, which writes nothing and would
+ * otherwise have no page left. The narrower profiles keep the closed pages
+ * Roller i skolan gave them. A decision page stays closed to every profile
+ * that does not decide: /admin/dataskydd holds the läslogg, which only the
+ * deciders read.
+ */
+export const READS_EVERY_PAGE: readonly AdminProfile[] = ["LASARE"];
+
+/** Who changes an area, in the order a sentence names them: rektor first. */
+export const WRITER_ORDER: readonly AdminProfile[] = ["REKTOR", "FULL", "SCHEMALAGGARE", "EXPEDITION", "LASARE"];
 
 export function profileWrites(profile: AdminProfile | null | undefined, area: AdminArea): boolean {
   return profile != null && PROFILE_WRITES[profile].includes(area);
@@ -126,6 +147,11 @@ export function profileOpens(profile: AdminProfile | null | undefined, gate: Pag
   return gate === "DECIDES" ? profileDecides(profile) : profileWrites(profile, gate);
 }
 
+/** Does the profile open a page with this gate read-only (Läsbehörighet)? */
+export function profileReadsPage(profile: AdminProfile | null | undefined, gate: PageGate): boolean {
+  return profile != null && READS_EVERY_PAGE.includes(profile) && gate !== "DECIDES" && !profileOpens(profile, gate);
+}
+
 /** A page the profile may not use, and why: its area or the decisions. */
 export interface ClosedPage {
   path: string;
@@ -140,6 +166,32 @@ export interface ClosedPage {
  */
 export function closedPages(profile: AdminProfile | null | undefined): ClosedPage[] {
   return Object.entries(PAGE_GATES)
-    .filter(([, gate]) => gate !== null && !profileOpens(profile, gate))
+    .filter(([, gate]) => gate !== null && !profileOpens(profile, gate) && !profileReadsPage(profile, gate))
     .map(([path, gate]) => ({ path, gate: gate as AdminArea | "DECIDES" }));
+}
+
+/** A page the profile reads but does not change, and the area its notice names. */
+export interface ReadOnlyPage {
+  path: string;
+  area: AdminArea;
+}
+
+/**
+ * The area named on a page whose gate names none: /admin/people is the
+ * register's, and its arbetstid and behörigheter, planering's, are hidden
+ * from a profile that does not write them on the page itself.
+ */
+const NOTICE_AREAS: Readonly<Record<string, AdminArea>> = { "/admin/people": "PERSONAL" };
+
+/**
+ * The admin pages a profile opens read-only (Läsbehörighet): every page a
+ * profile in READS_EVERY_PAGE does not write, decision pages aside. Computed
+ * on the server, in the (app) layout, as closedPages is.
+ */
+export function readOnlyPages(profile: AdminProfile | null | undefined): ReadOnlyPage[] {
+  if (profile == null || !READS_EVERY_PAGE.includes(profile)) return [];
+  return Object.entries(PAGE_GATES).flatMap(([path, gate]) => {
+    const area = gate ?? NOTICE_AREAS[path];
+    return area !== undefined && area !== "DECIDES" && !profileWrites(profile, area) ? [{ path, area }] : [];
+  });
 }

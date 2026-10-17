@@ -86,6 +86,8 @@ export async function adminAreaChecks(owner: Client, api: PrismaService, marker:
   const planner = await person('planner', 'SCHOOL_ADMIN', 'SCHEMALAGGARE');
   const plannerHr = await person('plannerhr', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', true);
   const expedition = await person('expedition', 'SCHOOL_ADMIN', 'EXPEDITION');
+  const reader = await person('reader', 'SCHOOL_ADMIN', 'LASARE');
+  const readerHr = await person('readerhr', 'SCHOOL_ADMIN', 'LASARE', true);
   const teacher = await person('teacher', 'TEACHER');
   await owner.query(
     `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", signature, note, "updatedAt")
@@ -160,6 +162,28 @@ export async function adminAreaChecks(owner: Client, api: PrismaService, marker:
       assert.deepEqual([shown?.employmentPercent, shown?.reductionPercent, shown?.note], [80, 20, 'skäl']);
       const [full_] = await posts.list(year.id, full.principal);
       assert.equal(full_?.employmentPercent, 80);
+    });
+
+    await check('(ar-g) a läsare reads the room and the posts, and a write of it is refused by row security as AREA_NOT_YOURS (Läsbehörighet)', async () => {
+      const rooms = await api.withRls(reader.principal, (tx) => tx.room.findMany({ where: { id: room.id }, select: { id: true } }));
+      assert.equal(rooms.length, 1);
+      for (const write of [
+        (tx: Parameters<Parameters<typeof api.withRls>[1]>[0]) => tx.room.create({ data: { schoolId: s, name: 'Läsarens sal' } }),
+        (tx: Parameters<Parameters<typeof api.withRls>[1]>[0]) => tx.room.update({ where: { id: room.id }, data: { name: 'Läst om' } }),
+      ]) {
+        const error = await refusalOf(api.withRls(reader.principal, write));
+        assert.equal(areaRefusal(error)?.code, 'AREA_NOT_YOURS', `not read as an area refusal: ${String(error)}`);
+      }
+      const error = await refusalOf(
+        api.withRls(reader.principal, (tx) => tx.user.update({ where: { id: planner.id }, data: { hrRead: true } })),
+      );
+      assert.equal(areaRefusal(error)?.code, 'DECISION_NOT_YOURS', `not read as a decision refusal: ${String(error)}`);
+      // HR-läs is its own grant: tjänst % without it is hidden, with it shown.
+      const posts = new TeacherEmploymentsService(api);
+      const [hidden] = await posts.list(year.id, reader.principal);
+      assert.deepEqual([hidden?.employmentPercent, hidden?.signature], [null, 'PRB']);
+      const [shown] = await posts.list(year.id, readerHr.principal);
+      assert.equal(shown?.employmentPercent, 80);
     });
   } finally {
     await sweepRollerSchool(owner, marker);
