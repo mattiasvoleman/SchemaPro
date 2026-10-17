@@ -550,23 +550,52 @@ decision is not shared.**
   an Absence with its date and times, whether it is a granted leave, its
   pupil, the pupil's id and the school's timezone. A note moves neither, nor
   a re-save of the register. Either is never earlier than the start of the
-  school's current run of sharing, and `meta.modified.after` and `.before`
-  compare exactly what is emitted, for both resources.
-* **A register save waits for a running SS12000 apply** at a school that
-  shares. Each status it writes moves a version, one pupil at a time, and an
-  administrator's apply that links or brings back pupils moves all of theirs
-  and holds them to its end; in opposite orders each would hold a version the
-  other waits for. So before its first write the save takes the school's
-  people lock shared (`app.attendance_recording_waits_for_sync`, the lock
-  `readLocalSlice` takes exclusively and a guardian's calendar feed shared),
-  and an apply waits for a save in progress. A save waits at most 5 s: an
-  apply still running then, it answers 409 `ATTENDANCE_SYNC_IN_PROGRESS`
-  having written nothing, and the phone's queue sends it again (the web
-  register says to try again). At a school that does not share it waits for
-  no apply. Whether the school shares is read once per save, so a decision
-  waits for the saves already writing (`'AttendanceSharing:<school>'`,
-  shared by every save, exclusive for a decision): no save that read "not
-  shared" writes on after a decision to share.
+  school's current run of sharing nor than the row's creation, and
+  `meta.modified.after` and `.before` compare exactly what is emitted, for
+  both resources.
+* **A register save never waits for an SS12000 apply or a sharing decision,
+  and is never refused by either.** Each status a save writes at a sharing
+  school moves
+  that record's version. An administrator's apply that links or brings back
+  pupils moves no record's version: it moves one row per pupil,
+  `AttendancePupil` and `AbsencePupil`, which the two read functions take
+  into every record's `meta.modified` (the latest of the record's version,
+  the pupil's row, the start of the current run of sharing and the record's
+  creation) and into
+  `meta.modified.after` and `.before`; a subscription is told of it as a
+  change of Attendance or Absence. So an apply and a save never share a row
+  this adds, and neither waits for the other. As the apply commits, the
+  pupils' rows are stamped again with the clock
+  (`Users_ss12000_attendance_pupils_stamped`, a deferred constraint
+  trigger), so an integration that read while the apply ran reads the
+  linked pupils' records again. A save still waits for an apply where it did
+  before this: when the apply changes the e-mail of a person the save's
+  foreign keys name (a pupil given a new record, the teacher recording, a
+  guardian notified), until the apply commits. Two saves of one lesson write
+  its records in pupil order, so they never hold one each of what the other
+  waits for.
+* **Decisions are ordered against the writers.** A writer reads whether the
+  school shares when its statement runs, and commits later. So every writer
+  of attendance or absence first takes `'AttendanceSharing:<school>'`
+  shared and holds it to its end, and a decision takes it exclusively: no
+  decision commits between the read and the commit of a writer that holds
+  it, so nothing it left unversioned or untold is readable after a start. A
+  writer that versions (a register save, a lesson's times) never waits for
+  it: one that cannot take it at once, because a decision is being written
+  or waits to be, versions as if the school shared, a version more and
+  never one less, so its commit is told whenever the school shares then
+  (`app.attendance_recorded_as_shared`). A stop is dated by its commit
+  (`committedAt`, stamped as its transaction commits, with only the
+  commit's own write after it), and a removal during it trusts a version
+  as a row that may have left only when its transaction began before that
+  (`app.ss12000_may_have_left`): a row committed while the stop was being
+  written is told when it goes, and one created and removed within the stop
+  is told to nobody. A removal cannot guess: it waits while a decision is
+  being written or waits to be (`app.attendance_removals_ordered`), at most
+  until the decision gives up. A decision waits at most 5 s for the writers
+  holding the lock, then answers 409 `ATTENDANCE_SHARING_BUSY` having
+  written nothing; while an SS12000 apply or a publication touching the
+  school's pupils or lessons runs, rektor decides once it is done.
 * **A granted leave and a span.** Only the leave decision marks a day as
   `Beviljad ledighet` (a guardian or a pupil who tries is refused); and a
   reported span ends after it starts (a report from before 20261114090000
@@ -1067,10 +1096,16 @@ departed person and what went while the school is stopped and never what
 was reported and went within it, an integration
 that misses a stop and a start between two reads and is still told
 everything (nv-j), a start decided while a notice is in flight (nv-k), and
-a register save corrected while an apply links its pupils in the opposite
-order, which waits for the apply instead of either being aborted (nv-l),
-and that wait ending after about 5 s with 409 and nothing written, and a
-decision waiting for a save that began before it (nv-m).
+register saves, phone-style for as long as an apply that links their
+pupils stays open, each going through at once while the apply moves only
+the pupils' own rows, stamped as it commits (nv-l), and a start that waits
+for a removal or a writer which read "not shared" (also at a school that
+never shared), a save that goes through at once, versioning as if the
+school shared, and a removal that waits while a start is being written, a
+row committed while a stop is being written that is told when it goes
+within the stop, a save during a start that never commits whose
+record, removed within the stop, is told to nobody, and a decision that
+answers 409 after waiting 5 s (nv-m).
 
 The six migrations after `20261114090000` exist for production's sake: it
 migrates while the previous API serves requests, and the reviewed single
