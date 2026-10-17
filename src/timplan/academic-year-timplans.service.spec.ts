@@ -28,9 +28,9 @@ const YEARS: LockedTable = {
  */
 function givenTable(tx: TxMock, initial: { gradeLevel: number; localTimplanId: string }[]) {
   const rows = new Map(initial.map((row) => [row.gradeLevel, row.localTimplanId]));
-  const plans: Record<string, { name: string; status: 'DRAFT' | 'DECIDED' }> = {
-    [DECIDED_ID]: { name: 'Grundskolan 2024', status: 'DECIDED' },
-    [DRAFT_ID]: { name: 'Grundskolan 2027 (utkast)', status: 'DRAFT' },
+  const plans: Record<string, { name: string; status: 'DRAFT' | 'DECIDED'; nationalVersion: { appliesFromCohortTerm: string } }> = {
+    [DECIDED_ID]: { name: 'Grundskolan 2024', status: 'DECIDED', nationalVersion: { appliesFromCohortTerm: 'HT2024' } },
+    [DRAFT_ID]: { name: 'Grundskolan 2027 (utkast)', status: 'DRAFT', nationalVersion: { appliesFromCohortTerm: 'HT2024' } },
   };
   tx.academicYearTimplan.findMany.mockImplementation((args: { select: Record<string, unknown> }) =>
     Promise.resolve(
@@ -120,9 +120,9 @@ describe('AcademicYearTimplansService', () => {
       });
       // A draft is legal and every row says which it is.
       expect(answer).toEqual([
-        { gradeLevel: 1, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT' },
-        { gradeLevel: 7, localTimplanId: DECIDED_ID, planName: 'Grundskolan 2024', planStatus: 'DECIDED' },
-        { gradeLevel: 8, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT' },
+        { gradeLevel: 1, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT', planTioarig: false },
+        { gradeLevel: 7, localTimplanId: DECIDED_ID, planName: 'Grundskolan 2024', planStatus: 'DECIDED', planTioarig: false },
+        { gradeLevel: 8, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT', planTioarig: false },
       ]);
     });
 
@@ -198,7 +198,7 @@ describe('AcademicYearTimplansService', () => {
       tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID });
 
       await expect(service.list(YEAR_ID, testUser())).resolves.toEqual([
-        { gradeLevel: 7, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT' },
+        { gradeLevel: 7, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT', planTioarig: false },
       ]);
     });
 

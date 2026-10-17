@@ -172,7 +172,6 @@ import {
   formatHours,
   peakLessonsPerWeek,
   peakLessonsPerWeekByKey,
-  type YearBounds,
 } from "@/lib/teaching-hours";
 import type { LessonRecurrence, StaffingWarning, TeachingRequirement } from "@/lib/types";
 import { isMixed, lengthPartsOf } from "@/lib/lesson-lengths";
@@ -684,9 +683,9 @@ export default function RequirementsPage() {
    * all when measured against 2026/27, and silently showing it against the
    * active year would be the wrong answer stated confidently.
    */
-  const yearBounds = useMemo<YearBounds | null>(() => {
+  const yearBounds = useMemo<TargetSources["year"] | null>(() => {
     const year = years?.find((entry) => entry.id === activeYearId);
-    return year ? { startDate: year.startDate, endDate: year.endDate } : null;
+    return year ? { startDate: year.startDate, endDate: year.endDate, gradeNumbering: year.gradeNumbering } : null;
   }, [years, activeYearId]);
 
   /**

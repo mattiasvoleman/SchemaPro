@@ -3928,7 +3928,7 @@ describe('Planning surface (e2e)', () => {
       harness.tx['academicYearTimplan']!['findMany']!
         .mockResolvedValueOnce([{ gradeLevel: 9, localTimplanId: PLAN_ID }])
         .mockResolvedValueOnce([
-          { gradeLevel: 7, localTimplanId: PLAN_ID, localTimplan: { name: 'Grundskolan 2027', status: 'DRAFT' } },
+          { gradeLevel: 7, localTimplanId: PLAN_ID, localTimplan: { name: 'Grundskolan 2027', status: 'DRAFT', nationalVersion: { appliesFromCohortTerm: 'HT2024' } } },
         ]);
 
       const response = await request(http())
@@ -3938,7 +3938,7 @@ describe('Planning surface (e2e)', () => {
         .expect(200);
 
       expect(response.body).toEqual([
-        { gradeLevel: 7, localTimplanId: PLAN_ID, planName: 'Grundskolan 2027', planStatus: 'DRAFT' },
+        { gradeLevel: 7, localTimplanId: PLAN_ID, planName: 'Grundskolan 2027', planStatus: 'DRAFT', planTioarig: false },
       ]);
       expect(harness.tx['academicYearTimplan']!['deleteMany']).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID, gradeLevel: { in: [9] } },
@@ -3949,7 +3949,7 @@ describe('Planning surface (e2e)', () => {
 
       harness.tx['academicYear']!['findUnique']!.mockResolvedValueOnce({ id: YEAR_ID });
       harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValueOnce([
-        { gradeLevel: 7, localTimplanId: PLAN_ID, localTimplan: { name: 'Grundskolan 2027', status: 'DRAFT' } },
+        { gradeLevel: 7, localTimplanId: PLAN_ID, localTimplan: { name: 'Grundskolan 2027', status: 'DRAFT', nationalVersion: { appliesFromCohortTerm: 'HT2024' } } },
       ]);
       const read = await request(http())
         .get(`/api/v1/academic-years/${YEAR_ID}/timplans`)
@@ -4064,7 +4064,7 @@ describe('Planning surface (e2e)', () => {
       });
       harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValue([{ gradeLevel: 7, localTimplanId: PLAN_ID }]);
       harness.tx['localTimplan']!['findMany']!.mockResolvedValue([
-        { id: PLAN_ID, name: 'Grundskolan 2024', status: 'DECIDED', entries: [{ subjectId: SUBJECT_ID, gradeLevel: 7, minutesPerWeek: 180 }] },
+        { id: PLAN_ID, name: 'Grundskolan 2024', status: 'DECIDED', entries: [{ subjectId: SUBJECT_ID, gradeLevel: 7, minutesPerWeek: 180 }], nationalVersion: { appliesFromCohortTerm: 'HT2024' } },
       ]);
       harness.tx['subject']!['findMany']!.mockResolvedValue([
         { id: SUBJECT_ID, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true },
@@ -4522,6 +4522,7 @@ describe('Planning surface (e2e)', () => {
         name: 'Grundskolan 2024',
         status: 'DECIDED',
         entries: [{ subjectId: SUBJECT_ID, gradeLevel: 7, minutesPerWeek: 175 }],
+        nationalVersion: { appliesFromCohortTerm: 'HT2024' },
       });
       harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR_ID });
       harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValue([{ gradeLevel: 7 }]);
@@ -5787,9 +5788,9 @@ describe('Planning surface (e2e)', () => {
 
       const read = await request(http()).get(successor).set('x-test-user', admin()).expect(200);
       expect(read.body).toEqual([
-        { gradeLevel: 7, localTimplanId: decidedId, planName: 'Grundskola 2024', planStatus: 'DECIDED' },
-        { gradeLevel: 8, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
-        { gradeLevel: 9, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
+        { gradeLevel: 7, localTimplanId: decidedId, planName: 'Grundskola 2024', planStatus: 'DECIDED', planTioarig: false },
+        { gradeLevel: 8, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT', planTioarig: false },
+        { gradeLevel: 9, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT', planTioarig: false },
       ]);
 
       // The admin decides åk 8 should follow the decided plan after all, and drops åk 9.

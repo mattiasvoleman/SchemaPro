@@ -118,6 +118,8 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
   const state = useMemo<TargetState>(() => {
     if (attachments.isError || plans.isError) return { status: "failed" };
     if (!attachments.data || !plans.data || !sources) return { status: "loading" };
+    // Each plan read in its lydelse's numbering (the year's rows say which).
+    const tioarig = new Map(attachments.data.map((row) => [row.localTimplanId, row.planTioarig]));
     const planned = plans.data.map((plan) => ({
       id: plan.id,
       name: plan.name,
@@ -127,6 +129,7 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
         gradeLevel: entry.gradeLevel,
         minutesPerWeek: entry.minutesPerWeek,
       })),
+      ...(tioarig.get(plan.id) !== undefined ? { tioarig: tioarig.get(plan.id) } : {}),
     }));
     const input = targetInput({ ...sources, attachments: attachments.data, plans: planned });
     const view = buildTargetView(computePlannedCoverage(input), planned);

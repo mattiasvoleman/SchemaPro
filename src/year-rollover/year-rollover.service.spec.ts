@@ -916,6 +916,7 @@ describe('YearRolloverService — rollover execute', () => {
         name: 'Språkval 2027',
         status: 'DECIDED',
         entries: [{ subjectId: TYSKA, gradeLevel: 7, minutesPerWeek: 120 }],
+        nationalVersion: { appliesFromCohortTerm: 'HT2024' },
       });
       world.rows['academicYearTimplan']!.push({ schoolId: IDS.school, academicYearId: target, gradeLevel: 7, localTimplanId: PLAN });
       world.rows['studentGroup']!.push({
@@ -1195,7 +1196,26 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         'gradeNumbering' in ((call.args as { select?: Record<string, unknown> }).select ?? {}),
     );
     expect(yearReads).toHaveLength(1);
+    // The FIFTH: the source reads of the decided and the attached plans select
+    // each plan's lydelse (grade-numbering.ts). Asserted, then taken out.
+    const lydelseReads = world.calls.filter((call) => {
+      const select = (call.args as { select?: Record<string, { select?: Record<string, unknown> }> }).select ?? {};
+      return (
+        (call.model === 'localTimplan' && call.method === 'findMany' && 'decidedAt' in select && 'nationalVersion' in select) ||
+        (call.model === 'academicYearTimplan' && call.method === 'findMany' && 'nationalVersion' in (select.localTimplan?.select ?? {}))
+      );
+    });
+    expect(lydelseReads).toHaveLength(2);
     const asAtFa4a3d6 = world.calls.map((call) => {
+      if (lydelseReads.includes(call)) {
+        const args = call.args as { select: Record<string, unknown> & { localTimplan?: { select: Record<string, unknown> } } };
+        if (call.model === 'localTimplan') {
+          const { nationalVersion: _lydelse, ...select } = args.select;
+          return { ...call, args: { ...args, select } };
+        }
+        const { nationalVersion: _lydelse, ...plan } = args.select.localTimplan!.select;
+        return { ...call, args: { ...args, select: { ...args.select, localTimplan: { select: plan } } } };
+      }
       if (yearReads.includes(call)) {
         const args = call.args as { select: Record<string, unknown> };
         const { gradeNumbering: _numbering, ...select } = args.select;

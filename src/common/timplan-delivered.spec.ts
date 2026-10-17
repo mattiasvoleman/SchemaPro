@@ -727,3 +727,33 @@ describe('every pupil’s figures, for the stage totals (timplan P4)', () => {
     ).not.toContain('TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS');
   });
 });
+
+describe('a class target read in the plan’s numbering (SFS 2025:729)', () => {
+  // 9A of a TIOARIG year on an older plan reads its row 8 (planRowOfInput):
+  // the årskull's own row, not row 9.
+  it('takes the year figure from the row of the årskull, as lager 1 does', () => {
+    const a = group('9A', 'CLASS', 9);
+    const plan = {
+      id: id(8800),
+      name: 'Grundskolan 2024',
+      status: 'DECIDED' as const,
+      tioarig: false,
+      entries: [
+        { subjectId: S.MA, gradeLevel: 8, minutesPerWeek: 180 },
+        { subjectId: S.MA, gradeLevel: 9, minutesPerWeek: 120 },
+      ],
+    };
+    const planned = {
+      groups: [a],
+      requirements: [req(a, S.MA, 3, 60)],
+      plans: [plan],
+      attachments: [{ gradeLevel: 9, localTimplanId: plan.id }],
+    };
+    // The target is the drill-down's detail of the group.
+    const tio = compute({ planned: { ...planned, gradeNumbering: 'TIOARIG' }, drillGroupId: a.id });
+    const nio = compute({ planned: { ...planned, gradeNumbering: 'NIOARIG' }, drillGroupId: a.id });
+    const target = (coverage: DeliveredCoverage) =>
+      (lineOf(coverage, a, `subject:${S.MA}`) as DeliveredLineDetail).projection.targetYearMinutes!;
+    expect(target(tio) / target(nio)).toBeCloseTo(180 / 120, 5);
+  });
+});

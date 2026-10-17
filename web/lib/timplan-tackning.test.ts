@@ -51,13 +51,13 @@ describe("buildCoverageMatrix", () => {
     expect(matrix.draftPlans).toEqual([{ id: id(202), name: "Grundskolan 2027 (utkast)", gradeLevels: [9] }]);
   });
 
-  it("names an årskurs attached to a plan that gives it no minutes, and never asks åk 11 for a plan", () => {
+  it("names an årskurs attached to a plan that gives it no minutes, and never asks åk 12 for a plan", () => {
     const { input, response } = coverageCase(EMPTY_PLAN);
     const matrix = buildCoverageMatrix(response, input.groups, input.subjects);
     expect(matrix.emptyPlanGrades).toEqual([{ gradeLevel: 3, planName: "Högstadiet 2024" }]);
     expect(matrix.unattachedGrades).toEqual([]);
     expect(matrix.classes.map((row) => [row.name, row.summary.linesWithTarget])).toEqual([
-      ["11A", 0],
+      ["12A", 0],
       ["3A", 0],
       ["3B", 0],
     ]);

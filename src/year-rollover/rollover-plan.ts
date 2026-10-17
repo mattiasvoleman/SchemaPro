@@ -21,7 +21,7 @@ import {
   type RolloverOutcome,
   type VolumeFinding,
 } from '../common/year-rollover';
-import { TIOARIG_FROM } from '../common/grade-numbering';
+import { gradeOfPlanRow, planRowOf, TIOARIG_FROM } from '../common/grade-numbering';
 import { isMixed } from '../common/lesson-lengths';
 import { isLanguageBlockName } from '../timplan/generate-requirements';
 import { qualificationFinding } from '../staffing/staffing-checks';
@@ -325,11 +325,16 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   }
 
   // ---- G
+  // A plan's top row is in its lydelse's numbering; G is in the source
+  // year's (an older plan's row 9 is a TIOARIG year's åk 10).
   const fallback = defaultGraduatingGrade(
     source.decidedPlans.map((plan) => ({
       schoolForm: plan.schoolForm,
       decidedAt: plan.decidedAt,
-      maxGradeLevel: plan.entries.length > 0 ? Math.max(...plan.entries.map((entry) => entry.gradeLevel)) : null,
+      maxGradeLevel:
+        plan.entries.length > 0
+          ? gradeOfPlanRow(plan.tioarig, source.year.gradeNumbering, Math.max(...plan.entries.map((entry) => entry.gradeLevel)))
+          : null,
     })),
     source.groups.filter((group) => group.kind === 'CLASS').map((group) => group.gradeLevel),
   );
@@ -764,11 +769,14 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   // That is the new year's timplan row for the grade (carried or default),
   // a draft included — the plan the coverage report will measure the class
   // against — and only when the plan gives the grade any minutes at all.
+  // The plan's row for the grade, in the plan's numbering (planRowOf).
+  const targetNumbering = writes.year.gradeNumbering ?? 'NIOARIG';
   const followed = new Map(timplans.map((row) => [row.gradeLevel, row]));
   const planFor = (grade: number) => {
     const row = followed.get(grade);
     if (!row) return null;
-    const entries = (source.planEntries.get(row.localTimplanId) ?? []).filter((entry) => entry.gradeLevel === grade);
+    const planRow = planRowOf(source.planTioarig.get(row.localTimplanId) ?? false, targetNumbering, grade);
+    const entries = (source.planEntries.get(row.localTimplanId) ?? []).filter((entry) => entry.gradeLevel === planRow);
     return entries.length > 0 ? { name: row.planName, entries } : null;
   };
   const volumeOf = new Map<string, { findings: PlannedGroup['volumeFindings']; planName: string | null }>();
@@ -779,11 +787,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     }
     const plan = planFor(row.successor.gradeLevel);
     if (!plan) continue;
-    const planned = new Map(
-      plan.entries
-        .filter((entry) => entry.gradeLevel === row.successor!.gradeLevel)
-        .map((entry) => [entry.subjectId, entry.minutesPerWeek] as const),
-    );
+    const planned = new Map(plan.entries.map((entry) => [entry.subjectId, entry.minutesPerWeek] as const));
     const rows = writes.requirements.filter((written) => written.groupKey === group.id);
     const findings = volumeFindings(rows, planned, target).map((finding) => ({
       ...finding,

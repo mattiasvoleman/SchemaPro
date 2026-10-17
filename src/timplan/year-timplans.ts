@@ -1,4 +1,5 @@
-import type { LocalTimplanStatus, Prisma } from '@prisma/client';
+import type { GradeNumbering, LocalTimplanStatus, Prisma } from '@prisma/client';
+import { gradeOfPlanRow, lydelseIsTioarig } from '../common/grade-numbering';
 import { stageGradesFor, type CoverageVersion } from '../common/timplan-coverage';
 
 /**
@@ -18,6 +19,12 @@ export interface YearTimplanRow {
   localTimplanId: string;
   planName: string;
   planStatus: LocalTimplanStatus;
+  /**
+   * Whether the plan's lydelse numbers its rows the tioårig way (applies from
+   * HT 2028): with the year's gradeNumbering, which row of the plan the
+   * årskurs reads (grade-numbering.ts, planRowOf).
+   */
+  planTioarig: boolean;
 }
 
 /** The year's rows, by årskurs. */
@@ -31,7 +38,9 @@ export async function readYearTimplans(
     select: {
       gradeLevel: true,
       localTimplanId: true,
-      localTimplan: { select: { name: true, status: true } },
+      localTimplan: {
+        select: { name: true, status: true, nationalVersion: { select: { appliesFromCohortTerm: true } } },
+      },
     },
   });
   return rows.map((row) => ({
@@ -39,6 +48,7 @@ export async function readYearTimplans(
     localTimplanId: row.localTimplanId,
     planName: row.localTimplan.name,
     planStatus: row.localTimplan.status,
+    planTioarig: lydelseIsTioarig(row.localTimplan.nationalVersion.appliesFromCohortTerm),
   }));
 }
 
@@ -71,25 +81,36 @@ export async function attachDefaultTimplans(
   tx: Prisma.TransactionClient,
   schoolId: string,
   academicYearId: string,
+  numbering: GradeNumbering = 'NIOARIG',
 ): Promise<YearTimplanRow[]> {
   const plan = await readDefaultTimplan(tx);
   if (!plan || plan.gradeLevels.length === 0) return [];
+  // The plan's grades are its lydelse's rows; the year attaches the årskurser
+  // that read them (an older plan's 1–9 are a TIOARIG year's 2–10).
+  const planTioarig = lydelseIsTioarig(plan.appliesFromCohortTerm);
+  const gradeLevels = plan.gradeLevels
+    .map((row) => gradeOfPlanRow(planTioarig, numbering, row))
+    .filter((grade): grade is number => grade !== null && grade <= MAX_ATTACHABLE_GRADE);
 
   await tx.academicYearTimplan.createMany({
-    data: plan.gradeLevels.map((gradeLevel) => ({
+    data: gradeLevels.map((gradeLevel) => ({
       schoolId,
       academicYearId,
       gradeLevel,
       localTimplanId: plan.id,
     })),
   });
-  return plan.gradeLevels.map((gradeLevel) => ({
+  return gradeLevels.map((gradeLevel) => ({
     gradeLevel,
     localTimplanId: plan.id,
     planName: plan.name,
     planStatus: plan.status,
+    planTioarig,
   }));
 }
+
+/** AcademicYearTimplans_gradeLevel_is_sane's top (20261121090000). */
+const MAX_ATTACHABLE_GRADE = 11;
 
 /** A DECIDED plan, and the grades it speaks for by default. */
 export interface DecidedTimplan {

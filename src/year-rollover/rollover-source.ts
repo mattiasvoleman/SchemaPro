@@ -8,6 +8,7 @@ import type {
   StaffingCheckMode,
   StudentGroupKind,
 } from '@prisma/client';
+import { lydelseIsTioarig } from '../common/grade-numbering';
 import type { FrameWindow } from '../common/year-rollover';
 import { sortSlots, type DutySlot } from '../staffing/duty-slot';
 import type { LoadQualification } from '../staffing/teacher-load';
@@ -115,6 +116,8 @@ export interface DecidedPlan {
   id: string;
   name: string;
   schoolForm: string;
+  /** Whether its lydelse numbers its rows the tioårig way (grade-numbering.ts). */
+  tioarig: boolean;
   decidedAt: string;
   entries: { subjectId: string; gradeLevel: number; minutesPerWeek: number }[];
 }
@@ -144,6 +147,8 @@ export interface RolloverSource {
   decidedTimplans: DecidedTimplan[];
   /** planId → entries, for every plan the new year can follow (attached or decided). */
   planEntries: Map<string, { subjectId: string; gradeLevel: number; minutesPerWeek: number }[]>;
+  /** planId → whether its rows are numbered the tioårig way, for the same plans. */
+  planTioarig: Map<string, boolean>;
   subjectNames: Map<string, string>;
   /** Users who may teach a row: TEACHER or SCHOOL_ADMIN, and active. */
   activeTeacherIds: Set<string>;
@@ -307,6 +312,7 @@ export async function readRolloverSource(
       schoolForm: true,
       decidedAt: true,
       entries: { select: { subjectId: true, gradeLevel: true, minutesPerWeek: true } },
+      nationalVersion: { select: { appliesFromCohortTerm: true } },
     },
   });
   const subjects = await tx.subject.findMany({ select: { id: true, name: true } });
@@ -322,14 +328,22 @@ export async function readRolloverSource(
           status: true,
           schoolForm: true,
           entries: { select: { subjectId: true, gradeLevel: true, minutesPerWeek: true } },
+          nationalVersion: { select: { appliesFromCohortTerm: true } },
         },
       },
     },
   });
   const decidedTimplans = await readDecidedTimplans(tx);
   const planEntries = new Map<string, { subjectId: string; gradeLevel: number; minutesPerWeek: number }[]>();
-  for (const plan of plans ?? []) planEntries.set(plan.id, plan.entries);
-  for (const row of attached ?? []) planEntries.set(row.localTimplanId, row.localTimplan.entries);
+  const planTioarig = new Map<string, boolean>();
+  for (const plan of plans ?? []) {
+    planEntries.set(plan.id, plan.entries);
+    planTioarig.set(plan.id, lydelseIsTioarig(plan.nationalVersion.appliesFromCohortTerm));
+  }
+  for (const row of attached ?? []) {
+    planEntries.set(row.localTimplanId, row.localTimplan.entries);
+    planTioarig.set(row.localTimplanId, lydelseIsTioarig(row.localTimplan.nationalVersion.appliesFromCohortTerm));
+  }
 
   const teacherIds = [
     ...new Set(
@@ -469,6 +483,7 @@ export async function readRolloverSource(
       id: plan.id,
       name: plan.name,
       schoolForm: plan.schoolForm,
+      tioarig: planTioarig.get(plan.id) ?? false,
       decidedAt: plan.decidedAt ? plan.decidedAt.toISOString() : '',
       entries: plan.entries,
     })),
@@ -481,6 +496,7 @@ export async function readRolloverSource(
     })),
     decidedTimplans,
     planEntries,
+    planTioarig,
     subjectNames: new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
     activeTeacherIds: new Set((activeTeachers ?? []).map((teacher) => teacher.id)),
     qualificationMode: policy?.qualificationMode ?? 'WARN',

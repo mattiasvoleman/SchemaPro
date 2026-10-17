@@ -20,6 +20,8 @@ export interface YearTimplanRow {
   localTimplanId: string;
   planName: string;
   planStatus: LocalTimplanStatus;
+  /** Whether the plan's lydelse numbers its rows the tioårig way (grade-numbering.ts). */
+  planTioarig?: boolean;
 }
 
 /**

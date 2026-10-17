@@ -13,7 +13,7 @@ import {
 } from '../calendar/publish-days';
 import { teachingWeeks, type ClosedRange } from '../staffing/teaching-weeks';
 import { shortestLessonOf, weeklyMinutesOf } from './lesson-lengths';
-import type { PlannedCoverageInput, PlannedGroup, PlannedRequirement } from './timplan-planned';
+import { planRowOfInput, type PlannedCoverageInput, type PlannedGroup, type PlannedRequirement } from './timplan-planned';
 import { lessonMinutes } from './timplan-scheduled';
 import { zonedTimeToUtc } from './utils/time';
 
@@ -1096,8 +1096,11 @@ export function computeDeliveredCoverage(
     for (const group of classes.filter((g) => g.gradeLevel === attachment.gradeLevel)) {
       let weeks = yearWeeks.get(attachment.gradeLevel);
       if (weeks === undefined) yearWeeks.set(attachment.gradeLevel, (weeks = teachingWeeks({}, year, planned.closures, attachment.gradeLevel)));
+      // The plan's row for the årskurs, in the plan's numbering (8A of a
+      // TIOARIG year reads row 7 of a plan on SFS 2023:945).
+      const row = planRowOfInput(planned, plan, attachment.gradeLevel);
       for (const entry of plan.entries) {
-        if (entry.gradeLevel !== attachment.gradeLevel || !subjects.has(entry.subjectId)) continue;
+        if (entry.gradeLevel !== row || !subjects.has(entry.subjectId)) continue;
         const lines = groupTallies.get(group.id);
         const tally = lines?.get(keyOf(entry.subjectId));
         if (tally) tally.target = entry.minutesPerWeek * weeks;
