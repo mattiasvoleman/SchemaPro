@@ -1208,8 +1208,11 @@ Android APK of §12.4 can be made before.
    every Android push), with two Android apps: `com.schemapro.teacher`
    (production and preview) and `com.schemapro.teacher.dev` (development).
 5. **The Expo data processing agreement**, before a push reaches a real
-   user (§8.1 step 1). Internal builds against a test stack (§12.6) carry no
-   real person's data and do not wait for it.
+   user (§8.1 step 1). Internal builds against a test stack (§12.6) hold no
+   pupil's or staff member's records and do not wait for it. The testers'
+   own push tokens and iPhone device ids still pass through Expo and Apple
+   (§12.5, §12.6), so the testers are staff or developers who have agreed to
+   that.
 
 Each account belongs to the organisation, and its sign-ins live in the
 password manager, never in this repository: the repository is public.
@@ -1217,12 +1220,14 @@ password manager, never in this repository: the repository is public.
 ### 12.2 The EAS project, environments and profiles
 
 1. **The CLI is the npm package `eas-cli`.** `npx eas …` runs an unrelated
-   package called `eas` and builds nothing. Install a pinned version once,
-   `npm install -g eas-cli@25.1.1` (`mobile/eas.json` asks for `>= 24.0.0`,
-   and the CLI needs Node 20.18.3 or later), or run each command below as
-   `npx eas-cli@25.1.1 <command>`. Then `eas login` with your own Expo
-   account, a member of the organisation, and check it with `eas whoami`.
-   Every `eas` command runs in `mobile/`.
+   package called `eas` and builds nothing. Install a pinned version
+   globally, `npm install -g eas-cli@25.1.1` (`mobile/eas.json` asks for
+   `>= 24.0.0`, and the CLI needs Node 20.18.3 or later). Not as `npx
+   eas-cli@…` in `mobile/`: `mobile/.npmrc` makes npm there refuse a version
+   published less than seven days ago, and a global install does not read
+   it. Then `eas login` with your own Expo account, a member of the
+   organisation, and check it with `eas whoami`. Every `eas` command runs in
+   `mobile/`.
 2. **Link the project, once:** `eas init --account <the Expo organisation>`.
    It creates the project on expo.dev and writes its id and owner into
    `app.json` (`extra.eas.projectId`, `owner`). `app.config.ts` passes
@@ -1271,7 +1276,9 @@ password manager, never in this repository: the repository is public.
    `mobile/.npmrc` makes it resolve peers as CI does (`legacy-peer-deps`),
    and the `eas-build-pre-install` script in `mobile/package.json` first
    installs npm 11, which wrote the lockfile and which CI pins, whatever npm
-   the build image ships. Versions and build numbers are §12.9.
+   the build image ships. It does so only on EAS's own machines. `eas build
+   --local` installs with the npm of the machine it runs on, which is
+   therefore npm 11 too. Versions and build numbers are §12.9.
 
 `mobile/ios` and `mobile/android` are generated for each build and are
 gitignored (`mobile/.gitignore`). Committed, they would make EAS treat the
@@ -1336,13 +1343,19 @@ of §12.1:
    the file may be committed, since it holds only public Firebase
    identifiers; here it never is, because the repository is public and the
    file's API key would trip every secret scanner. Keep the local copy at
-   `mobile/google-services.json`, which is gitignored: EAS gives no secret
-   variable to a local build, and `app.config.ts` uses that file when the
-   variable is not set (`npm run android`, `eas build --local`). On EAS, a
-   preview or production Android build stops without the variable (§12.2).
-   A development build without the file still builds, but gets no push
-   token: turning push on says "Pushnotiserna gick inte att slå på. Försök
-   igen."
+   `mobile/google-services.json`, which is gitignored. `app.config.ts` uses
+   it when the variable is not set, which covers `npm run android`. `eas
+   build --local` is different: it builds from a copy of the project that
+   leaves gitignored files out, and EAS gives no secret variable to a local
+   build. So before a local Android build, run `export
+   GOOGLE_SERVICES_JSON="$PWD/google-services.json"` in `mobile/` (an
+   absolute path). With the local copy present, every cloud Android build
+   prints that `android.googleServicesFile` "won't be uploaded to the
+   builder". That is expected, because the builder takes the file variable
+   instead. A preview or production Android build, on EAS or local, stops
+   without one or the other (§12.2). A development build without the file
+   still builds, but gets no push token: turning push on says
+   "Pushnotiserna gick inte att slå på. Försök igen."
 2. **The service-account key**, with which Expo sends to FCM. In Firebase,
    Project settings → Service accounts → *Generate new private key*. Then
    `eas credentials -p android`, the `production` profile, *Google Service
@@ -1363,8 +1376,9 @@ of §12.1:
 - Google Play: a Google Cloud service account with a JSON key, invited in
   Play Console (Users and permissions) with permission to release this app
   to testing tracks, and uploaded with `eas credentials -p android` under
-  *Google Service Account*, as the key for Play Store submissions. The first
-  Play upload is by hand anyway (§12.8), so this can wait for the second.
+  *Google Service Account*, as the key for Play Store submissions. Then
+  delete the downloaded key, as with the FCM key. The first Play upload is
+  by hand anyway (§12.8), so this can wait for the second.
 
 ### 12.4 The first internal Android build
 
@@ -1378,7 +1392,8 @@ of §12.1:
 3. Check: "SchemaPro Test" under the icon, the splash, a sign-in with a test
    account against the deployment the preview environment points at, the
    schedule, and attendance taken in airplane mode that syncs once the
-   network is back.
+   network is back. On every tab, the content runs down to the tab bar
+   with no empty strip above it, and nothing hides under the status bar.
 
 Every later preview build installs over the one before and keeps its data,
 since the build number only rises. **Android's catch:** a preview APK and
@@ -1398,6 +1413,20 @@ attendance queue included: let the queue empty before.
    every iPhone registered when it is made. For a new or just renewed
    membership, Apple can take 24 to 72 hours to accept a new device, and a
    build that includes it may fail until then: wait and build again.
+
+   **The encryption question.** Until the owner has decided export
+   compliance (§12.11), every interactive iOS build first asks *iOS app only
+   uses standard/exempt encryption?* Whatever the answer, the build goes on
+   without one. The CLI tries to write the answer into `app.json`, and with
+   it the iOS settings of the profile it builds (a development build's
+   bundle id included). `app.config.ts` keeps the answer out, so the CLI
+   rolls its write back and prints the line it would have added. Do not add
+   that line. The decision goes into `app.json` as
+   `ios.config.usesNonExemptEncryption`, and then the question stops. After
+   any interactive `eas` command, `git status mobile/` shows nothing except
+   what `eas init` wrote (§12.2). A changed bundle id or package is reverted
+   at once with `git checkout mobile/app.json`. A build from an `app.json`
+   whose id ends in `.dev` stops on the builder.
 3. On the iPhone, open the build's page and install. iOS 16 and later run it
    only in Developer Mode: open the app once and let iOS refuse, then
    Settings → Privacy & Security → Developer Mode → on, restart, and confirm
@@ -1408,7 +1437,8 @@ attendance queue included: let the queue empty before.
 Register it, then either build again, interactively so that EAS updates the
 provisioning profile (a non-interactive build reuses the old profile unless
 it is given `--refresh-ad-hoc-provisioning-profile` and an App Store Connect
-API key), or re-sign the latest build: `eas build:resign -p ios -e preview`.
+API key), or re-sign an existing preview build: `eas build:resign -p ios
+--source-profile preview -e preview`, which asks which one (or takes `--id`).
 Apple allows 100 iPhones a membership year for ad hoc builds, and a device
 disabled during the year still counts.
 
@@ -1417,7 +1447,11 @@ both platforms; an iPhone is registered first. Install SchemaPro Dev, run
 `npm start` in `mobile/` (it sets `APP_VARIANT=development`) and open the
 server from the app. The phone and the computer must be on the same network,
 and the API the app talks to must be https, as a phone is not localhost
-(§8). A plain `npx expo start`, without `APP_VARIANT`, describes the
+(§8). On an iPhone, SchemaPro Dev first asks to find devices on the local
+network ("Utvecklingsbygget letar efter utvecklingsservern …"): allow it.
+Refused, it cannot reach `npm start`; turn it back on under Settings →
+Privacy & Security → Local Network, or use `npm start -- --tunnel`.
+Preview and production builds never ask. A plain `npx expo start`, without `APP_VARIANT`, describes the
 production app to the development build, and a school-account sign-in would
 not come back to it.
 
@@ -1427,7 +1461,13 @@ not come back to it.
 to whoever the gateway holds, so it runs against a test stack:
 
 - a Supabase project that is not production's, set up as in §1 to §3, with
-  test accounts only (`npm run db:seed` gives a demo school);
+  test accounts only. `npm run db:seed`, run against that project's
+  `DIRECT_URL`, gives a demo school whose people have no login and which has
+  no lessons yet. Link its admin as in §7: create the auth user, then set
+  the seeded admin row's `"authId"` and `"invitedAt"`. Do the same for one
+  seeded teacher, or invite a test teacher at `/admin/people` to a mailbox
+  you control. Then generate and publish a timetable as in §9 steps 6 and
+  7, so that the Day planner has this week's lessons;
 - a gateway deployed against it as in §5, with `PUSH_NOTIFICATIONS=expo`
   (and `EXPO_ACCESS_TOKEN` if enhanced push security is on), reachable over
   https: a second service on the container host, or an https tunnel to a
@@ -1479,10 +1519,20 @@ On one iPhone and one Android phone:
    adding `-H 'Authorization: Bearer <EXPO_ACCESS_TOKEN>'` once enhanced
    push security is on. If this arrives and step 4's did not, read the
    gateway's log; if neither arrives, look at the credentials (§12.3).
-6. After 15 to 20 minutes the receipt checker has asked Expo about the send:
-   today's `push-receipts` row in `JobRuns` shows no failures, and the
-   gateway's log names no error code (`MismatchSenderId`,
-   `InvalidCredentials`, `DeviceNotRegistered`).
+6. After 15 to 20 minutes the receipt checker has asked Expo about the send.
+   Look for evidence that it did, since "no failures" alone also holds for a
+   pass that had nothing to check:
+
+   ```sql
+   select runs, failures, counts from "JobRuns"
+    where job = 'push-receipts' and day = (now() at time zone 'utc')::date;
+   ```
+
+   `counts` shows `"checked"` of at least 1, or the gateway's log has
+   `Push receipts settled [checked=1, …]`. The log has no `Push tickets with
+   errors`, `Push receipts with errors` or `Delivery failed` line, and names
+   no error code (`MismatchSenderId`, `InvalidCredentials`,
+   `DeviceNotRegistered`).
 7. Log out of the app: the row from step 3 is gone.
 8. Write the result in the build log (§12.9): the date, the phone and its OS
    version, the build, and what arrived.
@@ -1510,10 +1560,10 @@ round, every send fails as unauthorised in between.
    bundle id change once a build is uploaded, so §12.11's first question is
    decided before this step.
 3. **Export compliance.** Until `ios.config.usesNonExemptEncryption` is
-   decided (§12.11), every uploaded build waits in TestFlight as *Missing
-   Compliance* until someone answers Apple's encryption questions for that
-   build. Answer them as the owner has decided, never just to get a build
-   through.
+   decided (§12.11), the build's own question goes unanswered (§12.5 step
+   2), and every uploaded build waits in TestFlight as *Missing Compliance*
+   until someone answers Apple's encryption questions for that build. Answer
+   them as the owner has decided, never just to get a build through.
 4. TestFlight → Internal Testing: create a group and add testers. Internal
    testers are App Store Connect users of the team, at most 100, and each
    accepts the invitation in the TestFlight app. Internal builds need no
@@ -1660,10 +1710,13 @@ The build keeps today's values until the owner decides. What each touches:
    app encrypts its local database itself, with SQLCipher (`expo-sqlite`'s
    `useSQLCipher`), beyond the HTTPS and keychain that iOS provides. Whether
    that is exempt under the US export rules Apple asks about is the owner's
-   call. Unset, every build waits as *Missing Compliance* until its
-   questions are answered by hand (§12.7). Set, the value goes into every
-   build's Info.plist; `true` also brings the export documentation Apple
-   then asks for.
+   call. Unset, `eas build` asks at every interactive iOS build and the
+   answer is kept out of the build (§12.5 step 2), and every build waits as
+   *Missing Compliance* until its questions are answered by hand (§12.7).
+   Set in `app.json` (there, not as `ios.infoPlist.ITSAppUsesNonExemptEncryption`,
+   which `app.config.ts` drops), the value goes into every build's
+   Info.plist and the question stops; `true` also brings the export
+   documentation Apple then asks for.
 
 ## 12. Several schools per login ("Flera skolor per inloggning")
 
