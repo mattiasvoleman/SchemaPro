@@ -32,6 +32,10 @@ vi.mock("@/lib/queries", () => ({
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
 }));
+vi.mock("@tanstack/react-query", async () => ({
+  ...(await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query")),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useTranslations: () => {
@@ -79,7 +83,7 @@ describe("SitesCard", () => {
     render(<SitesCard />);
     expect(screen.getByText("missing(Norra–Hallen, Södra–Hallen)")).toBeInTheDocument();
     expect(screen.getByText("roomsWithoutSite(2)")).toBeInTheDocument();
-    expect(screen.getByLabelText("pairLabel(Norra|Södra) (optional)")).toHaveValue(15);
+    expect(screen.getByLabelText("pairLabel(Norra|Södra) (optional)")).toHaveValue("15");
   });
 
   it("saves every pair at once, an empty field as no figure, and refuses minutes the database would", async () => {
@@ -108,7 +112,42 @@ describe("SitesCard", () => {
     expect(save).toBeEnabled();
     await user.click(save);
 
-    expect(saveMock).toHaveBeenCalledWith([{ siteIds: [SODRA, HALLEN], minutes: 0 }]);
+    // With the figures it was looking at, so a save made meanwhile is not undone.
+    expect(saveMock).toHaveBeenCalledWith({
+      times: [{ siteIds: [SODRA, HALLEN], minutes: 0 }],
+      basis: `${NORRA}|${SODRA}:15`,
+    });
+  });
+});
+
+describe("SitesCard keeps what the admin typed", () => {
+  it("through a refetch: an edited field keeps its text, an untouched one takes the new figure", async () => {
+    const sites = [
+      { id: NORRA, name: "Norra", roomCount: 3 },
+      { id: SODRA, name: "Södra", roomCount: 2 },
+      { id: HALLEN, name: "Hallen", roomCount: 1 },
+    ];
+    const travelTimes = [{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }];
+    state.data = { sites, travelTimes, roomsWithoutSite: 0 };
+    const user = userEvent.setup();
+    const { rerender } = render(<SitesCard />);
+    const hallen = screen.getByLabelText("pairLabel(Södra|Hallen) (optional)");
+    await user.type(hallen, "25");
+
+    // A room saved elsewhere: the counts move, the pairs are the same array.
+    state.data = { sites: sites.map((site) => ({ ...site, roomCount: site.roomCount + 1 })), travelTimes, roomsWithoutSite: 0 };
+    rerender(<SitesCard />);
+    expect(screen.getByLabelText("pairLabel(Södra|Hallen) (optional)")).toHaveValue("25");
+
+    // Another tab saved Norra–Hallen: the untouched field takes it, the edited one keeps its text.
+    state.data = {
+      sites,
+      travelTimes: [...travelTimes, { siteAId: NORRA, siteBId: HALLEN, minutes: 30 }],
+      roomsWithoutSite: 0,
+    };
+    rerender(<SitesCard />);
+    expect(screen.getByLabelText("pairLabel(Norra|Hallen) (optional)")).toHaveValue("30");
+    expect(screen.getByLabelText("pairLabel(Södra|Hallen) (optional)")).toHaveValue("25");
   });
 });
 
@@ -117,6 +156,6 @@ describe("minutesFromField", () => {
     expect(minutesFromField("  ")).toBeNull();
     expect(minutesFromField("0")).toBe(0);
     expect(minutesFromField(" 240 ")).toBe(240);
-    for (const bad of ["241", "-1", "7.5", "tio"]) expect(minutesFromField(bad)).toBeUndefined();
+    for (const bad of ["241", "-1", "-", "7.5", "1e2", "tio"]) expect(minutesFromField(bad)).toBeUndefined();
   });
 });

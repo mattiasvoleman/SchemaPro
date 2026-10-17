@@ -65,7 +65,8 @@ export default function DayPlannerPage() {
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   // The vikarie's warnings mix the engine's STAFF_* with the cover's COVER_*
-  // (lunch, rest, the cap, the days), as on Lärarfrånvaro and the cover board.
+  // (lunch, rest, the cap, the days, a walk between sites too short), as on
+  // Lärarfrånvaro and the cover board.
   const tWarnings = chainLookup(useTranslations("coverErrors") as unknown as MessageLookup, tEngine);
   const tStatus = useTranslations("lessonStatus");
   const locale = useLocale();

@@ -405,7 +405,7 @@
     "missingTitle": "Travel time missing",
     "missing": "No travel time is given for {pairs}. Between those sites the timetable does not warn and no travel time is counted.",
     "roomsWithoutSiteTitle": "Rooms on no site",
-    "roomsWithoutSite": "{count, plural, one {# room stands} other {# rooms stand}} on no site. No travel time is counted to or from them.",
+    "roomsWithoutSite": "{count, plural, one {# room stands on no site. No travel time is counted to or from it.} other {# rooms stand on no site. No travel time is counted to or from them.}}",
     "addTitle": "Add site",
     "editTitle": "Edit {name}",
     "dialogHint": "The name shows in the room list and in the travel warnings.",
@@ -419,7 +419,9 @@
       "SITE_NAME_TAKEN": "The school already has a site with that name.",
       "SITE_NAME_EMPTY": "The site needs a name.",
       "SITE_TRAVEL_PAIR_INVALID": "The same pair of sites is given twice, or a site against itself.",
-      "SITE_NOT_FOUND": "The site no longer exists. Reload the page."
+      "SITE_NOT_FOUND": "The site no longer exists. Reload the page.",
+      "SITE_LIMIT": "A school has at most 50 sites.",
+      "SITE_TRAVEL_STALE": "The travel times have changed since you opened the page. The new ones show now, with what you typed kept; save again."
     }
   },
   "groups": {

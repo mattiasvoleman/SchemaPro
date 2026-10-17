@@ -36,14 +36,28 @@ export function useSites() {
   return useQuery({ queryKey: SITES_KEY, queryFn: () => api.get<Sites>("/api/v1/sites") });
 }
 
-/** Every travel time at once: the pairs listed are the school's figures, the rest have none. */
+/**
+ * Every travel time at once: the pairs listed are the school's figures, the
+ * rest have none. `basis` is the figures the card was looking at
+ * (travelBasis): the gateway refuses the save (SITE_TRAVEL_STALE) when they
+ * have changed since, rather than undo someone else's. Either way the list
+ * is read again.
+ */
 export function useSaveTravelTimes() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (times: { siteIds: [string, string]; minutes: number }[]) =>
-      api.put<SiteTravelTime[]>("/api/v1/sites/travel-times", { times }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: SITES_KEY }),
+    mutationFn: ({ times, basis }: { times: { siteIds: [string, string]; minutes: number }[]; basis: string }) =>
+      api.put<SiteTravelTime[]>("/api/v1/sites/travel-times", { times, basis }),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: SITES_KEY }),
   });
+}
+
+/** The figures as one string, as src/sites/sites.service.ts travelBasis builds it. */
+export function travelBasis(times: readonly SiteTravelTime[]): string {
+  return times
+    .map((time) => `${pairKey(time.siteAId, time.siteBId)}:${time.minutes}`)
+    .sort()
+    .join(",");
 }
 
 /** The pair's key in id order, the order the gateway stores and answers it in. */
