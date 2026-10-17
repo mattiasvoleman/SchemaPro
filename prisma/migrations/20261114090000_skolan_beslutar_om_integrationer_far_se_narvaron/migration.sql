@@ -679,16 +679,20 @@ $$;
 -- read. One of some ids, lessons or pupils is driven by that filter's index,
 -- and asks each of its records whether it moved. Any other from within the
 -- run (an organisation's too, which asks for every group of its unit) reads
--- what moved: while fewer than 50 000 records moved, it reads only those
--- after the page's last id, each through an index, never the school's
--- history (the records whose version moved,
+-- what moved, never the school's whole history. Each page first counts the
+-- records that moved since the cursor through their indexes, and stops
+-- counting at 50 000 in all. While fewer moved, the page reads every one of
+-- them through its index (the records whose version moved,
 -- Ss12000EntityVersions_modified_idx; the records of a pupil whose row moved,
 -- AttendanceRecords_studentId_recordedAt_idx; the records created since,
--- AttendanceRecords_schoolId_createdAt_idx, 20261114090150), then the keyset
--- and the page; from 50 000 (every pupil linked, a year made emitted) it
--- walks the school's records in id order from the page's last, a chunk at a
--- time, until the page is full, so a page costs about a page divided by the
--- share that moved. The bounds compare at the
+-- AttendanceRecords_schoolId_createdAt_idx, 20261114090150) and keeps those
+-- after the page's last id, then the keyset and the page: a page costs about
+-- what moved since the cursor. From 50 000 (every pupil linked, a year made
+-- emitted) it walks the school's records in id order from the page's last, a
+-- chunk at a time, until the page is full: a page costs the count and about
+-- a page divided by the share that moved. A 600 000-record school read 1 201
+-- pages after every pupil was linked at 43 to 58 ms a page on average, in two
+-- runs on a loaded laptop. The bounds compare at the
 -- millisecond an ISO string carries (S1: before inclusive, after exclusive):
 -- truncated(m) > X is m >= X + 1 ms. The statement is planned with its
 -- values at every call (EXECUTE ... USING), so a filter not asked folds away
@@ -709,9 +713,9 @@ DECLARE
   since timestamptz;
   modified_after timestamptz := p_modified_after;
   -- Changes since the cursor read through their indexes; at this many the
-  -- read walks the school's records instead (a page then walks about a page
-  -- times the school's records over this, and the union would rebuild this
-  -- many on every page).
+  -- read walks the school's records instead. Below it a page reads every
+  -- change since the cursor; above it about a page times the school's
+  -- records over the changes. The count stops here.
   many constant integer := 50000;
   moved uuid[];
   changes integer;
@@ -795,29 +799,33 @@ BEGIN
   $q$ USING school, app.ss12000_emitted_years(school), p_ids, p_lessons, p_students, p_groups,
             p_created_before, p_created_after, p_modified_before, modified_after, p_after, p_limit, since;
   ELSE
-    -- What moved since the cursor (and before modified.before), counted no
-    -- further than `many`, each through its index: the records of a pupil
-    -- whose row moved (linked or back), and the records whose version moved
-    -- or that were created, the larger of the two, since a record created
-    -- while the school shares is versioned as it is created.
+    -- What moved since the cursor (and before modified.before), counted
+    -- through its index no further than `many` in all: the records of a
+    -- pupil whose row moved (linked or back), then the records whose version
+    -- moved or that were created, the larger of the two, since a record
+    -- created while the school shares is versioned as it is created.
     moved := ARRAY(SELECT x."entityId" FROM "Ss12000EntityVersions" x
                     WHERE x."schoolId" = school AND x."resource" = 'AttendancePupil'
                       AND x."modifiedAt" >= modified_after + interval '1 millisecond'
                       AND (p_modified_before IS NULL OR x."modifiedAt" < p_modified_before + interval '1 millisecond'));
     changes := (SELECT count(*) FROM (SELECT 1 FROM "AttendanceRecords" r
-                                       WHERE r."schoolId" = school AND r."studentId" = ANY (moved) LIMIT many) s)
-             + greatest(
-                 (SELECT count(*) FROM (SELECT 1 FROM "Ss12000EntityVersions" x
-                                         WHERE x."schoolId" = school AND x."resource" = 'Attendance'
-                                           AND x."modifiedAt" >= modified_after + interval '1 millisecond'
-                                           AND (p_modified_before IS NULL OR x."modifiedAt" < p_modified_before + interval '1 millisecond')
-                                         LIMIT many) s),
-                 (SELECT count(*) FROM (SELECT 1 FROM "AttendanceRecords" r
-                                         WHERE r."schoolId" = school
-                                           AND r."createdAt" >= greatest(modified_after, p_created_after) + interval '1 millisecond'
-                                           AND (p_modified_before IS NULL OR r."createdAt" < p_modified_before + interval '1 millisecond')
-                                           AND (p_created_before IS NULL OR r."createdAt" < p_created_before + interval '1 millisecond')
-                                         LIMIT many) s));
+                                       WHERE r."schoolId" = school AND r."studentId" = ANY (moved) LIMIT many) s);
+    IF changes < many THEN
+      n := (SELECT count(*) FROM (SELECT 1 FROM "Ss12000EntityVersions" x
+                                   WHERE x."schoolId" = school AND x."resource" = 'Attendance'
+                                     AND x."modifiedAt" >= modified_after + interval '1 millisecond'
+                                     AND (p_modified_before IS NULL OR x."modifiedAt" < p_modified_before + interval '1 millisecond')
+                                   LIMIT many - changes) s);
+      IF changes + n < many THEN
+        n := greatest(n, (SELECT count(*) FROM (SELECT 1 FROM "AttendanceRecords" r
+                                                 WHERE r."schoolId" = school
+                                                   AND r."createdAt" >= greatest(modified_after, p_created_after) + interval '1 millisecond'
+                                                   AND (p_modified_before IS NULL OR r."createdAt" < p_modified_before + interval '1 millisecond')
+                                                   AND (p_created_before IS NULL OR r."createdAt" < p_created_before + interval '1 millisecond')
+                                                 LIMIT many - changes) s));
+      END IF;
+      changes := changes + n;
+    END IF;
     IF changes < many THEN
       RETURN QUERY EXECUTE $q$
     SELECT a."id", a."calendarLessonId", a."studentId", a."status"::text, a."createdAt",
@@ -864,8 +872,9 @@ BEGIN
     END IF;
     -- Many: the school's records in id order from the page's last, a chunk
     -- at a time, each read with the cursor's predicate, until the page is
-    -- full. A page costs about a page divided by the share that moved, and a
-    -- mass link (every pupil moved) about a page.
+    -- full. A page costs the count above and about a page divided by the
+    -- share that moved: after a mass link (every pupil moved), the count
+    -- and about a page.
     LOOP
       chunk := ARRAY(SELECT r."id" FROM "AttendanceRecords" r
                       WHERE r."schoolId" = school AND r."id" > walked
