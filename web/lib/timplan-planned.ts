@@ -241,6 +241,16 @@ const VERDICT_ORDER: Record<PlannedVerdictCode, number> = {
  */
 export const TIMPLAN_MAX_ATTACHABLE_GRADE = 11;
 
+/**
+ * Whether a year"s årskurs is one a plan can be asked for: F–10 in the
+ * nine-year numbering (specialskolan"s 10; 11 is no årskurs there), åk 1–11 in
+ * the tioårig one, which has no förskoleklass — the year PUT refuses a plan
+ * for its årskurs 0 (academic-year-timplans.service.ts).
+ */
+export function attachableGrade(grade: number, numbering: GradeNumbering): boolean {
+  return numbering === "TIOARIG" ? grade >= 1 && grade <= TIMPLAN_MAX_ATTACHABLE_GRADE : grade >= 0 && grade <= 10;
+}
+
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byName = (a: string, b: string): number => a.localeCompare(b, "sv");
 
@@ -492,7 +502,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     classGrades.set(grade, list);
   }
   for (const grade of [...classGrades.keys()].sort((a, b) => a - b)) {
-    if (grade > TIMPLAN_MAX_ATTACHABLE_GRADE) continue;
+    if (!attachableGrade(grade, input.gradeNumbering ?? "NIOARIG")) continue;
     const ids = classGrades.get(grade)!;
     const attached = planOfGrade.get(grade);
     if (attached) {

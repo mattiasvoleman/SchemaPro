@@ -215,6 +215,27 @@ describe("YearTimplansDialog", () => {
     expect(within(rows[1]!).getByText("notThisCohort(grade(2))")).toBeInTheDocument();
   });
 
+  it("reads a läsår's autumn term as the gateway does: a 2027/28 starting in January is HT 2027", () => {
+    state.plans = [
+      { id: "p-2024", name: "Grundskola 2024", status: "DECIDED", nationalTimplanVersionId: "v-2024" },
+      { id: "p-2028", name: "Grundskola 2028", status: "DECIDED", nationalTimplanVersionId: "v-2028" },
+    ];
+    state.saved = [
+      { gradeLevel: 0, localTimplanId: "p-2024", planName: "Grundskola 2024", planStatus: "DECIDED" },
+      { gradeLevel: 1, localTimplanId: "p-2024", planName: "Grundskola 2024", planStatus: "DECIDED" },
+      { gradeLevel: 2, localTimplanId: "p-2028", planName: "Grundskola 2028", planStatus: "DECIDED" },
+    ];
+    const january: AcademicYear[] = [
+      { id: "y-1", name: "2027/28", startDate: "2028-01-10", endDate: "2028-06-09", isActive: true, predecessorId: null, graduatingGradeLevel: null },
+    ];
+    render(<YearTimplansDialog open onOpenChange={() => {}} years={january} initialYearId={null} />);
+    const rows = screen.getAllByRole("row").slice(1);
+    // Every årskull of HT 2027 began before the reform: the older plan fits F and åk 1, the 2028 one nothing.
+    expect(within(rows[0]!).queryByText(/notThisCohort/)).toBeNull();
+    expect(within(rows[1]!).queryByText(/notThisCohort/)).toBeNull();
+    expect(within(rows[2]!).getByText("notThisCohort(grade(2))")).toBeInTheDocument();
+  });
+
   it("points to Timplan when the school has no plan to choose", () => {
     state.plans = [];
     state.saved = [];

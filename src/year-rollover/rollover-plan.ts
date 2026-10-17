@@ -27,6 +27,7 @@ import { fromNioarig, gradeOfPlanRow, planRowOf, TIOARIG_FROM, toNioarig } from 
 import { isMixed } from '../common/lesson-lengths';
 import { isLanguageBlockName } from '../timplan/generate-requirements';
 import { gradesParam, qualificationFinding } from '../staffing/staffing-checks';
+import { htOf } from '../common/timplan-cohorts';
 import type { GradeSpan } from '../staffing/teacher-load';
 import { skippedModels } from './rollover-registry';
 import type { RolloverSource, SourceGroup } from './rollover-source';
@@ -61,8 +62,9 @@ export interface RolloverRequest {
   /**
    * The rollover into HT 2028 (SFS 2025:729): true renumbers every årskurs
    * (övergångsbestämmelse 4), false keeps the school's numbering — for a
-   * school outside the four forms only. Absent: renumbered when the source
-   * year shows a form the reform covers (a timplan row, a förskoleklass), and
+   * school outside the four forms only. Absent: renumbered when the school
+   * shows a form the reform covers (a decided lokal timplan, a timplan row, a
+   * förskoleklass), and
    * otherwise a blocking question (ROLLOVER_2028_SCHOOL_FORM_UNKNOWN). Ignored
    * by every other rollover.
    */
@@ -96,6 +98,7 @@ export type RolloverProblemCode =
   | 'ROLLOVER_2028_RENUMBERING_REQUIRED'
   | 'ROLLOVER_GRADE_ABOVE_12'
   | 'ROLLOVER_TIMPLAN_NO_FITTING_PLAN'
+  | 'ROLLOVER_TIMPLAN_CARRIED_MISFIT'
   | StaffingProblemCode;
 
 export interface RolloverProblem {
@@ -335,17 +338,20 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   // starts after the date (a school that kept its numbering).
   //
   // WHO RENUMBERS. Per school, never per grade (one year, one numbering).
-  // Every SchoolForm is one of the four forms, so a source year with a
-  // timplan row, or with a förskoleklass, is a school the reform covers and
-  // renumbers without asking; asked to keep its numbering it is refused
-  // (ROLLOVER_2028_RENUMBERING_REQUIRED). A source year with neither shows no
-  // form, and the request must say (ROLLOVER_2028_SCHOOL_FORM_UNKNOWN): true
+  // Every SchoolForm is one of the four forms, so a school with a decided
+  // lokal timplan, or a source year with a timplan row or a förskoleklass, is
+  // one the reform covers and renumbers without asking; asked to keep its
+  // numbering it is refused (ROLLOVER_2028_RENUMBERING_REQUIRED). A school
+  // with none of them shows no form, and the request must say
+  // (ROLLOVER_2028_SCHOOL_FORM_UNKNOWN): true
   // renumbers, false keeps the numbering — a school that is not grundskola
   // stays untouched, its new year NIOARIG.
   const crossing =
     source.year.gradeNumbering === 'NIOARIG' && sourceBounds.startDate < TIOARIG_FROM && target.startDate >= TIOARIG_FROM;
   const reformEvidence =
-    source.timplans.length > 0 || source.groups.some((group) => group.kind === 'CLASS' && group.gradeLevel === 0);
+    source.decidedPlans.length > 0 ||
+    source.timplans.length > 0 ||
+    source.groups.some((group) => group.kind === 'CLASS' && group.gradeLevel === 0);
   const renumbers = crossing && (request.renumber2028 ?? reformEvidence);
   if (crossing) {
     const params = { startYear: Number(target.startDate.slice(0, 4)), source: 'SFS 2025:729, övergångsbestämmelse 4' };
@@ -710,7 +716,16 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     };
     return { from: single(pupils.map(homeGrade)), to: single(pupils.map(projectedGrade)) };
   };
-  writes.blocks = planBlocks(source, writes.requirements, cohortMove);
+  // An intake twin's row: its source group's årskurs, and the twin's (the
+  // same in a year like any other, one up across the reform).
+  const intakeMove = (groupKey: string): CohortMove => {
+    const groupId = groupKey.slice(intakeKey('').length);
+    return {
+      from: groupById.get(groupId)?.gradeLevel ?? null,
+      to: resolvedById.get(groupId)?.intake?.gradeLevel ?? null,
+    };
+  };
+  writes.blocks = planBlocks(source, writes.requirements, cohortMove, intakeMove);
   if (requirementStats.oddEvenRows > 0 && crossesIsoWeek53(sourceBounds.startDate, target.startDate)) {
     problems.push({ code: 'ISO_WEEK_53_CROSSED', blocking: false, params: { rows: requirementStats.oddEvenRows } });
   }
@@ -817,12 +832,13 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   const newFirstGrade =
     renumbers &&
     (resolved.some((row) => row.intake?.gradeLevel === 1) || source.timplans.some((row) => row.gradeLevel <= 1));
-  const { rows: timplans, unattached } = cohortTimplans({
+  const { rows: timplans, unattached, misfits } = cohortTimplans({
     source: source.timplans,
     graduatingGradeLevel: g,
     movingCohorts,
     decided: source.decidedTimplans,
-    targetStartYear: Number(target.startDate.slice(0, 4)),
+    // The autumn term the new läsår belongs to, as a new year's create reads it.
+    targetStartYear: htOf(target.startDate),
     sourceNumbering: source.year.gradeNumbering,
     targetNumbering,
     alsoGrades: newFirstGrade ? [1] : [],
@@ -836,6 +852,17 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       code: 'ROLLOVER_TIMPLAN_NO_FITTING_PLAN',
       blocking: false,
       params: { grades: unattached.map((row) => String(row.gradeLevel)) },
+    });
+  }
+  // An årskull carrying a plan its regime does not fit: kept, and said.
+  if (misfits.length > 0) {
+    problems.push({
+      code: 'ROLLOVER_TIMPLAN_CARRIED_MISFIT',
+      blocking: false,
+      params: {
+        grades: misfits.map((row) => String(row.gradeLevel)),
+        plans: [...new Set(misfits.map((row) => row.planName))],
+      },
     });
   }
 
@@ -1034,8 +1061,9 @@ export function hashWrites(writes: RolloverWrites): string {
  * already took a year's is not given another at the next rollover.
  *
  * The rows carried to the intake twins make a second copy under the source's
- * own name, as the twins keep theirs. A copy holding no carried row is not
- * written.
+ * own name, as the twins keep theirs — or, across the reform, where the twins
+ * open one årskurs up (8A beside 9A), named for that årskurs as they are. A
+ * copy holding no carried row is not written.
  *
  * The rows' lessons and weeks are carried as they are and their periods by
  * one rule, so a block whose rows agreed agrees in the new year as well, and
@@ -1049,6 +1077,7 @@ function planBlocks(
   source: RolloverSource,
   rows: RolloverWrites['requirements'],
   cohortMove: (sourceGroupId: string) => CohortMove,
+  intakeMove: (groupKey: string) => CohortMove,
 ): RolloverWrites['blocks'] {
   if (source.blocks.length === 0) return [];
   const used = new Set(rows.flatMap((row) => (row.blockKey ? [row.blockKey] : [])));
@@ -1070,7 +1099,17 @@ function planBlocks(
       sides.push({ key: block.id, sourceBlockId: block.id, name, intake: false });
     }
     if (used.has(intakeKey(block.id))) {
-      sides.push({ key: intakeKey(block.id), sourceBlockId: block.id, name: block.name, intake: true });
+      const moves = rows.filter((row) => row.blockKey === intakeKey(block.id)).map((row) => intakeMove(row.groupKey));
+      const from = moves[0]?.from ?? null;
+      const to = moves[0]?.to ?? null;
+      const moved =
+        from !== null && to !== null && to > from && moves.every((move) => move.from === from && move.to === to);
+      sides.push({
+        key: intakeKey(block.id),
+        sourceBlockId: block.id,
+        name: moved ? promoteName(block.name, from, to).name : block.name,
+        intake: true,
+      });
     }
     return sides;
   });

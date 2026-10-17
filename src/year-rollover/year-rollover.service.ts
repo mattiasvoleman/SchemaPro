@@ -542,7 +542,7 @@ function refuseBlockedRollover(plan: RolloverPlan, source: RolloverSource): void
   if (formUnknown) {
     throw new BadRequestException({
       message:
-        'renumber2028: läsåret visar inte om skolan är grundskola, anpassad grundskola, specialskola eller sameskola. ' +
+        'renumber2028: skolan visar inte om den är grundskola, anpassad grundskola, specialskola eller sameskola. ' +
         'Ange true för den tioåriga numreringen (SFS 2025:729) eller false för att behålla skolans numrering.',
       code: 'ROLLOVER_2028_SCHOOL_FORM_UNKNOWN',
     });
@@ -551,7 +551,7 @@ function refuseBlockedRollover(plan: RolloverPlan, source: RolloverSource): void
   if (required) {
     throw new BadRequestException({
       message:
-        'renumber2028: läsåret har en timplan eller en förskoleklass, så skolan har en av de skolformer som ' +
+        'renumber2028: skolan har en lokal timplan eller en förskoleklass, så den har en av de skolformer som ' +
         'SFS 2025:729 numrerar om från hösten 2028. Numreringen kan inte behållas.',
       code: 'ROLLOVER_2028_RENUMBERING_REQUIRED',
     });

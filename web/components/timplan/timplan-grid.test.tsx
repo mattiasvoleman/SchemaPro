@@ -345,7 +345,7 @@ describe("TimplanGrid: an empty plan", () => {
     const subjects = [subject("s-ma", "Matematik", "MA")];
     const check = checkLocalTimplan({
       planningWeeksTenths: 356,
-      version: toCoverageVersion({ ...B1, code: "SFS2025:729/GR", totalHours: 7424, skolansValHours: null, entries: [] }),
+      version: toCoverageVersion({ ...B1, code: "SFS2025:729", totalHours: 7424, skolansValHours: null, entries: [] }),
       nationalSubjects: NATIONAL.subjects,
       subjects,
       entries: [{ subjectId: "s-ma", gradeLevel: 1, minutesPerWeek: 120 }],

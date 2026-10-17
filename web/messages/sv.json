@@ -857,7 +857,7 @@
     "yearTimplans": {
       "title": "Timplan per årskurs",
       "body": "Vilken lokal timplan varje årskurs följer under läsåret. Ett nytt läsår följer den senast beslutade plan som årskullen får följa; här ändrar du det. Ett utkast kan väljas när nästa läsår planeras före beslutet, och markeras då som utkast överallt där målen visas.",
-      "cohortNote": "Varje årskull följer lydelsen för det år den började åk 1: en plan enligt 2028 års lydelse (7 424 timmar i grundskolan) gäller bara den som börjar åk 1 hösten 2028 eller senare, och alla som redan går i skolan, också förskoleklassen 2027/28, behåller den äldre totala tiden (6 890 timmar).",
+      "cohortNote": "En plan enligt 2028 års lydelse (7 424 timmar i grundskolan) gäller bara årskullar som börjar åk 1 hösten 2028 eller senare; alla som redan går i skolan, också förskoleklassen 2027/28, följer en äldre lydelse och behåller den äldre totala tiden (6 890 timmar i grundskolan).",
       "lydelse2028": "lydelse från 2028",
       "lydelseOlder": "äldre lydelse",
       "notThisCohort": "{grade} får inte följa den här lydelsen",
@@ -3411,7 +3411,7 @@
     "graduatingGradePlaceholder": "Välj årskurs",
     "gradeOption": "{grade, select, 0 {Förskoleklass} other {Årskurs {grade}}}",
     "numbering2028": "Numrering från hösten 2028",
-    "numbering2028Hint": "Läsåret har varken timplan eller förskoleklass, så det visar inte om den tioåriga grundskolan gäller skolan.",
+    "numbering2028Hint": "Skolan har varken lokal timplan eller förskoleklass, så SchemaPro vet inte om den tioåriga grundskolan gäller den.",
     "numbering2028Placeholder": "Välj numrering",
     "numbering2028Renumber": "Tioårig: skolan är grundskola, anpassad grundskola, specialskola eller sameskola",
     "numbering2028Keep": "Behåll numreringen: skolan har ingen av de fyra skolformerna",
@@ -3450,6 +3450,8 @@
     "outcomeFor": "Vad {name} blir",
     "newNameFor": "Nytt namn för {name}",
     "outcomeDefault": "Standard: {outcome}",
+    "outcomeCarryRenumbered": "Stannar kvar, en årskurs upp i den nya numreringen",
+    "outcomeCountCarryRenumbered": "{count} stannar kvar i sin årskull",
     "outcomeFollowsClass": "Följer {name}",
     "outcome": {
       "PROMOTE": "Flyttas upp",
@@ -3477,7 +3479,7 @@
       "caseCollision": "Skiljer sig bara i versaler",
       "ambiguous": "Kontrollera namnet",
       "keptNoDigit": "Namnet behålls",
-      "fKlass": "Förskoleklass blir åk 1",
+      "fKlass": "Förskoleklass blir åk {grade}",
       "noGrade": "Flyttas inte upp",
       "stageChange": "Ny stadieram"
     },
@@ -3586,12 +3588,13 @@
       "STAFFING_POST_FROM_PERIOD": "{teachers, plural, one {# tjänst ändrades} other {# tjänster ändrades}} under läsåret med en period som gäller till läsårets sista dag. Nästa läsår får tjänsten som perioden ger den. Läraren står listad under Tjänster och uppdrag.",
       "STAFFING_POST_PERIODS_ENDED": "{teachers, plural, one {# tjänst hade} other {# tjänster hade}} perioder som slutade före läsårets sista dag. De följer inte med, och nästa läsår får tjänsten som den står i lärarens kort.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "Timplansposterna för {groups} skiljer sig från den beslutade timplanen för den årskurs de flyttas upp till.",
+      "ROLLOVER_TIMPLAN_CARRIED_MISFIT": "Åk {grades} följer nästa läsår {plans}, som årskullen följer i år, men den planens lydelse gäller inte årskullen: 2028 års lydelse gäller just de årskullar som börjar åk 1 hösten 2028 eller senare. Byt plan under Timplan per årskurs när läsåret är skapat.",
       "ROLLOVER_TIMPLAN_NO_FITTING_PLAN": "Åk {grades} får ingen timplan nästa läsår, eftersom ingen beslutad plan gäller den årskullen. Från hösten 2028 följer nya åk 1 bara en plan enligt 2028 års lydelse, och alla som redan går i skolan bara en äldre. Välj plan under Timplan per årskurs när läsåret är skapat.",
       "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows, plural, one {# post} other {# poster}} på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem.",
-      "ROLLOVER_2028_RENUMBERING": "Det nya läsåret börjar {startYear} och numreras tioårigt: enligt {source} flyttas varje klass upp två årskurser i stället för en (8A blir 10A, förskoleklassen börjar direkt i åk 2), och en klass som stannar flyttas upp en. Nya åk 1 får en klass genom Ny klass för intaget eller när läsåret är skapat. Varje äldre årskull behåller sin timplan och den äldre totala tiden.",
+      "ROLLOVER_2028_RENUMBERING": "Det nya läsåret börjar {startYear} och numreras tioårigt: enligt {source} flyttas varje klass upp två årskurser i stället för en (8A blir 10A, förskoleklassen börjar direkt i åk 2), och en klass som stannar flyttas upp en. Ny klass för intaget öppnas en årskurs över den lägsta klassen, så förskoleklassens blir nya åk 1; annars läggs nya åk 1 till när läsåret är skapat. Varje äldre årskull behåller sin timplan och den äldre totala tiden.",
       "ROLLOVER_2028_NOT_RENUMBERED": "Det nya läsåret börjar {startYear} men behåller skolans numrering, eftersom skolan inte har någon av de skolformer som {source} numrerar om. Klasserna flyttas upp en årskurs som vanligt.",
       "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN": "Det nya läsåret börjar {startYear}, när {source} numrerar om grundskolan, anpassade grundskolan, specialskolan och sameskolan. Välj numrering under Numrering från hösten 2028.",
-      "ROLLOVER_2028_RENUMBERING_REQUIRED": "Läsåret har en timplan eller en förskoleklass, så skolan har en av de skolformer som {source} numrerar om från {startYear}. Numreringen kan inte behållas.",
+      "ROLLOVER_2028_RENUMBERING_REQUIRED": "Skolan har en lokal timplan eller en förskoleklass, så den har en av de skolformer som {source} numrerar om från {startYear}. Numreringen kan inte behållas.",
       "ROLLOVER_GRADE_ABOVE_12": "{groups} skulle hamna över åk 12 nästa läsår. Välj ett annat utfall för dem."
     },
     "errors": {

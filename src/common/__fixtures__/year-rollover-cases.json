@@ -2454,6 +2454,143 @@
           }
         ]
       }
-    ]
+    ],
+    "fHalves": {
+      "input": [
+        {
+          "id": "fsk",
+          "name": "Fsk A",
+          "kind": "CLASS",
+          "gradeLevel": 0,
+          "halfOfId": null
+        },
+        {
+          "id": "fsk1",
+          "name": "FA1",
+          "kind": "TEACHING_GROUP",
+          "gradeLevel": 0,
+          "halfOfId": "fsk"
+        },
+        {
+          "id": "1b",
+          "name": "1B",
+          "kind": "CLASS",
+          "gradeLevel": 1,
+          "halfOfId": null
+        }
+      ],
+      "cases": [
+        {
+          "name": "an F class's intake, ONE_YEAR",
+          "step": "ONE_YEAR",
+          "choices": {
+            "fsk": {
+              "outcome": "INTAKE"
+            }
+          },
+          "graduatingGradeLevel": 9,
+          "resolved": [
+            {
+              "sourceGroupId": "fsk",
+              "outcome": "INTAKE",
+              "successor": {
+                "name": "1A",
+                "gradeLevel": 1
+              },
+              "intake": {
+                "name": "Fsk A",
+                "gradeLevel": 0
+              },
+              "nameStatus": "F_KLASS",
+              "noGrade": false,
+              "error": null
+            },
+            {
+              "sourceGroupId": "fsk1",
+              "outcome": "PROMOTE",
+              "successor": {
+                "name": "1A1",
+                "gradeLevel": 1
+              },
+              "intake": {
+                "name": "FA1",
+                "gradeLevel": 0
+              },
+              "nameStatus": "F_KLASS",
+              "noGrade": false,
+              "error": null
+            },
+            {
+              "sourceGroupId": "1b",
+              "outcome": "PROMOTE",
+              "successor": {
+                "name": "2B",
+                "gradeLevel": 2
+              },
+              "intake": null,
+              "nameStatus": "PROMOTED",
+              "noGrade": false,
+              "error": null
+            }
+          ],
+          "collisions": []
+        },
+        {
+          "name": "an F class's intake, INTO_TIOARIG",
+          "step": "INTO_TIOARIG",
+          "choices": {
+            "fsk": {
+              "outcome": "INTAKE"
+            }
+          },
+          "graduatingGradeLevel": 9,
+          "resolved": [
+            {
+              "sourceGroupId": "fsk",
+              "outcome": "INTAKE",
+              "successor": {
+                "name": "2A",
+                "gradeLevel": 2
+              },
+              "intake": {
+                "name": "1A",
+                "gradeLevel": 1
+              },
+              "nameStatus": "F_KLASS",
+              "noGrade": false,
+              "error": null
+            },
+            {
+              "sourceGroupId": "fsk1",
+              "outcome": "PROMOTE",
+              "successor": {
+                "name": "2A1",
+                "gradeLevel": 2
+              },
+              "intake": {
+                "name": "1A1",
+                "gradeLevel": 1
+              },
+              "nameStatus": "F_KLASS",
+              "noGrade": false,
+              "error": null
+            },
+            {
+              "sourceGroupId": "1b",
+              "outcome": "PROMOTE",
+              "successor": {
+                "name": "3B",
+                "gradeLevel": 3
+              },
+              "intake": null,
+              "nameStatus": "PROMOTED",
+              "noGrade": false,
+              "error": null
+            }
+          ],
+          "collisions": []
+        }
+      ]
+    }
   }
 }

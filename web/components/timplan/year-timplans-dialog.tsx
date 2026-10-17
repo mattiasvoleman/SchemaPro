@@ -31,7 +31,7 @@ import { Link } from "@/i18n/navigation";
 import { useReadOnly } from "@/components/profile-context";
 import { lydelseIsTioarig } from "@/lib/grade-numbering";
 import { useGroups, useNationalTimplans } from "@/lib/queries";
-import { planFitsCohort } from "@/lib/timplan-cohorts";
+import { htOf, planFitsCohort } from "@/lib/timplan-cohorts";
 import { useLocalTimplans } from "@/lib/timplan-queries";
 import type { AcademicYear } from "@/lib/types";
 import { useSaveYearTimplans, useYearTimplans } from "@/lib/year-timplan-queries";
@@ -137,7 +137,8 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
     const term = termOf.get(planById.get(planId)?.nationalTimplanVersionId ?? "");
     return term === undefined ? null : t(lydelseIsTioarig(term) ? "lydelse2028" : "lydelseOlder");
   };
-  const ht = year ? Number(year.startDate.slice(0, 4)) : 0;
+  // The autumn term the läsår belongs to, as the gateway's default reads it.
+  const ht = year ? htOf(year.startDate) : 0;
   const misfits = (grade: number, planId: string): boolean => {
     const term = termOf.get(planById.get(planId)?.nationalTimplanVersionId ?? "");
     return term !== undefined && !planFitsCohort(term, ht, grade);

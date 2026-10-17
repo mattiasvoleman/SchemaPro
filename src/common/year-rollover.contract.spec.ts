@@ -14,6 +14,7 @@ import {
   type RolloverGroupInput,
   averageWeeklyMinutes,
   INTO_TIOARIG,
+  ONE_YEAR,
   volumeFindings,
   type VolumeRow,
 } from './year-rollover';
@@ -108,6 +109,18 @@ describe('the rollover module agrees with the shared fixture', () => {
       { carryTeachingGroups: c.carryTeachingGroups },
       choices,
       fixture.reform.step as GradeStep,
+    );
+    expect(resolved).toEqual(c.resolved);
+    expect(nameCollisions(resolved)).toEqual(c.collisions);
+  });
+
+  it.each(fixture.reform.fHalves.cases.map((c) => [c.name, c] as const))('resolves a förskoleklass half: %s', (_name, c) => {
+    const resolved = resolveGroups(
+      fixture.reform.fHalves.input as RolloverGroupInput[],
+      c.graduatingGradeLevel,
+      { carryTeachingGroups: false },
+      new Map(Object.entries(c.choices) as [string, GroupChoice][]),
+      c.step === 'ONE_YEAR' ? ONE_YEAR : INTO_TIOARIG,
     );
     expect(resolved).toEqual(c.resolved);
     expect(nameCollisions(resolved)).toEqual(c.collisions);
