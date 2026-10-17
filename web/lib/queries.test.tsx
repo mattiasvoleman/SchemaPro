@@ -479,6 +479,19 @@ describe("useActiveYear", () => {
     expect(result.current.activeYear).toEqual(years[1]);
   });
 
+  it("reads each läsår's numbering, which every reader of a tioårig year needs", async () => {
+    // Absent reads as NIOARIG (lib/grade-numbering.ts): without the column a
+    // tioårig läsår was read as nine-year by the year dialog, the requirements
+    // target and Skapa timplansposter alike.
+    stubTable("AcademicYears", ok(years));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useActiveYear(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const columns = String(argsFor("AcademicYears", "select")[0]?.[0] ?? "").split(",").map((column) => column.trim());
+    expect(columns).toContain("gradeNumbering");
+  });
+
   it("is null when no year is flagged active", async () => {
     stubTable("AcademicYears", ok([years[0]]));
     const { wrapper } = createHarness();
