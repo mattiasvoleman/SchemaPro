@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSFaceIDUsageDescription": "SchemaPro asks for Face ID before attendance is sent, so it cannot be sent from an unlocked device left lying around. The app only learns whether it succeeded."
+  }
+}

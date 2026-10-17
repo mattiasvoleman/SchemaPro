@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSFaceIDUsageDescription": "SchemaPro ber om Face ID innan närvaron skickas, så att den inte kan skickas från en olåst enhet som ligger framme. Appen får bara veta om det lyckades."
+  }
+}

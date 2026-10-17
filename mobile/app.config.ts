@@ -1,0 +1,127 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import type { ConfigContext, ExpoConfig } from 'expo/config';
+
+/**
+ * The app's identity per build variant.
+ *
+ * app.json stays the base. It holds everything every build shares (plugins,
+ * permission texts, icons, Android permissions) and the production identity.
+ * This file changes only what differs between variants:
+ *
+ * - development: a dev client ("SchemaPro Dev") with a bundle identifier,
+ *   Android package and URL scheme of its own, so it installs beside the real
+ *   app and the school-account sign-in comes back to it and not to the other
+ *   app (Linking.createURL takes the first scheme, so
+ *   schemapro-dev://auth/callback must be in Supabase's redirect URLs before
+ *   school accounts are switched on in that build).
+ * - preview: the internal test build ("SchemaPro Test"). It keeps production's
+ *   identity, so it replaces the real app on a test phone instead of sitting
+ *   beside it: one Firebase client, one App ID, one version counter, and the
+ *   redirect URL production already registers. Only the name under the icon
+ *   tells it apart.
+ * - production: exactly app.json.
+ *
+ * eas.json sets APP_VARIANT per build profile. Unset means production, so
+ * `expo export`, CI and anything else that does not ask builds exactly what
+ * app.json describes. An unknown value throws rather than falling back: a
+ * typo must not produce a build that installs over the real app.
+ *
+ * It exports a function of the static config, so `eas init` can still write
+ * extra.eas.projectId (and owner) into app.json: @expo/config writes the
+ * static file and checks that this function passes the change through, which
+ * `...config` does. The push registration reads the id from there.
+ */
+
+export type AppVariant = 'development' | 'preview' | 'production';
+
+const VARIANTS: Readonly<Record<AppVariant, { name: string; id: string; scheme: string }>> = {
+  development: { name: ' Dev', id: '.dev', scheme: '-dev' },
+  preview: { name: ' Test', id: '', scheme: '' },
+  production: { name: '', id: '', scheme: '' },
+};
+
+/**
+ * What a release build cannot work without. A missing EXPO_PUBLIC_* value is
+ * inlined as undefined when the builder bundles the JavaScript, and the app
+ * then fails at the first request on the phone; this stops the build instead.
+ * Checked only on the EAS builder (EAS_BUILD is not set when EAS CLI
+ * evaluates this file locally), and not for development builds, whose
+ * JavaScript comes from the developer's own `expo start` and its .env.local.
+ * EXPO_PUBLIC_WS_BASE_URL is left out: without it the app works and only
+ * live updates are off.
+ */
+const REQUIRED_IN_RELEASE = [
+  'EXPO_PUBLIC_API_BASE_URL',
+  'EXPO_PUBLIC_SUPABASE_URL',
+  'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+] as const;
+
+export function appVariant(raw: string | undefined): AppVariant {
+  if (raw === undefined || raw === '' || raw === 'production') return 'production';
+  if (raw === 'development' || raw === 'preview') return raw;
+  throw new Error(`APP_VARIANT must be development, preview or production, not "${raw}".`);
+}
+
+function required(value: string | string[] | undefined, field: string): string {
+  if (typeof value !== 'string' || value === '') throw new Error(`app.json must set ${field} as a single string.`);
+  return value;
+}
+
+/**
+ * FCM's google-services.json. On the builder it is the EAS file variable
+ * GOOGLE_SERVICES_JSON (a path to the file there); on a developer's machine
+ * it may be a gitignored mobile/google-services.json. Neither is ever in the
+ * repository. Prebuild throws on a configured path that does not exist, so
+ * the field is set only when there is a file to point at; without it the
+ * Android build has no FCM and the app reports push as unsupported.
+ */
+function googleServicesFile(env: NodeJS.ProcessEnv, projectRoot: string): string | undefined {
+  if (env.GOOGLE_SERVICES_JSON) return env.GOOGLE_SERVICES_JSON;
+  return existsSync(join(projectRoot, 'google-services.json')) ? './google-services.json' : undefined;
+}
+
+export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
+  // Aliased so that babel-preset-expo never rewrites these reads when jest
+  // transforms this file.
+  const env = process.env;
+  const variant = appVariant(env.APP_VARIANT);
+  const firebase = googleServicesFile(env, projectRoot);
+
+  if (env.EAS_BUILD === 'true' && variant !== 'development') {
+    const missing: string[] = REQUIRED_IN_RELEASE.filter((name) => !env[name]);
+    // An Android release without FCM installs and runs, and no one notices
+    // that push never arrives until a teacher misses a notification.
+    if (env.EAS_BUILD_PLATFORM === 'android' && !firebase) missing.push('GOOGLE_SERVICES_JSON');
+    if (missing.length > 0) {
+      throw new Error(`A ${variant} build needs ${missing.join(', ')} in the EAS "${variant}" environment.`);
+    }
+  }
+
+  const name = required(config.name, 'expo.name');
+  const slug = required(config.slug, 'expo.slug');
+  const scheme = required(config.scheme, 'expo.scheme');
+  const bundleIdentifier = required(config.ios?.bundleIdentifier, 'expo.ios.bundleIdentifier');
+  const androidPackage = required(config.android?.package, 'expo.android.package');
+
+  const suffix = VARIANTS[variant];
+  return {
+    ...config,
+    name: `${name}${suffix.name}`,
+    slug,
+    scheme: `${scheme}${suffix.scheme}`,
+    ios: { ...config.ios, bundleIdentifier: `${bundleIdentifier}${suffix.id}` },
+    android: {
+      ...config.android,
+      package: `${androidPackage}${suffix.id}`,
+      ...(firebase ? { googleServicesFile: firebase } : {}),
+    },
+    plugins: [
+      ...(config.plugins ?? []),
+      // Only the development build answers exp+schemapro-teacher://, the
+      // scheme `expo start`'s QR code opens. The plugin is applied to every
+      // build either way; listing it is how the option is set.
+      ['expo-dev-client', { addGeneratedScheme: variant === 'development' }],
+    ],
+  };
+};
