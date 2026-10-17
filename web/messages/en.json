@@ -365,6 +365,9 @@
     "floorInvalid": "The floor must be a whole number from -5 to 50.",
     "placeColumn": "Location",
     "floorShort": "floor {floor}",
+    "site": "Site",
+    "siteNone": "No site",
+    "siteHint": "Where the room stands. Between rooms on different sites the travel time is counted, and the timetable warns when a teacher or a class cannot make it between two lessons.",
     "stages": {
       "lower": "Lower (F–3)",
       "middle": "Middle (4–6)",
@@ -378,6 +381,46 @@
     "dialogHint": "The capacity and the year levels decide which lessons the schedule can place in the room. Building and floor are used by the room optimisation.",
     "typesFailed": "The room types could not be loaded",
     "typesFailedHint": "The Type column shows — until they have loaded. Nothing has changed; reload the page to try again."
+  },
+  "sites": {
+    "title": "Sites",
+    "description": "The school's different locations and the travel time between them. The timetable warns when a teacher or pupils cannot make it between two lessons on different sites, and the travel time counts as working time in the load. A school in one place needs none.",
+    "add": "Add site",
+    "empty": "The school has no sites. Add them if the school is in more than one place.",
+    "oneSite": "With one site there is no travel time to count. Add another to give the travel time between them.",
+    "loadFailed": "The sites could not be loaded",
+    "loadFailedHint": "No list is shown, since an empty list would mean the school has no sites. Nothing has changed; reload the page to try again.",
+    "caption": "The school's sites and how many rooms stand on each",
+    "columns": {
+      "name": "Name",
+      "rooms": "Rooms"
+    },
+    "travelTitle": "Travel time",
+    "travelHint": "Minutes between two sites, the same both ways. Give the longer time if the way takes longer in one direction. An empty field means no travel time is given.",
+    "pairLabel": "{a} – {b}, minutes",
+    "minutesPlaceholder": "Not given",
+    "minutesInvalid": "The travel time is whole minutes from 0 to 240.",
+    "saveTravel": "Save travel times",
+    "travelSaved": "The travel times are saved",
+    "missingTitle": "Travel time missing",
+    "missing": "No travel time is given for {pairs}. Between those sites the timetable does not warn and no travel time is counted.",
+    "roomsWithoutSiteTitle": "Rooms on no site",
+    "roomsWithoutSite": "{count, plural, one {# room stands} other {# rooms stand}} on no site. No travel time is counted to or from them.",
+    "addTitle": "Add site",
+    "editTitle": "Edit {name}",
+    "dialogHint": "The name shows in the room list and in the travel warnings.",
+    "namePlaceholder": "North",
+    "saveFailed": "The site could not be saved",
+    "created": "{name} is added",
+    "saved": "{name} is saved",
+    "deleted": "{name} is removed",
+    "deleteBody": "{count, plural, =0 {The travel times to the site are removed.} one {# room stands on the site and is left on no site. The travel times to it are removed.} other {# rooms stand on the site and are left on no site. The travel times to it are removed.}}",
+    "errors": {
+      "SITE_NAME_TAKEN": "The school already has a site with that name.",
+      "SITE_NAME_EMPTY": "The site needs a name.",
+      "SITE_TRAVEL_PAIR_INVALID": "The same pair of sites is given twice, or a site against itself.",
+      "SITE_NOT_FOUND": "The site no longer exists. Reload the page."
+    }
   },
   "groups": {
     "title": "Classes",
@@ -3058,6 +3101,8 @@
       "teachingHours": "Teaching per school year",
       "teachingHoursFactor": "Counted teaching per school year (factor)",
       "dutyHours": "Duties per school year",
+      "travelHours": "Travel between sites per school year",
+      "travelValue": "{hours} h ({minutes} min/wk)",
       "regulated": "Regulated working time",
       "annualHours": "Annual working time",
       "unregulated": "Other working time (annual − regulated)",
@@ -3655,6 +3700,7 @@
     "BLOCK_PARTLY_LOCKED_SUMMARY": "{count, plural, one {# block has} other {# blocks have}} lessons locked or placed by hand while the rest of the block is still to be placed, and a block's lessons are placed together.",
     "BLOCK_PARTLY_LOCKED": "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand while the rest of it is still to be placed. Unlock the block's lessons and move any moved by hand back with the block, or lock all of them.",
     "BLOCK_SPLIT": "{block} is split: this lesson has left the rest of the block and now counts as placed by hand. Unless every lesson of the block is locked, the next generation refuses the block as partly locked. Move it back with the block, or lock all of the block's lessons.",
+    "TRAVEL_TIME_SHORT": "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} {time}).",
     "TEACHER_LUNCH_WINDOW_TOO_NARROW": "The teacher working-time rule {rule} guarantees a {minutes}-minute lunch inside {windowStart}-{windowEnd}, and that window holds {remaining, plural, one {# minute} other {# minutes}} of the school day. Widen the window, shorten the lunch, or move it inside the hours the school teaches in.",
     "TEACHER_LUNCH_LEAVES_NO_START": "{causes, select, locked {Locked lessons} closed {Reservations on the teacher} locked_closed {Locked lessons and reservations on the teacher} other {These rules}} leave the teacher working-time rule {rule} no {minutes}-minute lunch inside {windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Move a locked lesson, shorten the reservation, or widen the window.",
     "TEACHER_REST_LONGER_THAN_THE_NIGHT": "The teacher working-time rule {rule} asks for {restMinutes} minutes between the last lesson of one day and the first of the next, and the longest night this week can give is {nightMinutes} minutes: the teacher's {lessons, plural, one {# lesson} other {# lessons}} cannot all be placed on days that are not next to each other. Shorten the rest, lengthen the school day, or give this teacher fewer lessons.",
@@ -4666,6 +4712,7 @@
     "POOL_LAST": "Substitute pool – used last",
     "PREFERS_FREE": "Has asked to be free then",
     "FREE_DAY_WISH": "Has asked to have that weekday free",
+    "TRAVEL_TOO_SHORT": "Cannot make it from {from} to {to}: {gap} min between the lessons, the walk takes {minutes} min",
     "INACTIVE": "Not an active teacher",
     "ON_LESSON": "Already on the lesson",
     "ABSENT": "Is absent themselves",
@@ -4744,7 +4791,8 @@
     "COVER_BEYOND_WORK_DAYS_HIDDEN": "The substitute gets more teaching days that week than their post allows. The days are shown to the principal, a full administrator and anyone with HR read.",
     "COVER_TEACHER_UNAVAILABLE": "The substitute is not available then, by their availability or a duty.",
     "COVER_TEACHER_BOOKED": "The substitute has booked a room then.",
-    "COVER_POOL_NOT_DECLARED": "The substitute has not said they can then."
+    "COVER_POOL_NOT_DECLARED": "The substitute has not said they can then.",
+    "COVER_TRAVEL_TIME_SHORT": "The substitute cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min."
   },
   "coverSettings": {
     "title": "Absence and cover",

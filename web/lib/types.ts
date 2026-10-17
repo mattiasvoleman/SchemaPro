@@ -183,6 +183,12 @@ export interface Room {
    */
   building: string | null;
   floor: number | null;
+  /**
+   * The skolområde the room stands on (Skolområden och restid): what the
+   * restid between two lessons is measured between. Null is unknown, and no
+   * travel is counted to or from the room.
+   */
+  siteId: string | null;
 }
 
 export type RoomBookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";

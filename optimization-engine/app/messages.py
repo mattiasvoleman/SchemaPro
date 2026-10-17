@@ -567,6 +567,17 @@ MESSAGES: dict[str, str] = {
         "hand. Unless every lesson of the block is locked, the next generation refuses the block "
         "as partly locked. Move it back with the block, or lock all of the block's lessons."
     ),
+    # Sent by the GATEWAY beside a hand edit that leaves a teacher, or the pupils
+    # of a lesson, less time between two lessons at different skolområden than
+    # the walk between them (master-lessons.service.ts, travel-warnings.ts): a
+    # warning, never a refusal. Here for the reason DISTRIBUTION_* is. The
+    # engine sends nothing about travel yet; Restid i generatorn will name an
+    # unkept walk with its own code.
+    "TRAVEL_TIME_SHORT": (
+        "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} "
+        "to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} "
+        "{time})."
+    ),
 
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (

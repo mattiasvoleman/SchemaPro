@@ -95,6 +95,13 @@ export interface SamverkanInput {
    * for THIS file; null leaves the column out entirely.
    */
   qualifications: readonly TeacherQualification[] | null;
+  /**
+   * Restid between the school's sites (GET /staffing/load's `travel`): two
+   * columns last, only at a school with a travel figure — a school with one
+   * site, or none, gets the file it always did. A teacher who walks nowhere
+   * reads 0.
+   */
+  travel?: readonly { userId: string; minutesPerWeek: number; hoursPerYear: number }[] | null;
 }
 
 const KIND_WORD: Record<TeacherQualification["kind"], string> = {
@@ -293,6 +300,10 @@ export function samverkanCsv(input: SamverkanInput): string {
           .join("; "),
       );
     }
+    if (input.travel) {
+      const walks = input.travel.find((entry) => entry.userId === id);
+      row.push(whole(walks?.minutesPerWeek ?? 0), csvDecimal(walks?.hoursPerYear ?? 0, 1));
+    }
     return row;
   });
 
@@ -301,6 +312,7 @@ export function samverkanCsv(input: SamverkanInput): string {
     input.load.some((row) => (row.periods?.length ?? 0) > 0),
   );
   if (input.qualifications !== null) headers.push("Behörigheter");
+  if (input.travel) headers.push("Restid mellan skolområden min/v (standardvecka)", "Restid mellan skolområden h/år");
   return serializeCsv(headers, rows);
 }
 

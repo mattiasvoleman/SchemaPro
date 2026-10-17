@@ -1340,14 +1340,18 @@ export default function TimetablePage() {
     [undoableUpdate, showError, t, lessonName],
   );
 
-  /** Put a parked lesson back where it was. The remembered slot may be taken. */
+  /**
+   * Put a parked lesson back where it was. The remembered slot may be taken,
+   * and the day around it may have moved: what the save warns of (a walk
+   * between sites, the ämnesfördelning) is said as after any other edit.
+   */
   const putBack = useCallback(
     (lesson: MasterLesson) => {
       void undoableUpdate(lesson, { isParked: false })
-        .then(() => toast.success(t("putBackDone", { lesson: lessonName(lesson) })))
+        .then((result) => savedToast(tEngine, t("putBackDone", { lesson: lessonName(lesson) }), result.warnings))
         .catch(showError);
     },
-    [undoableUpdate, showError, t, lessonName],
+    [undoableUpdate, showError, t, tEngine, lessonName],
   );
 
   /** A drag that let go off the grid: on the tray, it parks; elsewhere, nothing. */

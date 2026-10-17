@@ -247,6 +247,23 @@ describe("Tjänstefördelning för samverkan", () => {
     expect(csv).not.toContain("åk 4");
   });
 
+  it("writes restid between the school's sites last, only at a school with a travel figure, 0 for a teacher who walks nowhere", () => {
+    const without = parseCsv(samverkanCsv({ ...base, load: [teacher("t-anna")], reconciliation: [] }));
+    expect(without.headers).toHaveLength(29);
+    expect(without.headers.join(";")).not.toContain("Restid");
+    const csv = samverkanCsv({
+      ...base,
+      load: [teacher("t-anna"), teacher("t-bo")],
+      reconciliation: [],
+      travel: [{ userId: "t-anna", minutesPerWeek: 30, hoursPerYear: 19.5 }],
+    });
+    const parsed = parseCsv(csv);
+    expect(parsed.headers.slice(-2)).toEqual(["Restid mellan skolområden min/v (standardvecka)", "Restid mellan skolområden h/år"]);
+    const byName = new Map(parsed.rows.map((row) => [row[0], row]));
+    expect(byName.get("Öberg")!.slice(-2)).toEqual(["30", "19,5"]);
+    expect(byName.get("Alm")!.slice(-2)).toEqual(["0", "0"]);
+  });
+
   it("lists only behörigheter valid at some point of the läsår", () => {
     const csv = samverkanCsv({
       ...base,

@@ -209,6 +209,7 @@ export function StaffingReport() {
           personOf: (id) => personOf.get(id) ?? null,
           subjectName,
           qualifications,
+          travel: load.data.travel?.teachers ?? null,
         }),
       );
     } catch (error) {

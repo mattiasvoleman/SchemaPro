@@ -346,6 +346,21 @@ export function yearRosters(year: AcademicYear): YearRosters {
 }
 
 /**
+ * The school's skolområden (GET /api/v1/sites, 20261124090000): the main
+ * house and the sports hall a walk away, ten minutes apart. No room stands on
+ * either yet, so the rooms read as they always did and the card says so; the
+ * card's travel form is on the page for the a11y gate.
+ */
+export const SITES = {
+  sites: [
+    { id: uid(KIND.misc, 9601), name: "Huvudbyggnaden", roomCount: 0 },
+    { id: uid(KIND.misc, 9602), name: "Idrottshallen", roomCount: 0 },
+  ],
+  travelTimes: [{ siteAId: uid(KIND.misc, 9601), siteBId: uid(KIND.misc, 9602), minutes: 10 }],
+  roomsWithoutSite: ROOM_LIST.length,
+};
+
+/**
  * The school's skolenheter (GET /api/v1/school-units, 20261031090000): one,
  * 7–9, as a högstadieskola is, so every class of the year is in it.
  */

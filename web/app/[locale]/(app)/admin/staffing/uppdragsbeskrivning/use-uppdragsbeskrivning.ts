@@ -2,6 +2,7 @@
 
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
+import { travelOf } from "@/lib/staffing-travel";
 import { useEmploymentHistory } from "@/lib/staffing-history-queries";
 import { versionStampOf } from "@/lib/employment-history-view";
 
@@ -33,6 +34,8 @@ export function useAdminUppdragsbeskrivning(teacherId: string | null, yearId: st
     isError: years.isError || load.isError || duties.isError,
     row,
     loadModel: load.data?.loadModel ?? "MINUTES",
+    // Restid between the school's sites; null at a school with no travel figure.
+    travel: teacherId ? travelOf(load.data, teacherId) : null,
     yearName: year?.name ?? null,
     teacherName: person ? `${person.firstName} ${person.lastName}` : (row?.employment?.signature ?? null),
     // Their own only: the gateway filters by userId, and so does this.

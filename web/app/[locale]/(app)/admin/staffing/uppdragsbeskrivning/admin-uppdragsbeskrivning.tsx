@@ -60,6 +60,7 @@ export function AdminUppdragsbeskrivning({
         teacherName={data.teacherName ?? "—"}
         load={data.row}
         loadModel={data.loadModel}
+        travel={data.travel}
         duties={data.duties}
         subjectName={data.subjectName}
         groupName={data.groupName}

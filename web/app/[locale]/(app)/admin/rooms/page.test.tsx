@@ -16,7 +16,10 @@ import RoomsPage from "./page";
 const createMock = vi.fn();
 const updateMock = vi.fn();
 
-const state = vi.hoisted(() => ({ rooms: [] as unknown[] }));
+const state = vi.hoisted(() => ({
+  rooms: [] as unknown[],
+  sites: { sites: [] as { id: string; name: string; roomCount: number }[], travelTimes: [], roomsWithoutSite: 0 },
+}));
 
 vi.mock("@/lib/queries", () => ({
   useRooms: () => ({ data: state.rooms, isLoading: false }),
@@ -27,6 +30,14 @@ vi.mock("@/lib/queries", () => ({
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
 }));
+
+// The school's skolområden: the card is tested on its own (sites-card.test.tsx);
+// here they are what the room dialog offers and the Plats column names.
+vi.mock("./use-sites", () => ({
+  SITES_KEY: ["sites"],
+  useSites: () => ({ data: state.sites }),
+}));
+vi.mock("./sites-card", () => ({ SitesCard: () => null }));
 
 // The CSV buttons bring the import machinery and its own queries; neither has
 // anything to do with where a room is.
@@ -41,7 +52,7 @@ vi.mock("next-intl", () => ({
     values ? `${key}(${Object.values(values).join("|")})` : key,
 }));
 
-const room = (id: string, name: string, building: string | null, floor: number | null) => ({
+const room = (id: string, name: string, building: string | null, floor: number | null, siteId: string | null = null) => ({
   id,
   name,
   code: null,
@@ -52,12 +63,14 @@ const room = (id: string, name: string, building: string | null, floor: number |
   requiresApproval: false,
   building,
   floor,
+  siteId,
 });
 
 beforeEach(() => {
   createMock.mockReset().mockResolvedValue({});
   updateMock.mockReset().mockResolvedValue({});
   state.rooms = [];
+  state.sites = { sites: [], travelTimes: [], roomsWithoutSite: 0 };
 });
 
 /**
@@ -185,5 +198,44 @@ describe("Läsbehörighet: the controls that write are marked with planering", (
     const adds = screen.getAllByRole("button", { name: "addRoom" });
     expect(adds).toHaveLength(2);
     for (const add of adds) expect(add).toHaveAttribute("data-writes", "PLANERING");
+  });
+});
+
+describe("the Skolområde field (Skolområden och restid)", () => {
+  const SITES = [
+    { id: "site-n", name: "Norra", roomCount: 1 },
+    { id: "site-s", name: "Södra", roomCount: 0 },
+  ];
+
+  it("names the room's site first in Plats", () => {
+    state.sites = { sites: SITES, travelTimes: [], roomsWithoutSite: 1 };
+    state.rooms = [room("r-1", "Sal 1", "Hus A", 2, "site-n"), room("r-2", "Sal 2", null, null)];
+    render(<RoomsPage />);
+
+    expect(placeOf("Sal 1")).toBe("Norra · Hus A · floorShort(2)");
+    expect(placeOf("Sal 2")).toBe("—");
+  });
+
+  it("is offered once the school has a site, and keeps the room's own on save", async () => {
+    state.sites = { sites: SITES, travelTimes: [], roomsWithoutSite: 0 };
+    state.rooms = [room("r-1", "Sal 1", "Hus A", 2, "site-n")];
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Sal 1)" }));
+
+    expect(screen.getByLabelText("site")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "r-1", siteId: "site-n" }));
+  });
+
+  it("is not there at a school with no site, which writes the room it always did", async () => {
+    const user = userEvent.setup();
+    render(<RoomsPage />);
+    await user.click(screen.getAllByRole("button", { name: "addRoom" })[0]!);
+
+    expect(screen.queryByLabelText("site")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("name"), "Sal 10");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(createMock.mock.calls[0]![0]).not.toHaveProperty("siteId");
   });
 });
