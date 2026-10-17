@@ -4,7 +4,12 @@ import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { AttendanceSharingController, ATTENDANCE_SHARING_HISTORY, RecordAttendanceSharingDto } from './attendance-sharing.controller';
+import {
+  AttendanceSharingController,
+  ATTENDANCE_SHARING_BUSY,
+  ATTENDANCE_SHARING_HISTORY,
+  RecordAttendanceSharingDto,
+} from './attendance-sharing.controller';
 
 const ADMIN_ID = '20000000-0000-4000-8000-000000000001';
 const OTHER_ADMIN = '20000000-0000-4000-8000-000000000002';
@@ -65,6 +70,20 @@ describe('AttendanceSharingController', () => {
       expect.objectContaining({ data: { schoolId: SCHOOL_ID, shares: true, reference: 'Dnr 2026:41' } }),
     );
     expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+    // The name is looked up before the insert, which holds the decisions lock to the commit.
+    expect(tx.user.findMany.mock.invocationCallOrder[0]!).toBeLessThan(tx.attendanceSharingDecision.create.mock.invocationCallOrder[0]!);
+  });
+
+  it('answers 409 ATTENDANCE_SHARING_BUSY when its 5 s wait for writers runs out, and nothing else as that', async () => {
+    const user = testUser({ userId: ADMIN_ID, schoolId: SCHOOL_ID });
+    // The database's lock_timeout in the decision's stamp trigger, as the driver reports it.
+    tx.attendanceSharingDecision.create.mockRejectedValueOnce(new Error('canceling statement due to lock timeout (55P03)'));
+    await expect(controller.record({ shares: true }, user)).rejects.toMatchObject({
+      status: 409,
+      response: { code: ATTENDANCE_SHARING_BUSY },
+    });
+    tx.attendanceSharingDecision.create.mockRejectedValueOnce(new Error('something else'));
+    await expect(controller.record({ shares: true }, user)).rejects.toThrow('something else');
   });
 
   it('takes shares as a boolean and a reference of 1..200 characters that is not blank', async () => {

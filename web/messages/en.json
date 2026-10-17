@@ -2367,7 +2367,8 @@
       "SIGN_IN_DOMAIN_TAKEN": "Another school signs in with another provider on {domains}. Remove the domain here, or contact whoever runs SchemaPro if the domain is yours.",
       "SIGN_IN_NOT_AVAILABLE": "Signing in with school account is not turned on for SchemaPro yet.",
       "SIGN_IN_DOMAIN_UNUSED": "No invited teacher or administrator at the school has an address on {domains}. List only domains the school's staff sign in with.",
-      "SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT": "Staff with addresses on {domains} could not sign in with a school account. If the domain is the organisation's, add it here. If it is a personal address such as gmail.com, the person needs an address in the organisation, from SS12000 or from whoever runs SchemaPro, and their login has to move there with it. It moves only when you send the invitation again, so do that before you require school accounts for staff."
+      "SIGN_IN_SSO_ONLY_LEAVES_STAFF_OUT": "Staff with addresses on {domains} could not sign in with a school account. If the domain is the organisation's, add it here. If it is a personal address such as gmail.com, the person needs an address in the organisation, from SS12000 or from whoever runs SchemaPro, and their login has to move there with it. It moves only when you send the invitation again, so do that before you require school accounts for staff.",
+      "ATTENDANCE_SHARING_BUSY": "The school's attendance or pupils are being changed right now, for example by a sync from the source system. The decision was not saved. Try again in a moment."
     },
     "tabsLabel": "Direction of the integration",
     "loadFailed": "The source system could not be loaded",

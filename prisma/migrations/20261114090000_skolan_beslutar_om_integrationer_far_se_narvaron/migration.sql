@@ -26,8 +26,10 @@
 -- per decision, the latest in force, no row = not shared. "shares" and an
 -- optional "reference" (the school's konsekvensbedömning or decision, at
 -- most 200 characters); decidedAt and decidedById are stamped by a trigger,
--- never sent. Append-only (DELETE, UPDATE and TRUNCATE are refused with
--- SQLSTATE NV409 except a school's or a decider's referential action), so
+-- never sent, and committedAt as the decision's transaction commits (a
+-- deferred constraint trigger): when it took effect. Append-only (DELETE, UPDATE and TRUNCATE are refused with
+-- SQLSTATE NV409 except a school's or a decider's referential action and
+-- the commit stamp), so
 -- the record of who opened and who closed the school's attendance to
 -- integrations stays. The decider's key does not follow a user moved to
 -- another school (ON UPDATE NO ACTION): a decision never changes school.
@@ -43,8 +45,8 @@
 -- (the first decision to share after the last to stop), NULL while it does
 -- not share; app.attendance_run_xid(school) the transaction of that first
 -- decision (each decision carries the xid it was written in);
--- app.attendance_stopped_since(school) when the current stop began, NULL
--- while it shares; app.attendance_ever_shared(school) whether any decision
+-- app.attendance_stopped_since(school) when the current stop took effect
+-- (its committedAt), NULL while it shares; app.attendance_ever_shared(school) whether any decision
 -- ever shared. All five are the owner's (nobody's EXECUTE). Under the
 -- service principal:
 -- app.service_reads_attendance(scope) is true only when the key the request
@@ -116,7 +118,10 @@
 --                          every save, and it is not emitted);
 --       AbsenceReports     insert, or a change of date, times, grantedLeave
 --                          or pupil;
---       Users              a pupil reactivated, or a changed ss12000Id;
+--       Users              a pupil reactivated, or a changed ss12000Id: one
+--                          row for the pupil ('AttendancePupil',
+--                          'AbsencePupil'), not one per record, taken into
+--                          every record's meta.modified by the reads;
 --       CalendarLessons    new times (the minutes) or a new group;
 --       Schools            a new timezone (a full-day absence is the
 --                          school's local day);
@@ -146,8 +151,9 @@
 --     floor costs nothing, where a version per row would be millions of rows
 --     in the administrator's request. A version is written for every insert
 --     at a sharing school, emitted or not, so every row created while it
---     shares has a version from its creation and meta.modified is never
---     before meta.created.
+--     shares has a version from its creation, and the reads take the row's
+--     creation into meta.modified too: meta.modified is never before
+--     meta.created.
 --
 -- The emitted years are found once per statement, never per row.
 --
@@ -197,12 +203,34 @@
 -- AttendanceSharingDecisions: REVOKE ALL from every API role; SELECT and
 -- INSERT (schoolId, shares, reference) to app_authenticated; SELECT to
 -- service_role (who and when, and the xid, are the database's). Functions:
--- the trigger functions, the helpers (app.ss12000_may_have_left among
--- them), app.attendance_shared, app.attendance_shared_since,
+-- the trigger functions, the helpers (app.ss12000_may_have_left,
+-- app.attendance_recorded_as_shared and app.attendance_removals_ordered
+-- among them), app.attendance_shared, app.attendance_shared_since,
 -- app.attendance_stopped_since, app.attendance_run_xid and
 -- app.attendance_ever_shared are nobody's; app.service_reads_attendance,
--- app.service_reads_attendance_removals, the two read functions and
--- app.attendance_recording_waits_for_sync are app_authenticated's alone.
+-- app.service_reads_attendance_removals and the two read functions are
+-- app_authenticated's alone.
+--
+-- ## Writers, an apply and the decisions
+--
+-- A register save never waits for an SS12000 apply or a decision, and is
+-- never refused by either. An SS12000 apply that links or brings back pupils
+-- writes one version row per pupil ('AttendancePupil', 'AbsencePupil'),
+-- which the read functions take into meta.modified, never a version of a
+-- record, so an apply and a save share no row this migration writes; as it
+-- commits, those rows are stamped again with the clock (a deferred constraint
+-- trigger, Users_ss12000_attendance_pupils_stamped), so a read made while it
+-- ran reads the pupils' records again. (A
+-- save still waits, as before this migration, where the apply changes the
+-- e-mail of a person the save's foreign keys name.) Whether the school
+-- shares is read in an order with the decisions: a writer that versions
+-- reads it after taking 'AttendanceSharing:<school>' shared without waiting
+-- (app.attendance_recorded_as_shared), and versions as if it shared while a
+-- decision is being written or waits to be; a removal takes the same lock
+-- and waits only then (app.attendance_removals_ordered), and trusts a
+-- version as a row that may have left only when its transaction began
+-- before the stop (app.ss12000_may_have_left). A decision takes the lock
+-- exclusively and waits at most 5 s for the writers holding it.
 
 DO $$
 DECLARE
@@ -236,6 +264,7 @@ CREATE TABLE "AttendanceSharingDecisions" (
     "decidedById" UUID,
     "decidedAt"   TIMESTAMPTZ(6) NOT NULL DEFAULT clock_timestamp(),
     "xid"         XID8 NOT NULL DEFAULT pg_current_xact_id(),
+    "committedAt" TIMESTAMPTZ(6),
 
     CONSTRAINT "AttendanceSharingDecisions_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "AttendanceSharingDecisions_reference_is_short" CHECK ("reference" IS NULL OR char_length("reference") BETWEEN 1 AND 200)
@@ -255,23 +284,51 @@ ALTER TABLE "AttendanceSharingDecisions"
 
 CREATE FUNCTION app.attendance_sharing_decisions_are_stamped() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+DECLARE
+  previous text := current_setting('lock_timeout');
 BEGIN
-  -- After the register saves already writing, before any that begins now
-  -- (app.attendance_recording_waits_for_sync): a save never writes on having
-  -- read the decision before this one. Before the row's foreign key checks,
-  -- so nothing is held while it waits.
+  -- After the writers that read the decision before this one under the lock
+  -- (app.attendance_recorded_as_shared, app.attendance_removals_ordered):
+  -- none of them commits after this decision having read the one before it.
+  -- A writer that could not take the lock read nothing: it versioned as if
+  -- the school shared, and a removal waited for this decision.
+  -- Before the row's foreign key checks, so nothing is held while it waits;
+  -- at most 5 s, then 55P03, which the gateway answers 409
+  -- ATTENDANCE_SHARING_BUSY. A register save never waits for a decision.
+  PERFORM set_config('lock_timeout', '5s', true);
   PERFORM pg_advisory_xact_lock(hashtextextended('AttendanceSharing:' || NEW."schoolId"::text, 0));
+  PERFORM set_config('lock_timeout', previous, true);
   NEW."decidedAt" := clock_timestamp();
   NEW."decidedById" := app.current_user_id();
   NEW."xid" := pg_current_xact_id();
+  NEW."committedAt" := NULL;
   RETURN NEW;
+END
+$$;
+
+-- When the decision took effect: stamped as its transaction commits, after
+-- everything else in it, so nobody but the decision itself ever sees it
+-- NULL. A stop dates what may have left by it (app.attendance_stopped_since,
+-- app.ss12000_may_have_left): until then every reader saw the school share.
+-- Only the commit's own write follows it, before readers see the stop; a
+-- writer would have to begin and commit within that write to be read
+-- unmarked. decidedAt is earlier, read as the decision took the lock, with
+-- the decision's insert and its round trip to the API still to come. The
+-- update passes the append-only guard as a trigger's own write.
+CREATE FUNCTION app.attendance_sharing_decisions_are_committed() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  UPDATE "AttendanceSharingDecisions" SET "committedAt" = clock_timestamp() WHERE "id" = NEW."id";
+  RETURN NULL;
 END
 $$;
 
 CREATE FUNCTION app.attendance_sharing_decisions_are_append_only() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
-  -- A school's or a decider's referential action (cascade, SET NULL).
+  -- A school's or a decider's referential action (cascade, SET NULL), or the
+  -- commit stamp (app.attendance_sharing_decisions_are_committed): a
+  -- trigger's own write.
   IF TG_OP <> 'TRUNCATE' AND pg_trigger_depth() > 1 THEN
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
@@ -287,6 +344,10 @@ $$;
 CREATE TRIGGER "AttendanceSharingDecisions_stamped"
     BEFORE INSERT ON "AttendanceSharingDecisions"
     FOR EACH ROW EXECUTE FUNCTION app.attendance_sharing_decisions_are_stamped();
+CREATE CONSTRAINT TRIGGER "AttendanceSharingDecisions_committed"
+    AFTER INSERT ON "AttendanceSharingDecisions"
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION app.attendance_sharing_decisions_are_committed();
 CREATE TRIGGER "AttendanceSharingDecisions_append_only"
     BEFORE UPDATE OR DELETE ON "AttendanceSharingDecisions"
     FOR EACH ROW EXECUTE FUNCTION app.attendance_sharing_decisions_are_append_only();
@@ -362,90 +423,106 @@ $$;
 COMMENT ON FUNCTION app.attendance_ever_shared(uuid) IS
   'Whether any decision of the school ever shared attendance with integrations; from then on tombstones of Attendance and Absence are written whether or not it shares at the moment.';
 
--- When the current stop began: the first decision not to share after the
--- last to share. NULL while the school shares, and before it ever has. A
--- second decision not to share in a row is not a new beginning.
+-- When the current stop took effect: the commit of the first decision not
+-- to share after the last to share (within that decision's own transaction,
+-- the moment it read the clock). NULL while the school shares, and before it
+-- ever has. A second decision not to share in a row is not a new beginning.
 CREATE FUNCTION app.attendance_stopped_since(p_school uuid) RETURNS timestamptz
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT CASE WHEN NOT app.attendance_shared(p_school) THEN (
-    SELECT min(d."decidedAt")
+    SELECT coalesce(d."committedAt", d."decidedAt")
       FROM "AttendanceSharingDecisions" d
      WHERE d."schoolId" = p_school
        AND NOT d."shares"
        AND d."decidedAt" > (
              SELECT max(x."decidedAt") FROM "AttendanceSharingDecisions" x
-              WHERE x."schoolId" = p_school AND x."shares"))
+              WHERE x."schoolId" = p_school AND x."shares")
+     ORDER BY d."decidedAt"
+     LIMIT 1)
   END
 $$;
 
 COMMENT ON FUNCTION app.attendance_stopped_since(uuid) IS
-  'When the school''s current stop of sharing attendance with integrations began (the first decision not to share after the last to share); NULL while it shares or before it ever has. A row created since never left SchemaPro.';
+  'When the school''s current stop of sharing attendance with integrations took effect (the commit of the first decision not to share after the last to share); NULL while it shares or before it ever has. A row created since never left SchemaPro.';
 
--- A register save at a school that shares writes a version per record whose
--- status it changes, one statement per pupil in the client's order (the
--- recorders below). An SS12000 apply that links or brings back pupils writes
--- the versions of every record of each (app.ss12000_v_attendance_pupils), one
--- statement per pupil, and holds them to its end. In opposite orders each
--- would hold a version the other waits for, and Postgres would abort one. The
--- apply holds the school's people lock from its start (pg_advisory_xact_lock
--- of 'Users:<school>', readLocalSlice), so the save takes it shared before
--- its first write, as a guardian's calendar feed does
--- (app.calendar_feed_create): it waits for a running apply, an apply waits
--- for it, and neither holds a version while it waits. Before the first
--- write, never from a recorder: a trigger runs after the insert's foreign key
--- checks, holding KEY SHARE on the pupil's row, which an apply that changes
--- the pupil's e-mail would wait for. Only while the school shares: otherwise
--- the save writes no version and waits for nothing.
---
--- Whether it shares is read once, so it is ordered against the decisions:
--- the save first takes 'AttendanceSharing:<school>' shared, which a decision
--- takes exclusively (app.attendance_sharing_decisions_are_stamped). A
--- decision waits for the saves already writing, and a save that begins
--- during a decision reads it once it is committed; no save that read "not
--- shared" writes a version after a decision to share. Each wait is at most
--- 5 s (lock_timeout, restored after, as app.enter_grundschema_write does):
--- an apply can run for minutes, and a save still waiting answers 409
--- ATTENDANCE_SYNC_IN_PROGRESS (55P03 in the gateway), which the phone's
--- queue sends again, instead of holding its connection past the request.
-CREATE FUNCTION app.attendance_recording_waits_for_sync() RETURNS void
+-- Whether the recorders version as if the school shares, in this
+-- transaction. A writer reads the decision when its statement runs and
+-- commits later, so without an order a decision to share could commit in
+-- between: the writer's row would be readable after the start with no
+-- version, so no notice would ever tell of it (they follow the versions'
+-- xids) and a reader that read before it committed would hold it as it was.
+-- So the writer first takes the school's decisions lock shared, without
+-- waiting, and holds it to its end, then reads the decision: a decision
+-- takes the lock exclusively (app.attendance_sharing_decisions_are_stamped),
+-- so none commits between the writer's read and its commit. A writer that
+-- cannot take it at once, because a decision is being written or waits to
+-- be, does not hold it, so a decision can commit before it does; it
+-- versions as if the school shared: a version more, never one less. Past a
+-- stop, or a decision that never commits, the version is one whose
+-- transaction began before the stop took effect (and may have been read) or
+-- after it (and was not), which app.ss12000_may_have_left tells apart. No
+-- writer ever waits here: a teacher's register save is never held up or
+-- refused.
+CREATE FUNCTION app.attendance_recorded_as_shared(p_school uuid) RETURNS boolean
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-DECLARE
-  school uuid := app.current_school_id();
-  previous text := current_setting('lock_timeout');
 BEGIN
-  IF school IS NULL THEN
-    RETURN;
+  IF pg_try_advisory_xact_lock_shared(hashtextextended('AttendanceSharing:' || p_school::text, 0)) THEN
+    RETURN app.attendance_shared(p_school);
   END IF;
-  PERFORM set_config('lock_timeout', '5s', true);
-  PERFORM pg_advisory_xact_lock_shared(hashtextextended('AttendanceSharing:' || school::text, 0));
-  IF app.attendance_shared(school) THEN
-    PERFORM pg_advisory_xact_lock_shared(hashtextextended('Users:' || school::text, 0));
-  END IF;
-  PERFORM set_config('lock_timeout', previous, true);
+  RETURN true;
 END
 $$;
 
-COMMENT ON FUNCTION app.attendance_recording_waits_for_sync() IS
-  'Called by the register save before its first write: orders the save against the school''s sharing decisions (''AttendanceSharing:<school>'' shared) and, at a school that shares attendance, waits for a running SS12000 apply (''Users:<school>'' shared), each for at most 5 s, so the versions a save and an apply write are never held one each.';
+COMMENT ON FUNCTION app.attendance_recorded_as_shared(uuid) IS
+  'Whether the attendance recorders version as if the school shares in this transaction: the decision in force, read after taking the school''s decisions lock shared to the end (so no decision commits between the read and this writer''s commit), or true while a decision is being written or waits to be. Never waits.';
+
+-- The removals' side of the same order, which waits instead: whether a
+-- removed row is told depends on whether the school ever shared and when its
+-- stop began (app.ss12000_may_have_left), so a start committed between the
+-- removal's read and its commit would leave a row readable after the start
+-- untold, and nothing marks it. So a removal takes the decisions lock shared
+-- and holds it to its end, waiting only while a decision is being written
+-- (at most until that decision gives up, 5 s), and then reads the decisions.
+-- A register save removes nothing, and never comes here.
+CREATE FUNCTION app.attendance_removals_ordered(p_school uuid) RETURNS void
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('AttendanceSharing:' || p_school::text, 0)) THEN
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('AttendanceSharing:' || p_school::text, 0));
+  END IF;
+END
+$$;
+
+COMMENT ON FUNCTION app.attendance_removals_ordered(uuid) IS
+  'Called by the removal recorders before they read the school''s decisions: takes the school''s decisions lock shared to the end, waiting only while a decision is being written, so no decision commits between the removal''s read and its commit.';
 
 -- Of the removed rows p_ids (p_created their createdAt, in the same order),
 -- the ones that may have left SchemaPro, and so are buried. While the school
--- shares, every one. While it has stopped: one created before the stop
--- began, which existed while it shared; or one with a version, which only a
--- transaction that saw the school share writes, and which so marks a row
--- whose transaction began after the decision to stop read the clock but
--- committed before the decision did (readable, for those moments, as
--- shared). A row created and removed within the stop is neither: it was
--- never handed out. The other way round, a row whose transaction began
--- before the decision and committed after it is buried though it never
--- left: a tombstone for an id the integration does not hold deletes
--- nothing.
+-- shares, every one. While it has stopped: one created before the stop took
+-- effect (its commit, app.attendance_stopped_since), which existed while
+-- every reader saw the school share; or one with a version whose
+-- transaction began before then, the database's clock against the
+-- database's (a row created while the stop was being written and committed
+-- before it, readable for those moments, or one whose createdAt, the API's
+-- clock, runs ahead). A version written later, by a writer that versioned as
+-- if the school shared while another decision was being written
+-- (app.attendance_recorded_as_shared), marks nothing: such a row was never
+-- handed out. So a row created and removed within the stop is told to
+-- nobody. The other way round, a row
+-- whose transaction began before the decision and committed after it is
+-- buried though it never left: a tombstone for an id the integration does
+-- not hold deletes nothing. Read after the removal has ordered itself against the decisions
+-- (app.attendance_removals_ordered), so a start never commits between this
+-- read and the removal's commit: no row this left untold is readable after
+-- the start.
 CREATE FUNCTION app.ss12000_may_have_left(p_school uuid, p_resource text, p_ids uuid[], p_created timestamptz[])
 RETURNS uuid[]
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
-  stopped timestamptz := app.attendance_stopped_since(p_school);
+  stopped timestamptz;
 BEGIN
+  PERFORM app.attendance_removals_ordered(p_school);
+  stopped := app.attendance_stopped_since(p_school);
   IF stopped IS NULL THEN
     RETURN p_ids;
   END IF;
@@ -454,7 +531,8 @@ BEGIN
       FROM unnest(p_ids, p_created) AS r(id, created)
      WHERE r.created < stopped
         OR EXISTS (SELECT 1 FROM "Ss12000EntityVersions" v
-                    WHERE v."schoolId" = p_school AND v."resource" = p_resource AND v."entityId" = r.id));
+                    WHERE v."schoolId" = p_school AND v."resource" = p_resource AND v."entityId" = r.id
+                      AND v."createdAt" < stopped));
 END
 $$;
 
@@ -590,12 +668,15 @@ $$;
 -- ---------------------------------------------------------------------------
 
 -- A filter not asked is NULL. meta.modified ("versionModifiedAt") is the
--- version's or the moment the current run of sharing began, whichever is
--- later (a row with no version is the second). So modified.after X is "the
--- run began after X, or the version moved after X", and the first half is
--- answered here, before the statement: an incremental read from before the
--- run is a whole read, and one from within it compares the version alone,
--- which the versions' (schoolId, resource, modifiedAt) index answers. The
+-- latest of the record's version, its pupil's ('AttendancePupil': linked or
+-- back), the moment the current run of sharing began and the record's
+-- creation (its createdAt is the API's clock at the insert, after the
+-- version's transaction began), exactly what the gateway emits. So
+-- modified.after X is "the run began after X, or either version moved or
+-- the record was created after X", and the first half is answered here,
+-- before the statement: an incremental read from before the run is a whole
+-- read, and one from within it compares the rest, each version looked up by
+-- its key as the walk below reaches the record. The
 -- bounds compare at the millisecond an ISO string carries (S1: before
 -- inclusive, after exclusive): truncated(m) > X is m >= X + 1 ms. The
 -- statement is planned with its values at every call (EXECUTE ... USING), so
@@ -630,13 +711,15 @@ BEGIN
   RETURN QUERY EXECUTE $q$
     SELECT a."id", a."calendarLessonId", a."studentId", a."status"::text, a."createdAt",
            l."startsAt", l."endsAt", l."studentGroupId",
-           coalesce(v."createdAt", a."createdAt"), greatest(v."modifiedAt", $13)
+           coalesce(v."createdAt", a."createdAt"), greatest(v."modifiedAt", p."modifiedAt", $13, a."createdAt")
       FROM "AttendanceRecords" a
       JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
       JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
       JOIN "Users" u ON u."id" = a."studentId" AND u."isActive" AND u."role" = 'STUDENT'
       LEFT JOIN "Ss12000EntityVersions" v
         ON v."schoolId" = a."schoolId" AND v."resource" = 'Attendance' AND v."entityId" = a."id"
+      LEFT JOIN "Ss12000EntityVersions" p
+        ON p."schoolId" = a."schoolId" AND p."resource" = 'AttendancePupil' AND p."entityId" = a."studentId"
      WHERE a."schoolId" = $1
        AND g."academicYearId" = ANY ($2)
        AND ($3 IS NULL OR a."id" = ANY ($3))
@@ -645,8 +728,11 @@ BEGIN
        AND ($6 IS NULL OR l."studentGroupId" = ANY ($6))
        AND ($7 IS NULL OR a."createdAt" < $7 + interval '1 millisecond')
        AND ($8 IS NULL OR a."createdAt" >= $8 + interval '1 millisecond')
-       AND ($9 IS NULL OR v."modifiedAt" IS NULL OR v."modifiedAt" < $9 + interval '1 millisecond')
-       AND ($10 IS NULL OR v."modifiedAt" >= $10 + interval '1 millisecond')
+       AND ($9 IS NULL OR ((v."modifiedAt" IS NULL OR v."modifiedAt" < $9 + interval '1 millisecond')
+                           AND (p."modifiedAt" IS NULL OR p."modifiedAt" < $9 + interval '1 millisecond')
+                           AND a."createdAt" < $9 + interval '1 millisecond'))
+       AND ($10 IS NULL OR v."modifiedAt" >= $10 + interval '1 millisecond' OR p."modifiedAt" >= $10 + interval '1 millisecond'
+                        OR a."createdAt" >= $10 + interval '1 millisecond')
        AND ($11 IS NULL OR a."id" > $11)
      ORDER BY a."id"
      LIMIT $12
@@ -671,11 +757,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
          to_char(a."startTime", 'HH24:MI:SS'), to_char(a."endTime", 'HH24:MI:SS'),
          a."grantedLeave", a."createdAt",
          coalesce(v."createdAt", a."createdAt"),
-         greatest(v."modifiedAt", (SELECT app.attendance_shared_since(app.current_service_school_id())))
+         greatest(v."modifiedAt", p."modifiedAt", (SELECT app.attendance_shared_since(app.current_service_school_id())), a."createdAt")
     FROM "AbsenceReports" a
     JOIN "Users" u ON u."id" = a."studentId" AND u."isActive" AND u."role" = 'STUDENT'
     LEFT JOIN "Ss12000EntityVersions" v
       ON v."schoolId" = a."schoolId" AND v."resource" = 'Absence' AND v."entityId" = a."id"
+    LEFT JOIN "Ss12000EntityVersions" p
+      ON p."schoolId" = a."schoolId" AND p."resource" = 'AbsencePupil' AND p."entityId" = a."studentId"
    WHERE (SELECT app.service_reads_attendance('absences.read'))
      AND a."schoolId" = (SELECT app.current_service_school_id())
      AND (p_ids IS NULL OR a."id" = ANY (p_ids))
@@ -728,7 +816,7 @@ BEGIN
     -- Every row, emitted or not: a row created while the school shares has a
     -- version from its creation (meta.modified never before meta.created).
     FOR r IN SELECT n."schoolId" s, array_agg(n."id") ids FROM n GROUP BY 1 LOOP
-      CONTINUE WHEN NOT app.attendance_shared(r.s);
+      CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
       PERFORM app.ss12000_bump(r.s, 'Attendance', r.ids);
     END LOOP;
   ELSIF TG_OP = 'UPDATE' THEN
@@ -741,15 +829,18 @@ BEGIN
              IS DISTINCT FROM (o."status", o."calendarLessonId", o."studentId")
        GROUP BY 1
     LOOP
-      CONTINUE WHEN NOT app.attendance_shared(r.s);
+      CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
       PERFORM app.ss12000_bump(r.s, 'Attendance', app.ss12000_attendance_emitted(r.s, r.ids));
     END LOOP;
   ELSE
     -- A pupil already gone was buried with their leaving; a lesson of a year
     -- not emitted never left; nor did a row created while the school has
     -- stopped. A lesson, group or pupil deleted in the same statement (a
-    -- cascade) is no longer there to ask, and is buried.
+    -- cascade) is no longer there to ask, and is buried. A school that never
+    -- shared buries nothing; read once the removal is ordered against the
+    -- decisions (app.attendance_removals_ordered).
     FOR r IN SELECT DISTINCT o."schoolId" s FROM o LOOP
+      PERFORM app.attendance_removals_ordered(r.s);
       CONTINUE WHEN NOT app.attendance_ever_shared(r.s);
       years := app.ss12000_emitted_years(r.s);
       PERFORM app.ss12000_bury(r.s, 'Attendance', (
@@ -774,7 +865,7 @@ DECLARE r record;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     FOR r IN SELECT n."schoolId" s, array_agg(n."id") ids FROM n GROUP BY 1 LOOP
-      CONTINUE WHEN NOT app.attendance_shared(r.s);
+      CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
       PERFORM app.ss12000_bump(r.s, 'Absence', r.ids);
     END LOOP;
   ELSIF TG_OP = 'UPDATE' THEN
@@ -785,7 +876,7 @@ BEGIN
              IS DISTINCT FROM (o."date", o."startTime", o."endTime", o."grantedLeave", o."studentId")
        GROUP BY 1
     LOOP
-      CONTINUE WHEN NOT app.attendance_shared(r.s);
+      CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
       PERFORM app.ss12000_bump(r.s, 'Absence', app.ss12000_absence_emitted(r.s, r.ids));
     END LOOP;
   ELSE
@@ -796,6 +887,7 @@ BEGIN
        WHERE u."id" IS NULL OR (u."isActive" AND u."role" = 'STUDENT')
        GROUP BY 1
     LOOP
+      PERFORM app.attendance_removals_ordered(r.s);
       CONTINUE WHEN NOT app.attendance_ever_shared(r.s);
       PERFORM app.ss12000_bury(r.s, 'Absence', app.ss12000_may_have_left(r.s, 'Absence', r.ids, r.created));
     END LOOP;
@@ -806,11 +898,22 @@ $$;
 
 -- Users: a pupil who leaves (deactivated, or no longer a pupil), comes back,
 -- or is linked to the source.
+--
+-- A pupil who comes back, or is linked (their records are emitted under
+-- another person id), moves every Attendance and Absence of theirs. That is
+-- one version row per pupil, not one per record: 'AttendancePupil' and
+-- 'AbsencePupil', keyed by the pupil, which the two read functions take into
+-- meta.modified and its filters. An SS12000 apply links or brings back its
+-- pupils one statement each and holds what it writes to its end; were it
+-- every record's own version, a teacher's register save of any of them would
+-- wait for the whole apply, and the two could deadlock. A save writes only
+-- records' own versions, so the two never share a row.
 CREATE FUNCTION app.ss12000_v_attendance_pupils() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   r record;
   years uuid[];
+  moved uuid[];
 BEGIN
   FOR r IN
     SELECT n."schoolId" s,
@@ -826,38 +929,59 @@ BEGIN
      GROUP BY 1
   LOOP
     CONTINUE WHEN r.gone IS NULL AND r.back IS NULL AND r.relinked IS NULL;
-    CONTINUE WHEN NOT app.attendance_ever_shared(r.s);
-    IF r.gone IS NOT NULL THEN
-      -- Not what was written while the school has stopped: buried with the
-      -- pupil's own tombstone, at its instant, it would count the absences
-      -- the pupil had while the school chose not to share.
-      years := app.ss12000_emitted_years(r.s);
-      PERFORM app.ss12000_bury(r.s, 'Attendance', (
-        SELECT app.ss12000_may_have_left(r.s, 'Attendance', array_agg(a."id"), array_agg(a."createdAt"))
-          FROM "AttendanceRecords" a
-          JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
-          JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
-         WHERE a."studentId" = ANY (r.gone) AND g."academicYearId" = ANY (years)));
-      PERFORM app.ss12000_bury(r.s, 'Absence', (
-        SELECT app.ss12000_may_have_left(r.s, 'Absence', array_agg(a."id"), array_agg(a."createdAt"))
-          FROM "AbsenceReports" a WHERE a."studentId" = ANY (r.gone)));
+    IF r.gone IS NOT NULL OR r.back IS NOT NULL THEN
+      -- A removal, or its undoing: ordered against the decisions, exactly.
+      PERFORM app.attendance_removals_ordered(r.s);
+      IF app.attendance_ever_shared(r.s) THEN
+        IF r.gone IS NOT NULL THEN
+          -- Not what was written while the school has stopped: buried with
+          -- the pupil's own tombstone, at its instant, it would count the
+          -- absences the pupil had while the school chose not to share.
+          years := app.ss12000_emitted_years(r.s);
+          PERFORM app.ss12000_bury(r.s, 'Attendance', (
+            SELECT app.ss12000_may_have_left(r.s, 'Attendance', array_agg(a."id"), array_agg(a."createdAt"))
+              FROM "AttendanceRecords" a
+              JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
+              JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
+             WHERE a."studentId" = ANY (r.gone) AND g."academicYearId" = ANY (years)));
+          PERFORM app.ss12000_bury(r.s, 'Absence', (
+            SELECT app.ss12000_may_have_left(r.s, 'Absence', array_agg(a."id"), array_agg(a."createdAt"))
+              FROM "AbsenceReports" a WHERE a."studentId" = ANY (r.gone)));
+        END IF;
+        IF r.back IS NOT NULL THEN
+          PERFORM app.ss12000_unbury(r.s, 'Attendance', ARRAY(
+            SELECT a."id" FROM "AttendanceRecords" a WHERE a."studentId" = ANY (r.back)));
+          PERFORM app.ss12000_unbury(r.s, 'Absence', ARRAY(
+            SELECT a."id" FROM "AbsenceReports" a WHERE a."studentId" = ANY (r.back)));
+        END IF;
+      END IF;
     END IF;
-    IF r.back IS NOT NULL THEN
-      PERFORM app.ss12000_unbury(r.s, 'Attendance', ARRAY(
-        SELECT a."id" FROM "AttendanceRecords" a WHERE a."studentId" = ANY (r.back)));
-      PERFORM app.ss12000_unbury(r.s, 'Absence', ARRAY(
-        SELECT a."id" FROM "AbsenceReports" a WHERE a."studentId" = ANY (r.back)));
-    END IF;
-    CONTINUE WHEN NOT app.attendance_shared(r.s);
-    IF r.back IS NOT NULL OR r.relinked IS NOT NULL THEN
-      PERFORM app.ss12000_bump(r.s, 'Attendance', app.ss12000_attendance_emitted(r.s, ARRAY(
-        SELECT a."id" FROM "AttendanceRecords" a
-         WHERE a."studentId" = ANY (coalesce(r.back, ARRAY[]::uuid[]) || coalesce(r.relinked, ARRAY[]::uuid[])))));
-      PERFORM app.ss12000_bump(r.s, 'Absence', app.ss12000_absence_emitted(r.s, ARRAY(
-        SELECT a."id" FROM "AbsenceReports" a
-         WHERE a."studentId" = ANY (coalesce(r.back, ARRAY[]::uuid[]) || coalesce(r.relinked, ARRAY[]::uuid[])))));
+    moved := coalesce(r.back, ARRAY[]::uuid[]) || coalesce(r.relinked, ARRAY[]::uuid[]);
+    IF cardinality(moved) > 0 AND app.attendance_recorded_as_shared(r.s) THEN
+      PERFORM app.ss12000_bump(r.s, 'AttendancePupil', moved);
+      PERFORM app.ss12000_bump(r.s, 'AbsencePupil', moved);
     END IF;
   END LOOP;
+  RETURN NULL;
+END
+$$;
+
+-- As the transaction commits, a linked or returning pupil's two rows are
+-- stamped again with the clock. app.ss12000_bump stamps the transaction's
+-- start, and an apply runs for up to minutes: an integration that read while
+-- it ran, with a cursor past that start, would otherwise never read the
+-- pupil's records under their new id. Only rows this transaction wrote (its
+-- xid), which it already holds, so nothing is waited for; never moved back.
+-- Fired by a deferred constraint trigger per pupil row.
+CREATE FUNCTION app.ss12000_attendance_pupils_stamped() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  UPDATE "Ss12000EntityVersions" v
+     SET "modifiedAt" = greatest(v."modifiedAt", clock_timestamp())
+   WHERE v."schoolId" = NEW."schoolId"
+     AND v."resource" IN ('AttendancePupil', 'AbsencePupil')
+     AND v."entityId" = NEW."id"
+     AND v."xid" = pg_current_xact_id();
   RETURN NULL;
 END
 $$;
@@ -873,7 +997,7 @@ BEGIN
      WHERE (n."startsAt", n."endsAt", n."studentGroupId") IS DISTINCT FROM (o."startsAt", o."endsAt", o."studentGroupId")
      GROUP BY 1
   LOOP
-    CONTINUE WHEN NOT app.attendance_shared(r.s);
+    CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
     PERFORM app.ss12000_bump(r.s, 'Attendance', app.ss12000_attendance_emitted(r.s, ARRAY(
       SELECT a."id" FROM "AttendanceRecords" a WHERE a."calendarLessonId" = ANY (r.lessons))));
   END LOOP;
@@ -889,7 +1013,7 @@ BEGIN
   FOR r IN
     SELECT n."id" s FROM n JOIN o ON o."id" = n."id" WHERE n."timezone" IS DISTINCT FROM o."timezone"
   LOOP
-    CONTINUE WHEN NOT app.attendance_shared(r.s);
+    CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
     PERFORM app.ss12000_bump(r.s, 'Absence', app.ss12000_absence_emitted(r.s, ARRAY(
       SELECT a."id" FROM "AbsenceReports" a WHERE a."schoolId" = r.s)));
   END LOOP;
@@ -914,7 +1038,7 @@ BEGIN
       FROM n JOIN o ON o."id" = n."id"
      WHERE (n."isActive", n."startDate") IS DISTINCT FROM (o."isActive", o."startDate")
   LOOP
-    CONTINUE WHEN NOT app.attendance_shared(r.s);
+    CONTINUE WHEN NOT app.attendance_recorded_as_shared(r.s);
     WITH before AS (
       SELECT y."id",
              coalesce(o."isActive", y."isActive") AS active,
@@ -964,6 +1088,15 @@ CREATE TRIGGER "AbsenceReports_ss12000_versions_del"
 CREATE TRIGGER "Users_ss12000_attendance_upd"
     AFTER UPDATE ON "Users" REFERENCING OLD TABLE AS o NEW TABLE AS n
     FOR EACH STATEMENT EXECUTE FUNCTION app.ss12000_v_attendance_pupils();
+CREATE CONSTRAINT TRIGGER "Users_ss12000_attendance_pupils_stamped"
+    AFTER UPDATE ON "Users"
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW
+    WHEN (NEW."role" = 'STUDENT' AND NEW."isActive"
+          AND (OLD."ss12000Id" IS DISTINCT FROM NEW."ss12000Id"
+               OR OLD."isActive" IS DISTINCT FROM NEW."isActive"
+               OR OLD."role" IS DISTINCT FROM NEW."role"))
+    EXECUTE FUNCTION app.ss12000_attendance_pupils_stamped();
 CREATE TRIGGER "CalendarLessons_ss12000_attendance_upd"
     AFTER UPDATE ON "CalendarLessons" REFERENCING OLD TABLE AS o NEW TABLE AS n
     FOR EACH STATEMENT EXECUTE FUNCTION app.ss12000_v_attendance_lessons();
@@ -1005,6 +1138,10 @@ BEGIN
     'app.attendance_run_xid(uuid)',
     'app.attendance_ever_shared(uuid)',
     'app.attendance_stopped_since(uuid)',
+    'app.attendance_sharing_decisions_are_committed()',
+    'app.attendance_recorded_as_shared(uuid)',
+    'app.attendance_removals_ordered(uuid)',
+    'app.ss12000_attendance_pupils_stamped()',
     'app.ss12000_may_have_left(uuid, text, uuid[], timestamptz[])',
     'app.absence_reports_granted_leave_is_decided()',
     'app.ss12000_emitted_years(uuid)',
@@ -1025,10 +1162,8 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- The provider's questions and its two reads, and the register save's
-  -- wait for a running apply: the API alone.
+  -- The provider's questions and its two reads: the API alone.
   FOREACH fn IN ARRAY ARRAY[
-    'app.attendance_recording_waits_for_sync()',
     'app.service_reads_attendance(text)',
     'app.service_reads_attendance_removals(text)',
     'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',

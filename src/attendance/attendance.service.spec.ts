@@ -11,7 +11,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import { Role } from '../auth/enums/role.enum';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
-import { ATTENDANCE_SYNC_IN_PROGRESS, AttendanceService } from './attendance.service';
+import { AttendanceService } from './attendance.service';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
 
 const NOW = new Date('2026-09-02T06:05:00.000Z');
@@ -231,35 +231,28 @@ describe('AttendanceService', () => {
   // -------------------------------------------------------------------------
 
   describe('writing records', () => {
-    it('waits for a running SS12000 apply once, before its first write', async () => {
-      arrangeRoster([STUDENT_A, STUDENT_B]);
+    it('writes the records in pupil order, whatever the batch order and whatever is there already', async () => {
+      arrangeRoster([STUDENT_A, STUDENT_B, STUDENT_C]);
+      // C has a record already, A and B none yet.
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_C, status: 'PRESENT' }]);
 
       await service.reportAttendance(
         dto([
-          { studentId: STUDENT_A, status: 'PRESENT' as never },
+          { studentId: STUDENT_C, status: 'LATE' as never },
           { studentId: STUDENT_B, status: 'LATE' as never },
+          { studentId: STUDENT_A, status: 'LATE' as never },
         ]),
         teacher(),
       );
 
-      // Each upsert moves a version an apply that links pupils may hold to its
-      // end; the database's wait (20261114090000) comes before the first.
-      const waits = tx.$executeRaw.mock.calls
-        .map((call, index) => ({ sql: (call[0] as Prisma.Sql).sql, order: tx.$executeRaw.mock.invocationCallOrder[index]! }))
-        .filter((call) => call.sql === 'SELECT app.attendance_recording_waits_for_sync()');
-      expect(waits).toHaveLength(1);
-      expect(waits[0]!.order).toBeLessThan(tx.attendanceRecord.upsert.mock.invocationCallOrder[0]!);
-    });
-
-    it('answers 409 ATTENDANCE_SYNC_IN_PROGRESS when the wait runs out, and writes nothing', async () => {
-      arrangeRoster([STUDENT_A]);
-      // The database's 5 s lock_timeout, as the driver reports it.
-      tx.$executeRaw.mockRejectedValueOnce(new Error('canceling statement due to lock timeout (55P03)'));
-
-      await expect(
-        service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher()),
-      ).rejects.toMatchObject({ status: 409, response: { code: ATTENDANCE_SYNC_IN_PROGRESS } });
-      expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
+      // The same order for every save of the lesson, whatever each read: two
+      // saves never hold one each of the other's rows or versions. No wait
+      // and no refusal of the save (20261114090000).
+      const order = tx.attendanceRecord.upsert.mock.calls.map(
+        (call) => (call[0] as { where: { calendarLessonId_studentId: { studentId: string } } }).where.calendarLessonId_studentId.studentId,
+      );
+      expect(order).toEqual([STUDENT_A, STUDENT_B, STUDENT_C]);
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('upserts one row per entry and separates creates from updates', async () => {

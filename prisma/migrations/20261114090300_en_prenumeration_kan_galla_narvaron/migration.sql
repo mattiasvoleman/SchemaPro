@@ -9,7 +9,9 @@
 --     shares and the subscription's key holds the scope
 --     (app.ss12000_notifies, asked once per subscription), so a receiver is
 --     never told that attendance changed at a school that has stopped
---     sharing, nor by a key that lost the scope.
+--     sharing, nor by a key that lost the scope. A pupil's row
+--     ('AttendancePupil', 'AbsencePupil': linked or back) is a change of
+--     that resource, as a tombstone of 'AdhocActivity' is one of 'Activity'.
 --   * A removal of either is told once the school has ever shared, also
 --     while it has stopped (app.ss12000_notifies_removals), as
 --     /deletedEntities answers their tombstones then: the receiver deletes
@@ -118,7 +120,8 @@ BEGIN
        AND (nt.resumed
             OR EXISTS (SELECT 1 FROM "Ss12000EntityVersions" v
                         WHERE v."schoolId" = s."schoolId" AND v."xid" >= s."watermark" AND v."xid" < horizon
-                          AND v."resource" = ANY (nt.types))
+                          AND (CASE v."resource" WHEN 'AttendancePupil' THEN 'Attendance' WHEN 'AbsencePupil' THEN 'Absence'
+                                    ELSE v."resource" END) = ANY (nt.types))
             OR EXISTS (SELECT 1 FROM "Ss12000Tombstones" t
                         WHERE t."schoolId" = s."schoolId" AND t."xid" >= s."watermark" AND t."xid" < horizon
                           AND (CASE WHEN t."resource" = 'AdhocActivity' THEN 'Activity' ELSE t."resource" END) = ANY (nt.removals)))
@@ -133,9 +136,13 @@ BEGIN
   )
   SELECT c."id", c."schoolId", c."keyId", c."target",
          ARRAY(SELECT DISTINCT m.resource
-                 FROM (SELECT v."resource" FROM "Ss12000EntityVersions" v
+                 FROM (SELECT x.resource
+                         FROM "Ss12000EntityVersions" v
+                         CROSS JOIN LATERAL (SELECT CASE v."resource" WHEN 'AttendancePupil' THEN 'Attendance'
+                                                                     WHEN 'AbsencePupil' THEN 'Absence'
+                                                                     ELSE v."resource" END AS resource) x
                         WHERE v."schoolId" = c."schoolId" AND v."xid" >= c."watermark" AND v."xid" < horizon
-                          AND v."resource" = ANY (c."types")
+                          AND x.resource = ANY (c."types")
                        UNION
                        SELECT t FROM unnest(c."types") t
                         WHERE c."resumed" AND t IN ('Attendance', 'Absence')) m(resource)

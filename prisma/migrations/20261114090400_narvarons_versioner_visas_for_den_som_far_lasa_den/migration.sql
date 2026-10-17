@@ -1,8 +1,9 @@
 -- Närvarons versioner visas för den som får läsa den: Ss12000EntityVersions
--- take 'Attendance' and 'Absence' (20261114090000), and the service
--- principal's arm answers a row of either only to a request that may read
--- that resource (app.service_reads_attendance), so a key without the scope
--- does not learn even their ids and times.
+-- take 'Attendance' and 'Absence' (20261114090000), and 'AttendancePupil'
+-- and 'AbsencePupil', a pupil's row that moves all their records (linked or
+-- back), and the service principal's arm answers a row of either kind only
+-- to a request that may read that resource (app.service_reads_attendance),
+-- so a key without the scope does not learn even their ids and times.
 --
 -- One table, taken NOWAIT and retried every 50 ms for 30 s as
 -- 20261114090000 takes its own, so this transaction is in no cycle and no
@@ -34,7 +35,7 @@ ALTER TABLE "Ss12000EntityVersions" DROP CONSTRAINT "Ss12000EntityVersions_resou
 ALTER TABLE "Ss12000EntityVersions"
     ADD CONSTRAINT "Ss12000EntityVersions_resource_is_emitted" CHECK ("resource" IN
         ('Organisation', 'Person', 'Group', 'Duty', 'Activity', 'CalendarEvent', 'Room', 'Syllabus',
-         'Attendance', 'Absence')) NOT VALID;
+         'Attendance', 'Absence', 'AttendancePupil', 'AbsencePupil')) NOT VALID;
 
 DO $$
 BEGIN
@@ -42,9 +43,9 @@ BEGIN
     ALTER POLICY "ss12000_entity_versions_service_select" ON "Ss12000EntityVersions"
         USING (
             "schoolId" = app.current_service_school_id()
-            AND ("resource" NOT IN ('Attendance', 'Absence')
-                 OR ("resource" = 'Attendance' AND (select app.service_reads_attendance('attendances.read')))
-                 OR ("resource" = 'Absence' AND (select app.service_reads_attendance('absences.read'))))
+            AND ("resource" NOT IN ('Attendance', 'Absence', 'AttendancePupil', 'AbsencePupil')
+                 OR ("resource" IN ('Attendance', 'AttendancePupil') AND (select app.service_reads_attendance('attendances.read')))
+                 OR ("resource" IN ('Absence', 'AbsencePupil') AND (select app.service_reads_attendance('absences.read'))))
         );
   END IF;
 END
