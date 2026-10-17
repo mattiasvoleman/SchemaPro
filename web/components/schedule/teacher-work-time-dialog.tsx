@@ -333,7 +333,7 @@ export function TeacherWorkTimeDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tCommon("cancel")}
           </Button>
-          <Button onClick={() => void submit()} disabled={problem !== null || saving}>
+          <Button onClick={() => void submit()} disabled={problem !== null || saving} data-writes="PLANERING">
             {saving ? tCommon("saving") : tCommon("save")}
           </Button>
         </DialogFooter>

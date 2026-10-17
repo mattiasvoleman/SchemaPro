@@ -256,7 +256,7 @@ export function AbsenceDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={() => void save()} disabled={pending}>
+            <Button onClick={() => void save()} disabled={pending} data-writes="DRIFT">
               {pending ? <Loader2 className="animate-spin" /> : null}
               {editing ? t("save") : t("create")}
             </Button>

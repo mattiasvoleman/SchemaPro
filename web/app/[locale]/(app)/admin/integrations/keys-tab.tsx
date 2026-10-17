@@ -149,7 +149,8 @@ export function KeysTab() {
   return (
     <div className="space-y-4">
       <AttendanceSharingCard />
-      <SectionCard id="key-create" title={t("createTitle")} description={t("createBody")}>
+      {/* Wholly the new key's (POST /integration-keys, Integrationer). */}
+      <SectionCard id="key-create" title={t("createTitle")} description={t("createBody")} data-writes="INTEGRATIONER">
         <FormField id="key-name" label={t("keys.name")}>
           <Input placeholder={t("namePlaceholder")} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
         </FormField>
@@ -228,7 +229,13 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
           </div>
         </div>
         {live ? (
-          <Button size="sm" variant="outline" onClick={() => setRevoking(true)} disabled={revoke.isPending}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setRevoking(true)}
+            disabled={revoke.isPending}
+            data-writes="INTEGRATIONER"
+          >
             <Trash2 aria-hidden="true" />
             {t("revoke")}
           </Button>
@@ -244,7 +251,12 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
             </Badge>
           ))}
           {live && editing === null ? (
-            <Button size="sm" variant="ghost" onClick={() => setEditing(entry.scopes.filter((scope): scope is Scope => (SCOPES as readonly string[]).includes(scope)))}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditing(entry.scopes.filter((scope): scope is Scope => (SCOPES as readonly string[]).includes(scope)))}
+              data-writes="INTEGRATIONER"
+            >
               {tScopes("edit")}
             </Button>
           ) : null}
@@ -296,6 +308,7 @@ function KeyRow({ entry }: { entry: ProviderKey }) {
               variant="outline"
               disabled={secret.isPending}
               onClick={() => secret.mutate(entry.id, { onSuccess: (result) => setFreshSecret(result.secret), onError })}
+              data-writes="INTEGRATIONER"
             >
               {secret.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               {entry.webhookSecret ? t("keys.rotateSecret") : t("keys.createSecret")}
@@ -366,6 +379,7 @@ function Subscriptions({ keyId, subscriptions }: { keyId: string; subscriptions:
                 size="sm"
                 variant="outline"
                 disabled={state.isPending || current === "EXPIRED"}
+                data-writes="INTEGRATIONER"
                 onClick={() =>
                   state.mutate(
                     { keyId, subscriptionId: subscription.id, action: paused ? "resume" : "pause" },

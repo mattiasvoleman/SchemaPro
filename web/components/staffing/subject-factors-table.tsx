@@ -127,6 +127,7 @@ export function SubjectFactorsTable() {
             size="sm"
             onClick={() => void save()}
             disabled={invalid || changed.length === 0 || saving}
+            data-writes="PLANERING"
           >
             {saving ? tCommon("saving") : t("save", { count: changed.length })}
           </Button>

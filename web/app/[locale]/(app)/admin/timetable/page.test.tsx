@@ -6,6 +6,8 @@ import TimetablePage from "./page";
 import { buildIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
 import { ApiError } from "@/lib/api";
+import { ProfileProvider } from "@/components/profile-context";
+import type { Profile } from "@/lib/types";
 
 /**
  * Whose week is on screen.
@@ -761,6 +763,11 @@ describe("moving a lesson that lands on more than one class", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
     dragToTuesday("Matematik");
+    // Läsbehörighet: the confirmation is the move itself.
+    expect(await screen.findByRole("button", { name: "timetable.sharedMoveConfirm" })).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING DRIFT",
+    );
     await user.click(await screen.findByRole("button", { name: "timetable.sharedMoveConfirm" }));
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-ma1" }),
@@ -1204,6 +1211,8 @@ describe("the dialogs the page lifts out", () => {
       button.textContent?.includes("–"),
     );
     expect(options.length).toBeGreaterThan(0);
+    // Läsbehörighet: each free time picked is a move.
+    for (const option of options) expect(option).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
     await user.click(options[0]!);
 
     await waitFor(() =>
@@ -1976,6 +1985,22 @@ describe("placing a lunch by hand", () => {
 
     expect(lunch.remove.mutateAsync).toHaveBeenCalledWith("m-1");
   });
+
+  it("marks a meal's writes as schemaläggning's: the grip takes no pointer, the mode and the × are hidden (Läsbehörighet)", async () => {
+    state.sittings = [meal(1, false)];
+    const { unmount } = render(<TimetablePage />);
+    await filterTo("4.1");
+    // The grip carries the meal's name, so it stays on screen to read.
+    expect(screen.getByRole("button", { name: "timetable.lunchMove" })).toHaveAttribute("data-writes-inert", "SCHEMALAGGNING");
+    expect(screen.getByRole("button", { name: "timetable.lunchRemove" })).toHaveAttribute("data-writes", "SCHEMALAGGNING");
+    expect(screen.getByRole("button", { name: /^timetable\.placeLunch$/ })).toHaveAttribute("data-writes", "SCHEMALAGGNING");
+    unmount();
+
+    state.sittings = [];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    expect(screen.getByRole("button", { name: "timetable.noSittingsPlace" })).toHaveAttribute("data-writes", "SCHEMALAGGNING");
+  });
 });
 
 describe("the room optimisation", () => {
@@ -2454,6 +2479,10 @@ describe("a parallel block (Block i schemat)", () => {
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("timetable.blocks.splitTitle(Språkval åk 4)");
     expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    // Läsbehörighet: both answers are a move, the master lessons' write.
+    for (const name of ["timetable.blocks.moveOne", "timetable.blocks.moveBlock"]) {
+      expect(within(dialog).getByRole("button", { name })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    }
     await userEvent.setup().click(within(dialog).getByRole("button", { name: "timetable.blocks.moveOne" }));
 
     await waitFor(() =>
@@ -2501,6 +2530,15 @@ describe("a parallel block (Block i schemat)", () => {
     await user.click(await card());
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("button", { name: /timetable\.blocks\.editMemberNamed\(Slöjd/ })).toBeTruthy();
+    // Läsbehörighet: the editor a member opens and the lock are the master lessons' writes.
+    expect(within(dialog).getByRole("button", { name: /timetable\.blocks\.editMemberNamed\(Slöjd/ })).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING DRIFT",
+    );
+    expect(within(dialog).getByRole("button", { name: "timetable.blocks.lock" })).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING DRIFT",
+    );
     await user.click(within(dialog).getByRole("button", { name: "timetable.blocks.lock" }));
 
     await waitFor(() =>
@@ -2934,5 +2972,82 @@ describe("a parallel block (Block i schemat)", () => {
     await screen.findAllByRole("button", { name: /Slöjd/ });
     expect(screen.queryByRole("button", { name: /Språkval åk 4/ })).toBeNull();
     expect(blockNames.read).not.toHaveBeenCalled();
+  });
+});
+
+describe("what a profile that does not write the grundschema is spared (Läsbehörighet)", () => {
+  /*
+   * The (app) layout's style rule hides a control marked data-writes and takes
+   * the pointer from a part marked data-writes-inert, for each area the
+   * profile does not write (components/admin/area-refusal.tsx). jsdom draws
+   * no style, so the marks are what is read here.
+   */
+  it("marks the header's writes with their routes' areas, and what is read beside them with none", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    expect(screen.getByRole("button", { name: "timetable.addLesson" })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    expect(screen.getByRole("button", { name: "timetable.publish" })).toHaveAttribute("data-writes", "PUBLICERING DRIFT");
+    for (const name of ["timetable.undo", "timetable.redo"]) {
+      expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    }
+    // The hint says how to drag, click and key the writes: it goes with them.
+    expect(screen.getByText(/^timetable\.dragHint/)).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    // The versions are a list to read and compare; its own buttons are marked in the dialog.
+    expect(screen.getByRole("button", { name: "timetable.versions" }).closest("[data-writes]")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "timetable.moreActions" }));
+    expect(await screen.findByRole("menuitem", { name: "timetable.optimizeRooms" })).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING DRIFT",
+    );
+    for (const name of ["timetable.exportIcs", "timetable.exportPdf", "timetable.print"]) {
+      expect(screen.getByRole("menuitem", { name })).not.toHaveAttribute("data-writes");
+    }
+  });
+
+  it("keeps the grid's lessons on screen and takes the pointer from its columns: a drag, a click to edit or to add", () => {
+    const { container } = render(<TimetablePage />);
+    const card = container.querySelector('[data-lesson-id="l-slojd"]')!;
+    expect(card).not.toBeNull();
+    expect(card.closest("[data-writes]")).toBeNull();
+    expect(card.closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "SCHEMALAGGNING DRIFT");
+  });
+
+  it("gives a reader the grid to read: no column to press, no editor, the hover text kept", () => {
+    const { container } = render(
+      <ProfileProvider profile={{} as Profile} school={null} readOnly>
+        <TimetablePage />
+      </ProfileProvider>,
+    );
+    const card = container.querySelector<HTMLElement>('[data-lesson-id="l-slojd"]')!;
+    expect(card.closest("[data-writes-inert]")).toBeNull();
+    expect(card).toHaveClass("cursor-default");
+    expect(card.getAttribute("title")).toBeTruthy();
+    fireEvent.pointerDown(card, { button: 0 });
+    fireEvent.pointerUp(card, { button: 0 });
+    fireEvent.click(card);
+    fireEvent.keyDown(card, { key: "Enter" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps a parked lesson on the tray to read, without its drag or its way back", () => {
+    state.lessons = LESSONS.map((l) => (l.id === "l-slojd" ? { ...l, isParked: true } : l));
+    render(<TimetablePage />);
+    const tray = screen.getByTestId("lesson-tray");
+    expect(within(tray).getByRole("button", { name: /^timetable\.dragToPlace/ })).toHaveAttribute(
+      "data-writes-inert",
+      "SCHEMALAGGNING DRIFT",
+    );
+    expect(within(tray).getByRole("button", { name: "timetable.putBack" })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+  });
+
+  it("marks the selection's lock, unlock and delete, and leaves the clearing of it alone", async () => {
+    const { container } = render(<TimetablePage />);
+    fireEvent.keyDown(container.querySelector('[data-lesson-id="l-slojd"]')!, { key: "Enter", shiftKey: true });
+    expect(await screen.findByText(/^timetable\.bulkSelected/)).toBeInTheDocument();
+    for (const name of ["timetable.bulkLock", "timetable.bulkUnlock", "timetable.bulkDelete"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    }
+    expect(screen.getByRole("button", { name: "timetable.bulkClear" })).not.toHaveAttribute("data-writes");
   });
 });

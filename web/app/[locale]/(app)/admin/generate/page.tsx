@@ -265,8 +265,8 @@ export default function GeneratePage() {
     /** Not a gate: shown with a warning sign, and the run stays possible. */
     warn?: boolean;
     href?: string;
-    /** A second way to meet it, linked after the figure. */
-    action?: { href: string; label: string };
+    /** A second way to meet it, linked after the figure, and the areas its write needs (data-writes). */
+    action?: { href: string; label: string; writes: string };
   }[] = [
     /*
      * The year the run is FOR, which is next year's when it is picked — so
@@ -306,7 +306,9 @@ export default function GeneratePage() {
       detail: unstaffedCount === 0 ? "" : t("preStaffedMissing", { count: unstaffedCount }),
       href: unstaffedCount > 0 ? staffingHref("unstaffed") : undefined,
       action:
-        unstaffedCount > 0 ? { href: staffingHref("propose"), label: t("preStaffedPropose") } : undefined,
+        unstaffedCount > 0
+          ? { href: staffingHref("propose"), label: t("preStaffedPropose"), writes: "SCHEMALAGGNING DRIFT" }
+          : undefined,
     },
   ];
 
@@ -489,16 +491,19 @@ export default function GeneratePage() {
                 <Link href={staffingHref("unstaffed")} className="underline underline-offset-4">
                   {t("preStaffedLink")}
                 </Link>
-                {" · "}
-                <Link href={staffingHref("propose")} className="underline underline-offset-4">
-                  {t("preStaffedPropose")}
-                </Link>
+                <span data-writes="SCHEMALAGGNING DRIFT">
+                  {" · "}
+                  <Link href={staffingHref("propose")} className="underline underline-offset-4">
+                    {t("preStaffedPropose")}
+                  </Link>
+                </span>
               </p>
             ) : null}
             <Button
               className="w-full sm:w-auto"
               disabled={!canRun || isRunning}
               onClick={run}
+              data-writes="SCHEMALAGGNING DRIFT"
               aria-describedby={blockedByStaffing ? "generate-blocked-unstaffed" : undefined}
             >
               {isRunning ? (
@@ -556,6 +561,7 @@ export default function GeneratePage() {
                     <Link
                       href={prerequisite.action.href}
                       className="font-medium text-primary underline-offset-4 hover:underline"
+                      data-writes={prerequisite.action.writes}
                     >
                       {prerequisite.action.label}
                     </Link>

@@ -189,12 +189,15 @@ export function ValidityCard({
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onReview}>{t(mode === "DRAFT" ? "reviewDraft" : "reviewDirect")}</Button>
+        <Button onClick={onReview} data-writes="PUBLICERING DRIFT">
+          {t(mode === "DRAFT" ? "reviewDraft" : "reviewDirect")}
+        </Button>
         {mode === "DRAFT" ? (
           <Button
             variant="outline"
             onClick={() => setDiscarding(true)}
             disabled={!draft.data || pendingCount(draft.data) === 0}
+            data-writes="PUBLICERING SCHEMALAGGNING DRIFT"
           >
             {t("discard")}
           </Button>
@@ -210,7 +213,7 @@ export function ValidityCard({
       ) : null}
 
       {mode === "DRAFT" ? (
-        <section aria-labelledby="refill-title" className="space-y-3 rounded-md border p-3">
+        <section aria-labelledby="refill-title" className="space-y-3 rounded-md border p-3" data-writes="PUBLICERING DRIFT">
           <div className="space-y-1">
             <h3 id="refill-title" className="text-sm font-semibold">
               {t("refillTitle")}

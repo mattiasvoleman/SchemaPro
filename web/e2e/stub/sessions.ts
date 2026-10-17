@@ -86,6 +86,22 @@ export const PEOPLE: Record<Persona, SignedInPerson> = {
 };
 
 /**
+ * A läsare (Läsbehörighet, 20261120090000): an administrator whose profile
+ * writes nothing, signed in to read every admin page read-only. The admin's
+ * persona, so the stub's gateway answers it as it answers the administrator;
+ * what differs is the profile its own Users row carries (world.ts
+ * PROFILE_ROWS), which is what the app reads. Not one of the school's people:
+ * no page lists it, so the other suites see the school they always saw.
+ */
+export const READER: SignedInPerson = {
+  persona: "admin",
+  role: "SCHOOL_ADMIN",
+  authId: uid(KIND.auth, 5),
+  userId: uid(KIND.user, 2),
+  email: "lasare@exempelskolan.example",
+};
+
+/**
  * Someone signed in whom no school knows: an auth user with no Users row, so
  * the (app) layout sends them to /no-profile — the one way to reach that page.
  * Their persona is a pupil's, but no page reads anything for them.
@@ -135,7 +151,7 @@ export function personForToken(token: string | null | undefined): SignedInPerson
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { sub?: string };
-    return [...Object.values(PEOPLE), ORPHAN].find((person) => person.authId === payload.sub) ?? null;
+    return [...Object.values(PEOPLE), READER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
   } catch {
     return null;
   }

@@ -122,7 +122,7 @@ export function AbsenceEndDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={end.isPending}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={() => void submit()} disabled={end.isPending}>
+            <Button onClick={() => void submit()} disabled={end.isPending} data-writes="DRIFT">
               {end.isPending ? <Loader2 className="animate-spin" /> : null}
               {t("confirm")}
             </Button>

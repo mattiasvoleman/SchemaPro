@@ -94,6 +94,21 @@ describe("the absence register", () => {
     expect(link.getAttribute("href")).toMatch(/^\/sv\/admin\/cover\?date=\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("marks a row's changes as Drift's, and leaves the board, the filter and the settings to every reader", async () => {
+    wrap(<AbsenceRegister teachers={TEACHERS} />);
+    const row = (await screen.findByText("Anna Lind")).closest("tr")!;
+    for (const action of ["Ändra", "Avsluta i förtid", "Återkalla"]) {
+      expect(within(row).getByRole("button", { name: new RegExp(`^${action} Anna Lind`) })).toHaveAttribute(
+        "data-writes",
+        "DRIFT",
+      );
+    }
+    expect(within(row).getByRole("link", { name: /Vikarietavlan/ }).closest("[data-writes]")).toBeNull();
+    // The settings dialog is where the reasons and the pool are read; its own writes are marked inside.
+    expect(screen.getByRole("button", { name: "Inställningar" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("switch", { name: "Visa avslutade" })).not.toHaveAttribute("data-writes");
+  });
+
   it("ends an absence early, and undoes the decisions after the new end only when the admin says so", async () => {
     post
       .mockRejectedValueOnce(new ApiError(409, "Det finns beslut…", "ABSENCE_HAS_DECISIONS", { count: 2, lessonId: "l-1", decision: "SUBSTITUTE" }))
@@ -168,6 +183,11 @@ describe("Registrera frånvaro", () => {
         initial={{ userId: "t-anna", from: "2030-10-14", to: "2030-10-15" }}
       />,
     );
+
+  it("marks Registrera as Drift's", () => {
+    openDialog();
+    expect(screen.getByRole("button", { name: "Registrera" })).toHaveAttribute("data-writes", "DRIFT");
+  });
 
   it("registers whole days without times or a reason when none is chosen", async () => {
     post.mockResolvedValue(ONGOING);

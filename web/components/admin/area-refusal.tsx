@@ -1,10 +1,20 @@
 import { KeyRound } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Notice } from "@/components/ui/notice";
 import type { ClosedPages } from "@/components/profile-context";
-import type { AdminArea, AdminProfile, ClosedPage } from "@/lib/admin-areas";
+import {
+  ADMIN_AREAS,
+  WRITER_ORDER,
+  profileDecides,
+  profileWrites,
+  type AdminArea,
+  type AdminProfile,
+  type ClosedPage,
+  type ReadOnlyPage,
+} from "@/lib/admin-areas";
 
 /**
  * What AppShell shows in place of an admin page the profile does not use.
@@ -83,4 +93,75 @@ export function closedMenuStyle(closed: readonly ClosedPage[], menuLabel: string
   const menu = `nav[aria-label="${menuLabel.replace(/["\\]/g, "\\$&")}"]`;
   const links = `:is(${closed.map((page) => `a[href$="${page.path}"]`).join(",")})`;
   return `${menu} li:has(> ${links}){display:none}${menu} > div:not(:has(a:not(${links}))){display:none}`;
+}
+
+/**
+ * Läsbehörighet: the notice above a page the profile reads but does not
+ * change. It names the area and who changes it, so the reader knows whom to
+ * ask; the page's write controls are hidden by readOnlyStyle below.
+ *
+ * A server component like AreaRefusal: the (app) layout renders one per area
+ * the profile reads read-only, above every page, each hidden until the style
+ * rule shows the one whose page is open. No code reaches the browser for it.
+ * Static text, so no live role: it is the page's state, not news.
+ */
+export function ReadOnlyNotice({ area, profile }: { area: AdminArea; profile: AdminProfile }) {
+  const t = useTranslations("adminAreas");
+  const locale = useLocale();
+  const writers = new Intl.ListFormat(locale, { type: "disjunction" }).format(
+    WRITER_ORDER.filter((writer) => profileWrites(writer, area)).map((writer) => t(`doer.${writer}`)),
+  );
+  return (
+    <div data-read-only={area} className="mb-4 print:hidden">
+      <Notice role={null} title={t("readOnlyTitle")}>
+        {t("readOnlyBody", { profile: t(`profile.${profile}`), area: t(`area.${area}`), writers })}
+      </Notice>
+    </div>
+  );
+}
+
+/** One ReadOnlyNotice per area the profile reads read-only, for the layout to put above the page. */
+export function readOnlyNoticesFor(pages: readonly ReadOnlyPage[], profile: AdminProfile | null): React.ReactNode {
+  if (profile === null || pages.length === 0) return null;
+  const areas = [...new Set(pages.map((page) => page.area))];
+  return areas.map((area) => <ReadOnlyNotice key={area} area={area} profile={profile} />);
+}
+
+/**
+ * What the profile does not change, as a style rule the (app) layout renders
+ * on the server, beside closedMenuStyle:
+ *
+ *  - a control marked data-writes="AREA" (or "DECIDES", or several areas)
+ *    is hidden from a profile that does not write the area, so a page
+ *    offers no button the gateway would refuse;
+ *  - a part marked data-writes-inert="AREA" stays on the page but takes no
+ *    pointer: a lesson card one drags to move, a cell one clicks to edit.
+ *    What it shows is the page's reading; what it does is a write;
+ *  - the notices are hidden, and the one whose page the menu marks as
+ *    current (aria-current="page", which a sub-page's parent link carries
+ *    too) is shown. The desktop menu is in the document at every width, so
+ *    :has() finds it on a phone as well.
+ *
+ * The gateway refuses the same writes by name (RolesGuard), and the
+ * database refuses them under it: hiding is a courtesy, not the rule.
+ */
+export function readOnlyStyle(pages: readonly ReadOnlyPage[], profile: AdminProfile | null, menuLabel: string): string {
+  const unwritten: string[] = ADMIN_AREAS.filter((area) => !profileWrites(profile, area));
+  if (!profileDecides(profile)) unwritten.push("DECIDES");
+  let css =
+    unwritten.length > 0
+      ? `${unwritten.map((gate) => `[data-writes~="${gate}"]`).join(",")}{display:none!important}` +
+        `${unwritten.map((gate) => `[data-writes-inert~="${gate}"]`).join(",")}{pointer-events:none}`
+      : "";
+  if (pages.length === 0) return css;
+  const menu = `nav[aria-label="${menuLabel.replace(/["\\]/g, "\\$&")}"]`;
+  // Hidden, and never printed: a printout is the page's reading, not its state.
+  css += "[data-read-only]{display:none}@media print{[data-read-only]{display:none!important}}";
+  const byArea = new Map<AdminArea, string[]>();
+  for (const page of pages) byArea.set(page.area, [...(byArea.get(page.area) ?? []), page.path]);
+  for (const [area, paths] of byArea) {
+    const current = `${menu} a[aria-current="page"]:is(${paths.map((path) => `[href$="${path}"]`).join(",")})`;
+    css += `body:has(${current}) [data-read-only="${area}"]{display:block}`;
+  }
+  return css;
 }

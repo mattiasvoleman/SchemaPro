@@ -202,3 +202,30 @@ describe("SetupPage when every step is done", () => {
     expect(screen.getByRole("status")).toHaveTextContent("doneTimplan");
   });
 });
+
+describe("Läsbehörighet: what writes is marked with planering", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write it: läsår, ämnen, salar and klasser are each
+  // a controller with @Area('PLANERING').
+  const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+
+  it("marks the läsår form, and leaves the years and their Timplan per årskurs to read", async () => {
+    const user = userEvent.setup();
+    render(<SetupPage />);
+    await user.click(screen.getByRole("button", { name: /stepYear/ }));
+    expect(writes(screen.getByLabelText("yearName"))).toBe("PLANERING");
+    expect(writes(screen.getByLabelText("year-start"))).toBe("PLANERING");
+    expect(writes(screen.getByRole("switch"))).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: "create" }))).toBe("PLANERING");
+    // The dialog shows which plan each årskurs follows; its own Spara is marked there.
+    expect(writes(screen.getByRole("button", { name: "yearTimplansFor(2025/26)" }))).toBeUndefined();
+  });
+
+  it("marks a step's quick add", () => {
+    render(<SetupPage />);
+    expect(screen.getByRole("region", { name: "subjectsTitle" })).toBeInTheDocument();
+    expect(writes(screen.getByRole("textbox", { name: "name" }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: "add" }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("link", { name: /goToPage/ }))).toBeUndefined();
+  });
+});

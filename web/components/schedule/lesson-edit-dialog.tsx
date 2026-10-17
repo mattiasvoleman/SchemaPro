@@ -232,7 +232,7 @@ export function LessonEditDialog({
           {/* Both groups WRAP. Five buttons on one row is the overflow that
               put a sideways scrollbar on this dialog; a second row is what a
               narrow window gets instead. */}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" data-writes="SCHEMALAGGNING DRIFT">
             <Button variant="destructive" size="sm" onClick={onDelete} disabled={deletePending}>
               <Trash2 />
               {t("deleteLesson")}
@@ -253,6 +253,7 @@ export function LessonEditDialog({
             <Button
               onClick={onSave}
               disabled={savePending || !draft.startTime || !draft.endTime}
+              data-writes="SCHEMALAGGNING DRIFT"
             >
               {savePending ? (
                 <>

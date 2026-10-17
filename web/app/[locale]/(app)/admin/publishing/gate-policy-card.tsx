@@ -61,7 +61,7 @@ export function GatePolicyCard({ settings }: { settings: PublicationSettings }) 
       description={t("policyBody")}
       descriptionClassName="max-w-prose"
       footer={
-        <Button onClick={save} disabled={Object.keys(changes).length === 0 || update.isPending}>
+        <Button onClick={save} disabled={Object.keys(changes).length === 0 || update.isPending} data-writes="PUBLICERING">
           {update.isPending ? (
             <>
               <Loader2 className="animate-spin" />
@@ -83,7 +83,11 @@ export function GatePolicyCard({ settings }: { settings: PublicationSettings }) 
                 value={value}
                 onValueChange={(next) => setChanges((previous) => ({ ...previous, [key]: next as GateMode }))}
               >
-                <SelectTrigger className="w-36" aria-label={t(`policy.${GATE_OF_POLICY[key]}`)}>
+                <SelectTrigger
+                  className="w-36"
+                  aria-label={t(`policy.${GATE_OF_POLICY[key]}`)}
+                  data-writes-inert="PUBLICERING"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

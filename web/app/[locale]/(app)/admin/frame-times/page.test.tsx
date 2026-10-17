@@ -489,3 +489,25 @@ describe("removing a frame", () => {
     expect(removeMock).toHaveBeenCalledWith("f1");
   });
 });
+
+describe("under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write planering (frame-times.controller.ts @Area);
+  // the frames and the computed week stay to read.
+  const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+
+  it("marks Lägg till, the empty state's two offers and each row's actions, and not the week", () => {
+    const { unmount } = render(<FrameTimesPage />);
+    for (const add of screen.getAllByRole("button", { name: "add" })) expect(writes(add)).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: "offerWholeSchool" }))).toBe("PLANERING");
+    unmount();
+
+    state.frames = { data: [frame("f-1", 0, 9, null, "08:00", "16:00")], isLoading: false, isError: false };
+    render(<FrameTimesPage />);
+    const row = screen.getByRole("table", { name: "tableCaption" }).querySelector("tbody tr")!;
+    const actions = within(row as HTMLElement).getAllByRole("button");
+    expect(actions).toHaveLength(2);
+    for (const action of actions) expect(writes(action)).toBe("PLANERING");
+    expect(writes(screen.getByRole("region", { name: "effectiveTitle" }))).toBeUndefined();
+  });
+});

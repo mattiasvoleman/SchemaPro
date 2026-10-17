@@ -199,7 +199,11 @@ export function ProposalDialog({
             <RefreshCw />
             {t("recompute")}
           </Button>
-          <Button onClick={() => void submit()} disabled={kept.length === 0 || apply.isPending || propose.isPending}>
+          <Button
+            onClick={() => void submit()}
+            disabled={kept.length === 0 || apply.isPending || propose.isPending}
+            data-writes="DRIFT"
+          >
             {apply.isPending ? <Loader2 className="animate-spin" /> : null}
             {t("apply", { count: kept.length })}
           </Button>

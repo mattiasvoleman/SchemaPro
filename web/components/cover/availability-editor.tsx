@@ -98,6 +98,7 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
                   aria-label={t("removeWindow", { when: text })}
                   onClick={() => void drop(window.id)}
                   disabled={remove.isPending}
+                  data-writes="DRIFT"
                 >
                   <Trash2 />
                 </Button>
@@ -106,7 +107,7 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
           })}
         </ul>
       )}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 [&>*]:min-w-0">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 [&>*]:min-w-0" data-writes="DRIFT">
         <div className="space-y-1.5">
           <Label htmlFor="window-kind">{t("windowKind")}</Label>
           <NativeSelect
@@ -148,7 +149,13 @@ export function AvailabilityEditor({ userId, own = false }: { userId?: string; o
           <Input id="window-end" type="time" value={end} onChange={(event) => setEnd(event.target.value)} />
         </div>
       </div>
-      <Button variant="outline" size="sm" onClick={() => void submit()} disabled={add.isPending || !start || !end}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => void submit()}
+        disabled={add.isPending || !start || !end}
+        data-writes="DRIFT"
+      >
         {add.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
         {t("addWindow")}
       </Button>

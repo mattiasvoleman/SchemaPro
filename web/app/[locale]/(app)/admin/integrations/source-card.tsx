@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
+import { useReadOnly } from "@/components/profile-context";
 import { CHECKBOX, NATIVE_SELECT } from "./form-styles";
 import { SecretsSection } from "./secrets-section";
 import { codeText, errorCodeOf, errorText, formatWhen } from "./ss12000-messages";
@@ -135,7 +136,10 @@ export function SourceCard({ source }: { source: SourceView | null }) {
     form.authKind === "OAUTH2_CLIENT_CREDENTIALS"
       ? form.tokenUrl.trim() === "" || form.clientId.trim() === ""
       : form.authKind === "MTLS_CLIENT_CERT" && (form.tokenUrl.trim() === "") !== (form.clientId.trim() === "");
+  // A reader (Läsbehörighet) reads the source; Enter in a field does not save it.
+  const readOnly = useReadOnly();
   const canSave =
+    !readOnly &&
     form.name.trim() !== "" && form.baseUrl.trim() !== "" && !baseProblem && !tokenProblem && !clientIncomplete && !save.isPending;
 
   const submit = (input: SourceInput, okMessage: string) =>
@@ -176,8 +180,11 @@ export function SourceCard({ source }: { source: SourceView | null }) {
   return (
     <SectionCard id="ss-source" title={t("title")} description={t("body")}>
       <div className="space-y-6">
+        {/* The fields show the source as saved, so a profile that does not
+            write Integrationer reads them; they take no pointer, and Save is hidden. */}
         <form
           className="space-y-4"
+          data-writes-inert="INTEGRATIONER"
           onSubmit={(event) => {
             event.preventDefault();
             if (canSave) submit(inputOf(form), t("saved"));
@@ -264,7 +271,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
               <Switch id="ss-enabled" checked={form.enabled} onCheckedChange={(checked) => set("enabled", checked)} />
             </div>
           </div>
-          <Button type="submit" disabled={!canSave}>
+          <Button type="submit" disabled={!canSave} data-writes="INTEGRATIONER">
             {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
             {source ? t("save") : t("create")}
           </Button>
@@ -287,7 +294,13 @@ export function SourceCard({ source }: { source: SourceView | null }) {
                 </Notice>
               ) : null}
               <div className="flex flex-wrap items-center gap-3">
-                <Button type="button" variant="outline" onClick={runTest} disabled={test.isPending}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={runTest}
+                  disabled={test.isPending}
+                  data-writes="INTEGRATIONER"
+                >
                   {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
                   {t("test")}
                 </Button>
@@ -353,6 +366,7 @@ export function SourceCard({ source }: { source: SourceView | null }) {
                       size="sm"
                       disabled={!orgsChanged || chosenOrgs.length === 0 || save.isPending}
                       onClick={() => submit({ ...inputOf(formOf(source)), organisationIds: chosenOrgs }, t("organisationsSaved"))}
+                      data-writes="INTEGRATIONER"
                     >
                       {t("organisationsSave")}
                     </Button>

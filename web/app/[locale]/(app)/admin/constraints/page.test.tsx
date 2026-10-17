@@ -264,3 +264,34 @@ describe("Constraints page — a read that fails", () => {
     expect(within(screen.getByRole("table")).getByText("Möte")).toBeTruthy();
   });
 });
+
+describe("Constraints page under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write planering
+  // (availability-constraints.controller.ts @Area); the rules stay to read.
+  it("marks Lägg till and each rule's Redigera and Ta bort", () => {
+    constraints.data = [
+      {
+        id: "c-1",
+        resourceType: "TEACHER",
+        userId: "u-1",
+        roomId: null,
+        studentGroupId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        dayOfWeek: 1,
+        date: null,
+        startTime: "08:00:00",
+        endTime: "09:00:00",
+        type: "UNAVAILABLE",
+        reason: null,
+      },
+    ];
+    constraints.isError = false;
+    render(<ConstraintsPage />);
+    expect(screen.getByRole("button", { name: "addConstraint" })).toHaveAttribute("data-writes", "PLANERING");
+    for (const name of [/^actionNamed\(edit\|Karin Ek/, /^actionNamed\(delete\|Karin Ek/]) {
+      expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+    }
+  });
+});

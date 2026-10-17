@@ -57,6 +57,19 @@ describe("Lokalbokningar", () => {
     expect(screen.queryByText("Inga bokningar väntar på beslut")).not.toBeInTheDocument();
   });
 
+  it("marks a waiting booking's decision as Drift's, and the filter as no one's", () => {
+    renderPage();
+    expect(screen.getByRole("button", { name: /^Godkänn Musiksalen/ }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "DRIFT",
+    );
+    expect(screen.getByRole("button", { name: /^Avslå Musiksalen/ }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "DRIFT",
+    );
+    expect(screen.getByRole("tab", { name: "Väntar" }).closest("[data-writes]")).toBeNull();
+  });
+
   it("rejects only after the question, and says so", async () => {
     decide.mockResolvedValue({});
     const user = userEvent.setup();

@@ -103,6 +103,11 @@ describe("a teacher with no rule", () => {
     expect(screen.getByText("emptyMeansNoRule")).toBeInTheDocument();
   });
 
+  it("marks Spara as planering's write, the teacher's work rule (Läsbehörighet)", () => {
+    open(undefined);
+    expect(save()).toHaveAttribute("data-writes", "PLANERING");
+  });
+
   it("sends nothing at all when it is saved untouched", async () => {
     // Not a POST of four nulls, and not a DELETE of a row that does not exist:
     // there is nothing to say, so nothing is said.

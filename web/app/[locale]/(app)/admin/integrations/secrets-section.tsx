@@ -98,7 +98,8 @@ function SecretRow({ kind, setAt, optional, unused = false }: { kind: SecretKind
         )}
       </div>
       {unused ? <p className="text-xs text-muted-foreground">{t("unused")}</p> : null}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+      {/* What is set, and when, is the row's reading; the field and its buttons write. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start" data-writes="INTEGRATIONER">
         {unused ? null : PEM.has(kind) ? (
           <Textarea
             id={id}

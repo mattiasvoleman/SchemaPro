@@ -61,6 +61,18 @@ describe("/admin/calendar-feeds", () => {
     expect(screen.getByRole("link", { name: "Din egen prenumeration" })).toHaveAttribute("href", "/calendar-feed");
   });
 
+  it("marks each switch's row as Publicering's, so a profile that does not publish reads it but cannot press it", async () => {
+    renderPage();
+    for (const name of ["Lärare", "Elever", "Vårdnadshavare"]) {
+      // The row, label and all: a press on the label would press the switch.
+      const row = (await screen.findByRole("switch", { name })).closest("[data-writes-inert]");
+      expect(row).toHaveAttribute("data-writes-inert", "PUBLICERING");
+      expect(row).toContainElement(screen.getByText(name));
+    }
+    // The admin's own feed is theirs, whatever their profile.
+    expect(screen.getByRole("link", { name: "Din egen prenumeration" }).closest("[data-writes],[data-writes-inert]")).toBeNull();
+  });
+
   it("turns an audience on at once, and has the admin's own feed list read again", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });

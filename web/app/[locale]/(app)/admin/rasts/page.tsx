@@ -186,7 +186,7 @@ export default function RastsPage() {
         subtitle={t("subtitle")}
         intro={t("hint")}
         actions={
-          <Button onClick={openCreate}>
+          <Button data-writes="PLANERING" onClick={openCreate}>
             <Plus aria-hidden="true" />
             {t("add")}
           </Button>
@@ -259,23 +259,26 @@ export default function RastsPage() {
                       {formatTime(rast.startTime)}–{formatTime(rast.endTime)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <RowActions
-                        name={rast.name}
-                        actions={[
-                          {
-                            label: tCommon("edit"),
-                            icon: Pencil,
-                            onSelect: () => openEdit(rast),
-                            ariaLabel: t("editRast", { name: rast.name }),
-                          },
-                          {
-                            label: tCommon("delete"),
-                            icon: Trash2,
-                            onSelect: () => setDeleting(rast),
-                            ariaLabel: t("deleteRast", { name: rast.name }),
-                          },
-                        ]}
-                      />
+                      {/* Both write (rasts.controller.ts @Area): RowActions takes no attribute. */}
+                      <div data-writes="PLANERING" className="contents">
+                        <RowActions
+                          name={rast.name}
+                          actions={[
+                            {
+                              label: tCommon("edit"),
+                              icon: Pencil,
+                              onSelect: () => openEdit(rast),
+                              ariaLabel: t("editRast", { name: rast.name }),
+                            },
+                            {
+                              label: tCommon("delete"),
+                              icon: Trash2,
+                              onSelect: () => setDeleting(rast),
+                              ariaLabel: t("deleteRast", { name: rast.name }),
+                            },
+                          ]}
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -375,3 +375,23 @@ describe("RoomPreferencesCard", () => {
     });
   });
 });
+
+describe("RoomPreferencesCard under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write planering (room-preferences.controller.ts
+  // @Area); the stated rules stay to read.
+  beforeEach(() => {
+    preferences.data = [
+      { id: "p1", subjectId: "s-no", kind: "LOCK" as const, minGradeLevel: null, maxGradeLevel: null, roomTypeId: "rt-lab", weight: 5, rooms: [] },
+    ];
+    preferences.isError = false;
+  });
+
+  it("marks Lägg till and each rule's Ta bort", () => {
+    render(<RoomPreferencesCard kind="LOCK" />);
+    expect(screen.getByRole("button", { name: "addLock" })).toHaveAttribute("data-writes", "PLANERING");
+    const remove = within(screen.getByRole("list")).getByRole("button", { name: /^actionNamed\(delete\|/ });
+    expect(remove.closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("listitem").closest("[data-writes]")).toBeNull();
+  });
+});

@@ -115,7 +115,7 @@ export function DelegationDialog({ open, onOpenChange, current, history, pending
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             {tCommon("cancel")}
           </Button>
-          <Button onClick={() => void save()} disabled={pending || tooLong}>
+          <Button onClick={() => void save()} disabled={pending || tooLong} data-writes="DECIDES">
             {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
             {pending ? t("delegationSaving") : t("delegationSave")}
           </Button>

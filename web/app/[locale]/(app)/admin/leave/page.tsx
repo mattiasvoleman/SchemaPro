@@ -90,6 +90,7 @@ export default function LeaveRequestsPage() {
       }}
       deciding={actions.decide.isPending ? (actions.decide.variables?.id ?? null) : null}
       onDecide={decide}
+      writes="DRIFT"
     />
   );
 
@@ -114,6 +115,7 @@ export default function LeaveRequestsPage() {
                   setEditUsed(true);
                   setEditOpen(true);
                 }}
+                data-writes="DECIDES"
               >
                 <Pencil aria-hidden="true" />
                 {t("delegationEdit")}

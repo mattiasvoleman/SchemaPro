@@ -127,7 +127,7 @@ export function QualificationsCard({
       description={t("qualificationsHint")}
       action={
         !editing && !readOnly ? (
-          <Button variant="outline" size="sm" onClick={open}>
+          <Button variant="outline" size="sm" onClick={open} data-writes="PLANERING">
             {stored.length > 0 ? t("editQualifications") : tCommon("add")}
           </Button>
         ) : null

@@ -489,6 +489,7 @@ export function CreateLessonDialog({
           </Button>
           <Button
             onClick={onCreate}
+            data-writes="SCHEMALAGGNING DRIFT"
             disabled={
               pending ||
               !draft ||

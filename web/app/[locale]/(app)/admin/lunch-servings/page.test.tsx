@@ -605,3 +605,20 @@ describe("saving a sitting", () => {
     );
   });
 });
+
+describe("under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write planering (lunch-servings.controller.ts
+  // @Area); the sittings and the flow stay to read.
+  it("marks Lägg till and each sitting's Redigera and Ta bort, and not the flow", () => {
+    state.servings = { data: [serving("a", 4, 6, null, "11:40", "12:20")], isLoading: false };
+    render(<LunchServingsPage />);
+    const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+    expect(writes(screen.getByRole("button", { name: "add" }))).toBe("PLANERING");
+    const row = screen.getByRole("table", { name: "tableCaption" }).querySelector("tbody tr") as HTMLElement;
+    const actions = within(row).getAllByRole("button");
+    expect(actions).toHaveLength(2);
+    for (const action of actions) expect(writes(action)).toBe("PLANERING");
+    expect(writes(screen.getByRole("region", { name: "windowsTitle" }))).toBeUndefined();
+  });
+});

@@ -2,7 +2,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LocalTimplanCheckResponse, LocalTimplanDetail } from "@/lib/timplan-queries";
-import type { Subject } from "@/lib/types";
+import type { Profile, Subject } from "@/lib/types";
+import { ProfileProvider } from "@/components/profile-context";
 import { B1, LAW_2028, NATIONAL } from "@/lib/__fixtures__/timplan-statute";
 import TimplanPage from "./page";
 
@@ -475,5 +476,50 @@ describe("TimplanPage: Timplaner per årskull", () => {
     expect(notice).toBeVisible();
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(notice).toBeVisible();
+  });
+});
+
+describe("TimplanPage under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] and
+  // takes the pointer from [data-writes-inert~="PLANERING"] for a profile that
+  // does not write planering: local-timplans.controller.ts @Area('PLANERING'),
+  // Besluta included, and the import's /import/timplan.
+  it("hides every act on a draft but the export, and leaves the plan's fields and cells to read", () => {
+    render(<TimplanPage />);
+    for (const name of ["newPlan", "save", "decide", "copy", "generateButton", "importCsv", "delete"]) {
+      expect(screen.getByRole("button", { name: new RegExp(`^${name}$`) })).toHaveAttribute("data-writes", "PLANERING");
+    }
+    expect(screen.getByRole("button", { name: "exportCsv" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("button", { name: "yearTimplansButton" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("combobox", { name: "planLabel" })).not.toHaveAttribute("data-writes-inert");
+    // The fields are a writer's to type in: read-only only for a reader, below.
+    expect(screen.getByLabelText("nameLabel")).not.toHaveAttribute("readonly");
+    expect(input("s-ma", 1)).not.toHaveAttribute("readonly");
+  });
+
+  it("gives a reader the plan's fields and cells read-only, by keyboard as by pointer", () => {
+    render(
+      <ProfileProvider profile={{} as Profile} school={null} readOnly>
+        <TimplanPage />
+      </ProfileProvider>,
+    );
+    expect(screen.getByLabelText("nameLabel")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("weeksLabel")).toHaveAttribute("readonly");
+    expect(screen.getByRole("combobox", { name: "versionLabel" })).toBeDisabled();
+    expect(input("s-ma", 1)).toHaveAttribute("readonly");
+    expect(screen.queryByRole("button", { name: "weeksUseSuggestion" })).toBeNull();
+  });
+
+  it("hides Öppna igen on a decided plan, and the empty state's Ny timplan", () => {
+    show(DECIDED);
+    const { unmount } = render(<TimplanPage />);
+    expect(screen.getByRole("button", { name: "reopen" })).toHaveAttribute("data-writes", "PLANERING");
+    unmount();
+    state.plans = [];
+    state.plan = null;
+    render(<TimplanPage />);
+    for (const add of screen.getAllByRole("button", { name: "newPlan" })) {
+      expect(add).toHaveAttribute("data-writes", "PLANERING");
+    }
   });
 });

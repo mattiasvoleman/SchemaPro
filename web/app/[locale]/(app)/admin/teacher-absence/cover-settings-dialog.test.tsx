@@ -126,6 +126,30 @@ describe("Frånvaro och vikarier", () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cover/pool", { userId: "t-dan" }));
   });
 
+  it("marks every change as Drift's, and keeps the settings, the list and the pool on screen for a reader", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(await screen.findByRole("button", { name: "Spara reglerna" })).toHaveAttribute("data-writes", "DRIFT");
+    // What the school has set is the dialog's reading: shown, not pressed.
+    expect(screen.getByRole("switch", { name: /Lärare får anmäla sin egen frånvaro/ }).closest("[data-writes-inert]")).toHaveAttribute(
+      "data-writes-inert",
+      "DRIFT",
+    );
+    expect(screen.getByRole("combobox", { name: "Vikariepoolen i förslagen" })).toHaveAttribute("data-writes-inert", "DRIFT");
+    const own = (await screen.findByText("Facklig tid")).closest("li")!;
+    expect(within(own).getByRole("button", { name: "Byt namn" })).toHaveAttribute("data-writes", "DRIFT");
+    expect(within(own).getByRole("button", { name: "Dölj" })).toHaveAttribute("data-writes", "DRIFT");
+    expect(screen.getByLabelText("Ny orsak").closest("form")).toHaveAttribute("data-writes", "DRIFT");
+    expect(await screen.findByRole("button", { name: "Ta bort Cia Holm ur poolen" })).toHaveAttribute("data-writes", "DRIFT");
+    expect(screen.getByRole("button", { name: "Lägg till" }).closest("[data-writes]")).toHaveAttribute("data-writes", "DRIFT");
+    // A member's hours are read through Tider; adding one is a change.
+    const hours = screen.getByRole("button", { name: "Tider" });
+    expect(hours).not.toHaveAttribute("data-writes");
+    await user.click(hours);
+    expect(await screen.findByRole("button", { name: "Lägg till tid" })).toHaveAttribute("data-writes", "DRIFT");
+    expect(screen.getByLabelText("Veckodag").closest("[data-writes]")).toHaveAttribute("data-writes", "DRIFT");
+  });
+
   it("adds a weekly window for a member", async () => {
     post.mockResolvedValue({});
     const user = userEvent.setup();

@@ -64,7 +64,7 @@ export function ModeCard({ mode }: { mode: PublishMode }) {
       }
     >
       <p className="max-w-prose text-sm">{t(mode === "DRAFT" ? "modeDraftBody" : "modeDirectBody")}</p>
-      <Button variant="outline" onClick={() => setConfirming(true)} disabled={switchMode.isPending}>
+      <Button variant="outline" onClick={() => setConfirming(true)} disabled={switchMode.isPending} data-writes="PUBLICERING">
         {t(target === "DRAFT" ? "modeToDraft" : "modeToDirect")}
       </Button>
       {/* What the gateway refused and how to get there, where the switch was pressed. */}

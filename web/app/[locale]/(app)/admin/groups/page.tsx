@@ -389,11 +389,11 @@ export default function GroupsPage() {
                 },
               ]}
             />
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setImportOpen(true)}>
               <Upload aria-hidden="true" />
               {tCsvImport("button")}
             </Button>
-            <Button onClick={openCreate} disabled={!hasYears}>
+            <Button data-writes="PLANERING" onClick={openCreate} disabled={!hasYears}>
               <Plus aria-hidden="true" />
               {t("addGroup")}
             </Button>
@@ -447,7 +447,7 @@ export default function GroupsPage() {
           description={t("emptyHint")}
           headingLevel={2}
           action={
-            <Button onClick={openCreate}>
+            <Button data-writes="PLANERING" onClick={openCreate}>
               <Plus aria-hidden="true" />
               {t("addGroup")}
             </Button>
@@ -519,7 +519,10 @@ export default function GroupsPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <RowActions name={group.name} actions={actionsOf(group)} />
+                      {/* Every action writes (halves, members, edit, delete): RowActions takes no attribute. */}
+                      <div data-writes="PLANERING" className="contents">
+                        <RowActions name={group.name} actions={actionsOf(group)} />
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

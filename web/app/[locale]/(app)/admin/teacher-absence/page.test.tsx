@@ -111,6 +111,22 @@ describe("cancelling from Lärarfrånvaro", () => {
   });
 });
 
+describe("what a profile that does not write Drift is spared", () => {
+  it("marks Registrera frånvaro, the whole-list cancel and each lesson's actions as Drift's, and the filter as no one's", async () => {
+    await chooseTeacher();
+    expect(screen.getByRole("button", { name: /teacherAbsence\.register/ })).toHaveAttribute("data-writes", "DRIFT");
+    expect(screen.getByRole("button", { name: /teacherAbsence\.cancelAll/ })).toHaveAttribute("data-writes", "DRIFT");
+    const row = screen.getByText("7A").closest("tr")!;
+    for (const action of ["substituteAction", "roomChangeAction", "cancelAction"]) {
+      expect(within(row).getByRole("button", { name: new RegExp(`dayPlanner\\.${action}`) })).toHaveAttribute(
+        "data-writes",
+        "DRIFT",
+      );
+    }
+    expect(screen.getByLabelText("teacherAbsence.selectTeacher")).not.toHaveAttribute("data-writes");
+  });
+});
+
 describe("the register dialog beside the page's own filter", () => {
   it("labels the dialog's teacher field, not the page's teacher filter behind it", async () => {
     // Both fields are "Lärare" Selects; with one shared id the dialog's label

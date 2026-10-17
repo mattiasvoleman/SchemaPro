@@ -329,3 +329,24 @@ describe("LunchSettingsCard", () => {
     });
   });
 });
+
+describe("LunchSettingsCard under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] and
+  // takes the pointer from [data-writes-inert~="PLANERING"] for a profile
+  // that does not write planering (lunch-settings.controller.ts @Area).
+  beforeEach(() => {
+    settings.data = null;
+    settings.isSuccess = true;
+    settings.isError = false;
+  });
+
+  it("keeps the rules readable but inert, and hides Spara", async () => {
+    render(<LunchSettingsCard />);
+    await waitFor(() => expect(field("windowStart")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
+    for (const control of [field("windowStart"), field("seats"), screen.getByRole("switch")]) {
+      expect(control.closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "PLANERING");
+      expect(control.closest("[data-writes]")).toBeNull();
+    }
+  });
+});

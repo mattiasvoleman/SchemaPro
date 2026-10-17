@@ -226,6 +226,40 @@ describe("Vikarietavla", () => {
     expect(await within(await screen.findByRole("dialog")).findByText("Legitimerad i Matematik för åk 7–9")).toBeInTheDocument();
   });
 
+  it("marks every decision as Drift's, and leaves the board's reading and its navigation to every reader", async () => {
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    expect(screen.getByRole("button", { name: /Fördela dagen/ })).toHaveAttribute("data-writes", "DRIFT");
+    // A pair's decisions sit together: the button in sight and "Fler val" are hidden with them.
+    const maths = rowOf("Matematik");
+    expect(within(maths).getByRole("button", { name: /^Tillsätt vikarie Anna Lind/ }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "DRIFT",
+    );
+    expect(within(maths).getByRole("button", { name: /^Fler val Anna Lind/ }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "DRIFT",
+    );
+    expect(within(rowOf("Svenska")).getByRole("button", { name: /^Ångra Anna Lind/ }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "DRIFT",
+    );
+    // A pair is chosen only for the bulk decisions.
+    expect(within(maths).getByRole("checkbox")).toHaveAttribute("data-writes", "DRIFT");
+    const phoneMaths = within(phoneList())
+      .getAllByRole("listitem")
+      .find((item) => item.textContent?.includes("Matematik"))!;
+    expect(within(phoneMaths).getByRole("checkbox").closest("label")).toHaveAttribute("data-writes", "DRIFT");
+    for (const box of within(table()).getAllByRole("checkbox")) await user.click(box);
+    for (const name of ["Ställ in valda (2)", "Självstudier för valda (2)", "Ångra valda (1)"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("data-writes", "DRIFT");
+    }
+    expect(screen.getByRole("button", { name: "Avmarkera" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("tab", { name: "Vecka" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("button", { name: "Idag" })).not.toHaveAttribute("data-writes");
+  });
+
   it("says the board could not be read, and never draws a failed read as a day with nothing to cover", async () => {
     get.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/v1/cover/board")) throw new ApiError(500, "boom");

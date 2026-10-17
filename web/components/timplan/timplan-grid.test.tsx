@@ -214,6 +214,15 @@ describe("TimplanGrid", () => {
     expect(input("s-bi", 1)).not.toHaveClass("border-input-strong");
   });
 
+  // Läsbehörighet: the page passes readOnly for a reader, so the cells are
+  // read by pointer and keyboard alike, and a note stays on its hover.
+  it("keeps a read-only cell's note on its hover and takes no mark", () => {
+    render(<Harness readOnly notes={new Map([[cellKey("s-prog", 8), "Skolans val"]])} />);
+    expect(input("s-prog", 8)).toHaveAttribute("readonly");
+    expect(input("s-prog", 8)).toHaveAttribute("title", "cellNote(Skolans val)");
+    expect(input("s-prog", 8)).not.toHaveAttribute("data-writes-inert");
+  });
+
   it("lights the cells and the sum a selected verdict is about, and nothing else", () => {
     render(<Harness highlightCode="TIMPLAN_GROUP_MINIMUM_UNMET" highlightChild="KE" />);
     expect(input("s-ke", 4)).toHaveAttribute("data-highlighted", "true");

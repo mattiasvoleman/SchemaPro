@@ -208,7 +208,7 @@ export default function LunchServingsPage() {
         subtitle={t("subtitle")}
         intro={t("hint")}
         actions={
-          <Button onClick={openCreate}>
+          <Button data-writes="PLANERING" onClick={openCreate}>
             <Plus aria-hidden="true" />
             {t("add")}
           </Button>
@@ -298,13 +298,16 @@ export default function LunchServingsPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <RowActions
-                      name={rowName(serving)}
-                      actions={[
-                        { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(serving) },
-                        { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(serving) },
-                      ]}
-                    />
+                    {/* Both write (lunch-servings.controller.ts @Area): RowActions takes no attribute. */}
+                    <div data-writes="PLANERING" className="contents">
+                      <RowActions
+                        name={rowName(serving)}
+                        actions={[
+                          { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(serving) },
+                          { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(serving) },
+                        ]}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

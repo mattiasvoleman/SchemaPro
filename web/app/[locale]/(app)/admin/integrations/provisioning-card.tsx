@@ -64,7 +64,9 @@ export function ProvisioningCard() {
       {people.data && list.length === 0 ? <p className="text-sm text-muted-foreground">{t("empty")}</p> : null}
       {list.length > 0 ? (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          {/* The choosing and the invitation are the people register's (POST
+              /users/invitations, Personal); the list is the run's reading. */}
+          <div className="flex flex-wrap items-center gap-2" data-writes="PERSONAL">
             <Button type="button" size="sm" variant="outline" onClick={() => setChosen(new Set(list.map((person) => person.id)))}>
               {t("selectAll", { count: list.length })}
             </Button>
@@ -96,7 +98,14 @@ export function ProvisioningCard() {
               const id = `ss-prov-${person.id}`;
               return (
                 <li key={person.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                  <input id={id} type="checkbox" className={CHECKBOX} checked={chosen.has(person.id)} onChange={(event) => toggle(person.id, event.target.checked)} />
+                  <input
+                    id={id}
+                    type="checkbox"
+                    className={CHECKBOX}
+                    checked={chosen.has(person.id)}
+                    onChange={(event) => toggle(person.id, event.target.checked)}
+                    data-writes="PERSONAL"
+                  />
                   <label htmlFor={id} className="min-w-0 flex-1">
                     <span className="font-medium">
                       {person.firstName} {person.lastName}

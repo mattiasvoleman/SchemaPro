@@ -249,6 +249,7 @@ export default function TeacherAbsencePage() {
               setRegisterOpened(true);
               setRegistering(true);
             }}
+            data-writes="DRIFT"
           >
             <CalendarPlus />
             {t("register")}
@@ -311,6 +312,7 @@ export default function TeacherAbsencePage() {
               className="ml-auto"
               onClick={() => setConfirmingAll(true)}
               disabled={bulkBusy || cancel.isPending}
+              data-writes="DRIFT"
             >
               {bulkBusy ? <Loader2 className="animate-spin" /> : <CalendarX2 />}
               {t("cancelAll")}
@@ -384,6 +386,7 @@ export default function TeacherAbsencePage() {
                             size="sm"
                             aria-label={named(tDay("substituteAction"), lesson)}
                             onClick={() => open("substitute", lesson)}
+                            data-writes="DRIFT"
                           >
                             <UserPlus />
                             {tDay("substituteAction")}
@@ -393,6 +396,7 @@ export default function TeacherAbsencePage() {
                             size="sm"
                             aria-label={named(tDay("roomChangeAction"), lesson)}
                             onClick={() => open("room", lesson)}
+                            data-writes="DRIFT"
                           >
                             <MapPin />
                             {tDay("roomChangeAction")}
@@ -402,6 +406,7 @@ export default function TeacherAbsencePage() {
                             size="sm"
                             aria-label={named(tDay("cancelAction"), lesson)}
                             onClick={() => open("cancel", lesson)}
+                            data-writes="DRIFT"
                           >
                             <CalendarX2 />
                             {tDay("cancelAction")}

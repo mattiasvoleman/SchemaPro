@@ -49,7 +49,12 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 vi.mock("@/i18n/navigation", () => ({
-  Link: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>,
+  // The rest of the props too, as next-intl's Link passes them: a data-writes mark among them.
+  Link: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -336,5 +341,30 @@ describe("YearsPage", () => {
     expect(within(rowOf("2027/28")).getByRole("button", { name: "Ta bort 2027/28" })).toBeInTheDocument();
     expect(within(rowOf("2025/26")).queryByRole("button", { name: "Ta bort 2025/26" })).toBeNull();
     expect(within(rowOf("2026/27")).queryByRole("button", { name: "Ta bort 2026/27" })).toBeNull();
+  });
+
+  it("marks every write a row offers as planering's, and the links to read with nothing (Läsbehörighet)", async () => {
+    post.mockResolvedValue(plan());
+    const user = userEvent.setup();
+    renderPage();
+    const coming = rowOf("2027/28");
+    await waitFor(() => expect(within(coming).getByRole("button", { name: "Rulla vidare" })).toHaveAttribute("data-writes", "PLANERING"));
+    expect(within(coming).getByRole("button", { name: "Aktivera" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(within(coming).getByRole("button", { name: "Ta bort 2027/28" }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "PLANERING",
+    );
+    // Planning next year's schedule is a page to read before it is a write.
+    expect(within(coming).getByRole("link", { name: /Generera schema/ })).not.toHaveAttribute("data-writes");
+
+    await user.click(within(coming).getByRole("button", { name: "Aktivera" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("button", { name: "Aktivera 2027/28" })).toHaveAttribute("data-writes", "PLANERING");
+  });
+
+  it("marks the link to the rollover wizard as planering's write (Läsbehörighet)", () => {
+    state.years = [{ ...y26, predecessorId: null }];
+    renderPage();
+    expect(within(rowOf("2026/27")).getByRole("link", { name: /Rulla vidare/ })).toHaveAttribute("data-writes", "PLANERING");
   });
 });

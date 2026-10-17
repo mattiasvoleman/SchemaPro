@@ -320,7 +320,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
                     <ArrowRight aria-hidden="true" />
                   </Button>
                 ) : (
-                  <Button key="create" onClick={() => void create()} disabled={!canCreate}>
+                  <Button key="create" onClick={() => void create()} disabled={!canCreate} data-writes="PLANERING">
                     {execute.isPending ? tCommon("saving") : t("createYear", { name: form.name.trim() })}
                   </Button>
                 )}

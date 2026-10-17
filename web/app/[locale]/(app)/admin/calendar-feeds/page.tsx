@@ -14,6 +14,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useReadOnly } from "@/components/profile-context";
 import { CALENDAR_FEED_KEYS, useCalendarFeedCounts, type FeedAudience } from "@/lib/calendar-feed";
 import { usePublicationSettings, useUpdatePublicationSettings } from "@/lib/publication-queries";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,8 @@ export default function CalendarFeedSettingsPage() {
   const settings = usePublicationSettings();
   const counts = useCalendarFeedCounts();
   const update = useUpdatePublicationSettings();
+  // A press saves (or asks to stop): a reader (Läsbehörighet) sees the switches set, not pressable.
+  const readOnly = useReadOnly();
   const queryClient = useQueryClient();
   // Which audience the dialog asks about outlives its closing, so the exit
   // animation keeps its title.
@@ -84,7 +87,8 @@ export default function CalendarFeedSettingsPage() {
     <SectionCard id="calendar-feed-audiences" title={t("audiencesTitle")} description={t("audiencesBody")} headingLevel={2}>
       <div className="space-y-4">
         {AUDIENCES.map(({ flag, audience }) => (
-          <div key={flag} className="flex items-start justify-between gap-4">
+          // The whole row: its label presses the switch as well, and a press saves.
+          <div key={flag} className="flex items-start justify-between gap-4" data-writes-inert="PUBLICERING">
             <div className="space-y-1">
               <Label htmlFor={`feed-${flag}`}>{t(`audience.${audience}`)}</Label>
               <p className="text-sm text-muted-foreground">
@@ -98,6 +102,7 @@ export default function CalendarFeedSettingsPage() {
             <Switch
               id={`feed-${flag}`}
               checked={data[flag]}
+              disabled={readOnly}
               onCheckedChange={(on) => change(flag, audience, on)}
               aria-disabled={update.isPending}
               className={cn(update.isPending && "cursor-not-allowed opacity-50")}

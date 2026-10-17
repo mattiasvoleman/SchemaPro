@@ -551,6 +551,25 @@ describe("StaffingProposalDialog", () => {
       expect(button.getAttribute("aria-label")).toMatch(new RegExp(`^${button.textContent}`));
     });
 
+    it("marks each write with its route's areas, for the läsare's style rule (Läsbehörighet)", async () => {
+      // #propose opens the dialog from a link, so the page's own button is not the only way in.
+      const user = userEvent.setup();
+      renderDialog();
+      expect(screen.getByRole("button", { name: "Beräkna förslag" })).toHaveAttribute(
+        "data-writes",
+        "SCHEMALAGGNING DRIFT",
+      );
+      await computeProposal(user);
+      expect(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" })).toHaveAttribute(
+        "data-writes",
+        "SCHEMALAGGNING DRIFT",
+      );
+      expect(screen.getByRole("button", { name: /^Tillämpa/ })).toHaveAttribute(
+        "data-writes",
+        "SCHEMALAGGNING PLANERING",
+      );
+    });
+
     it("takes a kept row out of the selection at once, so a recompute that fails cannot apply it", async () => {
       const user = userEvent.setup();
       let asked = 0;

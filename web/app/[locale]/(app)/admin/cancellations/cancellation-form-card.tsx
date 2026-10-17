@@ -136,7 +136,8 @@ export function CancellationFormCard({
   };
 
   return (
-    <SectionCard id="cancel-form" title={t("formTitle")}>
+    // Every part of it is the new batch, Drift's: even its preview is a POST the gateway answers by area.
+    <SectionCard id="cancel-form" title={t("formTitle")} data-writes="DRIFT">
       <div className="space-y-4 text-sm">
         <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
           <FormField id="cancel-name" label={t("name")}>

@@ -237,6 +237,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
                             size="sm"
                             aria-label={named(t("edit"))}
                             onClick={opening(() => setEditing(absence))}
+                            data-writes="DRIFT"
                           >
                             {t("edit")}
                           </Button>
@@ -247,6 +248,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
                             size="sm"
                             aria-label={named(t("end"))}
                             onClick={opening(() => setEnding(absence))}
+                            data-writes="DRIFT"
                           >
                             {t("end")}
                           </Button>
@@ -258,6 +260,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
                             size="sm"
                             aria-label={named(t("withdraw"))}
                             onClick={opening(() => setWithdrawing(absence))}
+                            data-writes="DRIFT"
                           >
                             {t("withdraw")}
                           </Button>

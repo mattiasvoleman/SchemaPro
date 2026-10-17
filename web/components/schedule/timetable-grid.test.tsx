@@ -1412,5 +1412,39 @@ describe("movable bands", () => {
     expect(screen.queryByRole("button", { name: "Flytta lunchen" })).not.toBeInTheDocument();
     expect(screen.getByText("Lunch")).toBeInTheDocument();
   });
+
+  it("marks the grip inert and the × hidden for a profile that does not write the sittings (Läsbehörighet)", () => {
+    // The grip carries the meal's name: it stays to be read, without the pointer.
+    render(
+      <TimetableGrid
+        lessons={[]}
+        bands={[meal({ removeLabel: "Ta bort", handPlaced: true })]}
+        editable
+        onBandMove={vi.fn()}
+        onBandRemove={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Flytta lunchen" })).toHaveAttribute("data-writes-inert", "SCHEMALAGGNING");
+    expect(screen.getByRole("button", { name: "Ta bort" })).toHaveAttribute("data-writes", "SCHEMALAGGNING");
+  });
 });
 
+describe("TimetableGrid for a profile that does not write the grundschema (Läsbehörighet)", () => {
+  it("takes the pointer from an editable grid's columns, lessons and all, and marks a read-only grid not at all", () => {
+    /*
+     * A drag, a click that opens the editor and a click on empty time that
+     * adds a lesson are all the master lessons' writes. The (app) layout's
+     * style rule takes the pointer from a column marked data-writes-inert;
+     * what the column shows stays.
+     */
+    const { container, rerender } = render(
+      <TimetableGrid lessons={[makeLesson()]} editable onLessonChange={vi.fn()} onSlotClick={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: /Math/ }).closest("[data-writes-inert]")).toHaveAttribute(
+      "data-writes-inert",
+      "SCHEMALAGGNING DRIFT",
+    );
+    rerender(<TimetableGrid lessons={[makeLesson()]} onLessonClick={vi.fn()} />);
+    expect(container.querySelector("[data-writes-inert], [data-writes]")).toBeNull();
+  });
+});

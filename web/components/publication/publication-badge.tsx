@@ -13,12 +13,18 @@
  *
  * The count follows the grid's edits through `revision` — when the page last
  * read its lessons — rather than a timer or a refetch per render.
+ *
+ * The badge is the page's reading and stays for a profile that does not
+ * publish; only the press, which opens a publish, is taken from it. A reader
+ * (Läsbehörighet) gets the badge alone: the review asks the gateway for a
+ * preview, which is a publishing request it is refused.
  */
 
 import { useTranslations } from "next-intl";
 import { useDraftState, usePublicationSettings } from "@/lib/publication-queries";
 import { pendingCount } from "@/lib/publication-view";
 import { Badge } from "@/components/ui/badge";
+import { useReadOnly } from "@/components/profile-context";
 
 export function PublicationBadge({
   yearId,
@@ -30,16 +36,26 @@ export function PublicationBadge({
   onReview: () => void;
 }) {
   const t = useTranslations("publishing");
+  const readOnly = useReadOnly();
   const settings = usePublicationSettings();
   const draft = settings.data?.publishMode === "DRAFT";
   const state = useDraftState(yearId, draft, revision);
   if (!draft) return null;
   const count = state.data ? pendingCount(state.data) : null;
+  const badge = (
+    <Badge variant={count === null || count > 0 ? "warning" : "success"}>
+      {count === null ? t("badgeDraft") : count > 0 ? t("badgePending", { count }) : t("badgeClean")}
+    </Badge>
+  );
+  if (readOnly) return badge;
   return (
-    <button type="button" onClick={onReview} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      <Badge variant={count === null || count > 0 ? "warning" : "success"}>
-        {count === null ? t("badgeDraft") : count > 0 ? t("badgePending", { count }) : t("badgeClean")}
-      </Badge>
+    <button
+      type="button"
+      onClick={onReview}
+      className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      data-writes-inert="PUBLICERING DRIFT"
+    >
+      {badge}
     </button>
   );
 }

@@ -818,6 +818,23 @@ describe("People page", () => {
       );
     });
 
+    it("lets a decider make an administrator a läsare with HR-läs (Läsbehörighet)", async () => {
+      state.administrators = new Map([["a-1", { id: "a-1", adminProfile: "EXPEDITION", hrRead: false }]]);
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(editButton("Rita Nilsson"));
+      await user.click(await screen.findByRole("combobox", { name: /profileLabel/ }));
+      expect(screen.getAllByRole("option").map((option) => option.textContent)).toContain("profile.LASARE");
+      await user.click(screen.getByRole("option", { name: "profile.LASARE" }));
+      // HR-läs is its own grant on a läsare, as on the narrow profiles.
+      await user.click(screen.getByRole("switch", { name: "hrReadLabel" }));
+      await user.click(screen.getByRole("button", { name: "save" }));
+      expect(updatePerson).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: "a-1", adminProfile: "LASARE", hrRead: true }),
+      );
+    });
+
     it("locks the chooser while the profiles are read, and says when they could not be: a save then leaves them", async () => {
       state.administrators = undefined;
       const user = userEvent.setup();
@@ -893,6 +910,54 @@ describe("People page", () => {
       const sent = updatePerson.mock.calls[0]![0] as Record<string, unknown>;
       expect(sent).not.toHaveProperty("adminProfile");
       expect(sent).not.toHaveProperty("hrRead");
+    });
+
+    it("offers the läsare nothing to change: each write is left out by profile, or marked where it is not (Läsbehörighet)", async () => {
+      state.myProfile = "LASARE";
+      state.studentGuardians = [
+        {
+          id: "link-1",
+          guardianId: "g-1",
+          studentId: "st-1",
+          guardian: { id: "g-1", firstName: "Eva", lastName: "Berg", email: "eva@hem.se" },
+        },
+      ];
+      const user = userEvent.setup();
+      const { unmount } = render(<PeoplePage />);
+
+      // The register's buttons and every import: not drawn.
+      expect(screen.queryByRole("button", { name: "addPerson" })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^inviteAll/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: "button" })).toBeNull();
+      // No row has an action that changes it: only the name that opens it,
+      // and on a pupil's row the guardians to read.
+      const reading = (button: HTMLElement) =>
+        button.hasAttribute("aria-expanded") || /^guardiansTitle\(/.test(button.getAttribute("aria-label") ?? "");
+      for (const row of screen.getAllByRole("row").slice(1)) {
+        expect(within(row).getAllByRole("button").every(reading)).toBe(true);
+      }
+
+      // A member of staff's post, behörigheter and uppdrag are there to read, without a button.
+      await user.click(screen.getByRole("button", { name: /Karin Ek/, expanded: false }));
+      expect(await screen.findByText("employmentTitle")).toBeInTheDocument();
+      expect(await screen.findByText("qualificationsTitle")).toBeInTheDocument();
+      expect(await screen.findByText("dutiesTitle")).toBeInTheDocument();
+      for (const name of ["add", "editEmployment", "editQualifications", "addDuty"]) {
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      }
+      unmount();
+
+      // ?guardians= opens a pupil's guardians to any profile: there the writes carry personal's mark.
+      window.history.replaceState(null, "", "/sv/admin/people?guardians=st-1");
+      try {
+        render(<PeoplePage />);
+        await screen.findByRole("dialog");
+        for (const name of ["unlinkGuardian(Eva Berg)", "linkGuardian"]) {
+          expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "PERSONAL");
+        }
+      } finally {
+        window.history.replaceState(null, "", "/");
+      }
     });
 
     it("lists a person's role history in their open row, naming who changed it", async () => {

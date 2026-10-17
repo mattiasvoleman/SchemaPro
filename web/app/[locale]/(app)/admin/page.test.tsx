@@ -184,6 +184,14 @@ describe("the admin dashboard's quick actions (Roller i skolan)", () => {
     expect(screen.getByRole("list").tagName).toBe("OL");
   });
 
+  it("offers the läsare what it comes to read, as an unnumbered list (Läsbehörighet)", async () => {
+    me.adminProfile = "LASARE";
+    await renderPage();
+    await settled();
+    expect(tiles()).toEqual(["/admin/timetable", "/admin/requirements", "/admin/staffing", "/admin/reports"]);
+    expect(screen.getByRole("list").tagName).toBe("UL");
+  });
+
   it("offers the expedition the school day's pages instead, none of them closed to it", async () => {
     me.adminProfile = "EXPEDITION";
     await renderPage();

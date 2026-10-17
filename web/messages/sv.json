@@ -235,7 +235,15 @@
     "actionLeave": "Ledighet",
     "actionLeaveHint": "Besluta om elevernas ledighetsansökningar.",
     "actionPeople": "Personer",
-    "actionPeopleHint": "Lägg till och ändra elever, personal och vårdnadshavare."
+    "actionPeopleHint": "Lägg till och ändra elever, personal och vårdnadshavare.",
+    "readTimetable": "Schemat",
+    "readTimetableHint": "Grundschemat per klass, lärare och sal.",
+    "readRequirements": "Timplansposter",
+    "readRequirementsHint": "Vilka lärare som har vilka poster, och vad som saknar lärare.",
+    "readStaffing": "Tjänstefördelning",
+    "readStaffingHint": "Lärarnas belastning mot målen.",
+    "readReports": "Rapporter",
+    "readReportsHint": "Frånvaro, vikarier och undervisningstid."
   },
   "setup": {
     "title": "Kom igång",
@@ -444,6 +452,7 @@
     "filterAll": "Alla",
     "authHint": "Personen loggar in med denna e-post via Supabase Auth.",
     "manageGuardians": "Hantera vårdnadshavare",
+    "showGuardians": "Visa vårdnadshavare",
     "guardiansTitle": "Vårdnadshavare för {name}",
     "guardiansEmpty": "Inga vårdnadshavare kopplade ännu.",
     "selectGuardian": "Välj vårdnadshavare…",
@@ -5201,14 +5210,25 @@
       "FULL": "Fullständig administratör",
       "REKTOR": "Rektor",
       "SCHEMALAGGARE": "Schemaläggare",
-      "EXPEDITION": "Expedition"
+      "EXPEDITION": "Expedition",
+      "LASARE": "Läsare"
     },
     "profileHint": {
       "FULL": "Ändrar allt och fattar besluten, som en administratör alltid har gjort.",
       "REKTOR": "Ändrar allt och fattar besluten: roller, HR-läs, tjänst % och dataskydd.",
       "SCHEMALAGGARE": "Ändrar planering, schemaläggning, publicering och drift.",
-      "EXPEDITION": "Ändrar drift och personregistret."
+      "EXPEDITION": "Ändrar drift och personregistret.",
+      "LASARE": "Läser administrationens sidor utom dataskyddet och ändrar inget. Kan få HR-läs."
     },
+    "doer": {
+      "REKTOR": "rektor",
+      "FULL": "en fullständig administratör",
+      "SCHEMALAGGARE": "en schemaläggare",
+      "EXPEDITION": "expeditionen",
+      "LASARE": "en läsare"
+    },
+    "readOnlyTitle": "Du kan läsa men inte ändra",
+    "readOnlyBody": "Din profil, {profile}, läser sidan men ändrar inget på den. {area} ändras av {writers}.",
     "gateTitle": "Sidan hör till ett annat område",
     "gateArea": "Sidan ändrar {area}. Som {profile} ändrar du inte det området. Be rektor eller en administratör som har det om något här behöver ändras.",
     "gateDecides": "Sidan gäller rektors beslut. Som {profile} fattar du inte dem. Be rektor eller en fullständig administratör om något här behöver ändras.",

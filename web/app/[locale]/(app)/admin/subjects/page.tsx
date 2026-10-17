@@ -238,11 +238,11 @@ export default function SubjectsPage() {
                 },
               ]}
             />
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}
             </Button>
-            <Button onClick={openCreate}>
+            <Button data-writes="PLANERING" onClick={openCreate}>
               <Plus />
               {t("addSubject")}
             </Button>
@@ -263,7 +263,7 @@ export default function SubjectsPage() {
           description={t("empty")}
           headingLevel={2}
           action={
-            <Button onClick={openCreate}>
+            <Button data-writes="PLANERING" onClick={openCreate}>
               <Plus />
               {t("addSubject")}
             </Button>
@@ -324,23 +324,26 @@ export default function SubjectsPage() {
                   />
                 </TableCell>
                 <TableCell className="text-right">
-                  <RowActions
-                    name={subject.name}
-                    actions={[
-                      {
-                        label: tCommon("edit"),
-                        icon: Pencil,
-                        ariaLabel: tCommon("editNamed", { name: subject.name }),
-                        onSelect: () => openEdit(subject),
-                      },
-                      {
-                        label: tCommon("delete"),
-                        icon: Trash2,
-                        ariaLabel: tCommon("deleteNamed", { name: subject.name }),
-                        onSelect: () => setDeleting(subject),
-                      },
-                    ]}
-                  />
+                  {/* Both actions write: RowActions takes no attribute, so the wrapper carries it. */}
+                  <div data-writes="PLANERING" className="contents">
+                    <RowActions
+                      name={subject.name}
+                      actions={[
+                        {
+                          label: tCommon("edit"),
+                          icon: Pencil,
+                          ariaLabel: tCommon("editNamed", { name: subject.name }),
+                          onSelect: () => openEdit(subject),
+                        },
+                        {
+                          label: tCommon("delete"),
+                          icon: Trash2,
+                          ariaLabel: tCommon("deleteNamed", { name: subject.name }),
+                          onSelect: () => setDeleting(subject),
+                        },
+                      ]}
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

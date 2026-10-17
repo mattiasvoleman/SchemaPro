@@ -531,3 +531,38 @@ describe("Halvklasser: what the placement will not do", () => {
     expect(await screen.findByRole("dialog")).toHaveTextContent("halves.deleteHalf(7A)");
   });
 });
+
+describe("Läsbehörighet: the controls that write are marked with planering", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write it; student-groups.controller.ts @Area.
+  const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    yearState.years = [YEAR, NEXT_YEAR];
+    groupState.groups = groups;
+  });
+
+  it("marks Lägg till, Importera and every row action, and leaves the search and the tabs to read", () => {
+    render(<GroupsPage />);
+    expect(screen.getByRole("button", { name: "addGroup" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("button", { name: "button" })).toHaveAttribute("data-writes", "PLANERING");
+    for (const name of ["editNamed(7A)", "deleteNamed(7A)", "halves.splitTitle(7A)", "membersTitle(Ma71)"]) {
+      expect(writes(screen.getByRole("button", { name }))).toBe("PLANERING");
+    }
+    expect(writes(searchBox())).toBeUndefined();
+    expect(writes(screen.getByRole("tab", { name: "filterAll" }))).toBeUndefined();
+  });
+
+  it("marks the empty state's Lägg till, and leaves the way to Läsår open", () => {
+    groupState.groups = [];
+    const { unmount } = render(<GroupsPage />);
+    for (const add of screen.getAllByRole("button", { name: "addGroup" })) {
+      expect(add).toHaveAttribute("data-writes", "PLANERING");
+    }
+    unmount();
+    yearState.years = [];
+    render(<GroupsPage />);
+    expect(writes(screen.getByRole("link", { name: "noYearAction" }))).toBeUndefined();
+  });
+});

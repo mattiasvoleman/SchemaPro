@@ -191,6 +191,7 @@ export function BatchesCard({
                         aria-label={tCommon("actionNamed", { action: t("reapply"), name: batch.name })}
                         onClick={() => void doReapply(batch)}
                         disabled={reapply.isPending}
+                        data-writes="DRIFT"
                       >
                         {reapply.isPending && reapply.variables === batch.id ? <Loader2 className="animate-spin" /> : null}
                         {t("reapply")}
@@ -202,6 +203,7 @@ export function BatchesCard({
                         size="sm"
                         aria-label={tCommon("actionNamed", { action: t("reverse"), name: batch.name })}
                         onClick={() => setReversing(batch)}
+                        data-writes="DRIFT"
                       >
                         {t("reverse")}
                       </Button>
@@ -266,7 +268,7 @@ export function BatchesCard({
             <Button variant="outline" onClick={() => setReversing(null)} disabled={reverse.isPending}>
               {tCommon("cancel")}
             </Button>
-            <Button onClick={doReverse} disabled={!plan || reverse.isPending}>
+            <Button onClick={doReverse} disabled={!plan || reverse.isPending} data-writes="DRIFT">
               {reverse.isPending ? <Loader2 className="animate-spin" /> : null}
               {t("reverseConfirm")}
             </Button>

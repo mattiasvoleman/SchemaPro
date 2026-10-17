@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
+import { useReadOnly } from "@/components/profile-context";
 import { NATIVE_SELECT } from "./form-styles";
 import { errorText } from "./ss12000-messages";
 import type { ScheduleInput, SourceView } from "./ss12000-types";
@@ -31,6 +32,8 @@ export function ScheduleCard({ source }: { source: SourceView }) {
   const tErrors = useTranslations("integrations.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const save = useSaveSchedule();
+  // A press on either switch saves: a reader (Läsbehörighet) sees them set, not pressable.
+  const readOnly = useReadOnly();
   const [hour, setHour] = useState(source.scheduleHourLocal);
   const [fullEvery, setFullEvery] = useState(String(source.fullEveryDays));
 
@@ -46,16 +49,17 @@ export function ScheduleCard({ source }: { source: SourceView }) {
   return (
     <SectionCard id="ss-schedule-card" title={t("title")} description={t("body")}>
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+        {/* The rows, not only the switches: a label presses its switch as well, and a press saves. */}
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3" data-writes-inert="INTEGRATIONER">
           <Label htmlFor="ss-schedule">{t("enabled")}</Label>
           <Switch
             id="ss-schedule"
             checked={source.scheduleEnabled}
-            disabled={save.isPending}
+            disabled={readOnly || save.isPending}
             onCheckedChange={(checked) => patch({ scheduleEnabled: checked })}
           />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+        <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0" data-writes-inert="INTEGRATIONER">
           <FormField id="ss-hour" label={t("hour")} hint={t("hourHint")}>
             <select className={NATIVE_SELECT} value={hour} onChange={(event) => setHour(Number(event.target.value))}>
               {HOURS.map((value) => (
@@ -75,12 +79,13 @@ export function ScheduleCard({ source }: { source: SourceView }) {
           variant="outline"
           disabled={!dirty || !fullEveryValid || save.isPending}
           onClick={() => patch({ scheduleHourLocal: hour, fullEveryDays })}
+          data-writes="INTEGRATIONER"
         >
           {t("saveTimes")}
         </Button>
 
         <div className="space-y-2 rounded-md border p-3">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start justify-between gap-4" data-writes-inert="INTEGRATIONER">
             <div className="space-y-1">
               <Label htmlFor="ss-auto">{t("autoApply")}</Label>
               <p id="ss-auto-hint" className="text-xs text-muted-foreground">
@@ -90,7 +95,7 @@ export function ScheduleCard({ source }: { source: SourceView }) {
             <Switch
               id="ss-auto"
               checked={source.scheduleAutoApply}
-              disabled={!source.scheduleEnabled || save.isPending}
+              disabled={readOnly || !source.scheduleEnabled || save.isPending}
               aria-describedby="ss-auto-hint"
               onCheckedChange={(checked) => patch({ scheduleAutoApply: checked })}
             />

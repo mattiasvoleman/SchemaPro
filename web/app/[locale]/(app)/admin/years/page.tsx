@@ -202,11 +202,12 @@ export default function YearsPage() {
                             variant="outline"
                             disabled
                             title={t(year.isActive ? "rolloverNeedsStragglers" : "rolloverNeedsActivation")}
+                            data-writes="PLANERING"
                           >
                             {t("rollover")}
                           </Button>
                         ) : (
-                          <Button size="sm" variant="outline" asChild>
+                          <Button size="sm" variant="outline" asChild data-writes="PLANERING">
                             <Link href={`/admin/years/rollover?from=${year.id}`}>
                               {t("rollover")}
                               <ArrowRight aria-hidden="true" />
@@ -223,29 +224,31 @@ export default function YearsPage() {
                         </Button>
                       ) : null}
                       {status === "UPCOMING" ? (
-                        <Button size="sm" onClick={() => setActivating(year)}>
+                        <Button size="sm" onClick={() => setActivating(year)} data-writes="PLANERING">
                           {t("activate")}
                         </Button>
                       ) : null}
                       {/* The active year's own activation, run again: it hands no
                           flag over and moves only the pupils left behind. */}
                       {year.isActive && moving > 0 ? (
-                        <Button size="sm" onClick={() => setActivating(year)}>
+                        <Button size="sm" onClick={() => setActivating(year)} data-writes="PLANERING">
                           {t("moveStragglers")}
                         </Button>
                       ) : null}
                       {status === "UPCOMING" ? (
-                        <RowActions
-                          name={year.name}
-                          actions={[
-                            {
-                              label: tCommon("delete"),
-                              icon: Trash2,
-                              ariaLabel: t("deleteNamed", { name: year.name }),
-                              onSelect: () => setDeleting(year),
-                            },
-                          ]}
-                        />
+                        <div className="contents" data-writes="PLANERING">
+                          <RowActions
+                            name={year.name}
+                            actions={[
+                              {
+                                label: tCommon("delete"),
+                                icon: Trash2,
+                                ariaLabel: t("deleteNamed", { name: year.name }),
+                                onSelect: () => setDeleting(year),
+                              },
+                            ]}
+                          />
+                        </div>
                       ) : null}
                     </div>
                   </TableCell>

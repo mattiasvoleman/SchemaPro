@@ -91,6 +91,14 @@ describe("TeacherRequirementsCard", () => {
     expect(within(items[1]!).queryByRole("button")).toBeNull();
   });
 
+  it("marks Byt lärare as planering's write, which the läsare's style rule hides (Läsbehörighet)", () => {
+    renderCard();
+    expect(screen.getByRole("button", { name: "changeTeacherFor(7A · Matematik)" })).toHaveAttribute(
+      "data-writes",
+      "PLANERING",
+    );
+  });
+
   it("states a uniform row as it always did and a split row as its lengths", () => {
     render(
       <TeacherRequirementsCard

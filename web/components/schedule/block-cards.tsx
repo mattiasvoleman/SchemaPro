@@ -538,6 +538,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
                       variant="outline"
                       size="sm"
                       aria-label={t("editMemberNamed", { lesson: actions.name(lesson) })}
+                      data-writes="SCHEMALAGGNING DRIFT"
                       onClick={() => {
                         handOff.current = { focus: opened.id, run: () => actions.openEditor(lesson.id) };
                         setOpened(null);
@@ -557,6 +558,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               <Button
                 disabled={busy}
                 onClick={() => void lock(opened, !blockLocked)}
+                data-writes="SCHEMALAGGNING DRIFT"
               >
                 {blockLocked ? t("unlock") : t("lock")}
               </Button>
@@ -581,6 +583,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
             </Button>
             <Button
               variant="outline"
+              data-writes="SCHEMALAGGNING DRIFT"
               onClick={() => {
                 if (!splitting) return;
                 const { lesson, change } = splitting;
@@ -592,6 +595,7 @@ export function BlockHost({ academicYearId, lessons, requirements, actions, onKi
               {t("moveOne")}
             </Button>
             <Button
+              data-writes="SCHEMALAGGNING DRIFT"
               onClick={() => {
                 if (!splitting) return;
                 const { card, lesson, change } = splitting;

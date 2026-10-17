@@ -150,3 +150,16 @@ describe("Skolenheter", () => {
     expect(state.update).toHaveBeenCalledWith({ id: "u-79", gradeFrom: 7, gradeTo: 10 });
   });
 });
+
+describe("Skolenheter under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write it (school-units.controller.ts @Area).
+  it("marks Lägg till and each unit's actions with planering", () => {
+    state.units = { data: [F6], isLoading: false, isError: false };
+    render(<SchoolUnitsCard classes={[]} />);
+    expect(screen.getByRole("button", { name: "add" })).toHaveAttribute("data-writes", "PLANERING");
+    for (const name of ["actionNamed(edit|Norra F–6)", "actionNamed(delete|Norra F–6)"]) {
+      expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+    }
+  });
+});

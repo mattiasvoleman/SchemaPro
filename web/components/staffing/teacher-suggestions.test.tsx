@@ -175,6 +175,19 @@ describe("TeacherSuggestions", () => {
     expect(onAssigned).toHaveBeenCalledWith({ teacherId: null, warnings: [] });
   });
 
+  it("marks every assignment as planering's write, the PATCH of the timplanspost (Läsbehörighet)", () => {
+    renderList({ currentTeacherId: "t-anna" });
+    for (const name of ["Bo Alm", "Cilla Öst"]) {
+      expect(screen.getByRole("button", { name: `suggestAssignNamed(${name})` })).toHaveAttribute(
+        "data-writes",
+        "PLANERING",
+      );
+    }
+    expect(screen.getByRole("button", { name: "suggestUnassign" })).toHaveAttribute("data-writes", "PLANERING");
+    // Reading the rest of the list is nobody's write.
+    expect(screen.queryByRole("button", { name: /^suggestShow/ })?.hasAttribute("data-writes") ?? false).toBe(false);
+  });
+
   it("shows the first six and the rest on request", async () => {
     const user = userEvent.setup();
     suggestions.data = {

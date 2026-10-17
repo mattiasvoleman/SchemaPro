@@ -40,6 +40,11 @@ describe("SubjectFactorsTable", () => {
     expect(screen.getByRole("button", { name: "save(0)" })).toBeDisabled();
   });
 
+  it("marks its save as planering's write: the factors are the subjects' (Läsbehörighet)", () => {
+    render(<SubjectFactorsTable />);
+    expect(screen.getByRole("button", { name: "save(0)" })).toHaveAttribute("data-writes", "PLANERING");
+  });
+
   it("PATCHes only the changed subject, with loadFactor alone, and refreshes the load", async () => {
     const user = userEvent.setup();
     render(<SubjectFactorsTable />);

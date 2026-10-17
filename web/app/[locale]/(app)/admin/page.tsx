@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { getSession } from "@/lib/auth";
-import { gateOfPath, profileOpens } from "@/lib/admin-areas";
+import { READS_EVERY_PAGE, gateOfPath, profileOpens } from "@/lib/admin-areas";
 import { toDateString } from "@/lib/utils";
 import { Link } from "@/i18n/navigation";
 import { Page } from "@/components/layout/page";
@@ -96,12 +96,25 @@ export default async function AdminDashboardPage() {
     { title: t("actionLeave"), hint: t("actionLeaveHint"), href: "/admin/leave", icon: ClipboardCheck },
     { title: t("actionPeople"), hint: t("actionPeopleHint"), href: "/admin/people", icon: UserCheck },
   ];
+  // What a läsare, who changes nothing, comes to read (Läsbehörighet): the
+  // schedule, the timplan's teachers, their load, and the reports. Named as
+  // the pages are, not as things to do.
+  const read = [
+    { title: t("readTimetable"), hint: t("readTimetableHint"), href: "/admin/timetable", icon: CalendarDays },
+    { title: t("readRequirements"), hint: t("readRequirementsHint"), href: "/admin/requirements", icon: GraduationCap },
+    { title: t("readStaffing"), hint: t("readStaffingHint"), href: "/admin/staffing", icon: Target },
+    { title: t("readReports"), hint: t("readReportsHint"), href: "/admin/reports", icon: ClipboardCheck },
+  ];
   // Only the pages this profile uses: a tile to a closed page would lead to
   // the page that says so, whose way out is this overview.
   const profile = session?.profile?.adminProfile === undefined ? "FULL" : session.profile.adminProfile;
   const opens = (action: { href: string }) => profileOpens(profile, gateOfPath(action.href));
   const inChain = chain.some(opens);
-  const actions = inChain ? chain.filter(opens) : day.filter(opens);
+  const actions = inChain
+    ? chain.filter(opens)
+    : profile && READS_EVERY_PAGE.includes(profile)
+      ? read
+      : day.filter(opens);
   const Tiles = inChain ? "ol" : "ul";
 
   return (

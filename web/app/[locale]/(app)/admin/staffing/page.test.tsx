@@ -461,6 +461,16 @@ describe("StaffingPage", () => {
       expect((props.teacherName as (id: string) => string)("t-bo")).toBe("Bo Alm");
     });
 
+    it("marks the button with the areas of the proposal it asks for (Läsbehörighet)", () => {
+      render(<StaffingPage />);
+      expect(screen.getByRole("button", { name: "proposal.open" })).toHaveAttribute(
+        "data-writes",
+        "SCHEMALAGGNING DRIFT",
+      );
+      // Reading the riktmärke is every administrator's: the card's own Spara is marked, not its toggle.
+      expect(screen.getByRole("button", { name: "settings" })).not.toHaveAttribute("data-writes");
+    });
+
     it("opens from /admin/generate's #propose once the report has drawn", async () => {
       window.history.replaceState(null, "", "#propose");
       try {

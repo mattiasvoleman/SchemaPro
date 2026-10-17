@@ -124,4 +124,22 @@ describe("Dagsplanering", () => {
     await user.click(within(dialog).getByRole("button", { name: "Ställ in lektion" }));
     await waitFor(() => expect(cancel).toHaveBeenCalledWith({ id: "cl-1", reason: "Läxa på Classroom" }));
   });
+
+  it("marks each row's actions as Drift's, and the day's navigation as no one's", () => {
+    renderPage();
+    for (const name of [
+      "Tilldela vikarie 08:00–09:00 Matematik 7A",
+      "Byt sal 08:00–09:00 Matematik 7A",
+      "Ställ in lektion 08:00–09:00 Matematik 7A",
+    ]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("data-writes", "DRIFT");
+    }
+    expect(screen.getByRole("button", { name: "Idag" })).not.toHaveAttribute("data-writes");
+  });
+
+  it("marks Återinsätt on a cancelled lesson as Drift's", () => {
+    state.lessons = { data: [{ ...LESSON, status: "CANCELLED" }], isLoading: false, isError: false };
+    renderPage();
+    expect(screen.getByRole("button", { name: "Återinsätt 08:00–09:00 Matematik 7A" })).toHaveAttribute("data-writes", "DRIFT");
+  });
 });

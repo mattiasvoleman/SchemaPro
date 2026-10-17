@@ -318,7 +318,9 @@ export default function SetupPage() {
             >
               {currentStep === "year" ? (
                 <div className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+                  {/* The form only creates a läsår: a profile that does not
+                      write planering reads the years in the list below. */}
+                  <div data-writes="PLANERING" className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
                     <FormField id="year-name" label={t("yearName")}>
                       <Input
                         placeholder={t("yearNamePlaceholder")}
@@ -349,7 +351,7 @@ export default function SetupPage() {
                       </Link>
                     </p>
                   ) : null}
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div data-writes="PLANERING" className="flex flex-wrap items-center justify-between gap-3">
                     <label className="flex items-center gap-2 text-sm">
                       <Switch
                         checked={yearIsActive}
@@ -411,6 +413,7 @@ export default function SetupPage() {
                 </Button>
               ) : (
                 <form
+                  data-writes="PLANERING"
                   onSubmit={(e) => {
                     e.preventDefault();
                     void quickAdd(currentStep);

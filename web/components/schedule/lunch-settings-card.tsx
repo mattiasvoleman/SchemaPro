@@ -209,7 +209,7 @@ export function LunchSettingsCard() {
         // Drawn, disabled, while the rules load, so the card does not grow a
         // button under the admin's pointer; gone when they cannot be read.
         loaded || !isError ? (
-          <Button onClick={() => void submit()} disabled={!loaded || save.isPending || !changed}>
+          <Button data-writes="PLANERING" onClick={() => void submit()} disabled={!loaded || save.isPending || !changed}>
             {save.isPending ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden="true" />
@@ -223,7 +223,10 @@ export function LunchSettingsCard() {
       }
     >
       {loaded ? (
-        <div className="space-y-4">
+        // The rules as they stand are the reading; a profile that does not
+        // write planering (lunch-settings.controller.ts @Area) is not offered
+        // the fields, and Spara is hidden from it.
+        <div data-writes-inert="PLANERING" className="space-y-4">
           <div className="flex items-center justify-between gap-4 rounded-md border p-3">
             <Label htmlFor="lunch-enabled">{t("enabled")}</Label>
             <Switch

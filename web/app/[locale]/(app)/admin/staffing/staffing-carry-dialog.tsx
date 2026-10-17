@@ -149,7 +149,7 @@ export function StaffingCarryDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tCommon("cancel")}
           </Button>
-          <Button onClick={() => void carry()} disabled={!canCarry}>
+          <Button onClick={() => void carry()} disabled={!canCarry} data-writes="DECIDES">
             {execute.isPending ? tCommon("saving") : t("confirm")}
           </Button>
         </DialogFooter>
