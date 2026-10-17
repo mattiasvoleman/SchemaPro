@@ -599,13 +599,18 @@ export class UsersService {
    */
   async administrators(user: AuthenticatedUser): Promise<AdministratorView[]> {
     requireSchoolId(user);
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.user.findMany({
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const found = await tx.user.findMany({
         where: { role: 'SCHOOL_ADMIN' },
         select: { id: true, adminProfile: true, hrRead: true },
         orderBy: { id: 'asc' },
-      }),
-    );
+      });
+      // Each administrator's profile and HR-läs: what they may change and
+      // read, facts about the person, recorded as the role history records
+      // them (PEOPLE). The reader's own row is their own.
+      await recordRead(tx, 'PEOPLE', found.map((row) => row.id).filter((id) => id !== user.userId), user.channel);
+      return found;
+    });
     return rows.map((row) => ({ id: row.id, adminProfile: row.adminProfile ?? 'FULL', hrRead: row.hrRead }));
   }
 

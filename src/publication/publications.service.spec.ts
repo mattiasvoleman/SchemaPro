@@ -377,6 +377,29 @@ describe('PublicationsService (DIRECT)', () => {
     ]);
     expect(timeline).toMatchObject({ today: '2026-10-12', validNow: 'ht' });
     expect(timeline.publications).toHaveLength(4);
+    // No gate names a teacher: nothing to record.
+    expect(recordedReads(tx)).toEqual([]);
+  });
+
+  it("records the teachers a refused publication's staffing gate names, when the timeline reads it back (Läsbehörighet)", async () => {
+    const staffing = {
+      code: 'PUB_STAFFING_REFUSE',
+      severity: 'REFUSE',
+      count: 2,
+      items: [
+        { label: 'Anna Berg saknar behörighet: Matematik för 7B', teacherId: 'teacher-anna', requirementId: 'r1' },
+        { label: 'Bo Ek över mål: 900 av 800 min/vecka', teacherId: 'teacher-bo' },
+      ],
+      params: {},
+    };
+    const clash = { code: 'PUB_TEACHER_CLASH', severity: 'WARN', count: 1, items: [{ label: 'Matematik · 7B, mån 08:00', teacherId: 'teacher-cy' }], params: {} };
+    tx.timetablePublication.findMany.mockResolvedValue([
+      { ...storedRow({ kind: 'PUBLISH', outcome: 'REFUSED', publishMode: 'DIRECT', validFrom: day('2026-09-14'), validTo: day('2027-06-11'), gates: [staffing, clash] }), id: 'no', publishedAt: new Date('2026-09-10T08:00:00Z') },
+    ]);
+    await service.timeline(YEAR_ID, testUser({ channel: 'WEB' }));
+    // The staffing gate's teachers, as the publish recorded them; another
+    // gate's lesson line is the timetable layer, not recorded.
+    expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: 'WEB', ids: ['teacher-anna', 'teacher-bo'] }]);
   });
 
   it('answers the defaults for a school with no settings row', async () => {

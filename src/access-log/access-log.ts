@@ -14,7 +14,9 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *   LEAVE_REASON_AS_MENTOR   a mentor read a leave request's reason (Skoldagen)
  *   GUARDIANS                who is whose guardian
  *   EMPLOYMENT               tjänst and anställning
- *   STAFF_ABSENCES           when a member of staff is away, and why
+ *   STAFF_ABSENCES           when a member of staff is away, and why; and
+ *                            when a substitute can come (their availability,
+ *                            the other half of the same fact)
  *   ACCESS_LOG               the log itself, read about a person
  *   SCHEDULE                 one pupil's timetable: the family's week, an
  *                            SS12000 v2 read filtered to the pupil (20261026110000),
@@ -87,7 +89,26 @@ import { Prisma, type PrismaClient } from '@prisma/client';
  *     recipient, kind, content and time, kept until gallring;
  *   - an SS12000 sync change about a person not yet in Users (a CREATE):
  *     the log names Users rows only. The run's changes about linked people
- *     are recorded.
+ *     are recorded;
+ *   - the substitute pool (GET /cover/pool): ids and when each was added,
+ *     the school's own list of whom it may call. The pool page names them
+ *     through the register, which records its read (PEOPLE), and their
+ *     availability is recorded (STAFF_ABSENCES);
+ *   - the staff's work rules (GET /teacher-work-rules): lunch window and
+ *     daily rest, which colleagues read on purpose to plan around each
+ *     other, and which staff read directly through PostgREST as well;
+ *   - who signed a decision (the leave delegation, retention, attendance
+ *     sharing): rektor's or a full administrator's name on the school's own
+ *     decision, which is the school's act and not data about the person.
+ *
+ * Läsbehörighet (20261120100000) checked every read an administrator makes,
+ * since a läsare reads everything an administrator does. Recorded since:
+ * the teacher suggestions (EMPLOYMENT: each candidate's room is their target
+ * less their load), the publication timeline's stored staffing gates
+ * (EMPLOYMENT, as the publish recorded them), the teachers hidden from
+ * public timetables (PEOPLE: skyddad identitet), the substitutes'
+ * availability (STAFF_ABSENCES) and the administrators' profiles and HR-läs
+ * (PEOPLE, as the role history records them).
  */
 export const ACCESS_KINDS = [
   'PEOPLE',

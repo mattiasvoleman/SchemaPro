@@ -1477,6 +1477,8 @@ describe('UsersService', () => {
         select: { id: true, adminProfile: true, hrRead: true },
         orderBy: { id: 'asc' },
       });
+      // Each one's profile and HR-läs, recorded as the role history records them.
+      expect(recordedReads(tx)).toEqual([{ kind: 'PEOPLE', channel: null, ids: ['a1', 'a2'] }]);
     });
 
     it('lists the role history newest first, naming who changed it and nobody for a migration', async () => {

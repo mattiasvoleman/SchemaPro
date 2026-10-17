@@ -13,6 +13,7 @@ import type {
   CreateReasonDto,
   UpdateReasonDto,
 } from './dto/cover.dto';
+import { recordRead } from '../access-log/access-log';
 
 export interface ReasonView {
   id: string;
@@ -157,15 +158,20 @@ export class CoverSettingsService {
   async availability(userId: string | undefined, user: AuthenticatedUser): Promise<AvailabilityView[]> {
     const own = user.role !== Role.SCHOOL_ADMIN;
     const target = own ? requireUserId(user) : userId;
-    return this.prisma.withRls(user, async (tx) =>
-      (
-        await tx.substituteAvailability.findMany({
-          where: target ? { userId: target } : {},
-          select: { id: true, userId: true, date: true, dayOfWeek: true, startTime: true, endTime: true },
-          orderBy: [{ userId: 'asc' }, { date: 'asc' }, { dayOfWeek: 'asc' }, { startTime: 'asc' }],
-        })
-      ).map(availabilityView),
-    );
+    return this.prisma.withRls(user, async (tx) => {
+      const rows = await tx.substituteAvailability.findMany({
+        where: target ? { userId: target } : {},
+        select: { id: true, userId: true, date: true, dayOfWeek: true, startTime: true, endTime: true },
+        orderBy: [{ userId: 'asc' }, { date: 'asc' }, { dayOfWeek: 'asc' }, { startTime: 'asc' }],
+      });
+      // When a substitute can come is the other half of when they are away:
+      // an administrator's read of somebody's is recorded as STAFF_ABSENCES.
+      // A substitute reading their own records nothing.
+      if (!own) {
+        await recordRead(tx, 'STAFF_ABSENCES', rows.map((row) => row.userId).filter((id) => id !== user.userId), user.channel);
+      }
+      return rows.map(availabilityView);
+    });
   }
 
   async addAvailability(dto: CreateAvailabilityDto, user: AuthenticatedUser): Promise<AvailabilityView> {

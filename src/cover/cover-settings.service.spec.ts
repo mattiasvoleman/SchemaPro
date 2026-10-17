@@ -1,5 +1,6 @@
 import { Role } from '../auth/enums/role.enum';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
+import { recordedReads } from '../../test/utils/recorded-reads';
 import type { PrismaService } from '../database/prisma.service';
 import { CoverSettingsService } from './cover-settings.service';
 
@@ -110,8 +111,19 @@ describe('CoverSettingsService', () => {
       tx.substituteAvailability.findMany.mockResolvedValue([]);
       await service.availability(OTHER, teacher);
       expect(tx.substituteAvailability.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: ME } }));
+      // A substitute's own windows are their own: nothing recorded.
+      expect(recordedReads(tx)).toEqual([]);
       tx.substituteAvailability.deleteMany.mockResolvedValue({ count: 0 });
       await expect(service.removeAvailability('w1', teacher)).rejects.toThrow('Tillgängligheten finns inte.');
     });
+  });
+
+  it("records an administrator's read of the substitutes' availability, as when they are away (Läsbehörighet)", async () => {
+    tx.substituteAvailability.findMany.mockResolvedValue([
+      { id: 'w1', userId: ME, date: null, dayOfWeek: 1, startTime: new Date('1970-01-01T08:00:00Z'), endTime: new Date('1970-01-01T12:00:00Z') },
+      { id: 'w2', userId: OTHER, date: null, dayOfWeek: 2, startTime: new Date('1970-01-01T08:00:00Z'), endTime: new Date('1970-01-01T12:00:00Z') },
+    ]);
+    await expect(service.availability(undefined, testUser({ channel: 'WEB' }))).resolves.toHaveLength(2);
+    expect(recordedReads(tx)).toEqual([{ kind: 'STAFF_ABSENCES', channel: 'WEB', ids: [ME, OTHER] }]);
   });
 });

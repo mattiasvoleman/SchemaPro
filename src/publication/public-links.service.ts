@@ -6,6 +6,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { newToken, tokenHashOf } from './public-token';
 import type { CreatePublicLinkDto } from './dto/publication.dto';
+import { recordRead } from '../access-log/access-log';
 
 export const PUBLIC_GROUP_TOO_SMALL = 'PUBLIC_GROUP_TOO_SMALL';
 export const PUBLIC_TEACHER_NOT_SHOWABLE = 'PUBLIC_TEACHER_NOT_SHOWABLE';
@@ -185,10 +186,17 @@ export class PublicLinksService {
 
   async hiddenTeachers(user: AuthenticatedUser): Promise<string[]> {
     requireSchoolId(user);
-    const rows = await this.prisma.queryWithRls(user, (db) =>
-      db.teacherPublicLabel.findMany({ where: { hidden: true }, select: { userId: true }, orderBy: { userId: 'asc' } }),
-    );
-    return rows.map((row) => row.userId);
+    return this.prisma.withRls(user, async (tx) => {
+      const rows = await tx.teacherPublicLabel.findMany({
+        where: { hidden: true },
+        select: { userId: true },
+        orderBy: { userId: 'asc' },
+      });
+      // Which teachers are never shown in public is skyddad identitet, a fact
+      // about each of them: recorded as the register's facts are (PEOPLE).
+      await recordRead(tx, 'PEOPLE', rows.map((row) => row.userId), user.channel);
+      return rows.map((row) => row.userId);
+    });
   }
 
   /** A teacher never shown on any public timetable (skyddad identitet), or shown again. */
