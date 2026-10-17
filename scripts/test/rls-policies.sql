@@ -19686,6 +19686,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('SchoolSignInMethods', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
   ('SchoolUnits', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('Schools', '{}', '{PLANERING}', '{}', '{}'),
+  ('SiteTravelTimes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('Sites', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('Ss12000DutyLinks', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
   ('Ss12000Sources', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
   ('Ss12000SubscriptionDeliveries', '{}', '{}', '{}', '{}'),
@@ -22974,6 +22976,396 @@ BEGIN
 
   IF cardinality(bad) > 0 THEN
     RAISE EXCEPTION 'läsare: %', array_to_string(bad, '; ');
+-- Section 180: skolområdena och restiden står i katalogen som migreringen
+-- säger (Sites, SiteTravelTimes, Rooms."siteId", 20261124090000).
+--
+-- Row security on both tables; exactly four arms each, all TO
+-- app_authenticated (the staff read and the planner's insert, update and
+-- delete); the update arm asks the area in WITH CHECK only; PostgREST's
+-- authenticated and anon hold nothing; service_role reads and writes
+-- nothing more; the API holds SELECT, INSERT, UPDATE and DELETE and no
+-- TRUNCATE, REFERENCES or TRIGGER; no API role holds MAINTAIN on 17. The
+-- pair is stored once, the lower id first, 0..240 minutes; a name is
+-- trimmed and 1..60 characters; every key is composite with the school, and
+-- a room's site empties when the site goes while the room stays.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  t text;
+  arm text;
+  r text;
+  p text;
+  n bigint;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['Sites', 'SiteTravelTimes'] LOOP
+    arm := CASE t WHEN 'Sites' THEN 'sites' ELSE 'site_travel_times' END;
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', t)::regclass) THEN
+      RAISE EXCEPTION 'sites: row security is off on %', t;
+    END IF;
+    SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = t;
+    IF n <> 4
+       OR (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = t
+            AND (policyname, cmd) IN ((arm || '_staff_select', 'SELECT'), (arm || '_admin_insert', 'INSERT'),
+                                      (arm || '_admin_update', 'UPDATE'), (arm || '_admin_delete', 'DELETE'))
+            AND roles = '{app_authenticated}') <> 4 THEN
+      RAISE EXCEPTION 'sites: % has % arms, not the staff read and the planner''s three writes TO app_authenticated', t, n;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = t AND policyname = arm || '_staff_select'
+                     AND qual LIKE '%SCHOOL_ADMIN%' AND qual LIKE '%TEACHER%' AND qual NOT LIKE '%STUDENT%'
+                     AND qual NOT LIKE '%GUARDIAN%' AND qual LIKE '%current_school_id()%') THEN
+      RAISE EXCEPTION 'sites: %''s read is not the school''s administrators and teachers', t;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = t AND cmd = 'UPDATE' AND qual LIKE '%current_user_may%')
+       OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = t AND cmd = 'UPDATE'
+                        AND with_check LIKE '%current_user_may(''PLANERING''%') THEN
+      RAISE EXCEPTION 'sites: %''s update arm does not ask PLANERING in WITH CHECK alone', t;
+    END IF;
+    FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege(r, format('public.%I', t), p) THEN RAISE EXCEPTION 'sites: % holds % on %', r, p, t; END IF;
+      END LOOP;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+      FOREACH p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        IF has_table_privilege('service_role', format('public.%I', t), p) THEN RAISE EXCEPTION 'sites: service_role holds % on %', p, t; END IF;
+      END LOOP;
+    END IF;
+    FOREACH p IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+      IF NOT has_table_privilege('app_authenticated', format('public.%I', t), p) THEN RAISE EXCEPTION 'sites: the API lacks % on %', p, t; END IF;
+    END LOOP;
+    FOREACH p IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF has_table_privilege('app_authenticated', format('public.%I', t), p) THEN RAISE EXCEPTION 'sites: the API holds % on %', p, t; END IF;
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+        CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+        IF has_table_privilege(r, format('public.%I', t), 'MAINTAIN') THEN RAISE EXCEPTION 'sites: % holds MAINTAIN on %', r, t; END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  -- The checks and the keys, by what they say rather than by name alone.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SiteTravelTimes_lower_id_first' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%"siteAId" < "siteBId"%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SiteTravelTimes_minutes_range' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%minutes >= 0%' AND pg_get_constraintdef(oid) LIKE '%minutes <= 240%')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Sites_name_named' AND contype = 'c') THEN
+    RAISE EXCEPTION 'sites: the pair order, the minutes'' range or the name check is missing';
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.contype = 'f' AND c.confrelid = '"Sites"'::regclass AND c.confdeltype = 'c'
+     AND c.conrelid = '"SiteTravelTimes"'::regclass
+     AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum)
+         IN (ARRAY['siteAId', 'schoolId'], ARRAY['siteBId', 'schoolId']);
+  IF n <> 2 THEN RAISE EXCEPTION 'sites: the pair''s two keys to Sites are not (site, school) ON DELETE CASCADE (% found)', n; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.conrelid = '"Rooms"'::regclass AND c.confrelid = '"Sites"'::regclass
+       AND c.confdeltype = 'n'
+       AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['siteId', 'schoolId']
+       AND (SELECT array_agg(a.attname::text) FROM unnest(c.confdelsetcols) k(attnum)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['siteId']) THEN
+    RAISE EXCEPTION 'sites: a room''s site is not (siteId, schoolId) -> Sites ON DELETE SET NULL ("siteId")';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 181: skolans administratör och lärare läser skolans skolområden
+-- och restider, inga andras; elev och vårdnadshavare läser inga; den som
+-- skriver planering skriver dem, expeditionen inte; PostgREST:s roll når
+-- dem inte ens med administratörens anspråk (20261124090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001245')::text, true);
+SELECT set_config('app.test_so_other', app.current_school_id()::text, true);
+SELECT set_config('app.test_so_other_site', (SELECT id::text FROM "Sites" WHERE name = 'Annan Norra'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001240')::text, true);
+SELECT set_config('app.test_so_school', app.current_school_id()::text, true);
+DO $$
+DECLARE
+  n bigint;
+  who text;
+  norra uuid;
+  sodra uuid;
+  ny uuid;
+BEGIN
+  -- The other school's admin read their own site above; this school's admin
+  -- reads it nowhere below.
+  IF coalesce(current_setting('app.test_so_school', true), '') = ''
+     OR coalesce(current_setting('app.test_so_other_site', true), '') = '' THEN
+    RAISE EXCEPTION 'sites: a fixture admin read no school, or the other school''s admin none of their sites';
+  END IF;
+  SELECT count(*) INTO n FROM "Sites";
+  IF n <> 2 THEN RAISE EXCEPTION 'sites: the admin reads % sites, not the school''s two', n; END IF;
+  SELECT count(*) INTO n FROM "SiteTravelTimes";
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the admin reads % travel times, not the school''s one', n; END IF;
+  SELECT id INTO norra FROM "Sites" WHERE name = 'SO Norra';
+  SELECT id INTO sodra FROM "Sites" WHERE name = 'SO Södra';
+
+  -- The planner writes: a third site, its pair with Norra, a changed figure, both gone again.
+  INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), 'SO Idrottshallen') RETURNING id INTO ny;
+  INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+  VALUES (app.current_school_id(), least(ny, norra), greatest(ny, norra), 25);
+  UPDATE "SiteTravelTimes" SET minutes = 30 WHERE "siteAId" = least(ny, norra) AND "siteBId" = greatest(ny, norra);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the admin updated % of their own travel times', n; END IF;
+  UPDATE "Sites" SET name = 'SO Hallen' WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the admin renamed % of their own sites', n; END IF;
+  DELETE FROM "Sites" WHERE id = ny;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the admin removed % of their own sites', n; END IF;
+
+  -- Another school's site and pair: not seen, not changed, not removed, not written into.
+  UPDATE "Sites" SET name = 'x' WHERE id = current_setting('app.test_so_other_site')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: the admin renamed another school''s site'; END IF;
+  DELETE FROM "SiteTravelTimes" WHERE "schoolId" = current_setting('app.test_so_other')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: the admin removed another school''s travel time'; END IF;
+  BEGIN
+    INSERT INTO "Sites" ("schoolId", name) VALUES (current_setting('app.test_so_other')::uuid, 'Inte min');
+    RAISE EXCEPTION 'sites: the admin wrote a site into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Sites" SET "schoolId" = current_setting('app.test_so_other')::uuid WHERE id = norra;
+    RAISE EXCEPTION 'sites: the admin moved a site into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The expedition writes nothing here; it reads, as every administrator does.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001244')::text, true);
+  SELECT count(*) INTO n FROM "Sites";
+  IF n <> 2 THEN RAISE EXCEPTION 'sites: the expedition reads % sites, not the school''s two', n; END IF;
+  BEGIN
+    INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), 'Expeditionens');
+    RAISE EXCEPTION 'sites: the expedition created a site';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "SiteTravelTimes" SET minutes = 1;
+    RAISE EXCEPTION 'sites: the expedition changed a travel time';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "Sites";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: the expedition removed % sites', n; END IF;
+
+  -- The teacher reads both and writes neither.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001241')::text, true);
+  SELECT count(*) INTO n FROM "Sites";
+  IF n <> 2 THEN RAISE EXCEPTION 'sites: the teacher reads % sites, not the school''s two', n; END IF;
+  SELECT count(*) INTO n FROM "SiteTravelTimes";
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the teacher reads % travel times, not the school''s one', n; END IF;
+  UPDATE "Sites" SET name = 'x';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: the teacher renamed % sites', n; END IF;
+  DELETE FROM "SiteTravelTimes";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: the teacher removed % travel times', n; END IF;
+  BEGIN
+    INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), 'Lärarens');
+    RAISE EXCEPTION 'sites: the teacher created a site';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- Pupil and guardian: nothing read, nothing written.
+  FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000001242', '00000000-0000-4000-8000-000000001243'] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who)::text, true);
+    SELECT count(*) INTO n FROM "Sites";
+    IF n <> 0 THEN RAISE EXCEPTION 'sites: % (%) reads % sites', who, app.current_user_role(), n; END IF;
+    SELECT count(*) INTO n FROM "SiteTravelTimes";
+    IF n <> 0 THEN RAISE EXCEPTION 'sites: % (%) reads % travel times', who, app.current_user_role(), n; END IF;
+    BEGIN
+      INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), 'Familjens');
+      RAISE EXCEPTION 'sites: % created a site', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+
+  -- The service and the sync principal of the school: nothing.
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOREACH who IN ARRAY ARRAY['app.service_school_id', 'app.sync_school_id'] LOOP
+    PERFORM set_config(who, current_setting('app.test_so_school'), true);
+    SELECT count(*) INTO n FROM "Sites";
+    IF n <> 0 THEN RAISE EXCEPTION 'sites: % reads % sites', who, n; END IF;
+    PERFORM set_config(who, '', true);
+  END LOOP;
+END $$;
+
+-- PostgREST's role, with the admin's claims: nothing at all.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001240')::text, true);
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'sites: could not act as authenticated'; END IF;
+  BEGIN
+    PERFORM 1 FROM "Sites";
+    RAISE EXCEPTION 'sites: PostgREST''s role reads the sites';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM 1 FROM "SiteTravelTimes";
+    RAISE EXCEPTION 'sites: PostgREST''s role reads the travel times';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 182: en restid står en gång per par, och bara mellan skolans egna
+-- skolområden; ett rum står bara på sin egen skolas skolområde; ett
+-- skolområde som tas bort tar sina restider med sig och lämnar rummen kvar
+-- utan skolområde (20261124090000).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001245')::text, true);
+SELECT set_config('app.test_so_other_site', (SELECT id::text FROM "Sites" WHERE name = 'Annan Norra'), true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001240')::text, true);
+DO $$
+DECLARE
+  n bigint;
+  norra uuid;
+  sodra uuid;
+  ny uuid;
+  room uuid;
+  st text;
+BEGIN
+  SELECT id INTO norra FROM "Sites" WHERE name = 'SO Norra';
+  SELECT id INTO sodra FROM "Sites" WHERE name = 'SO Södra';
+  IF norra IS NULL OR sodra IS NULL THEN RAISE EXCEPTION 'sites: the fixture''s two sites are not there'; END IF;
+
+  -- The pair the other way round: refused, so A→B and B→A can never disagree.
+  BEGIN
+    INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+    VALUES (app.current_school_id(), greatest(norra, sodra), least(norra, sodra), 5);
+    RAISE EXCEPTION 'sites: a pair was stored with the higher id first';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  -- A site with itself: refused by the same check.
+  BEGIN
+    INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes) VALUES (app.current_school_id(), norra, norra, 0);
+    RAISE EXCEPTION 'sites: a site was given a travel time to itself';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  -- A second figure for the pair: the key refuses it.
+  BEGIN
+    INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+    VALUES (app.current_school_id(), least(norra, sodra), greatest(norra, sodra), 5);
+    RAISE EXCEPTION 'sites: a pair got a second travel time';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  -- The range: 0 and 240 are answers, -1 and 241 are not.
+  UPDATE "SiteTravelTimes" SET minutes = 0 WHERE "siteAId" = least(norra, sodra);
+  UPDATE "SiteTravelTimes" SET minutes = 240 WHERE "siteAId" = least(norra, sodra);
+  FOREACH n IN ARRAY ARRAY[-1, 241] LOOP
+    BEGIN
+      UPDATE "SiteTravelTimes" SET minutes = n WHERE "siteAId" = least(norra, sodra);
+      RAISE EXCEPTION 'sites: a travel time of % minutes was stored', n;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  -- A name: trimmed, 1..60, unique in the school.
+  FOREACH st IN ARRAY ARRAY['', ' SO Väst', 'SO Väst ', repeat('x', 61)] LOOP
+    BEGIN
+      INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), st);
+      RAISE EXCEPTION 'sites: a site named "%" was stored', st;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+  BEGIN
+    INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), 'SO Norra');
+    RAISE EXCEPTION 'sites: two sites of the school share a name';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  INSERT INTO "Sites" ("schoolId", name) VALUES (app.current_school_id(), repeat('x', 60));
+
+  -- Another school's site, by its id: no pair with it, and no room on it.
+  BEGIN
+    INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+    SELECT app.current_school_id(), least(norra, current_setting('app.test_so_other_site')::uuid),
+           greatest(norra, current_setting('app.test_so_other_site')::uuid), 5;
+    RAISE EXCEPTION 'sites: a travel time was stored to another school''s site';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  SELECT id INTO room FROM "Rooms" WHERE name = 'SO SO Norra';
+  IF room IS NULL THEN RAISE EXCEPTION 'sites: the fixture''s room on Norra is not there'; END IF;
+  BEGIN
+    UPDATE "Rooms" SET "siteId" = current_setting('app.test_so_other_site')::uuid WHERE id = room;
+    RAISE EXCEPTION 'sites: a room was put on another school''s site';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  UPDATE "Rooms" SET "siteId" = sodra WHERE id = room;
+  UPDATE "Rooms" SET "siteId" = NULL WHERE id = room;
+  UPDATE "Rooms" SET "siteId" = norra WHERE id = room;
+
+  -- Norra goes: its pair goes with it, its room stays, without a site.
+  DELETE FROM "Sites" WHERE id = norra;
+  SELECT count(*) INTO n FROM "SiteTravelTimes";
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: % travel times outlived the site they named', n; END IF;
+  SELECT count(*) INTO n FROM "Rooms" WHERE id = room AND "siteId" IS NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the room on a removed site was removed with it, or kept the site'; END IF;
+  SELECT count(*) INTO n FROM "Rooms" WHERE name = 'SO SO Södra' AND "siteId" = sodra;
+  IF n <> 1 THEN RAISE EXCEPTION 'sites: the room on the other site lost its site'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 183: ett rums skolområde flyttar ingen SS12000-version: S1:s Room
+-- har ingen plats för det, och leverantören lämnar ut samma rum som förut
+-- (20261124090000, app.ss12000_v_rooms från 20261014130000). Kapaciteten,
+-- som rummet lämnas ut med, flyttar den: läsningen nedan ser alltså en
+-- version som flyttas.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001240')::text, true);
+SELECT set_config('app.test_so_school', app.current_school_id()::text, true);
+SELECT set_config('app.test_so_room', (SELECT id::text FROM "Rooms" WHERE name = 'SO SO Norra'), true);
+SELECT set_config('app.test_so_sodra', (SELECT id::text FROM "Sites" WHERE name = 'SO Södra'), true);
+-- The version as it stands, read as the school's service principal.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_so_school'), true);
+SELECT set_config('app.test_so_before',
+  coalesce((SELECT "xid"::text FROM "Ss12000EntityVersions"
+             WHERE resource = 'Room' AND "entityId" = current_setting('app.test_so_room')::uuid), ''), true);
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001240')::text, true);
+UPDATE "Rooms" SET "siteId" = current_setting('app.test_so_sodra')::uuid WHERE id = current_setting('app.test_so_room')::uuid;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_so_school'), true);
+DO $$
+DECLARE
+  now_xid text;
+BEGIN
+  IF current_setting('app.test_so_before') = '' THEN
+    RAISE EXCEPTION 'sites: the fixture''s room has no SS12000 version to compare';
+  END IF;
+  SELECT "xid"::text INTO now_xid FROM "Ss12000EntityVersions"
+   WHERE resource = 'Room' AND "entityId" = current_setting('app.test_so_room')::uuid;
+  IF now_xid IS DISTINCT FROM current_setting('app.test_so_before') THEN
+    RAISE EXCEPTION 'sites: a room''s site moved its SS12000 version (% -> %)', current_setting('app.test_so_before'), now_xid;
+  END IF;
+END $$;
+-- The control: what the room is emitted with does move it.
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001240')::text, true);
+UPDATE "Rooms" SET capacity = coalesce(capacity, 0) + 1 WHERE id = current_setting('app.test_so_room')::uuid;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_so_school'), true);
+DO $$
+BEGIN
+  IF (SELECT "xid"::text FROM "Ss12000EntityVersions"
+       WHERE resource = 'Room' AND "entityId" = current_setting('app.test_so_room')::uuid)
+     IS NOT DISTINCT FROM current_setting('app.test_so_before') THEN
+    RAISE EXCEPTION 'sites: a room''s capacity did not move its version either; the read above proves nothing';
   END IF;
 END $$;
 ROLLBACK;

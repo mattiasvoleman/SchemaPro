@@ -192,6 +192,8 @@ model School {
   subjects                Subject[]
   academicYears           AcademicYear[]
   schoolUnits             SchoolUnit[]
+  sites                   Site[]
+  siteTravelTimes         SiteTravelTime[]
   studentGroups           StudentGroup[]
   teachingRequirements    TeachingRequirement[]
   teachingBlocks          TeachingBlock[]
@@ -459,6 +461,13 @@ model Room {
   /// building name to 1..60 characters after trimming.
   building         String?
   floor            Int?
+  /// The skolområde the room stands on (Sites, 20261124090000): above the
+  /// building, and what the travel time between lessons is measured between.
+  /// Null is unknown, never "the same site as the lesson before": a lesson in
+  /// a room with no site is held to no travel time and charged none, as a
+  /// null floor is never counted as a floor change. Deleting the site empties
+  /// it (ON DELETE SET NULL ("siteId")).
+  siteId           String?  @db.Uuid
   /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
   /// admin approval before they're confirmed. Ordinary rooms auto-approve.
   requiresApproval Boolean  @default(false)
@@ -467,6 +476,7 @@ model Room {
 
   school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   roomType                RoomType?                @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  site                    Site?                    @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull)
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
   availabilityConstraints AvailabilityConstraint[]
@@ -478,7 +488,56 @@ model Room {
   @@unique([id, schoolId])
   @@index([schoolId])
   @@index([roomTypeId])
+  @@index([siteId])
   @@map("Rooms")
+}
+
+/// A skolområde: one of a school's campuses, a walk or a bus ride from the
+/// others (migration 20261124090000). Above Room.building, which says where a
+/// room is within a site; separate from the skolenhet (SchoolUnit), which is
+/// what Skolverket registers — one skolenhet can span two sites and one site
+/// can house two skolenheter. A school with no site, or one, is the school it
+/// always was: travel is only ever counted between two different sites.
+model Site {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  /// 1..60 characters, trimmed; unique per school.
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school       School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  rooms        Room[]
+  travelFromA  SiteTravelTime[] @relation("SiteTravelA")
+  travelFromB  SiteTravelTime[] @relation("SiteTravelB")
+
+  @@unique([schoolId, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
+  @@map("Sites")
+}
+
+/// The minutes it takes to get from one site to another: one figure per PAIR,
+/// the same both ways (migration 20261124090000 argues why). Stored once, the
+/// lower id first (CHECK "siteAId" < "siteBId"), so a pair cannot hold two
+/// figures that disagree. 0..240. A pair with no row is unknown: no warning
+/// and no restid between its sites, and the sites card lists it as missing.
+model SiteTravelTime {
+  schoolId  String   @db.Uuid
+  siteAId   String   @db.Uuid
+  siteBId   String   @db.Uuid
+  minutes   Int
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  siteA  Site   @relation("SiteTravelA", fields: [siteAId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  siteB  Site   @relation("SiteTravelB", fields: [siteBId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@id([siteAId, siteBId])
+  @@index([schoolId])
+  @@index([siteBId, schoolId])
+  @@map("SiteTravelTimes")
 }
 
 model Subject {
