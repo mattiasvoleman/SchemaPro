@@ -191,6 +191,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   MasterLessonStudents: only('SCHEMALAGGNING'),
   MasterLessons: only('SCHEMALAGGNING'),
   OptimizationJobs: only('SCHEMALAGGNING'),
+  // Schemaförslag (20261125090000): a candidate is stored once and removed
+  // with its run, never changed (no UPDATE grant).
+  ScheduleCandidateRuns: only('SCHEMALAGGNING'),
+  ScheduleCandidates: just('SCHEMALAGGNING', 'insert', 'delete'),
   ScheduleChangeLogs: just('SCHEMALAGGNING', 'insert'),
   ScheduleVersions: only('SCHEMALAGGNING'),
 

@@ -579,6 +579,15 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     kind: 'SKIPPED',
     reason: 'Generation runs of the old year are its history; the new year runs its own.',
   },
+  ScheduleCandidateRun: {
+    kind: 'SKIPPED',
+    reason: 'Candidates of the old year’s schedule were solved from its draft; they live a week and are never a starting point.',
+  },
+  ScheduleCandidate: {
+    kind: 'FOLLOWS',
+    parent: 'ScheduleCandidateRun',
+    reason: 'A candidate belongs to its run, which is not carried.',
+  },
   /**
    * Not carried, and not counted in the preview. A credit is the school's
    * decision about ONE date of the old year ("the friluftsdag 25 September

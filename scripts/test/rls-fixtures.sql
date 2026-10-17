@@ -1495,6 +1495,27 @@ BEGIN
    WHERE "schoolId" = m AND name = 'Roller 1';
 END $$;
 
+-- Schemaförslag (20261125090000): Roller i skolan's matrix school gets a finished run with one
+-- candidate, so the role matrix (section 116) has a row of each table to probe. A block of its
+-- own that asks for the run, not the school: on a database that ran main's fixtures, the
+-- school's block has already returned.
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  run uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "ScheduleCandidateRuns" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m ORDER BY "createdAt" LIMIT 1;
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, basis, "startedAt", "finishedAt")
+  VALUES (m, yr, 'SUCCEEDED', 2, 2, repeat('a', 64), now(), now()) RETURNING id INTO run;
+  INSERT INTO "ScheduleCandidates" ("runId", "schoolId", ordinal, variant, "solverStatus", lessons)
+  VALUES (run, m, 1, 'CLOSE', 'OPTIMAL', '[]');
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.
