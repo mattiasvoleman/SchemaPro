@@ -392,10 +392,15 @@ export class ProviderWorld {
     return new Set(this.years.filter((row) => row['isActive'] || (row['startDate'] as Date) < horizon).map((row) => row['id'] as string));
   }
 
-  /** meta.modified as both functions reckon it: the version's or sharedSince, whichever is later. */
-  private modifiedOf(version: Row | undefined): Date {
-    const moved = version?.['modifiedAt'] as Date | undefined;
-    return moved && moved > this.sharedSince ? moved : this.sharedSince;
+  /**
+   * meta.modified as both functions reckon it: the latest of the record's
+   * creation, sharedSince, its own version and its pupil's row
+   * ('AttendancePupil' or 'AbsencePupil', moved when the pupil is linked or
+   * comes back).
+   */
+  private modifiedOf(created: Date, ...versions: Array<Row | undefined>): Date {
+    const moments = versions.map((row) => row?.['modifiedAt'] as Date | undefined).filter((moment): moment is Date => moment !== undefined);
+    return [created, this.sharedSince, ...moments].reduce((latest, moment) => (moment > latest ? moment : latest));
   }
 
   /**
@@ -422,8 +427,9 @@ export class ProviderWorld {
       if (!years.has(group['academicYearId'] as string)) continue;
       if (!within('ids', record['id']) || !within('lessons', lesson['id']) || !within('students', pupil['id']) || !within('groups', group['id'])) continue;
       const version = this.versions.find((row) => row['resource'] === 'Attendance' && row['entityId'] === record['id']);
+      const moved = this.versions.find((row) => row['resource'] === 'AttendancePupil' && row['entityId'] === record['studentId']);
       const created = record['createdAt'] as Date;
-      const modified = this.modifiedOf(version);
+      const modified = this.modifiedOf(created, version, moved);
       const cb = instant('createdBefore');
       const ca = instant('createdAfter');
       const mb = instant('modifiedBefore');
@@ -455,10 +461,11 @@ export class ProviderWorld {
       .filter((row) => (ids === null || ids.includes(row['id'] as string)) && (students === null || students.includes(row['studentId'] as string)))
       .map((row) => {
         const version = this.versions.find((entry) => entry['resource'] === 'Absence' && entry['entityId'] === row['id']);
+        const moved = this.versions.find((entry) => entry['resource'] === 'AbsencePupil' && entry['entityId'] === row['studentId']);
         return {
           id: row['id'], studentId: row['studentId'], date: (row['date'] as Date).toISOString().slice(0, 10),
           startTime: clock(row['startTime']), endTime: clock(row['endTime']), grantedLeave: row['grantedLeave'], createdAt: row['createdAt'],
-          versionCreatedAt: version?.['createdAt'] ?? row['createdAt'], versionModifiedAt: this.modifiedOf(version),
+          versionCreatedAt: version?.['createdAt'] ?? row['createdAt'], versionModifiedAt: this.modifiedOf(row['createdAt'] as Date, version, moved),
         };
       });
   }

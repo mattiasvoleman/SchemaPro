@@ -152,10 +152,12 @@ export interface AttendanceQuery {
  * app.ss12000_attendances' arguments, in its order, a filter not asked being
  * NULL: the index of each among the statement's values, so the specs'
  * in-memory school can answer the call by position. meta.modified
- * (versionModifiedAt) is the version's or the moment the school's current
- * run of sharing began, whichever is later, and the meta bounds compare it
- * at the millisecond an ISO string carries (S1: before inclusive, after
- * exclusive). The function's comment says how it is planned.
+ * (versionModifiedAt) is the latest of the record's version, its pupil's
+ * row (moved when the pupil is linked or comes back), the moment the
+ * school's current run of sharing began and the record's creation, which is
+ * what metaOf emits, and the meta bounds compare it at the millisecond an
+ * ISO string carries (S1: before inclusive, after exclusive). The function's
+ * comment says how it is planned.
  */
 export const ATTENDANCE_ARGUMENTS = {
   ids: 0,

@@ -3729,6 +3729,9 @@ model AttendanceSharingDecision {
   /// The transaction the decision was written in, stamped by the database: the
   /// webhook delivery's snapshot rule for telling a start; Prisma cannot read the type.
   xid         Unsupported("xid8") @default(dbgenerated("pg_current_xact_id()"))
+  /// When the decision took effect, stamped by the database as its transaction
+  /// commits; a stop dates what may have left by it.
+  committedAt DateTime? @db.Timestamptz(6)
 
   @@index([schoolId, decidedAt(sort: Desc)])
   @@map("AttendanceSharingDecisions")

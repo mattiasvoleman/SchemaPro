@@ -45,13 +45,23 @@
  *   nv-k  a start decided while a notice claimed during the stop is in
  *         flight, settled after it: the next tick still tells the start,
  *         once;
- *   nv-l  a register save at a sharing school while an SS12000 apply links
- *         its pupils in the opposite order: the save waits for the apply
- *         (app.attendance_recording_waits_for_sync) and both go through,
- *         where each would otherwise hold a version the other waits for;
- *   nv-m  that wait ends after about 5 s with 409 ATTENDANCE_SYNC_IN_PROGRESS
- *         and nothing written, and a sharing decision waits for a save
- *         already writing.
+ *   nv-l  while an SS12000 apply links pupils at a sharing school, register
+ *         saves of theirs, the other pupil first and phone-style saves for as
+ *         long as the apply stays open (PROBE_APPLY_HOLD_MS), each go through
+ *         at once; the apply writes no record's version, only the pupils' own
+ *         rows, stamped as it commits, and a read from before the commit
+ *         reads the records and absences again; the meta bounds compare
+ *         exactly what is emitted, for a record a save creates too;
+ *   nv-m  a decision is ordered against the writers: a start waits for a
+ *         removal and for a writer that read "not shared"; while a start is
+ *         being written a register save goes through at once, versioning as
+ *         if the school shared, and a removal waits for it and then reads it;
+ *         a row committed while a stop is being written is told when it is
+ *         removed within the stop; a save during a start that never commits
+ *         versions so too, and its record removed within the stop is told to
+ *         nobody; a decision that
+ *         waits 5 s answers 409 ATTENDANCE_SHARING_BUSY having written
+ *         nothing; and a school's first start waits for a removal too.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -94,6 +104,8 @@ export function ss12000NarvaroSlug(marker: string): string {
 export async function sweepSs12000NarvaroSchool(owner: Client, marker: string): Promise<void> {
   // The decisions are append-only, and a school's deletion cascades to them as a referential action.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [ss12000NarvaroSlug(marker)]);
+  // nv-m's school that had never shared until its first decision.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [`${ss12000NarvaroSlug(marker)}-forsta`]);
 }
 
 class ProbeOutbound extends Ss12000Outbound {
@@ -119,6 +131,15 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
   // runs tens or hundreds of milliseconds off the host's, so every "after"
   // this probe asks with is the database's own.
   const dbNow = async () => (await one<{ t: Date }>(`SELECT clock_timestamp() AS t`)).t.toISOString();
+  // The races (nv-l, nv-m) wait for the other side to be queued on an advisory lock rather than
+  // for a fixed time, which a loaded machine outlasts; after the limit they go on, and a side
+  // that never waited is then what the assertions see.
+  const advisoryWaiters = async () =>
+    Number((await one<{ n: string }>(`SELECT count(*)::text AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`)).n);
+  const untilWaiting = async (n: number, limitMs = 3_000) => {
+    const end = Date.now() + limitMs;
+    while (Date.now() < end && (await advisoryWaiters()) < n) await new Promise((resolve) => setTimeout(resolve, 25));
+  };
 
   const school = await one<{ id: string }>(
     `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
@@ -514,6 +535,8 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
         `SELECT app.attendance_run_xid($1::uuid)`,
         `SELECT app.attendance_stopped_since($1::uuid)`,
         `SELECT app.ss12000_may_have_left($1::uuid, 'Absence', ARRAY[$1::uuid], ARRAY[now()])`,
+        `SELECT app.attendance_recorded_as_shared($1::uuid)`,
+        `SELECT app.attendance_removals_ordered($1::uuid)`,
         `SELECT app.ss12000_notifies('{Attendance}'::text[], '{attendances.read}'::text[], $1::uuid)`,
         `SELECT app.ss12000_notifies_removals('{Attendance}'::text[], '{attendances.read}'::text[], $1::uuid)`,
         `SELECT app.ss12000_emitted_years($1::uuid)`,
@@ -650,107 +673,411 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       assert.equal(received.length, before + 1, 'a start was told twice');
     });
 
-    await check('(nv-l) a register save waits for an SS12000 apply that links its pupils, and neither is aborted', async () => {
+    await check('(nv-l) a register save goes through at once while an SS12000 apply links its pupils, and the apply moves only the pupils\' rows', async () => {
       const shares = await one<{ shares: boolean }>(`SELECT app.attendance_shared($1::uuid) AS shares`, [s]);
       assert.equal(shares.shares, true, 'the school does not share before the race');
       // Two pupils marked absent in a lesson; every record has its version (written while the school shares).
       const raceLesson = await lessonOf(klass.id, day(-1));
       const first = await record(raceLesson.id, pupil.id, 'ABSENT');
       const second = await record(raceLesson.id, leaver.id, 'ABSENT');
+      const away = await report(leaver.id, adminRow.id, day(20), 'SICK', NOTE, false);
       const notifications = { notifyUsers: async () => 0, guardiansOf: async () => [] } as unknown as NotificationsService;
       const attendance = new AttendanceService(api, notifications);
+      const save = (records: Array<{ studentId: string; status: string }>) =>
+        attendance.reportAttendance({ calendarLessonId: raceLesson.id, records } as never, admin);
+      // How long the apply stays open with saves beside it; PROBE_APPLY_HOLD_MS=60000 is the 60 s demo.
+      const holdMs = Number(process.env['PROBE_APPLY_HOLD_MS'] ?? 1_500);
+      // A save must be done well before an apply ends, whatever it holds: none waits for one.
+      let slowest = 0;
+      const promptly = async <T>(work: Promise<T>, what: string): Promise<T> => {
+        let timer: NodeJS.Timeout | undefined;
+        const limit = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${what} waited for the apply`)), 3_000);
+        });
+        const started = Date.now();
+        try {
+          return await Promise.race([work, limit]);
+        } finally {
+          clearTimeout(timer);
+          slowest = Math.max(slowest, Date.now() - started);
+        }
+      };
 
       // The apply's shape (readLocalSlice with lock, then one ss12000Id update per PERSON LINK, in
-      // change order), as the owner: the school's people lock, then the first pupil linked, which
-      // moves and holds the versions of every record of theirs until the apply ends.
+      // change order), as the administrator whose apply it is: the school's people lock, then the
+      // first pupil linked. Its records are re-versioned when it commits, not from this statement.
       await owner.query('BEGIN');
       let committed = false;
+      let applyXid = '';
+      let savedAt: Array<{ id: string; modified: Date }> = [];
+      let cursor = '';
+      let saves = 0;
       try {
-        // As the administrator whose apply it is: only an administrator's apply writes an ss12000Id.
         await owner.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`, [adminRow.authId]);
         await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended('Users:' || $1::text, 0))`, [s]);
+        applyXid = (await one<{ x: string }>(`SELECT pg_current_xact_id()::text AS x`)).x;
         await owner.query(`UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = $1`, [pupil.id]);
-        // Meanwhile the register is corrected, the other pupil first: without the wait it would hold
-        // the second pupil's version while it waits for the first's, which the apply holds.
-        const saving = attendance
-          .reportAttendance(
-            { calendarLessonId: raceLesson.id, records: [{ studentId: leaver.id, status: 'LATE' }, { studentId: pupil.id, status: 'LATE' }] } as never,
-            admin,
+        // The register corrected meanwhile, the other pupil first, and done before the apply ends.
+        const answer = await promptly(save([{ studentId: leaver.id, status: 'LATE' }, { studentId: pupil.id, status: 'LATE' }]), 'the register save');
+        assert.deepEqual(answer, { created: 0, updated: 2 }, 'the register save did not write both');
+        // Phone-style saves for as long as the apply stays open: every one through at once.
+        const until = Date.now() + holdMs;
+        for (let i = 0; Date.now() < until; i += 1) {
+          const status = i % 2 === 0 ? 'PRESENT' : 'LATE';
+          await promptly(save([{ studentId: pupil.id, status }, { studentId: leaver.id, status }]), `phone-style save ${i + 1}`);
+          saves += 1;
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, Math.max(0, until - Date.now()))));
+        }
+        await promptly(save([{ studentId: leaver.id, status: 'LATE' }, { studentId: pupil.id, status: 'LATE' }]), 'the last save');
+        // What the saves made of the two versions, and a cursor of an integration that reads now.
+        savedAt = (
+          await owner.query<{ id: string; modified: Date }>(
+            `SELECT "entityId"::text AS id, "modifiedAt" AS modified FROM "Ss12000EntityVersions" WHERE "entityId" = ANY ($1::uuid[])`,
+            [[first.id, second.id]],
           )
-          .then(
-            (answer) => ({ answer, afterCommit: committed, error: null as unknown }),
-            (error: unknown) => ({ answer: null, afterCommit: committed, error }),
-          );
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        // The apply links the second pupil, which moves that pupil's versions too, and commits.
+        ).rows;
+        assert.equal(savedAt.length, 2, 'the saves left the two records without a version');
+        cursor = (await one<{ t: Date }>(`SELECT clock_timestamp() AS t`)).t.toISOString();
+        await pause();
+        // The apply links the second pupil, and commits: both pupils' records re-versioned then.
         await owner.query(`UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = $1`, [leaver.id]);
         committed = true;
         await owner.query('COMMIT');
-        const saved = await saving;
-        assert.equal(saved.error, null, `the register save was aborted: ${String(saved.error)}`);
-        assert.deepEqual(saved.answer, { created: 0, updated: 2 }, 'the register save did not write both');
-        assert.equal(saved.afterCommit, true, 'the register save wrote while the apply was running');
       } catch (error) {
         if (!committed) await owner.query('ROLLBACK').catch(() => undefined);
         throw error;
       }
+      assert.ok(saves >= 1, 'no phone-style save ran while the apply was open');
+      console.log(`       nv-l: ${saves + 2} register saves beside an apply held open ${holdMs} ms, the slowest ${slowest} ms`);
+      // The apply wrote no record's version: those are the saves' alone.
+      const records = await owner.query<{ id: string; xid: string; modified: Date }>(
+        `SELECT "entityId"::text AS id, xid::text AS xid, "modifiedAt" AS modified FROM "Ss12000EntityVersions"
+          WHERE resource = 'Attendance' AND "entityId" = ANY ($1::uuid[])`,
+        [[first.id, second.id]],
+      );
+      for (const row of records.rows) {
+        assert.notEqual(row.xid, applyXid, `the apply wrote the version of ${row.id}`);
+        const before = savedAt.find((saved) => saved.id === row.id)!;
+        assert.equal(row.modified.getTime(), before.modified.getTime(), `the apply moved the version of ${row.id}`);
+      }
+      // It moved the two pupils' own rows, stamped as it committed, after the integration's cursor.
+      const pupils = await owner.query<{ id: string; xid: string; modified: Date }>(
+        `SELECT "entityId"::text AS id, xid::text AS xid, "modifiedAt" AS modified FROM "Ss12000EntityVersions"
+          WHERE resource IN ('AttendancePupil', 'AbsencePupil') AND "entityId" = ANY ($1::uuid[])`,
+        [[pupil.id, leaver.id]],
+      );
+      assert.equal(pupils.rows.length, 4, 'the apply did not move both pupils\' rows of attendance and absence');
+      for (const row of pupils.rows) {
+        assert.equal(row.xid, applyXid, `a pupil's row of ${row.id} is not the apply's`);
+        assert.ok(row.modified.toISOString() > cursor, `a pupil's row of ${row.id} is stamped before the apply committed`);
+      }
+      // An integration that read while the apply ran reads both again: the new pupil ids.
+      const reread = (await provider.listAttendances(caller, { 'meta.modified.after': cursor })).data;
+      assert.ok(
+        [first.id, second.id].every((id) => reread.some((item) => item.id === id)),
+        'a read from before the apply committed misses a pupil it linked',
+      );
+      const absences = (await provider.listAbsences(caller, { 'meta.modified.after': cursor })).data;
+      assert.ok(absences.some((item) => item.id === away.id), 'a read from before the apply committed misses an absence of a pupil it linked');
       const statuses = await owner.query<{ status: string }>(
         `SELECT status::text AS status FROM "AttendanceRecords" WHERE id = ANY ($1::uuid[])`,
         [[first.id, second.id]],
       );
-      assert.deepEqual(statuses.rows.map((row) => row.status), ['LATE', 'LATE'], 'the register save is not what the records say');
+      assert.deepEqual(statuses.rows.map((row) => row.status), ['LATE', 'LATE'], 'the register saves are not what the records say');
+
+      // The bounds compare exactly what is emitted, for a record a save creates too (its createdAt is
+      // the API's clock at the insert, after its version's transaction began): each record is read
+      // after the millisecond before its meta.modified, and not before it.
+      const freshLesson = await lessonOf(klass.id, day(-4));
+      await attendance.reportAttendance({ calendarLessonId: freshLesson.id, records: [{ studentId: pupil.id, status: 'PRESENT' }] } as never, admin);
+      const created = await one<{ id: string }>(
+        `SELECT id FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
+        [freshLesson.id, pupil.id],
+      );
+      // And one whose createdAt is 300 ms after its version's transaction began, as an API host's clock
+      // ahead of the database's makes it, so the check holds whichever way the clocks lean here.
+      const laterLesson = await lessonOf(klass.id, day(-5));
+      const later = await one<{ id: string }>(
+        `INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "recordedById", "recordedAt", note, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, 'PRESENT', $4, now(), $5, now() + interval '300 milliseconds', now()) RETURNING id`,
+        [s, laterLesson.id, pupil.id, teacherRow.id, NOTE],
+      );
+      const emitted = (await provider.listAttendances(caller, {})).data;
+      assert.ok(emitted.some((item) => item.id === created.id), `the record a save created is not read (${emitted.map((item) => item.id).join(', ')})`);
+      const laterVersion = await one<{ m: Date }>(
+        `SELECT "modifiedAt" AS m FROM "Ss12000EntityVersions" WHERE resource = 'Attendance' AND "entityId" = $1`,
+        [later.id],
+      );
+      const laterItem = emitted.find((item) => item.id === later.id);
+      assert.ok(
+        laterItem && (laterItem['meta'] as { modified: string }).modified > laterVersion.m.toISOString(),
+        'a record created after its version began is not emitted as modified at its creation',
+      );
+      for (const item of emitted) {
+        const before = new Date(Date.parse((item['meta'] as { modified: string }).modified) - 1).toISOString();
+        assert.ok(ids((await provider.listAttendances(caller, { 'meta.modified.after': before })).data).includes(item.id), `${item.id} is not read after ${before}`);
+        assert.ok(!ids((await provider.listAttendances(caller, { 'meta.modified.before': before })).data).includes(item.id), `${item.id} is read before ${before}`);
+      }
     });
 
-    await check('(nv-m) the wait has a limit, and a decision waits for a save already writing', async () => {
-      const raceLesson = await one<{ id: string }>(
-        `SELECT "calendarLessonId" AS id FROM "AttendanceRecords" WHERE "studentId" = $1 AND status = 'LATE' ORDER BY "createdAt" DESC LIMIT 1`,
-        [pupil.id],
-      );
+    await check('(nv-m) a decision is ordered against the writers, and a register save never waits for one', async () => {
       const notifications = { notifyUsers: async () => 0, guardiansOf: async () => [] } as unknown as NotificationsService;
       const attendance = new AttendanceService(api, notifications);
-      const save = () =>
-        attendance.reportAttendance({ calendarLessonId: raceLesson.id, records: [{ studentId: pupil.id, status: 'PRESENT' }] } as never, admin);
-
-      // An apply that runs longer than the save may wait: the save answers 409 within about 5 s
-      // and writes nothing, where it would otherwise hold its connection until the apply ends.
-      await owner.query('BEGIN');
-      try {
-        await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended('Users:' || $1::text, 0))`, [s]);
-        const started = Date.now();
-        await assert.rejects(save(), (error: unknown) => (error as { response?: { code?: string } }).response?.code === 'ATTENDANCE_SYNC_IN_PROGRESS');
-        const waited = Date.now() - started;
-        assert.ok(waited >= 4_500 && waited < 12_000, `the save waited ${waited} ms, not about 5 s`);
-      } finally {
-        await owner.query('ROLLBACK');
-      }
-      const unchanged = await one<{ status: string }>(
-        `SELECT status::text AS status FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
-        [raceLesson.id, pupil.id],
-      );
-      assert.equal(unchanged.status, 'LATE', 'a save that waited out its limit wrote');
-
-      // A save that has begun holds a decision back until it ends, so it never writes on having
-      // read the decision before: a real save, held up briefly by an apply (well under its 5 s),
-      // and a real decision to stop made meanwhile, which may only be written after the save.
+      const absenceIds = async (after: string) =>
+        (await provider.deletedEntities(caller, { after, entities: ['Absence'] })).data['absences'] ?? [];
+      // Both sides always settle before the check ends, a failure recorded rather than left in flight.
       const order: string[] = [];
+      const settle = (name: string) => [
+        () => order.push(name),
+        (error: unknown) => order.push(`${name} failed: ${String(error).slice(0, 160)}`),
+      ] as const;
+
+      // (1) A start waits for a removal that recorded the school as not sharing. The removal (as the
+      // owner, held open) drops an absence reported during the stop, untold; the start is written
+      // only after it commits, so the absence is never readable after the start.
+      await sharing.record({ shares: false, reference: 'probe: uppehåll före borttagningen' }, admin);
+      await pause();
+      const quiet = await report(pupil.id, guardianRow.id, day(16), 'SICK', NOTE, false);
+      const before = await dbNow();
+      let deciding: Promise<unknown> = Promise.resolve();
       await owner.query('BEGIN');
       let released = false;
       try {
-        await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended('Users:' || $1::text, 0))`, [s]);
-        const saving = save().then(() => order.push('save'));
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        const deciding = sharing.record({ shares: false, reference: 'probe: medan registret sparas' }, admin).then(() => order.push('decision'));
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        assert.deepEqual(order, [], 'the save or the decision went ahead while the apply was running');
+        await owner.query(`DELETE FROM "AbsenceReports" WHERE id = $1`, [quiet.id]);
+        deciding = sharing.record({ shares: true, reference: 'probe: börjar under borttagningen' }, admin).then(...settle('start'));
+        await untilWaiting(1);
+        const early = [...order];
+        order.push('removal');
         released = true;
         await owner.query('COMMIT');
-        await Promise.all([saving, deciding]);
-        assert.deepEqual(order, ['save', 'decision'], 'a decision was written while a save that began before it was still writing');
-      } catch (error) {
+        assert.deepEqual(early, [], 'a start was written while a removal that read "not shared" was still open');
+      } finally {
         if (!released) await owner.query('ROLLBACK').catch(() => undefined);
-        throw error;
+        await deciding;
       }
-      await sharing.record({ shares: true, reference: 'probe: igen efter registret' }, admin);
+      assert.deepEqual(order, ['removal', 'start'], 'the start did not wait for the removal');
+      assert.ok(!(await absenceIds(before)).includes(quiet.id), 'an absence that never left was told of its removal');
+      assert.ok(!(await provider.listAbsences(caller, {})).data.some((item) => item.id === quiet.id), 'a removed absence is read');
+
+      // (2) A start waits for a writer that recorded the school as not sharing, as for a removal: an
+      // absence reported (as the owner, held open) while the school has stopped is versioned by
+      // nobody, and is read after the start as every row from the stop is.
+      await sharing.record({ shares: false, reference: 'probe: uppehåll före skrivningen' }, admin);
+      await pause();
+      order.length = 0;
+      let reported = '';
+      await owner.query('BEGIN');
+      let written = false;
+      try {
+        reported = (await report(pupil.id, guardianRow.id, day(15), 'SICK', NOTE, false)).id;
+        deciding = sharing.record({ shares: true, reference: 'probe: börjar under skrivningen' }, admin).then(...settle('start'));
+        await untilWaiting(1);
+        const early = [...order];
+        order.push('writer');
+        written = true;
+        await owner.query('COMMIT');
+        assert.deepEqual(early, [], 'a start was written while a writer that read "not shared" was still open');
+      } finally {
+        if (!written) await owner.query('ROLLBACK').catch(() => undefined);
+        await deciding;
+      }
+      assert.deepEqual(order, ['writer', 'start'], 'the start did not wait for the writer');
+      assert.equal(
+        (await owner.query(`SELECT 1 FROM "Ss12000EntityVersions" WHERE "entityId" = $1`, [reported])).rowCount,
+        0,
+        'a writer versioned an absence at a school that had stopped',
+      );
+      assert.ok((await provider.listAbsences(caller, {})).data.some((item) => item.id === reported), 'an absence reported during the stop is not read after the start');
+
+      // (3) While a start is being written (as the owner, held open), a register save goes through
+      // at once, versioning as if the school shared, so a notice follows it if the start commits
+      // first, and a removal waits for the decision and then reads it exactly: the start committed,
+      // so the absence that went is told.
+      await sharing.record({ shares: false, reference: 'probe: uppehåll före beslutet' }, admin);
+      await pause();
+      const during = await report(pupil.id, guardianRow.id, day(17), 'SICK', NOTE, false);
+      const before2 = await dbNow();
+      const order2: string[] = [];
+      let removing: Promise<unknown> = Promise.resolve();
+      await owner.query('BEGIN');
+      let decided = false;
+      try {
+        await owner.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`, [adminRow.authId]);
+        await owner.query(`INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES ($1, true, 'probe: beslut i luften')`, [s]);
+        // The pupil's record in the lesson, if there is one yet, and the transaction that last versioned it.
+        const marked = async () =>
+          (
+            await owner.query<{ status: string; xid: string | null }>(
+              `SELECT a.status::text AS status, v.xid::text AS xid FROM "AttendanceRecords" a
+                 LEFT JOIN "Ss12000EntityVersions" v ON v."schoolId" = a."schoolId" AND v.resource = 'Attendance' AND v."entityId" = a.id
+                WHERE a."calendarLessonId" = $1 AND a."studentId" = $2`,
+              [lesson.id, pupil.id],
+            )
+          ).rows[0] as { status: string; xid: string | null } | undefined;
+        const prior = await marked();
+        const started = Date.now();
+        await attendance.reportAttendance(
+          { calendarLessonId: lesson.id, records: [{ studentId: pupil.id, status: prior?.status === 'PRESENT' ? 'LATE' : 'PRESENT' }] } as never,
+          admin,
+        );
+        const took = Date.now() - started;
+        assert.ok(took < 3_000, `a register save waited ${took} ms for a decision being written`);
+        // It could not tell whether the school shares, and versioned as if it did: one more, never one less.
+        const saved = await marked();
+        assert.ok(
+          saved !== undefined && saved.xid !== null && saved.xid !== (prior?.xid ?? null),
+          'a register save while a start was being written left its record unversioned',
+        );
+        removing = api
+          .withRls(guardian, (tx) => tx.absenceReport.delete({ where: { id: during.id } }))
+          .then(
+            () => order2.push('removal'),
+            (error: unknown) => order2.push(`removal failed: ${String(error).slice(0, 160)}`),
+          );
+        await untilWaiting(1);
+        order2.push('decision');
+        decided = true;
+        await owner.query('COMMIT');
+      } finally {
+        if (!decided) await owner.query('ROLLBACK').catch(() => undefined);
+        await removing;
+      }
+      assert.deepEqual(order2, ['decision', 'removal'], 'a removal read the decisions while a start was being written');
+      assert.ok((await absenceIds(before2)).includes(during.id), 'an absence removed just after a start is not told');
+
+      // (4) A writer that begins once a stop has read the clock (as the owner, held open) and commits
+      // before the stop does was readable as the school sharing: the stop dates the leaving by its
+      // commit, so the record, removed within the stop, is told. The API's insert takes its
+      // createdAt from the database's clock, as its version does, so that only the stop's dating
+      // decides, however the host's clock leans.
+      const beforeStop = await dbNow();
+      const stopLesson = await lessonOf(klass.id, day(-6));
+      await owner.query('BEGIN');
+      let stopCommitted = false;
+      try {
+        await owner.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`, [adminRow.authId]);
+        await owner.query(`INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES ($1, false, 'probe: stopp i luften')`, [s]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await api.withRls(admin, (tx) =>
+          tx.$executeRaw`INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "recordedById", "recordedAt", note, "updatedAt")
+                         VALUES (${s}::uuid, ${stopLesson.id}::uuid, ${pupil.id}::uuid, 'ABSENT', ${adminRow.id}::uuid, now(), ${NOTE}, now())`,
+        );
+        stopCommitted = true;
+        await owner.query('COMMIT');
+      } finally {
+        if (!stopCommitted) await owner.query('ROLLBACK').catch(() => undefined);
+      }
+      // Compared in the database, to the microsecond.
+      const readable = await one<{ id: string; stamped: boolean; between: boolean }>(
+        `SELECT a.id, d."committedAt" > d."decidedAt" AS stamped,
+                v."createdAt" > d."decidedAt" AND v."createdAt" < d."committedAt" AS between
+           FROM "AttendanceRecords" a
+           JOIN "Ss12000EntityVersions" v ON v."schoolId" = a."schoolId" AND v.resource = 'Attendance' AND v."entityId" = a.id
+           CROSS JOIN LATERAL (SELECT "decidedAt", "committedAt" FROM "AttendanceSharingDecisions"
+                                WHERE "schoolId" = $3 ORDER BY "decidedAt" DESC LIMIT 1) d
+          WHERE a."calendarLessonId" = $1 AND a."studentId" = $2`,
+        [stopLesson.id, pupil.id, s],
+      );
+      assert.ok(readable.stamped, 'a stop is not stamped as it commits');
+      assert.ok(readable.between, 'the writer did not begin between the stop reading the clock and its commit, which proves nothing here');
+      await owner.query(`DELETE FROM "AttendanceRecords" WHERE id = $1`, [readable.id]);
+      const toldStop = (await provider.deletedEntities(caller, { after: beforeStop, entities: ['Attendance'] })).data['attendances'] ?? [];
+      assert.ok(toldStop.includes(readable.id), 'a record readable while a stop was being written was not told of its removal');
+
+      // (5) A save while a start is being written that never commits (rolled back, as a refused one
+      // is) versions as if the school shared, but its transaction began after the stop took effect:
+      // the record it made, removed within the same stop, is told to nobody.
+      await sharing.record({ shares: false, reference: 'probe: uppehåll före beslutet som inte blir av' }, admin);
+      // The save's createdAt is the API's clock and the stop is the database's, which under load runs
+      // ahead of the host's: let the host's pass the stop, so the record is created within it.
+      const stoppedAt = (await one<{ t: Date }>(`SELECT app.attendance_stopped_since($1::uuid) AS t`, [s])).t.getTime();
+      while (Date.now() <= stoppedAt + 50) await pause();
+      const before5 = await dbNow();
+      const refusedLesson = await lessonOf(klass.id, day(-3));
+      await owner.query('BEGIN');
+      try {
+        await owner.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`, [adminRow.authId]);
+        await owner.query(`INSERT INTO "AttendanceSharingDecisions" ("schoolId", shares, reference) VALUES ($1, true, 'probe: beslut som inte blir av')`, [s]);
+        await attendance.reportAttendance({ calendarLessonId: refusedLesson.id, records: [{ studentId: pupil.id, status: 'ABSENT' }] } as never, admin);
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+      const made = await one<{ id: string }>(
+        `SELECT id FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
+        [refusedLesson.id, pupil.id],
+      );
+      assert.equal(
+        (await owner.query(`SELECT 1 FROM "Ss12000EntityVersions" WHERE "entityId" = $1`, [made.id])).rowCount,
+        1,
+        'a save while a start was being written left its record unversioned',
+      );
+      await owner.query(`DELETE FROM "AttendanceRecords" WHERE id = $1`, [made.id]);
+      const toldOf = (await provider.deletedEntities(caller, { after: before5, entities: ['Attendance'] })).data['attendances'] ?? [];
+      assert.ok(!toldOf.includes(made.id), 'a record made and removed within a stop was told of its removal');
+
+      // (6) A decision waits at most 5 s for a writer that recorded the school as not sharing, then
+      // answers 409 ATTENDANCE_SHARING_BUSY having written nothing; the writer is never held up.
+      await sharing.record({ shares: false, reference: 'probe: uppehåll före den långa skrivningen' }, admin);
+      await pause();
+      const slow = await report(pupil.id, guardianRow.id, day(18), 'SICK', NOTE, false);
+      const decisions = async () => (await one<{ n: string }>(`SELECT count(*)::text AS n FROM "AttendanceSharingDecisions" WHERE "schoolId" = $1`, [s])).n;
+      const counted = await decisions();
+      await owner.query('BEGIN');
+      try {
+        await owner.query(`DELETE FROM "AbsenceReports" WHERE id = $1`, [slow.id]);
+        const started = Date.now();
+        await assert.rejects(
+          sharing.record({ shares: true, reference: 'probe: beslutet som väntar för länge' }, admin),
+          (error: unknown) => (error as { response?: { code?: string } }).response?.code === 'ATTENDANCE_SHARING_BUSY',
+        );
+        const waited = Date.now() - started;
+        assert.ok(waited >= 4_500 && waited < 12_000, `the decision waited ${waited} ms, not about 5 s`);
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+      assert.equal(await decisions(), counted, 'a decision that waited out its limit was written');
+      await sharing.record({ shares: true, reference: 'probe: igen efter skrivningarna' }, admin);
+
+      // (7) At a school that never shared, its first start waits for a removal that read "never
+      // shared" too: the absence that went then was never handed out, and is told to nobody.
+      const first = await one<{ id: string }>(
+        `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+        [`${marker} ss12000 närvaro första`, `${ss12000NarvaroSlug(marker)}-forsta`],
+      );
+      const firstPerson = (role: string) =>
+        one<{ id: string; authId: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+           VALUES ($1, $2, 'Första', 'Skolan', $3::"UserRole", gen_random_uuid(), true, now()) RETURNING id, "authId"`,
+          [first.id, `${marker}-nv-${randomUUID()}@example.invalid`, role],
+        );
+      const firstAdminRow = await firstPerson('SCHOOL_ADMIN');
+      const firstPupil = await firstPerson('STUDENT');
+      const firstAdmin: AuthenticatedUser = {
+        authId: firstAdminRow.authId, userId: firstAdminRow.id, schoolId: first.id, role: Role.SCHOOL_ADMIN, adminProfile: 'FULL',
+      };
+      const never = await one<{ id: string }>(
+        `INSERT INTO "AbsenceReports" ("schoolId", "studentId", "reportedById", date, type, note) VALUES ($1, $2, $3, $4::date, 'SICK', $5) RETURNING id`,
+        [first.id, firstPupil.id, firstAdminRow.id, day(19), NOTE],
+      );
+      let starting: Promise<unknown> = Promise.resolve();
+      let early7: string[] = [];
+      await owner.query('BEGIN');
+      let removed = false;
+      try {
+        await owner.query(`DELETE FROM "AbsenceReports" WHERE id = $1`, [never.id]);
+        starting = sharing.record({ shares: true, reference: 'probe: första beslutet' }, firstAdmin).then(...settle('first start'));
+        await untilWaiting(1);
+        early7 = [...order];
+        removed = true;
+        await owner.query('COMMIT');
+      } finally {
+        if (!removed) await owner.query('ROLLBACK').catch(() => undefined);
+        await starting;
+      }
+      assert.ok(!early7.includes('first start'), 'a first start was written while a removal that read "never shared" was still open');
+      assert.ok(order.includes('first start'), 'the first start was not written once the removal committed');
+      const told = await one<{ n: string }>(`SELECT count(*)::text AS n FROM "Ss12000Tombstones" WHERE "schoolId" = $1 AND "emittedId" = $2`, [first.id, never.id]);
+      assert.equal(told.n, '0', 'an absence removed at a school that never shared is told after its first start');
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());

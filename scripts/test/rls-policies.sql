@@ -21995,8 +21995,9 @@ ROLLBACK;
 -- API's alone, run as their owner, and answer exactly the emitted columns.
 -- The versions' and tombstones' service arms ask app.service_reads_attendance
 -- for the two resources. Every other function is nobody's to call, except
--- that question, which is the API's; the fourteen triggers are in place, and
--- the CHECKs know the two resources and scopes.
+-- that question, which is the API's; the fifteen triggers are in place (a
+-- linked pupil's rows stamped again at commit, deferred), and the CHECKs
+-- know the two resources (and the pupils' rows of each) and the scopes.
 -- ---------------------------------------------------------------------------
 
 DO $$
@@ -22041,7 +22042,7 @@ BEGIN
       RAISE EXCEPTION 'attendance sharing: the API cannot insert %', p;
     END IF;
   END LOOP;
-  FOREACH p IN ARRAY ARRAY['id', 'decidedById', 'decidedAt', 'xid'] LOOP
+  FOREACH p IN ARRAY ARRAY['id', 'decidedById', 'decidedAt', 'xid', 'committedAt'] LOOP
     IF has_column_privilege('app_authenticated', '"AttendanceSharingDecisions"', p, 'INSERT') THEN
       RAISE EXCEPTION 'attendance sharing: the API may write %, which is the database''s', p;
     END IF;
@@ -22071,8 +22072,7 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- The functions: nobody's but the questions, the two reads and the register
-  -- save's wait for a running apply, which are the API's.
+  -- The functions: nobody's but the questions and the two reads, which are the API's.
   FOREACH fn IN ARRAY ARRAY[
     'app.attendance_sharing_decisions_are_stamped()', 'app.attendance_sharing_decisions_are_append_only()',
     'app.attendance_shared(uuid)', 'app.attendance_shared_since(uuid)', 'app.attendance_ever_shared(uuid)',
@@ -22082,7 +22082,9 @@ BEGIN
     'app.ss12000_v_attendance_lessons()', 'app.ss12000_v_absence_timezone()', 'app.ss12000_v_attendance_years()',
     'app.ss12000_notifies(text[], text[], uuid)', 'app.ss12000_notifies_removals(text[], text[], uuid)',
     'app.attendance_run_xid(uuid)', 'app.attendance_stopped_since(uuid)',
-    'app.ss12000_may_have_left(uuid, text, uuid[], timestamptz[])'
+    'app.ss12000_may_have_left(uuid, text, uuid[], timestamptz[])',
+    'app.attendance_recorded_as_shared(uuid)', 'app.attendance_removals_ordered(uuid)',
+    'app.ss12000_attendance_pupils_stamped()', 'app.attendance_sharing_decisions_are_committed()'
   ] LOOP
     FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
       CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
@@ -22091,7 +22093,6 @@ BEGIN
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'attendance sharing: % runs as its caller', fn; END IF;
   END LOOP;
   FOREACH fn IN ARRAY ARRAY[
-    'app.attendance_recording_waits_for_sync()',
     'app.service_reads_attendance(text)',
     'app.service_reads_attendance_removals(text)',
     'app.ss12000_attendances(uuid[], uuid[], uuid[], uuid[], timestamptz, timestamptz, timestamptz, timestamptz, uuid, integer)',
@@ -22122,17 +22123,28 @@ BEGIN
   SELECT count(*) INTO n FROM pg_trigger
    WHERE NOT tgisinternal AND (
          (tgrelid = '"AttendanceSharingDecisions"'::regclass AND tgname IN (
-            'AttendanceSharingDecisions_stamped', 'AttendanceSharingDecisions_append_only', 'AttendanceSharingDecisions_no_truncate'))
+            'AttendanceSharingDecisions_stamped', 'AttendanceSharingDecisions_committed', 'AttendanceSharingDecisions_append_only',
+            'AttendanceSharingDecisions_no_truncate'))
       OR (tgrelid = '"AbsenceReports"'::regclass AND tgname IN (
             'AbsenceReports_granted_leave_is_decided', 'AbsenceReports_ss12000_versions_ins',
             'AbsenceReports_ss12000_versions_upd', 'AbsenceReports_ss12000_versions_del'))
       OR (tgrelid = '"AttendanceRecords"'::regclass AND tgname IN (
             'AttendanceRecords_ss12000_versions_ins', 'AttendanceRecords_ss12000_versions_upd', 'AttendanceRecords_ss12000_versions_del'))
-      OR (tgrelid = '"Users"'::regclass AND tgname = 'Users_ss12000_attendance_upd')
+      OR (tgrelid = '"Users"'::regclass AND tgname IN ('Users_ss12000_attendance_upd', 'Users_ss12000_attendance_pupils_stamped'))
       OR (tgrelid = '"CalendarLessons"'::regclass AND tgname = 'CalendarLessons_ss12000_attendance_upd')
       OR (tgrelid = '"Schools"'::regclass AND tgname = 'Schools_ss12000_attendance_upd')
       OR (tgrelid = '"AcademicYears"'::regclass AND tgname = 'AcademicYears_ss12000_attendance_upd'));
-  IF n <> 14 THEN RAISE EXCEPTION 'attendance sharing: % of the fourteen triggers are in place', n; END IF;
+  IF n <> 16 THEN RAISE EXCEPTION 'attendance sharing: % of the sixteen triggers are in place', n; END IF;
+  -- A decision is stamped again as it commits, when it took effect.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"AttendanceSharingDecisions"'::regclass AND tgname = 'AttendanceSharingDecisions_committed'
+                    AND tgdeferrable AND tginitdeferred AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'attendance sharing: AttendanceSharingDecisions_committed is not deferred until commit';
+  END IF;
+  -- A linked pupil's rows are stamped again as the transaction commits.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '"Users"'::regclass AND tgname = 'Users_ss12000_attendance_pupils_stamped'
+                    AND tgdeferrable AND tginitdeferred AND tgenabled = 'O') THEN
+    RAISE EXCEPTION 'attendance sharing: Users_ss12000_attendance_pupils_stamped is not deferred until commit';
+  END IF;
 
   -- The CHECKs know the two resources and the two scopes.
   FOREACH fn IN ARRAY ARRAY['Ss12000EntityVersions_resource_is_emitted', 'Ss12000Tombstones_resource_is_emitted',
@@ -22147,6 +22159,16 @@ BEGIN
       RAISE EXCEPTION 'attendance sharing: % does not know the resources', fn;
     END IF;
   END LOOP;
+  -- A pupil's rows (linked or back: all their records moved at once) are
+  -- versions too, kept to a key that may read the resource like the records'.
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint WHERE conname = 'Ss12000EntityVersions_resource_is_emitted';
+  IF def NOT LIKE '%AttendancePupil%' OR def NOT LIKE '%AbsencePupil%' THEN
+    RAISE EXCEPTION 'attendance sharing: the versions do not know the pupils'' rows: %', def;
+  END IF;
+  SELECT qual INTO def FROM pg_policies WHERE schemaname = 'public' AND tablename = 'Ss12000EntityVersions' AND policyname = 'ss12000_entity_versions_service_select';
+  IF def NOT LIKE '%AttendancePupil%' OR def NOT LIKE '%AbsencePupil%' THEN
+    RAISE EXCEPTION 'attendance sharing: the versions'' arm does not keep the pupils'' rows to the scope: %', def;
+  END IF;
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -22551,7 +22573,8 @@ ROLLBACK;
 -- tombstones' own arm), and a key without the scope, or with only the other
 -- one, sees no Attendance version. Everything in one transaction, so "moved"
 -- is "now carries this transaction's xid", and every such check first asserts
--- there is a version at all.
+-- there is a version at all. A linked or returning pupil moves the pupil's
+-- own rows ('AttendancePupil', 'AbsencePupil'), not each record's version.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -22701,10 +22724,25 @@ BEGIN
      OR pg_temp.nv159_xid('Absence', sick, current_setting('app.test_nv_narrow')) IS NOT NULL THEN
     RAISE EXCEPTION 'attendance versions: the absence''s version is not exactly the absences.read key''s';
   END IF;
-  -- A pupil linked to the source is emitted under another id.
-  IF pg_temp.nv159_xid('Absence', granted) IS NOT NULL THEN RAISE EXCEPTION 'attendance versions: the granted leave moved before anything changed'; END IF;
+  -- A pupil linked to the source is emitted under another id: the pupil's own
+  -- rows move (every record of theirs reads as modified then), and no
+  -- record's version, which a register save writes and an apply must not hold.
+  IF pg_temp.nv159_xid('Absence', granted) IS NOT NULL OR pg_temp.nv159_xid('AbsencePupil', classmate) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: the granted leave moved before anything changed';
+  END IF;
   UPDATE "Users" SET "ss12000Id" = gen_random_uuid() WHERE id = classmate;
-  IF NOT pg_temp.nv159_moved('Absence', granted) THEN RAISE EXCEPTION 'attendance versions: linking the pupil did not move their absence'; END IF;
+  IF NOT pg_temp.nv159_moved('AbsencePupil', classmate) OR NOT pg_temp.nv159_moved('AttendancePupil', classmate) THEN
+    RAISE EXCEPTION 'attendance versions: linking the pupil did not move their rows';
+  END IF;
+  IF pg_temp.nv159_xid('Absence', granted) IS NOT NULL THEN
+    RAISE EXCEPTION 'attendance versions: linking the pupil wrote a version of each record';
+  END IF;
+  -- The pupil's rows are each resource's: kept to a key that may read it.
+  IF pg_temp.nv159_xid('AbsencePupil', classmate, current_setting('app.test_nv_narrow')) IS NOT NULL
+     OR pg_temp.nv159_xid('AttendancePupil', classmate, current_setting('app.test_nv_absences')) IS NOT NULL
+     OR pg_temp.nv159_xid('AbsencePupil', classmate, current_setting('app.test_nv_absences')) IS NULL THEN
+    RAISE EXCEPTION 'attendance versions: a pupil''s rows are not exactly their scope''s';
+  END IF;
 
   -- A year activated: its lessons' attendance is emitted from now on, and
   -- versioned (next year's planted row had none). Deactivating this year
@@ -22736,7 +22774,7 @@ BEGIN
   IF pg_temp.nv159_buried('Attendance', present) OR pg_temp.nv159_buried('Absence', sick) THEN
     RAISE EXCEPTION 'attendance versions: a pupil who came back stayed buried';
   END IF;
-  IF NOT pg_temp.nv159_moved('Attendance', present) OR NOT pg_temp.nv159_moved('Absence', sick) THEN
+  IF NOT pg_temp.nv159_moved('AttendancePupil', pupil) OR NOT pg_temp.nv159_moved('AbsencePupil', pupil) THEN
     RAISE EXCEPTION 'attendance versions: a pupil who came back brought no version';
   END IF;
 

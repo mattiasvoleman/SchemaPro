@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -14,22 +13,7 @@ import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
-import { isLockTimeout } from '../publication/publish-mode';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
-
-/**
- * A register save at a school that shares attendance with integrations waits
- * at most 5 s for a running SS12000 apply (20261114090000); still waiting, it
- * answers this, and the phone's queue sends the batch again.
- */
-export const ATTENDANCE_SYNC_IN_PROGRESS = 'ATTENDANCE_SYNC_IN_PROGRESS';
-
-function attendanceSyncInProgress(): ConflictException {
-  return new ConflictException({
-    message: 'Elevuppgifterna hämtas från källsystemet just nu. Försök igen om en stund.',
-    code: ATTENDANCE_SYNC_IN_PROGRESS,
-  });
-}
 
 export interface AttendanceReportResult {
   created: number;
@@ -186,20 +170,6 @@ export class AttendanceService {
       const studentIds = [...new Set(dto.records.map((entry) => entry.studentId))];
       await this.assertStudentsAreOnRoster(tx, lesson, studentIds);
 
-      // At a school that shares attendance with integrations each status
-      // written moves a version the SS12000 provider reads, one upsert at a
-      // time, and an SS12000 apply that links pupils moves all of theirs and
-      // holds them to its end: wait for a running apply before the first
-      // write, so neither holds one the other waits for (20261114090000).
-      // At most 5 s: an apply can run for minutes, and the phone's queue
-      // sends a 409 again.
-      try {
-        await tx.$executeRaw(Prisma.sql`SELECT app.attendance_recording_waits_for_sync()`);
-      } catch (error) {
-        if (isLockTimeout(error)) throw attendanceSyncInProgress();
-        throw error;
-      }
-
       let created = 0;
       let updated = 0;
 
@@ -222,6 +192,18 @@ export class AttendanceService {
           })
         ).map((row) => [row.studentId, row.status]),
       );
+
+      /**
+       * The order the rows are written in: by pupil, whatever order the batch
+       * came in and whatever this save read. A lesson's record is keyed by its
+       * pupil, and at a school that shares attendance with integrations each
+       * record's version (20261114090000) is written right after it, so two
+       * saves of the same lesson (a phone resending, a second device) take
+       * both in the same order and never hold one each of what the other
+       * waits for. An SS12000 apply writes none of these: a pupil it links
+       * moves one row of the pupil's.
+       */
+      const inWriteOrder = [...dto.records].sort((a, b) => (a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0));
 
       const now = new Date();
       const recordedById = user.userId ?? null;
@@ -247,7 +229,7 @@ export class AttendanceService {
 
       // Use upsert for idempotency — mobile devices may re-send if the first
       // attempt was lost while offline.
-      for (const entry of dto.records) {
+      for (const entry of inWriteOrder) {
         const result = await tx.attendanceRecord.upsert({
           where: {
             calendarLessonId_studentId: {

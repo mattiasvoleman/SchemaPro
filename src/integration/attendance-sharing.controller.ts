@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
+import { Body, ConflictException, Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import type { PrismaClient } from '@prisma/client';
 import { Decides } from '../auth/decorators/area.decorator';
@@ -10,6 +10,10 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
+import { isLockTimeout } from '../publication/publish-mode';
+
+/** A decision that waited its 5 s for the school's attendance writers holding the decisions lock (an SS12000 apply, a publication). */
+export const ATTENDANCE_SHARING_BUSY = 'ATTENDANCE_SHARING_BUSY';
 
 /**
  * Rektor's decision whether integrations may read pupils' attendance and
@@ -71,16 +75,37 @@ export class AttendanceSharingController {
   @Decides()
   async record(@Body() dto: RecordAttendanceSharingDto, @CurrentUser() user: AuthenticatedUser): Promise<AttendanceSharingView> {
     const schoolId = requireSchoolId(user);
-    requireUserId(user);
+    const userId = requireUserId(user);
     const reference = dto.reference?.trim() || null;
-    return this.prisma.withRls(user, async (tx) => {
-      const row = await tx.attendanceSharingDecision.create({
-        data: { schoolId, shares: dto.shares, reference },
-        select: { shares: true, reference: true, decidedAt: true, decidedById: true },
+    try {
+      return await this.prisma.withRls(user, async (tx) => {
+        // The decider's name first (the database stamps the decider as the
+        // caller): the insert takes the school's decisions lock, and holds it
+        // only to the commit, while every writer of the school's attendance
+        // versions as if it shared (app.attendance_recorded_as_shared).
+        const names = await namesOf(tx, [userId]);
+        const row = await tx.attendanceSharingDecision.create({
+          data: { schoolId, shares: dto.shares, reference },
+          select: { shares: true, reference: true, decidedAt: true, decidedById: true },
+        });
+        this.logger.log(`Attendance sharing decided [shares=${row.shares}]`);
+        return view(row, names);
       });
-      this.logger.log(`Attendance sharing decided [shares=${row.shares}]`);
-      return view(row, await namesOf(tx, [row.decidedById]));
-    });
+    } catch (error) {
+      // A decision waits at most 5 s for every writer of the school's
+      // attendance that took the decisions lock before it, whatever it read
+      // (app.attendance_sharing_decisions_are_stamped): an SS12000 apply or a
+      // publication can hold it for minutes. A register save never waits for
+      // the decision, and a removal only while it is being written or waits
+      // to be; the decision is the one refused, and is made again in a moment.
+      if (isLockTimeout(error)) {
+        throw new ConflictException({
+          message: 'Skolans närvaro eller elever ändras just nu. Beslutet sparades inte. Försök igen om en stund.',
+          code: ATTENDANCE_SHARING_BUSY,
+        });
+      }
+      throw error;
+    }
   }
 }
 
