@@ -79,10 +79,12 @@ describe('neighboursOf', () => {
     const spanska = { ...at('spa', '09:00', '09:55', 's1'), pupils: ['p1', 'p2'] };
     const tyska = { ...at('tys', '09:00', '10:00', 'n2'), pupils: ['p3', 'p4'] };
     const earlier = { ...at('mor', '08:00', '08:50', 'n1'), pupils: ['p1', 'p2', 'p3', 'p4'] };
-    const shares = (a: { pupils: string[] }, b: { pupils: string[] }) => a.pupils.some((p) => b.pupils.includes(p));
-    const { before } = neighboursOf(target, [spanska, tyska, earlier], shares);
+    // Hidden when every pupil the lesson and 7A's share goes to some lesson in between.
+    const hidden = (o: { pupils: string[] }, between: readonly { pupils: string[] }[]) =>
+      o.pupils.filter((p) => target.pupils.includes(p)).every((p) => between.some((m) => m.pupils.includes(p)));
+    const { before } = neighboursOf(target, [spanska, tyska, earlier], hidden);
     expect(before.map((l) => l.id).sort()).toEqual(['spa', 'tys']);
-    // The morning lesson shares every pupil with both, so it is nobody's lesson before 7A's.
+    // The morning lesson's pupils all go to Spanska or Tyska after it: nobody walks from it to 7A's.
     expect(before.map((l) => l.id)).not.toContain('mor');
   });
 

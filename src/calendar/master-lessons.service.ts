@@ -52,7 +52,7 @@ import {
 } from '../common/teacher-day';
 import { readsHr } from '../staffing/hr-visibility';
 import { recordRead } from '../access-log/access-log';
-import { hasTravel, readSiteMap } from '../common/site-travel';
+import { EMPTY_SITE_MAP, hasTravel, readSiteMap, type SiteMap } from '../common/site-travel';
 import { travelWarningsOf, type TravelDayLesson, type TravelWarning } from './travel-warnings';
 
 export interface MasterLessonConflict {
@@ -472,7 +472,7 @@ export class MasterLessonsService {
           teachers,
         )),
       );
-      warnings.push(...(await this.travelWarnings(tx, rosters, year.schoolId, created)));
+      warnings.push(...(await this.travelWarnings(tx, rosters, await readSiteMap(tx, year.schoolId), [created])));
 
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
       this.announce(year.schoolId, mode);
@@ -511,6 +511,10 @@ export class MasterLessonsService {
                   // Lärarens dag's gate, in the same statement for the same
                   // reason (teacherDayCounts).
                   ...teacherDayCounts(id),
+                  // Whether the school has a travel figure at all
+                  // (Skolområden och restid): none, and the walks below ask
+                  // nothing, in this statement and in no other.
+                  siteTravelTimes: true,
                 },
               },
             },
@@ -802,8 +806,8 @@ export class MasterLessonsService {
         updated.coTeacherId !== lesson.coTeacherId ||
         dto.extraGroupIds !== undefined ||
         dto.studentIds !== undefined;
-      if (movesTheWalks) {
-        warnings.push(...(await this.travelWarnings(tx, rosters, lesson.school.id, updated)));
+      if (movesTheWalks && lesson.school._count.siteTravelTimes > 0) {
+        warnings.push(...(await this.travelWarnings(tx, rosters, await readSiteMap(tx, lesson.school.id), [updated])));
       }
 
       // Lärarens dag, asked of the week as the PATCH leaves it, beside the
@@ -956,6 +960,8 @@ export class MasterLessonsService {
                     where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id: dto.lessonIds[0] } } }] },
                   },
                   ...teacherDayCounts(dto.lessonIds[0]!),
+                  // As in update(): no travel figure, no walk asked about.
+                  siteTravelTimes: true,
                 },
               },
             },
@@ -1099,6 +1105,9 @@ export class MasterLessonsService {
       let propagatedLessons = 0;
       let removedCalendarLessons = 0;
       const warnings: LessonWarning[] = [];
+      // The school's sites, once for the card, and the walks of all its members at once, below.
+      const sites = leader.school._count.siteTravelTimes > 0 ? await readSiteMap(tx, leader.school.id) : EMPTY_SITE_MAP;
+      const movedMembers: LessonRecord[] = [];
       const results: MasterLessonResult[] = [];
       const notices: { lesson: (typeof lessons)[number]; after: MasterLessonResult }[] = [];
       for (const lesson of lessons) {
@@ -1115,7 +1124,7 @@ export class MasterLessonsService {
         if (dto.dayOfWeek !== lesson.dayOfWeek) {
           warnings.push(...(await this.distributionWarnings(tx, updated)));
         }
-        warnings.push(...(await this.travelWarnings(tx, rosters, lesson.school.id, updated)));
+        movedMembers.push(updated);
         const after = toResult(updated);
         await this.writeChangeLog(tx, {
           schoolId: lesson.school.id,
@@ -1151,6 +1160,8 @@ export class MasterLessonsService {
           )),
         );
       }
+
+      warnings.push(...(await this.travelWarnings(tx, rosters, sites, movedMembers)));
 
       this.logger.log(
         `Block card moved [block=${blockId}, lessons=${lessons.length}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
@@ -1266,87 +1277,105 @@ export class MasterLessonsService {
 
   /**
    * TRAVEL_TIME_SHORT (travel-warnings.ts): the walks between sites the
-   * lesson is one end of, that its day as the edit leaves it has too little
-   * time for. Read after the write, under the caller's RLS.
+   * edited lessons are one end of, that their day as the edit leaves it has
+   * too little time for. Read after the write, under the caller's RLS: the
+   * edited lessons are in the day as they now stand.
    *
-   * A school with no travel figure asks one question (readSiteMap) and
-   * nothing more, and so does a lesson whose room stands on no site: an
-   * unknown walk is no walk. The pupils are read through the year's basis
-   * and rosterOf, as the clash check reads them, so a hand edit is held to
-   * the pupils the clash check holds it to.
+   * The caller hands in the school's sites (readSiteMap), or the empty map
+   * when a count it already made says there is no travel figure: a school
+   * with none asks nothing here, and neither does a lesson whose room stands
+   * on no site, since an unknown walk is no walk. One read of the day for
+   * every edited lesson of it — a block card's members share their year and
+   * their weekday — and a walk named by two members is said once. The pupils
+   * are read through the year's basis and rosterOf, as the clash check reads
+   * them, so a hand edit is held to the pupils the clash check holds it to.
    */
   private async travelWarnings(
     tx: PrismaClient,
     basis: RosterBasis,
-    schoolId: string,
-    lesson: LessonRecord,
+    map: SiteMap,
+    edited: readonly LessonRecord[],
   ): Promise<TravelWarning[]> {
-    if (lesson.isParked) return [];
-    const map = await readSiteMap(tx, schoolId);
-    if (!hasTravel(map) || lesson.roomId === null || !map.siteOfRoom.has(lesson.roomId)) return [];
-    const day = await tx.masterLesson.findMany({
-      where: { academicYearId: lesson.academicYearId, dayOfWeek: lesson.dayOfWeek, isParked: false, id: { not: lesson.id } },
-      select: {
-        id: true,
-        teacherId: true,
-        coTeacherId: true,
-        roomId: true,
-        studentGroupId: true,
-        startTime: true,
-        endTime: true,
-        recurrence: true,
-        startDate: true,
-        endDate: true,
-        subject: { select: { name: true } },
-        extraGroups: { select: { studentGroupId: true } },
-        participants: { select: { studentId: true } },
-      },
-    });
-    const subject = await tx.subject.findUnique({ where: { id: lesson.subjectId }, select: { name: true } });
-    const all = [{ ...lesson, subject: { name: subject?.name ?? '' } }, ...day];
-    const groupIds = new Set(all.flatMap((row) => [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)]));
-    const teacherIds = [...new Set(all.flatMap((row) => [row.teacherId, row.coTeacherId]))].filter(
-      (id): id is string => id !== null,
+    if (!hasTravel(map)) return [];
+    const targets = edited.filter(
+      (lesson) => !lesson.isParked && lesson.roomId !== null && map.siteOfRoom.has(lesson.roomId),
     );
-    const [{ membersOf, halves }, groups, teachers] = await Promise.all([
-      this.rosterOf(tx, basis, groupIds),
-      tx.studentGroup.findMany({ where: { id: { in: [...groupIds] } }, select: { id: true, name: true } }),
-      tx.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, firstName: true, lastName: true } }),
-    ]);
-    const halfPairKeys = new Set(
-      halfPairs(halves, membersOf, groupsOfPupils(membersOf)).map(([a, b]) => `${a}:${b}`),
-    );
-    const halvesPair = (a: string, b: string): boolean => halfPairKeys.has(a < b ? `${a}:${b}` : `${b}:${a}`);
-    const weeksOf = new Map(all.map((row) => [row.id, row]));
-    const asTravel = (row: (typeof all)[number]): TravelDayLesson => {
-      const attending = [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)];
-      return {
-        id: row.id,
-        start: toMinutes(row.startTime),
-        end: toMinutes(row.endTime),
-        roomId: row.roomId,
-        subjectName: row.subject.name,
-        teacherIds: [row.teacherId, row.coTeacherId].filter((id): id is string => id !== null),
-        groupIds: attending,
-        pupils: new Set([
-          ...attending.flatMap((groupId) => [...(membersOf.get(groupId) ?? [])]),
-          ...row.participants.map((p) => p.studentId),
-        ]),
-      };
-    };
-    const groupName = new Map(groups.map((group) => [group.id, group.name]));
-    const teacherName = new Map(teachers.map((t) => [t.id, `${t.firstName} ${t.lastName}`.trim()]));
-    return travelWarningsOf(
-      {
+    const warnings: TravelWarning[] = [];
+    for (const key of new Set(targets.map((lesson) => `${lesson.academicYearId}|${lesson.dayOfWeek}`))) {
+      const [academicYearId, dayOfWeek] = key.split('|') as [string, string];
+      const rows = await tx.masterLesson.findMany({
+        where: { academicYearId, dayOfWeek: Number(dayOfWeek), isParked: false },
+        select: {
+          id: true,
+          teacherId: true,
+          coTeacherId: true,
+          roomId: true,
+          studentGroupId: true,
+          startTime: true,
+          endTime: true,
+          recurrence: true,
+          startDate: true,
+          endDate: true,
+          subject: { select: { name: true } },
+          extraGroups: { select: { studentGroupId: true } },
+          participants: { select: { studentId: true } },
+        },
+      });
+      const groupIds = new Set(rows.flatMap((row) => [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)]));
+      const teacherIds = [...new Set(rows.flatMap((row) => [row.teacherId, row.coTeacherId]))].filter(
+        (id): id is string => id !== null,
+      );
+      const [{ membersOf, halves }, groups, teachers] = await Promise.all([
+        this.rosterOf(tx, basis, groupIds),
+        tx.studentGroup.findMany({ where: { id: { in: [...groupIds] } }, select: { id: true, name: true } }),
+        tx.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, firstName: true, lastName: true } }),
+      ]);
+      const halfPairKeys = new Set(
+        halfPairs(halves, membersOf, groupsOfPupils(membersOf)).map(([a, b]) => `${a}:${b}`),
+      );
+      const day = rows.map((row): TravelDayLesson => {
+        const attending = [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)];
+        return {
+          id: row.id,
+          start: toMinutes(row.startTime),
+          end: toMinutes(row.endTime),
+          roomId: row.roomId,
+          subjectName: row.subject.name,
+          teacherIds: [row.teacherId, row.coTeacherId].filter((id): id is string => id !== null),
+          groupIds: attending,
+          pupils: new Set([
+            ...attending.flatMap((groupId) => [...(membersOf.get(groupId) ?? [])]),
+            ...row.participants.map((p) => p.studentId),
+          ]),
+          weeks: {
+            recurrence: row.recurrence,
+            startDate: toDateStringOrNull(row.startDate),
+            endDate: toDateStringOrNull(row.endDate),
+          },
+        };
+      });
+      const groupName = new Map(groups.map((group) => [group.id, group.name]));
+      const teacherName = new Map(teachers.map((t) => [t.id, `${t.firstName} ${t.lastName}`.trim()]));
+      const weeksOf = new Map(rows.map((row) => [row.id, row]));
+      const context = {
         map,
-        weeksMeet: (a, b) => weeksCanOverlap(weeksOf.get(a.id)!, weeksOf.get(b.id)!),
-        halvesPair,
-        teacherName: (id) => teacherName.get(id) ?? '',
-        groupName: (id) => groupName.get(id) ?? '',
-      },
-      asTravel(all[0]!),
-      day.map(asTravel),
-    );
+        weeksMeet: (a: TravelDayLesson, b: TravelDayLesson) => weeksCanOverlap(weeksOf.get(a.id)!, weeksOf.get(b.id)!),
+        halvesPair: (a: string, b: string): boolean => halfPairKeys.has(a < b ? `${a}:${b}` : `${b}:${a}`),
+        teacherName: (id: string) => teacherName.get(id) ?? '',
+        groupName: (id: string) => groupName.get(id) ?? '',
+      };
+      for (const lesson of targets.filter((l) => `${l.academicYearId}|${l.dayOfWeek}` === key)) {
+        const target = day.find((row) => row.id === lesson.id);
+        if (target) warnings.push(...travelWarningsOf(context, target, day));
+      }
+    }
+    const seen = new Set<string>();
+    return warnings.filter((warning) => {
+      const signature = JSON.stringify(warning.params);
+      if (seen.has(signature)) return false;
+      seen.add(signature);
+      return true;
+    });
   }
 
   /**

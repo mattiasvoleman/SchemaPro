@@ -37,6 +37,27 @@ export interface SitesView {
 }
 
 export const SITE_NAME_TAKEN = 'SITE_NAME_TAKEN';
+export const SITE_LIMIT = 'SITE_LIMIT';
+export const SITE_TRAVEL_STALE = 'SITE_TRAVEL_STALE';
+
+/**
+ * At most fifty sites a school: no school has more campuses, and a full set
+ * of figures between fifty is 1 225 pairs, what one save carries
+ * (PutSiteTravelTimesDto).
+ */
+export const MAX_SITES = 50;
+
+/**
+ * The school's figures as one string, the pairs in id order: what the card
+ * sends back as `basis` to say which figures it was looking at. The web
+ * builds the same string from what it read (use-sites.ts travelBasis).
+ */
+export function travelBasis(times: readonly { siteAId: string; siteBId: string; minutes: number }[]): string {
+  return times
+    .map((time) => `${pairKey(time.siteAId, time.siteBId)}:${time.minutes}`)
+    .sort()
+    .join(',');
+}
 export const SITE_NAME_EMPTY = 'SITE_NAME_EMPTY';
 export const SITE_TRAVEL_PAIR_INVALID = 'SITE_TRAVEL_PAIR_INVALID';
 export const SITE_NOT_FOUND = 'SITE_NOT_FOUND';
@@ -95,6 +116,9 @@ export class SitesService {
     try {
       return await this.prisma.withRls(user, async (tx) => {
         await lockSites(tx, schoolId);
+        if ((await tx.site.count({ where: { schoolId } })) >= MAX_SITES) {
+          throw new ConflictException({ message: `En skola har högst ${MAX_SITES} skolområden.`, code: SITE_LIMIT });
+        }
         const row = await tx.site.create({ data: { schoolId, name }, select: { id: true, name: true } });
         return { ...row, roomCount: 0 };
       });
@@ -161,15 +185,23 @@ export class SitesService {
         const known = new Set(
           (await tx.site.findMany({ where: { schoolId }, select: { id: true } })).map((site) => site.id.toLowerCase()),
         );
+        // A site in the body that is not (or no longer) the school's: the
+        // card is behind, as with any reference in a body (409).
         for (const pair of wanted.values()) {
           if (!known.has(pair.siteAId) || !known.has(pair.siteBId)) {
-            throw new NotFoundException({ message: 'Ett av skolområdena finns inte.', code: SITE_NOT_FOUND });
+            throw new ConflictException({ message: 'Ett av skolområdena finns inte längre.', code: SITE_NOT_FOUND });
           }
         }
         const existing = await tx.siteTravelTime.findMany({
           where: { schoolId },
           select: { siteAId: true, siteBId: true, minutes: true },
         });
+        if (dto.basis !== undefined && dto.basis !== travelBasis(existing)) {
+          throw new ConflictException({
+            message: 'Restiderna har ändrats sedan du öppnade sidan. Ladda om och spara igen.',
+            code: SITE_TRAVEL_STALE,
+          });
+        }
         const gone = existing.filter((row) => !wanted.has(pairKey(row.siteAId, row.siteBId)));
         for (const row of gone) {
           await tx.siteTravelTime.delete({ where: { siteAId_siteBId: { siteAId: row.siteAId, siteBId: row.siteBId } } });
@@ -189,7 +221,8 @@ export class SitesService {
         );
       });
     } catch (error) {
-      this.rethrow(error);
+      // No name is written here: a duplicate key is not SITE_NAME_TAKEN.
+      rethrowPrismaError(error);
     }
   }
 

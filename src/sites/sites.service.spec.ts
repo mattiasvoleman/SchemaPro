@@ -2,7 +2,16 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type PrismaMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { SITE_NAME_TAKEN, SITE_NOT_FOUND, SITE_TRAVEL_PAIR_INVALID, SitesService } from './sites.service';
+import {
+  MAX_SITES,
+  SITE_LIMIT,
+  SITE_NAME_TAKEN,
+  SITE_NOT_FOUND,
+  SITE_TRAVEL_PAIR_INVALID,
+  SITE_TRAVEL_STALE,
+  SitesService,
+  travelBasis,
+} from './sites.service';
 
 /**
  * The school's skolområden and the minutes between them (20261124090000).
@@ -64,6 +73,12 @@ describe('SitesService', () => {
 
       expect(tx.site.create).toHaveBeenCalledWith({ data: { schoolId: SCHOOL_ID, name: 'Norra' }, select: { id: true, name: true } });
       expect(tx.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('refuses a fifty-first site', async () => {
+      tx.site.count.mockResolvedValue(MAX_SITES);
+      await expect(service.create({ name: 'En till' }, testUser())).rejects.toMatchObject({ response: { code: SITE_LIMIT } });
+      expect(tx.site.create).not.toHaveBeenCalled();
     });
 
     it('refuses a blank name, and maps a name the school already has to 409 SITE_NAME_TAKEN', async () => {
@@ -147,7 +162,7 @@ describe('SitesService', () => {
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
-    it('refuses a site the school does not have, before writing anything', async () => {
+    it('refuses a site the school does not have (409, the card is behind), before writing anything', async () => {
       tx.siteTravelTime.findMany.mockResolvedValue([]);
       await expect(
         service.putTravelTimes(
@@ -157,6 +172,23 @@ describe('SitesService', () => {
       ).rejects.toMatchObject({ response: { code: SITE_NOT_FOUND } });
       expect(tx.siteTravelTime.upsert).not.toHaveBeenCalled();
       expect(tx.siteTravelTime.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses a save made from figures that have changed since, and takes one made from the ones there are', async () => {
+      const now = [{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }];
+      tx.siteTravelTime.findMany.mockResolvedValue(now);
+      // The card read no figure; someone has since saved Norra–Södra.
+      await expect(
+        service.putTravelTimes({ times: [], basis: travelBasis([]) }, testUser()),
+      ).rejects.toMatchObject({ response: { code: SITE_TRAVEL_STALE } });
+      expect(tx.siteTravelTime.delete).not.toHaveBeenCalled();
+      // The same figures, in any order and either way round: taken.
+      await expect(
+        service.putTravelTimes(
+          { times: [{ siteIds: [SODRA, NORRA], minutes: 20 }], basis: travelBasis([{ siteAId: SODRA, siteBId: NORRA, minutes: 15 }]) },
+          testUser(),
+        ),
+      ).resolves.toEqual([{ siteAId: NORRA, siteBId: SODRA, minutes: 20 }]);
     });
 
     it('empties the school’s figures with an empty list', async () => {

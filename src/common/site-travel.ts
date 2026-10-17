@@ -101,14 +101,16 @@ export interface TravelBreach<L extends PlacedLesson = PlacedLesson> {
  *
  * `others` are the party's other lessons that day, in weeks that can meet the
  * target's: a teacher's own, or the lessons sharing pupils with it. A lesson
- * O before the target is the one the party comes FROM unless some third
- * lesson of the party lies between them that shares the party with both —
- * `shares(a, b)` says whether two lessons have someone in common. For a
- * teacher every lesson shares the teacher, so this is simply the nearest.
- * For pupils it is the nearest for each pupil: 7A's Spanska at Södra and its
- * Tyska at Norra both end before 7A's next lesson, and the Spanska pupils
- * walk from Södra however late the Tyska ends, because no lesson between the
- * two holds both a Spanska and a 7A pupil.
+ * O before the target is the one the party comes FROM unless the lessons
+ * lying between them HIDE it: everyone who would walk from O to the target
+ * goes somewhere in between, every week the two meet. `hidden(o, between)`
+ * says so; the default says yes as soon as anything lies between, which is
+ * right for one person on one date (a vikarie's day, a teacher's day of the
+ * year). On the grundschema the caller says more (travel-warnings.ts): a
+ * lesson between hides only weeks it runs in, and for pupils only the pupils
+ * it holds. 7A's Spanska at Södra and its Tyska at Norra both end before
+ * 7A's next lesson, and the Spanska pupils walk from Södra however late the
+ * Tyska ends, since the Tyska holds none of them.
  *
  * Lessons overlapping the target are not before or after it (that is a
  * clash, the conflict check's to refuse), and two lessons on one end are
@@ -117,17 +119,15 @@ export interface TravelBreach<L extends PlacedLesson = PlacedLesson> {
 export function neighboursOf<L extends PlacedLesson>(
   target: L,
   others: readonly L[],
-  shares: (a: L, b: L) => boolean = () => true,
+  hidden: (o: L, between: readonly L[]) => boolean = (_o, between) => between.length > 0,
 ): { before: L[]; after: L[] } {
   const before = others.filter((o) => o.id !== target.id && o.end <= target.start);
   const after = others.filter((o) => o.id !== target.id && o.start >= target.end);
   return {
     before: before.filter(
-      (o) => !before.some((m) => m !== o && m.start >= o.end && m.end <= target.start && shares(m, o) && shares(m, target)),
+      (o) => !hidden(o, before.filter((m) => m !== o && m.start >= o.end && m.end <= target.start)),
     ),
-    after: after.filter(
-      (o) => !after.some((m) => m !== o && m.start >= target.end && m.end <= o.start && shares(m, o) && shares(m, target)),
-    ),
+    after: after.filter((o) => !hidden(o, after.filter((m) => m !== o && m.start >= target.end && m.end <= o.start))),
   };
 }
 
@@ -139,10 +139,10 @@ export function travelBreaches<L extends PlacedLesson>(
   map: SiteMap,
   target: L,
   others: readonly L[],
-  shares?: (a: L, b: L) => boolean,
+  hidden?: (o: L, between: readonly L[]) => boolean,
 ): TravelBreach<L>[] {
   if (!hasTravel(map)) return [];
-  const { before, after } = neighboursOf(target, others, shares);
+  const { before, after } = neighboursOf(target, others, hidden);
   const breaches: TravelBreach<L>[] = [];
   for (const from of before) {
     const walk = walkBetween(map, from.roomId, target.roomId);
@@ -181,19 +181,21 @@ export function walksOfDay(map: SiteMap, lessons: readonly PlacedLesson[]): Walk
 /**
  * The school's sites, under the caller's RLS: an administrator's and a
  * teacher's read (Sites, SiteTravelTimes and Rooms are theirs to read). The
- * rooms are read only when a figure exists, so a school with no site, or no
- * pair, asks two empty questions and nothing more.
+ * figures first: a school with none — one site, or none — asks that one
+ * indexed question and nothing more, and every caller then has nothing to
+ * say. A caller that already knows the school has no figure (a `_count` on a
+ * read it makes anyway) asks nothing at all.
  */
 export async function readSiteMap(tx: PrismaClient, schoolId: string): Promise<SiteMap> {
-  const [sites, pairs] = await Promise.all([
-    tx.site.findMany({ where: { schoolId }, select: { id: true, name: true } }),
-    tx.siteTravelTime.findMany({ where: { schoolId }, select: { siteAId: true, siteBId: true, minutes: true } }),
-  ]);
-  if (pairs.length === 0) return { ...EMPTY_SITE_MAP, nameOf: new Map(sites.map((s) => [s.id, s.name])) };
-  const rooms = await tx.room.findMany({
-    where: { schoolId, siteId: { not: null } },
-    select: { id: true, siteId: true },
+  const pairs = await tx.siteTravelTime.findMany({
+    where: { schoolId },
+    select: { siteAId: true, siteBId: true, minutes: true },
   });
+  if (pairs.length === 0) return EMPTY_SITE_MAP;
+  const [sites, rooms] = await Promise.all([
+    tx.site.findMany({ where: { schoolId }, select: { id: true, name: true } }),
+    tx.room.findMany({ where: { schoolId, siteId: { not: null } }, select: { id: true, siteId: true } }),
+  ]);
   return {
     siteOfRoom: new Map(rooms.map((room) => [room.id, room.siteId!])),
     nameOf: new Map(sites.map((s) => [s.id, s.name])),

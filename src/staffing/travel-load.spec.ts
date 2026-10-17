@@ -61,6 +61,12 @@ describe('travelLoad', () => {
       travelLoad(MAP, MONDAY, YEAR, [{ startDate: '2026-09-07', endDate: '2026-09-07', minGradeLevel: 7, maxGradeLevel: 9 }])[0]!
         .hoursPerYear,
     ).toBe(2);
+    // A lov for åk 7–9 closes the åk 8 lesson at Södra that Monday: no walk to it, nor from it.
+    const graded = MONDAY.map((row) => ({ ...row, gradeLevel: row.id === 'b' ? 8 : 4 }));
+    expect(
+      travelLoad(MAP, graded, YEAR, [{ startDate: '2026-09-07', endDate: '2026-09-07', minGradeLevel: 7, maxGradeLevel: 9 }])[0]!
+        .hoursPerYear,
+    ).toBe(1.5);
   });
 
   it('is the co-teacher’s too, and counts nothing to or from a room on no site, or none', () => {

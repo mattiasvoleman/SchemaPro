@@ -1,5 +1,13 @@
 import { pairKey, type SiteMap } from '../common/site-travel';
-import { sharePupils, travelWarningsOf, TRAVEL_TIME_SHORT, type TravelDayLesson, type TravelWarningContext } from './travel-warnings';
+import {
+  sharePupils,
+  travelWarningsOf,
+  weeksCover,
+  TRAVEL_TIME_SHORT,
+  type TravelDayLesson,
+  type TravelWarningContext,
+  type TravelWeeks,
+} from './travel-warnings';
 
 /**
  * A hand edit's TRAVEL_TIME_SHORT (Skolområden och restid, 20261124090000).
@@ -40,7 +48,10 @@ const lesson = (
   teacherIds: rest.teacherIds ?? [],
   groupIds: rest.groupIds ?? [],
   pupils: new Set(rest.pupils ?? []),
+  weeks: rest.weeks ?? EVERY_WEEK,
 });
+
+const EVERY_WEEK: TravelWeeks = { recurrence: 'ALL_WEEKS', startDate: null, endDate: null };
 
 const context = (overrides: Partial<TravelWarningContext> = {}): TravelWarningContext => ({
   map: MAP,
@@ -124,6 +135,59 @@ describe('travelWarningsOf', () => {
     const target = lesson('sv', '10:05', '11:00', 's1', { teacherIds: ['anna', 'anna'], groupIds: ['g7a'], pupils: CLASS });
     const day = [lesson('ma', '09:00', '10:00', 'n1', { teacherIds: ['anna'], groupIds: ['g7a'], pupils: CLASS })];
     expect(travelWarningsOf(context(), target, day).map((w) => w.params.party)).toEqual(['TEACHER', 'PUPILS']);
+  });
+});
+
+describe('a lesson between two others hides the walk only where it stands', () => {
+  // 30 minutes between Norra and Södra here, so a 25-minute gap is short.
+  const LONG: SiteMap = { ...MAP, minutes: new Map([[pairKey(NORRA, SODRA), 30]]) };
+
+  it('only in the weeks it runs: an odd-week lesson between leaves the even weeks’ walk', () => {
+    const target = lesson('t', '09:25', '10:00', 'n1', { teacherIds: ['anna'] });
+    const from = lesson('o', '08:00', '09:00', 's1', { teacherIds: ['anna'], weeks: { recurrence: 'EVEN_WEEKS', startDate: null, endDate: null } });
+    const oddBetween = lesson('m', '09:00', '09:20', 'n2', { teacherIds: ['anna'], weeks: { recurrence: 'ODD_WEEKS', startDate: null, endDate: null } });
+    expect(travelWarningsOf(context({ map: LONG }), target, [from, oddBetween]).map((w) => [w.params.other, w.params.gap])).toEqual([
+      ['o', 25],
+    ]);
+    // Every week between: hidden.
+    expect(travelWarningsOf(context({ map: LONG }), target, [from, { ...oddBetween, weeks: EVERY_WEEK }])).toEqual([]);
+  });
+
+  it('only between its own Från and Till: one that stops at Christmas leaves the spring’s walk', () => {
+    const target = lesson('t', '09:25', '10:00', 'n1', { teacherIds: ['anna'] });
+    const from = lesson('o', '08:00', '09:00', 's1', { teacherIds: ['anna'] });
+    const autumn = lesson('m', '09:00', '09:20', 'n2', { teacherIds: ['anna'], weeks: { recurrence: 'ALL_WEEKS', startDate: null, endDate: '2026-12-20' } });
+    expect(travelWarningsOf(context({ map: LONG }), target, [from, autumn]).map((w) => w.params.other)).toEqual(['o']);
+  });
+
+  it('for pupils, only those it holds: modersmål with one Spanska pupil leaves the other four walking', () => {
+    const target = lesson('ma', '09:25', '10:00', 'n1', { groupIds: ['g7a'], pupils: ['a1', 'a2', 'a3', 'a4', 'a5', 'b1'] });
+    const spanska = lesson('spa', '08:00', '09:00', 's1', { groupIds: ['spa'], pupils: ['a1', 'a2', 'a3', 'a4', 'a5'] });
+    const modersmal = lesson('mod', '09:00', '09:20', 'n2', { groupIds: [], pupils: ['a1'] });
+    expect(
+      travelWarningsOf(context({ map: LONG }), target, [spanska, modersmal]).map((w) => [w.params.party, w.params.other]),
+    ).toEqual([['PUPILS', 'spa']]);
+    // Every Spanska pupil there in between: hidden.
+    expect(travelWarningsOf(context({ map: LONG }), target, [spanska, { ...modersmal, pupils: new Set(['a1', 'a2', 'a3', 'a4', 'a5']) }])).toEqual([]);
+  });
+});
+
+describe('weeksCover', () => {
+  const w = (recurrence: TravelWeeks['recurrence'], startDate: string | null = null, endDate: string | null = null): TravelWeeks => ({
+    recurrence,
+    startDate,
+    endDate,
+  });
+
+  it('is every week, or the parity two lessons share, over the dates they share', () => {
+    expect(weeksCover(w('ALL_WEEKS'), w('ALL_WEEKS'), w('ALL_WEEKS'))).toBe(true);
+    expect(weeksCover(w('ODD_WEEKS'), w('ALL_WEEKS'), w('ALL_WEEKS'))).toBe(false);
+    expect(weeksCover(w('ODD_WEEKS'), w('ODD_WEEKS'), w('ALL_WEEKS'))).toBe(true);
+    expect(weeksCover(w('EVEN_WEEKS'), w('ODD_WEEKS'), w('ALL_WEEKS'))).toBe(false);
+    expect(weeksCover(w('ALL_WEEKS', '2026-08-17'), w('ALL_WEEKS', '2026-09-01'), w('ALL_WEEKS'))).toBe(true);
+    expect(weeksCover(w('ALL_WEEKS', '2026-10-01'), w('ALL_WEEKS', '2026-09-01'), w('ALL_WEEKS'))).toBe(false);
+    expect(weeksCover(w('ALL_WEEKS', null, '2026-12-20'), w('ALL_WEEKS'), w('ALL_WEEKS', null, '2026-12-20'))).toBe(true);
+    expect(weeksCover(w('ALL_WEEKS', null, '2026-12-20'), w('ALL_WEEKS'), w('ALL_WEEKS'))).toBe(false);
   });
 });
 

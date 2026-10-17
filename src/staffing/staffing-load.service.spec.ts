@@ -272,10 +272,18 @@ describe('StaffingLoadService', () => {
         { id: 'e', teacherId: COLLEAGUE, coTeacherId: null, roomId: 's1', dayOfWeek: 1, startTime: t('09:15'), endTime: t('10:15'),
           recurrence: 'ALL_WEEKS', startDate: null, endDate: null, isParked: false },
       ]);
+      // COLLEAGUE has no post, row or uppdrag: no load row, and no restid row beside it.
+      const outside = await service.load(YEAR_ID, 'planned', testUser());
+      expect(outside.travel?.teachers.map((row) => row.userId)).toEqual([ME]);
+      tx.teachingRequirement.findMany.mockResolvedValue([requirementRow(), requirementRow({ id: 'req-2', teacherId: COLLEAGUE })]);
       const admin = await service.load(YEAR_ID, 'planned', testUser());
       expect(admin.travel?.teachers.map((row) => row.userId).sort()).toEqual([ME, COLLEAGUE].sort());
       const own = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER }));
       expect(own.travel?.teachers.map((row) => row.userId)).toEqual([ME]);
+      // The publication check never reads it, and asks nothing for it.
+      tx.siteTravelTime.findMany.mockClear();
+      await expect(service.load(YEAR_ID, 'planned', testUser(), { record: false, travel: false })).resolves.toMatchObject({ travel: null });
+      expect(tx.siteTravelTime.findMany).not.toHaveBeenCalled();
     });
   });
 
