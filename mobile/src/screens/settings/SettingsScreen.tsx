@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { LOCALES, translatorFor, type Locale, type MessageKey } from '../../i18n';
@@ -145,7 +146,7 @@ export function SettingsScreen(): React.JSX.Element {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       <ScrollView
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
       >

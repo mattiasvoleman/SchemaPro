@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
@@ -204,7 +205,7 @@ export function ScheduleScreen(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#6366f1" />
         </View>
@@ -213,7 +214,7 @@ export function ScheduleScreen(): React.JSX.Element {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('schedule.title')}</Text>
         <Text style={styles.headerSubtitle}>{t('schedule.nextDays', { count: DAYS_AHEAD })}</Text>

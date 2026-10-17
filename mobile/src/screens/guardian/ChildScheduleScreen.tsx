@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDayHeading, shiftDate } from '../../i18n/format';
@@ -116,7 +117,7 @@ export function ChildScheduleScreen(): React.JSX.Element {
 
   if (listState === 'LOADING') {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#6366f1" />
         </View>
@@ -128,7 +129,7 @@ export function ChildScheduleScreen(): React.JSX.Element {
     // A failed read says so and can be pulled to retry (common.loadError says
     // how); only a read that answered no children says none are linked.
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <ScrollView
           contentContainerStyle={styles.center}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
@@ -165,7 +166,7 @@ export function ChildScheduleScreen(): React.JSX.Element {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       <ScrollView
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
       >

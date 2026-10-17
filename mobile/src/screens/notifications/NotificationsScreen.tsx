@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { fetchNotifications, markAllRead as markOwnRead } from '../../services/notifications';
 import { notificationText } from '../../services/notificationText';
 import { useAuth } from '../../context/AuthContext';
@@ -55,7 +56,7 @@ export function NotificationsScreen(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#6366f1" />
         </View>
@@ -64,7 +65,7 @@ export function NotificationsScreen(): React.JSX.Element {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>{t('notifications.title')}</Text>

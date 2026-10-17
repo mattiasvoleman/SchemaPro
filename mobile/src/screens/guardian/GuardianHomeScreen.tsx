@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { fetchChildren } from '../../services/children';
 import { fetchAbsenceReports, mayWithdraw, removeAbsenceReport, reportAbsence } from '../../services/absenceReports';
 import { useAuth } from '../../context/AuthContext';
@@ -113,7 +114,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#6366f1" />
         </View>
@@ -122,7 +123,7 @@ export function GuardianHomeScreen(): React.JSX.Element {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       <ScrollView
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />

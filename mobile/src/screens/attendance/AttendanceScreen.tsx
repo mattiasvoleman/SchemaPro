@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
 import { FlashList } from '@shopify/flash-list';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
@@ -298,7 +299,7 @@ export function AttendanceScreen(): React.JSX.Element {
   // ── Empty / no-lesson state ─────────────────────────────────────────────
   if (!activeLesson) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
         <SyncBanner
           status={syncState.status}
           pendingCount={syncState.pendingCount}
@@ -313,7 +314,7 @@ export function AttendanceScreen(): React.JSX.Element {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
       {/* ── Status Banner ──────────────────────────────────────────────── */}
       <SyncBanner
         status={syncState.status}
