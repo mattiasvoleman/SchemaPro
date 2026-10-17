@@ -1,8 +1,10 @@
+import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { apiRequest, ApiError } from './api';
 import {
   disablePush,
+  easProjectId,
   enablePush,
   ensureAndroidChannel,
   forgetTap,
@@ -22,7 +24,10 @@ import {
  * consent is the signed-in person's own (teacher B never inherits A's
  * switch); logout always ends with this device off A's push — directly, or
  * through the release at the next start when the network was gone — and
- * never hangs on a dead network for more than the 4-second limit.
+ * never hangs on a dead network for more than the 4-second limit. The token
+ * is asked for with the EAS project id the app config carries, a build
+ * without one asks the phone nothing, and on Android the channel exists
+ * before the phone is asked.
  */
 
 const mockStore = new Map<string, string>();
@@ -51,6 +56,22 @@ jest.mock('expo-notifications', () => ({
   setNotificationChannelAsync: jest.fn(async () => null),
   AndroidImportance: { DEFAULT: 3 },
 }));
+// The app config as the build carries it: app.json's extra.eas.projectId
+// (written by eas init) and an EAS Update manifest's easConfig. Getters, so
+// that each test sets what its build has.
+let mockExpoConfig: unknown = null;
+let mockEasConfig: unknown = null;
+jest.mock('expo-constants', () => ({
+  __esModule: true,
+  default: {
+    get expoConfig() {
+      return mockExpoConfig;
+    },
+    get easConfig() {
+      return mockEasConfig;
+    },
+  },
+}));
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('./api', () => ({ ...jest.requireActual('./api'), apiRequest: jest.fn() }));
 jest.mock('./supabase', () => ({ getAccessToken: jest.fn(), getSupabase: jest.fn() }));
@@ -70,7 +91,8 @@ const calls = () => (apiRequest as jest.Mock).mock.calls.map(([path, options]) =
 
 beforeEach(() => {
   mockStore.clear();
-  process.env['EXPO_PUBLIC_EAS_PROJECT_ID'] = 'eas-project';
+  mockExpoConfig = { extra: { eas: { projectId: 'eas-project' } } };
+  mockEasConfig = null;
   route = async (path) => (path === '/api/v1/push/config' ? { enabled: true } : undefined);
   (apiRequest as jest.Mock).mockReset().mockImplementation((path: string, options?: never) => route(path, options));
   (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false, canAskAgain: true });
@@ -96,6 +118,7 @@ describe('turning push on', () => {
     route = async (path) => (path === '/api/v1/push/config' ? { enabled: false } : undefined);
     await expect(enablePush(A, 'sv')).resolves.toBe('SERVER_OFF');
     expect(Notifications.getPermissionsAsync).not.toHaveBeenCalled();
+    expect(Notifications.setNotificationChannelAsync).not.toHaveBeenCalled();
     expect(await isPushEnabledFor(A)).toBe(false);
   });
 
@@ -111,7 +134,7 @@ describe('turning push on', () => {
   it('stops at a refusal on the phone, and at a build without an EAS project', async () => {
     (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false, canAskAgain: false });
     await expect(enablePush(A, 'sv')).resolves.toBe('DENIED');
-    delete process.env['EXPO_PUBLIC_EAS_PROJECT_ID'];
+    mockExpoConfig = { extra: {} };
     await expect(enablePush(A, 'sv')).resolves.toBe('UNSUPPORTED');
     expect(calls().filter(([path]) => path === '/api/v1/devices')).toEqual([]);
   });
@@ -121,6 +144,57 @@ describe('turning push on', () => {
       throw new Error('network');
     };
     await expect(serverPushEnabled()).resolves.toBe(false);
+  });
+});
+
+describe('the EAS project id comes from the app config', () => {
+  it('reads app.json’s extra.eas.projectId first, and asks Expo for the token with it', async () => {
+    mockExpoConfig = { extra: { eas: { projectId: 'from-app-json' } } };
+    mockEasConfig = { projectId: 'from-update' };
+    expect(easProjectId()).toBe('from-app-json');
+    await expect(enablePush(A, 'sv')).resolves.toBe('ENABLED');
+    expect(Notifications.getExpoPushTokenAsync).toHaveBeenCalledWith({ projectId: 'from-app-json' });
+  });
+
+  it('falls back to easConfig where the expo config has none', async () => {
+    mockEasConfig = { projectId: 'from-update' };
+    for (const config of [null, { extra: {} }, { extra: { eas: { projectId: '  ' } } }]) {
+      mockExpoConfig = config;
+      expect(easProjectId()).toBe('from-update');
+    }
+    await expect(enablePush(A, 'sv')).resolves.toBe('ENABLED');
+    expect(Notifications.getExpoPushTokenAsync).toHaveBeenCalledWith({ projectId: 'from-update' });
+  });
+
+  it('trims what it reads', () => {
+    mockExpoConfig = { extra: { eas: { projectId: ' eas-project\n' } } };
+    expect(easProjectId()).toBe('eas-project');
+  });
+
+  it.each([
+    ['no config at all', null, null],
+    ['no extra.eas and no easConfig', { extra: {} }, {}],
+    ['a blank id', { extra: { eas: { projectId: ' ' } } }, { projectId: '' }],
+    ['an id that is not a string', { extra: { eas: { projectId: 42 } } }, { projectId: null }],
+  ])('treats %s as a build without a project: UNSUPPORTED, and the phone is asked nothing', async (_case, expoConfig, easConfig) => {
+    mockExpoConfig = expoConfig;
+    mockEasConfig = easConfig;
+    expect(easProjectId()).toBeNull();
+    await expect(enablePush(A, 'sv')).resolves.toBe('UNSUPPORTED');
+    expect(Notifications.setNotificationChannelAsync).not.toHaveBeenCalled();
+    expect(Notifications.getPermissionsAsync).not.toHaveBeenCalled();
+    expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled();
+    expect(calls().filter(([path]) => path === '/api/v1/devices')).toEqual([]);
+    expect(await isPushEnabledFor(A)).toBe(false);
+  });
+
+  it('refreshes nothing once a build has no project, even for a person who turned push on', async () => {
+    await enablePush(A, 'sv');
+    (apiRequest as jest.Mock).mockClear();
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, canAskAgain: true });
+    mockExpoConfig = null;
+    await expect(refreshRegistration(A, 'sv')).resolves.toBe('UNSUPPORTED');
+    expect(calls()).toEqual([['/api/v1/push/config', null]]);
   });
 });
 
@@ -310,6 +384,42 @@ describe('the Android channel', () => {
       importance: 3,
       lightColor: '#6366f1',
     });
+  });
+
+  it('exists, in the reader’s language, before push is asked for: Android 13 shows no prompt without one', async () => {
+    const steps: string[] = [];
+    // Resolves a turn later, so a channel that was started but not awaited
+    // would land after the permission calls.
+    (Notifications.setNotificationChannelAsync as jest.Mock).mockImplementationOnce(
+      async (_id: string, channel: { name: string }) => {
+        await Promise.resolve();
+        steps.push(`channel "${channel.name}"`);
+        return null;
+      },
+    );
+    (Notifications.getPermissionsAsync as jest.Mock).mockImplementationOnce(async () => {
+      steps.push('permission read');
+      return { granted: false, canAskAgain: true };
+    });
+    (Notifications.requestPermissionsAsync as jest.Mock).mockImplementationOnce(async () => {
+      steps.push('permission asked');
+      return { granted: true, canAskAgain: true };
+    });
+    await expect(enablePush(A, 'en')).resolves.toBe('ENABLED');
+    expect(steps).toEqual(['channel "School notifications"', 'permission read', 'permission asked']);
+  });
+
+  it('is not made on iPhone, where push is turned on as before', async () => {
+    const os = Platform.OS;
+    (Platform as { OS: string }).OS = 'ios';
+    try {
+      await expect(enablePush(A, 'sv')).resolves.toBe('ENABLED');
+      expect(Notifications.setNotificationChannelAsync).not.toHaveBeenCalled();
+      expect(Notifications.requestPermissionsAsync).toHaveBeenCalledTimes(1);
+      expect(calls()).toContainEqual(['/api/v1/devices', { token: TOKEN, platform: 'IOS', locale: 'sv' }]);
+    } finally {
+      (Platform as { OS: string }).OS = os;
+    }
   });
 });
 

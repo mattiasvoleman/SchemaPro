@@ -1,7 +1,9 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { ApiError, apiRequest } from './api';
+import { translatorFor } from '../i18n';
 import { loadLocale } from '../i18n/localeStore';
 import type { Locale } from '../i18n/translate';
 
@@ -88,9 +90,25 @@ export async function isPushEnabledFor(userId: string): Promise<boolean> {
   return (await readKey(enabledKey(userId))) === '1';
 }
 
+const usableId = (id: unknown): string | null => (typeof id === 'string' && id.trim() !== '' ? id.trim() : null);
+
+/**
+ * The EAS project this build belongs to, which Expo's push service needs to
+ * issue a token; null when the build has none, and push is then UNSUPPORTED.
+ * `eas init` writes it into mobile/app.json as extra.eas.projectId and
+ * app.config.ts passes it through, so every build of the project carries it
+ * — development client, preview and production alike — with nothing to set
+ * per machine or per EAS environment. easConfig is where an EAS Update's
+ * manifest carries it; Expo's own guide reads the two in this order. A blank
+ * value counts as none.
+ */
+export function easProjectId(): string | null {
+  return usableId(Constants.expoConfig?.extra?.eas?.projectId) ?? usableId(Constants.easConfig?.projectId);
+}
+
 /** This install's Expo push token, or null where the build cannot have one. */
 async function deviceToken(): Promise<string | null> {
-  const projectId = process.env['EXPO_PUBLIC_EAS_PROJECT_ID'];
+  const projectId = easProjectId();
   if (!projectId || platform() === null) return null;
   const { data } = await Notifications.getExpoPushTokenAsync({ projectId });
   return data;
@@ -107,11 +125,16 @@ async function register(token: string, locale: Locale): Promise<void> {
 /**
  * The person turns push on: the school must have it, the phone must allow it
  * (asked here, and only here), and the build must be able to get a token.
+ * On Android the channel is made first and awaited: Android 13 shows the
+ * permission prompt only once a channel exists, and Expo wants one before
+ * the token. The root layout's own call is not awaited, so it may not have
+ * landed yet.
  */
 export async function enablePush(userId: string, locale: Locale): Promise<PushOutcome> {
   if (!(await serverPushEnabled())) return 'SERVER_OFF';
-  if (!process.env['EXPO_PUBLIC_EAS_PROJECT_ID'] || platform() === null) return 'UNSUPPORTED';
+  if (!easProjectId() || platform() === null) return 'UNSUPPORTED';
   try {
+    await ensureAndroidChannel(translatorFor(locale)('push.channelName'));
     let permission = await Notifications.getPermissionsAsync();
     if (!permission.granted && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
     if (!permission.granted) return 'DENIED';
