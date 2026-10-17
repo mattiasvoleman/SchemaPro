@@ -32,7 +32,7 @@ export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
 export const LAST_DECIDER = 'LAST_DECIDER';
 
 /** The profiles HR-läs is given to: rektor and a full administrator read tjänst % anyway. */
-const HR_READ_PROFILES: readonly AdminProfile[] = ['SCHEMALAGGARE', 'EXPEDITION'];
+const HR_READ_PROFILES: readonly AdminProfile[] = ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'];
 
 /** What only rektor or a full administrator does (app.current_user_decides). */
 const decides = (user: AuthenticatedUser): void => assertAdministratorMay(user, { kind: 'decides' });
@@ -55,7 +55,7 @@ function profileOf(
       throw new BadRequestException('Bara en administratör har en administratörsprofil.');
     }
     if (requested.hrRead === true) {
-      throw new BadRequestException('HR-läs ges en administratör som är schemaläggare eller expedition.');
+      throw new BadRequestException('HR-läs ges en administratör som är schemaläggare, expedition eller läsare.');
     }
     return { adminProfile: null, hrRead: false };
   }
@@ -63,7 +63,7 @@ function profileOf(
   const narrow = HR_READ_PROFILES.includes(adminProfile);
   if (requested.hrRead === true && !narrow) {
     throw new BadRequestException(
-      'HR-läs ges en schemaläggare eller en expedition. Rektor och en fullständig administratör läser tjänst % ändå.',
+      'HR-läs ges en schemaläggare, en expedition eller en läsare. Rektor och en fullständig administratör läser tjänst % ändå.',
     );
   }
   const hrRead = narrow ? (requested.hrRead ?? (current?.adminProfile === adminProfile ? current.hrRead : false)) : false;

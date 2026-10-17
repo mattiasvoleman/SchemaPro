@@ -5,7 +5,8 @@ import type { LogChange } from './employment-log-diff';
 
 /**
  * Tjänst % and nedsättning are HR data (Roller i skolan): rektor and a full
- * administrator read them, and a schemaläggare or an expedition with HR-läs.
+ * administrator read them, and a schemaläggare, an expedition or a läsare
+ * with HR-läs.
  *
  * Row security cannot hide a column, and the post's row also carries what
  * every administrator's work needs: the lärarsignatur the schedule shows and

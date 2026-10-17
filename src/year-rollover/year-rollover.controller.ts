@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Area, Decides } from '../auth/decorators/area.decorator';
+import { AnyAdministrator, Area, Decides } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -100,7 +100,11 @@ export class YearRolloverController {
     return this.staffing.execute(id, dto.planHash, user);
   }
 
+  // A read by POST: the plan is worked out in memory and nothing is written
+  // but the läslogg. /admin/years shows its moves to every administrator,
+  // the läsare among them (Läsbehörighet), so it asks no area.
   @Post(':id/activation/preview')
+  @AnyAdministrator('a preview that writes nothing: the pending moves /admin/years shows every administrator')
   @HttpCode(HttpStatus.OK)
   previewActivation(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
