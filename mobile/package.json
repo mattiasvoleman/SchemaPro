@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "TZ=UTC jest",
     "test:cov": "TZ=UTC jest --coverage",
-    "eas-build-pre-install": "npm install -g npm@11"
+    "eas-build-pre-install": "[ \"$EAS_BUILD_RUNNER\" != eas-build ] || npm install -g npm@11"
   },
   "dependencies": {
     "@shopify/flash-list": "2.0.2",

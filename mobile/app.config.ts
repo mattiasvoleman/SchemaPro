@@ -45,8 +45,9 @@ const VARIANTS: Readonly<Record<AppVariant, { name: string; id: string; scheme: 
  * What a release build cannot work without. A missing EXPO_PUBLIC_* value is
  * inlined as undefined when the builder bundles the JavaScript, and the app
  * then fails at the first request on the phone; this stops the build instead.
- * Checked only on the EAS builder (EAS_BUILD is not set when EAS CLI
- * evaluates this file locally), and not for development builds, whose
+ * Checked only where an EAS build runs: EAS_BUILD is "true" on EAS's
+ * machines and "1" in `eas build --local`, and unset when EAS CLI evaluates
+ * this file to start a build. Not checked for development builds, whose
  * JavaScript comes from the developer's own `expo start` and its .env.local.
  * EXPO_PUBLIC_WS_BASE_URL is left out: without it the app works and only
  * live updates are off.
@@ -69,6 +70,50 @@ function required(value: string | string[] | undefined, field: string): string {
 }
 
 /**
+ * app.json holds production's identity, and only this file adds `.dev`. An id
+ * that already ends in it means something wrote a development build's
+ * evaluated config back into app.json, and every build from it, production's
+ * included, would be signed and uploaded as the development app. A build
+ * from such a tree stops on the builder rather than at the store, where the
+ * first upload fixes the id for good (appConfig.test.ts stops the commit).
+ * Not where EAS CLI evaluates this file: a throw there would also stop the
+ * CLI from rolling back such a write (withoutPromptedEncryptionAnswer).
+ */
+function assertProductionIdentity(value: string, field: string): void {
+  const id = VARIANTS.development.id;
+  if (value.endsWith(id)) {
+    throw new Error(`app.json's ${field} ends in "${id}", the development build's suffix; restore it (git checkout mobile/app.json).`);
+  }
+}
+
+/**
+ * The answer to Apple's export-compliance question is the owner's decision
+ * (docs/DEPLOYMENT.md §12.11) and goes into app.json as
+ * ios.config.usesNonExemptEncryption, which Expo writes into Info.plist.
+ * Until it is there, `eas build -p ios` asks the question itself and writes
+ * the answer as infoPlist.ITSAppUsesNonExemptEncryption, together with the
+ * whole ios block it evaluated for the build's variant (a development build's
+ * bundle id included), into app.json. Dropping that key here makes the CLI's
+ * check after the write fail, so it rolls app.json back, prints what it would
+ * have added and builds on without it: the build waits as Missing Compliance
+ * in TestFlight, as the runbook says.
+ */
+function withoutPromptedEncryptionAnswer(infoPlist: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!infoPlist || !('ITSAppUsesNonExemptEncryption' in infoPlist)) return infoPlist;
+  const { ITSAppUsesNonExemptEncryption: _answer, ...rest } = infoPlist;
+  return rest;
+}
+
+/**
+ * The development build finds `expo start` on the local network, and iOS asks
+ * first. The dev launcher's own English text would show; this one replaces it
+ * in that build only. Preview and production must not carry the key: the dev
+ * launcher's release build phase strips its own text and leaves any other.
+ */
+const DEV_LOCAL_NETWORK_TEXT =
+  'Utvecklingsbygget letar efter utvecklingsservern på det lokala nätverket och hämtar appens kod därifrån.';
+
+/**
  * FCM's google-services.json. On the builder it is the EAS file variable
  * GOOGLE_SERVICES_JSON (a path to the file there); on a developer's machine
  * it may be a gitignored mobile/google-services.json. Neither is ever in the
@@ -89,7 +134,8 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const variant = appVariant(env.APP_VARIANT);
   const firebase = googleServicesFile(env, projectRoot);
 
-  if (env.EAS_BUILD === 'true' && variant !== 'development') {
+  const onEasBuilder = env.EAS_BUILD === 'true' || env.EAS_BUILD === '1';
+  if (onEasBuilder && variant !== 'development') {
     const missing: string[] = REQUIRED_IN_RELEASE.filter((name) => !env[name]);
     // An Android release without FCM installs and runs, and no one notices
     // that push never arrives until a teacher misses a notification.
@@ -104,14 +150,23 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const scheme = required(config.scheme, 'expo.scheme');
   const bundleIdentifier = required(config.ios?.bundleIdentifier, 'expo.ios.bundleIdentifier');
   const androidPackage = required(config.android?.package, 'expo.android.package');
+  if (onEasBuilder) {
+    assertProductionIdentity(bundleIdentifier, 'expo.ios.bundleIdentifier');
+    assertProductionIdentity(androidPackage, 'expo.android.package');
+  }
 
   const suffix = VARIANTS[variant];
+  const infoPlist = withoutPromptedEncryptionAnswer(config.ios?.infoPlist);
   return {
     ...config,
     name: `${name}${suffix.name}`,
     slug,
     scheme: `${scheme}${suffix.scheme}`,
-    ios: { ...config.ios, bundleIdentifier: `${bundleIdentifier}${suffix.id}` },
+    ios: {
+      ...config.ios,
+      bundleIdentifier: `${bundleIdentifier}${suffix.id}`,
+      infoPlist: variant === 'development' ? { ...infoPlist, NSLocalNetworkUsageDescription: DEV_LOCAL_NETWORK_TEXT } : infoPlist,
+    },
     android: {
       ...config.android,
       package: `${androidPackage}${suffix.id}`,
