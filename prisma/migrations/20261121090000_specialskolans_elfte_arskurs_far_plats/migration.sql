@@ -22,16 +22,20 @@
 --   * TimplanStatements' gradesFrom/gradesTo and its three grade lists: the
 --     published stage of a reformed specialskola pupil is högstadiet 9–11.
 --   * CancellationBatches' GRADES scope: a cancellation for åk 11.
---   * SchoolUnits' span: a specialskola unit F–10 is 1–11 in the new
---     numbering.
+--
+-- Not SchoolUnits' span. It is school-wide, so it is stated in the nine-year
+-- numbering for good, like frames and behörigheter (20261121091000): there a
+-- specialskola unit is F–10, 0..10, as today. A unit's span in the tioårig
+-- numbering is a pair of its own, proposed by SFS 2025:729 övergångs-
+-- bestämmelse 5 and confirmed by an admin (a follow-up, before HT 2028).
 --
 -- 11 is the highest årskurs any form has after the reform; nothing above it
 -- is a compulsory-school årskurs, and the bounds that already run to 12
 -- (classes, frames, qualifications …) are untouched. Every existing row
 -- satisfies the wider CHECK, so validating it (under the lock below) reads
 -- the table and refuses nothing. The tables are small — per school a few
--- hundred plan cells, a dozen year rows, a handful of units and batches, a
--- statement per pupil stage published.
+-- hundred plan cells, a dozen year rows, a handful of batches, a statement
+-- per pupil stage published.
 --
 -- THE NEW ROW. 'SFS2025:729/SPE' after '/AGA', '/AGB' and '/SAM':
 -- SPECIALSKOLA, 8 604 h, no cells, skolans val and cap NULL (the law states
@@ -46,7 +50,7 @@
 -- the new row as one more version without cells. Nothing it does is refused
 -- by the wider CHECKs.
 --
--- LOCKS. Replacing a CHECK takes ACCESS EXCLUSIVE on its table. The five are
+-- LOCKS. Replacing a CHECK takes ACCESS EXCLUSIVE on its table. The four are
 -- taken NOWAIT together in a loop that gives up after 30 s with nothing
 -- changed: a live request holding one of them is waited out, never queued
 -- behind (a queued ACCESS EXCLUSIVE would stop every reader behind it).
@@ -58,7 +62,7 @@ BEGIN
   LOOP
     BEGIN
       LOCK TABLE "LocalTimplanEntries", "AcademicYearTimplans", "TimplanStatements",
-                 "CancellationBatches", "SchoolUnits" IN ACCESS EXCLUSIVE MODE NOWAIT;
+                 "CancellationBatches" IN ACCESS EXCLUSIVE MODE NOWAIT;
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
@@ -99,12 +103,6 @@ ALTER TABLE "CancellationBatches"
         OR ("scope" = 'GROUPS' AND "minGradeLevel" IS NULL AND "maxGradeLevel" IS NULL
             AND cardinality("groupIds") BETWEEN 1 AND 200)
     );
-
-ALTER TABLE "SchoolUnits"
-    DROP CONSTRAINT "SchoolUnits_span_check",
-    ADD CONSTRAINT "SchoolUnits_span_check" CHECK (
-        ("gradeFrom" IS NULL) = ("gradeTo" IS NULL)
-        AND ("gradeFrom" IS NULL OR (0 <= "gradeFrom" AND "gradeFrom" <= "gradeTo" AND "gradeTo" <= 11)));
 
 INSERT INTO "NationalTimplanVersions"
     ("code", "sfs", "title", "schoolForm", "totalHours", "skolansValHours",

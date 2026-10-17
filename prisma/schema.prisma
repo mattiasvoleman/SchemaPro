@@ -1456,7 +1456,8 @@ model SchoolUnit {
   /// per school where set (partial index SchoolUnits_schoolId_code_key).
   code        String?
   schoolTypes SchoolUnitType[] @default([])
-  /// 0..11, both or neither; 0 = förskoleklass.
+  /// 0..10, both or neither; 0 = förskoleklass. In the nine-year numbering
+  /// for good, like every school-wide span (20261121091000).
   gradeFrom   Int?
   gradeTo     Int?
   /// The source's Organisation id once an admin linked the unit; written only

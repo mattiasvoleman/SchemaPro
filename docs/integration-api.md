@@ -307,7 +307,7 @@ first unit arrives) is listed by `/deletedEntities`.
 `givenName`, `familyName`, and `emails` with one entry: `Skola elev` for a
 pupil, `Skola personal` for staff, `Privat` for a guardian. A pupil with an
 open class segment and a derivable school type has `enrolments`: `enroledAt`,
-`schoolType`, `schoolYear` (only 0–10) and `startDate`. `startDate` is the
+`schoolType`, `schoolYear` (only 0–11, in the numbering of the class's läsår: from HT 2028 the tioårig one, where 11 is specialskolan's last årskurs) and `startDate`. `startDate` is the
 start of the pupil's unbroken chain of class segments, so a class move is not
 a new enrolment, and moving up a year is not one either: the summer between
 two consecutive läsår does not break the chain. There is no `endDate` while

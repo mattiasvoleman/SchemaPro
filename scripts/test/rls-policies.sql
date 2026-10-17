@@ -18871,12 +18871,12 @@ BEGIN
   END;
   -- A unit without a span (a fritidshem) beside them is no overlap.
   INSERT INTO "SchoolUnits" ("schoolId", name, "schoolTypes") VALUES (me, 'Fritids', '{FTH}');
-  FOREACH state IN ARRAY ARRAY['half span', 'backwards', 'twelfth', 'short code', 'letters', 'blank name', 'tab name', 'nbsp name', 'long name', 'null type'] LOOP
+  FOREACH state IN ARRAY ARRAY['half span', 'backwards', 'eleventh', 'short code', 'letters', 'blank name', 'tab name', 'nbsp name', 'long name', 'null type'] LOOP
     BEGIN
       CASE state
         WHEN 'half span' THEN UPDATE "SchoolUnits" SET "gradeFrom" = NULL WHERE id = b;
         WHEN 'backwards' THEN INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'C', 10, 10), (me, 'D', 9, 8);
-        WHEN 'twelfth' THEN UPDATE "SchoolUnits" SET "gradeTo" = 12 WHERE id = b;
+        WHEN 'eleventh' THEN UPDATE "SchoolUnits" SET "gradeTo" = 11 WHERE id = b;
         WHEN 'short code' THEN INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'E', '1234567');
         WHEN 'letters' THEN INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'E', '1234567a');
         WHEN 'blank name' THEN INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, '   ');
@@ -25400,8 +25400,9 @@ ROLLBACK;
 -- bilaga 3 points at it — every bilaga's 2028 total is its own plus 534 h.
 -- Årskurs 11 fits wherever an årskurs of the tioårig numbering is stored: an
 -- admin plans it in a specialskola plan on the new lydelse and attaches it to
--- a läsår, a cancellation and a unit's span name it, and the statements'
--- CHECKs admit it. 12 is refused (sections 18 and 131).
+-- a läsår, a cancellation names it, and the statements' CHECKs admit it. 12 is
+-- refused (sections 18 and 131). A unit's span is not one of them: it is in
+-- the nine-year numbering, F–10 at most, and 11 is refused (section 132).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -25454,14 +25455,14 @@ BEGIN
     RAISE EXCEPTION 'åk 11: an admin attached % of 1 eleventh årskurs', n;
   END IF;
 
-  -- A cancellation for åk 11, and a unit whose span ends at it.
+  -- A cancellation for åk 11.
   INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope, "minGradeLevel", "maxGradeLevel")
   VALUES (school, year, 'RLS160 åk 11', 'MANUAL', DATE '2098-09-01', DATE '2098-09-01', 'GRADES', 11, 11);
-  INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo")
-  SELECT school, 'RLS160 elvan', 11, 11
-   WHERE NOT EXISTS (SELECT 1 FROM "SchoolUnits" WHERE "schoolId" = school AND "gradeTo" >= 11);
-  IF NOT EXISTS (SELECT 1 FROM "SchoolUnits" WHERE "schoolId" = school AND "gradeTo" = 11) THEN
-    RAISE EXCEPTION 'åk 11: no unit of the school ends at åk 11';
+  -- A unit's span stays nine-year: its CHECK still ends at 10.
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint
+   WHERE conrelid = '"SchoolUnits"'::regclass AND conname = 'SchoolUnits_span_check';
+  IF def NOT LIKE '%"gradeTo" <= 10%' THEN
+    RAISE EXCEPTION 'åk 11: a unit''s span CHECK reads %', def;
   END IF;
 
   -- The statements' two CHECKs admit 11 and nothing above it.
