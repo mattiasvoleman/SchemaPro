@@ -71,6 +71,22 @@ describe("DecisionList", () => {
     expect(onDecide).toHaveBeenCalledWith("r-2", "REJECTED", undefined);
   });
 
+  it("marks an open row's note and buttons with the area the page names, and a teacher's own page with none", () => {
+    renderList({ writes: "DRIFT" });
+    const open = screen.getByText("Sal 12").closest("li")!;
+    const controls = within(open).getByRole("button", { name: "Godkänn Sal 12" }).closest("[data-writes]");
+    expect(controls).toHaveAttribute("data-writes", "DRIFT");
+    expect(controls).toContainElement(within(open).getByRole("button", { name: "Avslå Sal 12" }));
+    expect(controls).toContainElement(within(open).getByRole("textbox", { name: /Sal 12/ }));
+    // The request itself is the page's reading.
+    expect(within(open).getByText("Sal 12 detail").closest("[data-writes]")).toBeNull();
+  });
+
+  it("marks nothing when the page names no area", () => {
+    renderList();
+    expect(screen.getByRole("button", { name: "Godkänn Sal 12" }).closest("[data-writes]")).toBeNull();
+  });
+
   it("holds only the request being decided", () => {
     renderList({ deciding: "r-1" });
     expect(screen.getByRole("button", { name: "Godkänn Sal 12" })).toBeDisabled();

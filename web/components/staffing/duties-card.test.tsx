@@ -119,6 +119,19 @@ describe("DutiesCard", () => {
     expect(screen.queryByRole("button", { name: /^removeDuty/ })).toBeNull();
   });
 
+  it("marks add, edit and remove as planering's writes, which the läsare's style rule hides (Läsbehörighet)", () => {
+    // The staffing drawer passes no readOnly: the marks are what spare a läsare the buttons there.
+    duties.data = [mentor, apt];
+    renderCard();
+    expect(screen.getByRole("button", { name: "addDuty" })).toHaveAttribute("data-writes", "PLANERING");
+    for (const button of [
+      ...screen.getAllByRole("button", { name: /^editDuty/ }),
+      ...screen.getAllByRole("button", { name: /^removeDuty/ }),
+    ]) {
+      expect(button.closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+    }
+  });
+
   it("reads one teacher's uppdrag for the year, and says so when there are none", () => {
     renderCard();
     expect(asked).toEqual({ year: "y1", user: "t-anna" });

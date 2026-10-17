@@ -151,6 +151,7 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
           <Button
             onClick={() => void confirm()}
             disabled={!plan || plan.blocking || pending || preview.isFetching || (strands && !understood)}
+            data-writes="PLANERING"
           >
             {pending
               ? tCommon("saving")

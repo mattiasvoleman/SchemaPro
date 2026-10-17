@@ -179,6 +179,11 @@ describe("StaffingCarryDialog", () => {
     expect(button).toBeEnabled();
   });
 
+  it("marks Ta med as a decision, as the gateway's @Decides on the carry is (Läsbehörighet)", async () => {
+    renderDialog();
+    expect(await screen.findByRole("button", { name: "Ta med" })).toHaveAttribute("data-writes", "DECIDES");
+  });
+
   it("has nothing to send when everything is already there", async () => {
     post.mockResolvedValue(
       preview({

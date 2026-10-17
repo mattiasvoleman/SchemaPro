@@ -464,7 +464,11 @@ export function StaffingProposalDialog({
               <Button variant="outline" onClick={() => changeOpen(false)}>
                 {tCommon("cancel")}
               </Button>
-              <Button onClick={() => void compute()} disabled={noTargets || propose.isPending}>
+              <Button
+                onClick={() => void compute()}
+                disabled={noTargets || propose.isPending}
+                data-writes="SCHEMALAGGNING DRIFT"
+              >
                 {propose.isPending ? (
                   <>
                     <Loader2 className="animate-spin" />
@@ -499,7 +503,11 @@ export function StaffingProposalDialog({
               {proposal.assignments.length === 0 ? (
                 <Button onClick={() => changeOpen(false)}>{tCommon("close")}</Button>
               ) : (
-                <Button onClick={() => void doApply()} disabled={busy || selected.size === 0}>
+                <Button
+                  onClick={() => void doApply()}
+                  disabled={busy || selected.size === 0}
+                  data-writes="SCHEMALAGGNING PLANERING"
+                >
                   {apply.isPending || propose.isPending ? <Loader2 className="animate-spin" /> : null}
                   {t("apply", { count: selected.size })}
                 </Button>
@@ -673,6 +681,7 @@ function ProposalResult({
                           disabled={busy}
                           aria-label={t("keepRow", { row: name })}
                           onClick={() => onKeep(assignment.requirementId)}
+                          data-writes="SCHEMALAGGNING DRIFT"
                         >
                           {t("keep")}
                         </Button>

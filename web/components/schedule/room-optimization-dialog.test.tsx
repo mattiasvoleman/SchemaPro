@@ -178,6 +178,17 @@ describe("choosing who is spared the walk", () => {
     expect(screen.getByText("unchanged")).toBeInTheDocument();
   });
 
+  it("marks computing and applying with the optimization's areas (Läsbehörighet)", async () => {
+    // POST /optimization/rooms/proposal is a write route too: the gateway asks its areas of it.
+    optimisation.propose.mutateAsync.mockResolvedValueOnce(proposal());
+    const user = userEvent.setup();
+    renderDialog();
+    const compute = screen.getByRole("button", { name: "compute" });
+    expect(compute).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    await user.click(compute);
+    expect(await screen.findByRole("button", { name: "apply" })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+  });
+
   it("says it is working, and cannot be pressed twice, while the solver runs", () => {
     optimisation.propose.isPending = true;
     renderDialog();

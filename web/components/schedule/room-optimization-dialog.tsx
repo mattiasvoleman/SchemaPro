@@ -310,7 +310,11 @@ export function RoomOptimizationDialog({
               <Button variant="outline" onClick={() => changeOpen(false)}>
                 {tCommon("cancel")}
               </Button>
-              <Button onClick={() => void compute()} disabled={!academicYearId || propose.isPending}>
+              <Button
+                onClick={() => void compute()}
+                disabled={!academicYearId || propose.isPending}
+                data-writes="SCHEMALAGGNING DRIFT"
+              >
                 {propose.isPending ? (
                   <>
                     <Loader2 className="animate-spin" />
@@ -425,7 +429,7 @@ export function RoomOptimizationDialog({
                   >
                     {t("back")}
                   </Button>
-                  <Button onClick={() => void doApply()} disabled={apply.isPending}>
+                  <Button onClick={() => void doApply()} disabled={apply.isPending} data-writes="SCHEMALAGGNING DRIFT">
                     {apply.isPending ? <Loader2 className="animate-spin" /> : null}
                     {t("apply")}
                   </Button>

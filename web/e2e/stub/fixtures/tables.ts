@@ -46,11 +46,18 @@ import {
 
 const withSchool = <T extends object>(rows: T[]) => rows.map((row) => ({ ...row, schoolId: SCHOOL.id }));
 
-/** Users: every person, and on the four signed-in ones the authId getSession looks them up by. */
-const users = ALL_PEOPLE.map((person) => {
-  const profile = PROFILE_ROWS.find((row) => row.id === person.id);
-  return { ...person, schoolId: SCHOOL.id, authId: profile?.authId ?? null };
-});
+/**
+ * Users: every person, and on the four signed-in ones the authId getSession
+ * looks them up by; and the läsare's own row, which only its session reads
+ * (the pages read people through the gateway, not this table).
+ */
+const users = [
+  ...ALL_PEOPLE.map((person) => {
+    const profile = PROFILE_ROWS.find((row) => row.id === person.id);
+    return { ...person, schoolId: SCHOOL.id, authId: profile?.authId ?? null };
+  }),
+  ...PROFILE_ROWS.filter((row) => !ALL_PEOPLE.some((person) => person.id === row.id)),
+];
 
 export const tables: Tables = {
   Schools: [SCHOOL],

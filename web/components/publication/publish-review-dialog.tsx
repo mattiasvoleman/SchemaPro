@@ -272,6 +272,7 @@ export function PublishReviewDialog({
           <Button
             onClick={doPublish}
             disabled={!result || result.refused || preview.isFetching || !previewIsForRange || publish.isPending}
+            data-writes="PUBLICERING DRIFT"
           >
             {publish.isPending ? (
               <>

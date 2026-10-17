@@ -191,7 +191,7 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
       description={t(isLock ? "locksHint" : "preferencesHint")}
       action={
         !adding ? (
-          <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+          <Button data-writes="PLANERING" variant="outline" size="sm" onClick={() => setAdding(true)}>
             <Plus aria-hidden="true" />
             {t(isLock ? "addLock" : "addPreference")}
           </Button>
@@ -389,12 +389,15 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
                   </Badge>
                 )}
               </span>
-              <RowActions
-                name={summary(preference)}
-                actions={[
-                  { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(preference) },
-                ]}
-              />
+              {/* room-preferences.controller.ts @Area: RowActions takes no attribute. */}
+              <div data-writes="PLANERING" className="contents">
+                <RowActions
+                  name={summary(preference)}
+                  actions={[
+                    { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(preference) },
+                  ]}
+                />
+              </div>
             </li>
           ))}
         </ul>

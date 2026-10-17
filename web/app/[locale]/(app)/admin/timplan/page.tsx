@@ -96,6 +96,7 @@ import { PLAN_STATUS_VARIANT } from "@/lib/status-variants";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { useReadOnly } from "@/components/profile-context";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TimplanGrid } from "@/components/timplan/timplan-grid";
 import { WarningsRail } from "@/components/timplan/warnings-rail";
@@ -208,6 +209,11 @@ export default function TimplanPage() {
   // the moment another plan is shown.
   const current = edit && base && edit.planId === base.planId ? edit : base;
   const decided = shown?.status === "DECIDED";
+  // The fields are the plan's reading: read-only once it is decided, and for
+  // a reader (Läsbehörighet) always, so a cell's note stays on its hover and
+  // a typed figure never looks like an edit waiting to be saved.
+  const reader = useReadOnly();
+  const fixed = decided || reader;
 
   const known = useMemo(() => new Set((subjects ?? []).map((subject) => subject.id)), [subjects]);
   const notes = useMemo(
@@ -406,7 +412,7 @@ export default function TimplanPage() {
                 </SelectContent>
               </Select>
             ) : null}
-            <Button variant="outline" onClick={() => setDialog("create")} disabled={dirty}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setDialog("create")} disabled={dirty}>
               <Plus />
               {t("newPlan")}
             </Button>
@@ -435,7 +441,7 @@ export default function TimplanPage() {
           description={t("noPlansBody")}
           headingLevel={2}
           action={
-            <Button onClick={() => setDialog("create")}>
+            <Button data-writes="PLANERING" onClick={() => setDialog("create")}>
               <Plus />
               {t("newPlan")}
             </Button>
@@ -468,7 +474,7 @@ export default function TimplanPage() {
               <FormField id="timplan-name" label={t("nameLabel")} error={nameProblem}>
                 <Input
                   value={current.name}
-                  readOnly={decided}
+                  readOnly={fixed}
                   onChange={(event) => change({ name: event.target.value })}
                 />
               </FormField>
@@ -477,7 +483,7 @@ export default function TimplanPage() {
                   <Select
                     value={current.versionId}
                     onValueChange={(value) => change({ versionId: value })}
-                    disabled={decided}
+                    disabled={fixed}
                   >
                     <SelectTrigger {...control}>
                       <SelectValue />
@@ -509,13 +515,14 @@ export default function TimplanPage() {
                     inputMode="decimal"
                     className="w-24"
                     value={current.weeks}
-                    readOnly={decided}
+                    readOnly={fixed}
                     aria-invalid={typedWeeksTenths === null || undefined}
                     aria-describedby="timplan-weeks-hint"
                     onChange={(event) => change({ weeks: event.target.value })}
                   />
-                  {!decided && typedWeeksTenths !== Math.round(SUGGESTED_WEEKS * 10) ? (
+                  {!fixed && typedWeeksTenths !== Math.round(SUGGESTED_WEEKS * 10) ? (
                     <Button
+                      data-writes="PLANERING"
                       variant="ghost"
                       size="sm"
                       onClick={() => change({ weeks: weeksText(SUGGESTED_WEEKS) })}
@@ -535,11 +542,13 @@ export default function TimplanPage() {
           </SectionCard>
 
           {/* Spara sits next to the form it saves (the brief's exception for
-              a form page), with the plan's other acts after it. */}
+              a form page), with the plan's other acts after it. Each but the
+              export writes the plan (local-timplans.controller.ts @Area). */}
           <div className="flex flex-wrap items-center gap-2">
             {!decided ? (
               <>
                 <Button
+                  data-writes="PLANERING"
                   onClick={() => void save()}
                   disabled={!dirty || pending || invalidCells.length > 0 || typedWeeksTenths === null || nameProblem !== null}
                 >
@@ -550,19 +559,20 @@ export default function TimplanPage() {
                     {t("discard")}
                   </Button>
                 ) : null}
-                <Button variant="outline" onClick={() => setDialog("decide")} disabled={dirty || pending}>
+                <Button data-writes="PLANERING" variant="outline" onClick={() => setDialog("decide")} disabled={dirty || pending}>
                   {t("decide")}
                 </Button>
               </>
             ) : (
-              <Button onClick={() => setDialog("reopen")} disabled={pending}>
+              <Button data-writes="PLANERING" onClick={() => setDialog("reopen")} disabled={pending}>
                 {t("reopen")}
               </Button>
             )}
-            <Button variant="outline" onClick={() => setDialog("copy")} disabled={dirty || pending}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setDialog("copy")} disabled={dirty || pending}>
               {t("copy")}
             </Button>
             <Button
+              data-writes="PLANERING"
               variant="outline"
               onClick={() => setDialog("generate")}
               disabled={dirty || pending || shown.entries.length === 0}
@@ -575,13 +585,13 @@ export default function TimplanPage() {
               {t("exportCsv")}
             </Button>
             {!decided ? (
-              <Button variant="outline" onClick={() => setDialog("import")} disabled={dirty || pending}>
+              <Button data-writes="PLANERING" variant="outline" onClick={() => setDialog("import")} disabled={dirty || pending}>
                 <FileUp />
                 {t("importCsv")}
               </Button>
             ) : null}
             {/* A neutral trigger: the confirmation it opens carries the red. */}
-            <Button variant="outline" onClick={() => setDialog("delete")} disabled={dirty || pending}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setDialog("delete")} disabled={dirty || pending}>
               {t("delete")}
             </Button>
           </div>
@@ -636,7 +646,7 @@ export default function TimplanPage() {
                   notes={notes}
                   check={check}
                   weeksTenths={weeksTenths}
-                  readOnly={decided}
+                  readOnly={fixed}
                   highlight={highlight}
                   onCellChange={onCellChange}
                 />

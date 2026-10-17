@@ -84,6 +84,12 @@ describe("QualificationsCard", () => {
     expect(screen.getAllByText("Matematik").length).toBeGreaterThan(0);
   });
 
+  it("marks its edit button as planering's write, which the läsare's style rule hides (Läsbehörighet)", () => {
+    // The staffing drawer passes no readOnly: the mark is what spares a läsare the button there.
+    renderCard();
+    expect(screen.getByRole("button", { name: "editQualifications" })).toHaveAttribute("data-writes", "PLANERING");
+  });
+
   it("says the fallback out loud when nothing is recorded", () => {
     renderCard([]);
     expect(screen.getByText("noQualifications")).toBeInTheDocument();

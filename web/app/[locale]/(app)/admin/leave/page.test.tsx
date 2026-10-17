@@ -196,6 +196,20 @@ describe("Ledighetsansökningar", () => {
     expect(screen.getByRole("button", { name: "Ändra delegering" })).toBeInTheDocument();
   });
 
+  it("marks each waiting request's decision as Drift's and the delegation's change as a decision, and leaves the filter to every reader", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    for (const name of [/^Bevilja Ada Berg/, /^Avslå Ada Berg/]) {
+      expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "DRIFT");
+    }
+    expect(screen.getByRole("tablist", { name: "Visa ansökningar" }).closest("[data-writes]")).toBeNull();
+    const edit = screen.getByRole("button", { name: "Ändra delegering" });
+    expect(edit).toHaveAttribute("data-writes", "DECIDES");
+    await user.click(edit);
+    const dialog = await screen.findByRole("dialog", { name: "Delegera beslut om ledighet" });
+    expect(within(dialog).getByRole("button", { name: "Spara beslutet" })).toHaveAttribute("data-writes", "DECIDES");
+  });
+
   it("records no delegation as a decision of its own", async () => {
     delegate.mockResolvedValue({ ...DELEGATION, mentorMaxSchoolDays: null });
     const user = userEvent.setup();

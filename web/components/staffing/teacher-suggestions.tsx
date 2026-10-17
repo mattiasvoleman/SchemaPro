@@ -166,6 +166,7 @@ export function TeacherSuggestions({
                     disabled={assign.isPending}
                     aria-label={t("suggestAssignNamed", { name })}
                     onClick={() => void take(candidate.userId)}
+                    data-writes="PLANERING"
                   >
                     {pendingId === candidate.userId ? tCommon("saving") : t("suggestAssign")}
                   </Button>
@@ -189,6 +190,7 @@ export function TeacherSuggestions({
             size="sm"
             disabled={assign.isPending}
             onClick={() => void take(null)}
+            data-writes="PLANERING"
           >
             {pendingId === null ? tCommon("saving") : t("suggestUnassign")}
           </Button>

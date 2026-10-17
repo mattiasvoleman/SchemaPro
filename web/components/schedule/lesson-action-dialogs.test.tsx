@@ -103,4 +103,15 @@ describe("the lesson action dialogs", () => {
     await user.click(within(dialog).getByRole("button", { name: "Byt sal" }));
     expect(onChangeRoom).toHaveBeenCalledWith(LESSON, null);
   });
+
+  it.each([
+    ["cancel", "Ställ in lektion"],
+    ["substitute", "Tilldela vikarie"],
+    ["room", "Byt sal"],
+  ] as const)("marks the %s dialog's confirmation as drift's write (Läsbehörighet)", (action, name) => {
+    renderDialogs({ target: { action, lesson: LESSON } });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name })).toHaveAttribute("data-writes", "DRIFT");
+    expect(within(dialog).getByRole("button", { name: "Avbryt" })).not.toHaveAttribute("data-writes");
+  });
 });

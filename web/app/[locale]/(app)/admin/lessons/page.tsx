@@ -304,6 +304,7 @@ export default function DayPlannerPage() {
                           size="sm"
                           aria-label={named(t("substituteAction"), lesson)}
                           onClick={() => open("substitute", lesson)}
+                          data-writes="DRIFT"
                         >
                           <UserPlus />
                           {t("substituteAction")}
@@ -313,6 +314,7 @@ export default function DayPlannerPage() {
                           size="sm"
                           aria-label={named(t("roomChangeAction"), lesson)}
                           onClick={() => open("room", lesson)}
+                          data-writes="DRIFT"
                         >
                           <MapPin />
                           {t("roomChangeAction")}
@@ -323,6 +325,7 @@ export default function DayPlannerPage() {
                           size="sm"
                           aria-label={named(t("cancelAction"), lesson)}
                           onClick={() => open("cancel", lesson)}
+                          data-writes="DRIFT"
                         >
                           <CalendarX2 />
                           {t("cancelAction")}
@@ -335,6 +338,7 @@ export default function DayPlannerPage() {
                         aria-label={named(t("reinstateAction"), lesson)}
                         onClick={() => doReinstate(lesson.id)}
                         disabled={reinstate.isPending}
+                        data-writes="DRIFT"
                       >
                         {reinstate.isPending && reinstate.variables === lesson.id ? (
                           <Loader2 className="animate-spin" />

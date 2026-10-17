@@ -156,6 +156,17 @@ describe("YearTimplansDialog", () => {
     expect(select(7)).toBeInTheDocument();
   });
 
+  // Läsbehörighet: a profile that does not write planering reads which plan
+  // each årskurs follows, but cannot open a select or press Spara
+  // (academic-year-timplans.controller.ts @Area('PLANERING')).
+  it("keeps the chosen plans readable but inert, Spara hidden and the läsår picker free", () => {
+    render(<YearTimplansDialog open onOpenChange={() => {}} years={YEARS} initialYearId="y-1" />);
+    expect(select(7)).toHaveAttribute("data-writes-inert", "PLANERING");
+    expect(select(7)).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("combobox", { name: "yearLabel" })).not.toHaveAttribute("data-writes-inert");
+  });
+
   it("points to Timplan when the school has no plan to choose", () => {
     state.plans = [];
     state.saved = [];

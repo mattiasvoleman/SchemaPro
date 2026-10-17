@@ -15,6 +15,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useReadOnly } from "@/components/profile-context";
 import { Textarea } from "@/components/ui/textarea";
 import { NATIVE_SELECT } from "./form-styles";
 import {
@@ -109,6 +110,8 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
   const save = useSaveSignInMethod();
   const remove = useRemoveSignInMethod();
   const busy = save.isPending || remove.isPending;
+  // A reader (Läsbehörighet) reads the method; neither Enter in a field nor the switch saves.
+  const readOnly = useReadOnly();
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -133,7 +136,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
     input.entraTenantId !== method.entraTenantId ||
     input.googleHostedDomain !== method.googleHostedDomain ||
     input.domains.join("\n") !== method.domains.join("\n");
-  const canSave = available && complete && !domainsProblem && !tenantProblem && !hostedProblem && dirty && !busy;
+  const canSave = !readOnly && available && complete && !domainsProblem && !tenantProblem && !hostedProblem && dirty && !busy;
 
   const persist = (next: SignInMethodInput, okMessage: string) =>
     save.mutate(next, {
@@ -163,8 +166,11 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
         ) : null}
         <p className="text-sm text-muted-foreground">{signedInWith}</p>
 
+        {/* The fields show the method as saved: read by a profile that does
+            not write Integrationer, but not pressed, and Save is hidden. */}
         <form
           className="space-y-4"
+          data-writes-inert="INTEGRATIONER"
           onSubmit={(event) => {
             event.preventDefault();
             if (canSave) persist(input, t("saved"));
@@ -231,14 +237,15 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               />
             </FormField>
           )}
-          <Button type="submit" size="sm" disabled={!canSave}>
+          <Button type="submit" size="sm" disabled={!canSave} data-writes="INTEGRATIONER">
             {t("save")}
           </Button>
         </form>
 
         {method !== null ? (
           <div className="space-y-2 rounded-md border p-3">
-            <div className="flex items-start justify-between gap-4">
+            {/* The row, not only the switch: its label presses the switch as well, and a press saves. */}
+            <div className="flex items-start justify-between gap-4" data-writes-inert="INTEGRATIONER">
               <div className="space-y-1">
                 <Label htmlFor="sign-in-sso-only">{t("ssoOnly")}</Label>
                 <p id="sign-in-sso-only-hint" className="text-xs text-muted-foreground">
@@ -248,7 +255,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
               <Switch
                 id="sign-in-sso-only"
                 checked={method.ssoOnlyForStaff}
-                disabled={busy || !available || (!method.ssoOnlyForStaff && !fits)}
+                disabled={readOnly || busy || !available || (!method.ssoOnlyForStaff && !fits)}
                 aria-describedby={
                   !method.ssoOnlyForStaff && !fits ? "sign-in-sso-only-hint sign-in-sso-only-needs" : "sign-in-sso-only-hint"
                 }
@@ -277,7 +284,7 @@ function SignInCard({ settings }: { settings: SignInSettings }) {
         <p className="text-xs text-muted-foreground">{t("setupHint")}</p>
 
         {method !== null ? (
-          <div className="flex justify-end border-t pt-4">
+          <div className="flex justify-end border-t pt-4" data-writes="INTEGRATIONER">
             <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setConfirmRemove(true)}>
               {t("remove")}
             </Button>

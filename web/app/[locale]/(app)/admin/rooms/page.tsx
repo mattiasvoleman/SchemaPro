@@ -247,11 +247,11 @@ export default function RoomsPage() {
                 },
               ]}
             />
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}
             </Button>
-            <Button onClick={openCreate}>
+            <Button data-writes="PLANERING" onClick={openCreate}>
               <Plus />
               {t("addRoom")}
             </Button>
@@ -272,7 +272,7 @@ export default function RoomsPage() {
           description={t("empty")}
           headingLevel={2}
           action={
-            <Button onClick={openCreate}>
+            <Button data-writes="PLANERING" onClick={openCreate}>
               <Plus />
               {t("addRoom")}
             </Button>
@@ -322,23 +322,26 @@ export default function RoomsPage() {
                     <TableCell>{stage ?? <Empty />}</TableCell>
                     <TableCell>{place === "—" ? <Empty /> : place}</TableCell>
                     <TableCell className="text-right">
-                      <RowActions
-                        name={room.name}
-                        actions={[
-                          {
-                            label: tCommon("edit"),
-                            icon: Pencil,
-                            ariaLabel: tCommon("editNamed", { name: room.name }),
-                            onSelect: () => openEdit(room),
-                          },
-                          {
-                            label: tCommon("delete"),
-                            icon: Trash2,
-                            ariaLabel: tCommon("deleteNamed", { name: room.name }),
-                            onSelect: () => setDeleting(room),
-                          },
-                        ]}
-                      />
+                      {/* Both actions write: RowActions takes no attribute, so the wrapper carries it. */}
+                      <div data-writes="PLANERING" className="contents">
+                        <RowActions
+                          name={room.name}
+                          actions={[
+                            {
+                              label: tCommon("edit"),
+                              icon: Pencil,
+                              ariaLabel: tCommon("editNamed", { name: room.name }),
+                              onSelect: () => openEdit(room),
+                            },
+                            {
+                              label: tCommon("delete"),
+                              icon: Trash2,
+                              ariaLabel: tCommon("deleteNamed", { name: room.name }),
+                              onSelect: () => setDeleting(room),
+                            },
+                          ]}
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

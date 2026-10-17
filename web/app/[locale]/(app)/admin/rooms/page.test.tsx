@@ -165,3 +165,25 @@ describe("the Byggnad and Våning fields", () => {
     expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
   });
 });
+
+describe("Läsbehörighet: the controls that write are marked with planering", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write it; the rooms controller's @Area.
+  const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+
+  it("marks Lägg till, Importera and each row's actions", () => {
+    state.rooms = [room("r-1", "Sal 1", null, null)];
+    render(<RoomsPage />);
+    expect(screen.getByRole("button", { name: "addRoom" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("button", { name: "button" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(writes(screen.getByRole("button", { name: "editNamed(Sal 1)" }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: "deleteNamed(Sal 1)" }))).toBe("PLANERING");
+  });
+
+  it("marks the empty state's Lägg till as well as the header's", () => {
+    render(<RoomsPage />);
+    const adds = screen.getAllByRole("button", { name: "addRoom" });
+    expect(adds).toHaveLength(2);
+    for (const add of adds) expect(add).toHaveAttribute("data-writes", "PLANERING");
+  });
+});

@@ -266,6 +266,22 @@ describe("/admin/cancellations", () => {
     expect(row).not.toHaveTextContent("Sammanfattning skickad");
   });
 
+  it("marks the new batch's form and each batch's re-apply and reversal as Drift's, and leaves the list to every reader", async () => {
+    post.mockResolvedValue({ reinstate: 330, skippedRoomTaken: [], removedTemplateMoved: [], notReinstatable: 0, creditsDeleted: 0 });
+    const user = userEvent.setup();
+    renderPage();
+    // The whole form: its preview is a POST, answered by area like the create.
+    expect(screen.getByRole("region", { name: "Ny avbokning" })).toHaveAttribute("data-writes", "DRIFT");
+    const row = (await screen.findByText("Friluftsdag")).closest("tr")!;
+    expect(row.closest("[data-writes]")).toBeNull();
+    expect(within(row).getByRole("button", { name: "Tillämpa igen Friluftsdag" })).toHaveAttribute("data-writes", "DRIFT");
+    const reverse = within(row).getByRole("button", { name: "Ta tillbaka Friluftsdag" });
+    expect(reverse).toHaveAttribute("data-writes", "DRIFT");
+    await user.click(reverse);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Ta tillbaka" })).toHaveAttribute("data-writes", "DRIFT");
+  });
+
   it("says a batch sent a digest, and how many its reversal tells", async () => {
     get.mockImplementation(async () => [{ ...BATCH, notifies: true }]);
     post.mockImplementation(async () => ({

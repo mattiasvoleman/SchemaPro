@@ -1,10 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, MouseEvent, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
-import { closedPages, type AdminProfile } from "@/lib/admin-areas";
-import { closedMenuStyle, closedPagesFor } from "@/components/admin/area-refusal";
+import { closedPages, readOnlyPages, type AdminProfile } from "@/lib/admin-areas";
+import { closedMenuStyle, closedPagesFor, readOnlyNoticesFor, readOnlyStyle } from "@/components/admin/area-refusal";
 import { ClosedPageGate, ProfileProvider } from "@/components/profile-context";
 import type { Profile } from "@/lib/types";
 
@@ -624,5 +624,70 @@ describe("AppShell in place of an admin page the profile does not use", () => {
     unmount();
     shellFor("REKTOR", "gallring");
     expect(screen.getByText("gallring")).toBeInTheDocument();
+  });
+});
+
+describe("AppShell for a läsare (Läsbehörighet)", () => {
+  /** The shell as the layout renders it for a läsare on `pathname`: the style rule, the notices, a page with three controls. */
+  const readerShell = (pathname: string) => {
+    navState.pathname = pathname;
+    const pages = readOnlyPages("LASARE");
+    const style = document.createElement("style");
+    style.textContent = closedMenuStyle(closedPages("LASARE"), "nav.label") + readOnlyStyle(pages, "LASARE", "nav.label");
+    document.head.append(style);
+    menuStyles.push(style);
+    return render(
+      <ProfileProvider profile={{ adminProfile: "LASARE" } as Profile} school={null} closed={closedFor("LASARE")}>
+        <AppShell role="SCHOOL_ADMIN" userName="Lisa Läsare" email="lisa@example.com" schoolName="Norra Real">
+          <ClosedPageGate>
+            {readOnlyNoticesFor(pages, "LASARE")}
+            <button type="button" data-writes="SCHEMALAGGNING">
+              Generera
+            </button>
+            <button type="button" data-writes-inert="SCHEMALAGGNING">
+              Matematik 7A
+            </button>
+            <button type="button">Visa veckan</button>
+          </ClosedPageGate>
+        </AppShell>
+      </ProfileProvider>,
+    );
+  };
+  const notice = (area: string) => document.querySelector(`main [data-read-only="${area}"]`);
+
+  it("keeps every page but dataskydd in the menu", () => {
+    readerShell("/admin");
+    const hrefs = navLinks().map((anchor) => anchor.getAttribute("href"));
+    expect(hrefs).toEqual(expect.arrayContaining(["/admin/timetable", "/admin/people", "/admin/integrations", "/admin/reports"]));
+    expect(hrefs).not.toContain("/admin/dataskydd");
+  });
+
+  it("opens a page read-only: its area's notice above it, the others' hidden, its write controls gone", () => {
+    readerShell("/admin/timetable");
+    expect(notice("SCHEMALAGGNING")).toBeVisible();
+    expect(notice("PLANERING")).not.toBeVisible();
+    expect(notice("DRIFT")).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "Visa veckan" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Generera" })).toBeNull();
+    // What is read stays on the page, and takes no pointer.
+    const lesson = screen.getByRole("button", { name: "Matematik 7A" });
+    expect(lesson).toBeVisible();
+    expect(getComputedStyle(lesson).pointerEvents).toBe("none");
+  });
+
+  it("names a sub-page by its parent's area, and the overview by none", () => {
+    readerShell("/admin/years/rollover");
+    expect(notice("PLANERING")).toBeVisible();
+    expect(notice("SCHEMALAGGNING")).not.toBeVisible();
+    cleanup();
+    readerShell("/admin");
+    for (const area of ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT", "PERSONAL", "INTEGRATIONER"]) {
+      expect(notice(area)).not.toBeVisible();
+    }
+  });
+
+  it("gives the dataskydd page the page that says why, not a read-only one", () => {
+    readerShell("/admin/dataskydd");
+    expect(screen.queryByRole("button", { name: "Visa veckan" })).toBeNull();
   });
 });

@@ -80,6 +80,20 @@ describe("VersionsDialog's rows and list", () => {
     expect(screen.getByRole("textbox", { name: "Namn på versionen" })).toBeTruthy();
   });
 
+  it("marks saving, restoring and deleting as schemaläggning's, and comparing as nobody's write (Läsbehörighet)", () => {
+    render(wrap(<VersionsDialog {...props(true, "y-1", [lessonA])} />));
+
+    // The name field goes with its Spara: a name with nowhere to send it is no use.
+    expect(screen.getByRole("textbox", { name: "Namn på versionen" }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING",
+    );
+    for (const name of ["Återställ ”Vår v12 (2026/27)”", "Ta bort ”Vår v12 (2026/27)”"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("data-writes", "SCHEMALAGGNING");
+    }
+    expect(screen.getByRole("button", { name: "Jämför ”Vår v12 (2026/27)” med nuvarande" }).closest("[data-writes]")).toBeNull();
+  });
+
   it("says the list could not be read, rather than that there are no versions", () => {
     versionsRead.failed = true;
     try {

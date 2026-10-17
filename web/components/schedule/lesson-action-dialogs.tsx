@@ -148,6 +148,7 @@ export function LessonActionDialogs({
               variant="destructive"
               onClick={() => lesson && onCancel(lesson, reason)}
               disabled={pending.cancel}
+              data-writes="DRIFT"
             >
               {pending.cancel ? <Loader2 className="animate-spin" /> : <CalendarX2 />}
               {t("cancelAction")}
@@ -223,6 +224,7 @@ export function LessonActionDialogs({
             <Button
               onClick={() => lesson && teacherId && onSubstitute(lesson, teacherId, note)}
               disabled={!teacherId || pending.substitute}
+              data-writes="DRIFT"
             >
               {pending.substitute ? <Loader2 className="animate-spin" /> : <UserPlus />}
               {t("substituteAction")}
@@ -261,6 +263,7 @@ export function LessonActionDialogs({
             <Button
               onClick={() => lesson && onChangeRoom(lesson, roomId === NO_ROOM ? null : roomId)}
               disabled={pending.room}
+              data-writes="DRIFT"
             >
               {pending.room ? <Loader2 className="animate-spin" /> : <MapPin />}
               {t("roomChangeAction")}

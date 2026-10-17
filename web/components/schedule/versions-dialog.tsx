@@ -281,7 +281,7 @@ export function VersionsDialog({
           <DialogTitle>{t("versionsTitle")}</DialogTitle>
           <DialogDescription>{t("versionsBody")}</DialogDescription>
         </DialogHeader>
-        <div className="flex gap-2">
+        <div className="flex gap-2" data-writes="SCHEMALAGGNING">
           {/* Named for a screen reader: the placeholder is an example, and
               it is gone as soon as a name is typed. */}
           <Input
@@ -349,6 +349,7 @@ export function VersionsDialog({
                     variant="outline"
                     onClick={() => void doRestoreVersion(version.id)}
                     disabled={versionActions.restore.isPending}
+                    data-writes="SCHEMALAGGNING"
                     aria-label={t("versionRestoreNamed", { name: version.name })}
                   >
                     {t("versionRestore")}
@@ -358,6 +359,7 @@ export function VersionsDialog({
                     variant="ghost"
                     onClick={() => void versionActions.remove.mutateAsync(version.id)}
                     disabled={versionActions.remove.isPending}
+                    data-writes="SCHEMALAGGNING"
                     title={t("versionDelete")}
                     aria-label={t("versionDeleteNamed", { name: version.name })}
                   >

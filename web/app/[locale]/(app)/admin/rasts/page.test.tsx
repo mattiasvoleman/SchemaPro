@@ -218,3 +218,18 @@ describe("the page around the list", () => {
     expect(screen.getByRole("dialog").className).not.toContain("max-w-md");
   });
 });
+
+describe("under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write planering (rasts.controller.ts @Area); the
+  // rasts and the week stay to read.
+  it("marks Lägg till and each rast's Redigera and Ta bort, and not the week", () => {
+    state.rasts = { data: [rast()], isLoading: false };
+    render(<RastsPage />);
+    const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+    expect(writes(screen.getByRole("button", { name: "add" }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: /^editRast\(/ }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("button", { name: /^deleteRast\(/ }))).toBe("PLANERING");
+    expect(writes(screen.getByRole("region", { name: "weekTitle" }))).toBeUndefined();
+  });
+});

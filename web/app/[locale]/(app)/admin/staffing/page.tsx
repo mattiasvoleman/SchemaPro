@@ -281,7 +281,13 @@ export default function StaffingPage() {
         actions={
           <>
             <YearSelect value={activeYearId} label={t("yearLabel")} onValueChange={setSelectedYearId} />
-            <Button variant="outline" onClick={openPropose} disabled={!report || !activeYearId}>
+            {/* Its first write is the proposal (optimization's areas); applying it is planering's too. */}
+            <Button
+              variant="outline"
+              onClick={openPropose}
+              disabled={!report || !activeYearId}
+              data-writes="SCHEMALAGGNING DRIFT"
+            >
               <Sparkles />
               {t("proposal.open")}
             </Button>

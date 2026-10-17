@@ -217,7 +217,7 @@ export function CandidatesDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             {tCommon("cancel")}
           </Button>
-          <Button onClick={() => item && pick && onAssign(item, pick)} disabled={!pick || pending}>
+          <Button onClick={() => item && pick && onAssign(item, pick)} disabled={!pick || pending} data-writes="DRIFT">
             {pending ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {t("assign")}
           </Button>

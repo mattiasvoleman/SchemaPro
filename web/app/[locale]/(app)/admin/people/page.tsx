@@ -790,9 +790,11 @@ export default function PeoplePage() {
         disabled: lockedAdmin,
       });
     }
-    if (person.role === "STUDENT" && writesPeople) {
+    // The guardians are every profile's to read (and logged as read); the
+    // dialog's link and unlink are personal's, marked inside it.
+    if (person.role === "STUDENT") {
       actions.push({
-        label: t("manageGuardians"),
+        label: writesPeople ? t("manageGuardians") : t("showGuardians"),
         icon: Link2,
         ariaLabel: t("guardiansTitle", { name }),
         onSelect: () => {
@@ -1267,23 +1269,26 @@ export default function PeoplePage() {
                         {entry.guardian.email}
                       </div>
                     </div>
-                    <RowActions
-                      name={name}
-                      actions={[
-                        {
-                          label: t("unlinkConfirm"),
-                          icon: Unlink,
-                          ariaLabel: t("unlinkGuardian", { name }),
-                          onSelect: () => setUnlinking({ id: entry.id, name }),
-                        },
-                      ]}
-                    />
+                    {/* Reached from ?guardians= by any profile, so the link's writes are marked here. */}
+                    <div className="contents" data-writes="PERSONAL">
+                      <RowActions
+                        name={name}
+                        actions={[
+                          {
+                            label: t("unlinkConfirm"),
+                            icon: Unlink,
+                            ariaLabel: t("unlinkGuardian", { name }),
+                            onSelect: () => setUnlinking({ id: entry.id, name }),
+                          },
+                        ]}
+                      />
+                    </div>
                   </li>
                 );
               })}
             </ul>
           )}
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-2" data-writes="PERSONAL">
             <FormField id="person-add-guardian" label={t("addGuardianLabel")} className="min-w-0 flex-1">
               {(control) => (
                 <Select value={newGuardianId || undefined} onValueChange={setNewGuardianId}>

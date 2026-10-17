@@ -123,6 +123,7 @@ export function AttendanceSharingCard() {
                 variant={shares ? "outline" : "default"}
                 disabled={decide.isPending}
                 onClick={() => setAsked(!shares)}
+                data-writes="DECIDES"
               >
                 {shares ? t("stop") : t("share")}
               </Button>

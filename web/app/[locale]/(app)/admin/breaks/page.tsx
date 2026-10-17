@@ -484,7 +484,8 @@ export default function BreaksPage() {
               problem the timplan's picker had, and the same fix.
             */}
             <YearSelect value={activeYearId} onValueChange={pickYear} label={t("yearLabel")} />
-            <Button onClick={openCreate} disabled={!activeYearId}>
+            {/* A lov writes the calendar too: school-breaks.controller.ts @Area('PLANERING', 'DRIFT'). */}
+            <Button data-writes="PLANERING DRIFT" onClick={openCreate} disabled={!activeYearId}>
               <Plus aria-hidden="true" />
               {t("addBreak")}
             </Button>
@@ -665,6 +666,7 @@ export default function BreaksPage() {
                   */}
                   <div className="flex items-center justify-end gap-1">
                     <Button
+                      data-writes="DRIFT"
                       variant="ghost"
                       size="icon"
                       onClick={() =>
@@ -676,6 +678,7 @@ export default function BreaksPage() {
                       <Plus aria-hidden="true" />
                     </Button>
                     <Button
+                      data-writes="PLANERING DRIFT"
                       variant="ghost"
                       size="icon"
                       onClick={() => openEdit(schoolBreak)}
@@ -684,6 +687,7 @@ export default function BreaksPage() {
                       <Pencil aria-hidden="true" />
                     </Button>
                     <Button
+                      data-writes="PLANERING DRIFT"
                       variant="ghost"
                       size="icon"
                       onClick={() => setDeleting(schoolBreak)}
@@ -706,7 +710,8 @@ export default function BreaksPage() {
           description={t("credits.intro")}
           descriptionClassName="max-w-prose leading-relaxed text-foreground"
           action={
-            <Button variant="outline" size="sm" onClick={() => openCredit(null)}>
+            // Tillgodoräknad tid is drift's: timplan-credits.controller.ts @Area('DRIFT').
+            <Button data-writes="DRIFT" variant="outline" size="sm" onClick={() => openCredit(null)}>
               <Plus aria-hidden="true" />
               {t("credits.add")}
             </Button>
@@ -754,7 +759,7 @@ export default function BreaksPage() {
                     <TableCell className="text-foreground">{creditScopeLabel(credit)}</TableCell>
                     <TableCell className="max-w-64 text-foreground">{credit.note ?? ""}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      <div data-writes="DRIFT" className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="icon"

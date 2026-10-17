@@ -968,3 +968,24 @@ describe("Tillgodoräknad tid", () => {
     expect(credits.remove).toHaveBeenCalledWith("c-tema");
   });
 });
+
+describe("Lov och tillgodoräknad tid under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="AREA"] from a
+  // profile that does not write AREA. A lov writes planering and the
+  // calendar's drift (school-breaks.controller.ts @Area('PLANERING',
+  // 'DRIFT')); a credit is drift's (timplan-credits.controller.ts @Area).
+  const writes = (element: HTMLElement) => element.closest("[data-writes]")?.getAttribute("data-writes");
+
+  it("marks a lov's writes with both areas and a credit's with drift", () => {
+    credits.rows = [FRILUFTSDAG];
+    render(<BreaksPage />);
+    expect(writes(screen.getByRole("button", { name: "addBreak" }))).toBe("PLANERING DRIFT");
+    expect(writes(screen.getByRole("button", { name: "editNamed(Höstlov)" }))).toBe("PLANERING DRIFT");
+    expect(writes(screen.getByRole("button", { name: "deleteNamed(Höstlov)" }))).toBe("PLANERING DRIFT");
+    expect(writes(screen.getByRole("button", { name: "credits.addForDayNamed(Höstlov)" }))).toBe("DRIFT");
+    expect(writes(screen.getByRole("button", { name: "credits.add" }))).toBe("DRIFT");
+    expect(writes(screen.getByRole("button", { name: "editNamed(Friluftsdag)" }))).toBe("DRIFT");
+    expect(writes(screen.getByRole("button", { name: "deleteNamed(Friluftsdag)" }))).toBe("DRIFT");
+    expect(writes(screen.getByRole("combobox", { name: "yearLabel" }))).toBeUndefined();
+  });
+});

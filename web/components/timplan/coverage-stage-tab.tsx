@@ -260,9 +260,11 @@ function Publication({
             : t("publicationOtherYear", { date: day(publication.asOfDate) })}
       </p>
       <p className="max-w-prose text-xs text-muted-foreground">{t("publicationHint")}</p>
+      {/* Both write the statement: timplan-stage.controller.ts @Area('PUBLICERING'). */}
       <div className="flex flex-wrap gap-2">
         {isActiveYear ? (
           <Button
+            data-writes="PUBLICERING"
             size="sm"
             disabled={pending}
             onClick={() =>
@@ -277,6 +279,7 @@ function Publication({
         ) : null}
         {publication !== null ? (
           <Button
+            data-writes="PUBLICERING"
             size="sm"
             variant="outline"
             disabled={pending}

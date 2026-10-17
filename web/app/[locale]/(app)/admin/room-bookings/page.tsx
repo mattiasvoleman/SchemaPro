@@ -129,6 +129,7 @@ export default function RoomBookingsPage() {
           }}
           deciding={actions.decide.isPending ? (actions.decide.variables?.id ?? null) : null}
           onDecide={decide}
+          writes="DRIFT"
         />
       )}
     </Page>

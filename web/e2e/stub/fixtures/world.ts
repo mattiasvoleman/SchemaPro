@@ -11,7 +11,7 @@ import type {
   TeachingBlock,
   TeachingRequirement,
 } from "../../../lib/types";
-import { KIND, PEOPLE, uid } from "../sessions";
+import { KIND, PEOPLE, READER, uid } from "../sessions";
 import {
   NEXT_YEAR_END,
   NEXT_YEAR_NAME,
@@ -262,6 +262,14 @@ export const PROFILE_ROWS = [
   { ...TEACHERS.anna, authId: PEOPLE.teacher.authId, schoolId: SCHOOL.id },
   { ...STUDENTS.ella, authId: PEOPLE.student.authId, schoolId: SCHOOL.id },
   { ...GUARDIANS.sara, authId: PEOPLE.guardian.authId, schoolId: SCHOOL.id },
+  // The läsare: read-only, and only here, so no page lists it.
+  {
+    ...person(READER.userId, "SCHOOL_ADMIN", "Lisa", "Läsare", READER.email),
+    authId: READER.authId,
+    schoolId: SCHOOL.id,
+    adminProfile: "LASARE" as const,
+    hrRead: false,
+  },
 ];
 
 // --- Requirements and the weekly schedule ------------------------------------

@@ -261,6 +261,20 @@ describe("CoverageStageTab", () => {
     expect(state.withdrawn).toBe(1);
   });
 
+  // Läsbehörighet: the (app) layout's readOnlyStyle hides
+  // [data-writes~="PUBLICERING"] from a profile that does not publish
+  // (timplan-stage.controller.ts @Area('PUBLICERING')); the figures stay.
+  it("marks Publicera and Dra tillbaka as publicering's writes", () => {
+    const { overview } = responses();
+    state.stages[""] = {
+      ...overview,
+      publication: { academicYearId: "y-1", publishedAt: "2026-10-09T22:30:00.000Z", publishedByUserId: "admin", asOfDate: "2026-10-10", pupils: 5 },
+    };
+    render(<CoverageStageTab {...props()} />);
+    expect(screen.getByRole("button", { name: "timplanCoverage.stage.republish" })).toHaveAttribute("data-writes", "PUBLICERING");
+    expect(screen.getByRole("button", { name: "timplanCoverage.stage.withdraw" })).toHaveAttribute("data-writes", "PUBLICERING");
+  });
+
   it("answers a year that is not the active one with no figures, and offers no publish for it", () => {
     state.stages[""] = {
       ...responses().overview,

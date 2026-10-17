@@ -132,3 +132,24 @@ describe("Lägg till lektion's free-slot search", () => {
     expect(screen.getByRole("textbox", { name: "participantStudents" })).toBeInTheDocument();
   });
 });
+
+describe("the writes the two dialogs start (Läsbehörighet)", () => {
+  // A lesson card's Enter opens Justera from the keyboard, where the grid's
+  // inert columns do not reach: the dialog's own writes carry the mark too.
+  it("marks Lägg till as the master lessons' write, schemaläggning's and drift's", () => {
+    renderCreate();
+    expect(screen.getByRole("button", { name: "addConfirm" })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    expect(screen.getByRole("button", { name: "cancel" })).not.toHaveAttribute("data-writes");
+  });
+
+  it("marks Justera's save, delete, duplicate and park, and leaves Avbryt alone", () => {
+    renderEdit();
+    for (const name of ["save", "deleteLesson", "duplicateLesson", "park"]) {
+      expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute(
+        "data-writes",
+        "SCHEMALAGGNING DRIFT",
+      );
+    }
+    expect(screen.getByRole("button", { name: "cancel" }).closest("[data-writes]")).toBeNull();
+  });
+});

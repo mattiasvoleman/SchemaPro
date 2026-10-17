@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import type { GateItem, PublicationPreview } from "@/lib/publication-types";
+import { PublicationBadge } from "./publication-badge";
 import { PublishReviewDialog } from "./publish-review-dialog";
 
 /**
@@ -113,6 +114,13 @@ describe("PublishReviewDialog", () => {
     expect(toast.success).toHaveBeenCalledWith("Publicerat: 812 lektioner skapades i kalendern.");
   });
 
+  it("marks Publicera with the areas of POST /publications, Publicering's and Drift's", async () => {
+    post.mockResolvedValue(preview());
+    renderDialog();
+    expect(await screen.findByRole("button", { name: "Publicera" })).toHaveAttribute("data-writes", "PUBLICERING DRIFT");
+    expect(screen.getByRole("button", { name: "Avbryt" })).not.toHaveAttribute("data-writes");
+  });
+
   it("leaves nothing to press when a check stops the publish, and says the severity in words", async () => {
     post.mockResolvedValue(
       preview({
@@ -159,6 +167,31 @@ describe("PublishReviewDialog", () => {
         // A dry run the dates have moved past is cancelled, not left holding the lock.
         expect.any(AbortSignal),
       ),
+    );
+  });
+});
+
+describe("PublicationBadge", () => {
+  it("stays on the timetable as its reading, and takes no pointer from a profile that does not publish", async () => {
+    vi.resetAllMocks();
+    get.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/publication-settings") return { publishMode: "DRAFT" };
+      if (path.startsWith("/api/v1/publications/state")) {
+        return { academicYearId: "y26", publishMode: "DRAFT", publicationId: "p", added: [], changed: [], removed: [], pendingRemovals: 0 };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
+          <PublicationBadge yearId="y26" revision={0} onReview={() => {}} />
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "Utkast = publicerat" })).toHaveAttribute(
+      "data-writes-inert",
+      "PUBLICERING DRIFT",
     );
   });
 });

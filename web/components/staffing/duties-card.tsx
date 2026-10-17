@@ -202,7 +202,7 @@ export function DutiesCard({
       description={t("dutiesHint", { year: academicYearName })}
       action={
         editing === null && !readOnly ? (
-          <Button variant="outline" size="sm" onClick={openNew}>
+          <Button variant="outline" size="sm" onClick={openNew} data-writes="PLANERING">
             <Plus />
             {t("addDuty")}
           </Button>
@@ -257,7 +257,7 @@ export function DutiesCard({
                       {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}
                     </div>
                     {readOnly ? null : (
-                      <span className="flex shrink-0 gap-1">
+                      <span className="flex shrink-0 gap-1" data-writes="PLANERING">
                         <Button
                           variant="ghost"
                           size="icon"

@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 /**
  * The role chooser's administrator half (Roller i skolan): which profile,
- * and HR-läs for a schemaläggare or an expedition. Shown when the person is
+ * and HR-läs for a schemaläggare, an expedition or a läsare (Läsbehörighet:
+ * the profile that reads everything and changes nothing). Shown when the person is
  * an administrator. Only rektor and a full administrator change it; anybody
  * else sees it, disabled, with the sentence that says who does.
  */

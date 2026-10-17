@@ -15,6 +15,11 @@
  *
  * A third action may sit beside the two: the mentor's "Skicka till rektor"
  * (/teacher/ledighet). It cannot be taken back either, so it asks first too.
+ *
+ * The page names the area its decisions write (`writes`): an open row's note
+ * and buttons are then hidden from a profile that does not write it
+ * (components/admin/area-refusal.tsx readOnlyStyle), and the row reads as
+ * the request alone.
  */
 
 import { useState } from "react";
@@ -67,10 +72,22 @@ export interface DecisionListProps {
     confirm: (request: DecisionRequest) => { title: string; body: string };
     onAct: (id: string) => Promise<unknown>;
   };
+  /** The area the decisions write, as data-writes takes it ("DRIFT"); none on a teacher's own page. */
+  writes?: string;
 }
 
 /** A SectionCard of requests, each decided on its own row. */
-export function DecisionList({ id, title, requests, labels, rejectCopy, deciding, onDecide, extra }: DecisionListProps) {
+export function DecisionList({
+  id,
+  title,
+  requests,
+  labels,
+  rejectCopy,
+  deciding,
+  onDecide,
+  extra,
+  writes,
+}: DecisionListProps) {
   const tCommon = useTranslations("common");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [rejecting, setRejecting] = useState<DecisionRequest | null>(null);
@@ -102,7 +119,7 @@ export function DecisionList({ id, title, requests, labels, rejectCopy, deciding
                 ))}
               </div>
               {request.open ? (
-                <div className="flex shrink-0 flex-col gap-2 sm:w-64">
+                <div className="flex shrink-0 flex-col gap-2 sm:w-64" data-writes={writes}>
                   <FormField
                     id={noteId}
                     optional

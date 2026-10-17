@@ -235,7 +235,15 @@
     "actionLeave": "Leave",
     "actionLeaveHint": "Decide pupils' leave requests.",
     "actionPeople": "People",
-    "actionPeopleHint": "Add and edit pupils, staff and guardians."
+    "actionPeopleHint": "Add and edit pupils, staff and guardians.",
+    "readTimetable": "The timetable",
+    "readTimetableHint": "The base timetable by class, teacher and room.",
+    "readRequirements": "Curriculum entries",
+    "readRequirementsHint": "Which teachers have which entries, and what lacks a teacher.",
+    "readStaffing": "Staffing",
+    "readStaffingHint": "The teachers' load against their targets.",
+    "readReports": "Reports",
+    "readReportsHint": "Absence, cover and teaching time."
   },
   "setup": {
     "title": "School setup",
@@ -444,6 +452,7 @@
     "filterAll": "All",
     "authHint": "The person signs in with this email via Supabase Auth.",
     "manageGuardians": "Manage guardians",
+    "showGuardians": "Show guardians",
     "guardiansTitle": "Guardians of {name}",
     "guardiansEmpty": "No guardians linked yet.",
     "selectGuardian": "Select guardian…",
@@ -5201,14 +5210,25 @@
       "FULL": "Full administrator",
       "REKTOR": "Principal",
       "SCHEMALAGGARE": "Scheduler",
-      "EXPEDITION": "School office"
+      "EXPEDITION": "School office",
+      "LASARE": "Reader"
     },
     "profileHint": {
       "FULL": "Changes everything and makes the decisions, as an administrator always has.",
       "REKTOR": "Changes everything and makes the decisions: roles, HR read, employment % and data protection.",
       "SCHEMALAGGARE": "Changes planning, scheduling, publishing and operations.",
-      "EXPEDITION": "Changes operations and the people register."
+      "EXPEDITION": "Changes operations and the people register.",
+      "LASARE": "Reads the administration pages except data protection and changes nothing. Can be given HR read access."
     },
+    "doer": {
+      "REKTOR": "the principal",
+      "FULL": "a full administrator",
+      "SCHEMALAGGARE": "a scheduler",
+      "EXPEDITION": "the school office",
+      "LASARE": "a reader"
+    },
+    "readOnlyTitle": "You can read but not change",
+    "readOnlyBody": "Your profile, {profile}, reads the page but changes nothing on it. {area} is changed by {writers}.",
     "gateTitle": "This page belongs to another area",
     "gateArea": "This page changes {area}. As {profile} you do not change that area. Ask the principal or an administrator who has it if something here needs changing.",
     "gateDecides": "This page is about the principal's decisions. As {profile} you do not make them. Ask the principal or a full administrator if something here needs changing.",

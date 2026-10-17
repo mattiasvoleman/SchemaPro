@@ -183,6 +183,7 @@ import {
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { useReadOnly } from "@/components/profile-context";
 import type { BlockKit } from "@/components/schedule/block-cards";
 import {
   TimetableGrid,
@@ -359,6 +360,9 @@ export default function TimetablePage() {
   const deleteLesson = useDeleteMasterLesson();
   const history = useScheduleHistory();
   const { peers, setEditing: setRemoteEditing } = useTimetableRealtime();
+  // A reader (Läsbehörighet) gets the grid as a reading: no drag, no editor,
+  // no presence saying it edits; the hover text is the lesson in full.
+  const readOnly = useReadOnly();
 
   /**
    * A drag that lands on more than one class, held until it is confirmed.
@@ -2010,6 +2014,7 @@ export default function TimetablePage() {
               variant="outline"
               onClick={() => openCreate(1, 8 * 60)}
               disabled={!shownYear}
+              data-writes="SCHEMALAGGNING DRIFT"
             >
               <Plus />
               {t("addLesson")}
@@ -2041,6 +2046,7 @@ export default function TimetablePage() {
               >
                 <DropdownMenuItem
                   disabled={!shownYear || !lessons || lessons.length === 0}
+                  data-writes="SCHEMALAGGNING DRIFT"
                   onSelect={fromMenu(() => {
                     setRoomsUsed(true);
                     setRoomsOpen(true);
@@ -2069,7 +2075,7 @@ export default function TimetablePage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button onClick={() => setPublishOpen(true)} disabled={!shownYear}>
+            <Button onClick={() => setPublishOpen(true)} disabled={!shownYear} data-writes="PUBLICERING DRIFT">
               <Upload />
               {t("publish")}
             </Button>
@@ -2107,7 +2113,7 @@ export default function TimetablePage() {
           modes. Undo and redo live here, beside what they undo, with their
           shortcuts said in words (aria-keyshortcuts) and on hover. */}
       <FilterBar className="items-center">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" data-writes="SCHEMALAGGNING DRIFT">
           <Button
             variant="outline"
             size="icon"
@@ -2194,6 +2200,7 @@ export default function TimetablePage() {
             variant={lunchMode ? "default" : "outline"}
             aria-pressed={lunchMode}
             onClick={() => setPlacingLunch((on) => !on)}
+            data-writes="SCHEMALAGGNING"
           >
             <UtensilsCrossed />
             {lunchMode ? t("placeLunchOn") : t("placeLunch")}
@@ -2220,7 +2227,10 @@ export default function TimetablePage() {
             {t("conflictCount", { count: conflictCount })}
           </Badge>
         ) : null}
-        <span className="text-xs text-muted-foreground">{t("dragHint")}</span>
+        {/* How to drag, click and key the grid's writes: no use where the grid takes no pointer. */}
+        <span className="text-xs text-muted-foreground" data-writes="SCHEMALAGGNING DRIFT">
+          {t("dragHint")}
+        </span>
         {peers.length > 1 ? (
           <span className="ml-auto inline-flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">{t("online")}</span>
@@ -2279,7 +2289,7 @@ export default function TimetablePage() {
           tone="warning"
           action={
             canPlaceLunch ? (
-              <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)}>
+              <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)} data-writes="SCHEMALAGGNING">
                 <UtensilsCrossed />
                 {t("noSittingsPlace")}
               </Button>
@@ -2319,15 +2329,15 @@ export default function TimetablePage() {
           <span className="text-sm font-medium">
             {t("bulkSelected", { count: selectedLessons().length })}
           </span>
-          <Button size="sm" variant="outline" onClick={() => void bulkSetLock(true)}>
+          <Button size="sm" variant="outline" onClick={() => void bulkSetLock(true)} data-writes="SCHEMALAGGNING DRIFT">
             <Lock />
             {t("bulkLock")}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => void bulkSetLock(false)}>
+          <Button size="sm" variant="outline" onClick={() => void bulkSetLock(false)} data-writes="SCHEMALAGGNING DRIFT">
             <LockOpen />
             {t("bulkUnlock")}
           </Button>
-          <Button size="sm" variant="destructive" onClick={() => void bulkDelete()}>
+          <Button size="sm" variant="destructive" onClick={() => void bulkDelete()} data-writes="SCHEMALAGGNING DRIFT">
             <Trash2 />
             {t("bulkDelete")}
           </Button>
@@ -2401,8 +2411,8 @@ export default function TimetablePage() {
               </h2>
               <TimetableGrid
                 lessons={board.lessons}
-                editable
-                onLessonClick={(lesson) => openEditor(lesson.id)}
+                editable={!readOnly}
+                onLessonClick={readOnly ? undefined : (lesson) => openEditor(lesson.id)}
                 onLessonChange={handleGridChange}
                 validateChange={validateGridChange}
                 onInvalidDrop={handleInvalidDrop}
@@ -2423,8 +2433,8 @@ export default function TimetablePage() {
         <TimetableGrid
           ref={gridRef}
           lessons={gridLessons}
-          editable
-          onLessonClick={(lesson) => openEditor(lesson.id)}
+          editable={!readOnly}
+          onLessonClick={readOnly ? undefined : (lesson) => openEditor(lesson.id)}
           onLessonChange={handleGridChange}
           validateChange={validateGridChange}
           onInvalidDrop={handleInvalidDrop}
@@ -2473,6 +2483,7 @@ export default function TimetablePage() {
                 <button
                   type="button"
                   aria-label={t("dragToPlace", { lesson: lessonName(lesson) })}
+                  data-writes-inert="SCHEMALAGGNING DRIFT"
                   className={cn(
                     "text-left",
                     groupBy === "none" ? "cursor-grab" : "cursor-default",
@@ -2490,7 +2501,7 @@ export default function TimetablePage() {
                     })}
                   </span>
                 </button>
-                <Button variant="ghost" size="sm" onClick={() => putBack(lesson)}>
+                <Button variant="ghost" size="sm" onClick={() => putBack(lesson)} data-writes="SCHEMALAGGNING DRIFT">
                   {t("putBack")}
                 </Button>
               </li>

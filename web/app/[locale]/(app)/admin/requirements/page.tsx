@@ -1131,7 +1131,7 @@ export default function RequirementsPage() {
             <CsvExportButton
               exports={[{ kind: "requirements", build: exportCsv, empty: exportEmpty }]}
             />
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Button data-writes="PLANERING" variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}
             </Button>
@@ -1941,6 +1941,7 @@ export default function RequirementsPage() {
           <DialogFooter className="sm:justify-between">
             {cell?.existing ? (
               <Button
+                data-writes="PLANERING"
                 variant="destructive"
                 onClick={() => setConfirmRemove(true)}
                 disabled={mutations.remove.isPending}
@@ -1955,6 +1956,7 @@ export default function RequirementsPage() {
                 {tCommon("cancel")}
               </Button>
               <Button
+                data-writes="PLANERING"
                 onClick={submit}
                 // Why a split post's save waits: the sentence under its lengths.
                 aria-describedby={form.extraLengths.length > 0 ? "req-lengths-status" : undefined}

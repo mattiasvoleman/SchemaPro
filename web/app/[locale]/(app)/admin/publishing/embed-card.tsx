@@ -38,6 +38,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useReadOnly } from "@/components/profile-context";
 
 type EmbedFlag = "publicEmbedGroups" | "publicEmbedTeachers" | "publicEmbedRooms";
 const SCOPES: { flag: EmbedFlag; scope: "publicGroups" | "publicTeachers" | "publicRooms" }[] = [
@@ -87,6 +88,8 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
   const [sitesText, setSitesText] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [pasted, setPasted] = useState("");
+  // The sites are read, and scrolled, by a reader (Läsbehörighet): read-only rather than inert.
+  const reader = useReadOnly();
 
   const value = <K extends EmbedFlag>(key: K) => changes[key] ?? settings[key];
   const text = sitesText ?? settings.publicEmbedOrigins.join("\n");
@@ -135,7 +138,11 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
       description={t("embedBody")}
       descriptionClassName="max-w-prose"
       footer={
-        <Button onClick={save} disabled={!dirty || refused.length > 0 || tooMany || update.isPending}>
+        <Button
+          onClick={save}
+          disabled={!dirty || refused.length > 0 || tooMany || update.isPending}
+          data-writes="PUBLICERING"
+        >
           {update.isPending ? (
             <>
               <Loader2 className="animate-spin" />
@@ -151,7 +158,8 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
         {SCOPES.map(({ flag, scope }) => {
           const shown = settings.publicViewerEnabled && settings[scope];
           return (
-            <li key={flag} className="flex items-start justify-between gap-4 rounded-md border p-3">
+            // The whole row: its label presses the switch as well.
+            <li key={flag} className="flex items-start justify-between gap-4 rounded-md border p-3" data-writes-inert="PUBLICERING">
               <div className="min-w-0 space-y-1">
                 <Label htmlFor={`embed-${flag}`}>{t(`embed.${flag}`)}</Label>
                 <p id={`embed-${flag}-hint`} className="text-xs text-muted-foreground">
@@ -188,6 +196,7 @@ export function EmbedCard({ settings }: { settings: PublicationSettings }) {
           onChange={(event) => setSitesText(event.target.value)}
           placeholder="https://www.skolan.se"
           className="max-w-xl font-mono text-sm"
+          readOnly={reader}
         />
       </FormField>
       {anyOn && sites.length === 0 ? <Notice tone="warning">{t("embedNoSites")}</Notice> : null}

@@ -42,6 +42,11 @@ describe("StaffingPolicyCard", () => {
     expect(screen.getByText("riktmarkeSource")).toBeInTheDocument();
   });
 
+  it("marks Spara as planering's write, which the läsare's style rule hides (Läsbehörighet)", () => {
+    render(<StaffingPolicyCard />);
+    expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
+  });
+
   it("fills the form from the school's saved row", async () => {
     state.data = {
       id: "p1",

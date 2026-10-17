@@ -111,7 +111,11 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
       footer={
         // Not before the school's row has been read: until then the form
         // holds the table's defaults, and a Spara would write them over it.
-        <Button onClick={() => void submit()} disabled={!loaded || problem !== null || save.isPending}>
+        <Button
+          onClick={() => void submit()}
+          disabled={!loaded || problem !== null || save.isPending}
+          data-writes="PLANERING"
+        >
           {save.isPending ? tCommon("saving") : tCommon("save")}
         </Button>
       }

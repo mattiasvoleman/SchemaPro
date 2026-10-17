@@ -54,9 +54,14 @@ vi.mock("@/i18n/navigation", () => ({
   ),
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+// Läsbehörighet: the profile context's readOnly, true for a läsare.
+const reader = vi.hoisted(() => ({ on: false }));
 vi.mock("sonner", () => ({ toast }));
 // The attendance card on the keys tab asks who is signed in (Roller i skolan): a full administrator.
-vi.mock("@/components/profile-context", () => ({ useProfile: () => ({ profile: { adminProfile: "FULL" } }) }));
+vi.mock("@/components/profile-context", () => ({
+  useProfile: () => ({ profile: { adminProfile: "FULL" } }),
+  useReadOnly: () => reader.on,
+}));
 
 const SOURCE: SourceView = {
   id: "src-1",
@@ -206,6 +211,7 @@ function renderPage() {
 describe("/admin/integrations — the register", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    reader.on = false;
     server.source = null;
     server.runs = [];
     server.pages = [{ data: [], nextCursor: null }];
@@ -601,6 +607,76 @@ describe("/admin/integrations — the register", () => {
     expect(await screen.findByRole("switch", { name: "Tillämpa säkra ändringar automatiskt" })).toBeEnabled();
   });
 
+  it("gives a reader the nightly switches set but not pressable, and saves nothing on Enter in the source (Läsbehörighet)", async () => {
+    const user = userEvent.setup();
+    reader.on = true;
+    server.source = { ...SOURCE, scheduleEnabled: true };
+    renderPage();
+    expect(await screen.findByRole("switch", { name: "Synka varje natt" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Tillämpa säkra ändringar automatiskt" })).toBeDisabled();
+    // The keyboard reaches the field (inert takes only the pointer); Enter sends nothing.
+    await user.type(screen.getByLabelText("Namn"), " 2{Enter}");
+    expect(put).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("marks each write of the source as Integrationer's, an invitation as Personal's, and an apply as every area the gateway names", async () => {
+    const user = userEvent.setup();
+    server.source = {
+      ...SOURCE,
+      organisationIds: ["aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa"],
+      secrets: { CLIENT_SECRET: { setAt: "2026-10-10T09:00:00.000Z" } },
+    };
+    server.runs = [run({})];
+    server.pages = [{ data: [CREATE_CIA, GUARDIAN_ENDED], nextCursor: null }];
+    server.provisioning = [
+      { id: "33333333-3333-4333-8333-333333333333", role: "STUDENT", firstName: "Cia", lastName: "Holm", email: "cia@skola.se", studentGroup: null },
+    ];
+    renderPage();
+    // The source as saved is the page's reading: its fields take no pointer, and Spara is hidden.
+    const form = (await screen.findByLabelText("Namn")).closest("form")!;
+    expect(form).toHaveAttribute("data-writes-inert", "INTEGRATIONER");
+    expect(within(form).getByRole("button", { name: "Spara" })).toHaveAttribute("data-writes", "INTEGRATIONER");
+    // A credential: when it was set stays, the field and its buttons go.
+    const secret = screen.getByLabelText("Klienthemlighet").closest("form")!;
+    expect(within(secret).getByText(/^Sparad /).closest("[data-writes]")).toBeNull();
+    expect(within(secret).getByRole("button", { name: "Ersätt" }).closest("[data-writes]")).toHaveAttribute("data-writes", "INTEGRATIONER");
+    expect(screen.getByLabelText("Klienthemlighet").closest("[data-writes]")).toHaveAttribute("data-writes", "INTEGRATIONER");
+    for (const name of ["Testa anslutning", "Synka nu", "Full synk", "Spara klockslag"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("data-writes", "INTEGRATIONER");
+    }
+    for (const name of ["Synka varje natt", "Tillämpa säkra ändringar automatiskt"]) {
+      // The row, label and all: a press on the label presses the switch, and that saves.
+      expect(screen.getByRole("switch", { name }).closest("[data-writes-inert]")).toHaveAttribute("data-writes-inert", "INTEGRATIONER");
+    }
+    expect(screen.getByLabelText("Klockslag (skolans tid)").closest("[data-writes-inert]")).toHaveAttribute(
+      "data-writes-inert",
+      "INTEGRATIONER",
+    );
+    // Inviting is the people register's.
+    expect(await screen.findByRole("checkbox", { name: /Cia Holm/ })).toHaveAttribute("data-writes", "PERSONAL");
+    expect(screen.getByRole("button", { name: "Bjud in valda (0)" }).closest("[data-writes]")).toHaveAttribute("data-writes", "PERSONAL");
+
+    // A waiting run is read through Granska; what it would do is shown, choosing and applying are not.
+    const review = screen.getAllByRole("button", { name: "Granska" });
+    for (const button of review) expect(button.closest("[data-writes]")).toBeNull();
+    await user.click(review[0]!);
+    const dialog = await screen.findByRole("dialog");
+    const apply = "INTEGRATIONER PERSONAL PLANERING";
+    expect(await within(dialog).findByRole("checkbox", { name: "Cia Holm" })).toHaveAttribute("data-writes-inert", apply);
+    expect(within(dialog).getByLabelText("Jag har sett barnet ovan.").closest("[data-writes]")).toHaveAttribute("data-writes", apply);
+    expect(within(dialog).getByRole("button", { name: "Välj alla visade utom flaggade" }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      apply,
+    );
+    expect(within(dialog).getByRole("button", { name: "Tillämpa 1" })).toHaveAttribute("data-writes", apply);
+    expect(within(dialog).getByRole("button", { name: "Kasta diffen" })).toHaveAttribute("data-writes", "INTEGRATIONER");
+    expect(within(dialog).getByRole("checkbox", { name: "Bara konflikter, noteringar och skyddade" })).not.toHaveAttribute(
+      "data-writes",
+    );
+  });
+
   it("invites only the people the admin chose", async () => {
     const user = userEvent.setup();
     server.source = { ...SOURCE };
@@ -625,6 +701,7 @@ describe("/admin/integrations — the register", () => {
 describe("/admin/integrations — API keys", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    reader.on = false;
     server.source = null;
     server.runs = [];
     server.pages = [{ data: [], nextCursor: null }];
@@ -709,6 +786,24 @@ describe("/admin/integrations — API keys", () => {
     await user.click(screen.getByRole("button", { name: "Kopiera" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Kunde inte kopiera. Markera värdet och kopiera det själv."));
     expect(toast.success).not.toHaveBeenCalledWith("Kopierat till urklipp");
+  });
+
+  it("marks the new key and each key's changes as Integrationer's, and the sharing decision as rektor's", async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/integrations/attendance-sharing") return { current: null, history: [] };
+      if (path === "/api/v1/integration-keys/provider") return server.keys;
+      if (path === "/api/v1/ss12000-source") throw new ApiError(404, "Skolan har inget källsystem.", "SS12000_SOURCE_NOT_FOUND");
+      throw new Error(`unexpected GET ${path}`);
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("tab", { name: "API-nycklar" }));
+    expect(await screen.findByRole("region", { name: "Skapa API-nyckel" })).toHaveAttribute("data-writes", "INTEGRATIONER");
+    const row = (await screen.findByText("Vklass")).closest("li")!;
+    for (const name of ["Återkalla", "Ändra omfång", "Skapa signeringshemlighet", "Pausa"]) {
+      expect(within(row).getByRole("button", { name })).toHaveAttribute("data-writes", "INTEGRATIONER");
+    }
+    expect(await screen.findByRole("button", { name: "Börja dela" })).toHaveAttribute("data-writes", "DECIDES");
   });
 
   it("changes a key's scopes and refuses an empty set", async () => {

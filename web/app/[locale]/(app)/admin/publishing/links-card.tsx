@@ -168,7 +168,7 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
       description={t("linksBody")}
       descriptionClassName="max-w-prose"
     >
-      <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
+      <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0" data-writes="PUBLICERING">
         <FormField id="link-kind" label={t("linkKind")}>
           {(control) => (
             <Select value={kind} onValueChange={(next) => pickKind(next as PublicScopeKind)}>
@@ -212,7 +212,11 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
         </FormField>
       </div>
       {!scopeOn ? <p className="max-w-prose text-sm text-muted-foreground">{t("linkScopeOff")}</p> : null}
-      <Button onClick={doCreate} disabled={create.isPending || (needsTarget && target === INDEX)}>
+      <Button
+        onClick={doCreate}
+        disabled={create.isPending || (needsTarget && target === INDEX)}
+        data-writes="PUBLICERING"
+      >
         {t("linkCreate")}
       </Button>
       {made ? (
@@ -335,17 +339,20 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
                   </TableCell>
                   <TableCell className={cn(TD, "pr-0 text-right")}>
                     {link.revokedAt ? null : (
-                      <RowActions
-                        name={linkName(link)}
-                        actions={[
-                          {
-                            label: t("linkRevoke"),
-                            icon: Link2Off,
-                            ariaLabel: t("linkRevokeNamed", { name: linkName(link) }),
-                            onSelect: () => setRevoking(link),
-                          },
-                        ]}
-                      />
+                      // RowActions takes no attributes of its own; its one action writes.
+                      <span data-writes="PUBLICERING" className="contents">
+                        <RowActions
+                          name={linkName(link)}
+                          actions={[
+                            {
+                              label: t("linkRevoke"),
+                              icon: Link2Off,
+                              ariaLabel: t("linkRevokeNamed", { name: linkName(link) }),
+                              onSelect: () => setRevoking(link),
+                            },
+                          ]}
+                        />
+                      </span>
                     )}
                   </TableCell>
                 </TableRow>

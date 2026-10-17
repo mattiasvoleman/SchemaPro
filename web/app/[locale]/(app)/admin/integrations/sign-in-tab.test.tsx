@@ -211,6 +211,27 @@ describe("/admin/integrations — Inloggning", () => {
     expect(toast.success).toHaveBeenCalledWith("Personalen loggar nu in med skolkonto.");
   });
 
+  it("keeps the saved method on screen for a profile that does not write Integrationer, and marks every change", async () => {
+    settings = {
+      available: true,
+      method: { provider: "azure", domains: ["skola.example"], entraTenantId: TENANT, googleHostedDomain: null, ssoOnlyForStaff: false, updatedAt: "2026-10-20T08:00:00.000Z" },
+      session: { schoolAccount: { provider: "azure", entraTenantId: TENANT } },
+    };
+    const card = await openTab();
+    const form = within(card).getByLabelText("E-postdomäner").closest("form")!;
+    expect(form).toHaveAttribute("data-writes-inert", "INTEGRATIONER");
+    expect(within(form).getByRole("button", { name: "Spara inloggningen" })).toHaveAttribute("data-writes", "INTEGRATIONER");
+    // The row, label and all: a press on the label presses the switch, and that saves.
+    expect(within(card).getByRole("switch", { name: "Kräv skolkonto för personal" }).closest("[data-writes-inert]")).toHaveAttribute(
+      "data-writes-inert",
+      "INTEGRATIONER",
+    );
+    expect(within(card).getByRole("button", { name: "Stäng av skolkonton" }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "INTEGRATIONER",
+    );
+  });
+
   it("says the gateway's refusal in words", async () => {
     settings = {
       available: true,

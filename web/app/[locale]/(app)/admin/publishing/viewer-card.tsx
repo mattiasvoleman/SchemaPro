@@ -74,7 +74,11 @@ export function ViewerCard({ settings }: { settings: PublicationSettings }) {
       description={t("viewerBody")}
       descriptionClassName="max-w-prose"
       footer={
-        <Button onClick={save} disabled={Object.keys(changes).length === 0 || !sizeValid || update.isPending}>
+        <Button
+          onClick={save}
+          disabled={Object.keys(changes).length === 0 || !sizeValid || update.isPending}
+          data-writes="PUBLICERING"
+        >
           {update.isPending ? (
             <>
               <Loader2 className="animate-spin" />
@@ -88,7 +92,8 @@ export function ViewerCard({ settings }: { settings: PublicationSettings }) {
     >
       <ul className="space-y-2">
         {FLAGS.map((flag) => (
-          <li key={flag} className="flex items-start justify-between gap-4 rounded-md border p-3">
+          // The whole row: its label presses the switch as well.
+          <li key={flag} className="flex items-start justify-between gap-4 rounded-md border p-3" data-writes-inert="PUBLICERING">
             <div className="min-w-0 space-y-1">
               <Label htmlFor={`viewer-${flag}`}>{t(`viewer.${flag}`)}</Label>
               <p id={`viewer-${flag}-hint`} className="text-xs text-muted-foreground">
@@ -105,7 +110,7 @@ export function ViewerCard({ settings }: { settings: PublicationSettings }) {
           </li>
         ))}
       </ul>
-      <div className="grid max-w-xl gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid max-w-xl gap-4 sm:grid-cols-2 [&>*]:min-w-0" data-writes-inert="PUBLICERING">
         <FormField id="viewer-display" label={t("viewer.teacherDisplay")} hint={t("viewer.teacherDisplayHint")}>
           {(control) => (
             <Select

@@ -91,6 +91,7 @@ export function TeacherRequirementsCard({
                       aria-controls={`handover-${row.id}`}
                       aria-label={t("changeTeacherFor", { row: label })}
                       onClick={() => setOpenId(open ? null : row.id)}
+                      data-writes="PLANERING"
                     >
                       <ArrowLeftRight />
                       {t("changeTeacher")}

@@ -297,7 +297,7 @@ export default function ConstraintsPage() {
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <Button onClick={openCreate}>
+          <Button data-writes="PLANERING" onClick={openCreate}>
             <Plus aria-hidden="true" />
             {t("addConstraint")}
           </Button>
@@ -396,13 +396,16 @@ export default function ConstraintsPage() {
                       {constraint.reason ?? "—"}
                     </TableCell>
                     <TableCell className={cn(INNER_TD, "pr-0 text-right")}>
-                      <RowActions
-                        name={rowName(constraint)}
-                        actions={[
-                          { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(constraint) },
-                          { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(constraint) },
-                        ]}
-                      />
+                      {/* Both write (availability-constraints.controller.ts @Area): RowActions takes no attribute. */}
+                      <div data-writes="PLANERING" className="contents">
+                        <RowActions
+                          name={rowName(constraint)}
+                          actions={[
+                            { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(constraint) },
+                            { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(constraint) },
+                          ]}
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

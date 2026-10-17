@@ -17,6 +17,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useReadOnly } from "@/components/profile-context";
 import { useSetTeacherHidden } from "./use-public-links";
 
 export function HiddenTeachersCard({
@@ -40,6 +41,8 @@ export function HiddenTeachersCard({
   const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const setHidden = useSetTeacherHidden();
+  // A press saves: a reader (Läsbehörighet) sees who is hidden, the switches not pressable.
+  const readOnly = useReadOnly();
 
   const toggle = async (userId: string, next: boolean) => {
     try {
@@ -67,11 +70,12 @@ export function HiddenTeachersCard({
       ) : (
         <ul className="grid gap-2 text-sm sm:grid-cols-2">
           {teachers.map((teacher) => (
-            <li key={teacher.id} className="flex items-center gap-3">
+            // The whole row: the name is the switch's label, and pressing it would save.
+            <li key={teacher.id} className="flex items-center gap-3" data-writes-inert="PUBLICERING">
               <Switch
                 id={`hidden-${teacher.id}`}
                 checked={hidden.has(teacher.id)}
-                disabled={setHidden.isPending}
+                disabled={readOnly || setHidden.isPending}
                 onCheckedChange={(checked) => void toggle(teacher.id, checked)}
                 aria-label={t("hiddenToggle", { name: `${teacher.firstName} ${teacher.lastName}` })}
               />

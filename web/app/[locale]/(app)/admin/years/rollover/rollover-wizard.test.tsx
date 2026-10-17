@@ -396,6 +396,7 @@ describe("RolloverWizard", () => {
 
     const create = screen.getByRole("button", { name: "Skapa 2027/28" });
     await waitFor(() => expect(create).toBeEnabled());
+    expect(create).toHaveAttribute("data-writes", "PLANERING");
     await user.click(create);
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/years"));
     const execute = post.mock.calls.find(([path]) => String(path) === "/api/v1/academic-years/y26/rollover");

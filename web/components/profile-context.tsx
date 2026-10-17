@@ -9,6 +9,14 @@ import type { Profile, School } from "@/lib/types";
 interface ProfileContextValue {
   profile: Profile;
   school: School | null;
+  /**
+   * Läsbehörighet: the profile changes nothing (the läsare), so a page leaves
+   * its editors read-only — the grid that drags, the switch that saves as it
+   * turns, the form that sends on Enter — where hiding a button
+   * (data-writes, components/admin/area-refusal.tsx) would leave the
+   * keyboard a way in. Worked out by the (app) layout on the server.
+   */
+  readOnly?: boolean;
 }
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
@@ -37,11 +45,12 @@ const ClosedContext = createContext<ClosedPages>({});
 export function ProfileProvider({
   profile,
   school,
+  readOnly,
   closed = {},
   children,
 }: ProfileContextValue & { closed?: ClosedPages; children: React.ReactNode }) {
   return (
-    <ProfileContext.Provider value={{ profile, school }}>
+    <ProfileContext.Provider value={{ profile, school, readOnly }}>
       <ClosedContext.Provider value={closed}>{children}</ClosedContext.Provider>
     </ProfileContext.Provider>
   );
@@ -53,6 +62,11 @@ export function useProfile(): ProfileContextValue {
     throw new Error("useProfile must be used inside ProfileProvider.");
   }
   return value;
+}
+
+/** Läsbehörighet: whether the profile changes nothing. False outside the provider. */
+export function useReadOnly(): boolean {
+  return useContext(ProfileContext)?.readOnly === true;
 }
 
 /** The page, or in place of a closed one the page that says why. */

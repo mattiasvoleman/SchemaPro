@@ -23,6 +23,7 @@ import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Link } from "@/i18n/navigation";
+import { useReadOnly } from "@/components/profile-context";
 import { useGroups } from "@/lib/queries";
 import { useLocalTimplans } from "@/lib/timplan-queries";
 import type { AcademicYear } from "@/lib/types";
@@ -83,6 +84,8 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
   const groups = useGroups();
   const saved = useYearTimplans(yearId);
   const save = useSaveYearTimplans();
+  // A reader (Läsbehörighet) reads each årskurs's plan; the select does not open for it.
+  const reader = useReadOnly();
 
   // The admin's choices for one year; dropped when another year is shown.
   const [edit, setEdit] = useState<{ yearId: string; choices: Map<number, string> } | null>(null);
@@ -231,9 +234,11 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
                         <Select
                           value={chosen === "" ? NONE : chosen}
                           onValueChange={(value) => choose(grade, value)}
-                          disabled={save.isPending}
+                          disabled={reader || save.isPending}
                         >
+                          {/* The chosen plan is the reading; choosing is planering's. */}
                           <SelectTrigger
+                            data-writes-inert="PLANERING"
                             className="w-64"
                             aria-label={t("planFor", { grade: gradeName(grade) })}
                           >
@@ -271,7 +276,7 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
           <Button variant="outline" onClick={() => close(false)} disabled={save.isPending}>
             {tCommon("cancel")}
           </Button>
-          <Button onClick={() => void submit()} disabled={!dirty || save.isPending}>
+          <Button data-writes="PLANERING" onClick={() => void submit()} disabled={!dirty || save.isPending}>
             {save.isPending ? t("saving") : t("save")}
           </Button>
         </DialogFooter>

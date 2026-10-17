@@ -288,6 +288,34 @@ describe("/admin/publishing", () => {
     expect(screen.queryByRole("heading", { level: 2, name: "Publiceringsinställningarna kunde inte hämtas" })).toBeNull();
   });
 
+  it("marks each write with the areas its route names, and keeps the checks' choices on screen without a pointer", async () => {
+    server.settings = { ...SETTINGS, publishMode: "DRAFT", stored: true };
+    server.draft = { ...(server.draft as object), removed: [{ id: "l" }] };
+    const user = userEvent.setup();
+    renderPage();
+    // POST /publication-settings/mode and PUT /publication-settings: Publicering's.
+    expect(await screen.findByRole("button", { name: "Byt till direkt publicering" })).toHaveAttribute("data-writes", "PUBLICERING");
+    expect(screen.getByRole("button", { name: "Spara" })).toHaveAttribute("data-writes", "PUBLICERING");
+    expect(screen.getByRole("combobox", { name: "Krockar (lärare, sal, grupp, tillgänglighet)" })).toHaveAttribute(
+      "data-writes-inert",
+      "PUBLICERING",
+    );
+    // POST /publications (the review's preview too) and /publications/refill: the class's two areas.
+    expect(screen.getByRole("button", { name: "Granska och publicera utkastet" })).toHaveAttribute("data-writes", "PUBLICERING DRIFT");
+    expect(screen.getByRole("region", { name: "Fyll på publicerat schema" })).toHaveAttribute("data-writes", "PUBLICERING DRIFT");
+    // POST /publications/discard puts the grundschema back: Schemaläggning's as well.
+    expect(await screen.findByRole("button", { name: "Kassera utkast" })).toHaveAttribute(
+      "data-writes",
+      "PUBLICERING SCHEMALAGGNING DRIFT",
+    );
+    // The log is read.
+    const log = await screen.findByRole("button", { name: "Logg (2)" });
+    expect(log).not.toHaveAttribute("data-writes");
+    await user.click(screen.getByRole("button", { name: "Granska och publicera utkastet" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Publicera" })).toHaveAttribute("data-writes", "PUBLICERING DRIFT");
+  });
+
   it("saves only the checks that were changed", async () => {
     put.mockResolvedValueOnce({ ...SETTINGS, gateClashes: "REFUSE", stored: true });
     const user = userEvent.setup();
@@ -396,6 +424,48 @@ describe("/admin/publishing › Schemavisaren", () => {
     expect(dialog).toHaveTextContent("inom en minut");
     await user.click(within(dialog).getByRole("button", { name: "Återkalla" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/public-links/k-1/revoke"));
+  });
+
+  it("keeps Schemavisaren's settings, links and hidden teachers on screen for a reader, and marks every change as Publicering's", async () => {
+    const user = userEvent.setup();
+    await openViewerTab(user);
+    const viewer = (await screen.findByRole("heading", { name: "Schemavisaren" })).closest("section") as HTMLElement;
+    // Rows and fields, labels and all: a press on a label presses its control.
+    const inert = (element: HTMLElement) => element.closest("[data-writes-inert]");
+    expect(inert(within(viewer).getByRole("switch", { name: "Lärare" }))).toHaveAttribute("data-writes-inert", "PUBLICERING");
+    expect(inert(within(viewer).getByRole("combobox", { name: "Läraren visas som" }))).toHaveAttribute(
+      "data-writes-inert",
+      "PUBLICERING",
+    );
+    expect(inert(within(viewer).getByRole("spinbutton", { name: "Minsta gruppstorlek som visas med namn" }))).toHaveAttribute(
+      "data-writes-inert",
+      "PUBLICERING",
+    );
+    expect(within(viewer).getByRole("button", { name: "Spara" })).toHaveAttribute("data-writes", "PUBLICERING");
+    const embed = screen.getByRole("heading", { name: "Inbäddning på skolans webbplats" }).closest("section") as HTMLElement;
+    expect(inert(within(embed).getByRole("switch", { name: "Bädda in klasser och grupper" }))).toHaveAttribute(
+      "data-writes-inert",
+      "PUBLICERING",
+    );
+    // The sites stay scrollable: a reader gets them read-only (useReadOnly), not inert.
+    expect(within(embed).getByRole("textbox", { name: /Webbplatser som får visa schemat/ })).not.toHaveAttribute(
+      "data-writes-inert",
+    );
+    expect(within(embed).getByRole("button", { name: "Spara" })).toHaveAttribute("data-writes", "PUBLICERING");
+    // The code for a link one already has writes nothing.
+    expect(within(embed).getByRole("textbox", { name: /Inbäddningskod för en länk du redan har/ }).closest("[data-writes],[data-writes-inert]")).toBeNull();
+    // A new link and a revocation: POST /public-links, POST /public-links/:id/revoke.
+    expect(screen.getByRole("button", { name: "Skapa länk" })).toHaveAttribute("data-writes", "PUBLICERING");
+    expect(screen.getByRole("combobox", { name: "Vad" }).closest("[data-writes]")).toHaveAttribute("data-writes", "PUBLICERING");
+    expect((await screen.findByRole("button", { name: "Återkalla länken till 7A" })).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "PUBLICERING",
+    );
+    expect(screen.getByRole("cell", { name: "7A Klass eller grupp" }).closest("[data-writes]")).toBeNull();
+    // Who is never shown is read; the switch is PUT /teacher-public-labels/:id.
+    const bo = inert(await screen.findByRole("switch", { name: "Visa aldrig Bo Ek" }));
+    expect(bo).toHaveAttribute("data-writes-inert", "PUBLICERING");
+    expect(bo).toHaveTextContent("Bo Ek");
   });
 
   it("never offers a hidden teacher a link, and hides a teacher with one switch", async () => {

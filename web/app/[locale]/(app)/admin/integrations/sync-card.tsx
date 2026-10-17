@@ -106,11 +106,22 @@ export function SyncCard({ source }: { source: SourceView }) {
     <SectionCard id="ss-sync" title={t("title")} description={t("body")}>
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={() => startRun("INCREMENTAL")} disabled={!ready || running || start.isPending}>
+          <Button
+            type="button"
+            onClick={() => startRun("INCREMENTAL")}
+            disabled={!ready || running || start.isPending}
+            data-writes="INTEGRATIONER"
+          >
             {running || start.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
             {t("syncNow")}
           </Button>
-          <Button type="button" variant="outline" onClick={() => startRun("FULL")} disabled={!ready || running || start.isPending}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => startRun("FULL")}
+            disabled={!ready || running || start.isPending}
+            data-writes="INTEGRATIONER"
+          >
             {t("syncFull")}
           </Button>
           {source.lastFullAt ? (

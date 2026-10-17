@@ -424,8 +424,9 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
     }
     if (actions.undo && !undoInSight) menu.push({ label: t("undo"), icon: Undo2, onSelect: () => void runUndo(item) });
     if (!actions.assign && !undoInSight && menu.length === 0) return null;
+    // Every one of them is a decision, Drift's (POST/DELETE /cover/lessons/:id/decision).
     return (
-      <div className={className}>
+      <div className={className} data-writes="DRIFT">
         {actions.coTeacherFirst ? (
           <Button
             size="sm"
@@ -474,11 +475,13 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
       return (
         <TableRow key={pairKey(item)} className={first && index > 0 ? "border-t-2" : undefined}>
           <TableCell className="w-8">
+            {/* A pair is chosen only for the bulk decisions, Drift's. */}
             <input
               type="checkbox"
               aria-label={pairLabel(item)}
               checked={selected.has(pairKey(item))}
               onChange={(event) => toggle(item, event.target.checked)}
+              data-writes="DRIFT"
             />
           </TableCell>
           <TableCell className="whitespace-nowrap tabular-nums">{first ? timeText(lesson) : null}</TableCell>
@@ -515,7 +518,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
       return (
         <li key={pairKey(item)} className="flex gap-3 px-3 py-2 text-sm">
           {/* The label widens the box's hit area to a thumb's; the name is the input's own. */}
-          <label className="-m-2 flex shrink-0 cursor-pointer self-start p-2">
+          <label className="-m-2 flex shrink-0 cursor-pointer self-start p-2" data-writes="DRIFT">
             <input
               type="checkbox"
               className="mt-0.5 size-4"
@@ -561,6 +564,7 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
                 setProposalOpen(true);
               }}
               disabled={!summary || summary.open === 0}
+              data-writes="DRIFT"
             >
               <Sparkles />
               {t("distributeDay")}
@@ -620,7 +624,13 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
       {selected.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
           <span className="font-medium">{t("bulkSelected", { count: selected.size })}</span>
-          <Button size="sm" variant="outline" disabled={busy || eligible("CANCELLED") === 0} onClick={() => setConfirmingBulk("CANCELLED")}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || eligible("CANCELLED") === 0}
+            onClick={() => setConfirmingBulk("CANCELLED")}
+            data-writes="DRIFT"
+          >
             {t("bulkCancel", { count: eligible("CANCELLED") })}
           </Button>
           <Button
@@ -628,10 +638,17 @@ export function CoverBoard({ initialDate, initialView }: { initialDate: string |
             variant="outline"
             disabled={busy || eligible("SUPERVISED_STUDY") === 0}
             onClick={() => void runBulk("SUPERVISED_STUDY")}
+            data-writes="DRIFT"
           >
             {t("bulkSupervised", { count: eligible("SUPERVISED_STUDY") })}
           </Button>
-          <Button size="sm" variant="outline" disabled={busy || eligible("UNDO") === 0} onClick={() => setConfirmingBulk("UNDO")}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || eligible("UNDO") === 0}
+            onClick={() => setConfirmingBulk("UNDO")}
+            data-writes="DRIFT"
+          >
             {t("bulkUndo", { count: eligible("UNDO") })}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>

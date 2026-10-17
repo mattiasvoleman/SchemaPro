@@ -81,7 +81,12 @@ interface TimetableGridProps {
   /** Optional dates rendered under each day header (index 0 = Monday). */
   dates?: Date[];
   onLessonClick?: (lesson: TimetableLesson) => void;
-  /** Enables drag-to-move, drag-to-resize and empty-slot clicks. */
+  /**
+   * Enables drag-to-move, drag-to-resize and empty-slot clicks: the
+   * grundschema's writes (master lessons, lunch sittings), so an editable
+   * grid's columns and grips take no pointer from a profile that does not
+   * write them (data-writes-inert, components/admin/area-refusal.tsx).
+   */
   editable?: boolean;
   /** Called after a valid drag-move or resize is dropped. */
   onLessonChange?: (id: string, change: LessonChange) => void;
@@ -867,6 +872,7 @@ function TimetableGridInner({
                 key={day}
                 className="relative border-l"
                 onClick={(event) => handleSlotClick(event, day)}
+                data-writes-inert={editable ? "SCHEMALAGGNING DRIFT" : undefined}
               >
                 {/*
                   The bands, behind everything and inert.
@@ -913,6 +919,7 @@ function TimetableGridInner({
                             title={band.moveLabel ?? band.label}
                             onPointerDown={(event) => startBandDrag(event, band)}
                             onKeyDown={(event) => handleBandKey(event, band)}
+                            data-writes-inert="SCHEMALAGGNING"
                             // The focus outline in the ring colour (6.18 / 4.37
                             // against the card): the amber it had measured
                             // about 3:1, and the warning token 2.1:1 in light.
@@ -927,6 +934,7 @@ function TimetableGridInner({
                               aria-label={band.removeLabel}
                               title={band.removeLabel}
                               onClick={() => onBandRemove(band.id)}
+                              data-writes="SCHEMALAGGNING"
                               className="rounded px-0.5 hover:bg-warning/20 focus-visible:outline-2 focus-visible:outline-ring"
                             >
                               <X aria-hidden className="size-2.5" />

@@ -86,6 +86,11 @@ describe("UnstaffedPanel", () => {
     expect(asked.ids).toEqual([]);
   });
 
+  it("leaves Föreslå lärare unmarked: the ranking is a reading, and its buttons that staff the row are marked (Läsbehörighet)", () => {
+    render(<UnstaffedPanel rows={[row({})]} teacherName={(id) => id} />);
+    expect(screen.getByRole("button", { name: "suggestTeachers" })).not.toHaveAttribute("data-writes");
+  });
+
   it("opens one row's suggestions, assigns in one click, and says WARN in the panel, naming the row, with focus on it", async () => {
     /*
      * The panel sits under the whole matrix. Its WARN used to be handed up to

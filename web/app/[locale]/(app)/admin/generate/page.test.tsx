@@ -299,6 +299,27 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     );
   });
 
+  it("marks the run and Föreslå bemanning with their routes' areas, and the links to read with none (Läsbehörighet)", () => {
+    state.policy = { unstaffedGeneration: "REFUSE" };
+    state.requirements = [unstaffed("g-41"), requirement("g-sl1"), requirement("g-ma1")];
+    render(<GeneratePage />);
+
+    // POST /optimization/jobs: schemaläggning's and drift's.
+    expect(runButton()).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
+    // #propose opens the proposal, whose first write is optimization's too; its " · " goes with it.
+    const reason = document.getElementById(runButton().getAttribute("aria-describedby") ?? "")!;
+    expect(within(reason).getByRole("link", { name: "generate.preStaffedPropose" }).closest("[data-writes]")).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING DRIFT",
+    );
+    expect(within(reason).getByRole("link", { name: "generate.preStaffedLink" }).closest("[data-writes]")).toBeNull();
+    expect(within(staffedLine()).getByRole("link", { name: "generate.preStaffedPropose" })).toHaveAttribute(
+      "data-writes",
+      "SCHEMALAGGNING DRIFT",
+    );
+    expect(within(staffedLine()).getByRole("link", { name: "generate.preStaffed" })).not.toHaveAttribute("data-writes");
+  });
+
   it("blocks nothing while the policy has not answered: the gateway's pre-flight decides", () => {
     state.requirements = [unstaffed("g-41")];
     render(<GeneratePage />);

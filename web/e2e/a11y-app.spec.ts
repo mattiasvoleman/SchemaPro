@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { gateOfPath } from "../lib/admin-areas";
 import { APP_ROUTES, PAGES, STALE_QUERIES } from "./app-routes";
 import { DESKTOP, PHONE, scanBothSchemes, setScheme, type Violation } from "./axe";
-import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
+import { freezeClock, settle, signIn, signInAs, watchStubMisses } from "./signed-in";
+import { READER, STUB_ORIGIN } from "./stub/sessions";
 
 /**
  * Violations the suite lets through, each with the reason it is not fixed
@@ -61,4 +63,106 @@ for (const route of APP_ROUTES) {
       expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
     });
   }
+}
+
+/*
+ * Läsbehörighet: every admin page as the läsare, a profile that writes
+ * nothing. A page of an area opens read-only, with the notice that names the
+ * area above it; a decision page (dataskydd, with the läslogg) stays closed.
+ * And no control a write would start is offered: a visible button, switch or
+ * menu item whose name starts with one of the verbs below is a control
+ * somebody forgot to mark (data-writes, components/admin/area-refusal.tsx
+ * readOnlyStyle). The verbs are the admin pages' own, in Swedish; a reading
+ * control that happens to start with one goes in READ_CONTROLS with why.
+ * The row menus are opened, since "Fler åtgärder" folds items away. And
+ * data-writes-inert takes only the pointer, so each inert control the
+ * keyboard reaches is pressed: nothing but reads may reach the stub.
+ */
+const WRITE_VERBS =
+  /^(lägg (till|upp|in)|ny|nytt|nya|skapa|spara|ta bort|radera|redigera|ändra|byt|importera|publicera|generera|tilldela|kopiera|rulla|lås|avboka|boka|bjud in|arkivera|godkänn|avslå|bevilja|koppla|ladda upp|tillämpa|ställ in|registrera|fördela|tillsätt|återkalla|synka|aktivera|avsluta|behåll|beräkna förslag|placera|parkera|dela|flytta|återställ|avbryt publicering|ersätt|gör)\b/i;
+
+/** Reading controls whose names begin with a write verb: `page` as on disk, `name` the control's. */
+const READ_CONTROLS: Array<{ page: string; name: RegExp; reason: string }> = [];
+
+/** Reads the gateway takes as a POST: the activation plan /admin/years shows every administrator. */
+const READ_POSTS = [/\/activation\/preview$/];
+
+for (const route of APP_ROUTES.filter((entry) => entry.page.startsWith("/admin") && entry.personas.includes("admin"))) {
+  test(`läsare ${route.page}`, async ({ page, context, baseURL }) => {
+    test.slow();
+    await signInAs(context, READER, baseURL!);
+    await freezeClock(page);
+    const misses = watchStubMisses(page);
+    await page.setViewportSize(DESKTOP);
+    await setScheme(page, "light", false);
+    await page.goto(`/sv${route.url}`);
+    await settle(page);
+    expect.soft(misses, "the backend stub could not answer these reads").toEqual([]);
+
+    const gate = gateOfPath(route.url.split("?")[0]!);
+    // Every area's notice is in the page, hidden; the open page's alone shows.
+    const notice = page.getByText("Du kan läsa men inte ändra", { exact: true }).filter({ visible: true });
+    if (gate === "DECIDES") {
+      await expect(page.getByRole("heading", { level: 1, name: "Sidan hör till ett annat område" })).toBeVisible();
+      return;
+    }
+    if (gate === null && !route.page.startsWith("/admin/people")) {
+      await expect(notice).toHaveCount(0);
+    } else {
+      await expect(notice).toBeVisible();
+      await expect(notice).toHaveCount(1);
+    }
+
+    const offered = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>("main button, main [role=button], main [role=switch], main [role=menuitem]")]
+        .filter((element) => element.checkVisibility())
+        .map((element) => (element.getAttribute("aria-label") ?? element.textContent ?? "").trim().replace(/\s+/g, " ")),
+    );
+    // What a row's menu folds away is offered as well (its items are in a portal, outside main).
+    const menus = page.locator("main").getByRole("button", { name: /^Fler åtgärder/ }).filter({ visible: true });
+    for (let index = 0; index < Math.min(await menus.count(), 3); index++) {
+      await menus.nth(index).click();
+      offered.push(
+        ...(await page
+          .getByRole("menuitem")
+          .filter({ visible: true })
+          .evaluateAll((items) =>
+            items.map((item) => (item.getAttribute("aria-label") ?? item.textContent ?? "").trim().replace(/\s+/g, " ")),
+          )),
+      );
+      await page.keyboard.press("Escape");
+    }
+    const writes = offered.filter(
+      (name) => WRITE_VERBS.test(name) && !READ_CONTROLS.some((entry) => entry.page === route.page && entry.name.test(name)),
+    );
+    expect(writes, "controls a läsare is offered that start a write; mark them data-writes").toEqual([]);
+
+    // The keyboard, which inert does not stop: Enter and Space on each inert
+    // control it reaches, a dialog closed behind each. Only reads may follow.
+    const sent: string[] = [];
+    page.on("request", (request) => {
+      const method = request.method();
+      const path = new URL(request.url()).pathname;
+      if (!request.url().startsWith(STUB_ORIGIN) || ["GET", "HEAD", "OPTIONS"].includes(method)) return;
+      if (!READ_POSTS.some((read) => read.test(path))) sent.push(`${method} ${path}`);
+    });
+    const controls = "button, input, select, textarea, [role=switch], [role=combobox], [tabindex='0']";
+    const inert = page
+      .locator(`main [data-writes-inert] :is(${controls}), main :is(${controls})[data-writes-inert]`)
+      .filter({ visible: true });
+    for (let index = 0; index < Math.min(await inert.count(), 12); index++) {
+      const control = inert.nth(index);
+      if (await control.isDisabled()) continue;
+      await control.focus();
+      for (const key of ["Enter", "Space"]) {
+        await page.keyboard.press(key);
+        await page.keyboard.press("Escape");
+      }
+    }
+    await settle(page);
+    expect(sent, "what a läsare's keyboard sent beyond reads").toEqual([]);
+
+    // The notice in both schemes, at desktop width.
+    expect((await scanBothSchemes(page, "desktop", true, (violations) => unexplained(violations, route.page))).join("\n")).toBe("");
+  });
 }

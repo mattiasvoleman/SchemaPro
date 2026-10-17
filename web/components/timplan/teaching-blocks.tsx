@@ -285,7 +285,7 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
       description={t("description")}
       descriptionClassName="text-foreground"
       action={
-        <Button variant="outline" size="sm" onClick={() => open(null)}>
+        <Button data-writes="PLANERING" variant="outline" size="sm" onClick={() => open(null)}>
           {t("new")}
         </Button>
       }
@@ -305,7 +305,8 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
               <li key={block.id} className="space-y-2 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-medium">{block.name}</h3>
-                  <div className="flex flex-wrap gap-2">
+                  {/* Lektioner, Redigera and Ta bort each write the block (teaching-blocks.controller.ts @Area). */}
+                  <div data-writes="PLANERING" className="flex flex-wrap gap-2">
                     {members.length > 0 ? (
                       <Button
                         variant="outline"

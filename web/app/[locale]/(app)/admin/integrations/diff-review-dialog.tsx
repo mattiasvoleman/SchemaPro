@@ -202,7 +202,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                       </li>
                     ))}
                   </ul>
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-2" data-writes="INTEGRATIONER PERSONAL PLANERING">
                     <input id="ss-guardians-seen" type="checkbox" className={`${CHECKBOX} mt-0.5`} checked={guardiansSeen} onChange={(event) => setGuardiansSeen(event.target.checked)} />
                     <label htmlFor="ss-guardians-seen">{t("guardiansEndedSeen", { count: guardianEnds.length })}</label>
                   </div>
@@ -246,7 +246,7 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                 {t("filterAttention")}
               </label>
               {editable ? (
-                <div className="flex gap-2 pb-1">
+                <div className="flex gap-2 pb-1" data-writes="INTEGRATIONER PERSONAL PLANERING">
                   <Button type="button" size="sm" variant="outline" onClick={() => setOverrides((current) => withAll(current, visible.slice(0, shown), run.status, true))}>
                     {t("selectVisible")}
                   </Button>
@@ -266,10 +266,12 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
                 return (
                   <li key={change.id} className="flex items-start gap-3 px-3 py-2 text-sm">
                     {selectable ? (
+                      // Whether the apply takes it is the run's reading; choosing it is the apply's.
                       <input
                         id={inputId}
                         type="checkbox"
                         className={`${CHECKBOX} mt-0.5`}
+                        data-writes-inert="INTEGRATIONER PERSONAL PLANERING"
                         checked={isChosen(change, overrides)}
                         onChange={(event) =>
                           setOverrides((current) => new Map(current).set(change.id, event.target.checked))
@@ -310,14 +312,20 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
 
         {editable ? (
           <DialogFooter className="flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => setDiscarding(true)} disabled={apply.isPending || discard.isPending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDiscarding(true)}
+              disabled={apply.isPending || discard.isPending}
+              data-writes="INTEGRATIONER"
+            >
               {t("discard")}
             </Button>
             {/* Nothing chosen is still an answer: a run of conflicts only, or of
                 changes the admin left out, is marked reviewed by an apply of
                 nothing, which moves the cursors (A4.4: what was left out
                 returns at the next full sync). Discarding would not. */}
-            <Button type="button" onClick={() => setConfirming(true)} disabled={!canApply || apply.isPending}>
+            <Button type="button" onClick={() => setConfirming(true)} disabled={!canApply || apply.isPending} data-writes="INTEGRATIONER PERSONAL PLANERING">
               {summary.chosen === 0 ? t("markReviewed") : t("apply", { count: summary.chosen })}
             </Button>
           </DialogFooter>
@@ -349,7 +357,12 @@ export function DiffReviewDialog({ run, fullEveryDays, onClose }: { run: SyncRun
               <Button type="button" variant="outline" onClick={closeConfirm} disabled={apply.isPending}>
                 {tCommon("cancel")}
               </Button>
-              <Button type="button" onClick={() => doApply(massLimit !== null)} disabled={apply.isPending || (massLimit !== null && !massConfirmed)}>
+              <Button
+                type="button"
+                onClick={() => doApply(massLimit !== null)}
+                disabled={apply.isPending || (massLimit !== null && !massConfirmed)}
+                data-writes="INTEGRATIONER PERSONAL PLANERING"
+              >
                 {apply.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
                 {t("applyNow")}
               </Button>

@@ -206,7 +206,7 @@ export default function FrameTimesPage() {
         subtitle={t("subtitle")}
         intro={t("hint")}
         actions={
-          <Button onClick={openCreate}>
+          <Button data-writes="PLANERING" onClick={openCreate}>
             <Plus aria-hidden="true" />
             {t("add")}
           </Button>
@@ -244,7 +244,7 @@ export default function FrameTimesPage() {
             grid already assumes, and the corridor is then one field away.
           */
           action={
-            <div className="flex flex-wrap justify-center gap-2">
+            <div data-writes="PLANERING" className="flex flex-wrap justify-center gap-2">
               <Button onClick={openCreate}>
                 <Plus aria-hidden="true" />
                 {t("add")}
@@ -285,13 +285,16 @@ export default function FrameTimesPage() {
                     {formatTime(frame.startTime)}–{formatTime(frame.endTime)}
                   </TableCell>
                   <TableCell className="text-right">
-                    <RowActions
-                      name={rowName(frame)}
-                      actions={[
-                        { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(frame) },
-                        { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(frame) },
-                      ]}
-                    />
+                    {/* Both write (frame-times.controller.ts @Area): RowActions takes no attribute. */}
+                    <div data-writes="PLANERING" className="contents">
+                      <RowActions
+                        name={rowName(frame)}
+                        actions={[
+                          { label: tCommon("edit"), icon: Pencil, onSelect: () => openEdit(frame) },
+                          { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(frame) },
+                        ]}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

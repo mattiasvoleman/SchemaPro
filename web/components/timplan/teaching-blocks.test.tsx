@@ -279,6 +279,20 @@ describe("BlocksHost", () => {
   });
 });
 
+describe("BlocksHost under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] from a
+  // profile that does not write planering (teaching-blocks.controller.ts
+  // @Area); the blocks and their warnings stay to read.
+  it("marks Nytt block and each block's Lektioner, Redigera and Ta bort", async () => {
+    show([row("r-ty", "g-ty", "s-ty", { blockId: "b-sv" })]);
+    await screen.findByRole("heading", { name: "Språkval åk 7" });
+    expect(screen.getByRole("button", { name: "new" })).toHaveAttribute("data-writes", "PLANERING");
+    for (const name of ["lessonsNamed(Språkval åk 7)", "editNamed(Språkval åk 7)", "removeNamed(Språkval åk 7)"]) {
+      expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+    }
+  });
+});
+
 describe("blockWarnings", () => {
   const t: WarningText = (key, values) => (values ? `${key}(${Object.values(values).join("|")})` : key);
   const label = (requirement: TeachingRequirement) => requirement.id;

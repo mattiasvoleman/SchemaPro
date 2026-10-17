@@ -209,7 +209,7 @@ export function SchoolUnitsCard({ classes }: { classes: StudentGroup[] }) {
       title={t("title")}
       description={t("description")}
       action={
-        <Button type="button" variant="outline" size="sm" onClick={startCreate} disabled={!units.data}>
+        <Button data-writes="PLANERING" type="button" variant="outline" size="sm" onClick={startCreate} disabled={!units.data}>
           <Plus aria-hidden="true" />
           {t("add")}
         </Button>
@@ -263,13 +263,16 @@ export function SchoolUnitsCard({ classes }: { classes: StudentGroup[] }) {
                   <TableCell className="whitespace-nowrap">{span(unit)}</TableCell>
                   <TableCell>{(classesOf.get(unit.id) ?? []).join(", ") || "–"}</TableCell>
                   <TableCell className="text-right">
-                    <RowActions
-                      name={unit.name}
-                      actions={[
-                        { label: tCommon("edit"), icon: Pencil, onSelect: () => startEdit(unit) },
-                        { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(unit) },
-                      ]}
-                    />
+                    {/* Both write (school-units.controller.ts @Area): RowActions takes no attribute. */}
+                    <div data-writes="PLANERING" className="contents">
+                      <RowActions
+                        name={unit.name}
+                        actions={[
+                          { label: tCommon("edit"), icon: Pencil, onSelect: () => startEdit(unit) },
+                          { label: tCommon("delete"), icon: Trash2, onSelect: () => setDeleting(unit) },
+                        ]}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

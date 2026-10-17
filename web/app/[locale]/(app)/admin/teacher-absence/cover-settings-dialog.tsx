@@ -69,7 +69,8 @@ function PolicySection() {
       <h3 id="cover-policy-title" className="text-sm font-semibold">
         {t("policyTitle")}
       </h3>
-      <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+      {/* The whole row: its label presses the switch as well. */}
+      <div className="flex items-start justify-between gap-4 rounded-md border p-3" data-writes-inert="DRIFT">
         <div className="space-y-1">
           <Label htmlFor="cover-self-report">{t("selfReport")}</Label>
           <p id="cover-self-report-hint" className="text-xs text-muted-foreground">
@@ -86,7 +87,7 @@ function PolicySection() {
       <div className="max-w-sm space-y-1.5">
         <Label htmlFor="pool-preference">{t("poolPreference")}</Label>
         <Select value={preference} onValueChange={(value) => setPreference(value as PoolPreference)}>
-          <SelectTrigger id="pool-preference" aria-describedby="pool-preference-hint">
+          <SelectTrigger id="pool-preference" aria-describedby="pool-preference-hint" data-writes-inert="DRIFT">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -104,6 +105,7 @@ function PolicySection() {
       <Button
         size="sm"
         disabled={!changed || save.isPending}
+        data-writes="DRIFT"
         onClick={() =>
           save.mutate(
             { teacherSelfReport: selfReport, poolPreference: preference },
@@ -160,7 +162,7 @@ function ReasonRow({ reason }: { reason: AbsenceReason }) {
       )}
       <span className="flex gap-1">
         {reason.builtin === null && !renaming ? (
-          <Button variant="ghost" size="sm" onClick={() => setRenaming(true)}>
+          <Button variant="ghost" size="sm" onClick={() => setRenaming(true)} data-writes="DRIFT">
             {t("renameReason")}
           </Button>
         ) : null}
@@ -169,6 +171,7 @@ function ReasonRow({ reason }: { reason: AbsenceReason }) {
           size="sm"
           disabled={update.isPending}
           onClick={() => update.mutate({ id: reason.id, archived: !reason.archived }, { onError: fail })}
+          data-writes="DRIFT"
         >
           {reason.archived ? t("showReason") : t("hideReason")}
         </Button>
@@ -199,6 +202,7 @@ function ReasonsSection() {
       </ul>
       <form
         className="flex max-w-sm items-end gap-2"
+        data-writes="DRIFT"
         onSubmit={(event) => {
           event.preventDefault();
           create.mutate(label.trim(), {
@@ -282,6 +286,7 @@ function PoolSection({ teachers }: { teachers: { id: string; name: string }[] })
                     size="icon"
                     aria-label={tPool("removeMember", { name })}
                     disabled={remove.isPending}
+                    data-writes="DRIFT"
                     onClick={() =>
                       remove.mutate(member.userId, {
                         onSuccess: () => {
@@ -300,7 +305,7 @@ function PoolSection({ teachers }: { teachers: { id: string; name: string }[] })
           })}
         </ul>
       )}
-      <div className="flex max-w-md items-end gap-2">
+      <div className="flex max-w-md items-end gap-2" data-writes="DRIFT">
         <div className="flex-1 space-y-1.5">
           <Label htmlFor="pool-candidate">{tPool("addMember")}</Label>
           <Select value={candidate} onValueChange={setCandidate}>

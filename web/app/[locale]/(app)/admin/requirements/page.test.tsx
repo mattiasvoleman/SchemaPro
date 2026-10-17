@@ -2379,3 +2379,25 @@ describe("Parallella block on the timplan", () => {
     expect(screen.getByRole("dialog")).not.toHaveTextContent("blocks.memberNotice");
   });
 });
+
+describe("Timplansposter under Läsbehörighet", () => {
+  // The (app) layout's readOnlyStyle hides [data-writes~="PLANERING"] for a
+  // profile that does not write planering (teaching-requirements.controller.ts
+  // and /import/requirements, @Area('PLANERING')). The cell stays a button:
+  // its dialog is the post's reading (the teachers, the weeks, the buffers),
+  // and only its Spara and Ta bort are writes.
+  it("marks Importera and the dialog's Spara and Ta bort, and leaves the modes, the cells and Avbryt", async () => {
+    render(<RequirementsPage />);
+    expect(screen.getByRole("button", { name: "button" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("button", { name: "blocks.toggle" })).not.toHaveAttribute("data-writes");
+    expect(screen.getByRole("button", { name: "target.toggle" })).not.toHaveAttribute("data-writes");
+    const cell = screen.getByLabelText("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+    expect(cell).not.toHaveAttribute("data-writes-inert");
+    expect(cell).not.toHaveAttribute("data-writes");
+
+    await userEvent.click(cell);
+    expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("button", { name: "delete" })).toHaveAttribute("data-writes", "PLANERING");
+    expect(screen.getByRole("button", { name: "cancel" })).not.toHaveAttribute("data-writes");
+  });
+});

@@ -70,7 +70,9 @@ export function SharedMoveDialog({
           <Button variant="outline" onClick={onCancel}>
             {tCommon("cancel")}
           </Button>
-          <Button onClick={onConfirm}>{t("sharedMoveConfirm")}</Button>
+          <Button onClick={onConfirm} data-writes="SCHEMALAGGNING DRIFT">
+            {t("sharedMoveConfirm")}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -110,6 +112,7 @@ export function SuggestPlacementsDialog({
                 key={`${option.dayOfWeek}-${option.startMinutes}`}
                 type="button"
                 onClick={() => onPick(option)}
+                data-writes="SCHEMALAGGNING DRIFT"
                 className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
               >
                 <span className="font-medium">{tDays(String(option.dayOfWeek))}</span>
