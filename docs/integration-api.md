@@ -552,10 +552,18 @@ decision is not shared.**
   a re-save of the register. Either is never earlier than the start of the
   school's current run of sharing nor than the row's creation, and
   `meta.modified.after` and `.before` compare exactly what is emitted, for
-  both resources.
-* **A register save never waits for an SS12000 apply or a sharing decision,
-  and is never refused by either.** Each status a save writes at a sharing
-  school moves
+  both resources. An incremental read of /attendances does not read the
+  school's whole history: one of some ids, lessons or pupils is driven by
+  that filter's index; any other (an organisation's too) reads the records
+  changed since the cursor through their indexes (a record's version, a
+  moved pupil's records, a record's creation:
+  `AttendanceRecords_schoolId_createdAt_idx`, `20261114090150`) while they
+  are fewer than 50 000, and from 50 000 (every pupil linked to the source,
+  a year made emitted) walks the school's records in id order from the
+  page's last until the page is full.
+* **A register save never waits for the school's people lock, an apply's
+  record versions or a sharing decision.** Each status a save writes at a
+  sharing school moves
   that record's version. An administrator's apply that links or brings back
   pupils moves no record's version: it moves one row per pupil,
   `AttendancePupil` and `AbsencePupil`, which the two read functions take
@@ -568,12 +576,28 @@ decision is not shared.**
   pupils' rows are stamped again with the clock
   (`Users_ss12000_attendance_pupils_stamped`, a deferred constraint
   trigger), so an integration that read while the apply ran reads the
-  linked pupils' records again. A save still waits for an apply where it did
+  linked pupils' records again. A save still meets an apply where it did
   before this: when the apply changes the e-mail of a person the save's
   foreign keys name (a pupil given a new record, the teacher recording, a
-  guardian notified), until the apply commits. Two saves of one lesson write
-  its records in pupil order, so they never hold one each of what the other
-  waits for.
+  guardian notified), the apply holds that person's row until it commits.
+  The save waits for a lock at most 5 s, then answers 409
+  `ATTENDANCE_REGISTER_BUSY` having written nothing; the phone's queue sends
+  it again, and the web register says to try again in a moment. Two saves
+  of one lesson write its records in pupil order, so they never hold one
+  each of what the other waits for.
+* **A mark is written only over an older one.** The phone's queue sends a
+  batch again until it goes through (a refusal of the batch itself
+  excepted), so a mark can arrive long after it was made. The register
+  keeps each mark's `recordedAt` (when the teacher marked it on the phone;
+  the server's clock for the web), and a save writes a pupil's mark only
+  when the stored one is not later: a late phone mark leaves a newer
+  correction standing, and alerts no guardian. A phone mark sent again is
+  written again with its own time. A pupil the web sends back as the
+  register holds it (the web saves every pupil it lists) is no new mark and
+  is not written, so it keeps out no phone mark made before that save. The
+  phone's time is its own clock, trusted within the register's limits: a
+  mark dated in the future or more than 120 days back takes the server's
+  clock, and so counts as made when it arrived.
 * **Decisions are ordered against the writers.** A writer reads whether the
   school shares when its statement runs, and commits later. So every writer
   of attendance or absence first takes `'AttendanceSharing:<school>'`
@@ -1107,7 +1131,7 @@ within the stop, a save during a start that never commits whose
 record, removed within the stop, is told to nobody, and a decision that
 answers 409 after waiting 5 s (nv-m).
 
-The six migrations after `20261114090000` exist for production's sake: it
+The seven migrations after `20261114090000` exist for production's sake: it
 migrates while the previous API serves requests, and the reviewed single
 migration deadlocked with a register save, a lesson deleted, the webhook
 tick and a provider read on a throwaway Postgres 17 (each time the request
@@ -1115,10 +1139,10 @@ was the side aborted). Now each migration takes its locks first, all at
 once or none (NOWAIT, retried every 50 ms, giving up after 30 s with
 nothing changed, as `20261104090000` does), each table in the weakest mode
 it needs, so it never waits while it holds a lock and no request queues
-behind it; the index is built CONCURRENTLY; and the four tables requests
+behind it; the two indexes are built CONCURRENTLY; and the four tables requests
 take in contradicting orders (keys, subscriptions, versions, tombstones)
 are changed one per migration, so each needs only its own table free.
-Raced against the same five request shapes, none of the seven ends either
+Raced against the same five request shapes, none of the eight ends either
 side.
 
 Section 4b runs both principals on a connection where an earlier transaction
