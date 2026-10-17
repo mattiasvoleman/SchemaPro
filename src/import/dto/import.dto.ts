@@ -693,7 +693,7 @@ export class ImportTeacherDutiesDto {
 }
 
 /**
- * "F", "f" or a number 0..10, as a school writes an årskurs, made into the
+ * "F", "f" or a number 0..11, as a school writes an årskurs, made into the
  * integer the table holds — or left as it came, for @IsInt to refuse with the
  * sentence below. The browser may post either the cell's text or a number it
  * already parsed; both arrive here.
@@ -707,7 +707,7 @@ export function parseTimplanGrade(value: unknown): unknown {
   return value;
 }
 
-const GRADE_MESSAGE = 'årskurs: anges som F (förskoleklass) eller ett heltal 0–10.';
+const GRADE_MESSAGE = 'årskurs: anges som F (förskoleklass) eller ett heltal 0–11.';
 
 /**
  * One row of a lokal timplan file: ämne, årskurs, minuter per vecka, notering.
@@ -726,7 +726,7 @@ export class ImportTimplanRowDto {
   @Transform(({ value }) => parseTimplanGrade(value))
   @IsInt({ message: GRADE_MESSAGE })
   @Min(0, { message: GRADE_MESSAGE })
-  @Max(10, { message: GRADE_MESSAGE })
+  @Max(11, { message: GRADE_MESSAGE })
   gradeLevel!: number;
 
   @IsInt({ message: 'minuterPerVecka: anges i hela minuter.' })

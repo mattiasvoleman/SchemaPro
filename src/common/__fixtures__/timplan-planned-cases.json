@@ -6316,7 +6316,7 @@
    }
   },
   {
-   "name": "åk 3 attached to a plan that gives it no minutes is noticed rather than read as 0 of 0, and åk 11 is never asked to attach a plan",
+   "name": "åk 3 attached to a plan that gives it no minutes is noticed rather than read as 0 of 0, and åk 12 is never asked to attach a plan",
    "input": {
     "year": {
      "startDate": "2026-08-17",
@@ -6425,9 +6425,9 @@
      },
      {
       "id": "00000000-0000-4000-8000-000000000332",
-      "name": "11A",
+      "name": "12A",
       "kind": "CLASS",
-      "gradeLevel": 11
+      "gradeLevel": 12
      }
     ],
     "requirements": [
@@ -6471,7 +6471,7 @@
     "groups": [
      {
       "studentGroupId": "00000000-0000-4000-8000-000000000332",
-      "gradeLevel": 11,
+      "gradeLevel": 12,
       "localTimplanId": null,
       "planStatus": null,
       "plannedMinutesPerWeek": 180,

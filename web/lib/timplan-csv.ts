@@ -15,7 +15,7 @@
  *                      other kind (an unknown or ambiguous one is a row error
  *                      in the report, not here — the browser does not hold the
  *                      authority on which names are taken)
- *   arskurs            F (förskoleklass) or 0..10
+ *   arskurs            F (förskoleklass) or 0..11
  *   minuter_per_vecka  0..1200, any integer — a target, not a lesson, so not
  *                      on the five-minute grid
  *   notering           optional; a file WITHOUT the column leaves every stored
@@ -72,13 +72,13 @@ const LABEL: Record<TimplanFileColumn, string> = {
   note: "notering",
 };
 
-/** "F" or "f" → 0, "0".."10" → the number, anything else → null. */
+/** "F" or "f" → 0, "0".."11" → the number, anything else → null. */
 export function parseTimplanGrade(cell: string): number | null {
   const text = cell.trim();
   if (/^f$/i.test(text)) return 0;
   if (!/^\d{1,2}$/.test(text)) return null;
   const grade = Number(text);
-  return grade <= 10 ? grade : null;
+  return grade <= 11 ? grade : null;
 }
 
 /** The file's spelling of an årskurs: F for förskoleklass. */
@@ -149,7 +149,7 @@ export function mapTimplanRows(parsed: ParsedCsv): {
     const rawGrade = cell("gradeLevel");
     const gradeLevel = parseTimplanGrade(rawGrade);
     if (gradeLevel === null) {
-      return fail(`Rad ${rowNumber}: arskurs "${rawGrade}" är inte F eller ett heltal 0–10.`);
+      return fail(`Rad ${rowNumber}: arskurs "${rawGrade}" är inte F eller ett heltal 0–11.`);
     }
 
     const rawMinutes = cell("minutesPerWeek");

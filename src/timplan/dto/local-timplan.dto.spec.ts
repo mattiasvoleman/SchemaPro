@@ -125,7 +125,7 @@ describe('ReplaceLocalTimplanEntriesDto mirrors LocalTimplanEntries’ CHECKs', 
     await expect(
       failing(ReplaceLocalTimplanEntriesDto, {
         entries: [
-          cell({ gradeLevel: 11 }),
+          cell({ gradeLevel: 12 }),
           cell({ gradeLevel: -1 }),
           cell({ minutesPerWeek: 1201 }),
           cell({ minutesPerWeek: 12.5 }),

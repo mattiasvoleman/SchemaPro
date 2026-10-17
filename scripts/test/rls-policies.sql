@@ -4699,15 +4699,15 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN NULL;
   END;
 
-  -- The DTO's 0..10, as a CHECK.
+  -- The DTO's 0..11 (specialskolan's eleventh årskurs, 20261121090000), as a CHECK.
   BEGIN
     INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
-    VALUES (school, year, 11, spare, now());
-    RAISE EXCEPTION 'year timplans: årskurs 11 was attached to a plan';
+    VALUES (school, year, 12, spare, now());
+    RAISE EXCEPTION 'year timplans: årskurs 12 was attached to a plan';
   EXCEPTION WHEN check_violation THEN
     GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
     IF con IS DISTINCT FROM 'AcademicYearTimplans_gradeLevel_is_sane' THEN
-      RAISE EXCEPTION 'year timplans: årskurs 11 was refused by "%", not the gradeLevel CHECK the gateway names', con;
+      RAISE EXCEPTION 'year timplans: årskurs 12 was refused by "%", not the gradeLevel CHECK the gateway names', con;
     END IF;
   END;
   BEGIN
@@ -7672,7 +7672,7 @@ END $$;
 -- 2028 rows. The column is the statute's like the rest of the row: a pupil and
 -- a guardian read it (their card's figures are judged by it), nobody writes
 -- it, and the figures are SFS 2025:729's — 7 424, 7 199 and 5 007, with no
--- cells.
+-- cells; 20261121090000 adds specialskolan's 8 604 the same way.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -7685,7 +7685,7 @@ BEGIN
   END IF;
   SELECT string_agg(code || '=' || "appliesBy" || ':' || "totalHours", ',' ORDER BY code) INTO figures
     FROM "NationalTimplanVersions" WHERE code LIKE 'SFS2025:729%';
-  IF figures IS DISTINCT FROM 'SFS2025:729=COHORTS_STARTING:7424,SFS2025:729/AGA=COHORTS_STARTING:7424,SFS2025:729/AGB=COHORTS_STARTING:7199,SFS2025:729/SAM=COHORTS_STARTING:5007' THEN
+  IF figures IS DISTINCT FROM 'SFS2025:729=COHORTS_STARTING:7424,SFS2025:729/AGA=COHORTS_STARTING:7424,SFS2025:729/AGB=COHORTS_STARTING:7199,SFS2025:729/SAM=COHORTS_STARTING:5007,SFS2025:729/SPE=COHORTS_STARTING:8604' THEN
     RAISE EXCEPTION 'lydelse: a guardian reads the 2028 rows as %', figures;
   END IF;
   SELECT count(*) INTO n FROM "NationalTimplanVersions" WHERE code LIKE 'SFS2023:945/%' AND "appliesBy" <> 'STAGES_NOT_COMPLETED';
@@ -18871,12 +18871,12 @@ BEGIN
   END;
   -- A unit without a span (a fritidshem) beside them is no overlap.
   INSERT INTO "SchoolUnits" ("schoolId", name, "schoolTypes") VALUES (me, 'Fritids', '{FTH}');
-  FOREACH state IN ARRAY ARRAY['half span', 'backwards', 'eleventh', 'short code', 'letters', 'blank name', 'tab name', 'nbsp name', 'long name', 'null type'] LOOP
+  FOREACH state IN ARRAY ARRAY['half span', 'backwards', 'twelfth', 'short code', 'letters', 'blank name', 'tab name', 'nbsp name', 'long name', 'null type'] LOOP
     BEGIN
       CASE state
         WHEN 'half span' THEN UPDATE "SchoolUnits" SET "gradeFrom" = NULL WHERE id = b;
         WHEN 'backwards' THEN INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo") VALUES (me, 'C', 10, 10), (me, 'D', 9, 8);
-        WHEN 'eleventh' THEN UPDATE "SchoolUnits" SET "gradeTo" = 11 WHERE id = b;
+        WHEN 'twelfth' THEN UPDATE "SchoolUnits" SET "gradeTo" = 12 WHERE id = b;
         WHEN 'short code' THEN INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'E', '1234567');
         WHEN 'letters' THEN INSERT INTO "SchoolUnits" ("schoolId", name, code) VALUES (me, 'E', '1234567a');
         WHEN 'blank name' THEN INSERT INTO "SchoolUnits" ("schoolId", name) VALUES (me, '   ');
@@ -25388,6 +25388,89 @@ BEGIN
   PERFORM app.lock_years_for_grundschema_edit(ARRAY[]::uuid[]);
   IF current_setting('lock_timeout') <> '7s' THEN
     RAISE EXCEPTION 'edit lock: an empty call left lock_timeout at %', current_setting('lock_timeout');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 190: specialskolans elfte årskurs (20261121090000).
+--
+-- Specialskolan's 2028 total is the statute's like the other three: SPECIAL-
+-- SKOLA, 8 604 h, HT2028, COHORTS_STARTING, no cells, no pool and no cap, and
+-- bilaga 3 points at it — every bilaga's 2028 total is its own plus 534 h.
+-- Årskurs 11 fits wherever an årskurs of the tioårig numbering is stored: an
+-- admin plans it in a specialskola plan on the new lydelse and attaches it to
+-- a läsår, a cancellation and a unit's span name it, and the statements'
+-- CHECKs admit it. 12 is refused (sections 18 and 131).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  v record;
+  spe uuid; year uuid; plan uuid; subject uuid;
+  n bigint;
+  def text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'åk 11: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  SELECT * INTO v FROM "NationalTimplanVersions" WHERE code = 'SFS2025:729/SPE';
+  IF NOT FOUND OR v."schoolForm" <> 'SPECIALSKOLA' OR v."totalHours" <> 8604 OR v."appliesFromCohortTerm" <> 'HT2028'
+     OR v."appliesBy" <> 'COHORTS_STARTING' OR v."skolansValHours" IS NOT NULL OR v."reductionCapPercent" IS NOT NULL
+     OR v."supersededByCode" IS NOT NULL THEN
+    RAISE EXCEPTION 'åk 11: specialskolan''s 2028 total reads as %', row_to_json(v);
+  END IF;
+  spe := v.id;
+  IF EXISTS (SELECT 1 FROM "NationalTimplanEntries" WHERE "versionId" = spe) THEN
+    RAISE EXCEPTION 'åk 11: specialskolan''s 2028 total carries a cell nobody has published';
+  END IF;
+  IF (SELECT "supersededByCode" FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B3') IS DISTINCT FROM 'SFS2025:729/SPE' THEN
+    RAISE EXCEPTION 'åk 11: bilaga 3 does not point at specialskolan''s 2028 total';
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanVersions" old
+    JOIN "NationalTimplanVersions" new ON new.code = old."supersededByCode"
+   WHERE new."totalHours" = old."totalHours" + 534 AND new."appliesFromCohortTerm" = 'HT2028';
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'åk 11: % of the five bilagor point at a 2028 total 534 h above their own', n;
+  END IF;
+
+  -- An admin's specialskola plan on the new lydelse, åk 11 planned and attached.
+  INSERT INTO "Subjects" ("schoolId", name, code, "nationalCode", "updatedAt")
+  VALUES (school, 'RLS160 matematik', 'RLS160', 'MA', now()) RETURNING id INTO subject;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS160 år', DATE '2098-08-15', DATE '2099-06-10', false, now()) RETURNING id INTO year;
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (school, 'RLS160 specialskolan', 'SPECIALSKOLA', spe, now()) RETURNING id INTO plan;
+  INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+  VALUES (school, plan, subject, 11, 120);
+  INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+  VALUES (school, year, 11, plan, now());
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'åk 11: an admin attached % of 1 eleventh årskurs', n;
+  END IF;
+
+  -- A cancellation for åk 11, and a unit whose span ends at it.
+  INSERT INTO "CancellationBatches" ("schoolId", "academicYearId", name, cause, "fromDate", "toDate", scope, "minGradeLevel", "maxGradeLevel")
+  VALUES (school, year, 'RLS160 åk 11', 'MANUAL', DATE '2098-09-01', DATE '2098-09-01', 'GRADES', 11, 11);
+  INSERT INTO "SchoolUnits" ("schoolId", name, "gradeFrom", "gradeTo")
+  SELECT school, 'RLS160 elvan', 11, 11
+   WHERE NOT EXISTS (SELECT 1 FROM "SchoolUnits" WHERE "schoolId" = school AND "gradeTo" >= 11);
+  IF NOT EXISTS (SELECT 1 FROM "SchoolUnits" WHERE "schoolId" = school AND "gradeTo" = 11) THEN
+    RAISE EXCEPTION 'åk 11: no unit of the school ends at åk 11';
+  END IF;
+
+  -- The statements' two CHECKs admit 11 and nothing above it.
+  SELECT string_agg(pg_get_constraintdef(oid), ' ' ORDER BY conname) INTO def
+    FROM pg_constraint
+   WHERE conrelid = '"TimplanStatements"'::regclass
+     AND conname IN ('TimplanStatements_grades_are_sane', 'TimplanStatements_grade_lists_are_sane');
+  IF def NOT LIKE '%"gradesTo" <= 11%' OR def NOT LIKE '%10, 11]%' OR def LIKE '%12%' THEN
+    RAISE EXCEPTION 'åk 11: the statements'' CHECKs read %', def;
   END IF;
 END $$;
 ROLLBACK;

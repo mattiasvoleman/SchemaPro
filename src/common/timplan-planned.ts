@@ -317,11 +317,11 @@ const VERDICT_ORDER: Record<PlannedVerdictCode, number> = {
 
 /**
  * The highest årskurs a year can attach a plan to: AcademicYearTimplans'
- * CHECK (0..10, migration 20261007130000) and the year PUT's DTO. Classes
- * may go to 12 (StudentGroups allow it); above 10 there is nothing to attach,
- * so no notice asks for it.
+ * CHECK (0..11 since 20261121090000: specialskolan's eleventh årskurs) and
+ * the year PUT's DTO. Classes may go to 12 (StudentGroups allow it); above 11
+ * there is nothing to attach, so no notice asks for it.
  */
-export const TIMPLAN_MAX_ATTACHABLE_GRADE = 10;
+export const TIMPLAN_MAX_ATTACHABLE_GRADE = 11;
 
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byName = (a: string, b: string): number => a.localeCompare(b, 'sv');

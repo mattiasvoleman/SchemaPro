@@ -57,8 +57,8 @@ export class GenerateOverrideDto {
  */
 export class GenerateLanguageGroupDto {
   @IsInt({ message: 'languageGroups: årskursen anges som ett heltal.' })
-  @Min(0, { message: 'languageGroups: årskursen är 0 (förskoleklass) till 10.' })
-  @Max(10, { message: 'languageGroups: årskursen är 0 (förskoleklass) till 10.' })
+  @Min(0, { message: 'languageGroups: årskursen är 0 (förskoleklass) till 11.' })
+  @Max(11, { message: 'languageGroups: årskursen är 0 (förskoleklass) till 11.' })
   gradeLevel!: number;
 
   @Transform(lowerUuid)

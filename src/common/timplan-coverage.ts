@@ -348,8 +348,8 @@ export function cohortYear(term: string): number {
  * 4–6 / 7–9; specialskolan 1–4 / 5–7 / 8–10; sameskolan 1–3 / 4–6 and no
  * högstadium. A lydelse applying from 2028 or later is the tioårig grundskola:
  * förskoleklassen becomes årskurs 1, and the forms run 1–4 / 5–7 / 8–10
- * (sameskolan 1–4 / 5–7). Specialskolan's 2028 re-cut would need an årskurs 11
- * the table cannot hold and is not seeded; it keeps today's cut until it is.
+ * (sameskolan 1–4 / 5–7; specialskolan, eleven årskurser, 1–5 / 6–8 / 9–11 —
+ * SFS 2025:729 10 kap. 3 §, 11 kap. 4 §, 12 kap. 3 §, 13 kap. 3 §).
  */
 export function stageGradesFor(
   version: Pick<CoverageVersion, 'schoolForm' | 'appliesFromCohortTerm'>,
@@ -357,7 +357,9 @@ export function stageGradesFor(
   const reformed = cohortYear(version.appliesFromCohortTerm) >= 2028;
   switch (version.schoolForm) {
     case 'SPECIALSKOLA':
-      return { LAG: range(1, 4), MELLAN: range(5, 7), HOG: range(8, 10) };
+      return reformed
+        ? { LAG: range(1, 5), MELLAN: range(6, 8), HOG: range(9, 11) }
+        : { LAG: range(1, 4), MELLAN: range(5, 7), HOG: range(8, 10) };
     case 'SAMESKOLA':
       return reformed
         ? { LAG: range(1, 4), MELLAN: range(5, 7), HOG: [] }

@@ -6,8 +6,8 @@ describe("dialogGrades", () => {
     expect(dialogGrades([], [])).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
-  it("adds a grade the year attaches or has a class in, never one outside 0..10", () => {
-    expect(dialogGrades([10], [null, 7, 12])).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  it("adds a grade the year attaches or has a class in, never one outside 0..11", () => {
+    expect(dialogGrades([10], [null, 7, 11, 12])).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 });
 

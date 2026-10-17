@@ -13,7 +13,7 @@ export function dialogGrades(attached: readonly number[], classGrades: readonly 
   const grades = new Set<number>(DEFAULT_GRADES);
   for (const grade of attached) grades.add(grade);
   for (const grade of classGrades) {
-    if (grade !== null && grade >= 0 && grade <= 10) grades.add(grade);
+    if (grade !== null && grade >= 0 && grade <= 11) grades.add(grade);
   }
   return [...grades].sort((a, b) => a - b);
 }

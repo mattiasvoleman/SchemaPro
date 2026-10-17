@@ -1111,13 +1111,13 @@ function sourceCode(organisation: S1Organisation, note: UnitsDiffInput['note'], 
   return code;
 }
 
-/** Lowest to highest schoolYear (0..10) of the enrolments at the organisation active on `today`; null when none gives one. */
+/** Lowest to highest schoolYear (0..11) of the enrolments at the organisation active on `today`; null when none gives one. */
 function sourceSpan(roster: FetchedRoster, organisationId: string, today: string): { gradeFrom: number; gradeTo: number } | null {
   const grades: number[] = [];
   for (const person of roster.persons.values()) {
     for (const enrolment of person.enrolments) {
       if (enrolment.organisationId !== organisationId || enrolment.cancelled || !activeOn(today, enrolment.startDate, enrolment.endDate)) continue;
-      if (enrolment.schoolYear !== null && enrolment.schoolYear >= 0 && enrolment.schoolYear <= 10) grades.push(enrolment.schoolYear);
+      if (enrolment.schoolYear !== null && enrolment.schoolYear >= 0 && enrolment.schoolYear <= 11) grades.push(enrolment.schoolYear);
     }
   }
   return grades.length === 0 ? null : { gradeFrom: Math.min(...grades), gradeTo: Math.max(...grades) };

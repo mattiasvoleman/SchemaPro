@@ -1736,10 +1736,10 @@ async function runChecks(
     try {
       await api.withRls(admin, (tx) =>
         tx.academicYearTimplan.create({
-          data: { schoolId: fixture.schoolId, academicYearId: fixture.activeYearId, gradeLevel: 11, localTimplanId: plan.id },
+          data: { schoolId: fixture.schoolId, academicYearId: fixture.activeYearId, gradeLevel: 12, localTimplanId: plan.id },
         }),
       );
-      assert.fail('årskurs 11 was attached');
+      assert.fail('årskurs 12 was attached');
     } catch (error) {
       assert.throws(() => rethrowPrismaError(error), (thrown: unknown) => {
         assert.ok(thrown instanceof BadRequestException, summarise(thrown));

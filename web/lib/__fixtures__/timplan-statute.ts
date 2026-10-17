@@ -65,3 +65,4 @@ export const B1 = NATIONAL.versions.find((version) => version.code === "SFS2023:
 export const LAW_2028 = NATIONAL.versions.find((version) => version.code === "SFS2025:729")!;
 export const SAMESKOLA = NATIONAL.versions.find((version) => version.code === "SFS2023:945/B4")!;
 export const SPECIALSKOLA = NATIONAL.versions.find((version) => version.code === "SFS2023:945/B3")!;
+export const SPECIALSKOLA_2028 = NATIONAL.versions.find((version) => version.code === "SFS2025:729/SPE")!;

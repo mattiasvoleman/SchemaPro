@@ -593,15 +593,15 @@ describe('CSV import (e2e)', () => {
         .expect(404);
     });
 
-    it('400s a lokal timplan row with an årskurs outside F..10, before the handler', async () => {
+    it('400s a lokal timplan row with an årskurs outside F..11, before the handler', async () => {
       const response = await post(harness, 'timplan')
         .send({
           localTimplanId: 'abababab-abab-4bab-8bab-abababababab',
-          rows: [{ subject: 'MA', gradeLevel: '11', minutesPerWeek: 180 }],
+          rows: [{ subject: 'MA', gradeLevel: '12', minutesPerWeek: 180 }],
         })
         .expect(400);
 
-      expect(JSON.stringify(response.body)).toContain('årskurs: anges som F (förskoleklass) eller ett heltal 0–10.');
+      expect(JSON.stringify(response.body)).toContain('årskurs: anges som F (förskoleklass) eller ett heltal 0–11.');
       expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
     });
 

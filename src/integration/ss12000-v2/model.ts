@@ -406,7 +406,7 @@ export class Model {
         out.set(pupilId, {
           // The skolenhet holding the pupil's årskurs now.
           enroledAt: this.organisationRef(this.ids.organisationOf(open.gradeLevel)),
-          ...(open.gradeLevel !== null && open.gradeLevel >= 0 && open.gradeLevel <= 10 ? { schoolYear: open.gradeLevel } : {}),
+          ...(open.gradeLevel !== null && open.gradeLevel >= 0 && open.gradeLevel <= 11 ? { schoolYear: open.gradeLevel } : {}),
           schoolType,
           startDate: dayOf(sorted[first]!.validFrom),
         });

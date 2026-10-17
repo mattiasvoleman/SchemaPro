@@ -16,7 +16,7 @@ import {
   verdictHighlight,
   type DraftCells,
 } from "@/lib/timplan-view";
-import { B1, LAW_2028, NATIONAL, SAMESKOLA, SPECIALSKOLA } from "@/lib/__fixtures__/timplan-statute";
+import { B1, LAW_2028, NATIONAL, SAMESKOLA, SPECIALSKOLA, SPECIALSKOLA_2028 } from "@/lib/__fixtures__/timplan-statute";
 
 const SUBJECTS = [
   { id: "s-ma", name: "Matematik", nationalCode: "MA", countsTowardTimplan: true },
@@ -86,6 +86,12 @@ describe("gridColumns follows the lydelse's årskurser", () => {
   it("the 2028 grundskola re-cuts to 1–4 / 5–7 / 8–10", () => {
     expect(shape(gridColumns(stageGradesFor(LAW_2028)))).toEqual([
       "0", "1", "2", "3", "4", "ΣLAG", "5", "6", "7", "ΣMELLAN", "8", "9", "10", "ΣHOG",
+    ]);
+  });
+
+  it("the 2028 specialskola runs to årskurs 11: 1–5 / 6–8 / 9–11", () => {
+    expect(shape(gridColumns(stageGradesFor(SPECIALSKOLA_2028)))).toEqual([
+      "0", "1", "2", "3", "4", "5", "ΣLAG", "6", "7", "8", "ΣMELLAN", "9", "10", "11", "ΣHOG",
     ]);
   });
 

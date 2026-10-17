@@ -552,15 +552,16 @@ describe('computePlannedCoverage', () => {
     });
 
     // Review reproduction (P2 review, lens data-api): StudentGroups allow åk
-    // 11–12, AcademicYearTimplans only 0–10, so the notice asked the admin to
-    // attach a plan the dialog and the API cannot attach.
-    it('does not ask for a plan for åk 11 and 12, which no year can attach', () => {
+    // 0–12, AcademicYearTimplans only 0–11 (åk 11 since 20261121090000, the
+    // 2028 specialskola), so a notice for åk 12 would ask the admin to attach
+    // a plan the dialog and the API cannot attach.
+    it('asks for a plan for åk 11 but never for åk 12, which no year can attach', () => {
       const c = group('11A', 'CLASS', 11);
       const d = group('12A', 'CLASS', 12);
       const coverage = computePlannedCoverage(
-        input({ groups: [c, d], requirements: [req(c, S.MA, 3, 60)] }),
+        input({ groups: [c, d], requirements: [req(c, S.MA, 3, 60), req(d, S.MA, 3, 60)] }),
       );
-      expect(coverage.verdicts).toEqual([]);
+      expect(coverage.verdicts.map((v) => [v.code, v.params.gradeLevel])).toEqual([['TIMPLAN_YEAR_GRADE_UNATTACHED', 11]]);
       expect(coverage.groups.map((g) => g.localTimplanId)).toEqual([null, null]);
     });
 

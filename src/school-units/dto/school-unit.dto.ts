@@ -27,13 +27,13 @@ export class CreateSchoolUnitDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10)
+  @Max(11)
   gradeFrom?: number | null;
 
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10)
+  @Max(11)
   gradeTo?: number | null;
 }
 
@@ -58,12 +58,12 @@ export class UpdateSchoolUnitDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10)
+  @Max(11)
   gradeFrom?: number | null;
 
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10)
+  @Max(11)
   gradeTo?: number | null;
 }

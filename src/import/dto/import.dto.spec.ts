@@ -425,12 +425,12 @@ describe('ImportTimplanRowDto — a lokal timplan file’s row', () => {
     await expect(errorsOf(row({ gradeLevel: 'F' }))).resolves.toEqual([]);
   });
 
-  it('refuses an årskurs outside F..10 with the one sentence that says what is allowed', async () => {
-    for (const bad of ['11', 'Fk', 'åk 4', '', '-1', 4.5]) {
+  it('refuses an årskurs outside F..11 with the one sentence that says what is allowed', async () => {
+    for (const bad of ['12', 'Fk', 'åk 4', '', '-1', 4.5]) {
       await expect(errorsOf(row({ gradeLevel: bad }))).resolves.toEqual(['gradeLevel']);
     }
     expect(JSON.stringify(await validate(parse(row({ gradeLevel: 'åk 4' }))))).toContain(
-      'årskurs: anges som F (förskoleklass) eller ett heltal 0–10.',
+      'årskurs: anges som F (förskoleklass) eller ett heltal 0–11.',
     );
   });
 
