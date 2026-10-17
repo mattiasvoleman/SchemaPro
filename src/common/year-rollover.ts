@@ -329,9 +329,15 @@ function followTheClass(
       sourceGroupId: half.id,
       outcome: classRow.outcome === 'INTAKE' ? (successor ? 'PROMOTE' : 'GRADUATE') : classRow.outcome,
       successor,
+      // The twin of the half: its own name while the twin stays at the
+      // half's årskurs (a year like any other), the class twin's name for it
+      // across the reform, where the twin moves up one.
       intake: classRow.intake
         ? {
-            name: halfName(half.name, theClass.name, classRow.intake.name, half.gradeLevel, classRow.intake.gradeLevel),
+            name:
+              classRow.intake.gradeLevel === half.gradeLevel
+                ? half.name
+                : halfName(half.name, theClass.name, classRow.intake.name, half.gradeLevel, classRow.intake.gradeLevel),
             gradeLevel: classRow.intake.gradeLevel,
           }
         : null,

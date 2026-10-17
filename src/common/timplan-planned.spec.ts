@@ -592,14 +592,17 @@ describe('computePlannedCoverage', () => {
     // 0–12, AcademicYearTimplans only 0–11 (åk 11 since 20261121090000, the
     // 2028 specialskola), so a notice for åk 12 would ask the admin to attach
     // a plan the dialog and the API cannot attach.
-    it('asks for a plan for åk 11 but never for åk 12, which no year can attach', () => {
+    it('asks for a plan for åk 11 in a tioårig year only, and never for åk 12, which no year can attach', () => {
       const c = group('11A', 'CLASS', 11);
       const d = group('12A', 'CLASS', 12);
-      const coverage = computePlannedCoverage(
-        input({ groups: [c, d], requirements: [req(c, S.MA, 3, 60), req(d, S.MA, 3, 60)] }),
-      );
-      expect(coverage.verdicts.map((v) => [v.code, v.params.gradeLevel])).toEqual([['TIMPLAN_YEAR_GRADE_UNATTACHED', 11]]);
-      expect(coverage.groups.map((g) => g.localTimplanId)).toEqual([null, null]);
+      const of = (gradeNumbering: 'NIOARIG' | 'TIOARIG') =>
+        computePlannedCoverage(
+          input({ groups: [c, d], requirements: [req(c, S.MA, 3, 60), req(d, S.MA, 3, 60)], gradeNumbering }),
+        );
+      // Specialskolan's eleventh årskurs exists only in the tioårig numbering.
+      expect(of('TIOARIG').verdicts.map((v) => [v.code, v.params.gradeLevel])).toEqual([['TIMPLAN_YEAR_GRADE_UNATTACHED', 11]]);
+      expect(of('NIOARIG').verdicts).toEqual([]);
+      expect(of('TIOARIG').groups.map((g) => g.localTimplanId)).toEqual([null, null]);
     });
 
     it('marks a draft plan, and still judges the classes that follow it', () => {

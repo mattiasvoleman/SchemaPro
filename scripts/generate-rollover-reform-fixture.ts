@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   INTO_TIOARIG,
+  ONE_YEAR,
   nameCollisions,
   promoteName,
   resolveGroups,
@@ -66,6 +67,16 @@ const names: { name: string; gradeLevel: number; to: number }[] = [
   { name: 'Klass 1A', gradeLevel: 1, to: 3 },
 ];
 
+// A förskoleklass whose half is not named after it: the half's intake twin
+// keeps its own name in a year like any other, and takes the class twin's
+// across the reform, where the twin moves up one.
+const fInput: RolloverGroupInput[] = [
+  { id: 'fsk', name: 'Fsk A', kind: 'CLASS', gradeLevel: 0, halfOfId: null },
+  { id: 'fsk1', name: 'FA1', kind: 'TEACHING_GROUP', gradeLevel: 0, halfOfId: 'fsk' },
+  { id: '1b', name: '1B', kind: 'CLASS', gradeLevel: 1, halfOfId: null },
+];
+const steps = { ONE_YEAR, INTO_TIOARIG };
+
 fixture['reform'] = {
   step: INTO_TIOARIG,
   names: names.map((row) => ({ ...row, expected: promoteName(row.name, row.gradeLevel, row.to) })),
@@ -80,6 +91,14 @@ fixture['reform'] = {
     );
     return { ...c, graduatingGradeLevel: 9, resolved, collisions: nameCollisions(resolved) };
   }),
+  fHalves: {
+    input: fInput,
+    cases: (['ONE_YEAR', 'INTO_TIOARIG'] as const).map((step) => {
+      const choices = { fsk: { outcome: 'INTAKE' as const } };
+      const resolved = resolveGroups(fInput, 9, { carryTeachingGroups: false }, new Map(Object.entries(choices)), steps[step]);
+      return { name: `an F class's intake, ${step}`, step, choices, graduatingGradeLevel: 9, resolved, collisions: nameCollisions(resolved) };
+    }),
+  },
 };
 
 writeFileSync(file, `${JSON.stringify(fixture, null, 2)}\n`);

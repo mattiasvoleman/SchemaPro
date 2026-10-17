@@ -154,6 +154,16 @@ export interface UnattachedTimplan {
 }
 
 /**
+ * A grade whose årskull carries a plan its regime does not fit — a 2028 plan
+ * a school put on an older årskull, past the year dialog's warning. The
+ * cohort keeps what the school chose, and the preview says so.
+ */
+export interface MisfitTimplan {
+  gradeLevel: number;
+  planName: string;
+}
+
+/**
  * The term-year the cohort in årskurs g of a year starting HT `year` started
  * åk 1. Moved to src/common/timplan-cohorts.ts (timplan P4), where the stage
  * module and its web mirror read it too; re-exported so this import holds.
@@ -195,7 +205,11 @@ function cohortStartOf(ht: number, gradeLevel: number): number | null {
   return grade === null ? null : cohortStartYear(grade, ht);
 }
 
-export function cohortTimplans(input: CohortTimplanInput): { rows: PlannedTimplan[]; unattached: UnattachedTimplan[] } {
+export function cohortTimplans(input: CohortTimplanInput): {
+  rows: PlannedTimplan[];
+  unattached: UnattachedTimplan[];
+  misfits: MisfitTimplan[];
+} {
   const { source, graduatingGradeLevel, decided, targetStartYear } = input;
   const targetNumbering = input.targetNumbering ?? 'NIOARIG';
   // A source row's own grade in the new year: the same årskull's age.
@@ -221,6 +235,7 @@ export function cohortTimplans(input: CohortTimplanInput): { rows: PlannedTimpla
   });
   const rows: PlannedTimplan[] = [];
   const unattached: UnattachedTimplan[] = [];
+  const misfits: MisfitTimplan[] = [];
 
   /** DEFAULT for a grade of the form's decided plans the årskull fits, else KEPT `own`, else none. */
   const byDefault = (gradeLevel: number, form: string, own: SourceTimplanRow | undefined) => {
@@ -246,14 +261,14 @@ export function cohortTimplans(input: CohortTimplanInput): { rows: PlannedTimpla
 
   if (source.length === 0) {
     const newest = decided[0];
-    if (!newest) return { rows, unattached };
+    if (!newest) return { rows, unattached, misfits };
     const grades = newest.gradeLevels
       .map((row) => (input.targetNumbering === undefined ? row : gradeOfPlanRowFor(newest, targetNumbering, row)))
       .filter((grade): grade is number => grade !== null && grade <= MAX_GRADE);
     for (const gradeLevel of [...new Set([...grades, ...(input.alsoGrades ?? [])])].sort((a, b) => a - b)) {
       byDefault(gradeLevel, newest.schoolForm, undefined);
     }
-    return { rows, unattached };
+    return { rows, unattached, misfits };
   }
 
   const byGrade = new Map(source.map((row) => [row.gradeLevel, row]));
@@ -271,12 +286,15 @@ export function cohortTimplans(input: CohortTimplanInput): { rows: PlannedTimpla
       rows.push(
         planned(gradeLevel, 'CARRIED', { id: below.localTimplanId, name: below.planName, status: below.planStatus }, below.gradeLevel),
       );
+      if (below.planAppliesFrom !== undefined && !planFitsCohort(below.planAppliesFrom, targetStartYear, gradeLevel)) {
+        misfits.push({ gradeLevel, planName: below.planName });
+      }
       continue;
     }
     const own = ownOf.get(gradeLevel);
     byDefault(gradeLevel, own?.planSchoolForm ?? lowestForm, own);
   }
-  return { rows, unattached };
+  return { rows, unattached, misfits };
 }
 
 /** The new year's grade reading row `row` of a decided plan. */

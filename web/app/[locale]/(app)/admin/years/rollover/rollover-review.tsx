@@ -107,7 +107,9 @@ export function RolloverReview({
           {OUTCOMES.filter((outcome) => byOutcome.has(outcome)).map((outcome) => (
             <li key={outcome}>
               <Badge variant="secondary">
-                {t(`outcomeCount.${outcome}`, { count: byOutcome.get(outcome)! })}
+                {outcome === "CARRY" && plan.reform2028?.renumbers
+                  ? t("outcomeCountCarryRenumbered", { count: byOutcome.get(outcome)! })
+                  : t(`outcomeCount.${outcome}`, { count: byOutcome.get(outcome)! })}
               </Badge>
             </li>
           ))}

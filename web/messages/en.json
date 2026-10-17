@@ -857,7 +857,7 @@
     "yearTimplans": {
       "title": "Timplan per year",
       "body": "Which local timplan each year group follows during the academic year. A new academic year follows the most recently decided plan the cohort may follow; change it here. A draft may be chosen while next year is planned ahead of the decision, and is then marked as a draft wherever the targets are shown.",
-      "cohortNote": "Each cohort follows the wording for the year it started grade 1: a plan under the 2028 wording (7,424 hours in grundskolan) applies only to pupils starting grade 1 in autumn 2028 or later, and everyone already in school, the 2027/28 preschool class included, keeps the older total (6,890 hours).",
+      "cohortNote": "A plan under the 2028 wording (7,424 hours in grundskolan) applies only to cohorts starting grade 1 in autumn 2028 or later; everyone already in school, the 2027/28 preschool class included, follows an older wording and keeps the older total (6,890 hours in grundskolan).",
       "lydelse2028": "2028 wording",
       "lydelseOlder": "older wording",
       "notThisCohort": "{grade} may not follow this wording",
@@ -3411,7 +3411,7 @@
     "graduatingGradePlaceholder": "Choose a grade",
     "gradeOption": "{grade, select, 0 {Preschool class} other {Grade {grade}}}",
     "numbering2028": "Grade numbering from autumn 2028",
-    "numbering2028Hint": "The year has neither a timplan nor a preschool class, so it does not show whether the ten-year compulsory school applies to the school.",
+    "numbering2028Hint": "The school has neither a local timplan nor a preschool class, so SchemaPro cannot tell whether the ten-year compulsory school applies to it.",
     "numbering2028Placeholder": "Choose numbering",
     "numbering2028Renumber": "Ten-year: the school is a grundskola, anpassad grundskola, specialskola or sameskola",
     "numbering2028Keep": "Keep the numbering: the school has none of the four school forms",
@@ -3450,6 +3450,8 @@
     "outcomeFor": "What {name} becomes",
     "newNameFor": "New name for {name}",
     "outcomeDefault": "Default: {outcome}",
+    "outcomeCarryRenumbered": "Stays, one grade up in the new numbering",
+    "outcomeCountCarryRenumbered": "{count} stay with their cohort",
     "outcomeFollowsClass": "Follows {name}",
     "outcome": {
       "PROMOTE": "Promoted",
@@ -3477,7 +3479,7 @@
       "caseCollision": "Differs only in case",
       "ambiguous": "Check the name",
       "keptNoDigit": "Name kept",
-      "fKlass": "Preschool class becomes grade 1",
+      "fKlass": "Preschool class becomes grade {grade}",
       "noGrade": "Not promoted",
       "stageChange": "New stage frame"
     },
@@ -3586,12 +3588,13 @@
       "STAFFING_POST_FROM_PERIOD": "{teachers, plural, one {# post changed} other {# posts changed}} during the school year with a period that runs to its last day. Next year gets the post as the period gives it. The teacher is listed under Posts and duties.",
       "STAFFING_POST_PERIODS_ENDED": "{teachers, plural, one {# post had} other {# posts had}} periods that ended before the last day of the school year. They are not carried, and next year gets the post as it stands on the teacher's card.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "The teaching requirements of {groups} differ from the decided timplan for the grade they are promoted into.",
-      "ROLLOVER_TIMPLAN_NO_FITTING_PLAN": "Grade {grades} gets no timplan next year, because no decided plan applies to that cohort. From autumn 2028 the new grade 1 follows only a plan under the 2028 law, and everyone already in school only an older one. Choose a plan under Timplan per årskurs once the year is created.",
+      "ROLLOVER_TIMPLAN_CARRIED_MISFIT": "Grade {grades} follows {plans} next year, as its cohort does this year, but that plan's wording does not apply to the cohort: the 2028 wording applies to exactly the cohorts starting grade 1 in autumn 2028 or later. Choose another plan under Timplan per year once the year is created.",
+      "ROLLOVER_TIMPLAN_NO_FITTING_PLAN": "Grade {grades} gets no timplan next year, because no decided plan applies to that cohort. From autumn 2028 the new grade 1 follows only a plan under the 2028 law, and everyone already in school only an older one. Choose a plan under Timplan per year once the year is created.",
       "ISO_WEEK_53_CROSSED": "The rollover crosses a week 53: {rows, plural, one {# odd- or even-week requirement switches} other {# odd- or even-week requirements switch}} to the other week type. Check them.",
-      "ROLLOVER_2028_RENUMBERING": "The new year starts in {startYear} and uses the ten-year numbering: under {source}, every class moves up two grades instead of one (8A becomes 10A, the preschool class starts directly in grade 2), and a class that stays moves up one. The new grade 1 gets a class through New intake class or once the year is created. Every older cohort keeps its timplan and the older total time.",
+      "ROLLOVER_2028_RENUMBERING": "The new year starts in {startYear} and uses the ten-year numbering: under {source}, every class moves up two grades instead of one (8A becomes 10A, the preschool class starts directly in grade 2), and a class that stays moves up one. A new intake class opens one grade above the lowest class, so the preschool class's becomes the new grade 1; otherwise the new grade 1 is added once the year is created. Every older cohort keeps its timplan and the older total time.",
       "ROLLOVER_2028_NOT_RENUMBERED": "The new year starts in {startYear} but keeps the school’s numbering, because the school has none of the school forms {source} renumbers. Classes move up one grade as usual.",
       "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN": "The new year starts in {startYear}, when {source} renumbers grundskolan, anpassade grundskolan, specialskolan and sameskolan. Choose the numbering under Grade numbering from autumn 2028.",
-      "ROLLOVER_2028_RENUMBERING_REQUIRED": "The year has a timplan or a preschool class, so the school has one of the school forms {source} renumbers from {startYear}. The numbering cannot be kept.",
+      "ROLLOVER_2028_RENUMBERING_REQUIRED": "The school has a local timplan or a preschool class, so it has one of the school forms {source} renumbers from {startYear}. The numbering cannot be kept.",
       "ROLLOVER_GRADE_ABOVE_12": "{groups} would end up above grade 12 next year. Choose another outcome for them."
     },
     "errors": {

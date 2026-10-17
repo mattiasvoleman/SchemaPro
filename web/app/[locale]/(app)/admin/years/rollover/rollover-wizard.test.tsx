@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import type { RolloverOptions, RolloverPreview, StaffingCarryPreview, StudentGroup } from "@/lib/types";
@@ -647,12 +647,14 @@ describe("RolloverWizard", () => {
     expect(screen.getByText(/flyttas varje klass upp två årskurser i stället för en/)).toBeInTheDocument();
   });
 
-  it("asks the numbering into HT 2028 when the year shows no school form, sends the answer, and names the classes two grades up", async () => {
-    // A source year 2027/28, so the new year (52 weeks on) starts in August 2028.
+  describe("into HT 2028 at a school whose year shows no school form", () => {
+    // A source year 2027/28, so the new year (52 weeks on) starts in August
+    // 2028, with a förskoleklass, which begins directly in åk 2.
     const before = { ...year };
-    Object.assign(year, { name: "2027/28", startDate: "2027-08-16", endDate: "2028-06-09" });
-    try {
-      const params = { startYear: 2028, source: "SFS 2025:729, övergångsbestämmelse 4" };
+    const params = { startYear: 2028, source: "SFS 2025:729, övergångsbestämmelse 4" };
+    beforeEach(() => {
+      Object.assign(year, { name: "2027/28", startDate: "2027-08-16", endDate: "2028-06-09" });
+      groups.push({ id: "g-fa", academicYearId: "y26", name: "FA", kind: "CLASS", gradeLevel: 0 });
       post.mockImplementation(async (_path: string, body: RolloverOptions) =>
         previewFor(body, {
           reform2028: { renumbers: body.renumber2028 === true, numbering: body.renumber2028 ? "TIOARIG" : "NIOARIG" },
@@ -663,31 +665,47 @@ describe("RolloverWizard", () => {
           blocking: body.renumber2028 === undefined,
         }),
       );
+    });
+    afterEach(() => {
+      Object.assign(year, before);
+      groups.pop();
+    });
+    const choose = async (user: ReturnType<typeof userEvent.setup>, option: RegExp, renumber: boolean) => {
+      await user.click(screen.getByRole("combobox", { name: "Numrering från hösten 2028" }));
+      await user.click(screen.getByRole("option", { name: option }));
+      await waitFor(() => expect(previewCalls().at(-1)?.renumber2028).toBe(renumber));
+    };
+
+    it("asks the numbering, sends the answer, and names the classes two grades up, förskoleklassen to åk 2", async () => {
       const user = userEvent.setup();
       renderWizard();
       expect(await screen.findByText(/Välj numrering under Numrering från hösten 2028/)).toBeInTheDocument();
       expect(previewCalls().at(-1)).not.toHaveProperty("renumber2028");
 
-      await user.click(screen.getByRole("combobox", { name: "Numrering från hösten 2028" }));
-      await user.click(screen.getByRole("option", { name: /^Tioårig/ }));
-      await waitFor(() => expect(previewCalls().at(-1)?.renumber2028).toBe(true));
+      await choose(user, /^Tioårig/, true);
       expect(await screen.findByText(/numreras tioårigt/)).toBeInTheDocument();
 
       // The mirror names with the same double step the planner takes.
       await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
       expect(screen.getByLabelText("Nytt namn för 7A")).toHaveAttribute("placeholder", "9A");
       expect(screen.getByLabelText("Nytt namn för 8A")).toHaveAttribute("placeholder", "10A");
+      expect(screen.getByLabelText("Nytt namn för FA")).toHaveAttribute("placeholder", "2A");
+      expect(screen.getByText("Förskoleklass blir åk 2")).toBeInTheDocument();
+      // Carried, a class moves up one with its årskull: not "unchanged".
+      await user.click(screen.getByRole("combobox", { name: "Vad 7A blir" }));
+      expect(screen.getByRole("option", { name: "Stannar kvar, en årskurs upp i den nya numreringen" })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "Följer med oförändrad" })).toBeNull();
+    });
 
-      // Keeping the numbering is the ordinary step again.
-      await user.click(screen.getByRole("button", { name: /Nytt läsår/ }));
-      await user.click(screen.getByRole("combobox", { name: "Numrering från hösten 2028" }));
-      await user.click(screen.getByRole("option", { name: /^Behåll numreringen/ }));
-      await waitFor(() => expect(previewCalls().at(-1)?.renumber2028).toBe(false));
+    it("takes the ordinary step for a school that keeps its numbering", async () => {
+      const user = userEvent.setup();
+      renderWizard();
+      await screen.findByText(/Välj numrering under Numrering från hösten 2028/);
+      await choose(user, /^Behåll numreringen/, false);
       await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
       expect(screen.getByLabelText("Nytt namn för 7A")).toHaveAttribute("placeholder", "8A");
-    } finally {
-      Object.assign(year, before);
-    }
+      expect(screen.getByText("Förskoleklass blir åk 1")).toBeInTheDocument();
+    });
   });
 
   it("says once what happens to the published undervisningstid, and not its rows in the registry's words", async () => {

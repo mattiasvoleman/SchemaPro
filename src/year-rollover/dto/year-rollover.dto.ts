@@ -104,8 +104,9 @@ abstract class RolloverRequestBaseDto {
   /**
    * Into HT 2028 (SFS 2025:729): true moves every årskull into the tioårig
    * numbering, false keeps the school's own — for a school outside the four
-   * forms. Absent: the source year decides when it shows a form, and asks
-   * when it does not (rollover-plan.ts). Ignored by every other rollover.
+   * forms. Absent: the school's plans and source year decide when they show a
+   * form, and it is asked when they do not (rollover-plan.ts). Ignored by
+   * every other rollover.
    */
   @IsOptional()
   @IsBoolean({ message: 'renumber2028: true eller false.' })

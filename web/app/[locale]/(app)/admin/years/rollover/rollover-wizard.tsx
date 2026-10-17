@@ -352,6 +352,7 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
                 collisions={collisions}
                 plan={plan}
                 decides={decides}
+                renumbers={gradeStep === INTO_TIOARIG}
               />
             ) : step === "breaks" ? (
               <RolloverBreaksStep form={form} update={update} plan={plan} />

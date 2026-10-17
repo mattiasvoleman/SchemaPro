@@ -1735,6 +1735,27 @@ describe('YearRolloverService — into HT 2028, the tioårig grundskola (SFS 202
     expect(year['gradeNumbering']).toBe('NIOARIG');
   });
 
+  it('renumbers without asking a school whose decided lokal timplan places it in the four forms, though its year attaches none', async () => {
+    const rows = rows2027();
+    rows['academicYearTimplan'] = [];
+    rows['localTimplan']!.push({
+      id: 'f2000000-0000-4000-8000-0000000000d1',
+      name: 'Grundskola 2024',
+      schoolForm: 'GRUNDSKOLA',
+      status: 'DECIDED',
+      decidedAt: new Date('2024-05-01T00:00:00Z'),
+      createdAt: new Date('2024-04-01T00:00:00Z'),
+      nationalVersion: GRUNDSKOLA_2024,
+      entries: [],
+    });
+    const { service } = setup(rows);
+    const asked = await service.previewRollover(IDS.yearA, INTO_2028, admin);
+    expect(codes(asked)).not.toContain('ROLLOVER_2028_SCHOOL_FORM_UNKNOWN');
+    expect(asked.reform2028).toEqual({ renumbers: true, numbering: 'TIOARIG' });
+    const kept = await service.previewRollover(IDS.yearA, { ...INTO_2028, renumber2028: false }, admin);
+    expect(kept.problems).toContainEqual({ code: 'ROLLOVER_2028_RENUMBERING_REQUIRED', blocking: true, params });
+  });
+
   it('refuses to keep the numbering of a school its timplan places in the four forms', async () => {
     const { service } = setup(rows2027());
     const preview = await service.previewRollover(IDS.yearA, { ...INTO_2028, renumber2028: false }, admin);
@@ -1771,6 +1792,46 @@ describe('YearRolloverService — into HT 2028, the tioårig grundskola (SFS 202
         params: expect.objectContaining({ error: 'CARRY_FORSKOLEKLASS' }),
       }),
     );
+  });
+
+  it('names a block for the årskurs its rows reach: two up for the successors, one up for the intake twins', async () => {
+    const { world, service } = setup(withBlock(rows2027()));
+    const { result } = await previewAndExecute(world, service, {
+      ...INTO_2028,
+      groups: [{ sourceGroupId: IDS.g7a, outcome: 'INTAKE' }],
+    });
+    const names = world.rows['teachingBlock']!
+      .filter((block) => block['academicYearId'] === result.academicYear.id)
+      .map((block) => block['name'])
+      .sort();
+    expect(names).toEqual(['Språkval åk 8', 'Språkval åk 9']);
+  });
+
+  it('keeps the plan an årskull carries though its regime does not fit it, and says so', async () => {
+    // Last year's förskoleklass on a 2028 plan, past the year dialog's mark:
+    // the årskull begins åk 2 in HT 2028 and keeps the older total (ö.b. 12).
+    const rows = rows2027();
+    const plan2028 = {
+      id: 'f2000000-0000-4000-8000-0000000000d8',
+      name: 'Grundskola 2028',
+      schoolForm: 'GRUNDSKOLA',
+      status: 'DECIDED',
+      decidedAt: new Date('2027-05-01T00:00:00Z'),
+      createdAt: new Date('2027-04-01T00:00:00Z'),
+      nationalVersion: { ...GRUNDSKOLA_2024, code: 'SFS2025:729', appliesFromCohortTerm: 'HT2028' },
+      entries: [],
+    };
+    rows['localTimplan']!.push(plan2028);
+    rows['studentGroup']!.push({ id: FA, academicYearId: IDS.yearA, name: 'FA', kind: 'CLASS', gradeLevel: 0, predecessorId: null });
+    rows['academicYearTimplan']!.push({ schoolId: IDS.school, academicYearId: IDS.yearA, gradeLevel: 0, localTimplanId: plan2028.id });
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(IDS.yearA, { ...INTO_2028, graduatingGradeLevel: 9 }, admin);
+    expect(preview.timplans).toContainEqual(expect.objectContaining({ gradeLevel: 2, reason: 'CARRIED', fromGradeLevel: 0, planName: 'Grundskola 2028' }));
+    expect(preview.problems).toContainEqual({
+      code: 'ROLLOVER_TIMPLAN_CARRIED_MISFIT',
+      blocking: false,
+      params: { grades: ['2'], plans: ['Grundskola 2028'] },
+    });
   });
 
   it('carries a class that stays one årskurs up and renamed, since its årskull is numbered one higher', async () => {

@@ -62,6 +62,7 @@ export function RolloverGroupsStep({
   collisions,
   plan,
   decides,
+  renumbers,
 }: {
   form: RolloverFormState;
   update: (patch: Partial<RolloverFormState>) => void;
@@ -74,10 +75,18 @@ export function RolloverGroupsStep({
   plan: RolloverPreview | undefined;
   /** Whether the reader carries tjänster: rektor or a full administrator (Roller i skolan). */
   decides: boolean;
+  /**
+   * The rollover into the tioårig numbering: a carried class moves up one
+   * årskurs (its årskull's new number), so CARRY is not "unchanged" there.
+   */
+  renumbers: boolean;
 }) {
   const t = useTranslations("years");
   const tAreas = useTranslations("adminAreas");
   const lowest = lowestClassGrade(sourceGroups);
+  // Across the reform a carried group with an årskurs moves up one (7C → 8C).
+  const outcomeLabel = (outcome: string, grade: number | null) =>
+    renumbers && outcome === "CARRY" && grade !== null ? t("outcomeCarryRenumbered") : t(`outcome.${outcome}`);
   const resolvedOf = new Map(resolved.map((row) => [row.sourceGroupId, row]));
   const defaultOf = new Map(defaults.map((row) => [row.sourceGroupId, row]));
   const plannedOf = new Map((plan?.groups ?? []).map((row) => [row.sourceGroupId, row]));
@@ -180,11 +189,11 @@ export function RolloverGroupsStep({
                         <SelectItem value={DEFAULT}>
                           {halfOf
                             ? t("outcomeFollowsClass", { name: halfOf.name })
-                            : t("outcomeDefault", { outcome: t(`outcome.${byDefault.outcome}`) })}
+                            : t("outcomeDefault", { outcome: outcomeLabel(byDefault.outcome, group.gradeLevel) })}
                         </SelectItem>
                         {outcomes.map((outcome) => (
                           <SelectItem key={outcome} value={outcome}>
-                            {t(`outcome.${outcome}`)}
+                            {outcomeLabel(outcome, group.gradeLevel)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -255,7 +264,10 @@ function GroupFlags({
   if (row.nameStatus === "KEPT_NO_GRADE_DIGIT" && row.outcome !== "CARRY") {
     flags.push({ key: "kept", text: t("flag.keptNoDigit"), variant: "secondary" });
   }
-  if (row.nameStatus === "F_KLASS") flags.push({ key: "f", text: t("flag.fKlass"), variant: "secondary" });
+  if (row.nameStatus === "F_KLASS") {
+    // Åk 1, or åk 2 in the rollover into the tioårig numbering.
+    flags.push({ key: "f", text: t("flag.fKlass", { grade: row.successor?.gradeLevel ?? 1 }), variant: "secondary" });
+  }
   if (row.noGrade) flags.push({ key: "noGrade", text: t("flag.noGrade"), variant: "secondary" });
   if (flags.length === 0) return null;
   return (
