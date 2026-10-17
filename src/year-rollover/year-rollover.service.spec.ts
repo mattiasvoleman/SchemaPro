@@ -1186,7 +1186,21 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
         'halfOfId' in ((call.args as { select?: Record<string, unknown> }).select ?? {}),
     );
     expect(groupReads).toHaveLength(1);
+    // The FOURTH: the source read of the year selects its numbering
+    // (20261121091000). Asserted, then taken out.
+    const yearReads = world.calls.filter(
+      (call) =>
+        call.model === 'academicYear' &&
+        call.method === 'findUnique' &&
+        'gradeNumbering' in ((call.args as { select?: Record<string, unknown> }).select ?? {}),
+    );
+    expect(yearReads).toHaveLength(1);
     const asAtFa4a3d6 = world.calls.map((call) => {
+      if (yearReads.includes(call)) {
+        const args = call.args as { select: Record<string, unknown> };
+        const { gradeNumbering: _numbering, ...select } = args.select;
+        return { ...call, args: { ...args, select } };
+      }
       if (call.model === 'teacherDutySlot') {
         return { model: 'teacherDuty', method: 'count', args: { where: { academicYearId: IDS.yearA, blockedConstraintId: { not: null } } } };
       }

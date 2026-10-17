@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { BreakKind, ConstraintType, LessonRecurrence, StudentGroupKind } from '@prisma/client';
+import type { BreakKind, ConstraintType, GradeNumbering, LessonRecurrence, StudentGroupKind } from '@prisma/client';
 import {
   crossesIsoWeek53,
   dateShiftDays,
@@ -21,6 +21,7 @@ import {
   type RolloverOutcome,
   type VolumeFinding,
 } from '../common/year-rollover';
+import { TIOARIG_FROM } from '../common/grade-numbering';
 import { isMixed } from '../common/lesson-lengths';
 import { isLanguageBlockName } from '../timplan/generate-requirements';
 import { qualificationFinding } from '../staffing/staffing-checks';
@@ -98,6 +99,12 @@ export interface RolloverWrites {
     endDate: string;
     graduatingGradeLevel: number;
     predecessorId: string;
+    /**
+     * The new year's numbering (20261121091000). Only on a year starting from
+     * 2028-07-01, where the database would otherwise fill it: an earlier year
+     * is NIOARIG and writes, and hashes, what it always did.
+     */
+    gradeNumbering?: GradeNumbering;
   };
   groups: {
     key: GroupKey;
@@ -390,6 +397,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       endDate: target.endDate,
       graduatingGradeLevel: g,
       predecessorId: source.year.id,
+      ...(target.startDate >= TIOARIG_FROM ? { gradeNumbering: source.year.gradeNumbering } : {}),
     },
     groups: [],
     members: [],

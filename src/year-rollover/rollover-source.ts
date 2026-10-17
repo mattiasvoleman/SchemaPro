@@ -2,6 +2,7 @@ import type {
   BreakKind,
   ConstraintResource,
   ConstraintType,
+  GradeNumbering,
   LessonRecurrence,
   PrismaClient,
   StaffingCheckMode,
@@ -40,6 +41,8 @@ export interface SourceYear {
   startDate: string;
   endDate: string;
   isActive: boolean;
+  /** The numbering its årskurser are in (20261121091000). */
+  gradeNumbering: GradeNumbering;
 }
 
 export interface SourceGroup {
@@ -178,7 +181,7 @@ export async function readRolloverSource(
 ): Promise<RolloverSource | null> {
   const year = await tx.academicYear.findUnique({
     where: { id: sourceYearId },
-    select: { id: true, schoolId: true, name: true, startDate: true, endDate: true, isActive: true },
+    select: { id: true, schoolId: true, name: true, startDate: true, endDate: true, isActive: true, gradeNumbering: true },
   });
   if (!year) return null;
   const successor = await tx.academicYear.findFirst({
@@ -407,6 +410,7 @@ export async function readRolloverSource(
       startDate: asDay(year.startDate),
       endDate: asDay(year.endDate),
       isActive: year.isActive,
+      gradeNumbering: year.gradeNumbering,
     },
     successor: successor ?? null,
     otherYears: (otherYears ?? []).map((other) => ({

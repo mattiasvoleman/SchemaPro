@@ -1,0 +1,564 @@
+{
+ "spans": [
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": null,
+   "toNioarig": null,
+   "fromNioarig": null
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 0,
+   "toNioarig": 0,
+   "fromNioarig": 0
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 1,
+   "toNioarig": 1,
+   "fromNioarig": 1
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 2,
+   "toNioarig": 2,
+   "fromNioarig": 2
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 3,
+   "toNioarig": 3,
+   "fromNioarig": 3
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 4,
+   "toNioarig": 4,
+   "fromNioarig": 4
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 5,
+   "toNioarig": 5,
+   "fromNioarig": 5
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 6,
+   "toNioarig": 6,
+   "fromNioarig": 6
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 7,
+   "toNioarig": 7,
+   "fromNioarig": 7
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 8,
+   "toNioarig": 8,
+   "fromNioarig": 8
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 9,
+   "toNioarig": 9,
+   "fromNioarig": 9
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 10,
+   "toNioarig": 10,
+   "fromNioarig": 10
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 11,
+   "toNioarig": 11,
+   "fromNioarig": 11
+  },
+  {
+   "numbering": "NIOARIG",
+   "gradeLevel": 12,
+   "toNioarig": 12,
+   "fromNioarig": 12
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": null,
+   "toNioarig": null,
+   "fromNioarig": null
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 0,
+   "toNioarig": 0,
+   "fromNioarig": 1
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 1,
+   "toNioarig": 0,
+   "fromNioarig": 2
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 2,
+   "toNioarig": 1,
+   "fromNioarig": 3
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 3,
+   "toNioarig": 2,
+   "fromNioarig": 4
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 4,
+   "toNioarig": 3,
+   "fromNioarig": 5
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 5,
+   "toNioarig": 4,
+   "fromNioarig": 6
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 6,
+   "toNioarig": 5,
+   "fromNioarig": 7
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 7,
+   "toNioarig": 6,
+   "fromNioarig": 8
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 8,
+   "toNioarig": 7,
+   "fromNioarig": 9
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 9,
+   "toNioarig": 8,
+   "fromNioarig": 10
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 10,
+   "toNioarig": 9,
+   "fromNioarig": 11
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 11,
+   "toNioarig": 10,
+   "fromNioarig": 12
+  },
+  {
+   "numbering": "TIOARIG",
+   "gradeLevel": 12,
+   "toNioarig": 12,
+   "fromNioarig": 12
+  }
+ ],
+ "planRows": [
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 0,
+   "planRowOf": 0,
+   "gradeOfPlanRow": 0
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 1,
+   "planRowOf": 1,
+   "gradeOfPlanRow": 1
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 2,
+   "planRowOf": 2,
+   "gradeOfPlanRow": 2
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 3,
+   "planRowOf": 3,
+   "gradeOfPlanRow": 3
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 4,
+   "planRowOf": 4,
+   "gradeOfPlanRow": 4
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 5,
+   "planRowOf": 5,
+   "gradeOfPlanRow": 5
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 6,
+   "planRowOf": 6,
+   "gradeOfPlanRow": 6
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 7,
+   "planRowOf": 7,
+   "gradeOfPlanRow": 7
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 8,
+   "planRowOf": 8,
+   "gradeOfPlanRow": 8
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 9,
+   "planRowOf": 9,
+   "gradeOfPlanRow": 9
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 10,
+   "planRowOf": 10,
+   "gradeOfPlanRow": 10
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 11,
+   "planRowOf": 11,
+   "gradeOfPlanRow": 11
+  },
+  {
+   "planTioarig": false,
+   "numbering": "NIOARIG",
+   "grade": 12,
+   "planRowOf": 12,
+   "gradeOfPlanRow": 12
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 0,
+   "planRowOf": null,
+   "gradeOfPlanRow": 1
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 1,
+   "planRowOf": 0,
+   "gradeOfPlanRow": 2
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 2,
+   "planRowOf": 1,
+   "gradeOfPlanRow": 3
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 3,
+   "planRowOf": 2,
+   "gradeOfPlanRow": 4
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 4,
+   "planRowOf": 3,
+   "gradeOfPlanRow": 5
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 5,
+   "planRowOf": 4,
+   "gradeOfPlanRow": 6
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 6,
+   "planRowOf": 5,
+   "gradeOfPlanRow": 7
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 7,
+   "planRowOf": 6,
+   "gradeOfPlanRow": 8
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 8,
+   "planRowOf": 7,
+   "gradeOfPlanRow": 9
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 9,
+   "planRowOf": 8,
+   "gradeOfPlanRow": 10
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 10,
+   "planRowOf": 9,
+   "gradeOfPlanRow": 11
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 11,
+   "planRowOf": 10,
+   "gradeOfPlanRow": 12
+  },
+  {
+   "planTioarig": false,
+   "numbering": "TIOARIG",
+   "grade": 12,
+   "planRowOf": 11,
+   "gradeOfPlanRow": 13
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 0,
+   "planRowOf": 1,
+   "gradeOfPlanRow": null
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 1,
+   "planRowOf": 2,
+   "gradeOfPlanRow": 0
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 2,
+   "planRowOf": 3,
+   "gradeOfPlanRow": 1
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 3,
+   "planRowOf": 4,
+   "gradeOfPlanRow": 2
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 4,
+   "planRowOf": 5,
+   "gradeOfPlanRow": 3
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 5,
+   "planRowOf": 6,
+   "gradeOfPlanRow": 4
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 6,
+   "planRowOf": 7,
+   "gradeOfPlanRow": 5
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 7,
+   "planRowOf": 8,
+   "gradeOfPlanRow": 6
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 8,
+   "planRowOf": 9,
+   "gradeOfPlanRow": 7
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 9,
+   "planRowOf": 10,
+   "gradeOfPlanRow": 8
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 10,
+   "planRowOf": 11,
+   "gradeOfPlanRow": 9
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 11,
+   "planRowOf": 12,
+   "gradeOfPlanRow": 10
+  },
+  {
+   "planTioarig": true,
+   "numbering": "NIOARIG",
+   "grade": 12,
+   "planRowOf": 13,
+   "gradeOfPlanRow": 11
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 0,
+   "planRowOf": 0,
+   "gradeOfPlanRow": 0
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 1,
+   "planRowOf": 1,
+   "gradeOfPlanRow": 1
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 2,
+   "planRowOf": 2,
+   "gradeOfPlanRow": 2
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 3,
+   "planRowOf": 3,
+   "gradeOfPlanRow": 3
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 4,
+   "planRowOf": 4,
+   "gradeOfPlanRow": 4
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 5,
+   "planRowOf": 5,
+   "gradeOfPlanRow": 5
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 6,
+   "planRowOf": 6,
+   "gradeOfPlanRow": 6
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 7,
+   "planRowOf": 7,
+   "gradeOfPlanRow": 7
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 8,
+   "planRowOf": 8,
+   "gradeOfPlanRow": 8
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 9,
+   "planRowOf": 9,
+   "gradeOfPlanRow": 9
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 10,
+   "planRowOf": 10,
+   "gradeOfPlanRow": 10
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 11,
+   "planRowOf": 11,
+   "gradeOfPlanRow": 11
+  },
+  {
+   "planTioarig": true,
+   "numbering": "TIOARIG",
+   "grade": 12,
+   "planRowOf": 12,
+   "gradeOfPlanRow": 12
+  }
+ ],
+ "lydelser": [
+  {
+   "term": "HT2023",
+   "tioarig": false
+  },
+  {
+   "term": "HT2024",
+   "tioarig": false
+  },
+  {
+   "term": "VT2028",
+   "tioarig": true
+  },
+  {
+   "term": "HT2028",
+   "tioarig": true
+  },
+  {
+   "term": "HT2031",
+   "tioarig": true
+  },
+  {
+   "term": "bilaga 1",
+   "tioarig": false
+  }
+ ]
+}

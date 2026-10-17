@@ -642,6 +642,13 @@ enum TimplanStage {
   LAG_MELLAN
 }
 
+/// The numbers a läsår gives its årskurser (20261121091000): NIOARIG today's,
+/// förskoleklass 0; TIOARIG those of SFS 2025:729 from HT 2028, no förskoleklass.
+enum GradeNumbering {
+  NIOARIG
+  TIOARIG
+}
+
 /// How a national lydelse applies to a pupil; see NationalTimplanVersion.appliesBy.
 enum TimplanApplicability {
   STAGES_NOT_COMPLETED
@@ -1360,6 +1367,12 @@ model AcademicYear {
   /// the predecessor at or above it got no successor, and activation calls its
   /// pupils graduates. 0..12. Set by the rollover; never moves anyone.
   graduatingGradeLevel Int?
+  /// The numbering its årskurser are in (SFS 2025:729 övergångsbestämmelse
+  /// 4 numbers them anew from HT 2028). Written once, at INSERT (GN409 after);
+  /// TIOARIG only for a year starting 2028-07-01 or later (CHECK). Left out,
+  /// a trigger fills it: NIOARIG before 2028-07-01, else the numbering of the
+  /// school's latest year from that date, else TIOARIG. See 20261121091000.
+  gradeNumbering       GradeNumbering @default(dbgenerated())
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 

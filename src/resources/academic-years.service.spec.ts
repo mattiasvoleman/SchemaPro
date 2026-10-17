@@ -243,6 +243,26 @@ describe('AcademicYearsService', () => {
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
+    it('writes the numbering only when it is given, and leaves it to the database otherwise', async () => {
+      tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
+      await service.create(
+        dto({ name: '2028/29', startDate: '2028-08-21', endDate: '2029-06-12', gradeNumbering: 'NIOARIG' }),
+        testUser(),
+      );
+      expect(tx.academicYear.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({ gradeNumbering: 'NIOARIG' }),
+      });
+      await service.create(dto(), testUser());
+      expect(tx.academicYear.create.mock.lastCall![0].data).not.toHaveProperty('gradeNumbering');
+    });
+
+    it('refuses the tioårig numbering for a year before 1 July 2028, before the transaction', async () => {
+      await expect(service.create(dto({ gradeNumbering: 'TIOARIG' }), testUser())).rejects.toThrow(
+        'gradeNumbering: den tioåriga numreringen gäller läsår som börjar 1 juli 2028 eller senare.',
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
     it('rejects a zero-length year', async () => {
       await expect(
         service.create(

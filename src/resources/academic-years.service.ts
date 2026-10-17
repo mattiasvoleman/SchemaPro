@@ -5,6 +5,7 @@ import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { TIOARIG_FROM, TIOARIG_TOO_EARLY } from '../common/grade-numbering';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { attachDefaultTimplans, type YearTimplanRow } from '../timplan/year-timplans';
@@ -60,6 +61,9 @@ export class AcademicYearsService {
     if (dto.startDate >= dto.endDate) {
       throw new BadRequestException('startDate must be before endDate.');
     }
+    if (dto.gradeNumbering === 'TIOARIG' && dto.startDate < TIOARIG_FROM) {
+      throw new BadRequestException(TIOARIG_TOO_EARLY);
+    }
     try {
       return await this.prisma.withRls(user, async (tx) => {
         // Only one academic year may be active per school, and the partial
@@ -86,6 +90,7 @@ export class AcademicYearsService {
             startDate: parseDateString(dto.startDate),
             endDate: parseDateString(dto.endDate),
             isActive: dto.isActive ?? false,
+            ...(dto.gradeNumbering !== undefined ? { gradeNumbering: dto.gradeNumbering } : {}),
           },
         });
         const timplans = await attachDefaultTimplans(tx, schoolId, year.id);

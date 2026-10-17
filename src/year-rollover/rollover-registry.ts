@@ -95,6 +95,13 @@ export type ColumnRule =
   /** The request: the new year's name, dates and graduating grade. */
   | 'FROM_REQUEST'
   /**
+   * The new year's numbering (20261121091000): the source's, or TIOARIG when
+   * the rollover crosses into HT 2028 and renumbers. Written only for a year
+   * starting from 2028-07-01; an earlier one is left to the database's NIOARIG
+   * and writes, and hashes, what it always did.
+   */
+  | 'NUMBERING'
+  /**
    * A grade of the new year's timplan per årskurs: the grade above a source
    * row whose class moves up (g−1 → g), or a grade the source attaches. See
    * rollover-timplans.ts.
@@ -217,6 +224,7 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       isActive: 'DEFAULT',
       predecessorId: 'SOURCE_ID',
       graduatingGradeLevel: 'FROM_REQUEST',
+      gradeNumbering: 'NUMBERING',
       ...timestamps,
     },
   },
