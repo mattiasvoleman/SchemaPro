@@ -2013,6 +2013,11 @@ model OptimizationJob {
   /// per-request blob: the settings row is edited in place, so without this a
   /// timetable generated in September cannot be explained in November.
   rules                 Json?
+  /// What a finished run could not keep of the soft wishes (Lärarens dag:
+  /// a teacher's free-day wish), in a conflict's shape — code, params, the
+  /// work rule as the resource — so the page says it as it says a refusal.
+  /// Null when every wish was kept, and on every run before 20261123090100.
+  notes                 Json?
   createdAt             DateTime              @default(now()) @db.Timestamptz(6)
   finishedAt            DateTime?             @db.Timestamptz(6)
 
@@ -2385,11 +2390,12 @@ model AvailabilityConstraint {
 /// lunch window per class and a rast per stage, and leaves the adult who walks
 /// them there with no meal, no break and no evening.
 ///
-/// HARD RULES, EVERY ONE OF THEM. A week that cannot honour a row here is
-/// refused, and the refusal names the row. That is why the table exists instead
-/// of a weight: a lunch the solver may trade against a fuller Tuesday is not a
-/// lunch, it is a preference, and a school reading "schemat är klart" has no way
-/// to discover which teacher paid for it.
+/// HARD RULES, EVERY ONE OF THEM BUT THE WISH. A week that cannot honour a row
+/// here is refused, and the refusal names the row. That is why the table exists
+/// instead of a weight: a lunch the solver may trade against a fuller Tuesday is
+/// not a lunch, it is a preference, and a school reading "schemat är klart" has
+/// no way to discover which teacher paid for it. The one preference here is
+/// `preferredFreeDayOfWeek`, and its name says it is one.
 ///
 /// EVERY RULE IS OPTIONAL, AND NULL MEANS IT DOES NOT APPLY. A school that has
 /// filled in nobody is refused nothing, which is what makes this safe to deploy
@@ -2441,6 +2447,19 @@ model TeacherWorkRule {
   /// being a proof: 1440 minutes of rest is a teacher who can never teach two
   /// days running, and the engine would have to refuse the week to say so.
   minDailyRestMinutes Int?
+
+  /// Lärarens dag (20261123090000): the most minutes of teaching on one day.
+  /// HARD where set, like the two rules above. Minutes and not lessons, since
+  /// lessons are not one length; every lesson the teacher is on counts, start
+  /// to end (src/common/teacher-day.ts). 30..720 and a multiple of 5. Set by an
+  /// administrator who writes planering — a trigger keeps it from the teacher's
+  /// own write of this row.
+  maxTeachingMinutesPerDay Int?
+  /// The ISO weekday the teacher would rather have free. SOFT, THE ONE WISH ON
+  /// THIS TABLE: the generator pays for a lesson on it and never refuses a
+  /// week over it, and the Vikarietavla ranks a cover on it lower. 1..7. Set by
+  /// the administrator, like the cap.
+  preferredFreeDayOfWeek   Int?
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -2599,6 +2618,13 @@ model TeacherEmployment {
   /// Per-teacher override of the policy's riktmärke × (employment − reduction)
   /// / 100. Null = derive. 0..2400.
   teachingTargetMinutesPerWeek Int?
+  /// Deltid in days (Lärarens dag, 20261123090000): the most weekdays with
+  /// teaching the post allows, 1..6; null = no limit. HARD where set, in the
+  /// generator, a hand edit's warning and the Vikarietavla. HR data like the
+  /// tjänstgöringsgrad: hideHr leaves it out for an administrator without
+  /// HR-läs, and no refusal, warning or ranking states it to them. The whole
+  /// year's, not a period's: the generator plans one week.
+  maxTeachingDaysPerWeek       Int?
   /// Lärarsignatur, 1..8 characters. Unique per school AND YEAR where set — not
   /// per school: the same teacher carries the same signature next year, and a
   /// per-school key would refuse the roll-forward. Prisma cannot state the
