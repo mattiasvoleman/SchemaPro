@@ -71,7 +71,9 @@ export interface SyncState {
 
 export type SyncProblem =
   | { readonly code: 'SESSION_EXPIRED' }
-  | { readonly code: 'RECORDS_FAILED'; readonly count: number };
+  | { readonly code: 'RECORDS_FAILED'; readonly count: number }
+  /** Marks the server refused for good: never sent again, named apart for the teacher to check and discard. */
+  | { readonly code: 'RECORDS_REFUSED'; readonly count: number };
 
 // ─── Network ──────────────────────────────────────────────────────────────────
 
