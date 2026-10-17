@@ -3747,9 +3747,9 @@ describe('Planning surface (e2e)', () => {
       const grade = await request(http())
         .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
         .set('x-test-user', admin())
-        .send({ entries: [{ subjectId: SUBJECT_ID, gradeLevel: 11, minutesPerWeek: 60 }] })
+        .send({ entries: [{ subjectId: SUBJECT_ID, gradeLevel: 12, minutesPerWeek: 60 }] })
         .expect(400);
-      expect(JSON.stringify(grade.body)).toContain('gradeLevel: högsta årskurs är 10.');
+      expect(JSON.stringify(grade.body)).toContain('gradeLevel: högsta årskurs är 11.');
 
       await request(http())
         .post(`/api/v1/local-timplans/${PLAN_ID}/decide`)
@@ -3978,9 +3978,9 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['academicYearTimplan']!['createMany']).toHaveBeenCalledTimes(1);
     });
 
-    it('400s a grade outside 0..10, a missing plan field and the same grade twice, naming the field', async () => {
+    it('400s a grade outside 0..11, a missing plan field and the same grade twice, naming the field', async () => {
       const bodies: [object, string][] = [
-        [{ timplans: [{ gradeLevel: 11, localTimplanId: null }] }, 'gradeLevel: högsta årskurs är 10.'],
+        [{ timplans: [{ gradeLevel: 12, localTimplanId: null }] }, 'gradeLevel: högsta årskurs är 11.'],
         [{ timplans: [{ gradeLevel: 4 }] }, 'localTimplanId: den lokala timplanen anges med sitt id, eller null för ingen.'],
         [{ timplans: [[{ gradeLevel: 4, localTimplanId: null }]] }, 'timplans: varje årskurs anges som ett objekt.'],
         [

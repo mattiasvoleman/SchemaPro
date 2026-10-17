@@ -656,8 +656,8 @@ model NationalTimplanVersion {
   sfs                   String
   title                 String
   schoolForm            SchoolForm
-  /// "Totalt garanterat antal timmar" — 6 890, 6 665, 8 070, 4 473; 7 424 for
-  /// the 2028 law.
+  /// "Totalt garanterat antal timmar" — 6 890, 6 665, 8 070, 4 473; for the
+  /// 2028 law 7 424, 7 199, 8 604 and 5 007, totals without cells.
   totalHours            Int
   /// "Därav skolans val". Null where the bilaga prints no such row.
   skolansValHours       Int?
@@ -806,8 +806,8 @@ model LocalTimplanEntry {
   schoolId       String  @db.Uuid
   localTimplanId String  @db.Uuid
   subjectId      String  @db.Uuid
-  /// 0..10. 0 = förskoleklass (in no stadium); 10 = specialskolan today, the
-  /// tioårig grundskola from 2028.
+  /// 0..11. 0 = förskoleklass (in no stadium); 10 = specialskolan today, the
+  /// tioårig grundskola from 2028; 11 = specialskolan from 2028.
   gradeLevel     Int
   /// 0..1200, integer minutes, not on the 5-minute grid: a target, not a lesson.
   minutesPerWeek Int
@@ -836,7 +836,7 @@ model AcademicYearTimplan {
   schoolId       String   @db.Uuid
   /// Composite (academicYearId, schoolId) key; cascades with the year.
   academicYearId String   @db.Uuid
-  /// 0..10, the bound LocalTimplanEntry.gradeLevel has (DB CHECK).
+  /// 0..11, the bound LocalTimplanEntry.gradeLevel has (DB CHECK).
   gradeLevel     Int
   /// Composite (localTimplanId, schoolId) key, ON DELETE RESTRICT.
   localTimplanId String   @db.Uuid
@@ -1443,7 +1443,7 @@ model SchoolUnit {
   /// per school where set (partial index SchoolUnits_schoolId_code_key).
   code        String?
   schoolTypes SchoolUnitType[] @default([])
-  /// 0..10, both or neither; 0 = förskoleklass.
+  /// 0..11, both or neither; 0 = förskoleklass.
   gradeFrom   Int?
   gradeTo     Int?
   /// The source's Organisation id once an admin linked the unit; written only

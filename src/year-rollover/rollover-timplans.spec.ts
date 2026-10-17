@@ -254,17 +254,17 @@ describe('planCohortTimplans', () => {
     });
   });
 
-  it('stops at the graduating grade the admin chose, and at the table’s åk 10', () => {
+  it('stops at the graduating grade the admin chose, and at the table’s åk 11', () => {
     // An F–6 school: åk 6 leaves, so nothing is carried into 7.
     expect(plan({ source: rows(range(1, 6), OLD), graduatingGradeLevel: 6 }).map((entry) => entry.gradeLevel)).toEqual(
       range(1, 6),
     );
-    // A grade-10 cohort with G above it would land on 11, which no row may hold.
+    // A grade-11 cohort with G above it would land on 12, which no row may hold.
     expect(
-      plan({ source: [row(10, OLD)], graduatingGradeLevel: 12, movingCohorts: new Set([10]) }).map(
+      plan({ source: [row(11, OLD)], graduatingGradeLevel: 12, movingCohorts: new Set([11]) }).map(
         (entry) => entry.gradeLevel,
       ),
-    ).toEqual([10]);
+    ).toEqual([11]);
   });
 
   it('gives a source year with no rows exactly P2’s default for a new year', () => {

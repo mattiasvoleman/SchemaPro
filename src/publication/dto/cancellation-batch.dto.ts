@@ -65,13 +65,13 @@ export class CancellationSelectionDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10)
+  @Max(11)
   minGradeLevel?: number;
 
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(10)
+  @Max(11)
   maxGradeLevel?: number;
 
   @IsOptional()

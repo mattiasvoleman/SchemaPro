@@ -349,10 +349,10 @@ const NAMED_CHECKS: Record<string, string> = {
   LocalTimplans_planningWeeks_is_sane: 'planningWeeks: mellan 20,0 och 40,0 veckor.',
   LocalTimplans_decisionNote_is_sane:
     'decisionNote: beslutet behöver en anteckning på högst 500 tecken som identifierar det.',
-  LocalTimplanEntries_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 10.',
+  LocalTimplanEntries_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 11.',
   LocalTimplanEntries_minutesPerWeek_is_sane: 'minutesPerWeek: 0 till 1200 minuter per vecka.',
   LocalTimplanEntries_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',
-  AcademicYearTimplans_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 10.',
+  AcademicYearTimplans_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 11.',
   TeachingRequirements_teacher_load_percent_is_sane:
     'teacherLoadPercent: andelen som räknas för läraren är 0 till 200 %.',
   TeachingRequirements_co_teacher_load_percent_is_sane:

@@ -49,7 +49,7 @@ describe("mapTimplanRows: a lokal timplan file to ImportTimplanRowDto rows", () 
         "amne;arskurs;minuter_per_vecka",
         "MA;1;60",
         ";2;60",
-        "MA;11;60",
+        "MA;12;60",
         "MA;G;60",
         "MA;3;1201",
         "MA;4;12,5",
@@ -62,7 +62,7 @@ describe("mapTimplanRows: a lokal timplan file to ImportTimplanRowDto rows", () 
       [6, 0],
     ]);
     expect(errors.map((error) => error.row)).toEqual([2, 3, 4, 5, 6, 7]);
-    expect(errors[1]!.message).toContain('"11"');
+    expect(errors[1]!.message).toContain('"12"');
   });
 
   it("refuses a file larger than one plan can hold, before anything is sent", () => {
@@ -122,9 +122,9 @@ describe("timplanToCsv: the plan as the file its import reads", () => {
 });
 
 describe("årskurs spelling", () => {
-  it("reads F/f and 0–10, refuses the rest, and writes 0 back as F", () => {
-    expect(["F", "f", "0", "10", "07"].map(parseTimplanGrade)).toEqual([0, 0, 0, 10, 7]);
-    expect(["11", "Fk", "-1", "", "1.5"].map(parseTimplanGrade)).toEqual([null, null, null, null, null]);
+  it("reads F/f and 0–11, refuses the rest, and writes 0 back as F", () => {
+    expect(["F", "f", "0", "10", "11", "07"].map(parseTimplanGrade)).toEqual([0, 0, 0, 10, 11, 7]);
+    expect(["12", "Fk", "-1", "", "1.5"].map(parseTimplanGrade)).toEqual([null, null, null, null, null]);
     expect([0, 9].map(formatTimplanGrade)).toEqual(["F", "9"]);
   });
 });

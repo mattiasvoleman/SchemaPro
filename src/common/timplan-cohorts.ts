@@ -74,10 +74,9 @@ import { cohortYear, stageGradesFor, type BaseStage, type SchoolForm } from './t
  * The regime's numbering: PRE_2028 reads the lydelser of today (1–3 / 4–6 /
  * 7–9; specialskolan 1–4 / 5–7 / 8–10; sameskolan 1–3 / 4–6), REFORMED_2028
  * the tioårig cut stageGradesFor gives a lydelse from HT 2028 (1–4 / 5–7 /
- * 8–10; sameskolan 1–4 / 5–7). Specialskolan's 2028 cut is 1–5 / 6–8 / 9–11
- * (SFS 2025:729 12 kap. 3 §); its 8 604 h version is not seeded because
- * årskurs 11 does not fit the tables' 0..10, so a reformed specialskola pupil
- * reads VERSION_NOT_IN_REFERENCE until it is.
+ * 8–10; sameskolan 1–4 / 5–7; specialskolan 1–5 / 6–8 / 9–11, SFS 2025:729
+ * 12 kap. 3 §, whose 8 604 h version is SFS2025:729/SPE, seeded with the
+ * tables' årskurs 11 by 20261121090000).
  *
  * ## Which version, per stage
  *

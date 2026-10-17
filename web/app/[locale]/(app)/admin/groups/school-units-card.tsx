@@ -54,7 +54,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { TableCard } from "@/components/ui/table-card";
 import { SCHOOL_UNITS_KEY, useSchoolUnits } from "./use-school-units";
 
-const GRADES = Array.from({ length: 11 }, (_, grade) => grade);
+const GRADES = Array.from({ length: 12 }, (_, grade) => grade);
 
 interface UnitForm {
   name: string;

@@ -155,9 +155,9 @@ describe('Resource CRUD (e2e)', () => {
       await request(server).delete(`/api/v1/school-units/${UNIT_ID}`).set('x-test-user', asUser({})).expect(204);
     });
 
-    it('refuses a skolform it does not know, a grade past 10 and a field it does not take', async () => {
+    it('refuses a skolform it does not know, a grade past 11 and a field it does not take', async () => {
       const server = harness.app.getHttpServer();
-      for (const body of [{ name: 'X', schoolTypes: ['GY'] }, { name: 'X', gradeFrom: 0, gradeTo: 11 }, { name: 'X', schoolId: SCHOOL_ID }]) {
+      for (const body of [{ name: 'X', schoolTypes: ['GY'] }, { name: 'X', gradeFrom: 0, gradeTo: 12 }, { name: 'X', schoolId: SCHOOL_ID }]) {
         await request(server).post('/api/v1/school-units').set('x-test-user', asUser({})).send(body).expect(400);
       }
       expect(harness.tx['schoolUnit']!['create']).not.toHaveBeenCalled();

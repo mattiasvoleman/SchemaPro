@@ -237,6 +237,15 @@ describe('stageGradesFor — keyed on the version, not on the school form alone'
       HOG: [8, 9, 10],
     });
   });
+
+  it('gives specialskolan eleven årskurser in the 2028 law: 1–5 / 6–8 / 9–11 (12 kap. 3 §)', () => {
+    // SFS2025:729/SPE (20261121090000), a row of P0's form with no cells.
+    expect(stageGradesFor({ schoolForm: 'SPECIALSKOLA', appliesFromCohortTerm: 'HT2028' })).toEqual({
+      LAG: [1, 2, 3, 4, 5],
+      MELLAN: [6, 7, 8],
+      HOG: [9, 10, 11],
+    });
+  });
 });
 
 describe('checkLocalTimplan — grundskolan, bilaga 1', () => {

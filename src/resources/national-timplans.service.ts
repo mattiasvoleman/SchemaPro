@@ -50,7 +50,7 @@ export interface NationalTimplansResponse {
  * The national timplan as the gateway hands it out: every seeded version with
  * its cells, and the ämnen the cells and Subject.nationalCode name.
  *
- * ONE DOCUMENT, NOT A COLLECTION. The statute is small (six versions, 180
+ * ONE DOCUMENT, NOT A COLLECTION. The statute is small (ten versions, 180
  * cells, 28 ämnen) and read whole by every page that reads it at all — a
  * subjects dialog needs the subject list, a coverage page needs versions and
  * cells and names in one go. Paging or per-version routes would be three

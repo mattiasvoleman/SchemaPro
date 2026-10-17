@@ -56,8 +56,8 @@ import { cohortStartYear } from '../common/timplan-cohorts';
  * plan into. A 7–9 school that removed åk 1–6 from its year does not get them
  * back every summer; one that kept P2's rows keeps them, each on its default
  * as a new year would have them. A source grade at or above G graduates and
- * contributes nothing; a grade above 10 does not exist in the table (its
- * CHECK, 0..10).
+ * contributes nothing; a grade above 11 does not exist in the table (its
+ * CHECK, 0..11).
  *
  * A SOURCE YEAR WITH NO ROWS AT ALL (a year from before P2, which the
  * migration did not backfill, or one whose rows were all cleared) says
@@ -143,8 +143,8 @@ function forCohort(
   return candidates.find((_, index) => years[index] === lydelse);
 }
 
-/** The table's CHECK: 0 = förskoleklass … 10. */
-const MAX_GRADE = 10;
+/** The table's CHECK: 0 = förskoleklass … 11 (specialskolan from 2028). */
+const MAX_GRADE = 11;
 
 export function planCohortTimplans(input: CohortTimplanInput): PlannedTimplan[] {
   const { source, graduatingGradeLevel, movingCohorts, decided, targetStartYear } = input;
