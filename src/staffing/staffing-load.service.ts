@@ -328,7 +328,7 @@ export class StaffingLoadService {
    */
   async suggestTeachers(requirementId: string, user: AuthenticatedUser): Promise<TeacherSuggestions> {
     requireSchoolId(user);
-    const { input, staffIds, lastYear } = await this.prisma.withRls(user, async (tx) => {
+    return this.prisma.withRls(user, async (tx) => {
       const requirement = await tx.teachingRequirement.findUnique({
         where: { id: requirementId },
         select: {
@@ -348,11 +348,21 @@ export class StaffingLoadService {
       const lastYear = predecessorId
         ? await readLastYearTeachersOf(tx, predecessorId, requirement.subjectId)
         : null;
-      return { input: yearInput, staffIds, lastYear };
+      // Without HR-läs a changing post's room is the year's, as the report
+      // states it (suggest-teachers.ts showsPeriods).
+      const answer = suggestTeachers(yearInput, requirementId, staffIds, lastYear, readsHr(user));
+      // A candidate's room is their target less their load: their tjänst, as
+      // the load report hands it out, so recorded as the report is
+      // (EMPLOYMENT), in this transaction. A candidate without a post has no
+      // room and nothing of a tjänst to read.
+      await recordRead(
+        tx,
+        'EMPLOYMENT',
+        answer.candidates.filter((candidate) => candidate.remainingMinutesPerWeek !== null).map((candidate) => candidate.userId),
+        user.channel,
+      );
+      return answer;
     });
-    // Without HR-läs a changing post's room is the year's, as the report
-    // states it (suggest-teachers.ts showsPeriods).
-    return suggestTeachers(input, requirementId, staffIds, lastYear, readsHr(user));
   }
 
   private async readInput(

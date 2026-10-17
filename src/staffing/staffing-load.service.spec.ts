@@ -1,3 +1,4 @@
+import { recordedReads } from '../../test/utils/recorded-reads';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
@@ -583,6 +584,9 @@ describe('StaffingLoadService', () => {
         expect.objectContaining({ userId: ME, teachesSubjectAlready: true, remainingMinutesPerWeek: 145, status: 'UNDER' }),
         expect.objectContaining({ userId: COLLEAGUE, remainingMinutesPerWeek: null, status: 'NO_TARGET' }),
       ]);
+      // ME's room is read off her tjänst, and recorded as the load report's
+      // is; the colleague has no post, and nothing of one is handed out.
+      expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: [ME] }]);
     });
 
     it("gives a planner without HR-läs a changing post's room as the year's, as the report states it (Roller i skolan)", async () => {

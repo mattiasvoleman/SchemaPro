@@ -318,6 +318,20 @@ export class PublicationsService {
         select: PUBLICATION_SELECT,
       });
       const publications = rows.map(toRow);
+      // A refused publication keeps the gates it was refused with, and a
+      // staffing gate names the teachers it stopped on with their minutes or
+      // their missing behörighet: read back here, recorded as the preview
+      // and the publish record them (EMPLOYMENT).
+      await recordRead(
+        tx,
+        'EMPLOYMENT',
+        publications.flatMap((publication) =>
+          publication.gates
+            .filter((gate) => gate.code === 'PUB_STAFFING_REFUSE')
+            .flatMap((gate) => gate.items.map((item) => item.teacherId)),
+        ),
+        user.channel,
+      );
       const segments = effectiveSegments(publications.filter(countsForValidity));
       const today = asDay(todayInZone(year.timezone));
       const now = segments.find((segment) => segment.from <= today && today <= segment.to);

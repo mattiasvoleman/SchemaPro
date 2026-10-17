@@ -3,6 +3,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import { Role } from '../auth/enums/role.enum';
 import type { PrismaService } from '../database/prisma.service';
 import { Ss12000Service } from '../integration/ss12000.service';
+import { PublicLinksService } from '../publication/public-links.service';
 import { StudentGroupsService } from '../resources/student-groups.service';
 import { TeacherEmploymentsService } from '../staffing/teacher-employments.service';
 import type { SupabaseAdminService } from '../users/supabase-admin.service';
@@ -192,5 +193,25 @@ describe('SS12000 v1 with an integration key', () => {
     ]);
     await service().calendarEvents(SCHOOL, '2026-10-01', '2026-10-31', undefined, undefined, KEY);
     expect(recordedReads(tx)).toEqual([{ kind: 'ROSTER', channel: null, ids: [P2] }]);
+  });
+});
+
+describe('GET /api/v1/teacher-public-labels (Läsbehörighet)', () => {
+  it('records the teachers hidden from public timetables as PEOPLE: skyddad identitet is a fact about each', async () => {
+    tx.teacherPublicLabel.findMany.mockResolvedValue([{ userId: P1 }, { userId: P2 }]);
+    const service = new PublicLinksService(prisma as unknown as PrismaService);
+    await expect(service.hiddenTeachers(testUser({ channel: 'WEB' }))).resolves.toEqual([P1, P2]);
+    expect(tx.teacherPublicLabel.findMany).toHaveBeenCalledWith({
+      where: { hidden: true },
+      select: { userId: true },
+      orderBy: { userId: 'asc' },
+    });
+    expect(recordedReads(tx)).toEqual([{ kind: 'PEOPLE', channel: 'WEB', ids: [P1, P2] }]);
+  });
+
+  it('records nothing when no teacher is hidden', async () => {
+    tx.teacherPublicLabel.findMany.mockResolvedValue([]);
+    await new PublicLinksService(prisma as unknown as PrismaService).hiddenTeachers(testUser());
+    expect(recordedReads(tx)).toEqual([]);
   });
 });
