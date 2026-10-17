@@ -1,5 +1,6 @@
 import type { GradeNumbering, LocalTimplanStatus, Prisma } from '@prisma/client';
-import { gradeOfPlanRow, lydelseIsTioarig } from '../common/grade-numbering';
+import { gradeOfPlanRow, lydelseIsTioarig, planRowOf } from '../common/grade-numbering';
+import { htOf, planFitsCohort } from '../common/timplan-cohorts';
 import { stageGradesFor, type CoverageVersion } from '../common/timplan-coverage';
 
 /**
@@ -82,31 +83,61 @@ export async function attachDefaultTimplans(
   schoolId: string,
   academicYearId: string,
   numbering: GradeNumbering = 'NIOARIG',
+  startDate?: string,
 ): Promise<YearTimplanRow[]> {
   const plan = await readDefaultTimplan(tx);
   if (!plan || plan.gradeLevels.length === 0) return [];
   // The plan's grades are its lydelse's rows; the year attaches the årskurser
   // that read them (an older plan's 1–9 are a TIOARIG year's 2–10).
-  const planTioarig = lydelseIsTioarig(plan.appliesFromCohortTerm);
   const gradeLevels = plan.gradeLevels
-    .map((row) => gradeOfPlanRow(planTioarig, numbering, row))
+    .map((row) => gradeOfPlanRow(lydelseIsTioarig(plan.appliesFromCohortTerm), numbering, row))
     .filter((grade): grade is number => grade !== null && grade <= MAX_ATTACHABLE_GRADE);
 
+  // Each årskurs follows the plan only when its årskull may (planFitsCohort):
+  // from HT 2028 a plan on SFS 2025:729 is for the new åk 1 alone, and an
+  // older plan for everybody above it. An årskurs it does not fit takes the
+  // newest decided plan of the same form that speaks for it and fits, or none.
+  const ht = startDate === undefined ? null : htOf(startDate);
+  const fits = (candidate: DecidedTimplan, grade: number) =>
+    ht === null || planFitsCohort(candidate.appliesFromCohortTerm, ht, grade);
+  let others: DecidedTimplan[] | null = null;
+  const rows: YearTimplanRow[] = [];
+  for (const gradeLevel of gradeLevels) {
+    let chosen: DecidedTimplan | undefined = fits(plan, gradeLevel) ? plan : undefined;
+    if (!chosen) {
+      others ??= (await readDecidedTimplans(tx)).filter((other) => other.id !== plan.id && other.schoolForm === plan.schoolForm);
+      chosen = others.find((other) => speaksFor(other, numbering, gradeLevel) && fits(other, gradeLevel));
+    }
+    if (!chosen) continue;
+    rows.push({
+      gradeLevel,
+      localTimplanId: chosen.id,
+      planName: chosen.name,
+      planStatus: chosen.status,
+      planTioarig: lydelseIsTioarig(chosen.appliesFromCohortTerm),
+    });
+  }
+  if (rows.length === 0) return [];
+
   await tx.academicYearTimplan.createMany({
-    data: gradeLevels.map((gradeLevel) => ({
+    data: rows.map((row) => ({
       schoolId,
       academicYearId,
-      gradeLevel,
-      localTimplanId: plan.id,
+      gradeLevel: row.gradeLevel,
+      localTimplanId: row.localTimplanId,
     })),
   });
-  return gradeLevels.map((gradeLevel) => ({
-    gradeLevel,
-    localTimplanId: plan.id,
-    planName: plan.name,
-    planStatus: plan.status,
-    planTioarig,
-  }));
+  return rows;
+}
+
+/** Whether a decided plan has a row for årskurs `grade` of a year in `numbering`. */
+export function speaksFor(
+  plan: { appliesFromCohortTerm: string; gradeLevels: readonly number[] },
+  numbering: GradeNumbering,
+  grade: number,
+): boolean {
+  const row = planRowOf(lydelseIsTioarig(plan.appliesFromCohortTerm), numbering, grade);
+  return row !== null && plan.gradeLevels.includes(row);
 }
 
 /** AcademicYearTimplans_gradeLevel_is_sane's top (20261121090000). */

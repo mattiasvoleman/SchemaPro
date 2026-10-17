@@ -493,6 +493,7 @@ export async function readRolloverSource(
       planName: row.localTimplan.name,
       planStatus: row.localTimplan.status,
       planSchoolForm: row.localTimplan.schoolForm,
+      planAppliesFrom: row.localTimplan.nationalVersion.appliesFromCohortTerm,
     })),
     decidedTimplans,
     planEntries,

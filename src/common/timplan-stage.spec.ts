@@ -1,5 +1,5 @@
 import fixture from './__fixtures__/timplan-stage-cases.json';
-import { cohortStartYear, htOf, pupilRegime, stageVersionFor, versionGradeOf } from './timplan-cohorts';
+import { cohortStartYear, htOf, planFitsCohort, pupilRegime, stageVersionFor, versionGradeOf } from './timplan-cohorts';
 import { cohortStartYear as rolloverCohortStartYear } from '../year-rollover/rollover-timplans';
 import { computePupilStages, summarizeClassStages, type StageCoverage, type StageInput, type StagePupil } from './timplan-stage';
 
@@ -39,6 +39,25 @@ describe('årskullar: the regime, the version grade and the version', () => {
     expect(pupilRegime([{ ht: 2028, gradeLevel: 2 }, { ht: 2029, gradeLevel: 2 }])).toBe('PRE_2028');
     expect(pupilRegime([{ ht: 2029, gradeLevel: 2 }])).toBe('REFORMED_2028');
     expect(pupilRegime([])).toBe('PRE_2028');
+  });
+
+  it('lets an årskurs follow only a plan on its årskull’s lydelse (planFitsCohort)', () => {
+    // 2028/29: åk 1 is the first reformed årskull; åk 2 is last year's
+    // förskoleklass, åk 10 last year's åttor — both keep the older total.
+    expect(planFitsCohort('HT2028', 2028, 1)).toBe(true);
+    expect(planFitsCohort('HT2024', 2028, 1)).toBe(false);
+    expect(planFitsCohort('HT2028', 2028, 2)).toBe(false);
+    expect(planFitsCohort('HT2024', 2028, 2)).toBe(true);
+    expect(planFitsCohort('HT2024', 2028, 10)).toBe(true);
+    // 2029/30: the reform has reached åk 2; a lydelse from HT 2031 fits nobody yet.
+    expect(planFitsCohort('HT2028', 2029, 2)).toBe(true);
+    expect(planFitsCohort('HT2028', 2029, 3)).toBe(false);
+    expect(planFitsCohort('HT2031', 2029, 1)).toBe(false);
+    // Before the reform every årskurs follows the older lydelse, förskoleklass
+    // included; after it förskoleklass is no årskurs.
+    expect(planFitsCohort('HT2024', 2027, 0)).toBe(true);
+    expect(planFitsCohort('HT2028', 2027, 1)).toBe(false);
+    expect(planFitsCohort('HT2024', 2028, 0)).toBe(false);
   });
 
   it('reads an old-cohort pupil one grade down from HT 2028, and förskoleklass after 2028 as no grade', () => {

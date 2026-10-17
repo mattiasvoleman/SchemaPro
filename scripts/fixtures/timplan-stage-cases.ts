@@ -13,7 +13,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cohortNotice, type CohortClass } from '../../src/common/timplan-cohorts';
+import { cohortNotice, planFitsCohort, type CohortClass } from '../../src/common/timplan-cohorts';
 import {
   computePupilStages,
   summarizeClassStages,
@@ -229,8 +229,16 @@ const cohortCases = [
   { name: 'a school in 2028/29, renumbered', schoolForm: 'GRUNDSKOLA' as const, classes: [cls('20281a00', '1A', 1, 2028), cls('20282a00', '2A', 2, 2028), cls('202810a0', '10A', 10, 2028)] },
 ].map((c) => ({ ...c, versions: withCount, notice: cohortNotice(c.classes, withCount, c.schoolForm) }));
 
+// Which årskurs of which läsår may follow a plan on which lydelse (planFitsCohort):
+// the older bilaga, SFS 2025:729, and a later 2028-type lydelse from HT 2031.
+const planFitCases = ['HT2024', 'HT2028', 'HT2031'].flatMap((appliesFromCohortTerm) =>
+  [2026, 2027, 2028, 2029, 2031].flatMap((ht) =>
+    Array.from({ length: 12 }, (_, gradeLevel) => ({ appliesFromCohortTerm, ht, gradeLevel, fits: planFitsCohort(appliesFromCohortTerm, ht, gradeLevel) })),
+  ),
+);
+
 writeFileSync(
   join(__dirname, '../../src/common/__fixtures__/timplan-stage-cases.json'),
-  JSON.stringify({ cases: out, cohortCases }, null, 1) + '\n',
+  JSON.stringify({ cases: out, cohortCases, planFitCases }, null, 1) + '\n',
 );
-console.log('cases', out.length, 'cohort cases', cohortCases.length);
+console.log('cases', out.length, 'cohort cases', cohortCases.length, 'plan fit cases', planFitCases.length);

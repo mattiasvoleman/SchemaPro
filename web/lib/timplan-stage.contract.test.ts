@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../../src/common/__fixtures__/timplan-stage-cases.json";
-import { cohortNotice, type CohortClass, type CohortNoticeRow } from "@/lib/timplan-cohorts";
+import { cohortNotice, planFitsCohort, type CohortClass, type CohortNoticeRow } from "@/lib/timplan-cohorts";
 import type { SchoolForm } from "@/lib/timplan-coverage";
 import {
   computePupilStages,
@@ -46,7 +46,11 @@ interface CohortCase {
   notice: CohortNoticeRow[];
 }
 
-const { cases, cohortCases } = fixture as unknown as { cases: FixtureCase[]; cohortCases: CohortCase[] };
+const { cases, cohortCases, planFitCases } = fixture as unknown as {
+  cases: FixtureCase[];
+  cohortCases: CohortCase[];
+  planFitCases: { appliesFromCohortTerm: string; ht: number; gradeLevel: number; fits: boolean }[];
+};
 
 describe("stadiesummor agree with the gateway's fixture", () => {
   it("has the spec's 21 cases, the two boundary cases and the cohort cases, reaching every cell status", () => {
@@ -75,6 +79,18 @@ describe("stadiesummor agree with the gateway's fixture", () => {
 
   it.each(cohortCases.map((entry) => [entry.name, entry] as const))("the cohort notice: %s", (_name, entry) => {
     expect(cohortNotice(entry.classes, entry.versions, entry.schoolForm)).toEqual(entry.notice);
+  });
+
+  it("says which årskurs of which läsår may follow a plan on which lydelse", () => {
+    expect(planFitCases.length).toBe(180);
+    for (const row of planFitCases) {
+      expect([row.appliesFromCohortTerm, row.ht, row.gradeLevel, planFitsCohort(row.appliesFromCohortTerm, row.ht, row.gradeLevel)]).toEqual([
+        row.appliesFromCohortTerm,
+        row.ht,
+        row.gradeLevel,
+        row.fits,
+      ]);
+    }
   });
 
   it("paints a class from its drill-down exactly as the overview does", () => {
