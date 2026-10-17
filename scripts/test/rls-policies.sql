@@ -19680,6 +19680,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('RoomPreferences', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('RoomTypes', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('Rooms', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('ScheduleCandidateRuns', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
+  ('ScheduleCandidates', '{SCHEMALAGGNING}', '{}', '{SCHEMALAGGNING}', '{}'),
   ('ScheduleChangeLogs', '{SCHEMALAGGNING}', '{}', '{}', '{}'),
   ('ScheduleVersions', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('SchoolBreaks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),

@@ -240,7 +240,8 @@ describe('the rollover registry', () => {
     // duty links (20261014100000), an uppdrag's times (20261017090000,
     // left behind with the uppdrag and counted, beside it in the list), and a
     // post's periods (20261022120000, left behind, the carried post being the
-    // year-start one).
+    // year-start one), and Schemaförslag's runs (20261125090000, a week's
+    // working material, never a starting point).
     const skipped = skippedModels();
     const added = [
       'TeacherDutySlot',
@@ -258,6 +259,8 @@ describe('the rollover registry', () => {
       'PublicTimetableLink',
       'PublicationPendingRemoval',
       'Ss12000DutyLink',
+      'ScheduleCandidateRun',
+      'ScheduleCandidate',
     ];
     expect(
       createHash('sha256')
