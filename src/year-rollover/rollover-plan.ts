@@ -5,6 +5,8 @@ import {
   dateShiftDays,
   defaultGraduatingGrade,
   frameChanges,
+  INTO_TIOARIG,
+  ONE_YEAR,
   mapPeriod,
   nameCollisions,
   promoteName,
@@ -21,10 +23,10 @@ import {
   type RolloverOutcome,
   type VolumeFinding,
 } from '../common/year-rollover';
-import { gradeOfPlanRow, planRowOf, TIOARIG_FROM } from '../common/grade-numbering';
+import { fromNioarig, gradeOfPlanRow, planRowOf, TIOARIG_FROM, toNioarig } from '../common/grade-numbering';
 import { isMixed } from '../common/lesson-lengths';
 import { isLanguageBlockName } from '../timplan/generate-requirements';
-import { qualificationFinding } from '../staffing/staffing-checks';
+import { gradesParam, qualificationFinding } from '../staffing/staffing-checks';
 import type { GradeSpan } from '../staffing/teacher-load';
 import { skippedModels } from './rollover-registry';
 import type { RolloverSource, SourceGroup } from './rollover-source';
@@ -57,6 +59,15 @@ export interface RolloverRequest {
   carryClassRules?: boolean;
   breaks?: { sourceBreakId: string; startDate?: string; endDate?: string }[];
   /**
+   * The rollover into HT 2028 (SFS 2025:729): true renumbers every årskurs
+   * (övergångsbestämmelse 4), false keeps the school's numbering — for a
+   * school outside the four forms only. Absent: renumbered when the source
+   * year shows a form the reform covers (a timplan row, a förskoleklass), and
+   * otherwise a blocking question (ROLLOVER_2028_SCHOOL_FORM_UNKNOWN). Ignored
+   * by every other rollover.
+   */
+  renumber2028?: boolean;
+  /**
    * Carry tjänster and uppdrag (staffing Fas 5). Absent means false, unlike
    * the four options above: a request from before the option existed plans,
    * writes and hashes exactly as it did. The wizard sends true by default.
@@ -80,6 +91,10 @@ export type RolloverProblemCode =
   | 'VOLUME_DIFFERS_FROM_TIMPLAN'
   | 'ISO_WEEK_53_CROSSED'
   | 'ROLLOVER_2028_RENUMBERING'
+  | 'ROLLOVER_2028_NOT_RENUMBERED'
+  | 'ROLLOVER_2028_SCHOOL_FORM_UNKNOWN'
+  | 'ROLLOVER_2028_RENUMBERING_REQUIRED'
+  | 'ROLLOVER_GRADE_ABOVE_12'
   | 'ROLLOVER_TIMPLAN_NO_FITTING_PLAN'
   | StaffingProblemCode;
 
@@ -256,6 +271,12 @@ export interface RolloverPlan {
   timplans: PlannedTimplan[];
   /** What carrying tjänster and uppdrag would do; null without carryStaffing. */
   staffing: StaffingCarryPreview | null;
+  /**
+   * The rollover into HT 2028 (SFS 2025:729), and whether it renumbers: the
+   * wizard names next year's groups with the same step. Null for every other
+   * rollover.
+   */
+  reform2028: { renumbers: boolean; numbering: GradeNumbering } | null;
   skipped: { model: string; reason: string; count: number | null }[];
   problems: RolloverProblem[];
   blocking: boolean;
@@ -265,9 +286,6 @@ export interface RolloverPlan {
 }
 
 const clock = (value: Date): string => value.toISOString().slice(11, 16);
-
-/** SFS 2025:729 applies to education after 30 June 2028 (övergångsbestämmelse 2). */
-const REFORM_2028_FROM = '2028-07-01';
 
 export function planRollover(source: RolloverSource, request: RolloverRequest): RolloverPlan {
   const options = {
@@ -304,26 +322,46 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   if (overlapping.length > 0) {
     problems.push({ code: 'YEAR_DATES_OVERLAP', blocking: false, params: { years: overlapping } });
   }
-  // The tioårig grundskola (SFS 2025:729, i kraft 2026-07-01, tillämpas från
-  // 2028-07-01). Its övergångsbestämmelse 4 moves every pupil already in
-  // school one årskurs further than a normal year: förskoleklassen 2027/28
-  // begins directly in åk 2, and everyone who would have begun åk 2 or
-  // higher in HT 2028 begins the årskurs above it. This rollover promotes
-  // one årskurs (PROMOTE_GRADE); the double step is a follow-up due before
-  // the spring 2028 rollover. Until then the preview SAYS so, as a warning
-  // that blocks nothing — every class's gradeLevel in a year from HT 2028
-  // would otherwise be one too low without anybody being told. Not a write,
-  // so the planHash over the writes is unchanged. Only for the rollover that
-  // CROSSES into the reform (source before 1 July 2028, target from it): the
-  // double step is once, and a rollover from 2028/29 into 2029/30 promotes
-  // one årskurs like any other.
-  if (sourceBounds.startDate < REFORM_2028_FROM && target.startDate >= REFORM_2028_FROM) {
-    problems.push({
-      code: 'ROLLOVER_2028_RENUMBERING',
-      blocking: false,
-      params: { startYear: Number(target.startDate.slice(0, 4)), source: 'SFS 2025:729, övergångsbestämmelse 4' },
-    });
+  // ---- the tioårig grundskola (SFS 2025:729, tillämpas från 2028-07-01)
+  // Övergångsbestämmelse 4 moves every pupil already in school one årskurs
+  // further than a normal year: förskoleklassen 2027/28 begins directly in åk
+  // 2, and everyone who would have begun åk 2 or higher in HT 2028 begins the
+  // årskurs above it — in grundskolan, anpassade grundskolan, specialskolan
+  // and sameskolan alike. So the rollover that CROSSES into the reform (a
+  // NIOARIG source, a target from 1 July 2028) renumbers: a promoted group
+  // moves two årskurser, a carried one and an intake twin one (INTO_TIOARIG),
+  // and the new year is TIOARIG. Once: a rollover from a TIOARIG year promotes
+  // one like any other, and so does one from a NIOARIG year that already
+  // starts after the date (a school that kept its numbering).
+  //
+  // WHO RENUMBERS. Per school, never per grade (one year, one numbering).
+  // Every SchoolForm is one of the four forms, so a source year with a
+  // timplan row, or with a förskoleklass, is a school the reform covers and
+  // renumbers without asking; asked to keep its numbering it is refused
+  // (ROLLOVER_2028_RENUMBERING_REQUIRED). A source year with neither shows no
+  // form, and the request must say (ROLLOVER_2028_SCHOOL_FORM_UNKNOWN): true
+  // renumbers, false keeps the numbering — a school that is not grundskola
+  // stays untouched, its new year NIOARIG.
+  const crossing =
+    source.year.gradeNumbering === 'NIOARIG' && sourceBounds.startDate < TIOARIG_FROM && target.startDate >= TIOARIG_FROM;
+  const reformEvidence =
+    source.timplans.length > 0 || source.groups.some((group) => group.kind === 'CLASS' && group.gradeLevel === 0);
+  const renumbers = crossing && (request.renumber2028 ?? reformEvidence);
+  if (crossing) {
+    const params = { startYear: Number(target.startDate.slice(0, 4)), source: 'SFS 2025:729, övergångsbestämmelse 4' };
+    if (request.renumber2028 === undefined && !reformEvidence) {
+      problems.push({ code: 'ROLLOVER_2028_SCHOOL_FORM_UNKNOWN', blocking: true, params });
+    } else if (request.renumber2028 === false && reformEvidence) {
+      problems.push({ code: 'ROLLOVER_2028_RENUMBERING_REQUIRED', blocking: true, params });
+    } else if (renumbers) {
+      problems.push({ code: 'ROLLOVER_2028_RENUMBERING', blocking: false, params });
+    } else {
+      problems.push({ code: 'ROLLOVER_2028_NOT_RENUMBERED', blocking: false, params });
+    }
   }
+  const step = renumbers ? INTO_TIOARIG : ONE_YEAR;
+  const targetNumbering: GradeNumbering =
+    source.year.gradeNumbering === 'TIOARIG' || renumbers ? 'TIOARIG' : 'NIOARIG';
 
   // ---- G
   // A plan's top row is in its lydelse's numbering; G is in the source
@@ -365,7 +403,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     }
     choices.set(choice.sourceGroupId, { outcome: choice.outcome, name: choice.name });
   }
-  const resolved = resolveGroups(source.groups, g, options, choices);
+  const resolved = resolveGroups(source.groups, g, options, choices, step);
   const resolvedById = new Map(resolved.map((row) => [row.sourceGroupId, row]));
   for (const row of resolved) {
     if (row.error) {
@@ -394,6 +432,14 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     });
   }
   const colliding = new Set(blockedNames.flatMap((collision) => collision.sourceGroupIds));
+  const aboveTwelve = resolved
+    .filter((row) => (row.successor?.gradeLevel ?? 0) > 12 || (row.intake?.gradeLevel ?? 0) > 12)
+    .map((row) => groupById.get(row.sourceGroupId)!.name)
+    .sort();
+  // Without a G every graded group promotes, and that problem says so already.
+  if (graduating !== null && aboveTwelve.length > 0) {
+    problems.push({ code: 'ROLLOVER_GRADE_ABOVE_12', blocking: true, params: { groups: aboveTwelve } });
+  }
   const caseColliding = new Set(caseNames.flatMap((collision) => collision.sourceGroupIds));
 
   const writes: RolloverWrites = {
@@ -403,7 +449,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       endDate: target.endDate,
       graduatingGradeLevel: g,
       predecessorId: source.year.id,
-      ...(target.startDate >= TIOARIG_FROM ? { gradeNumbering: source.year.gradeNumbering } : {}),
+      ...(target.startDate >= TIOARIG_FROM ? { gradeNumbering: targetNumbering } : {}),
     },
     groups: [],
     members: [],
@@ -504,6 +550,11 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     }
     return own === null ? null : { min: own, max: own };
   };
+  // The span is the new year's; behörigheter are stated in the nine-year
+  // numbering for good (grade-numbering.ts), so a TIOARIG year's 10A is
+  // judged as the 9 a teacher's "7–9" holds — and named as the 10 it is.
+  const judgedSpan = (span: GradeSpan | null): GradeSpan | null =>
+    span === null ? null : { min: toNioarig(span.min, targetNumbering)!, max: toNioarig(span.max, targetNumbering)! };
   const requirementStats: RolloverPlan['requirements'] = {
     carried: 0,
     notCarried: 0,
@@ -595,7 +646,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
             userId,
             role,
             subject: { id: requirement.subjectId, name: requirement.subjectName },
-            span,
+            span: judgedSpan(span),
             window: target,
           });
           if (finding?.mode === 'REFUSE') return clear('NOT_QUALIFIED');
@@ -606,7 +657,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
               groupName: targetGroupName,
               role,
               teacherId: userId,
-              grades: String(finding.params.grades),
+              grades: gradesParam(span),
             });
           }
           return userId;
@@ -697,8 +748,10 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
           kind: lov.kind,
           startDate: startDateToWrite,
           endDate: endDateToWrite,
-          minGradeLevel: lov.minGradeLevel,
-          maxGradeLevel: lov.maxGradeLevel,
+          // A lov's span is its year's own: renumbered with the year (åk 7–9
+          // is 8–10 of the tioårig year), 12 staying "and above".
+          minGradeLevel: renumbers ? fromNioarig(lov.minGradeLevel, 'TIOARIG') : lov.minGradeLevel,
+          maxGradeLevel: renumbers ? fromNioarig(lov.maxGradeLevel, 'TIOARIG') : lov.maxGradeLevel,
         });
       }
     }
@@ -722,7 +775,9 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       const row = group ? resolvedById.get(group.id) : undefined;
       if (!group || !row?.successor) continue;
       const stageChange =
-        row.outcome !== 'CARRY' && group.gradeLevel !== null && frameChanges(source.frames, group.gradeLevel);
+        row.outcome !== 'CARRY' &&
+        group.gradeLevel !== null &&
+        frameChanges(source.frames, toNioarig(group.gradeLevel, source.year.gradeNumbering)!);
       classRules.push({
         sourceConstraintId: rule.id,
         sourceGroupName: group.name,
@@ -747,14 +802,21 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   }
 
   // ---- timplan per årskurs, by cohort
-  // A cohort is a class that moves up a grade, not an attachment row.
-  const movingCohorts = new Set<number>();
+  // A cohort is a class that moves up, not an attachment row: source grade →
+  // its successor's (g + 1, or g + 2 across the reform).
+  const movingCohorts = new Map<number, number>();
   for (const row of resolved) {
     const group = groupById.get(row.sourceGroupId)!;
-    if (group.kind === 'CLASS' && group.gradeLevel !== null && row.successor?.gradeLevel === group.gradeLevel + 1) {
-      movingCohorts.add(group.gradeLevel);
+    const to = row.successor?.gradeLevel ?? null;
+    if (group.kind === 'CLASS' && group.gradeLevel !== null && to !== null && to === group.gradeLevel + step.promote) {
+      movingCohorts.set(group.gradeLevel, to);
     }
   }
+  // The new åk 1 across the reform: where an intake twin opens at åk 1, or the
+  // source plans the årskurs whose age it now is (F, or the old åk 1).
+  const newFirstGrade =
+    renumbers &&
+    (resolved.some((row) => row.intake?.gradeLevel === 1) || source.timplans.some((row) => row.gradeLevel <= 1));
   const { rows: timplans, unattached } = cohortTimplans({
     source: source.timplans,
     graduatingGradeLevel: g,
@@ -762,7 +824,8 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     decided: source.decidedTimplans,
     targetStartYear: Number(target.startDate.slice(0, 4)),
     sourceNumbering: source.year.gradeNumbering,
-    targetNumbering: writes.year.gradeNumbering ?? 'NIOARIG',
+    targetNumbering,
+    alsoGrades: newFirstGrade ? [1] : [],
   });
   for (const row of timplans) {
     writes.timplans.push({ gradeLevel: row.gradeLevel, localTimplanId: row.localTimplanId });
@@ -781,7 +844,6 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   // a draft included — the plan the coverage report will measure the class
   // against — and only when the plan gives the grade any minutes at all.
   // The plan's row for the grade, in the plan's numbering (planRowOf).
-  const targetNumbering = writes.year.gradeNumbering ?? 'NIOARIG';
   const followed = new Map(timplans.map((row) => [row.gradeLevel, row]));
   const planFor = (grade: number) => {
     const row = followed.get(grade);
@@ -904,6 +966,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     classRules,
     timplans,
     staffing,
+    reform2028: crossing ? { renumbers, numbering: targetNumbering } : null,
     skipped,
     problems,
     blocking: problems.some((problem) => problem.blocking),
@@ -995,10 +1058,12 @@ function planBlocks(
       // A successor row's groupKey is its source group's id.
       const moves = rows.filter((row) => row.blockKey === block.id).map((row) => cohortMove(row.groupKey));
       const from = moves[0]?.from ?? null;
-      const promoted = from !== null && moves.every((move) => move.from === from && move.to === from + 1);
+      const to = moves[0]?.to ?? null;
+      const promoted =
+        from !== null && to !== null && to > from && moves.every((move) => move.from === from && move.to === to);
       const unknown = moves.some((move) => move.from === null || move.to === null);
       const name = promoted
-        ? promoteName(block.name, from).name
+        ? promoteName(block.name, from, to).name
         : unknown && isLanguageBlockName(block.name)
           ? withSuffix(block.name, ` (${source.year.name})`)
           : block.name;

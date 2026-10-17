@@ -100,6 +100,7 @@ export function defaultRolloverRows(): Record<string, Row[]> {
         isActive: true,
         predecessorId: null,
         graduatingGradeLevel: null,
+        gradeNumbering: 'NIOARIG',
       },
     ],
     studentGroup: [
@@ -709,7 +710,13 @@ export function givenRolloverWorld(
               case 'count':
                 return found.length;
               case 'create': {
-                const row = { id: freshId(), ...(args['data'] as Row) };
+                const row: Row = { id: freshId(), ...(args['data'] as Row) };
+                // AcademicYears_numbering: a year without a numbering is given
+                // the one its start date allows (20261121091000).
+                if (name === 'academicYear' && row['gradeNumbering'] === undefined) {
+                  const start = row['startDate'] instanceof Date ? row['startDate'].toISOString() : String(row['startDate']);
+                  row['gradeNumbering'] = start < '2028-07-01' ? 'NIOARIG' : 'TIOARIG';
+                }
                 table(name).push(row);
                 return row;
               }

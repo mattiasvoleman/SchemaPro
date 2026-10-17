@@ -1636,6 +1636,220 @@ describe('YearRolloverService — timplan per årskurs by cohort', () => {
   });
 });
 
+describe('YearRolloverService — into HT 2028, the tioårig grundskola (SFS 2025:729)', () => {
+  const INTO_2028: RolloverOptionsDto = { name: '2028/29', startDate: '2028-08-14', endDate: '2029-06-08' };
+  const params = { startYear: 2028, source: 'SFS 2025:729, övergångsbestämmelse 4' };
+  const utc = (value: string) => new Date(`${value}T00:00:00.000Z`);
+  const FA = 'b0000000-0000-4000-8000-0000000000f0';
+
+  /** The world's year as 2027/28, the last year of the nine-year numbering. */
+  function rows2027(): Record<string, Row[]> {
+    const rows = defaultRolloverRows();
+    Object.assign(rows['academicYear']![0]!, { name: '2027/28', startDate: utc('2027-08-16'), endDate: utc('2028-06-09') });
+    return rows;
+  }
+  type Planned = {
+    groups: {
+      sourceName: string;
+      outcome: string;
+      targetName: string | null;
+      targetGradeLevel: number | null;
+      intakeName: string | null;
+    }[];
+  };
+  const groupsOf = (preview: Planned) =>
+    Object.fromEntries(
+      preview.groups.map((group) => [group.sourceName, [group.outcome, group.targetName, group.targetGradeLevel, group.intakeName]]),
+    );
+  const codes = (preview: { problems: { code: string }[] }) => preview.problems.map((problem) => problem.code);
+
+  it('renumbers a school its timplan places in the four forms without asking: 7A → 9A, 8A → 10A, the nians graduate, and the new year is tioårig', async () => {
+    const { world, service } = setup(rows2027());
+    const { preview, result } = await previewAndExecute(world, service, INTO_2028);
+    expect(preview.reform2028).toEqual({ renumbers: true, numbering: 'TIOARIG' });
+    expect(preview.problems).toContainEqual({ code: 'ROLLOVER_2028_RENUMBERING', blocking: false, params });
+    expect(preview.blocking).toBe(false);
+    expect(groupsOf(preview)).toEqual({
+      '7A': ['PROMOTE', '9A', 9, null],
+      '8A': ['PROMOTE', '10A', 10, null],
+      '9A': ['GRADUATE', null, null, null],
+      'Ma7 grupp 1': ['PROMOTE', 'Ma9 grupp 1', 9, null],
+    });
+    const year = world.rows['academicYear']!.find((row) => row['id'] === result.academicYear.id)!;
+    expect(year['gradeNumbering']).toBe('TIOARIG');
+    const created = world.rows['studentGroup']!
+      .filter((group) => group['academicYearId'] === result.academicYear.id)
+      .map((group) => [group['name'], group['gradeLevel']])
+      .sort();
+    expect(created).toEqual([
+      ['10A', 10],
+      ['9A', 9],
+      ['Ma9 grupp 1', 9],
+    ]);
+  });
+
+  it('carries each moving årskull’s own plan to its new årskurs', async () => {
+    const { service } = setup(rows2027());
+    const preview = await service.previewRollover(IDS.yearA, INTO_2028, admin);
+    // The 2027/28 årskullar 7 and 8 began school before 2028: they keep the
+    // older plan (övergångsbestämmelse 12) at åk 9 and 10 of the new year.
+    expect(preview.timplans.map((row) => [row.gradeLevel, row.reason, row.fromGradeLevel, row.planName])).toEqual(
+      expect.arrayContaining([
+        [9, 'CARRIED', 7, 'Utkast 2027'],
+        [10, 'CARRIED', 8, 'Utkast 2027'],
+      ]),
+    );
+  });
+
+  it('asks a school whose year shows no school form, and refuses until answered', async () => {
+    const rows = rows2027();
+    rows['academicYearTimplan'] = [];
+    const { service } = setup(rows);
+    const unasked = await service.previewRollover(IDS.yearA, INTO_2028, admin);
+    expect(unasked.problems).toContainEqual({ code: 'ROLLOVER_2028_SCHOOL_FORM_UNKNOWN', blocking: true, params });
+    expect(unasked.blocking).toBe(true);
+    expect(unasked.reform2028).toEqual({ renumbers: false, numbering: 'NIOARIG' });
+    const refusal = await service
+      .executeRollover(IDS.yearA, { ...INTO_2028, graduatingGradeLevel: 9, planHash: unasked.planHash }, admin)
+      .catch((e) => e);
+    expect(refusal).toBeInstanceOf(BadRequestException);
+    expect(refusal.getResponse()).toMatchObject({ code: 'ROLLOVER_2028_SCHOOL_FORM_UNKNOWN' });
+
+    const renumbered = await service.previewRollover(IDS.yearA, { ...INTO_2028, renumber2028: true }, admin);
+    expect(renumbered.blocking).toBe(false);
+    expect(codes(renumbered)).toContain('ROLLOVER_2028_RENUMBERING');
+    expect(groupsOf(renumbered)['7A']).toEqual(['PROMOTE', '9A', 9, null]);
+  });
+
+  it('leaves a school outside the four forms untouched when told so: one årskurs up, and the new year keeps the nine-year numbering', async () => {
+    const rows = rows2027();
+    rows['academicYearTimplan'] = [];
+    const { world, service } = setup(rows);
+    const { preview, result } = await previewAndExecute(world, service, { ...INTO_2028, renumber2028: false });
+    expect(preview.reform2028).toEqual({ renumbers: false, numbering: 'NIOARIG' });
+    expect(preview.problems).toContainEqual({ code: 'ROLLOVER_2028_NOT_RENUMBERED', blocking: false, params });
+    expect(codes(preview)).not.toContain('ROLLOVER_2028_RENUMBERING');
+    expect(groupsOf(preview)['7A']).toEqual(['PROMOTE', '8A', 8, null]);
+    expect(groupsOf(preview)['8A']).toEqual(['PROMOTE', '9A', 9, null]);
+    const year = world.rows['academicYear']!.find((row) => row['id'] === result.academicYear.id)!;
+    expect(year['gradeNumbering']).toBe('NIOARIG');
+  });
+
+  it('refuses to keep the numbering of a school its timplan places in the four forms', async () => {
+    const { service } = setup(rows2027());
+    const preview = await service.previewRollover(IDS.yearA, { ...INTO_2028, renumber2028: false }, admin);
+    expect(preview.problems).toContainEqual({ code: 'ROLLOVER_2028_RENUMBERING_REQUIRED', blocking: true, params });
+    expect(preview.blocking).toBe(true);
+  });
+
+  it('moves förskoleklassen directly to åk 2, opens the new åk 1 as its intake twin, and will not carry it unchanged', async () => {
+    const rows = rows2027();
+    rows['academicYearTimplan'] = [];
+    rows['studentGroup']!.push({ id: FA, academicYearId: IDS.yearA, name: 'FA', kind: 'CLASS', gradeLevel: 0, predecessorId: null });
+    const { service } = setup(rows);
+    // A förskoleklass places the school in the four forms: no question.
+    const promoted = await service.previewRollover(IDS.yearA, { ...INTO_2028, graduatingGradeLevel: 9 }, admin);
+    expect(codes(promoted)).not.toContain('ROLLOVER_2028_SCHOOL_FORM_UNKNOWN');
+    expect(groupsOf(promoted)['FA']).toEqual(['PROMOTE', '2A', 2, null]);
+
+    const intake = await service.previewRollover(
+      IDS.yearA,
+      { ...INTO_2028, graduatingGradeLevel: 9, groups: [{ sourceGroupId: FA, outcome: 'INTAKE' }] },
+      admin,
+    );
+    expect(groupsOf(intake)['FA']).toEqual(['INTAKE', '2A', 2, '1A']);
+
+    const carried = await service.previewRollover(
+      IDS.yearA,
+      { ...INTO_2028, graduatingGradeLevel: 9, groups: [{ sourceGroupId: FA, outcome: 'CARRY' }] },
+      admin,
+    );
+    expect(carried.problems).toContainEqual(
+      expect.objectContaining({
+        code: 'ROLLOVER_GROUP_CHOICE_INVALID',
+        blocking: true,
+        params: expect.objectContaining({ error: 'CARRY_FORSKOLEKLASS' }),
+      }),
+    );
+  });
+
+  it('carries a class that stays one årskurs up and renamed, since its årskull is numbered one higher', async () => {
+    const { service } = setup(rows2027());
+    const preview = await service.previewRollover(
+      IDS.yearA,
+      { ...INTO_2028, groups: [{ sourceGroupId: IDS.g7a, outcome: 'CARRY' }] },
+      admin,
+    );
+    expect(groupsOf(preview)['7A']).toEqual(['CARRY', '8A', 8, null]);
+  });
+
+  it('blocks a group that would land above åk 12', async () => {
+    const rows = rows2027();
+    rows['studentGroup']!.push({
+      id: 'b0000000-0000-4000-8000-0000000000e1',
+      academicYearId: IDS.yearA,
+      name: '11A',
+      kind: 'CLASS',
+      gradeLevel: 11,
+      predecessorId: null,
+    });
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(IDS.yearA, { ...INTO_2028, graduatingGradeLevel: 12 }, admin);
+    expect(preview.problems).toContainEqual({ code: 'ROLLOVER_GRADE_ABOVE_12', blocking: true, params: { groups: ['11A'] } });
+  });
+
+  it('judges a kept teacher’s behörighet in the nine-year numbering it is stated in, and names the grade the new year uses', async () => {
+    const rows = rows2027();
+    rows['staffingPolicy'] = [{ qualificationMode: 'WARN' }];
+    // Anna holds matematik 7–8: next year's 9A (today's 7A) is the old åk 8,
+    // inside it; 10A (today's 8A) is the old åk 9, outside it.
+    rows['teacherSubjectQualification'] = [
+      { userId: IDS.anna, subjectId: IDS.ma, minGradeLevel: 7, maxGradeLevel: 8, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+    ];
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(IDS.yearA, INTO_2028, admin);
+    expect(preview.requirements.qualificationWarnings.map((row) => [row.groupName, row.grades])).toEqual([
+      ['10A', '10'],
+      ['Ma9 grupp 1', '9–10'],
+    ]);
+  });
+
+  it('carries a lov’s grade span into the new numbering', async () => {
+    const rows = rows2027();
+    Object.assign(rows['schoolBreak']!.find((row) => row['id'] === IDS.hostlov)!, { minGradeLevel: 7, maxGradeLevel: 9 });
+    const { world, service } = setup(rows);
+    const { result } = await previewAndExecute(world, service, {
+      ...INTO_2028,
+      breaks: [{ sourceBreakId: IDS.hostlov, startDate: '2028-10-30', endDate: '2028-11-03' }],
+    });
+    const lov = world.rows['schoolBreak']!.find((row) => row['academicYearId'] === result.academicYear.id)!;
+    expect([lov['minGradeLevel'], lov['maxGradeLevel']]).toEqual([8, 10]);
+  });
+
+  it('steps once: a tioårig year rolls one årskurs up and stays tioårig', async () => {
+    const rows = defaultRolloverRows();
+    Object.assign(rows['academicYear']![0]!, {
+      name: '2028/29',
+      startDate: utc('2028-08-14'),
+      endDate: utc('2029-06-08'),
+      gradeNumbering: 'TIOARIG',
+    });
+    const { world, service } = setup(rows);
+    const { preview, result } = await previewAndExecute(world, service, {
+      name: '2029/30',
+      startDate: '2029-08-13',
+      endDate: '2030-06-07',
+      graduatingGradeLevel: 10,
+    });
+    expect(preview.reform2028).toBeNull();
+    expect(codes(preview).filter((code) => code.startsWith('ROLLOVER_2028'))).toEqual([]);
+    expect(groupsOf(preview)['8A']).toEqual(['PROMOTE', '9A', 9, null]);
+    expect(groupsOf(preview)['9A']).toEqual(['PROMOTE', '10A', 10, null]);
+    const year = world.rows['academicYear']!.find((row) => row['id'] === result.academicYear.id)!;
+    expect(year['gradeNumbering']).toBe('TIOARIG');
+  });
+});
+
 describe('YearRolloverService — activation', () => {
   const AFTER = { today: '2027-06-14' };
 

@@ -953,6 +953,12 @@ export interface RolloverPreview {
   timplans: RolloverPlannedTimplan[];
   /** What carrying tjänster and uppdrag would do (staffing Fas 5); null without carryStaffing. */
   staffing: StaffingCarryPreview | null;
+  /**
+   * The rollover into HT 2028 (SFS 2025:729) and whether it renumbers: the
+   * wizard names next year's groups with the same step. Null for every other
+   * rollover; absent from a gateway before the tioårig grundskola.
+   */
+  reform2028?: { renumbers: boolean; numbering: GradeNumbering } | null;
   skipped: { model: string; reason: string; count: number | null }[];
   problems: RolloverProblem[];
   blocking: boolean;
@@ -972,6 +978,8 @@ export interface RolloverOptions {
   carryClassRules?: boolean;
   /** Ta med tjänster och uppdrag. The server reads an absent field as false; the wizard always sends it. */
   carryStaffing?: boolean;
+  /** Into HT 2028: true renumbers into the tioårig numbering, false keeps it; absent lets the source year decide. */
+  renumber2028?: boolean;
   breaks?: { sourceBreakId: string; startDate?: string; endDate?: string }[];
 }
 

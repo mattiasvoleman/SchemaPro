@@ -624,7 +624,7 @@ describe("RolloverWizard", () => {
     expect(await screen.findByRole("button", { name: "Skapa 2027/28" })).toBeDisabled();
   });
 
-  it("warns on the year step, without blocking, that a year from HT 2028 moves pupils two grades", async () => {
+  it("says on the year step, without blocking, that a year from HT 2028 moves pupils two grades", async () => {
     post.mockImplementation(async (_path: string, body: RolloverOptions) =>
       previewFor(body, {
         problems: [
@@ -638,13 +638,56 @@ describe("RolloverWizard", () => {
     );
     const user = userEvent.setup();
     renderWizard();
-    const warning = await screen.findByText(/Det nya läsåret börjar 2028: enligt SFS 2025:729, övergångsbestämmelse 4/);
+    const warning = await screen.findByText(/Det nya läsåret börjar 2028 och numreras tioårigt: enligt SFS 2025:729, övergångsbestämmelse 4/);
     expect(warning.closest("li")).not.toHaveAttribute("role", "alert");
     await user.click(screen.getByRole("button", { name: /Granska/ }));
     // A warning, not a refusal: the year can still be created.
     const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
     await waitFor(() => expect(create).toBeEnabled());
-    expect(screen.getByText(/går eleverna som redan går i skolan upp två årskurser/)).toBeInTheDocument();
+    expect(screen.getByText(/flyttas varje klass upp två årskurser i stället för en/)).toBeInTheDocument();
+  });
+
+  it("asks the numbering into HT 2028 when the year shows no school form, sends the answer, and names the classes two grades up", async () => {
+    // A source year 2027/28, so the new year (52 weeks on) starts in August 2028.
+    const before = { ...year };
+    Object.assign(year, { name: "2027/28", startDate: "2027-08-16", endDate: "2028-06-09" });
+    try {
+      const params = { startYear: 2028, source: "SFS 2025:729, övergångsbestämmelse 4" };
+      post.mockImplementation(async (_path: string, body: RolloverOptions) =>
+        previewFor(body, {
+          reform2028: { renumbers: body.renumber2028 === true, numbering: body.renumber2028 ? "TIOARIG" : "NIOARIG" },
+          problems:
+            body.renumber2028 === undefined
+              ? [{ code: "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN", blocking: true, params }]
+              : [{ code: body.renumber2028 ? "ROLLOVER_2028_RENUMBERING" : "ROLLOVER_2028_NOT_RENUMBERED", blocking: false, params }],
+          blocking: body.renumber2028 === undefined,
+        }),
+      );
+      const user = userEvent.setup();
+      renderWizard();
+      expect(await screen.findByText(/Välj numrering under Numrering från hösten 2028/)).toBeInTheDocument();
+      expect(previewCalls().at(-1)).not.toHaveProperty("renumber2028");
+
+      await user.click(screen.getByRole("combobox", { name: "Numrering från hösten 2028" }));
+      await user.click(screen.getByRole("option", { name: /^Tioårig/ }));
+      await waitFor(() => expect(previewCalls().at(-1)?.renumber2028).toBe(true));
+      expect(await screen.findByText(/numreras tioårigt/)).toBeInTheDocument();
+
+      // The mirror names with the same double step the planner takes.
+      await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
+      expect(screen.getByLabelText("Nytt namn för 7A")).toHaveAttribute("placeholder", "9A");
+      expect(screen.getByLabelText("Nytt namn för 8A")).toHaveAttribute("placeholder", "10A");
+
+      // Keeping the numbering is the ordinary step again.
+      await user.click(screen.getByRole("button", { name: /Nytt läsår/ }));
+      await user.click(screen.getByRole("combobox", { name: "Numrering från hösten 2028" }));
+      await user.click(screen.getByRole("option", { name: /^Behåll numreringen/ }));
+      await waitFor(() => expect(previewCalls().at(-1)?.renumber2028).toBe(false));
+      await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
+      expect(screen.getByLabelText("Nytt namn för 7A")).toHaveAttribute("placeholder", "8A");
+    } finally {
+      Object.assign(year, before);
+    }
   });
 
   it("says once what happens to the published undervisningstid, and not its rows in the registry's words", async () => {

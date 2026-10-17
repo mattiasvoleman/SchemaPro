@@ -63,7 +63,9 @@ export type GroupChoiceError =
   /** PROMOTE asked of a group with no grade to promote. */
   | "PROMOTE_WITHOUT_GRADE"
   /** INTAKE asked of anything but a class at the source's lowest class grade. */
-  | "INTAKE_NOT_LOWEST";
+  | "INTAKE_NOT_LOWEST"
+  /** CARRY asked of förskoleklass in the year into the tioårig numbering (SFS 2025:729 övg. 4). */
+  | "CARRY_FORSKOLEKLASS";
 
 export interface RolloverGroupInput {
   id: string;
@@ -79,6 +81,21 @@ export interface GroupChoice {
   /** The successor's name, typed by the admin. */
   name?: string;
 }
+
+/**
+ * How many årskurser a rollover moves a group: a promoted one a year, a
+ * carried one none — or, into the tioårig numbering, two and one (the
+ * gateway file says why).
+ */
+export interface GradeStep {
+  promote: number;
+  carry: number;
+}
+
+/** A year like any other. */
+export const ONE_YEAR: GradeStep = { promote: 1, carry: 0 };
+/** The year into HT 2028 for a school in the four forms. */
+export const INTO_TIOARIG: GradeStep = { promote: 2, carry: 1 };
 
 export interface ResolvedGroup {
   sourceGroupId: string;
@@ -101,35 +118,38 @@ export interface ResolvedGroup {
 const F_KLASS = /^F(sk|-klass)?[\s-]?([A-ZÅÄÖa-zåäö0-9]{1,3})$/;
 
 /**
- * The successor's name for a group of `gradeLevel`.
+ * The successor's name for a group of `gradeLevel` moving to årskurs `to`
+ * (grade + 1 unless said: two across the reform, "8A" → "10A").
  *
- * One whole digit run equal to the grade becomes grade + 1: "7A" → "8A",
+ * One whole digit run equal to the grade becomes `to`: "7A" → "8A",
  * "Klass 7B" → "Klass 8B", and "8-2" in åk 8 → "9-2", since only the run
  * equal to the grade counts. Runs are compared as whole numbers, never as
  * characters, so "17A" is not a grade-1 name. Two runs equal to the grade
  * ("7A7") or runs but none equal ("Ma71" in åk 7) keep the name, flagged
- * KEPT_AMBIGUOUS. No digits: förskoleklass names map to åk 1 (grade 0 only),
- * everything else is kept, KEPT_NO_GRADE_DIGIT.
+ * KEPT_AMBIGUOUS. No digits: förskoleklass names map to `to` (grade 0 only:
+ * "FA" → "1A", or "2A" across the reform), everything else is kept,
+ * KEPT_NO_GRADE_DIGIT.
  */
 export function promoteName(
   name: string,
   gradeLevel: number | null,
+  to: number | null = gradeLevel === null ? null : gradeLevel + 1,
 ): { name: string; status: NameStatus } {
-  if (gradeLevel === null) return { name, status: "KEPT" };
+  if (gradeLevel === null || to === null) return { name, status: "KEPT" };
   const runs = [...name.matchAll(/\d+/g)];
   const equal = runs.filter((run) => Number(run[0]) === gradeLevel);
   if (equal.length === 1) {
     const run = equal[0]!;
     const at = run.index ?? 0;
     return {
-      name: `${name.slice(0, at)}${gradeLevel + 1}${name.slice(at + run[0].length)}`,
+      name: `${name.slice(0, at)}${to}${name.slice(at + run[0].length)}`,
       status: "PROMOTED",
     };
   }
   if (equal.length > 1) return { name, status: "KEPT_AMBIGUOUS" };
   if (gradeLevel === 0) {
     const f = F_KLASS.exec(name);
-    if (f) return { name: `1${f[2]}`, status: "F_KLASS" };
+    if (f) return { name: `${to}${f[2]}`, status: "F_KLASS" };
   }
   return { name, status: runs.length > 0 ? "KEPT_AMBIGUOUS" : "KEPT_NO_GRADE_DIGIT" };
 }
@@ -157,15 +177,17 @@ export function lowestClassGrade(groups: readonly RolloverGroupInput[]): number 
  * class with its name and grade is opened for next year's intake.
  *
  * A half follows its class (Halvklasser), as src/common/year-rollover.ts
- * says; see followTheClass there.
+ * says; see followTheClass there. Across the reform (`step`, INTO_TIOARIG) a
+ * promoted group moves two årskurser, a carried one and an intake twin one.
  */
 export function resolveGroups(
   groups: readonly RolloverGroupInput[],
   graduatingGradeLevel: number,
   options: { carryTeachingGroups: boolean },
   choices: ReadonlyMap<string, GroupChoice> = new Map(),
+  step: GradeStep = ONE_YEAR,
 ): ResolvedGroup[] {
-  return followTheClass(groups, resolveEachGroup(groups, graduatingGradeLevel, options, choices), choices);
+  return followTheClass(groups, resolveEachGroup(groups, graduatingGradeLevel, options, choices, step), choices);
 }
 
 function resolveEachGroup(
@@ -173,6 +195,7 @@ function resolveEachGroup(
   graduatingGradeLevel: number,
   options: { carryTeachingGroups: boolean },
   choices: ReadonlyMap<string, GroupChoice>,
+  step: GradeStep,
 ): ResolvedGroup[] {
   const lowest = lowestClassGrade(groups);
   return groups.map((group) => {
@@ -200,15 +223,22 @@ function resolveEachGroup(
         else outcome = "PROMOTE";
         break;
       case "CARRY":
+        if (g === 0 && step.carry > 0) error = "CARRY_FORSKOLEKLASS";
+        else outcome = "CARRY";
+        break;
       case "SKIP":
-        outcome = choice.outcome;
+        outcome = "SKIP";
         break;
       case "INTAKE":
         if (group.kind !== "CLASS" || g === null || g !== lowest) {
           error = "INTAKE_NOT_LOWEST";
         } else {
           outcome = "INTAKE";
-          intake = { name: group.name, gradeLevel: g };
+          // The intake of the lowest class's age, in the new year's numbering.
+          intake =
+            step.carry === 0
+              ? { name: group.name, gradeLevel: g }
+              : { name: promoteName(group.name, g, g + step.carry).name, gradeLevel: g + step.carry };
         }
         break;
     }
@@ -224,9 +254,15 @@ function resolveEachGroup(
     let successor: ResolvedGroup["successor"] = null;
     let nameStatus: NameStatus | null = null;
     if (continues === "PROMOTE") {
-      const promoted = promoteName(group.name, g);
-      successor = { name: promoted.name, gradeLevel: (g as number) + 1 };
+      const to = (g as number) + step.promote;
+      const promoted = promoteName(group.name, g, to);
+      successor = { name: promoted.name, gradeLevel: to };
       nameStatus = promoted.status;
+    } else if (continues === "CARRY" && g !== null && step.carry > 0) {
+      const to = g + step.carry;
+      const renamed = promoteName(group.name, g, to);
+      successor = { name: renamed.name, gradeLevel: to };
+      nameStatus = renamed.status;
     } else if (continues === "CARRY") {
       successor = { name: group.name, gradeLevel: g };
       nameStatus = "KEPT";
@@ -248,10 +284,10 @@ function resolveEachGroup(
   });
 }
 
-function halfName(half: string, className: string, successorName: string, grade: number | null): string {
+function halfName(half: string, className: string, successorName: string, grade: number | null, to: number | null): string {
   return half.startsWith(className) && className.length > 0
     ? `${successorName}${half.slice(className.length)}`
-    : promoteName(half, grade).name;
+    : promoteName(half, grade, to).name;
 }
 
 function followTheClass(
@@ -269,7 +305,7 @@ function followTheClass(
     const choice = choices.get(half.id) ?? {};
     if (choice.outcome === "SKIP") return { ...row, outcome: "SKIP", successor: null, intake: null, error: null };
     const named = classRow.successor
-      ? halfName(half.name, theClass.name, classRow.successor.name, half.gradeLevel)
+      ? halfName(half.name, theClass.name, classRow.successor.name, half.gradeLevel, classRow.successor.gradeLevel)
       : null;
     const override = choice.name?.trim();
     const renamed = named !== null && Boolean(override) && override !== named;
@@ -281,7 +317,12 @@ function followTheClass(
       sourceGroupId: half.id,
       outcome: classRow.outcome === "INTAKE" ? (successor ? "PROMOTE" : "GRADUATE") : classRow.outcome,
       successor,
-      intake: classRow.intake ? { name: half.name, gradeLevel: classRow.intake.gradeLevel } : null,
+      intake: classRow.intake
+        ? {
+            name: halfName(half.name, theClass.name, classRow.intake.name, half.gradeLevel, classRow.intake.gradeLevel),
+            gradeLevel: classRow.intake.gradeLevel,
+          }
+        : null,
       nameStatus: successor ? (renamed ? "OVERRIDDEN" : classRow.nameStatus) : null,
       noGrade: half.gradeLevel === null,
       error: null,

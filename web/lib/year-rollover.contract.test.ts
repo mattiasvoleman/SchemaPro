@@ -10,9 +10,11 @@ import {
   proposeBreak,
   resolveGroups,
   type DayBounds,
+  type GradeStep,
   type GroupChoice,
   type RolloverGroupInput,
   averageWeeklyMinutes,
+  INTO_TIOARIG,
   volumeFindings,
   type VolumeRow,
 } from "@/lib/year-rollover";
@@ -96,6 +98,35 @@ describe("the rollover mirror agrees with the gateway's fixture", () => {
         c.graduatingGradeLevel,
         { carryTeachingGroups: c.carryTeachingGroups },
         choices,
+      );
+      expect(resolved).toEqual(c.resolved);
+      expect(nameCollisions(resolved)).toEqual(c.collisions);
+    },
+  );
+
+  // Into the tioårig numbering: the wizard names with the step the preview
+  // says (reform2028), so the mirror must take it the same way.
+  it("replays the step the planner takes into HT 2028", () => {
+    expect(fixture.reform.step).toEqual(INTO_TIOARIG);
+  });
+
+  it.each(fixture.reform.names.map((row) => [row.name, row.to, row] as const))(
+    "names %s for åk %s the same way across the reform",
+    (_name, _to, row) => {
+      expect(promoteName(row.name, row.gradeLevel, row.to)).toEqual(row.expected);
+    },
+  );
+
+  it.each(fixture.reform.cases.map((c) => [c.name, c] as const))(
+    "resolves across the reform, collisions included: %s",
+    (_name, c) => {
+      const choices = new Map(Object.entries(c.choices) as [string, GroupChoice][]);
+      const resolved = resolveGroups(
+        fixture.reform.input as RolloverGroupInput[],
+        c.graduatingGradeLevel,
+        { carryTeachingGroups: c.carryTeachingGroups },
+        choices,
+        fixture.reform.step as GradeStep,
       );
       expect(resolved).toEqual(c.resolved);
       expect(nameCollisions(resolved)).toEqual(c.collisions);

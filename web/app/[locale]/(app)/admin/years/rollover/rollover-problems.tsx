@@ -22,6 +22,10 @@ const STEP_OF: Record<string, RolloverStep> = {
   // tioårig grundskola), so it is said where that date is typed — and again on
   // the review, beside the classes whose grades it asks the admin to check.
   ROLLOVER_2028_RENUMBERING: "year",
+  ROLLOVER_2028_NOT_RENUMBERED: "year",
+  ROLLOVER_2028_SCHOOL_FORM_UNKNOWN: "year",
+  ROLLOVER_2028_RENUMBERING_REQUIRED: "year",
+  ROLLOVER_GRADE_ABOVE_12: "groups",
   ROLLOVER_NAME_COLLISION: "groups",
   ROLLOVER_NAME_CASE_COLLISION: "groups",
   ROLLOVER_GROUP_CHOICE_INVALID: "groups",

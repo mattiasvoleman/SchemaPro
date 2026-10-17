@@ -4986,6 +4986,39 @@ describe('Planning surface (e2e)', () => {
       expect(carried.filter((row) => 'lessonLengths' in row)).toHaveLength(1);
     });
 
+    it('rolls a school its timplan places in the four forms into HT 2028 renumbered, without asking (admin round-trip)', async () => {
+      // Year A as 2027/28, so the next year starts in August 2028 (SFS 2025:729).
+      const { world, options } = givenSchool(2027);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      expect(world.rows['academicYear']!.find((year) => year['id'] === yearB)).toMatchObject({ gradeNumbering: 'TIOARIG' });
+      const names = world.rows['studentGroup']!
+        .filter((group) => group['academicYearId'] === yearB)
+        .map((group) => [group['name'], group['gradeLevel']]);
+      expect(names).toEqual(expect.arrayContaining([['9A', 9], ['10A', 10]]));
+    });
+
+    it('asks a school whose year shows no school form, reads renumber2028 as a boolean only, and keeps the numbering when told (admin round-trip)', async () => {
+      const { world, options } = givenSchool(2027);
+      world.rows['academicYearTimplan']!.length = 0;
+      const unasked = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      expect(unasked.body).toMatchObject({ blocking: true, reform2028: { renumbers: false, numbering: 'NIOARIG' } });
+      expect(unasked.body.problems.map((problem: { code: string }) => problem.code)).toContain('ROLLOVER_2028_SCHOOL_FORM_UNKNOWN');
+      const typo = await request(http())
+        .post(`${base}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ ...options, renumber2028: 'ja' })
+        .expect(400);
+      expect(JSON.stringify(typo.body)).toContain('renumber2028: true eller false.');
+
+      const yearB = (await roll({ ...options, renumber2028: false }, 201)).body.academicYear.id as string;
+      expect(world.rows['academicYear']!.find((year) => year['id'] === yearB)).toMatchObject({ gradeNumbering: 'NIOARIG' });
+      const names = world.rows['studentGroup']!
+        .filter((group) => group['academicYearId'] === yearB)
+        .map((group) => group['name'])
+        .sort();
+      expect(names).toEqual(['8A', '9A', 'Ma8 grupp 1']);
+    });
+
     it('previews and executes a rollover, then previews and executes the activation (admin round-trips)', async () => {
       // A year that ended long ago, so the activation is not too early.
       const { world, options } = givenSchool(2020);

@@ -21,6 +21,7 @@ const form = (overrides: Partial<RolloverFormState> = {}): RolloverFormState => 
   keepTeachers: true,
   carryClassRules: true,
   carryStaffing: true,
+  renumber2028: null,
   breaks: {},
   ...overrides,
 });
@@ -110,6 +111,12 @@ describe("rolloverOptions", () => {
     expect(rolloverOptions(form({ graduatingGradeLevel: 9 }))?.graduatingGradeLevel).toBe(9);
     // 0 is a grade (förskoleklass), not "unset".
     expect(rolloverOptions(form({ graduatingGradeLevel: 0 }))?.graduatingGradeLevel).toBe(0);
+  });
+
+  it("sends renumber2028 only once answered, so a rollover that never crosses 2028 previews as before", () => {
+    expect(rolloverOptions(form())).not.toHaveProperty("renumber2028");
+    expect(rolloverOptions(form({ renumber2028: true }))?.renumber2028).toBe(true);
+    expect(rolloverOptions(form({ renumber2028: false }))?.renumber2028).toBe(false);
   });
 
   it("always sends carryStaffing, off as well as on: the server reads an absent field as off", () => {

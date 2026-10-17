@@ -101,6 +101,16 @@ abstract class RolloverRequestBaseDto {
   @IsBoolean({ message: 'carryStaffing: true eller false.' })
   carryStaffing?: boolean;
 
+  /**
+   * Into HT 2028 (SFS 2025:729): true moves every årskull into the tioårig
+   * numbering, false keeps the school's own — for a school outside the four
+   * forms. Absent: the source year decides when it shows a form, and asks
+   * when it does not (rollover-plan.ts). Ignored by every other rollover.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'renumber2028: true eller false.' })
+  renumber2028?: boolean;
+
   @IsOptional()
   @IsArray({ message: 'breaks: loven anges som en lista.' })
   @ArrayMaxSize(ROLLOVER_MAX_BREAKS, { message: `breaks: högst ${ROLLOVER_MAX_BREAKS} lov.` })

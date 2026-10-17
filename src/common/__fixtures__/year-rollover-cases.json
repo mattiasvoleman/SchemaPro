@@ -1742,5 +1742,718 @@
         "collisions": []
       }
     ]
+  },
+  "reform": {
+    "step": {
+      "promote": 2,
+      "carry": 1
+    },
+    "names": [
+      {
+        "name": "8A",
+        "gradeLevel": 8,
+        "to": 10,
+        "expected": {
+          "name": "10A",
+          "status": "PROMOTED"
+        }
+      },
+      {
+        "name": "Klass 7B",
+        "gradeLevel": 7,
+        "to": 9,
+        "expected": {
+          "name": "Klass 9B",
+          "status": "PROMOTED"
+        }
+      },
+      {
+        "name": "FA",
+        "gradeLevel": 0,
+        "to": 2,
+        "expected": {
+          "name": "2A",
+          "status": "F_KLASS"
+        }
+      },
+      {
+        "name": "F-klass C",
+        "gradeLevel": 0,
+        "to": 1,
+        "expected": {
+          "name": "1C",
+          "status": "F_KLASS"
+        }
+      },
+      {
+        "name": "Klass 1A",
+        "gradeLevel": 1,
+        "to": 3,
+        "expected": {
+          "name": "Klass 3A",
+          "status": "PROMOTED"
+        }
+      }
+    ],
+    "input": [
+      {
+        "id": "fa",
+        "name": "FA",
+        "kind": "CLASS",
+        "gradeLevel": 0,
+        "halfOfId": null
+      },
+      {
+        "id": "fa1",
+        "name": "FA:1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 0,
+        "halfOfId": "fa"
+      },
+      {
+        "id": "fb",
+        "name": "Fsk B",
+        "kind": "CLASS",
+        "gradeLevel": 0,
+        "halfOfId": null
+      },
+      {
+        "id": "1a",
+        "name": "1A",
+        "kind": "CLASS",
+        "gradeLevel": 1,
+        "halfOfId": null
+      },
+      {
+        "id": "7a",
+        "name": "7A",
+        "kind": "CLASS",
+        "gradeLevel": 7,
+        "halfOfId": null
+      },
+      {
+        "id": "7a1",
+        "name": "7A:1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 7,
+        "halfOfId": "7a"
+      },
+      {
+        "id": "8a",
+        "name": "8A",
+        "kind": "CLASS",
+        "gradeLevel": 8,
+        "halfOfId": null
+      },
+      {
+        "id": "8b",
+        "name": "8B",
+        "kind": "CLASS",
+        "gradeLevel": 8,
+        "halfOfId": null
+      },
+      {
+        "id": "9a",
+        "name": "9A",
+        "kind": "CLASS",
+        "gradeLevel": 9,
+        "halfOfId": null
+      },
+      {
+        "id": "ma7",
+        "name": "Ma7 grupp 1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 7,
+        "halfOfId": null
+      },
+      {
+        "id": "ugg",
+        "name": "Ugglan",
+        "kind": "CLASS",
+        "gradeLevel": null,
+        "halfOfId": null
+      }
+    ],
+    "cases": [
+      {
+        "name": "every årskull two up, förskoleklassen to åk 2, the nians out",
+        "carryTeachingGroups": true,
+        "choices": {},
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "fa",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fa1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A:1",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fb",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2B",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "1a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "3A",
+              "gradeLevel": 3
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A:1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10A",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10B",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma9 grupp 1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "the F class’s intake twin is the new åk 1, its half’s twin with it",
+        "carryTeachingGroups": false,
+        "choices": {
+          "fa": {
+            "outcome": "INTAKE"
+          }
+        },
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "fa",
+            "outcome": "INTAKE",
+            "successor": {
+              "name": "2A",
+              "gradeLevel": 2
+            },
+            "intake": {
+              "name": "1A",
+              "gradeLevel": 1
+            },
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fa1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A:1",
+              "gradeLevel": 2
+            },
+            "intake": {
+              "name": "1A:1",
+              "gradeLevel": 1
+            },
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fb",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2B",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "1a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "3A",
+              "gradeLevel": 3
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A:1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10A",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10B",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "a class carried moves one årskurs and is renamed; a förskoleklass cannot be carried",
+        "carryTeachingGroups": true,
+        "choices": {
+          "7a": {
+            "outcome": "CARRY"
+          },
+          "fb": {
+            "outcome": "CARRY"
+          }
+        },
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "fa",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fa1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A:1",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fb",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2B",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": "CARRY_FORSKOLEKLASS"
+          },
+          {
+            "sourceGroupId": "1a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "3A",
+              "gradeLevel": 3
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "8A:1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10A",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10B",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma9 grupp 1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "a carried class is named for the årskurs it reaches: 8B carried is 9B, beside 7A typed as 9B",
+        "carryTeachingGroups": false,
+        "choices": {
+          "8b": {
+            "outcome": "CARRY"
+          },
+          "7a": {
+            "name": "9B"
+          }
+        },
+        "graduatingGradeLevel": 9,
+        "resolved": [
+          {
+            "sourceGroupId": "fa",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fa1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2A:1",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "fb",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "2B",
+              "gradeLevel": 2
+            },
+            "intake": null,
+            "nameStatus": "F_KLASS",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "1a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "3A",
+              "gradeLevel": 3
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9B",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "OVERRIDDEN",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7a1",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9B:1",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "OVERRIDDEN",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "10A",
+              "gradeLevel": 10
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8b",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "9B",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": [
+          {
+            "name": "9B",
+            "sourceGroupIds": [
+              "7a",
+              "8b"
+            ],
+            "caseOnly": false
+          }
+        ]
+      }
+    ]
   }
 }
