@@ -3575,6 +3575,7 @@
       "STAFFING_POST_FROM_PERIOD": "{teachers, plural, one {# tjänst ändrades} other {# tjänster ändrades}} under läsåret med en period som gäller till läsårets sista dag. Nästa läsår får tjänsten som perioden ger den. Läraren står listad under Tjänster och uppdrag.",
       "STAFFING_POST_PERIODS_ENDED": "{teachers, plural, one {# tjänst hade} other {# tjänster hade}} perioder som slutade före läsårets sista dag. De följer inte med, och nästa läsår får tjänsten som den står i lärarens kort.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "Timplansposterna för {groups} skiljer sig från den beslutade timplanen för den årskurs de flyttas upp till.",
+      "ROLLOVER_TIMPLAN_NO_FITTING_PLAN": "Åk {grades} får ingen timplan nästa läsår, eftersom ingen beslutad plan gäller den årskullen. Från hösten 2028 följer nya åk 1 bara en plan enligt 2028 års lydelse, och alla som redan går i skolan bara en äldre. Välj plan under Timplan per årskurs när läsåret är skapat.",
       "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows, plural, one {# post} other {# poster}} på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem.",
       "ROLLOVER_2028_RENUMBERING": "Det nya läsåret börjar {startYear}: enligt {source} går eleverna som redan går i skolan upp två årskurser i stället för en (förskoleklassen 2027/28 börjar direkt i åk 2). Rullningen flyttar i dag upp en årskurs, så kontrollera klassernas årskurser innan läsåret aktiveras."
     },

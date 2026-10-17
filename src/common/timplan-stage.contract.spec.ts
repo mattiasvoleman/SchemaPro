@@ -1,5 +1,5 @@
 import fixture from './__fixtures__/timplan-stage-cases.json';
-import { cohortNotice, type CohortClass, type CohortNoticeRow } from './timplan-cohorts';
+import { cohortNotice, planFitsCohort, type CohortClass, type CohortNoticeRow } from './timplan-cohorts';
 import type { SchoolForm } from './timplan-coverage';
 import {
   computePupilStages,
@@ -40,7 +40,11 @@ interface CohortCase {
   notice: CohortNoticeRow[];
 }
 
-const { cases, cohortCases } = fixture as unknown as { cases: FixtureCase[]; cohortCases: CohortCase[] };
+const { cases, cohortCases, planFitCases } = fixture as unknown as {
+  cases: FixtureCase[];
+  cohortCases: CohortCase[];
+  planFitCases: { appliesFromCohortTerm: string; ht: number; gradeLevel: number; fits: boolean }[];
+};
 
 describe('stadiesummor agree with the shared fixture', () => {
   it('has the 21 cases of the spec, the two boundary cases and the review’s cases, and reaches every verdict code and every cell status', () => {
@@ -75,5 +79,17 @@ describe('stadiesummor agree with the shared fixture', () => {
 
   it.each(cohortCases.map((entry) => [entry.name, entry] as const))('the cohort notice: %s', (_name, entry) => {
     expect(cohortNotice(entry.classes, entry.versions, entry.schoolForm)).toEqual(entry.notice);
+  });
+
+  it('says which årskurs of which läsår may follow a plan on which lydelse', () => {
+    expect(planFitCases.length).toBe(180);
+    for (const row of planFitCases) {
+      expect([row.appliesFromCohortTerm, row.ht, row.gradeLevel, planFitsCohort(row.appliesFromCohortTerm, row.ht, row.gradeLevel)]).toEqual([
+        row.appliesFromCohortTerm,
+        row.ht,
+        row.gradeLevel,
+        row.fits,
+      ]);
+    }
   });
 });

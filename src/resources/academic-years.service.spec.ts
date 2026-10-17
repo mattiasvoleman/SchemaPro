@@ -161,22 +161,58 @@ describe('AcademicYearsService', () => {
       });
     });
 
-    it('attaches an older plan one årskurs up in a tioårig year: its F row to åk 1, its 1–9 to 2–10', async () => {
+    it('attaches an older plan one årskurs up in a tioårig year, to the old årskullar only: åk 2–10, never the new åk 1', async () => {
       tx.academicYear.create.mockResolvedValue({ id: YEAR_ID, gradeNumbering: 'TIOARIG' });
       tx.localTimplan.findFirst.mockResolvedValue({
         id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
         name: 'Grundskolan 2024',
         status: 'DECIDED',
+        schoolForm: 'GRUNDSKOLA',
         nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
         entries: [{ gradeLevel: 0 }],
       });
+      tx.localTimplan.findMany.mockResolvedValue([]);
 
       await service.create(dto({ name: '2028/29', startDate: '2028-08-21', endDate: '2029-06-12' }), testUser());
 
       const rows = (tx.academicYearTimplan.createMany.mock.calls[0]?.[0] as {
         data: { gradeLevel: number }[];
       }).data;
-      expect(rows.map((row) => row.gradeLevel)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      // Its förskoleklass row would be read by the new åk 1, the one årskull
+      // SFS 2025:729's 7 424 h are for (övergångsbestämmelse 12): not attached.
+      expect(rows.map((row) => row.gradeLevel)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    });
+
+    it('puts the new åk 1 on a decided 2028 plan and every older årskull on the older plan of the same form', async () => {
+      const reformed = {
+        id: 'a3a3a3a3-a3a3-4a3a-8a3a-a3a3a3a3a3a3',
+        name: 'Grundskolan 2028',
+        status: 'DECIDED',
+        schoolForm: 'GRUNDSKOLA',
+        nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2028' },
+        entries: [],
+      };
+      const older = {
+        id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+        schoolForm: 'GRUNDSKOLA',
+        nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+        entries: [],
+      };
+      tx.academicYear.create.mockResolvedValue({ id: YEAR_ID, gradeNumbering: 'TIOARIG' });
+      tx.localTimplan.findFirst.mockResolvedValue(reformed);
+      tx.localTimplan.findMany.mockResolvedValue([reformed, older]);
+
+      await service.create(dto({ name: '2028/29', startDate: '2028-08-21', endDate: '2029-06-12' }), testUser());
+
+      const rows = (tx.academicYearTimplan.createMany.mock.calls[0]?.[0] as {
+        data: { gradeLevel: number; localTimplanId: string }[];
+      }).data;
+      expect(rows.map((row) => [row.gradeLevel, row.localTimplanId === reformed.id ? '2028' : '2024'])).toEqual([
+        [1, '2028'],
+        ...[2, 3, 4, 5, 6, 7, 8, 9, 10].map((grade) => [grade, '2024']),
+      ]);
     });
 
     it('attaches förskoleklassen only when the plan itself plans it, and follows the version’s stages', async () => {

@@ -1,6 +1,8 @@
-import type { LocalTimplanStatus } from '@prisma/client';
+import type { GradeNumbering, LocalTimplanStatus } from '@prisma/client';
 import { cohortYear } from '../common/timplan-coverage';
-import { cohortStartYear } from '../common/timplan-cohorts';
+import { cohortStartYear, planFitsCohort, pupilRegime, versionGradeOf } from '../common/timplan-cohorts';
+import { gradeOfPlanRow, lydelseIsTioarig } from '../common/grade-numbering';
+import { speaksFor } from '../timplan/year-timplans';
 
 /**
  * Timplan per årskurs (AcademicYearTimplans, timplan P2) carried into the new
@@ -52,8 +54,22 @@ import { cohortStartYear } from '../common/timplan-cohorts';
  * none — the earliest one the school has stands in for it: the closest to
  * the cohort's own, and never a later one when an earlier exists.
  *
- * WHICH GRADES. Those the source year attaches, and those a cohort carries a
- * plan into. A 7–9 school that removed åk 1–6 from its year does not get them
+ * WHICH REGIME FIRST (SFS 2025:729). From HT 2028 two kinds of årskull share
+ * a school: the reformed, from the new åk 1 up, whose lydelse is one from HT
+ * 2028; and every older one, last year's förskoleklass included, which keeps
+ * the older total (övergångsbestämmelse 12) and an older lydelse. A grade's
+ * årskull is read as a pupil recorded in that one year (planFitsCohort), and
+ * only plans it fits are candidates: 2A of 2028/29 (last year's F) is never
+ * put on a 2028 plan by its start year alone, and the new åk 1 never on an
+ * older one. A grade no decided plan fits keeps its own source row's plan
+ * when that one fits, and otherwise gets no row — the preview names it
+ * (unattached) rather than attach the wrong bilaga.
+ *
+ * WHICH GRADES. Those the source year attaches — each in the new year's
+ * numbering, so a crossing into the tioårig numbering reads a source row g as
+ * the new year's g + 1, the same årskull's age — and those a cohort carries a
+ * plan into (s → t, the step its classes take: one årskurs, or two across the
+ * reform), and any the planner names (the new åk 1 at the crossing). A 7–9 school that removed åk 1–6 from its year does not get them
  * back every summer; one that kept P2's rows keeps them, each on its default
  * as a new year would have them. A source grade at or above G graduates and
  * contributes nothing; a grade above 11 does not exist in the table (its
@@ -79,6 +95,8 @@ export interface SourceTimplanRow {
   planStatus: LocalTimplanStatus;
   /** The attached plan's school form. */
   planSchoolForm: string;
+  /** Its lydelse's first cohort term ('HT2024'); absent: it fits any årskull, as before the reform. */
+  planAppliesFrom?: string;
 }
 
 /** A DECIDED plan the new year may default to (readDecidedTimplans). */
@@ -113,12 +131,26 @@ export interface CohortTimplanInput {
   /** The source year's rows. */
   source: readonly SourceTimplanRow[];
   graduatingGradeLevel: number;
-  /** Source grades g−1 a class moves up from, into g (resolveGroups). */
-  movingCohorts: ReadonlySet<number>;
+  /**
+   * The grades a class moves up between (resolveGroups): source grade → the
+   * new year's grade, g → g + 1, or g → g + 2 across the reform. A set names
+   * source grades that move one årskurs up.
+   */
+  movingCohorts: ReadonlySet<number> | ReadonlyMap<number, number>;
   /** The school's decided plans, newest first (readDecidedTimplans). */
   decided: readonly DecidedTimplanChoice[];
   /** The calendar year the new läsår starts (its HT): 2027 for 2027/28. */
   targetStartYear: number;
+  /** The two years' numbering (AcademicYears.gradeNumbering); absent NIOARIG. */
+  sourceNumbering?: GradeNumbering;
+  targetNumbering?: GradeNumbering;
+  /** Grades of the new year that get a row besides the source's and the carried (the new åk 1). */
+  alsoGrades?: readonly number[];
+}
+
+/** A grade of the new year the rollover leaves without a plan: no decided plan fits its årskull. */
+export interface UnattachedTimplan {
+  gradeLevel: number;
 }
 
 /**
@@ -131,7 +163,8 @@ export { cohortStartYear } from '../common/timplan-cohorts';
 /**
  * Of the plans (newest decided first), the newest decided one of the latest
  * lydelse that applies to a cohort starting åk 1 in `startYear`, or of the
- * earliest lydelse when none does. See WHICH LYDELSE.
+ * earliest lydelse when none does. See WHICH LYDELSE; the candidates are
+ * already the ones the årskull fits (WHICH REGIME FIRST).
  */
 function forCohort(
   candidates: readonly DecidedTimplanChoice[],
@@ -146,8 +179,31 @@ function forCohort(
 /** The table's CHECK: 0 = förskoleklass … 11 (specialskolan from 2028). */
 const MAX_GRADE = 11;
 
+/** The rows of the new year, and the grades left without one. */
 export function planCohortTimplans(input: CohortTimplanInput): PlannedTimplan[] {
-  const { source, graduatingGradeLevel, movingCohorts, decided, targetStartYear } = input;
+  return cohortTimplans(input).rows;
+}
+
+/**
+ * The term-year the årskull in grade `gradeLevel` of a year starting HT `ht`
+ * began åk 1, in its own numbering (an older årskull in a year from HT 2028
+ * sits one above its lydelse's number); null for no årskurs.
+ */
+function cohortStartOf(ht: number, gradeLevel: number): number | null {
+  const regime = pupilRegime([{ ht, gradeLevel }]);
+  const grade = versionGradeOf(regime, ht, gradeLevel);
+  return grade === null ? null : cohortStartYear(grade, ht);
+}
+
+export function cohortTimplans(input: CohortTimplanInput): { rows: PlannedTimplan[]; unattached: UnattachedTimplan[] } {
+  const { source, graduatingGradeLevel, decided, targetStartYear } = input;
+  const targetNumbering = input.targetNumbering ?? 'NIOARIG';
+  // A source row's own grade in the new year: the same årskull's age.
+  const renumber = (grade: number) => grade + (input.sourceNumbering !== 'TIOARIG' && targetNumbering === 'TIOARIG' ? 1 : 0);
+  const moves: ReadonlyMap<number, number> =
+    input.movingCohorts instanceof Map
+      ? input.movingCohorts
+      : new Map([...(input.movingCohorts as ReadonlySet<number>)].map((grade) => [grade, grade + 1]));
   const planned = (
     gradeLevel: number,
     reason: TimplanCarryReason,
@@ -163,45 +219,67 @@ export function planCohortTimplans(input: CohortTimplanInput): PlannedTimplan[] 
     planStatus: plan.status,
     laterPlan,
   });
+  const rows: PlannedTimplan[] = [];
+  const unattached: UnattachedTimplan[] = [];
 
-  if (source.length === 0) {
-    const newest = decided[0];
-    return newest ? newest.gradeLevels.map((gradeLevel) => planned(gradeLevel, 'DEFAULT', newest)) : [];
-  }
-
-  const byGrade = new Map(source.map((row) => [row.gradeLevel, row]));
-  const carries = (gradeLevel: number) =>
-    gradeLevel < graduatingGradeLevel && movingCohorts.has(gradeLevel) && byGrade.has(gradeLevel);
-  const grades = new Set<number>();
-  for (const row of source) {
-    grades.add(row.gradeLevel);
-    if (carries(row.gradeLevel) && row.gradeLevel + 1 <= MAX_GRADE) grades.add(row.gradeLevel + 1);
-  }
-  const out: PlannedTimplan[] = [];
-  for (const gradeLevel of [...grades].sort((a, b) => a - b)) {
-    if (carries(gradeLevel - 1)) {
-      const below = byGrade.get(gradeLevel - 1)!;
-      out.push(
-        planned(gradeLevel, 'CARRIED', { id: below.localTimplanId, name: below.planName, status: below.planStatus }, below.gradeLevel),
-      );
-      continue;
-    }
-    // Not carried, so the grade is in the set by its own source row.
-    const own = byGrade.get(gradeLevel)!;
-    const candidates = decided.filter(
-      (plan) => plan.gradeLevels.includes(gradeLevel) && plan.schoolForm === own.planSchoolForm,
-    );
-    const chosen = forCohort(candidates, cohortStartYear(gradeLevel, targetStartYear));
+  /** DEFAULT for a grade of the form's decided plans the årskull fits, else KEPT `own`, else none. */
+  const byDefault = (gradeLevel: number, form: string, own: SourceTimplanRow | undefined) => {
+    const candidates = decided.filter((plan) => plan.schoolForm === form && speaksFor(plan, targetNumbering, gradeLevel));
+    const fitting = candidates.filter((plan) => planFitsCohort(plan.appliesFromCohortTerm, targetStartYear, gradeLevel));
+    const start = cohortStartOf(targetStartYear, gradeLevel);
+    const chosen = start === null || fitting.length === 0 ? undefined : forCohort(fitting, start);
     if (!chosen) {
-      out.push(planned(gradeLevel, 'KEPT', { id: own.localTimplanId, name: own.planName, status: own.planStatus }));
-      continue;
+      if (own && (own.planAppliesFrom === undefined || planFitsCohort(own.planAppliesFrom, targetStartYear, gradeLevel))) {
+        rows.push(planned(gradeLevel, 'KEPT', { id: own.localTimplanId, name: own.planName, status: own.planStatus }));
+      } else {
+        unattached.push({ gradeLevel });
+      }
+      return;
     }
     const newest = candidates[0]!;
     const skipped =
       newest !== chosen && cohortYear(newest.appliesFromCohortTerm) > cohortYear(chosen.appliesFromCohortTerm)
         ? { name: newest.name, appliesFromCohortTerm: newest.appliesFromCohortTerm }
         : null;
-    out.push(planned(gradeLevel, 'DEFAULT', chosen, null, skipped));
+    rows.push(planned(gradeLevel, 'DEFAULT', chosen, null, skipped));
+  };
+
+  if (source.length === 0) {
+    const newest = decided[0];
+    if (!newest) return { rows, unattached };
+    const grades = newest.gradeLevels
+      .map((row) => (input.targetNumbering === undefined ? row : gradeOfPlanRowFor(newest, targetNumbering, row)))
+      .filter((grade): grade is number => grade !== null && grade <= MAX_GRADE);
+    for (const gradeLevel of [...new Set([...grades, ...(input.alsoGrades ?? [])])].sort((a, b) => a - b)) {
+      byDefault(gradeLevel, newest.schoolForm, undefined);
+    }
+    return { rows, unattached };
   }
-  return out;
+
+  const byGrade = new Map(source.map((row) => [row.gradeLevel, row]));
+  const ownOf = new Map(source.map((row) => [renumber(row.gradeLevel), row]));
+  const carriedInto = new Map<number, SourceTimplanRow>();
+  for (const [from, to] of moves) {
+    const row = byGrade.get(from);
+    if (row && from < graduatingGradeLevel && to <= MAX_GRADE) carriedInto.set(to, row);
+  }
+  const grades = new Set<number>([...ownOf.keys(), ...carriedInto.keys(), ...(input.alsoGrades ?? [])]);
+  const lowestForm = [...source].sort((a, b) => a.gradeLevel - b.gradeLevel)[0]!.planSchoolForm;
+  for (const gradeLevel of [...grades].filter((grade) => grade <= MAX_GRADE).sort((a, b) => a - b)) {
+    const below = carriedInto.get(gradeLevel);
+    if (below) {
+      rows.push(
+        planned(gradeLevel, 'CARRIED', { id: below.localTimplanId, name: below.planName, status: below.planStatus }, below.gradeLevel),
+      );
+      continue;
+    }
+    const own = ownOf.get(gradeLevel);
+    byDefault(gradeLevel, own?.planSchoolForm ?? lowestForm, own);
+  }
+  return { rows, unattached };
+}
+
+/** The new year's grade reading row `row` of a decided plan. */
+function gradeOfPlanRowFor(plan: DecidedTimplanChoice, numbering: GradeNumbering, row: number): number | null {
+  return gradeOfPlanRow(lydelseIsTioarig(plan.appliesFromCohortTerm), numbering, row);
 }

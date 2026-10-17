@@ -3,6 +3,7 @@ import { ROLLOVER_STEPS, type StepContext } from './rollover-apply';
 import type { RolloverWrites } from './rollover-plan';
 import {
   cohortStartYear,
+  cohortTimplans,
   planCohortTimplans,
   type CohortTimplanInput,
   type DecidedTimplanChoice,
@@ -231,7 +232,7 @@ describe('planCohortTimplans', () => {
     expect(planned[0]).toMatchObject({ gradeLevel: 1, reason: 'DEFAULT', localTimplanId: TIOARIG.id, laterPlan: null });
   });
 
-  it('stands the earliest lydelse the school has in for one older than any, never a later one', () => {
+  it('stands the earliest lydelse the school has in for one older than any, never one from HT 2028', () => {
     // A 7–9 school's intake in HT2027 started åk 1 in HT2021, before every
     // lydelse in the reference data; HT2024 is the closest it has.
     const planned = plan({
@@ -245,11 +246,13 @@ describe('planCohortTimplans', () => {
       localTimplanId: NEW.id,
       laterPlan: { name: 'Tioårig 2028', appliesFromCohortTerm: 'HT2028' },
     });
-    // With only the later lydelse decided, it is the one there is.
+    // With only the 2028 lydelse decided, åk 7 keeps its own plan: an årskull
+    // in school before HT 2028 never follows SFS 2025:729 (övergångs-
+    // bestämmelse 12 keeps the older total for it).
     expect(plan({ source: rows([7, 8, 9], OLD), movingCohorts: new Set([7, 8]), decided: [TIOARIG] })[0]).toMatchObject({
       gradeLevel: 7,
-      reason: 'DEFAULT',
-      localTimplanId: TIOARIG.id,
+      reason: 'KEPT',
+      localTimplanId: OLD.id,
       laterPlan: null,
     });
   });
@@ -272,6 +275,62 @@ describe('planCohortTimplans', () => {
       range(0, 9).map((grade) => [grade, 'DEFAULT', NEW.id, null]),
     );
     expect(plan({ source: [] })).toEqual([]);
+  });
+});
+
+describe('cohortTimplans after the reform (SFS 2025:729): a plan only for the årskull it fits', () => {
+  // 2028/29 → 2029/30, both in the tioårig numbering: åk 1 of 2028/29 is the
+  // first reformed årskull, åk 2–10 are older ones on the older bilaga.
+  const REFORMED: Plan = { id: TIOARIG.id, name: TIOARIG.name, status: 'DECIDED' };
+  const source2028 = [
+    { ...row(1, REFORMED), planAppliesFrom: 'HT2028' },
+    ...range(2, 10).map((grade) => ({ ...row(grade, NEW), planAppliesFrom: 'HT2024' })),
+  ];
+  const next = (input: Partial<CohortTimplanInput>) =>
+    cohortTimplans({
+      source: source2028,
+      graduatingGradeLevel: 10,
+      movingCohorts: new Set(range(1, 9)),
+      decided: [TIOARIG, decidedOf(NEW)],
+      targetStartYear: 2029,
+      sourceNumbering: 'TIOARIG',
+      targetNumbering: 'TIOARIG',
+      ...input,
+    });
+
+  it('carries each årskull’s plan up, and gives the entering åk 1 the 2028 plan', () => {
+    const { rows: planned, unattached } = next({});
+    expect(planned.map((entry) => [entry.gradeLevel, entry.reason, entry.localTimplanId])).toEqual([
+      [1, 'DEFAULT', TIOARIG.id],
+      [2, 'CARRIED', TIOARIG.id],
+      ...range(3, 10).map((grade) => [grade, 'CARRIED', NEW.id]),
+    ]);
+    expect(unattached).toEqual([]);
+  });
+
+  it('never gives the entering åk 1 an older plan decided later, and names the plan it skipped', () => {
+    const { rows: planned } = next({ decided: [decidedOf(NEW), TIOARIG] });
+    expect(planned[0]).toMatchObject({ gradeLevel: 1, reason: 'DEFAULT', localTimplanId: TIOARIG.id, laterPlan: null });
+  });
+
+  it('leaves a reformed årskull without a plan when no 2028 plan is decided, and says so', () => {
+    // 2028/29 attached no plan to its åk 1, so the årskull that is 2029/30's
+    // åk 2 carries none; its own source row (the older bilaga) does not fit it.
+    const { rows: planned, unattached } = next({ decided: [decidedOf(NEW)], source: source2028.filter((entry) => entry.gradeLevel !== 1) });
+    expect(planned.find((entry) => entry.gradeLevel === 2)).toBeUndefined();
+    expect(unattached).toEqual([{ gradeLevel: 2 }]);
+  });
+
+  it('gives an older årskull entering at its own grade (a 7–9 school’s åk 8) the older plan, not the 2028 one', () => {
+    const { rows: planned } = next({
+      source: [8, 9, 10].map((grade) => ({ ...row(grade, NEW), planAppliesFrom: 'HT2024' })),
+      movingCohorts: new Set([8, 9]),
+    });
+    expect(planned.map((entry) => [entry.gradeLevel, entry.reason, entry.localTimplanId])).toEqual([
+      [8, 'DEFAULT', NEW.id],
+      [9, 'CARRIED', NEW.id],
+      [10, 'CARRIED', NEW.id],
+    ]);
   });
 });
 

@@ -22064,5 +22064,1087 @@
     }
    ]
   }
+ ],
+ "planFitCases": [
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 0,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 1,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 2,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 3,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 4,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 5,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 6,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 7,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 8,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 9,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 10,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2026,
+   "gradeLevel": 11,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 0,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 1,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 2,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 3,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 4,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 5,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 6,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 7,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 8,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 9,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 10,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2027,
+   "gradeLevel": 11,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 2,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 3,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 4,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 5,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 6,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 7,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 8,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 9,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 10,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2028,
+   "gradeLevel": 11,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 3,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 4,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 5,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 6,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 7,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 8,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 9,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 10,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2029,
+   "gradeLevel": 11,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 5,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 6,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 7,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 8,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 9,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 10,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2024",
+   "ht": 2031,
+   "gradeLevel": 11,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2026,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2027,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 1,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2028,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 1,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 2,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2029,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 1,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 2,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 3,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 4,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2028",
+   "ht": 2031,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2026,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2027,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2028,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 1,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2029,
+   "gradeLevel": 11,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 0,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 1,
+   "fits": true
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 2,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 3,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 4,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 5,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 6,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 7,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 8,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 9,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 10,
+   "fits": false
+  },
+  {
+   "appliesFromCohortTerm": "HT2031",
+   "ht": 2031,
+   "gradeLevel": 11,
+   "fits": false
+  }
  ]
 }

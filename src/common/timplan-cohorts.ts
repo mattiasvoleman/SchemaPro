@@ -208,6 +208,25 @@ export function stageVersionFor<V extends CohortVersion>(
   );
 }
 
+/**
+ * Whether a plan on the lydelse applying from `appliesFromCohortTerm` is one
+ * årskurs `gradeLevel` of a läsår starting HT `ht` may follow: its årskull is
+ * read as a pupil recorded in that one year (pupilRegime), and stageVersionFor's
+ * rule decides. A reformed årskull — the new åk 1 from HT 2028, and the årskurs
+ * above it a year later — follows only a lydelse from HT 2028 that applies to
+ * the term it began åk 1; every older årskull, last year's förskoleklass
+ * included, only an older lydelse, because övergångsbestämmelse 12 keeps the
+ * older total for whoever "höstterminen 2028 påbörjar årskurs 2 eller en högre
+ * årskurs". False for förskoleklass from HT 2028, which is no årskurs.
+ */
+export function planFitsCohort(appliesFromCohortTerm: string, ht: number, gradeLevel: number): boolean {
+  const regime = pupilRegime([{ ht, gradeLevel }]);
+  const grade = versionGradeOf(regime, ht, gradeLevel);
+  if (grade === null) return false;
+  const from = cohortYear(appliesFromCohortTerm);
+  return regime === 'REFORMED_2028' ? from >= REFORM_HT && from <= cohortStartYear(grade, ht) : from < REFORM_HT;
+}
+
 /** Whether a PRE_2028 stage reads SFS 2023:945's cells for a year from HT 2028 (an assumption). */
 export function stageAssumesOldDistribution(regime: Regime, yearHTs: readonly number[]): boolean {
   return regime === 'PRE_2028' && yearHTs.some((ht) => ht >= REFORM_HT);

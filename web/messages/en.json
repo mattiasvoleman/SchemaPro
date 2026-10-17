@@ -3575,6 +3575,7 @@
       "STAFFING_POST_FROM_PERIOD": "{teachers, plural, one {# post changed} other {# posts changed}} during the school year with a period that runs to its last day. Next year gets the post as the period gives it. The teacher is listed under Posts and duties.",
       "STAFFING_POST_PERIODS_ENDED": "{teachers, plural, one {# post had} other {# posts had}} periods that ended before the last day of the school year. They are not carried, and next year gets the post as it stands on the teacher's card.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "The teaching requirements of {groups} differ from the decided timplan for the grade they are promoted into.",
+      "ROLLOVER_TIMPLAN_NO_FITTING_PLAN": "Grade {grades} gets no timplan next year, because no decided plan applies to that cohort. From autumn 2028 the new grade 1 follows only a plan under the 2028 law, and everyone already in school only an older one. Choose a plan under Timplan per årskurs once the year is created.",
       "ISO_WEEK_53_CROSSED": "The rollover crosses a week 53: {rows, plural, one {# odd- or even-week requirement switches} other {# odd- or even-week requirements switch}} to the other week type. Check them.",
       "ROLLOVER_2028_RENUMBERING": "The new year starts in {startYear}: under {source}, pupils already in school move up two grades instead of one (the 2027/28 preschool class starts directly in grade 2). The rollover moves classes up one grade today, so check the classes’ grades before the year is activated."
     },

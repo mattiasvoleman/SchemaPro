@@ -35,7 +35,7 @@ import {
   type StaffingProblemCode,
   type StaffingWrites,
 } from './rollover-staffing';
-import { planCohortTimplans, type PlannedTimplan } from './rollover-timplans';
+import { cohortTimplans, type PlannedTimplan } from './rollover-timplans';
 
 /**
  * The rollover as a plan: every row it would write, every row it leaves
@@ -80,6 +80,7 @@ export type RolloverProblemCode =
   | 'VOLUME_DIFFERS_FROM_TIMPLAN'
   | 'ISO_WEEK_53_CROSSED'
   | 'ROLLOVER_2028_RENUMBERING'
+  | 'ROLLOVER_TIMPLAN_NO_FITTING_PLAN'
   | StaffingProblemCode;
 
 export interface RolloverProblem {
@@ -754,15 +755,25 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       movingCohorts.add(group.gradeLevel);
     }
   }
-  const timplans = planCohortTimplans({
+  const { rows: timplans, unattached } = cohortTimplans({
     source: source.timplans,
     graduatingGradeLevel: g,
     movingCohorts,
     decided: source.decidedTimplans,
     targetStartYear: Number(target.startDate.slice(0, 4)),
+    sourceNumbering: source.year.gradeNumbering,
+    targetNumbering: writes.year.gradeNumbering ?? 'NIOARIG',
   });
   for (const row of timplans) {
     writes.timplans.push({ gradeLevel: row.gradeLevel, localTimplanId: row.localTimplanId });
+  }
+  // A grade no decided plan fits (WHICH REGIME FIRST): no row, and said.
+  if (unattached.length > 0) {
+    problems.push({
+      code: 'ROLLOVER_TIMPLAN_NO_FITTING_PLAN',
+      blocking: false,
+      params: { grades: unattached.map((row) => String(row.gradeLevel)) },
+    });
   }
 
   // ---- volume against the plan the target grade will follow
