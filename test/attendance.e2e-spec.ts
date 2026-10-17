@@ -73,20 +73,16 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
       .expect(400);
   });
 
-  it('accepts a batch from an assigned teacher and upserts records', async () => {
-    const now = new Date();
+  it('accepts a batch from an assigned teacher and writes records', async () => {
     harness.tx['calendarLesson']!['findUnique']!.mockResolvedValue(LESSON);
     harness.tx['calendarLessonTeacher']!['findUnique']!.mockResolvedValue({
       id: '77777777-7777-4777-8777-777777777777',
     });
     arrangeRoster([STUDENT_A, STUDENT_B]);
-    // First record is new (createdAt == updatedAt), second is an update.
-    harness.tx['attendanceRecord']!['upsert']!
-      .mockResolvedValueOnce({ createdAt: now, updatedAt: now })
-      .mockResolvedValueOnce({
-        createdAt: now,
-        updatedAt: new Date(now.getTime() + 60_000),
-      });
+    // A is new, B is in the register already: an insert, and an update over an older mark.
+    harness.tx['attendanceRecord']!['findMany']!.mockResolvedValue([{ studentId: STUDENT_B, status: 'PRESENT' }]);
+    harness.tx['attendanceRecord']!['createMany']!.mockResolvedValue({ count: 1 });
+    harness.tx['attendanceRecord']!['updateMany']!.mockResolvedValue({ count: 1 });
 
     const response = await request(harness.app.getHttpServer())
       .post('/api/v1/attendance/report')
@@ -101,7 +97,8 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
       .expect(200);
 
     expect(response.body).toEqual({ created: 1, updated: 1 });
-    expect(harness.tx['attendanceRecord']!['upsert']).toHaveBeenCalledTimes(2);
+    expect(harness.tx['attendanceRecord']!['createMany']).toHaveBeenCalledTimes(1);
+    expect(harness.tx['attendanceRecord']!['updateMany']).toHaveBeenCalledTimes(1);
   });
 
   it('a teacher’s submit that marks a pupil absent answers 200, writes the guardian’s notice without reading it back, and mails once after the response', async () => {
@@ -110,14 +107,14 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     process.env.RESEND_API_KEY = 'resend-key';
     try {
-      const now = new Date();
       harness.tx['calendarLesson']!['findUnique']!.mockResolvedValue(LESSON);
       harness.tx['calendarLessonTeacher']!['findUnique']!.mockResolvedValue({ id: '77777777-7777-4777-8777-777777777777' });
       // The roster, the pupil's name and the guardian's address, as each read asks.
       harness.tx['user']!['findMany']!.mockResolvedValue([
         { id: STUDENT_A, studentGroupId: PRIMARY_GROUP, firstName: 'Ella', lastName: 'Ek', email: 'vh@example.invalid' },
       ]);
-      harness.tx['attendanceRecord']!['upsert']!.mockResolvedValue({ createdAt: now, updatedAt: now });
+      harness.tx['attendanceRecord']!['findMany']!.mockResolvedValue([]);
+      harness.tx['attendanceRecord']!['createMany']!.mockResolvedValue({ count: 1 });
       // Nobody reported: app.reported_absences answers no row.
       harness.tx['$queryRaw']!.mockResolvedValue([]);
       harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([{ guardianId: '88888888-8888-4888-8888-888888888888' }]);
@@ -175,7 +172,8 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
       .expect(403);
 
     expect(response.body.detail).toContain(STUDENT_B);
-    expect(harness.tx['attendanceRecord']!['upsert']).not.toHaveBeenCalled();
+    expect(harness.tx['attendanceRecord']!['createMany']).not.toHaveBeenCalled();
+    expect(harness.tx['attendanceRecord']!['updateMany']).not.toHaveBeenCalled();
   });
 
   it('applies the roster check to admins as well as teachers', async () => {
@@ -191,7 +189,8 @@ describe('POST /api/v1/attendance/report (e2e)', () => {
       })
       .expect(403);
 
-    expect(harness.tx['attendanceRecord']!['upsert']).not.toHaveBeenCalled();
+    expect(harness.tx['attendanceRecord']!['createMany']).not.toHaveBeenCalled();
+    expect(harness.tx['attendanceRecord']!['updateMany']).not.toHaveBeenCalled();
   });
 
   it('returns 404 for a lesson outside the caller school (RLS semantics)', async () => {

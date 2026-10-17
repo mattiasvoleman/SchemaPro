@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -13,7 +14,17 @@ import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
+import { isLockTimeout } from '../publication/publish-mode';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
+
+/**
+ * A register save that waited its 5 s for a row another transaction holds:
+ * in practice an SS12000 apply that changes the e-mail of a person the save
+ * names (the pupil, the teacher, a guardian it alerts), which holds that
+ * person's row until it commits, for up to two minutes. The save wrote
+ * nothing; the phone's queue sends it again, and the web says to.
+ */
+export const ATTENDANCE_REGISTER_BUSY = 'ATTENDANCE_REGISTER_BUSY';
 
 export interface AttendanceReportResult {
   created: number;
@@ -140,7 +151,33 @@ export class AttendanceService {
     dto: ReportAttendanceDto,
     user: AuthenticatedUser,
   ): Promise<AttendanceReportResult> {
+    try {
+      return await this.writeReport(dto, user);
+    } catch (error) {
+      if (isLockTimeout(error)) {
+        throw new ConflictException({
+          message: 'Registret kunde inte sparas just nu, eftersom en elev eller lärare uppdateras från källsystemet. Inget sparades. Försök igen om en stund.',
+          code: ATTENDANCE_REGISTER_BUSY,
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async writeReport(
+    dto: ReportAttendanceDto,
+    user: AuthenticatedUser,
+  ): Promise<AttendanceReportResult> {
     return this.prisma.withRls(user, async (tx) => {
+      // A lock is waited for at most 5 s, then the save answers 409
+      // ATTENDANCE_REGISTER_BUSY having written nothing, instead of running
+      // into the transaction's 15 s and an unexplained 500. Nothing SS12000
+      // närvaro adds holds a save up (20261114090000); what can is an SS12000
+      // apply that changes the e-mail of a person this save names, which
+      // holds that person's row, which the insert's foreign keys share, until
+      // it commits.
+      await tx.$executeRaw`SELECT set_config('lock_timeout', '5s', true)`;
+
       // Verify the lesson exists (RLS will scope this to the caller's school).
       const lesson = await tx.calendarLesson.findUnique({
         where: { id: dto.calendarLessonId },
@@ -172,6 +209,7 @@ export class AttendanceService {
 
       let created = 0;
       let updated = 0;
+      let kept = 0;
 
       /**
        * What the register said before this batch.
@@ -184,14 +222,15 @@ export class AttendanceService {
        * and inventing one would be describing the symptom; the transition is
        * the thing that is actually new.
        */
-      const priorStatus = new Map(
+      const prior = new Map(
         (
           await tx.attendanceRecord.findMany({
             where: { calendarLessonId: dto.calendarLessonId, studentId: { in: studentIds } },
-            select: { studentId: true, status: true },
+            select: { studentId: true, status: true, note: true },
           })
-        ).map((row) => [row.studentId, row.status]),
+        ).map((row) => [row.studentId, { status: row.status as string, note: row.note ?? null }]),
       );
+      const priorStatus = new Map([...prior].map(([studentId, mark]) => [studentId, mark.status]));
 
       /**
        * The order the rows are written in: by pupil, whatever order the batch
@@ -227,61 +266,86 @@ export class AttendanceService {
         return age < 0 || age > MAX_BACKDATE_MS ? now : claimed;
       };
 
-      // Use upsert for idempotency — mobile devices may re-send if the first
-      // attempt was lost while offline.
+      /**
+       * Each mark is written only over an older one. The phone's queue sends a
+       * batch again until it goes through, so a mark can arrive long after it
+       * was made, after a correction on the web since; written over it, it
+       * would undo the correction and alert the guardians about an old
+       * lesson. recordedAt says when the register's mark was made (the
+       * teacher's moment on the phone, the server's on the web): a stored one
+       * later than this entry's stands, and the entry is neither written nor
+       * alerted. An equal one is the same mark sent again, and is written.
+       * Per pupil without a race: the update is conditional, and an insert
+       * that meets a row a concurrent save has just written tries the
+       * conditional update once more. Written again with the same values, a
+       * mark sent twice is still idempotent.
+       *
+       * A pupil the register already holds as this entry says, sent without
+       * a time of its own, is no new mark and is not written: the web saves
+       * every pupil it lists, and stamping the ones nobody touched with the
+       * server's clock would keep out a phone mark made before that save and
+       * delivered after it. A phone entry carries the moment it was marked,
+       * and is written as any mark is.
+       */
+      const holds = new Map(prior);
+      const written = new Map<string, string>();
+      let unchanged = 0;
       for (const entry of inWriteOrder) {
-        const result = await tx.attendanceRecord.upsert({
-          where: {
-            calendarLessonId_studentId: {
-              calendarLessonId: dto.calendarLessonId,
-              studentId: entry.studentId,
-            },
-          },
-          create: {
-            schoolId: lesson.schoolId,
-            calendarLessonId: dto.calendarLessonId,
-            studentId: entry.studentId,
-            status: entry.status,
-            recordedById,
-            recordedAt: recordedAtOf(entry.recordedAt),
-            note: entry.note ?? null,
-          },
-          update: {
-            status: entry.status,
-            recordedById,
-            recordedAt: recordedAtOf(entry.recordedAt),
-            note: entry.note ?? null,
-          },
-          select: { createdAt: true, updatedAt: true },
-        });
-
-        // Prisma upsert doesn't distinguish create vs update, so compare timestamps.
-        const wasCreated =
-          result.createdAt.getTime() === result.updatedAt.getTime();
-        if (wasCreated) {
-          created++;
-        } else {
-          updated++;
+        const held = holds.get(entry.studentId);
+        if (!entry.recordedAt && held && held.status === entry.status && held.note === (entry.note ?? null)) {
+          unchanged++;
+          continue;
         }
+        const recordedAt = recordedAtOf(entry.recordedAt);
+        const key = { calendarLessonId: dto.calendarLessonId, studentId: entry.studentId };
+        const values = { status: entry.status, recordedById, recordedAt, note: entry.note ?? null };
+        const overAnOlderMark = async () =>
+          (
+            await tx.attendanceRecord.updateMany({
+              where: { ...key, OR: [{ recordedAt: null }, { recordedAt: { lte: recordedAt } }] },
+              data: values,
+            })
+          ).count > 0;
+        const asANewRecord = async () =>
+          (
+            await tx.attendanceRecord.createMany({
+              data: [{ schoolId: lesson.schoolId, ...key, ...values }],
+              skipDuplicates: true,
+            })
+          ).count > 0;
+
+        if (priorStatus.has(entry.studentId) && (await overAnOlderMark())) {
+          updated++;
+        } else if (await asANewRecord()) {
+          created++;
+        } else if (await overAnOlderMark()) {
+          updated++;
+        } else {
+          kept++;
+          continue;
+        }
+        written.set(entry.studentId, entry.status);
+        holds.set(entry.studentId, { status: entry.status, note: entry.note ?? null });
       }
 
       this.logger.log(
-        `Attendance reported [lesson=${dto.calendarLessonId}, created=${created}, updated=${updated}]`,
+        `Attendance reported [lesson=${dto.calendarLessonId}, created=${created}, updated=${updated}, kept=${kept}, unchanged=${unchanged}]`,
       );
 
       // Skola24-style guardian alert: a student was marked ABSENT without a
       // prior absence report covering this lesson.
-      const absentIds = dto.records
+      const absentIds = [...written]
         .filter(
-          (entry) =>
-            entry.status === 'ABSENT' &&
+          ([studentId, status]) =>
+            status === 'ABSENT' &&
             // Already absent in the register: this batch changed nothing about
             // them, so there is nothing to tell a guardian that was not told
             // the first time. A correction from PRESENT to ABSENT is a real
-            // transition and does alert.
-            priorStatus.get(entry.studentId) !== 'ABSENT',
+            // transition and does alert; a mark a newer one kept out was never
+            // written, and alerts nobody.
+            priorStatus.get(studentId) !== 'ABSENT',
         )
-        .map((entry) => entry.studentId);
+        .map(([studentId]) => studentId);
       if (absentIds.length > 0) {
         const lessonDate = toDateString(lesson.date);
         const covered = coveredBy(await reportedAbsencesOn(tx, lesson.date), lesson);
