@@ -175,6 +175,88 @@ describe('Resource CRUD (e2e)', () => {
     });
   });
 
+  describe('sites', () => {
+    const NORRA = '10000000-0000-4000-8000-0000000001a1';
+    const SODRA = '20000000-0000-4000-8000-0000000001a2';
+
+    it('lists, creates, renames, saves the travel times of and removes the caller school\'s sites as its admin', async () => {
+      const server = harness.app.getHttpServer();
+      harness.tx['$executeRaw']!.mockResolvedValue(1);
+      harness.tx['site']!['findMany']!.mockResolvedValue([{ id: NORRA, name: 'Norra' }, { id: SODRA, name: 'Södra' }]);
+      harness.tx['siteTravelTime']!['findMany']!.mockResolvedValue([{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }]);
+      harness.tx['room']!['groupBy']!.mockResolvedValue([{ siteId: null, _count: { _all: 2 } }]);
+      const listed = await request(server).get('/api/v1/sites').set('x-test-user', asUser({})).expect(200);
+      expect(listed.body).toEqual({
+        sites: [
+          { id: NORRA, name: 'Norra', roomCount: 0 },
+          { id: SODRA, name: 'Södra', roomCount: 0 },
+        ],
+        travelTimes: [{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }],
+        roomsWithoutSite: 2,
+      });
+
+      harness.tx['site']!['create']!.mockResolvedValue({ id: NORRA, name: 'Norra' });
+      await request(server).post('/api/v1/sites').set('x-test-user', asUser({})).send({ name: ' Norra ' }).expect(201);
+      expect(harness.tx['site']!['create']).toHaveBeenCalledWith({
+        data: { schoolId: SCHOOL_ID, name: 'Norra' },
+        select: { id: true, name: true },
+      });
+
+      harness.tx['site']!['findFirst']!.mockResolvedValue({ id: NORRA });
+      harness.tx['site']!['update']!.mockResolvedValue({ id: NORRA, name: 'Norr' });
+      harness.tx['room']!['count']!.mockResolvedValue(0);
+      await request(server).patch(`/api/v1/sites/${NORRA}`).set('x-test-user', asUser({})).send({ name: 'Norr' }).expect(200);
+
+      harness.tx['siteTravelTime']!['findMany']!.mockResolvedValue([]);
+      const saved = await request(server)
+        .put('/api/v1/sites/travel-times')
+        .set('x-test-user', asUser({}))
+        .send({ times: [{ siteIds: [SODRA, NORRA], minutes: 15 }] })
+        .expect(200);
+      expect(saved.body).toEqual([{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }]);
+
+      harness.tx['site']!['deleteMany']!.mockResolvedValue({ count: 1 });
+      await request(server).delete(`/api/v1/sites/${NORRA}`).set('x-test-user', asUser({})).expect(204);
+    });
+
+    it('refuses a name past 60, minutes past 240, a pair of one site and a field it does not take', async () => {
+      const server = harness.app.getHttpServer();
+      await request(server).post('/api/v1/sites').set('x-test-user', asUser({})).send({ name: 'x'.repeat(61) }).expect(400);
+      await request(server).post('/api/v1/sites').set('x-test-user', asUser({})).send({ name: 'X', schoolId: SCHOOL_ID }).expect(400);
+      for (const times of [[{ siteIds: [NORRA, SODRA], minutes: 241 }], [{ siteIds: [NORRA], minutes: 5 }], [{ siteIds: [NORRA, 'x'], minutes: 5 }]]) {
+        await request(server).put('/api/v1/sites/travel-times').set('x-test-user', asUser({})).send({ times }).expect(400);
+      }
+      expect(harness.tx['site']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['siteTravelTime']!['upsert']).not.toHaveBeenCalled();
+    });
+
+    it('is read by every administrator, written by planering, and nobody else\'s', async () => {
+      const server = harness.app.getHttpServer();
+      for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN']) {
+        await request(server).get('/api/v1/sites').set('x-test-user', asUser({ role: role as never })).expect(403);
+        await request(server).post('/api/v1/sites').set('x-test-user', asUser({ role: role as never })).send({ name: 'X' }).expect(403);
+      }
+      const expedition = asUser({ adminProfile: 'EXPEDITION' } as never);
+      harness.tx['site']!['findMany']!.mockResolvedValue([]);
+      harness.tx['siteTravelTime']!['findMany']!.mockResolvedValue([]);
+      harness.tx['room']!['groupBy']!.mockResolvedValue([]);
+      await request(server).get('/api/v1/sites').set('x-test-user', expedition).expect(200);
+      await request(server).post('/api/v1/sites').set('x-test-user', expedition).send({ name: 'X' }).expect(403);
+      await request(server).put('/api/v1/sites/travel-times').set('x-test-user', expedition).send({ times: [] }).expect(403);
+      expect(harness.tx['site']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('puts a room on a site through the rooms route', async () => {
+      harness.tx['room']!['update']!.mockResolvedValue({ id: SUBJECT_ID, siteId: NORRA });
+      await request(harness.app.getHttpServer())
+        .patch(`/api/v1/rooms/${SUBJECT_ID}`)
+        .set('x-test-user', asUser({}))
+        .send({ siteId: NORRA })
+        .expect(200);
+      expect(harness.tx['room']!['update']).toHaveBeenCalledWith({ where: { id: SUBJECT_ID }, data: { siteId: NORRA } });
+    });
+  });
+
   describe('calendar publish', () => {
     it('requires SCHOOL_ADMIN', async () => {
       await request(harness.app.getHttpServer())

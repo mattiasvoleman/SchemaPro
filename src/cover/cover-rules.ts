@@ -111,6 +111,8 @@ export interface PersonLesson {
   subjectId: string;
   /** Why a CANCELLED lesson is cancelled; the ranking tells an activity (EVENT) from the rest. */
   cancelCause?: string | null;
+  /** Where it is held: the ranking's walk between sites (cover-rank.ts, TRAVEL_TOO_SHORT). */
+  roomId?: string | null;
 }
 
 export interface PersonClosure {
@@ -155,6 +157,8 @@ export interface CoverTarget {
   start: number;
   end: number;
   teacherIds: readonly string[];
+  /** Where it is held; read by the ranking's walk between sites, never by a hard rule. */
+  roomId?: string | null;
 }
 
 const MINUTE = 60_000;
@@ -316,6 +320,9 @@ export function prefersFree(day: PersonDay, target: CoverTarget): boolean {
  * rektor may override, informed — a teacher may agree to skip lunch — as
  * behörighet is a warning and never a refusal (Fas 2). An overlapping lesson
  * and an absence stay refusals, and are not repeated here.
+ * COVER_TRAVEL_TIME_SHORT is no hard rule's: the walk between two sites the
+ * pick leaves too little time for (common/site-travel.ts), what the
+ * suggestions rank down as TRAVEL_TOO_SHORT (cover-rank.ts).
  */
 export type CoverWarningCode =
   | 'COVER_BREAKS_LUNCH'
@@ -326,7 +333,8 @@ export type CoverWarningCode =
   | 'COVER_BEYOND_WORK_DAYS_HIDDEN'
   | 'COVER_TEACHER_UNAVAILABLE'
   | 'COVER_TEACHER_BOOKED'
-  | 'COVER_POOL_NOT_DECLARED';
+  | 'COVER_POOL_NOT_DECLARED'
+  | 'COVER_TRAVEL_TIME_SHORT';
 
 /**
  * The cap and the days stay warnings too, as the lunch and the rest do: the

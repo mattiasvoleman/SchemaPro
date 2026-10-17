@@ -25,6 +25,8 @@ import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
 import { readLastYearTeachersOf } from './last-year-teachers';
 import { readActiveStaffIds } from './staff-candidates';
 import { hideHr, readsHr } from './hr-visibility';
+import { hasTravel, readSiteMap } from '../common/site-travel';
+import { travelLoad, type TeacherTravel } from './travel-load';
 
 /**
  * The horizons the weekly report can be asked for: the timplansposter
@@ -49,6 +51,14 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
    * are empty there rather than computed over lessons.
    */
   listsComputed: boolean;
+  /**
+   * Restid, arbetstid beside the undervisning (Skolområden och restid,
+   * travel-load.ts): each teacher's walks between sites in the grundschema,
+   * whatever the horizon, for the teachers who walk at all. Null at a school
+   * with no travel figure — one site, or none — which reads the report it
+   * always did. Never part of the counted minutes, the saldo or the status.
+   */
+  travel: { teachers: TeacherTravel[] } | null;
 }
 
 /** GET /staffing/delivered's answer. */
@@ -106,7 +116,7 @@ export class StaffingLoadService {
     }
 
     const scheduled = chosen === 'scheduled';
-    const { year, report } = await this.prisma.withRls(user, async (tx) => {
+    const { year, report, travel } = await this.prisma.withRls(user, async (tx) => {
       const read = scheduled
         ? await this.readScheduledInput(tx, academicYearId, user)
         : await this.readInput(tx, academicYearId, user);
@@ -117,7 +127,8 @@ export class StaffingLoadService {
       if (user.role === Role.SCHOOL_ADMIN && options.record !== false) {
         await recordRead(tx, 'EMPLOYMENT', built.teachers.map((row) => row.userId), user.channel);
       }
-      return { year: read.year, report: built };
+      const travel = await this.readTravel(tx, academicYearId, user, read.year, read.input.closures);
+      return { year: read.year, report: built, travel };
     });
 
     const response: TeacherLoadReportResponse = {
@@ -126,6 +137,7 @@ export class StaffingLoadService {
       year,
       ...report,
       listsComputed: !scheduled,
+      travel,
       ...(scheduled
         ? { unstaffedRequirements: [], unqualifiedAssignments: [], subjectBottlenecks: [], bottlenecksComputed: false }
         : {}),
@@ -162,6 +174,7 @@ export class StaffingLoadService {
     return {
       ...response,
       teachers: report.teachers.filter((row) => row.userId === own),
+      travel: travel && { teachers: travel.teachers.filter((row) => row.userId === own) },
       unstaffedRequirements: [],
       unqualifiedAssignments: report.unqualifiedAssignments.filter(
         (row) => row.userId === own,
@@ -363,6 +376,58 @@ export class StaffingLoadService {
       );
       return answer;
     });
+  }
+
+  /**
+   * The restid of travel-load.ts, from the reader's grundschema: the draft
+   * for an administrator, the published one for a teacher
+   * (published-grundschema.ts). One question and nothing more at a school
+   * with no travel figure.
+   */
+  private async readTravel(
+    tx: PrismaClient,
+    academicYearId: string,
+    user: AuthenticatedUser,
+    year: YearBounds,
+    closures: LoadInput['closures'],
+  ): Promise<{ teachers: TeacherTravel[] } | null> {
+    const schoolId = requireSchoolId(user);
+    const map = await readSiteMap(tx, schoolId);
+    if (!hasTravel(map)) return null;
+    const { rows } = await readGrundschema(tx, { role: user.role, schoolId }, academicYearId, () =>
+      tx.masterLesson.findMany({
+        where: { academicYearId, isParked: false },
+        select: {
+          id: true,
+          teacherId: true,
+          coTeacherId: true,
+          roomId: true,
+          dayOfWeek: true,
+          startTime: true,
+          endTime: true,
+          recurrence: true,
+          startDate: true,
+          endDate: true,
+          isParked: true,
+        },
+        orderBy: { id: 'asc' },
+      }),
+    );
+    const minutes = (value: Date) => value.getUTCHours() * 60 + value.getUTCMinutes();
+    const masters = rows
+      .filter((row) => !row.isParked)
+      .map((row) => ({
+        id: row.id,
+        teacherIds: [row.teacherId, row.coTeacherId].filter((id): id is string => id !== null),
+        dayOfWeek: row.dayOfWeek,
+        start: minutes(row.startTime),
+        end: minutes(row.endTime),
+        roomId: row.roomId,
+        recurrence: row.recurrence,
+        startDate: asDayOrNull(row.startDate),
+        endDate: asDayOrNull(row.endDate),
+      }));
+    return { teachers: travelLoad(map, masters, year, closures) };
   }
 
   private async readInput(

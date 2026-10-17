@@ -498,6 +498,46 @@ describe('CalendarLessonsService', () => {
       });
     });
 
+    it('warns of the walk between sites a pick leaves too little time for, and assigns all the same', async () => {
+      const NORRA = '10000000-0000-4000-8000-0000000000d1';
+      const SODRA = '20000000-0000-4000-8000-0000000000d2';
+      const NORRA_ROOM = '00000000-dddd-4ddd-8ddd-0000000000d3';
+      arrangeAssign();
+      // The vikarie's own lesson that day, on Norra, ends five minutes before the cover starts on Södra.
+      tx.calendarLessonTeacher.findMany.mockImplementation((query: { where: { teacherId?: unknown } }) =>
+        Promise.resolve(
+          query.where.teacherId
+            ? [
+                {
+                  teacherId: SUB_ID,
+                  calendarLesson: {
+                    id: 'their-own',
+                    date: new Date('2026-08-10T00:00:00.000Z'),
+                    startsAt: new Date(STARTS_AT.getTime() - 65 * 60_000),
+                    endsAt: new Date(STARTS_AT.getTime() - 5 * 60_000),
+                    status: 'SCHEDULED',
+                    studentGroupId: 'other-group',
+                    subjectId: 'other-subject',
+                    roomId: NORRA_ROOM,
+                  },
+                },
+              ]
+            : [],
+        ),
+      );
+      tx.siteTravelTime.findMany.mockResolvedValue([{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }]);
+      tx.site.findMany.mockResolvedValue([{ id: NORRA, name: 'Norra' }, { id: SODRA, name: 'Södra' }]);
+      tx.room.findMany.mockResolvedValue([{ id: NORRA_ROOM, siteId: NORRA }, { id: ROOM_ID, siteId: SODRA }]);
+
+      const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      expect(result.warnings).toContainEqual({
+        code: 'COVER_TRAVEL_TIME_SHORT',
+        params: { from: 'Norra', to: 'Södra', minutes: 15, gap: 5 },
+      });
+      expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
+    });
+
     it('leaves a CANCELLED lesson cancelled when a substitute is put on it through the API', async () => {
       // The UIs offer a vikarie on scheduled rows only; the API allows it on a
       // cancelled one. Neither the status nor the cause moves, so the

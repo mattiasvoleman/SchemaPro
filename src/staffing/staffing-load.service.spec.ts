@@ -227,6 +227,58 @@ describe('StaffingLoadService', () => {
     expect(report.bottlenecksComputed).toBe(false);
   });
 
+  describe('restid (Skolområden och restid)', () => {
+    const NORRA = '10000000-0000-4000-8000-0000000000b1';
+    const SODRA = '20000000-0000-4000-8000-0000000000b2';
+    const t = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
+    /** Every Monday: Norra 08–09, Södra 09:15–10:15, for ME; COLLEAGUE on Norra all day. */
+    const arrangeWeek = () => {
+      tx.siteTravelTime.findMany.mockResolvedValue([{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }]);
+      tx.site.findMany.mockResolvedValue([{ id: NORRA, name: 'Norra' }, { id: SODRA, name: 'Södra' }]);
+      tx.room.findMany.mockResolvedValue([{ id: 'n1', siteId: NORRA }, { id: 's1', siteId: SODRA }]);
+      const lesson = (id: string, teacherId: string, from: string, to: string, roomId: string, isParked = false) => ({
+        id, teacherId, coTeacherId: null, roomId, dayOfWeek: 1, startTime: t(from), endTime: t(to),
+        recurrence: 'ALL_WEEKS', startDate: null, endDate: null, isParked,
+      });
+      tx.masterLesson.findMany.mockResolvedValue([
+        lesson('a', ME, '08:00', '09:00', 'n1'),
+        lesson('b', ME, '09:15', '10:15', 's1'),
+        lesson('c', COLLEAGUE, '08:00', '09:00', 'n1'),
+        lesson('d', COLLEAGUE, '09:15', '10:15', 's1', true),
+      ]);
+    };
+
+    it('states each teacher’s walks beside the report, and moves none of the counted minutes', async () => {
+      const without = await service.load(YEAR_ID, 'planned', testUser());
+      expect(without.travel).toBeNull();
+      // A school with no travel figure asks one question and reads no lesson for it.
+      expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+
+      arrangeWeek();
+      const report = await service.load(YEAR_ID, 'planned', testUser());
+      expect(report.travel?.teachers).toEqual([
+        expect.objectContaining({ userId: ME, minutesPerWeek: expect.any(Number), peakMinutesPerWeek: 15 }),
+      ]);
+      expect(report.travel!.teachers[0]!.minutesPerWeek).toBeGreaterThan(0);
+      expect(report.teachers.map((row) => [row.countedMinutesPerWeek, row.status])).toEqual(
+        without.teachers.map((row) => [row.countedMinutesPerWeek, row.status]),
+      );
+    });
+
+    it('answers a teacher their own walks alone', async () => {
+      arrangeWeek();
+      tx.masterLesson.findMany.mockResolvedValue([
+        ...(await tx.masterLesson.findMany()),
+        { id: 'e', teacherId: COLLEAGUE, coTeacherId: null, roomId: 's1', dayOfWeek: 1, startTime: t('09:15'), endTime: t('10:15'),
+          recurrence: 'ALL_WEEKS', startDate: null, endDate: null, isParked: false },
+      ]);
+      const admin = await service.load(YEAR_ID, 'planned', testUser());
+      expect(admin.travel?.teachers.map((row) => row.userId).sort()).toEqual([ME, COLLEAGUE].sort());
+      const own = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER }));
+      expect(own.travel?.teachers.map((row) => row.userId)).toEqual([ME]);
+    });
+  });
+
   it('leaves tjänst %, the stretches and the year figures read off them out for a planner without HR-läs (Roller i skolan)', async () => {
     tx.teacherEmployment.findMany.mockResolvedValue([
       {

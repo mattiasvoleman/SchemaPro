@@ -25,6 +25,7 @@ export class RoomsService {
             maxGradeLevel: dto.maxGradeLevel ?? null,
             building: normaliseBuilding(dto.building),
             floor: dto.floor ?? null,
+            siteId: dto.siteId ?? null,
             ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
@@ -57,6 +58,7 @@ export class RoomsService {
               ? { building: normaliseBuilding(dto.building) }
               : {}),
             ...(dto.floor !== undefined ? { floor: dto.floor } : {}),
+            ...(dto.siteId !== undefined ? { siteId: dto.siteId } : {}),
             ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }

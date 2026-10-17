@@ -116,6 +116,8 @@ describe('RoomsService', () => {
           // room changes, and charges no floor or building it was never told.
           building: null,
           floor: null,
+          // On no skolområde: no travel is counted to or from it.
+          siteId: null,
         },
       });
     });
@@ -393,6 +395,26 @@ describe('RoomsService', () => {
         where: { id: ROOM_ID },
         data: { building: null, floor: null },
       });
+    });
+
+    it('puts a room on a skolområde, moves it, and takes it off with null', async () => {
+      const SITE = '77777777-7777-4777-8777-777777777777';
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(dto({ siteId: SITE }), testUser());
+      await service.update(ROOM_ID, { siteId: null }, testUser());
+
+      expect(tx.room.create).toHaveBeenCalledWith({ data: expect.objectContaining({ siteId: SITE }) });
+      expect(tx.room.update).toHaveBeenCalledWith({ where: { id: ROOM_ID }, data: { siteId: null } });
+    });
+
+    it('maps another school’s site, which the composite key refuses (P2003), to 409', async () => {
+      tx.room.update.mockRejectedValue(prismaError('P2003'));
+
+      await expect(
+        service.update(ROOM_ID, { siteId: '77777777-7777-4777-8777-777777777777' }, testUser()),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('leaves an untouched location alone on a partial update', async () => {
