@@ -1,7 +1,15 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PAGE_GATES, gateOfPath, profileOpens, profileReadsHr } from "./admin-areas";
+import {
+  PAGE_GATES,
+  closedPages,
+  gateOfPath,
+  profileOpens,
+  profileReadsHr,
+  profileReadsPage,
+  readOnlyPages,
+} from "./admin-areas";
 
 describe("admin areas (Roller i skolan)", () => {
   it("gives every admin page a gate, so a new page is a decision and not a default", () => {
@@ -38,5 +46,43 @@ describe("admin areas (Roller i skolan)", () => {
     expect(profileReadsHr("SCHEMALAGGARE", true)).toBe(true);
     expect(profileReadsHr("SCHEMALAGGARE", false)).toBe(false);
     expect(profileReadsHr("REKTOR", false)).toBe(true);
+  });
+});
+
+describe("the läsare (Läsbehörighet)", () => {
+  it("opens no page by writing, and may be given HR-läs", () => {
+    for (const gate of ["PLANERING", "SCHEMALAGGNING", "PUBLICERING", "DRIFT", "PERSONAL", "INTEGRATIONER", "DECIDES"] as const) {
+      expect(profileOpens("LASARE", gate)).toBe(false);
+    }
+    expect(profileReadsHr("LASARE", false)).toBe(false);
+    expect(profileReadsHr("LASARE", true)).toBe(true);
+  });
+
+  it("closes only the decision pages to it: dataskydd holds the läslogg, which those who decide read", () => {
+    expect(closedPages("LASARE")).toEqual([{ path: "/admin/dataskydd", gate: "DECIDES" }]);
+  });
+
+  it("opens every other admin page read-only, each named by its area, Personer by the register", () => {
+    const pages = readOnlyPages("LASARE");
+    const expected = Object.entries(PAGE_GATES)
+      .filter(([path, gate]) => gate !== "DECIDES" && (gate !== null || path === "/admin/people"))
+      .map(([path]) => path)
+      .sort();
+    expect(pages.map((page) => page.path).sort()).toEqual(expected);
+    expect(pages.find((page) => page.path === "/admin/people")?.area).toBe("PERSONAL");
+    expect(pages.find((page) => page.path === "/admin/timetable")?.area).toBe("SCHEMALAGGNING");
+    expect(pages.find((page) => page.path === "/admin/calendar-feeds")?.area).toBe("PUBLICERING");
+    expect(pages.some((page) => page.path === "/admin")).toBe(false);
+    expect(profileReadsPage("LASARE", "DRIFT")).toBe(true);
+    expect(profileReadsPage("LASARE", "DECIDES")).toBe(false);
+  });
+
+  it("leaves the narrower profiles their closed pages, and opens nothing read-only to them or to a writer", () => {
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION"] as const) {
+      expect(readOnlyPages(profile)).toEqual([]);
+      expect(profileReadsPage(profile, "INTEGRATIONER")).toBe(false);
+    }
+    expect(closedPages("SCHEMALAGGARE").map((page) => page.path)).toContain("/admin/integrations");
+    expect(readOnlyPages(null)).toEqual([]);
   });
 });

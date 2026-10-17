@@ -19600,7 +19600,8 @@ END $$;
 --
 -- The role × table matrix. In the fixtures' school rls-roller-school every
 -- table an administrator's arm reaches has a row, and there is one
--- administrator of each profile, two of them with HR-läs. Each of the six
+-- administrator of each profile, three of them with HR-läs: the läsare
+-- (Läsbehörighet, 20261120100000) twice, with and without. Each of the eight
 -- reads, inserts, updates and deletes in each table, and every cell is
 -- compared with what src/auth/admin-areas.ts says, through the rows the
 -- generator writes below (scripts/test/generate-rls-area-matrix.ts):
@@ -19630,7 +19631,8 @@ INSERT INTO area_profiles (profile, writes, decides) VALUES
   ('FULL', '{PLANERING,SCHEMALAGGNING,PUBLICERING,DRIFT,PERSONAL,INTEGRATIONER}', true),
   ('REKTOR', '{PLANERING,SCHEMALAGGNING,PUBLICERING,DRIFT,PERSONAL,INTEGRATIONER}', true),
   ('SCHEMALAGGARE', '{PLANERING,SCHEMALAGGNING,PUBLICERING,DRIFT}', false),
-  ('EXPEDITION', '{DRIFT,PERSONAL}', false);
+  ('EXPEDITION', '{DRIFT,PERSONAL}', false),
+  ('LASARE', '{}', false);
 INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('AbsenceReports', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('AcademicYearTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -19726,7 +19728,9 @@ DECLARE
     ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'false'],
     ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'false'],
     ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE', 'true'],
-    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true']];
+    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true'],
+    ['00000000-0000-4000-8000-000000000115', 'LASARE', 'false'],
+    ['00000000-0000-4000-8000-000000000116', 'LASARE', 'true']];
   i integer;
   m uuid;
   pr record;
@@ -19748,7 +19752,8 @@ DECLARE
   wrong text[] := '{}';
   cells integer := 0;
 BEGIN
-  IF (SELECT count(*) FROM area_gates) < 70 OR (SELECT count(*) FROM area_profiles) <> 4 THEN
+  IF (SELECT count(*) FROM area_gates) < 70
+     OR (SELECT count(*) FROM area_profiles) <> cardinality(enum_range(NULL::"AdminProfile")) THEN
     RAISE EXCEPTION 'matrix: the generated rows are missing (% tables, % profiles)',
       (SELECT count(*) FROM area_gates), (SELECT count(*) FROM area_profiles);
   END IF;
@@ -19881,7 +19886,8 @@ BEGIN
   IF cardinality(wrong) > 0 THEN
     RAISE EXCEPTION 'matrix: % of % cells wrong: %', cardinality(wrong), cells, array_to_string(wrong, '; ');
   END IF;
-  RAISE NOTICE 'matrix: % cells, 6 administrators × % tables × read, insert, update, delete', cells,
+  RAISE NOTICE 'matrix: % cells, % administrators × % tables × read, insert, update, delete', cells,
+    array_length(principals, 1),
     (SELECT count(*) FROM area_gates);
 END $$;
 
@@ -20017,13 +20023,15 @@ BEGIN
       ('00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE'),
       ('00000000-0000-4000-8000-000000000108', 'EXPEDITION'),
       ('00000000-0000-4000-8000-000000000110', 'EXPEDITION'),
+      ('00000000-0000-4000-8000-000000000115', 'LASARE'),
+      ('00000000-0000-4000-8000-000000000116', 'LASARE'),
       ('00000000-0000-4000-8000-000000000111', 'TEACHER'),
       ('00000000-0000-4000-8000-000000000112', 'STUDENT'),
       ('00000000-0000-4000-8000-000000000113', 'GUARDIAN'),
       ('00000000-0000-4000-8000-000000000003', 'DEACTIVATED')) v(sub, who)
   LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', rec.sub)::text, true);
-    admin := rec.who IN ('FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION');
+    admin := rec.who IN ('FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE');
     writes := CASE WHEN admin THEN app.admin_profile_writes(rec.who::"AdminProfile") ELSE '{}' END;
     FOREACH a IN ARRAY enum_range(NULL::"AdminArea") LOOP
       IF app.current_user_may(a, false) IS DISTINCT FROM admin THEN
@@ -22861,5 +22869,111 @@ BEGIN
   -- A lesson removed takes its attendance with it (the cascade), buried.
   DELETE FROM "CalendarLessons" WHERE id = lesson;
   IF NOT pg_temp.nv159_buried('Attendance', present) THEN RAISE EXCEPTION 'attendance versions: a removed lesson''s attendance was not buried'; END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 117: läsaren läser allt och ändrar inget (Läsbehörighet,
+-- 20261120090000, 20261120100000).
+--
+-- Beside the matrix (116), which runs the läsare against every table, and
+-- the functions (107): the profile in the catalogue — a value of
+-- "AdminProfile" with no area and no decisions, stated by the newest
+-- app.admin_profile_writes — and its rules on Users. HR-läs is its own
+-- grant: rektor gives it to a läsare and the läsare keeps it, while it goes
+-- when the profile becomes a deciding one; the CHECK admits it on a läsare.
+-- A läsare makes nobody an administrator, gives nobody HR-läs and changes no
+-- profile, its own included. Each attempt must raise, never pass as zero
+-- rows: the decisions' trigger runs before row security checks the new row,
+-- so a decision is refused as AR403, and what is not one as 42501 (the
+-- läsare writes no area). Every change rektor makes is logged with rektor. Run as the API's role, signed in as
+-- rektor to read the school's people, as section 108 is.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  m uuid;
+  teacher uuid;
+  lasare uuid;
+  rektor uuid;
+  row_ record;
+  bad text[] := '{}';
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+  teacher := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000111');
+  lasare := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  rektor := (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000106');
+  IF lasare IS NULL THEN
+    RAISE EXCEPTION 'läsare: the läsare is not in rls-roller-school; fixtures did not run';
+  END IF;
+
+  -- The catalogue.
+  IF NOT ('LASARE' = ANY (enum_range(NULL::"AdminProfile")::text[])) THEN
+    bad := bad || 'LASARE is no value of "AdminProfile"'::text;
+  END IF;
+  IF app.admin_profile_writes('LASARE') IS DISTINCT FROM '{}'::"AdminArea"[] THEN
+    bad := bad || format('the läsare writes %s', app.admin_profile_writes('LASARE'));
+  END IF;
+  IF app.admin_profile_decides('LASARE') THEN
+    bad := bad || 'the läsare decides'::text;
+  END IF;
+  IF pg_get_constraintdef((SELECT oid FROM pg_constraint
+                            WHERE conrelid = 'public."Users"'::regclass
+                              AND conname = 'Users_hr_read_is_a_narrow_administrators')) NOT LIKE '%LASARE%' THEN
+    bad := bad || 'the HR-läs CHECK does not admit a läsare'::text;
+  END IF;
+  IF (SELECT "hrRead" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000116') IS DISTINCT FROM true THEN
+    bad := bad || 'the läsare planted with HR-läs does not have it'::text;
+  END IF;
+
+  -- The läsare decides nothing about anybody, itself included.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  m := app.current_school_id();
+  IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'läsare: the läsare is not signed in to rls-roller-school';
+  END IF;
+  BEGIN
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+    VALUES (m, 'roller-lasare-ny@example.invalid', 'Ny', 'Admin', 'SCHOOL_ADMIN', 'LASARE', gen_random_uuid(), now());
+    bad := bad || 'the läsare made an administrator'::text;
+  EXCEPTION WHEN SQLSTATE 'AR403' OR insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'LASARE' WHERE id = teacher;
+    bad := bad || 'the läsare made a teacher a läsare'::text;
+  EXCEPTION WHEN SQLSTATE 'AR403' OR insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "hrRead" = true WHERE id = lasare;
+    bad := bad || 'the läsare gave itself HR-läs'::text;
+  EXCEPTION WHEN SQLSTATE 'AR403' OR insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Users" SET "adminProfile" = 'FULL' WHERE id = lasare;
+    bad := bad || 'the läsare made itself full'::text;
+  EXCEPTION WHEN SQLSTATE 'AR403' OR insufficient_privilege THEN NULL;
+  END;
+
+  -- Rektor makes a teacher a läsare with HR-läs; the läsare keeps HR-läs, and
+  -- it goes when rektor makes the läsare full.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+  UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'LASARE', "hrRead" = true WHERE id = teacher;
+  SELECT "adminProfile"::text AS profile, "hrRead" AS hr INTO row_ FROM "Users" WHERE id = teacher;
+  IF row_.profile IS DISTINCT FROM 'LASARE' OR row_.hr IS DISTINCT FROM true THEN
+    bad := bad || format('rektor''s läsare with HR-läs reads back as %s %s', row_.profile, row_.hr);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "UserRoleChanges"
+                  WHERE "userId" = teacher AND "toProfile" = 'LASARE' AND "toHrRead" AND "actorId" = rektor) THEN
+    bad := bad || 'making a läsare left no log row with rektor'::text;
+  END IF;
+  UPDATE "Users" SET "adminProfile" = 'FULL' WHERE id = teacher;
+  IF (SELECT "hrRead" FROM "Users" WHERE id = teacher) THEN
+    bad := bad || 'a full administrator kept the läsare''s HR-läs'::text;
+  END IF;
+
+  IF cardinality(bad) > 0 THEN
+    RAISE EXCEPTION 'läsare: %', array_to_string(bad, '; ');
+  END IF;
 END $$;
 ROLLBACK;

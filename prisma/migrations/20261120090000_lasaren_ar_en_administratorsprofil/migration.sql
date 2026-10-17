@@ -1,0 +1,29 @@
+-- Läsbehörighet, del 1: läsaren är en administratörsprofil.
+--
+-- ## Why
+--
+-- A kommun's controller, a skolchef or a new colleague being shown the ropes
+-- needs to see the school's planning, schedule, day and roster without being
+-- able to change any of it. Roller i skolan (20261110090000) gave every
+-- administrator a profile that names the areas it writes; a profile that
+-- writes none is the read-only staff role.
+--
+-- ## What this migration adds
+--
+-- The value 'LASARE' of "AdminProfile", and nothing else. A value added with
+-- ALTER TYPE cannot be used in the transaction that adds it, and Prisma runs
+-- each migration file in one transaction, so what the value means comes in
+-- 20261120100000: its line in app.admin_profile_writes() and HR-läs.
+--
+-- Until then a LASARE administrator, of whom there is none (only a decider's
+-- write through the gateway makes one), already writes nothing: the matrix's
+-- ELSE gives an unknown profile no area, and it does not decide.
+--
+-- ## Beside the live API
+--
+-- No table is locked: adding an enum value locks the type, which no request
+-- takes a lock on. The API before this release reads the profile through a
+-- Prisma enum without 'LASARE'; no row holds it until the release that can
+-- write it is deployed.
+
+ALTER TYPE "AdminProfile" ADD VALUE IF NOT EXISTS 'LASARE';

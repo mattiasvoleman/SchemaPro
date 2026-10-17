@@ -1116,7 +1116,8 @@ BEGIN
   VALUES (m, yr, 'Roller Spanska', 7, 'TEACHING_GROUP', now()) RETURNING id INTO tgrp;
 
   -- One administrator of each profile; two with HR-läs. The log trigger
-  -- gives each a UserRoleChanges row, which is that table's row here.
+  -- gives each a UserRoleChanges row, which is that table's row here. The
+  -- läsare are planted in the block after this one.
   INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt")
   VALUES
     (m, 'roller-full@example.invalid',    'Roller', 'Full',          'SCHOOL_ADMIN', 'FULL',          false, '00000000-0000-4000-8000-000000000105', true, now()),
@@ -1286,6 +1287,24 @@ BEGIN
   -- A read in the läslogg, which those who decide read (20261026091000).
   INSERT INTO "PersonalDataAccess" ("schoolId", "at", "actorId", "actorRole", channel, kind, "subjectIds", "readSize")
   VALUES (m, now(), teacher, 'TEACHER', 'WEB', 'ROSTER', ARRAY[pupil], 1);
+END $$;
+
+-- The läsare of the matrix's school (Läsbehörighet, 20261120100000): an
+-- administrator whose profile writes nothing, with and without HR-läs.
+-- Planted on their own and only when missing, so a database whose
+-- rls-roller-school an older suite made (production's order, main's suite
+-- first) gets them too.
+DO $$
+DECLARE
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+BEGIN
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt")
+  VALUES
+    (m, 'roller-lasare@example.invalid',    'Roller', 'Läsare',    'SCHOOL_ADMIN', 'LASARE', false, '00000000-0000-4000-8000-000000000115', true, now()),
+    (m, 'roller-lasare-hr@example.invalid', 'Roller', 'Läsare HR', 'SCHOOL_ADMIN', 'LASARE', true,  '00000000-0000-4000-8000-000000000116', true, now());
 END $$;
 
 -- SS12000-närvaro (sections 155–159, 20261114090000). Two schools with a
