@@ -216,7 +216,7 @@
 
   <h4>Administratörens profil</h4>
   <p>
-    En administratör har en av fyra profiler. Profilen styr vad hen ändrar,
+    En administratör har en av fem profiler. Profilen styr vad hen ändrar,
     inte vad hen läser: varje administratör läser hela skolans uppgifter.
     Varje administratör som fanns innan profilerna infördes är fullständig
     administratör, så ingenting ändras förrän rektor väljer något annat.
@@ -228,6 +228,9 @@
       <tr><td class="k">Rektor</td><td>Alla områden, och fattar besluten.</td></tr>
       <tr><td class="k">Schemaläggare</td><td>Planering, schemaläggning, publicering och drift.</td></tr>
       <tr><td class="k">Expedition</td><td>Drift och personal.</td></tr>
+      <tr><td class="k">Läsare</td><td>Ingenting. Läser hela administrationen, till exempel för en
+        skolchef, en controller på förvaltningen eller en ny kollega som ska
+        sätta sig in i skolan.</td></tr>
     </tbody>
   </table>
   <table>
@@ -254,8 +257,8 @@
   </p>
   <p>
     <strong>HR-läs.</strong> Tjänstgöringsgrad och nedsättning visas för
-    rektor, en fullständig administratör och en schemaläggare eller
-    expedition som rektor har gett HR-läs. För alla andra står det
+    rektor, en fullständig administratör och en schemaläggare, expedition
+    eller läsare som rektor har gett HR-läs. För alla andra står det
     <span class="ui">dolt</span> där procenten skulle stå, och tjänstens
     perioder visas inte: när och hur en tjänst ändras under året räknas som
     HR-uppgifter på samma sätt. Bemanningsförslaget, lärarförslagen vid en
@@ -272,6 +275,20 @@
     områden, som <span class="path">Grunddata › Personer</span>, visas bara
     de knappar som profilen ändrar. Profilerna, HR-läs och rollhistoriken
     hanteras under Personer, se 3.5.
+  </p>
+  <p>
+    <strong>Läsare.</strong> En läsare ser varje sida i menyn utom
+    <span class="path">Dataskydd</span>, där läsloggen finns och som bara
+    rektor och en fullständig administratör läser. Varje sida öppnas för
+    läsning: överst står att du kan läsa men inte ändra, vilket område sidan
+    hör till och vem som ändrar det. Knapparna som skulle ändra något visas
+    inte, och fält och reglage som sparar direkt går att läsa men inte ändra.
+    Försöker en läsare ändå ändra något, till exempel genom en gammal flik,
+    säger SchemaPro att läsaren inte ändrar det området och vem som gör det,
+    och ingenting sparas. Översikten visar läsaren schemat,
+    timplansposterna, tjänstefördelningen och rapporterna. Det som skrivs i
+    läsloggen när en administratör öppnar uppgifter om en person skrivs
+    också när en läsare gör det.
   </p>
 
   <div class="warn">
@@ -698,7 +715,7 @@
   <p>
     <strong>Roll, profil och HR-läs.</strong> När rektor eller en fullständig
     administratör ändrar en administratör väljer hen profil, och för en
-    schemaläggare eller expedition även HR-läs, i samma dialog som namn och
+    schemaläggare, expedition eller läsare även HR-läs, i samma dialog som namn och
     e-post (se 2.2). Andra administratörer ser valen men kan inte ändra dem,
     och de kan inte heller ändra, bjuda in eller ta bort en administratör.
     Varje ändring av roll, profil eller HR-läs sparas. Fäll ut personens rad
@@ -710,7 +727,9 @@
     ändrar personer och kopplar vårdnadshavare. Schemaläggaren ändrar
     lärarnas arbetstid, behörigheter och uppdrag och importerar dem från fil,
     men lägger inte upp personer. Rektor och en fullständig administratör gör
-    båda delarna och skriver dessutom tjänsterna.
+    båda delarna och skriver dessutom tjänsterna. En läsare ser personerna,
+    deras behörigheter och uppdrag och elevernas vårdnadshavare men ändrar
+    inget av det.
   </p>
   <p>
     Har skolan ett elevregister som stöder SS12000 kan personerna hämtas
