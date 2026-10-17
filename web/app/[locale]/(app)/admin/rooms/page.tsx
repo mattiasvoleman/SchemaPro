@@ -40,6 +40,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { SitesCard } from "./sites-card";
+import { SITES_KEY, useSites } from "./use-sites";
 
 interface RoomForm {
   name: string;
@@ -53,9 +55,12 @@ interface RoomForm {
   requiresApproval: boolean;
   building: string;
   floor: string;
+  /** NO_SITE or a site's id. */
+  siteId: string;
 }
 
 const NO_LIMIT = "none";
+const NO_SITE = "none";
 const CUSTOM_RANGE = "custom";
 
 const EMPTY_FORM: RoomForm = {
@@ -69,6 +74,7 @@ const EMPTY_FORM: RoomForm = {
   requiresApproval: false,
   building: "",
   floor: "",
+  siteId: NO_SITE,
 };
 
 /** The range the database accepts, so the form refuses what the API would. */
@@ -125,13 +131,14 @@ function gradeRangeFromForm(form: RoomForm): {
 }
 
 /**
- * "Hus A · plan 2", "plan 2", "Hus A" or "—".
+ * "Norra · Hus A · plan 2", "Hus A · plan 2", "plan 2", "Hus A" or "—": the
+ * skolområde first, when the room stands on one.
  *
  * Floor 0 is tested against null, not for truthiness: a ground floor called 0
  * is a place, and dropping it would show the room as unplaced.
  */
-function placeLabel(room: Room, floorLabel: (floor: number) => string): string {
-  const parts = [room.building, room.floor !== null ? floorLabel(room.floor) : null].filter(
+function placeLabel(room: Room, floorLabel: (floor: number) => string, siteName: string | null): string {
+  const parts = [siteName, room.building, room.floor !== null ? floorLabel(room.floor) : null].filter(
     (part): part is string => part !== null && part !== "",
   );
   return parts.length > 0 ? parts.join(" · ") : "—";
@@ -147,6 +154,8 @@ export default function RoomsPage() {
     [roomTypes],
   );
   const { data: rooms, isLoading, isError } = useRooms();
+  const { data: sites } = useSites();
+  const siteName = useMemo(() => new Map((sites?.sites ?? []).map((site) => [site.id, site.name] as const)), [sites]);
   const mutations = useCrudMutations<{
     name: string;
     code?: string | null;
@@ -155,7 +164,8 @@ export default function RoomsPage() {
     requiresApproval?: boolean;
     building?: string | null;
     floor?: number | null;
-  }>("/api/v1/rooms", [["rooms"]]);
+    siteId?: string | null;
+  }>("/api/v1/rooms", [["rooms"], SITES_KEY]);
 
   const [importOpen, setImportOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -185,6 +195,7 @@ export default function RoomsPage() {
       requiresApproval: room.requiresApproval,
       building: room.building ?? "",
       floor: room.floor !== null ? String(room.floor) : "",
+      siteId: room.siteId ?? NO_SITE,
     });
     setDialogOpen(true);
   };
@@ -205,6 +216,9 @@ export default function RoomsPage() {
       // keep the old building when a school clears the field.
       building: form.building.trim() || null,
       floor,
+      // Only once the school has a site to choose: a school without one
+      // writes the rooms it always did.
+      ...(siteName.size > 0 ? { siteId: form.siteId === NO_SITE ? null : form.siteId } : {}),
     };
     try {
       if (editing) {
@@ -303,7 +317,11 @@ export default function RoomsPage() {
                 const stage = gradeRangeLabel(room.minGradeLevel, room.maxGradeLevel, (key) =>
                   t(`stages.${key}`),
                 );
-                const place = placeLabel(room, (value) => t("floorShort", { floor: value }));
+                const place = placeLabel(
+                  room,
+                  (value) => t("floorShort", { floor: value }),
+                  room.siteId ? (siteName.get(room.siteId) ?? null) : null,
+                );
                 return (
                   <TableRow key={room.id}>
                     <TableCell className="font-medium">
@@ -350,6 +368,8 @@ export default function RoomsPage() {
           </TableCard>
         </>
       )}
+
+      <SitesCard />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -444,6 +464,26 @@ export default function RoomsPage() {
                   />
                 </FormField>
               </div>
+            ) : null}
+
+            {siteName.size > 0 ? (
+              <FormField id="room-site" label={t("site")} hint={t("siteHint")}>
+                {(control) => (
+                  <Select value={form.siteId} onValueChange={(value) => setForm({ ...form, siteId: value })}>
+                    <SelectTrigger {...control}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_SITE}>{t("siteNone")}</SelectItem>
+                      {(sites?.sites ?? []).map((site) => (
+                        <SelectItem key={site.id} value={site.id}>
+                          {site.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </FormField>
             ) : null}
 
             {/* One hint for the pair, read by both fields; the floor's own rule

@@ -49,6 +49,7 @@ const room: Room = {
   requiresApproval: false,
   building: null,
   floor: null,
+  siteId: null,
 };
 
 const row = (overrides: Partial<CalendarLessonRow> = {}): CalendarLessonRow => ({

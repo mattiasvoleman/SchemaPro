@@ -182,7 +182,7 @@ export function useRooms() {
       sortByName(
         await selectAll<Room>(
           "Rooms",
-          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval, building, floor",
+          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval, building, floor, siteId",
           "name",
         ),
         (room) => room.name,

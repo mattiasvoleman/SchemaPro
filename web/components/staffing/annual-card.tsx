@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { formatPercent } from "@/lib/staffing-view";
 import type { LoadModel, TeacherLoad } from "@/lib/teacher-load";
+import type { TeacherTravel } from "@/lib/staffing-travel";
 import { SectionCard } from "@/components/ui/section-card";
 
 export interface AnnualCardProps {
@@ -16,6 +17,12 @@ export interface AnnualCardProps {
   showSettingsPath?: boolean;
   /** "h2" on a page of its own, "h3" inside the drawer's cards. */
   headingLevel?: "h2" | "h3";
+  /**
+   * The teacher's restid between the school's sites (travelOf): arbetstid
+   * beside the teaching and the uppdrag. Null at a school with no travel
+   * figure, which sees no row for it.
+   */
+  travel?: TeacherTravel | null;
 }
 
 /**
@@ -45,6 +52,7 @@ export function AnnualCard({
   loadModel,
   showSettingsPath = false,
   headingLevel = "h3",
+  travel = null,
 }: AnnualCardProps) {
   const t = useTranslations("staffing.annual");
   const hours = (value: number) => t("hours", { hours: formatPercent(value) });
@@ -55,6 +63,12 @@ export function AnnualCard({
     },
     { label: t("dutyHours"), value: hours(annual.dutyHoursPerYear) },
   ];
+  if (travel) {
+    rows.push({
+      label: t("travelHours"),
+      value: t("travelValue", { hours: formatPercent(travel.hoursPerYear), minutes: travel.minutesPerWeek }),
+    });
+  }
   if (annual.contractKind === "FERIE") {
     if (annual.regulatedHoursPerYear !== null) {
       rows.push({ label: t("regulated"), value: hours(annual.regulatedHoursPerYear) });

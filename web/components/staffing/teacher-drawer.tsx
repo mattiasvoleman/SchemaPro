@@ -5,6 +5,7 @@ import { Printer } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { formatPercent } from "@/lib/staffing-view";
 import { useTeacherDuties } from "@/lib/staffing-queries";
+import type { TeacherTravel } from "@/lib/staffing-travel";
 import type { LoadModel, TeacherLoad, UnqualifiedAssignment } from "@/lib/teacher-load";
 import type {
   StaffingPolicy,
@@ -49,6 +50,8 @@ export interface TeacherDrawerProps {
   loadModel?: LoadModel;
   /** A person's name, or null when the people list has none (Historik's actor). */
   personName?: (userId: string) => string | null;
+  /** The teacher's restid between sites (travelOf); null at a school with no travel figure. */
+  travel?: TeacherTravel | null;
 }
 
 /**
@@ -78,6 +81,7 @@ export function TeacherDrawer({
   groups,
   teacherName,
   loadModel = "MINUTES",
+  travel = null,
   personName = () => null,
 }: TeacherDrawerProps) {
   const t = useTranslations("staffing");
@@ -195,7 +199,7 @@ export function TeacherDrawer({
           </SectionCard>
         ) : null}
 
-        {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath /> : null}
+        {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath travel={travel} /> : null}
 
         <EmploymentHistoryCard
           userId={teacher.id}

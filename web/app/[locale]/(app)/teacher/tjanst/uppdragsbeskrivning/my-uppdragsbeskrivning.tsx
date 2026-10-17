@@ -48,6 +48,7 @@ export function MyUppdragsbeskrivning({ yearId }: { yearId: string | null }) {
         teacherName={`${profile.firstName} ${profile.lastName}`}
         load={data.row}
         loadModel={data.loadModel}
+        travel={data.travel}
         duties={data.duties}
         subjectName={data.subjectName}
         groupName={data.groupName}

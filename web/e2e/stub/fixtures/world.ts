@@ -138,6 +138,7 @@ const room = (n: number, name: string, code: string, capacity: number, type: num
   requiresApproval: false,
   building: "Hus A",
   floor: 1,
+  siteId: null,
   ...extra,
 });
 

@@ -72,6 +72,7 @@ import {
   useTeacherEmployments,
   useTeacherQualifications,
 } from "@/lib/staffing-queries";
+import { travelOf } from "@/lib/staffing-travel";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
 import { NextStep } from "@/components/layout/next-step";
 import { Page } from "@/components/layout/page";
@@ -497,6 +498,7 @@ export default function StaffingPage() {
             groups={yearGroups}
             teacherName={teacherName}
             loadModel={report?.loadModel ?? "MINUTES"}
+            travel={travelOf(report, openTeacher.id)}
             personName={(userId) => {
               const person = personOf.get(userId);
               return person ? `${person.firstName} ${person.lastName}` : null;

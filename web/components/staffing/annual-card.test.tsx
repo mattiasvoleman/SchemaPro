@@ -42,6 +42,21 @@ describe("AnnualCard", () => {
     expect(screen.queryByText("captionAdmin")).not.toBeInTheDocument();
   });
 
+  it("states restid between the school's sites after the uppdrag, and nothing of it at a school with no travel figure", () => {
+    render(
+      <AnnualCard
+        annual={ferie}
+        loadModel="MINUTES"
+        travel={{ userId: "t", minutesPerWeek: 30, peakMinutesPerWeek: 45, hoursPerYear: 19.5 }}
+      />,
+    );
+    expect(rows().slice(0, 3)).toEqual([
+      "teachingHours=hours(573,5)",
+      "dutyHours=hours(57)",
+      "travelHours=travelValue(19,5|30)",
+    ]);
+  });
+
   it("says räknad tid under the Faktor model, and points the admin at the settings", () => {
     render(<AnnualCard annual={ferie} loadModel="FACTOR" showSettingsPath />);
     expect(rows()[0]).toBe("teachingHoursFactor=hours(573,5)");

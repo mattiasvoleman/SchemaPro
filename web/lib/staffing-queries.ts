@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { TeacherTravel } from "./staffing-travel";
 import { api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import type { DutyBody } from "@/lib/duty-forms";
@@ -182,7 +183,14 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
   academicYearId: string;
   horizon: "planned";
   year: { startDate: string; endDate: string };
+  /**
+   * Restid (Skolområden och restid, src/staffing/travel-load.ts): each
+   * teacher's walks between sites in the grundschema, beside the load and
+   * never in it. Null, or absent, at a school with no travel figure.
+   */
+  travel?: { teachers: TeacherTravel[] } | null;
 }
+
 
 /**
  * The report for one läsår, computed by the gateway. Only the planned horizon

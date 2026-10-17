@@ -52,6 +52,7 @@ const room = (id: string, floor: number | null, building: string | null = null):
   requiresApproval: false,
   building,
   floor,
+  siteId: null,
 });
 
 /** Sal 1 on the ground floor, sal 10 upstairs — the school's own example. */
