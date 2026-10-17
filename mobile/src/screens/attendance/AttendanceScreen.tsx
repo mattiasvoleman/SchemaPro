@@ -12,7 +12,7 @@ import { FlashList } from '@shopify/flash-list';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { useSync } from '../../context/SyncContext';
-import { formatTimeRange } from '../../i18n/format';
+import { formatDateTime, formatTimeRange } from '../../i18n/format';
 import type { Translate } from '../../i18n';
 import { useBiometrics } from '../../hooks/useBiometrics';
 import { useOfflineAttendance } from '../../hooks/useOfflineAttendance';
@@ -60,6 +60,7 @@ export function syncBannerText(t: Translate, status: SyncStatus, pendingCount: n
   if (pendingCount > 0) parts.push(t('attendance.pending', { count: pendingCount }));
   if (problem?.code === 'SESSION_EXPIRED') parts.push(t('attendance.syncErrors.SESSION_EXPIRED'));
   if (problem?.code === 'RECORDS_FAILED') parts.push(t('attendance.syncErrors.RECORDS_FAILED', { count: problem.count }));
+  if (problem?.code === 'RECORDS_REFUSED') parts.push(t('attendance.syncErrors.RECORDS_REFUSED', { count: problem.count }));
   return parts.join(' · ');
 }
 
@@ -73,9 +74,58 @@ interface SyncBannerProps {
   readonly problem: SyncProblem | null;
 }
 
+/**
+ * The refused lessons, named, and what the teacher can do: look at the
+ * register on the web (or ask an administrator, when the lesson is gone or no
+ * longer theirs), then discard them from this phone. Nothing else ever clears
+ * them, since the server will never take them.
+ */
+function useRefusedPrompt() {
+  const { t, locale } = useI18n();
+  const { refusedLessons, discardRefused } = useSync();
+  return useCallback(async (): Promise<void> => {
+    const lessons = await refusedLessons();
+    const named = lessons
+      .map((lesson) =>
+        t('attendance.refused.lesson', {
+          lesson: lesson.subjectName && lesson.startTime
+            ? `${lesson.subjectName} ${formatDateTime(lesson.startTime, locale)}`
+            : t('attendance.refused.unknownLesson', { marked: formatDateTime(lesson.markedAt, locale) }),
+          count: lesson.count,
+        }),
+      )
+      .join('\n');
+    Alert.alert(t('attendance.refused.title'), t('attendance.refused.body', { lessons: named }), [
+      { text: t('attendance.refused.keep'), style: 'cancel' },
+      {
+        text: t('attendance.refused.discard'),
+        style: 'destructive',
+        onPress: () => void discardRefused(lessons.map((lesson) => lesson.lessonId)),
+      },
+    ]);
+  }, [t, locale, refusedLessons, discardRefused]);
+}
+
 function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.JSX.Element {
   const { t } = useI18n();
   const cfg = SYNC_STATUS_CONFIG[status];
+  const promptRefused = useRefusedPrompt();
+
+  if (problem?.code === 'RECORDS_REFUSED') {
+    return (
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityHint={t('attendance.refused.hint')}
+        onPress={() => void promptRefused()}
+        style={[styles.banner, { backgroundColor: `${cfg.color}22`, borderBottomColor: cfg.color }]}
+      >
+        <Text style={[styles.bannerDot, { color: cfg.color }]}>{cfg.dotChar}</Text>
+        <Text style={[styles.bannerText, { color: cfg.color }]} numberOfLines={3}>
+          {syncBannerText(t, status, pendingCount, problem)}
+        </Text>
+      </TouchableOpacity>
+    );
+  }
 
   return (
     <View
@@ -85,7 +135,7 @@ function SyncBanner({ status, pendingCount, problem }: SyncBannerProps): React.J
       ]}
     >
       <Text style={[styles.bannerDot, { color: cfg.color }]}>{cfg.dotChar}</Text>
-      <Text style={[styles.bannerText, { color: cfg.color }]} numberOfLines={1}>
+      <Text style={[styles.bannerText, { color: cfg.color }]} numberOfLines={problem ? 3 : 1}>
         {syncBannerText(t, status, pendingCount, problem)}
       </Text>
     </View>

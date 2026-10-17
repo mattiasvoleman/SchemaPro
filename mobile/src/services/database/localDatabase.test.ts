@@ -1,8 +1,10 @@
 import * as SQLite from 'expo-sqlite';
 import {
   clearCachedSchoolData,
+  discardRefusedRecords,
   getPendingAttendanceRecords,
-  getPendingQueueCount,
+  getQueueCounts,
+  getRefusedLessons,
   getStudentsByIds,
   initDatabase,
 } from './localDatabase';
@@ -24,8 +26,9 @@ jest.mock('expo-secure-store', () => ({
  */
 const rows: unknown[] = [];
 const getAllAsync = jest.fn(async () => rows);
-const getFirstAsync = jest.fn(async () => ({ cipher_version: '4.5.5 community', count: 0 }));
+const getFirstAsync = jest.fn(async (): Promise<Record<string, unknown>> => ({ cipher_version: '4.5.5 community', count: 0 }));
 const execAsync = jest.fn(async () => undefined);
+const runAsync = jest.fn(async () => ({ changes: 0, lastInsertRowId: 0 }));
 
 jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: jest.fn(),
@@ -48,7 +51,7 @@ beforeEach(async () => {
     // the store — see the cipher_version check it makes on the connection.
     getFirstAsync,
     getAllAsync,
-    runAsync: jest.fn(async () => ({ changes: 0, lastInsertRowId: 0 })),
+    runAsync,
   } as unknown as SQLite.SQLiteDatabase);
   await initDatabase();
 });
@@ -85,11 +88,57 @@ describe('the pending badge', () => {
     // The badge has to agree with what the worker can actually send, and the
     // worker only drains its own teacher's rows. Counting the whole table made
     // the badge stick at a number this teacher could never work off.
-    await getPendingQueueCount('teacher-a');
+    await getQueueCounts('teacher-a', 5);
 
     const [sql, params] = getFirstAsync.mock.calls.at(-1) as unknown as [string, unknown[]];
     expect(sql).toContain('submitted_by_teacher_id = ?');
-    expect(params).toEqual(['teacher-a']);
+    expect(params).toEqual([5, 5, 'teacher-a']);
+  });
+
+  it('counts a refused row apart from the pending ones, and nought for an empty queue', async () => {
+    // A row the server refused for good is never sent again: counted as
+    // pending it would promise a send that never comes.
+    getFirstAsync.mockResolvedValueOnce({ pending: 2, refused: 3 });
+    await expect(getQueueCounts('teacher-a', 5)).resolves.toEqual({ pending: 2, refused: 3 });
+    const [sql] = getFirstAsync.mock.calls.at(-1) as unknown as [string];
+    expect(sql).toContain('retry_count < ?');
+    expect(sql).toContain('retry_count >= ?');
+
+    getFirstAsync.mockResolvedValueOnce({ pending: null, refused: null });
+    await expect(getQueueCounts('teacher-a', 5)).resolves.toEqual({ pending: 0, refused: 0 });
+  });
+});
+
+describe('refused rows', () => {
+  it('names this teacher’s refused rows by lesson, as the phone last saved it', async () => {
+    getAllAsync.mockResolvedValueOnce([
+      { lesson_id: 'L1', subject_name: 'Matematik', start_time: '2026-10-13T06:00:00.000Z', marked_at: '2026-10-13T06:03:00.000Z', count: 25 },
+      // Signing out forgets the lesson cache and keeps the queue: named by when it was marked.
+      { lesson_id: 'L2', subject_name: null, start_time: null, marked_at: '2026-10-14T07:01:00.000Z', count: 3 },
+    ] as never);
+
+    await expect(getRefusedLessons('teacher-a', 5)).resolves.toEqual([
+      { lessonId: 'L1', subjectName: 'Matematik', startTime: '2026-10-13T06:00:00.000Z', markedAt: '2026-10-13T06:03:00.000Z', count: 25 },
+      { lessonId: 'L2', subjectName: null, startTime: null, markedAt: '2026-10-14T07:01:00.000Z', count: 3 },
+    ]);
+    const [sql, params] = lastQuery();
+    expect(sql).toContain('retry_count >= ?');
+    expect(sql).toContain('LEFT JOIN calendar_lessons');
+    expect(params).toEqual(['teacher-a', 5]);
+  });
+
+  it('discards only this teacher’s refused rows of the lessons it was shown, and nothing for none', async () => {
+    await discardRefusedRecords('teacher-a', 5, ['L1', 'L2']);
+
+    const [sql, params] = runAsync.mock.calls.at(-1) as unknown as [string, unknown[]];
+    expect(sql.replace(/\s+/g, ' ').trim()).toBe(
+      'DELETE FROM attendance_queue WHERE is_synced = 0 AND submitted_by_teacher_id = ? AND retry_count >= ? AND lesson_id IN (?, ?)',
+    );
+    expect(params).toEqual(['teacher-a', 5, 'L1', 'L2']);
+
+    runAsync.mockClear();
+    await discardRefusedRecords('teacher-a', 5, []);
+    expect(runAsync).not.toHaveBeenCalled();
   });
 });
 

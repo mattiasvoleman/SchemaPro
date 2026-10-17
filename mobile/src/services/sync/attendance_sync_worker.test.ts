@@ -2,8 +2,10 @@ import * as Network from 'expo-network';
 import { getAccessToken } from '../supabase';
 import { SecureTokenStore } from '../auth/secureTokenStore';
 import {
+  discardRefusedRecords,
   getPendingAttendanceRecords,
-  getPendingQueueCount,
+  getQueueCounts,
+  getRefusedLessons,
   incrementRetryCount,
   markAttendanceRecordSynced,
 } from '../database/localDatabase';
@@ -13,8 +15,10 @@ jest.mock('expo-network', () => ({ getNetworkStateAsync: jest.fn() }));
 jest.mock('../supabase', () => ({ getAccessToken: jest.fn(), getSupabase: jest.fn() }));
 jest.mock('../auth/secureTokenStore', () => ({ SecureTokenStore: { getTeacherSession: jest.fn() } }));
 jest.mock('../database/localDatabase', () => ({
+  discardRefusedRecords: jest.fn(async () => undefined),
+  getRefusedLessons: jest.fn(async () => []),
   getPendingAttendanceRecords: jest.fn(),
-  getPendingQueueCount: jest.fn(),
+  getQueueCounts: jest.fn(),
   incrementRetryCount: jest.fn(async () => undefined),
   markAttendanceRecordSynced: jest.fn(async () => undefined),
 }));
@@ -46,7 +50,7 @@ beforeEach(() => {
   (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: true });
   (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 't-1', role: 'TEACHER' });
   (getAccessToken as jest.Mock).mockResolvedValue('token');
-  (getPendingQueueCount as jest.Mock).mockResolvedValue(0);
+  (getQueueCounts as jest.Mock).mockResolvedValue({ pending: 0, refused: 0 });
 });
 
 it('says an expired session as SESSION_EXPIRED', async () => {
@@ -58,7 +62,7 @@ it('says an expired session as SESSION_EXPIRED', async () => {
 
 it('sends one batch per lesson, marks the sent ones, and counts the failed ones as RECORDS_FAILED', async () => {
   (getPendingAttendanceRecords as jest.Mock).mockResolvedValue([record('1', 'L1'), record('2', 'L1'), record('3', 'L2')]);
-  (getPendingQueueCount as jest.Mock).mockResolvedValue(1);
+  (getQueueCounts as jest.Mock).mockResolvedValue({ pending: 1, refused: 0 });
   fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
     const ok = JSON.parse(init.body).calendarLessonId === 'L1';
     return { ok, status: ok ? 201 : 500, json: async () => ({}), text: async () => '{}' };
@@ -73,13 +77,71 @@ it('sends one batch per lesson, marks the sent ones, and counts the failed ones 
   expect(status).toHaveBeenLastCalledWith('error', 1, { code: 'RECORDS_FAILED', count: 1 });
 });
 
+it('names this teacher’s refused lessons, and discards only the ones shown, for this teacher, then says where it stands', async () => {
+  const lesson = { lessonId: 'L1', subjectName: 'Matematik', startTime: null, markedAt: '2026-10-13T08:03:00.000Z', count: 2 };
+  (getRefusedLessons as jest.Mock).mockResolvedValue([lesson]);
+  (getPendingAttendanceRecords as jest.Mock).mockResolvedValue([]);
+  const status = jest.fn();
+  const worker = new AttendanceSyncWorker(status);
+
+  await expect(worker.refusedLessons()).resolves.toEqual([lesson]);
+  expect(getRefusedLessons).toHaveBeenCalledWith('t-1', 5);
+
+  await worker.discardRefused(['L1']);
+  expect(discardRefusedRecords).toHaveBeenCalledWith('t-1', 5, ['L1']);
+  expect(status).toHaveBeenLastCalledWith('connected', 0, null);
+
+  (discardRefusedRecords as jest.Mock).mockClear();
+  await worker.discardRefused([]);
+  expect(discardRefusedRecords).not.toHaveBeenCalled();
+});
+
+it('sends each pupil’s latest mark once, and settles the earlier ones with it', async () => {
+  // Every submit queues the whole class again: two submits of one lesson.
+  (getPendingAttendanceRecords as jest.Mock).mockResolvedValue([
+    { ...record('1', 'L1'), studentId: 's-a', status: 'absent' as const },
+    { ...record('2', 'L1'), studentId: 's-b' },
+    { ...record('3', 'L1'), studentId: 's-a', status: 'late' as const },
+  ]);
+  fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({}), text: async () => '{}' });
+  await new AttendanceSyncWorker(jest.fn()).runSyncCycle();
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const body = JSON.parse((fetchMock.mock.calls[0] as [string, { body: string }])[1].body) as { records: Array<{ studentId: string; status: string }> };
+  expect(body.records).toEqual([
+    expect.objectContaining({ studentId: 's-a', status: 'LATE' }),
+    expect.objectContaining({ studentId: 's-b', status: 'PRESENT' }),
+  ]);
+  expect((markAttendanceRecordSynced as jest.Mock).mock.calls.map(([id]) => id).sort()).toEqual(['1', '2', '3']);
+});
+
+it('sends a lesson of more pupils than the gateway takes at once in batches of 200', async () => {
+  (getPendingAttendanceRecords as jest.Mock).mockResolvedValue(
+    Array.from({ length: 250 }, (_, i) => ({ ...record(String(i), 'L1'), studentId: `s-${i}` })),
+  );
+  fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({}), text: async () => '{}' });
+  await new AttendanceSyncWorker(jest.fn()).runSyncCycle();
+
+  const sizes = fetchMock.mock.calls.map((call) => (JSON.parse((call as [string, { body: string }])[1].body) as { records: unknown[] }).records.length);
+  expect(sizes).toEqual([200, 50]);
+  expect(markAttendanceRecordSynced).toHaveBeenCalledTimes(250);
+});
+
 it('says offline with this teacher’s own count and no problem', async () => {
   (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
-  (getPendingQueueCount as jest.Mock).mockResolvedValue(4);
+  (getQueueCounts as jest.Mock).mockResolvedValue({ pending: 4, refused: 0 });
   const status = jest.fn();
   await new AttendanceSyncWorker(status).runSyncCycle();
-  expect(getPendingQueueCount).toHaveBeenCalledWith('t-1');
+  expect(getQueueCounts).toHaveBeenCalledWith('t-1', 5);
   expect(status).toHaveBeenCalledWith('offline', 4, null);
+});
+
+it('names the refused records apart when offline too, out of the pending count', async () => {
+  (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
+  (getQueueCounts as jest.Mock).mockResolvedValue({ pending: 4, refused: 25 });
+  const status = jest.fn();
+  await new AttendanceSyncWorker(status).runSyncCycle();
+  expect(status).toHaveBeenCalledWith('offline', 4, { code: 'RECORDS_REFUSED', count: 25 });
 });
 
 /**
@@ -105,7 +167,10 @@ describe('which failures count toward MAX_RETRIES', () => {
     quiet = [jest.spyOn(console, 'error').mockImplementation(() => undefined), jest.spyOn(console, 'warn').mockImplementation(() => undefined)];
     queue = [record('1', 'L1')];
     (getPendingAttendanceRecords as jest.Mock).mockImplementation(async () => queue.map((row) => ({ ...row })));
-    (getPendingQueueCount as jest.Mock).mockImplementation(async () => queue.length);
+    (getQueueCounts as jest.Mock).mockImplementation(async (_teacher: string, max: number) => ({
+      pending: queue.filter((row) => row.retryCount < max).length,
+      refused: queue.filter((row) => row.retryCount >= max).length,
+    }));
     (incrementRetryCount as jest.Mock).mockImplementation(async (id: string) => {
       queue.find((row) => row.id === id)!.retryCount += 1;
     });
@@ -154,15 +219,33 @@ describe('which failures count toward MAX_RETRIES', () => {
     expect(status).toHaveBeenLastCalledWith('connected', 0, null);
   });
 
-  it.each([400, 422])('a %i counts a retry each cycle, and a record at MAX_RETRIES is skipped', async (refusal) => {
+  it.each([400, 403, 404, 422])('a %i counts a retry each cycle, and a record at MAX_RETRIES is refused, named and not pending', async (refusal) => {
     fetchMock.mockResolvedValue(answer(refusal));
-    const worker = new AttendanceSyncWorker(jest.fn());
-    for (let i = 0; i < MAX_RETRIES + 2; i++) await cycle(worker);
+    const status = jest.fn();
+    const worker = new AttendanceSyncWorker(status);
+    await cycle(worker);
+    // While it is tried again, the banner says so.
+    expect(status).toHaveBeenLastCalledWith('error', 1, { code: 'RECORDS_FAILED', count: 1 });
+    for (let i = 1; i < MAX_RETRIES + 2; i++) await cycle(worker);
 
     expect(fetchMock).toHaveBeenCalledTimes(MAX_RETRIES);
     expect(incrementRetryCount).toHaveBeenCalledTimes(MAX_RETRIES);
     expect(incrementRetryCount).toHaveBeenCalledWith('1');
     expect(queue[0]?.retryCount).toBe(MAX_RETRIES);
-    expect(console.warn).toHaveBeenLastCalledWith(`[SyncWorker] Skipping record 1: exceeded ${MAX_RETRIES} retries.`);
+    // Then it is refused: never sent again, not pending, and named, so the
+    // banner no longer turns green over a lesson that is missing.
+    expect(status).toHaveBeenLastCalledWith('error', 0, { code: 'RECORDS_REFUSED', count: 1 });
+  });
+
+  it('sends a new record beside a refused one, and keeps naming the refused one', async () => {
+    queue = [{ ...record('1', 'L1'), retryCount: MAX_RETRIES }, record('2', 'L2')];
+    fetchMock.mockResolvedValue(answer(201));
+    const status = jest.fn();
+    await cycle(new AttendanceSyncWorker(status));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchMock.mock.calls[0] as [string, { body: string }])[1].body).calendarLessonId).toBe('L2');
+    expect(status).toHaveBeenCalledWith('syncing', 1, null);
+    expect(status).toHaveBeenLastCalledWith('error', 0, { code: 'RECORDS_REFUSED', count: 1 });
   });
 });

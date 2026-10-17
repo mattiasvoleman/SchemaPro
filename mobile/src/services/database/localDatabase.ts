@@ -267,21 +267,76 @@ export async function incrementRetryCount(id: string): Promise<void> {
 }
 
 /**
- * How many rows THIS teacher still has to send.
+ * How many rows THIS teacher still has to send, and how many the server
+ * refused for good (maxRetries permanent refusals), which are never sent again.
  *
  * The badge this feeds must agree with what the sync worker can actually
  * drain, and the worker only ever drains its own teacher's rows. Counting the
  * whole table made the badge stick at a number the signed-in teacher could
  * never work off — their colleague's unsent attendance, invisible to them and
- * unreachable by them. A count nobody can act on is worse than no count.
+ * unreachable by them. A count nobody can act on is worse than no count. So
+ * a refused row is not pending either: the banner names it apart, and lets
+ * the teacher see its lesson and discard it.
  */
-export async function getPendingQueueCount(teacherId: string): Promise<number> {
+export async function getQueueCounts(teacherId: string, maxRetries: number): Promise<{ pending: number; refused: number }> {
   const db = getDb();
-  const row = await db.getFirstAsync<{ count: number }>(
-    'SELECT COUNT(*) AS count FROM attendance_queue WHERE is_synced = 0 AND submitted_by_teacher_id = ?',
-    [teacherId],
+  const row = await db.getFirstAsync<{ pending: number | null; refused: number | null }>(
+    `SELECT SUM(CASE WHEN retry_count < ? THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN retry_count >= ? THEN 1 ELSE 0 END) AS refused
+       FROM attendance_queue WHERE is_synced = 0 AND submitted_by_teacher_id = ?`,
+    [maxRetries, maxRetries, teacherId],
   );
-  return row?.count ?? 0;
+  return { pending: row?.pending ?? 0, refused: row?.refused ?? 0 };
+}
+
+/**
+ * This teacher's refused rows by lesson, with the lesson as this phone last
+ * saved it (null when it no longer holds it): what the banner names, so the
+ * teacher knows which lesson to look at.
+ */
+export async function getRefusedLessons(
+  teacherId: string,
+  maxRetries: number,
+): Promise<Array<{ lessonId: string; subjectName: string | null; startTime: string | null; markedAt: string; count: number }>> {
+  const db = getDb();
+  const rows = await db.getAllAsync<{
+    lesson_id: string;
+    subject_name: string | null;
+    start_time: string | null;
+    marked_at: string;
+    count: number;
+  }>(
+    `SELECT q.lesson_id, l.subject_name, l.start_time, MIN(q.timestamp) AS marked_at, COUNT(*) AS count
+       FROM attendance_queue q LEFT JOIN calendar_lessons l ON l.id = q.lesson_id
+      WHERE q.is_synced = 0 AND q.submitted_by_teacher_id = ? AND q.retry_count >= ?
+      GROUP BY q.lesson_id, l.subject_name, l.start_time
+      ORDER BY MIN(q.timestamp) ASC`,
+    [teacherId, maxRetries],
+  );
+  return rows.map((row) => ({
+    lessonId: row.lesson_id,
+    subjectName: row.subject_name,
+    startTime: row.start_time,
+    markedAt: row.marked_at,
+    count: row.count,
+  }));
+}
+
+/**
+ * Forgets this teacher's refused rows of these lessons, once the teacher has
+ * said so: the server will never take them, and the banner names them until
+ * they go. Only the lessons the teacher was shown: a row refused meanwhile,
+ * of another lesson, stays to be named.
+ */
+export async function discardRefusedRecords(teacherId: string, maxRetries: number, lessonIds: readonly string[]): Promise<void> {
+  if (lessonIds.length === 0) return;
+  const db = getDb();
+  await db.runAsync(
+    `DELETE FROM attendance_queue
+      WHERE is_synced = 0 AND submitted_by_teacher_id = ? AND retry_count >= ?
+        AND lesson_id IN (${lessonIds.map(() => '?').join(', ')})`,
+    [teacherId, maxRetries, ...lessonIds],
+  );
 }
 
 /**

@@ -32,6 +32,12 @@ interface SyncContextValue {
   readonly setActiveLesson: (lesson: CalendarLesson | null, options?: { readonly fromCache?: boolean }) => void;
   /** Request an immediate sync cycle (e.g. after queuing new records). */
   readonly triggerManualSync: () => Promise<void>;
+  /** The lessons whose records the server refused for good (RECORDS_REFUSED). */
+  readonly refusedLessons: () => Promise<
+    Array<{ lessonId: string; subjectName: string | null; startTime: string | null; markedAt: string; count: number }>
+  >;
+  /** Forgets the refused records of these lessons, once the teacher has said so. */
+  readonly discardRefused: (lessonIds: readonly string[]) => Promise<void>;
 }
 
 const SyncContext = createContext<SyncContextValue | null>(null);
@@ -126,6 +132,17 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
     }
   }, []);
 
+  const refusedLessons = useCallback(
+    async () => (workerRef.current ? workerRef.current.refusedLessons() : []),
+    [],
+  );
+
+  const discardRefused = useCallback(async (lessonIds: readonly string[]): Promise<void> => {
+    if (workerRef.current) {
+      await workerRef.current.discardRefused(lessonIds);
+    }
+  }, []);
+
   return (
     <SyncContext.Provider
       value={{
@@ -134,6 +151,8 @@ export function SyncProvider({ children }: { readonly children: ReactNode }): Re
         activeLessonFromCache: active?.fromCache ?? false,
         setActiveLesson,
         triggerManualSync,
+        refusedLessons,
+        discardRefused,
       }}
     >
       {children}
