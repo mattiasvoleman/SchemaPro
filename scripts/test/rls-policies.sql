@@ -23051,25 +23051,26 @@ BEGIN
                    AND pg_get_constraintdef(oid) LIKE '%"siteAId" < "siteBId"%')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SiteTravelTimes_minutes_range' AND contype = 'c'
                    AND pg_get_constraintdef(oid) LIKE '%minutes >= 0%' AND pg_get_constraintdef(oid) LIKE '%minutes <= 240%')
-     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Sites_name_named' AND contype = 'c') THEN
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Sites_name_named' AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%btrim%' AND pg_get_constraintdef(oid) LIKE '%60%') THEN
     RAISE EXCEPTION 'sites: the pair order, the minutes'' range or the name check is missing';
   END IF;
   SELECT count(*) INTO n FROM pg_constraint c
-   WHERE c.contype = 'f' AND c.confrelid = '"Sites"'::regclass AND c.confdeltype = 'c'
+   WHERE c.contype = 'f' AND c.confrelid = '"Sites"'::regclass AND c.confdeltype = 'c' AND c.confupdtype = 'a'
      AND c.conrelid = '"SiteTravelTimes"'::regclass
      AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum)
          IN (ARRAY['siteAId', 'schoolId'], ARRAY['siteBId', 'schoolId']);
-  IF n <> 2 THEN RAISE EXCEPTION 'sites: the pair''s two keys to Sites are not (site, school) ON DELETE CASCADE (% found)', n; END IF;
+  IF n <> 2 THEN RAISE EXCEPTION 'sites: the pair''s two keys to Sites are not (site, school) ON DELETE CASCADE ON UPDATE NO ACTION (% found)', n; END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint c
      WHERE c.contype = 'f' AND c.conrelid = '"Rooms"'::regclass AND c.confrelid = '"Sites"'::regclass
-       AND c.confdeltype = 'n'
+       AND c.confdeltype = 'n' AND c.confupdtype = 'a'
        AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
               JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['siteId', 'schoolId']
        AND (SELECT array_agg(a.attname::text) FROM unnest(c.confdelsetcols) k(attnum)
               JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) = ARRAY['siteId']) THEN
-    RAISE EXCEPTION 'sites: a room''s site is not (siteId, schoolId) -> Sites ON DELETE SET NULL ("siteId")';
+    RAISE EXCEPTION 'sites: a room''s site is not (siteId, schoolId) -> Sites ON UPDATE NO ACTION ON DELETE SET NULL ("siteId")';
   END IF;
 END $$;
 
@@ -23138,6 +23139,11 @@ BEGIN
     RAISE EXCEPTION 'sites: the admin moved a site into another school';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
+  BEGIN
+    UPDATE "SiteTravelTimes" SET "schoolId" = current_setting('app.test_so_other')::uuid;
+    RAISE EXCEPTION 'sites: the admin moved a travel time into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- The expedition writes nothing here; it reads, as every administrator does.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000001244')::text, true);
@@ -23174,6 +23180,15 @@ BEGIN
     RAISE EXCEPTION 'sites: the teacher created a site';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
+  UPDATE "SiteTravelTimes" SET minutes = 1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'sites: the teacher changed % travel times', n; END IF;
+  BEGIN
+    INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+    SELECT app.current_school_id(), "siteAId", "siteBId", 1 FROM "SiteTravelTimes" LIMIT 1;
+    RAISE EXCEPTION 'sites: the teacher wrote a travel time';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   -- Pupil and guardian: nothing read, nothing written.
   FOREACH who IN ARRAY ARRAY['00000000-0000-4000-8000-000000001242', '00000000-0000-4000-8000-000000001243'] LOOP
@@ -23195,6 +23210,8 @@ BEGIN
     PERFORM set_config(who, current_setting('app.test_so_school'), true);
     SELECT count(*) INTO n FROM "Sites";
     IF n <> 0 THEN RAISE EXCEPTION 'sites: % reads % sites', who, n; END IF;
+    SELECT count(*) INTO n FROM "SiteTravelTimes";
+    IF n <> 0 THEN RAISE EXCEPTION 'sites: % reads % travel times', who, n; END IF;
     PERFORM set_config(who, '', true);
   END LOOP;
 END $$;

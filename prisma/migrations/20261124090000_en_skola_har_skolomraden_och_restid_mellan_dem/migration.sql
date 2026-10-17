@@ -46,6 +46,9 @@
 --     /admin/rooms lists the pairs still missing one;
 --   * ("siteAId", "schoolId") and ("siteBId", "schoolId") reference Sites
 --     ("id", "schoolId"), ON DELETE CASCADE: a pair goes with either site.
+--     ON UPDATE NO ACTION, as 20261113090000's: ids are never rewritten, and
+--     a cascade would carry an owner's change of a site's school into rooms
+--     and lessons with row security off.
 --
 -- Composite, for the reason every tenant reference is (20260822130000): the
 -- referential check runs as the referenced table's owner with row security
@@ -55,7 +58,7 @@
 -- ## Rooms."siteId"
 --
 -- UUID NULL, ("siteId", "schoolId") -> Sites ("id", "schoolId"), ON UPDATE
--- CASCADE, ON DELETE SET NULL ("siteId"): deleting a site leaves its rooms
+-- NO ACTION, ON DELETE SET NULL ("siteId"): deleting a site leaves its rooms
 -- without one, as deleting a teacher leaves a lesson without one. Null is
 -- UNKNOWN, never "the same site as the lesson before": a lesson in a room
 -- with no site, or in no room, is held to no travel time and charged none.
@@ -75,9 +78,10 @@
 --
 -- ## Who reads and who writes
 --
--- Through the gateway only (the API role, app_authenticated); nothing for a
--- PostgREST role. Rooms keep their arms; the new column is read wherever a
--- room is.
+-- Through the gateway only (the API role, app_authenticated); nothing for
+-- authenticated or anon, and service_role keeps its SELECT and nothing more,
+-- as on every table (20261016130000). Rooms keep their arms; the new column
+-- is read wherever a room is.
 --
 --   sites_staff_select / site_travel_times_staff_select
 --       the school's SCHOOL_ADMIN and TEACHER: the rooms page, the warnings
@@ -176,10 +180,10 @@ ALTER TABLE "SiteTravelTimes"
     REFERENCES "Schools"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "SiteTravelTimes"
     ADD CONSTRAINT "SiteTravelTimes_siteAId_schoolId_fkey" FOREIGN KEY ("siteAId", "schoolId")
-    REFERENCES "Sites"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE;
+    REFERENCES "Sites"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION;
 ALTER TABLE "SiteTravelTimes"
     ADD CONSTRAINT "SiteTravelTimes_siteBId_schoolId_fkey" FOREIGN KEY ("siteBId", "schoolId")
-    REFERENCES "Sites"("id", "schoolId") ON DELETE CASCADE ON UPDATE CASCADE;
+    REFERENCES "Sites"("id", "schoolId") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 -- ---------------------------------------------------------------------------
 -- Rooms."siteId"
@@ -189,7 +193,7 @@ ALTER TABLE "Rooms" ADD COLUMN "siteId" UUID;
 
 ALTER TABLE "Rooms"
     ADD CONSTRAINT "Rooms_siteId_schoolId_fkey" FOREIGN KEY ("siteId", "schoolId")
-    REFERENCES "Sites"("id", "schoolId") ON UPDATE CASCADE ON DELETE SET NULL ("siteId");
+    REFERENCES "Sites"("id", "schoolId") ON UPDATE NO ACTION ON DELETE SET NULL ("siteId");
 
 -- Every row is NULL here, so the index is built at once; the key's SET NULL
 -- scans it when a site is deleted.
@@ -282,7 +286,8 @@ BEGIN
                                    || '_' || CASE p.cmd WHEN 'SELECT' THEN 'staff_select'
                                                         WHEN 'INSERT' THEN 'admin_insert'
                                                         WHEN 'UPDATE' THEN 'admin_update'
-                                                        WHEN 'DELETE' THEN 'admin_delete' END)
+                                                        WHEN 'DELETE' THEN 'admin_delete'
+                                                        ELSE 'an arm for every command' END)
               AND (p.cmd = 'SELECT' OR coalesce(p.with_check, p.qual) LIKE '%current_user_may(''PLANERING''%'));
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'SITES_REACH: these arms reach Sites or SiteTravelTimes beyond the staff read and the planner''s writes: %', bad;
