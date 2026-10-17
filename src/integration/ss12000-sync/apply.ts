@@ -9,8 +9,9 @@ import type { ChangeEntity, ChangeOp } from './diff';
  * in dependency order:
  *
  *   skolenheter (create, link, update) -> groups (create, link, rename) ->
- *   persons (create, link, relink, names, email, reactivate) -> class moves
+ *   persons (create, link, relink, names, reactivate) -> class moves
  *   -> teaching-group adds -> guardian links -> duty links -> deactivations
+ *   -> e-mail addresses
  *
  * so a pupil created in this apply can be moved into a class created in it,
  * and a guardian linked in it can be linked to a child. A change that
@@ -270,14 +271,6 @@ export async function applyChanges(
        WHERE u."id" = v.id AND u."schoolId" = ${schoolId}::uuid AND u."role" <> 'SCHOOL_ADMIN'`);
     rows.forEach(({ change }) => done(change));
   }
-  for (const change of of('PERSON', 'UPDATE').filter((c) => typeof c.after?.['email'] === 'string')) {
-    if (!change.localId) continue;
-    await tx.user.updateMany({
-      where: { id: change.localId, schoolId, role: { not: 'SCHOOL_ADMIN' } },
-      data: { email: str(change.after!['email'])!, updatedAt: stamp },
-    });
-    done(change);
-  }
   for (const change of of('PERSON', 'REACTIVATE')) {
     if (!change.localId) continue;
     await tx.user.updateMany({
@@ -409,6 +402,25 @@ export async function applyChanges(
          AND "id" IN (${Prisma.join(rows.map((change) => Prisma.sql`${change.localId}::uuid`))})
          AND "role" <> 'SCHOOL_ADMIN' AND "isActive"`);
     rows.forEach(done);
+  }
+
+  // --- e-mail addresses, last ---------------------------------------------------
+  // An address is a key of Users (Users_schoolId_email_key), so changing one
+  // locks the person's row FOR UPDATE until the apply commits, and a register
+  // save that names the person (a pupil given a new record, the teacher
+  // recording, a guardian it alerts) waits for that row at its foreign keys.
+  // Written last, the row is held for the rest of this loop and the caller's
+  // bookkeeping, not for the whole apply. One statement each, in the source's
+  // order, as before: one statement for all would check the unique index row
+  // by row in an order of its own, and could refuse an address another person
+  // gives up in the same apply.
+  for (const change of of('PERSON', 'UPDATE').filter((c) => typeof c.after?.['email'] === 'string')) {
+    if (!change.localId) continue;
+    await tx.user.updateMany({
+      where: { id: change.localId, schoolId, role: { not: 'SCHOOL_ADMIN' } },
+      data: { email: str(change.after!['email'])!, updatedAt: stamp },
+    });
+    done(change);
   }
 
   return outcome;
