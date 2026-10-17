@@ -52,12 +52,12 @@ export interface CohortYear {
 
 /** PRE_2028 or REFORMED_2028, by the three rules of the header. */
 export function pupilRegime(years: readonly CohortYear[]): Regime {
-  if (years.some((year) => year.ht < REFORM_HT)) return "PRE_2028";
   const known = years.filter((year): year is { ht: number; gradeLevel: number } => year.gradeLevel !== null);
   const reformYear = known.filter((year) => year.ht === REFORM_HT);
   if (reformYear.length > 0) {
     return Math.min(...reformYear.map((year) => year.gradeLevel)) <= 1 ? "REFORMED_2028" : "PRE_2028";
   }
+  if (years.some((year) => year.ht < REFORM_HT)) return "PRE_2028";
   if (known.length === 0) return "PRE_2028";
   const earliest = known.reduce((a, b) => (b.ht < a.ht ? b : a));
   return earliest.gradeLevel - (earliest.ht - REFORM_HT) <= 1 ? "REFORMED_2028" : "PRE_2028";
