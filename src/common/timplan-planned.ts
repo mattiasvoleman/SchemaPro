@@ -7,6 +7,7 @@ import {
   type YearBounds,
 } from '../staffing/teaching-weeks';
 import { TIMPLAN_ALTERNATIVE_CODES } from './timplan-coverage';
+import { planRowOf, type GradeNumbering } from './grade-numbering';
 
 /*
  * Planerat mot timplan — layer 1 of the timplan coverage: what a läsår's
@@ -137,6 +138,13 @@ export interface PlannedPlan {
   name: string;
   status: 'DRAFT' | 'DECIDED';
   entries: { subjectId: string; gradeLevel: number; minutesPerWeek: number }[];
+  /**
+   * Whether the plan's lydelse numbers its rows the tioårig way (one applying
+   * from HT 2028). With the year's gradeNumbering it says which row an
+   * årskurs reads (planRowOf, grade-numbering.ts). Absent: the plan is read
+   * in the year's own numbering, row for row, as before the reform.
+   */
+  tioarig?: boolean;
 }
 
 export interface PlannedSubject {
@@ -173,6 +181,8 @@ export interface PlannedPupilInput {
 
 export interface PlannedCoverageInput {
   year: YearBounds;
+  /** The year's numbering (AcademicYears.gradeNumbering); absent is NIOARIG. */
+  gradeNumbering?: GradeNumbering;
   closures: ClosedRange[];
   plans: PlannedPlan[];
   attachments: { gradeLevel: number; localTimplanId: string }[];
@@ -351,6 +361,20 @@ interface LineDraft {
   smallestLesson: number;
 }
 
+/**
+ * The row of `plan` the year's årskurs `grade` reads: the same årskull, in
+ * the plan's numbering (8A of a TIOARIG year reads row 7 of a plan on SFS
+ * 2023:945). Null for none; `grade` itself for a plan read in the year's own
+ * numbering. Lager 3 (timplan-delivered.ts) reads its targets through this too.
+ */
+export function planRowOfInput(
+  input: Pick<PlannedCoverageInput, 'gradeNumbering'>,
+  plan: Pick<PlannedPlan, 'tioarig'>,
+  grade: number,
+): number | null {
+  return plan.tioarig === undefined ? grade : planRowOf(plan.tioarig, input.gradeNumbering ?? 'NIOARIG', grade);
+}
+
 export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCoverage {
   const { year, closures } = input;
   const subjects = new Map(
@@ -377,8 +401,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     let targets = targetsByGrade.get(grade);
     if (!targets) {
       targets = new Map();
+      const row = planRowOfInput(input, plan, grade);
       for (const entry of plan.entries) {
-        if (entry.gradeLevel === grade && subjects.has(entry.subjectId)) {
+        if (entry.gradeLevel === row && subjects.has(entry.subjectId)) {
           targets.set(entry.subjectId, entry.minutesPerWeek);
         }
       }

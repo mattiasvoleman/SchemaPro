@@ -42,6 +42,31 @@ const input = (over: Partial<GenerateInput> = {}): GenerateInput => ({
   ...over,
 });
 
+describe('proposeRequirements in the tioårig numbering (SFS 2025:729)', () => {
+  it('gives a class of a TIOARIG year the older plan’s row of its own årskull: 8A reads row 7', () => {
+    const { rows } = proposeRequirements(
+      input({
+        gradeLevels: [8],
+        classes: [{ id: A7, name: '8A', gradeLevel: 8 }],
+        planTioarig: false,
+        gradeNumbering: 'TIOARIG',
+      }),
+    );
+    expect(rows.map((row) => [row.subjectId, row.gradeLevel, row.targetMinutesPerWeek])).toEqual([
+      [EN, 8, 140],
+      [MA, 8, 180],
+      [SV, 8, 175],
+    ]);
+  });
+
+  it('reads a 2028 plan row for row in a TIOARIG year, and nothing for a row it lacks', () => {
+    const { rows } = proposeRequirements(
+      input({ gradeLevels: [8], classes: [{ id: A7, name: '8A', gradeLevel: 8 }], planTioarig: true, gradeNumbering: 'TIOARIG' }),
+    );
+    expect(rows).toEqual([]);
+  });
+});
+
 describe('proposeRequirements', () => {
   it('rounds every target UP to whole lessons and states the surplus: 180 → 3 × 60, 175 → 3 × 60 +5, 140 → 3 × 60 +40', () => {
     const { rows, skipped } = proposeRequirements(input());

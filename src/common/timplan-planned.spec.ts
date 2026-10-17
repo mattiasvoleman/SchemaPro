@@ -95,6 +95,43 @@ const lineOf = (coverage: ReturnType<typeof computePlannedCoverage>, groupId: st
   coverage.groups.find((g) => g.studentGroupId === groupId)!.lines.find((l) => l.key === key)!;
 
 describe('computePlannedCoverage', () => {
+  describe('a plan read in its lydelse’s numbering (SFS 2025:729)', () => {
+    // 9A of 2028/29 is 2026/27's 7A two years on: the old cohort's eighth
+    // school year, read on the older plan's row 8 — not its row 9, which no
+    // plan of today's numbering has for this cohort.
+    const older = plan([[S.MA, 8, 180], [S.MA, 9, 120]], { tioarig: false });
+    const nineA = group('9A', 'CLASS', 9);
+    const tioarig = (over: Partial<PlannedCoverageInput>) =>
+      input({
+        year: { startDate: '2028-08-14', endDate: '2029-06-08' },
+        gradeNumbering: 'TIOARIG',
+        plans: [older],
+        attachments: [{ gradeLevel: 9, localTimplanId: PLAN }],
+        groups: [nineA],
+        requirements: [req(nineA, S.MA, 3, 60)],
+        ...over,
+      });
+
+    it('reads an older plan one row down in a TIOARIG year', () => {
+      expect(lineOf(computePlannedCoverage(tioarig({})), nineA.id, `subject:${S.MA}`).targetMinutesPerWeek).toBe(180);
+    });
+
+    it('reads a 2028 plan row for row, and a plan without a numbering in the year’s own', () => {
+      const reformed = plan([[S.MA, 8, 180], [S.MA, 9, 120]], { tioarig: true });
+      expect(lineOf(computePlannedCoverage(tioarig({ plans: [reformed] })), nineA.id, `subject:${S.MA}`).targetMinutesPerWeek).toBe(120);
+      const unsaid = plan([[S.MA, 8, 180], [S.MA, 9, 120]]);
+      expect(lineOf(computePlannedCoverage(tioarig({ plans: [unsaid] })), nineA.id, `subject:${S.MA}`).targetMinutesPerWeek).toBe(120);
+    });
+
+    it('notices a TIOARIG åk 1 on an older plan with no förskoleklass row as a plan giving it nothing', () => {
+      const oneA = group('1A', 'CLASS', 1);
+      const coverage = computePlannedCoverage(
+        tioarig({ attachments: [{ gradeLevel: 1, localTimplanId: PLAN }], groups: [oneA], requirements: [req(oneA, S.MA, 3, 60)] }),
+      );
+      expect(coverage.verdicts.map((v) => v.code)).toContain('TIMPLAN_ATTACHED_PLAN_EMPTY');
+    });
+  });
+
   describe('the standardvecka', () => {
     it('halves an odd- or even-week row, and adds the two halves back to a whole week', () => {
       const c = group('7A');

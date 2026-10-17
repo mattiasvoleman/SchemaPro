@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { planRowOf, type GradeNumbering } from '../common/grade-numbering';
 import { TIMPLAN_ALTERNATIVE_CODES } from '../common/timplan-coverage';
 import {
   LESSON_GRID_MINUTES,
@@ -178,7 +179,16 @@ export interface GenerateOverride {
 export interface GenerateInput {
   /** The årskurser the year attaches to this plan. */
   gradeLevels: number[];
+  /** The plan's rows, in its lydelse's numbering. */
   entries: GenerateEntry[];
+  /**
+   * Whether the plan's lydelse numbers its rows the tioårig way, and the
+   * year's numbering: a class reads the row of its own årskull (planRowOf; 8A
+   * of a TIOARIG year reads row 7 of a plan on SFS 2023:945). Absent: the
+   * rows are read in the year's own numbering, as before the reform.
+   */
+  planTioarig?: boolean;
+  gradeNumbering?: GradeNumbering;
   /** The year's CLASS groups. */
   classes: GenerateGroup[];
   subjectNames: ReadonlyMap<string, string>;
@@ -259,6 +269,10 @@ export const alternativeLineOf = (nationalCode: string | null | undefined): stri
 const byName = (a: string, b: string): number => a.localeCompare(b, 'sv');
 
 /** The rows to create, and the ones skipped, in group then subject order. */
+/** The plan row a class in `grade` reads (GenerateInput.planTioarig). */
+const rowOfInput = (input: GenerateInput, grade: number): number | null =>
+  input.planTioarig === undefined ? grade : planRowOf(input.planTioarig, input.gradeNumbering ?? 'NIOARIG', grade);
+
 export function proposeRequirements(input: GenerateInput): Proposal {
   const grades = new Set(input.gradeLevels);
   const existing = new Set(input.existing.map((row) => pairKey(row.studentGroupId, row.subjectId)));
@@ -283,8 +297,9 @@ export function proposeRequirements(input: GenerateInput): Proposal {
   const skipped: SkippedRow[] = [];
   const known = new Set<string>();
   for (const group of classes) {
+    const row = rowOfInput(input, group.gradeLevel!);
     const entries = input.entries
-      .filter((entry) => entry.gradeLevel === group.gradeLevel && entry.minutesPerWeek > 0)
+      .filter((entry) => entry.gradeLevel === row && entry.minutesPerWeek > 0)
       .sort((a, b) => byName(subjectName(a.subjectId), subjectName(b.subjectId)) || (a.subjectId < b.subjectId ? -1 : 1));
     // Per alternative line of this class: the subject it has or gets, or
     // null for a line never posted on a class (M2).
@@ -313,7 +328,8 @@ export function proposeRequirements(input: GenerateInput): Proposal {
         groupName: group.name,
         subjectId: entry.subjectId,
         subjectName: subjectName(entry.subjectId),
-        gradeLevel: entry.gradeLevel,
+        // The class's årskurs, in the year's numbering; the entry is its row.
+        gradeLevel: group.gradeLevel!,
       };
       if (existing.has(key)) {
         skipped.push({ ...where, reason: 'EXISTS', alternativeCode, alternativeTo: null });
@@ -403,7 +419,7 @@ function proposeLanguageBlocks(
     }
     const entry = input.entries.find(
       (candidate) =>
-        candidate.gradeLevel === choice.gradeLevel &&
+        candidate.gradeLevel === rowOfInput(input, choice.gradeLevel) &&
         candidate.subjectId === choice.subjectId &&
         candidate.minutesPerWeek > 0,
     );
@@ -431,7 +447,7 @@ function proposeLanguageBlocks(
   for (const gradeLevel of [...byGrade.keys()].sort((a, b) => a - b)) {
     const target = Math.max(
       ...input.entries
-        .filter((entry) => entry.gradeLevel === gradeLevel && alternativeOf(entry.subjectId) === 'M2')
+        .filter((entry) => entry.gradeLevel === rowOfInput(input, gradeLevel) && alternativeOf(entry.subjectId) === 'M2')
         .map((entry) => entry.minutesPerWeek),
     );
     const split = splitWeeklyMinutes(target, input.minutesPerLesson, input.remainder ?? 'ROUND_UP');

@@ -5,6 +5,7 @@ import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { lydelseIsTioarig } from '../common/grade-numbering';
 import {
   computePlannedCoverage,
   type PlannedCoverage,
@@ -415,7 +416,7 @@ export async function readPlannedInput(
 ): Promise<PlannedCoverageInput | null> {
   const year = await tx.academicYear.findUnique({
     where: { id: academicYearId },
-    select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
+    select: { startDate: true, endDate: true, isActive: true, predecessorId: true, gradeNumbering: true },
   });
   if (!year) return null;
   // A past year with class history reads ITS rosters (timplan P4): each
@@ -484,6 +485,7 @@ export async function readPlannedInput(
 
   return {
     year: { startDate: asDay(year.startDate), endDate: asDay(year.endDate) },
+    gradeNumbering: year.gradeNumbering,
     closures,
     plans,
     attachments,
@@ -522,6 +524,7 @@ export async function readPlannedRows(
             name: true,
             status: true,
             entries: { select: { subjectId: true, gradeLevel: true, minutesPerWeek: true } },
+            nationalVersion: { select: { appliesFromCohortTerm: true } },
           },
         });
   const subjects = await tx.subject.findMany({
@@ -558,7 +561,12 @@ export async function readPlannedRows(
       minGradeLevel: row.minGradeLevel,
       maxGradeLevel: row.maxGradeLevel,
     })),
-    plans,
+    // Each plan says which numbering its rows are in (its lydelse's), so an
+    // årskurs reads the row of its own årskull (planRowOfInput).
+    plans: plans.map(({ nationalVersion, ...plan }) => ({
+      ...plan,
+      tioarig: lydelseIsTioarig(nationalVersion.appliesFromCohortTerm),
+    })),
     attachments,
     subjects,
     groups,

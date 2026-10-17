@@ -33,8 +33,9 @@ describe('TimplanRequirementsService', () => {
         { subjectId: MA, gradeLevel: 7, minutesPerWeek: 175 },
         { subjectId: SV, gradeLevel: 7, minutesPerWeek: 200 },
       ],
+      nationalVersion: { appliesFromCohortTerm: 'HT2024' },
     });
-    tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID });
+    tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID, gradeNumbering: 'NIOARIG' });
     tx.academicYearTimplan.findMany.mockResolvedValue([{ gradeLevel: 7 }]);
     tx.studentGroup.findMany.mockResolvedValue([{ id: A7, name: '7A', gradeLevel: 7 }]);
     tx.subject.findMany.mockResolvedValue([
@@ -131,6 +132,7 @@ describe('TimplanRequirementsService', () => {
           { subjectId: DE, gradeLevel: 7, minutesPerWeek: 120 },
           { subjectId: ES, gradeLevel: 7, minutesPerWeek: 120 },
         ],
+        nationalVersion: { appliesFromCohortTerm: 'HT2024' },
       });
       tx.studentGroup.findMany.mockImplementation(async ({ where }: { where: { kind: string } }) =>
         where.kind === 'CLASS'

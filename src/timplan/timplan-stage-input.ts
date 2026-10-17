@@ -11,6 +11,7 @@ import {
   baseStageOf,
   htOf,
   pupilRegime,
+  REFORM_HT,
   stageCutOf,
   versionGradeOf,
   type Regime,
@@ -426,7 +427,7 @@ export function futureBlocks(args: {
     const grade = versionGrade + step;
     const ht = activeHT + step;
     // The year's own numbering: an old-cohort pupil sits one above their version grade from HT 2028.
-    const gradeLevel = regime === 'PRE_2028' && ht >= 2028 ? grade + 1 : grade;
+    const gradeLevel = regime === 'PRE_2028' && ht >= REFORM_HT ? grade + 1 : grade;
     const plan = (step === 1 ? args.successorPlans.get(gradeLevel) : undefined) ?? args.currentPlan;
     const entries = (plan?.entries ?? []).filter((entry) => entry.gradeLevel === grade && args.counts.has(entry.subjectId));
     const byCode = new Map<string, StageLine>();

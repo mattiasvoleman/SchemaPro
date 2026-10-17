@@ -3,6 +3,7 @@ import type { LocalTimplanStatus } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { lydelseIsTioarig } from '../common/grade-numbering';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { lengthPartsOf, type LessonShape } from '../common/lesson-lengths';
 import type { GenerateRequirementsDto } from './dto/generate-requirements.dto';
@@ -113,12 +114,13 @@ export class TimplanRequirementsService {
             name: true,
             status: true,
             entries: { select: { subjectId: true, gradeLevel: true, minutesPerWeek: true } },
+            nationalVersion: { select: { appliesFromCohortTerm: true } },
           },
         });
         if (!plan) throw new NotFoundException('Den lokala timplanen finns inte.');
         const year = await tx.academicYear.findUnique({
           where: { id: dto.academicYearId },
-          select: { id: true },
+          select: { id: true, gradeNumbering: true },
         });
         if (!year) throw new NotFoundException('Läsåret finns inte.');
 
@@ -172,6 +174,8 @@ export class TimplanRequirementsService {
         const proposal = proposeRequirements({
           gradeLevels,
           entries: plan.entries,
+          planTioarig: lydelseIsTioarig(plan.nationalVersion.appliesFromCohortTerm),
+          gradeNumbering: year.gradeNumbering,
           classes,
           subjectNames: new Map(subjects.map((subject) => [subject.id, subject.name])),
           nationalCodes: new Map(subjects.map((subject) => [subject.id, subject.nationalCode])),

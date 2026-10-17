@@ -34,13 +34,15 @@ import {
   type PlannedRequirement,
   type PlannedStatus,
 } from "@/lib/timplan-planned";
+import type { GradeNumbering } from "@/lib/grade-numbering";
 import type { ClosedRange, YearBounds } from "@/lib/teaching-hours";
 import { shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
 import type { LessonRecurrence, StudentGroup, Subject, TeachingRequirement } from "@/lib/types";
 
 /** What the matrix needs to have loaded before Mål mode can say anything. */
 export interface TargetSources {
-  year: YearBounds;
+  /** With the year's numbering: which row of a plan its årskurser read. */
+  year: YearBounds & { gradeNumbering?: GradeNumbering };
   closures: ClosedRange[];
   attachments: { gradeLevel: number; localTimplanId: string }[];
   plans: PlannedPlan[];
@@ -76,8 +78,10 @@ export function targetInput(sources: TargetSources): PlannedCoverageInput {
     if (list) list.push(row.studentGroupId);
     else groupsByPupil.set(row.studentId, [row.studentGroupId]);
   }
+  const { gradeNumbering, ...year } = sources.year;
   return {
-    year: sources.year,
+    year,
+    ...(gradeNumbering ? { gradeNumbering } : {}),
     closures: sources.closures,
     plans: sources.plans,
     attachments: sources.attachments,

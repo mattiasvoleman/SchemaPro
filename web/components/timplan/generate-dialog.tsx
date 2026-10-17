@@ -72,6 +72,7 @@ import {
 } from "@/lib/timplan-generate";
 import { formatLengths } from "@/lib/lesson-lengths-text";
 import { signedMinutes } from "@/lib/timplan-tackning";
+import { gradeOfPlanRow } from "@/lib/grade-numbering";
 import type { AcademicYear } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -99,7 +100,8 @@ import {
 export interface GenerateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  plan: { id: string; name: string; status: "DRAFT" | "DECIDED" };
+  /** tioarig: the plan's lydelse numbers its rows the tioårig way (grade-numbering.ts). */
+  plan: { id: string; name: string; status: "DRAFT" | "DECIDED"; tioarig?: boolean };
   years: readonly AcademicYear[];
   /** The year the dialog starts on; the active one when null. */
   initialYearId: string | null;
@@ -147,11 +149,19 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId,
     const m2 = new Map(
       (subjects ?? []).filter((subject) => subject.nationalCode === "M2").map((subject) => [subject.id, subject.name]),
     );
+    // A plan row is offered as the year's årskurs that reads it: an older
+    // plan's åk 7 is a tioårig year's åk 8.
+    const numbering = year?.gradeNumbering ?? "NIOARIG";
     return (entries ?? [])
       .filter((entry) => entry.minutesPerWeek > 0 && m2.has(entry.subjectId))
-      .map((entry) => ({ gradeLevel: entry.gradeLevel, subjectId: entry.subjectId, subjectName: m2.get(entry.subjectId)! }))
+      .map((entry) => ({
+        gradeLevel: gradeOfPlanRow(plan.tioarig ?? false, numbering, entry.gradeLevel),
+        subjectId: entry.subjectId,
+        subjectName: m2.get(entry.subjectId)!,
+      }))
+      .filter((entry): entry is { gradeLevel: number; subjectId: string; subjectName: string } => entry.gradeLevel !== null)
       .sort((a, b) => a.gradeLevel - b.gradeLevel || a.subjectName.localeCompare(b.subjectName, "sv"));
-  }, [entries, subjects]);
+  }, [entries, subjects, plan.tioarig, year?.gradeNumbering]);
   const attached = preview && preview.academicYearId === yearId ? preview.gradeLevels : [];
   const shownLanguages = languages.filter((language) => attached.includes(language.gradeLevel));
   const teachingGroups = (groups.data ?? []).filter(

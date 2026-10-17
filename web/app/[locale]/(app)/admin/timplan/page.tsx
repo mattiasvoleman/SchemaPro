@@ -78,6 +78,7 @@ import {
   type UpdatePlanBody,
 } from "@/lib/timplan-queries";
 import { checkLocalTimplan, planningWeeksInTenths } from "@/lib/timplan-coverage";
+import { lydelseIsTioarig } from "@/lib/grade-numbering";
 import {
   draftFromEntries,
   entriesFromDraft,
@@ -741,7 +742,12 @@ export default function TimplanPage() {
           <GenerateDialog
             open
             onOpenChange={(open) => !open && setDialog(null)}
-            plan={{ id: shown.id, name: shown.name, status: shown.status }}
+            plan={{
+              id: shown.id,
+              name: shown.name,
+              status: shown.status,
+              tioarig: version ? lydelseIsTioarig(version.appliesFromCohortTerm) : false,
+            }}
             years={years ?? []}
             initialYearId={null}
             entries={shown.entries}

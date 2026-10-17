@@ -52,6 +52,7 @@ describe('TimplanCoverageService', () => {
           { subjectId: SPA, gradeLevel: 8, minutesPerWeek: 90 },
           { subjectId: MA, gradeLevel: 8, minutesPerWeek: 180 },
         ],
+        nationalVersion: { appliesFromCohortTerm: 'HT2024' },
       },
     ]);
     tx.subject.findMany.mockResolvedValue([

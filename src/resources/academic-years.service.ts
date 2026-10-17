@@ -93,7 +93,7 @@ export class AcademicYearsService {
             ...(dto.gradeNumbering !== undefined ? { gradeNumbering: dto.gradeNumbering } : {}),
           },
         });
-        const timplans = await attachDefaultTimplans(tx, schoolId, year.id);
+        const timplans = await attachDefaultTimplans(tx, schoolId, year.id, year.gradeNumbering);
         if (this.notifications) await tellNewMentors(this.notifications, tx, schoolId);
         return { ...year, timplans };
       });
