@@ -11,7 +11,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import { Role } from '../auth/enums/role.enum';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
-import { AttendanceService } from './attendance.service';
+import { ATTENDANCE_SYNC_IN_PROGRESS, AttendanceService } from './attendance.service';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
 
 const NOW = new Date('2026-09-02T06:05:00.000Z');
@@ -249,6 +249,17 @@ describe('AttendanceService', () => {
         .filter((call) => call.sql === 'SELECT app.attendance_recording_waits_for_sync()');
       expect(waits).toHaveLength(1);
       expect(waits[0]!.order).toBeLessThan(tx.attendanceRecord.upsert.mock.invocationCallOrder[0]!);
+    });
+
+    it('answers 409 ATTENDANCE_SYNC_IN_PROGRESS when the wait runs out, and writes nothing', async () => {
+      arrangeRoster([STUDENT_A]);
+      // The database's 5 s lock_timeout, as the driver reports it.
+      tx.$executeRaw.mockRejectedValueOnce(new Error('canceling statement due to lock timeout (55P03)'));
+
+      await expect(
+        service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher()),
+      ).rejects.toMatchObject({ status: 409, response: { code: ATTENDANCE_SYNC_IN_PROGRESS } });
+      expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
     });
 
     it('upserts one row per entry and separates creates from updates', async () => {

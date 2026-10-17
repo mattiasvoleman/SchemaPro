@@ -48,7 +48,10 @@
  *   nv-l  a register save at a sharing school while an SS12000 apply links
  *         its pupils in the opposite order: the save waits for the apply
  *         (app.attendance_recording_waits_for_sync) and both go through,
- *         where each would otherwise hold a version the other waits for.
+ *         where each would otherwise hold a version the other waits for;
+ *   nv-m  that wait ends after about 5 s with 409 ATTENDANCE_SYNC_IN_PROGRESS
+ *         and nothing written, and a sharing decision waits for a save
+ *         already writing.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -696,6 +699,58 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
         [[first.id, second.id]],
       );
       assert.deepEqual(statuses.rows.map((row) => row.status), ['LATE', 'LATE'], 'the register save is not what the records say');
+    });
+
+    await check('(nv-m) the wait has a limit, and a decision waits for a save already writing', async () => {
+      const raceLesson = await one<{ id: string }>(
+        `SELECT "calendarLessonId" AS id FROM "AttendanceRecords" WHERE "studentId" = $1 AND status = 'LATE' ORDER BY "createdAt" DESC LIMIT 1`,
+        [pupil.id],
+      );
+      const notifications = { notifyUsers: async () => 0, guardiansOf: async () => [] } as unknown as NotificationsService;
+      const attendance = new AttendanceService(api, notifications);
+      const save = () =>
+        attendance.reportAttendance({ calendarLessonId: raceLesson.id, records: [{ studentId: pupil.id, status: 'PRESENT' }] } as never, admin);
+
+      // An apply that runs longer than the save may wait: the save answers 409 within about 5 s
+      // and writes nothing, where it would otherwise hold its connection until the apply ends.
+      await owner.query('BEGIN');
+      try {
+        await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended('Users:' || $1::text, 0))`, [s]);
+        const started = Date.now();
+        await assert.rejects(save(), (error: unknown) => (error as { response?: { code?: string } }).response?.code === 'ATTENDANCE_SYNC_IN_PROGRESS');
+        const waited = Date.now() - started;
+        assert.ok(waited >= 4_500 && waited < 12_000, `the save waited ${waited} ms, not about 5 s`);
+      } finally {
+        await owner.query('ROLLBACK');
+      }
+      const unchanged = await one<{ status: string }>(
+        `SELECT status::text AS status FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
+        [raceLesson.id, pupil.id],
+      );
+      assert.equal(unchanged.status, 'LATE', 'a save that waited out its limit wrote');
+
+      // A save that has begun holds a decision back until it ends, so it never writes on having
+      // read the decision before: a real save, held up briefly by an apply (well under its 5 s),
+      // and a real decision to stop made meanwhile, which may only be written after the save.
+      const order: string[] = [];
+      await owner.query('BEGIN');
+      let released = false;
+      try {
+        await owner.query(`SELECT pg_advisory_xact_lock(hashtextextended('Users:' || $1::text, 0))`, [s]);
+        const saving = save().then(() => order.push('save'));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const deciding = sharing.record({ shares: false, reference: 'probe: medan registret sparas' }, admin).then(() => order.push('decision'));
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        assert.deepEqual(order, [], 'the save or the decision went ahead while the apply was running');
+        released = true;
+        await owner.query('COMMIT');
+        await Promise.all([saving, deciding]);
+        assert.deepEqual(order, ['save', 'decision'], 'a decision was written while a save that began before it was still writing');
+      } catch (error) {
+        if (!released) await owner.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      }
+      await sharing.record({ shares: true, reference: 'probe: igen efter registret' }, admin);
     });
   } finally {
     Logger.overrideLogger(new ConsoleLogger());

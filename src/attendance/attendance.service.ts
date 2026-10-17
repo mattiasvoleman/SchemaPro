@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -13,7 +14,22 @@ import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
+import { isLockTimeout } from '../publication/publish-mode';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
+
+/**
+ * A register save at a school that shares attendance with integrations waits
+ * at most 5 s for a running SS12000 apply (20261114090000); still waiting, it
+ * answers this, and the phone's queue sends the batch again.
+ */
+export const ATTENDANCE_SYNC_IN_PROGRESS = 'ATTENDANCE_SYNC_IN_PROGRESS';
+
+function attendanceSyncInProgress(): ConflictException {
+  return new ConflictException({
+    message: 'Elevuppgifterna hämtas från källsystemet just nu. Försök igen om en stund.',
+    code: ATTENDANCE_SYNC_IN_PROGRESS,
+  });
+}
 
 export interface AttendanceReportResult {
   created: number;
@@ -175,7 +191,14 @@ export class AttendanceService {
       // time, and an SS12000 apply that links pupils moves all of theirs and
       // holds them to its end: wait for a running apply before the first
       // write, so neither holds one the other waits for (20261114090000).
-      await tx.$executeRaw(Prisma.sql`SELECT app.attendance_recording_waits_for_sync()`);
+      // At most 5 s: an apply can run for minutes, and the phone's queue
+      // sends a 409 again.
+      try {
+        await tx.$executeRaw(Prisma.sql`SELECT app.attendance_recording_waits_for_sync()`);
+      } catch (error) {
+        if (isLockTimeout(error)) throw attendanceSyncInProgress();
+        throw error;
+      }
 
       let created = 0;
       let updated = 0;
