@@ -580,9 +580,11 @@ decision is not shared.**
   before this: when the apply changes the e-mail of a person the save's
   foreign keys name (a pupil given a new record, the teacher recording, a
   guardian notified), the apply holds that person's row until it commits.
-  The save waits for a lock at most 5 s, then answers 409
+  The apply writes addresses last, so it holds those rows only for its last
+  moments. The save waits for a lock at most 5 s, then answers 409
   `ATTENDANCE_REGISTER_BUSY` having written nothing; the phone's queue sends
-  it again, and the web register says to try again in a moment. Two saves
+  it again (a phone from before this counts it as one of its five
+  attempts), and the web register says to try again in a moment. Two saves
   of one lesson write its records in pupil order, so they never hold one
   each of what the other waits for.
 * **A mark is written only over an older one.** The phone's queue sends a
@@ -1122,7 +1124,9 @@ that misses a stop and a start between two reads and is still told
 everything (nv-j), a start decided while a notice is in flight (nv-k), and
 register saves, phone-style for as long as an apply that links their
 pupils stays open, each going through at once while the apply moves only
-the pupils' own rows, stamped as it commits (nv-l), and a start that waits
+the pupils' own rows, stamped as it commits (nv-l), the real apply writing
+e-mail addresses last, so a register save naming such a pupil goes through
+until then (nv-n), and a start that waits
 for a removal or a writer which read "not shared" (also at a school that
 never shared), a save that goes through at once, versioning as if the
 school shared, and a removal that waits while a start is being written, a
