@@ -25474,3 +25474,109 @@ BEGIN
   END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 161: ett läsår vet sin numrering (20261121091000).
+--
+-- AcademicYears."gradeNumbering" is NOT NULL, NIOARIG or TIOARIG, TIOARIG
+-- only from 2028-07-01, written once (GN409 after) by a trigger whose function
+-- no API role may call. Left out, it is filled: NIOARIG before 2028-07-01,
+-- else the numbering of the school's latest läsår from that date before this
+-- one, else TIOARIG — so an admin's explicit NIOARIG for a läsår from HT 2028
+-- (a school outside the four forms) carries to the next läsår made by hand.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  def text;
+BEGIN
+  IF NOT (SELECT attnotnull FROM pg_attribute WHERE attrelid = '"AcademicYears"'::regclass AND attname = 'gradeNumbering') THEN
+    RAISE EXCEPTION 'numbering: AcademicYears.gradeNumbering may be null';
+  END IF;
+  IF (SELECT array_agg(enumlabel::text ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = '"GradeNumbering"'::regtype)
+     IS DISTINCT FROM ARRAY['NIOARIG', 'TIOARIG'] THEN
+    RAISE EXCEPTION 'numbering: the type is not NIOARIG | TIOARIG';
+  END IF;
+  SELECT pg_get_constraintdef(oid) INTO def FROM pg_constraint
+   WHERE conrelid = '"AcademicYears"'::regclass AND conname = 'AcademicYears_tioarig_from_2028';
+  IF def IS NULL OR def NOT LIKE '%NIOARIG%' OR def NOT LIKE '%2028-07-01%' THEN
+    RAISE EXCEPTION 'numbering: the CHECK reads %', def;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger t
+     WHERE t.tgrelid = '"AcademicYears"'::regclass AND t.tgname = 'AcademicYears_numbering'
+       AND t.tgfoid = 'app.academic_years_numbering()'::regprocedure AND t.tgenabled = 'O'
+       AND (t.tgtype & (1 | 2 | 4 | 16)) = (1 | 2 | 4 | 16)
+       AND (SELECT array_agg(a.attname::text) FROM pg_attribute a WHERE a.attrelid = t.tgrelid AND a.attnum = ANY (t.tgattr)) = ARRAY['gradeNumbering']) THEN
+    RAISE EXCEPTION 'numbering: the trigger is not BEFORE INSERT OR UPDATE OF gradeNumbering, per row';
+  END IF;
+  IF has_function_privilege('app_authenticated', 'app.academic_years_numbering()', 'EXECUTE')
+     OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated')
+         AND has_function_privilege('authenticated', 'app.academic_years_numbering()', 'EXECUTE')) THEN
+    RAISE EXCEPTION 'numbering: an API role may call the trigger function';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "AcademicYears" WHERE "gradeNumbering" = 'TIOARIG' AND "startDate" < DATE '2028-07-01') THEN
+    RAISE EXCEPTION 'numbering: a läsår before 2028-07-01 is TIOARIG';
+  END IF;
+END $$;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  earlier uuid; first_t uuid; kept uuid; inherited uuid; renewed uuid; next_t uuid;
+  n text; con text; st text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'numbering: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  -- Far from every seeded year, and in an order that makes each fill visible.
+  IF EXISTS (SELECT 1 FROM "AcademicYears" WHERE "schoolId" = school AND "startDate" >= DATE '2028-07-01') THEN
+    RAISE EXCEPTION 'numbering: the fixture school already has a läsår from HT 2028; the fills below would read it';
+  END IF;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS161 före', DATE '2027-08-16', DATE '2028-06-10', false, now()) RETURNING id INTO earlier;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS161 första', DATE '2096-08-15', DATE '2097-06-10', false, now()) RETURNING id INTO first_t;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt", "gradeNumbering")
+  VALUES (school, 'RLS161 behåller', DATE '2097-08-15', DATE '2098-06-10', false, now(), 'NIOARIG') RETURNING id INTO kept;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS161 ärver', DATE '2098-08-15', DATE '2099-06-10', false, now()) RETURNING id INTO inherited;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt", "gradeNumbering")
+  VALUES (school, 'RLS161 tioårig', DATE '2099-08-15', DATE '2100-06-10', false, now(), 'TIOARIG') RETURNING id INTO renewed;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS161 nästa', DATE '2100-08-15', DATE '2101-06-10', false, now()) RETURNING id INTO next_t;
+  SELECT string_agg("gradeNumbering"::text, ',' ORDER BY "startDate") INTO n
+    FROM "AcademicYears" WHERE id IN (earlier, first_t, kept, inherited, renewed, next_t);
+  IF n IS DISTINCT FROM 'NIOARIG,TIOARIG,NIOARIG,NIOARIG,TIOARIG,TIOARIG' THEN
+    RAISE EXCEPTION 'numbering: the läsår were filled as %', n;
+  END IF;
+
+  -- Written once.
+  BEGIN
+    UPDATE "AcademicYears" SET "gradeNumbering" = 'TIOARIG' WHERE id = kept;
+    RAISE EXCEPTION 'numbering: an admin changed a läsår''s numbering';
+  EXCEPTION WHEN SQLSTATE 'GN409' THEN
+    GET STACKED DIAGNOSTICS st = MESSAGE_TEXT;
+    IF st NOT LIKE 'GRADE_NUMBERING_IS_FIXED:%' THEN RAISE EXCEPTION 'numbering: GN409 said %', st; END IF;
+  END;
+  -- TIOARIG only from 2028-07-01, whichever way it would land before.
+  FOREACH n IN ARRAY ARRAY['moved', 'inserted'] LOOP
+    BEGIN
+      IF n = 'moved' THEN
+        UPDATE "AcademicYears" SET "startDate" = DATE '2027-08-16', "endDate" = DATE '2028-06-09' WHERE id = renewed;
+      ELSE
+        INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt", "gradeNumbering")
+        VALUES (school, 'RLS161 för tidig', DATE '2026-08-17', DATE '2027-06-12', false, now(), 'TIOARIG');
+      END IF;
+      RAISE EXCEPTION 'numbering: a TIOARIG läsår before 2028-07-01 was %', n;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+      IF con IS DISTINCT FROM 'AcademicYears_tioarig_from_2028' THEN
+        RAISE EXCEPTION 'numbering: a TIOARIG läsår % before 2028-07-01 was refused by "%"', n, con;
+      END IF;
+    END;
+  END LOOP;
+END $$;
+ROLLBACK;

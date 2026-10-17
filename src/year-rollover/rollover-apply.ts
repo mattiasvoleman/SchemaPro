@@ -71,6 +71,7 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
         isActive: false,
         predecessorId: year.predecessorId,
         graduatingGradeLevel: year.graduatingGradeLevel,
+        ...(year.gradeNumbering !== undefined ? { gradeNumbering: year.gradeNumbering } : {}),
       },
       select: { id: true },
     });

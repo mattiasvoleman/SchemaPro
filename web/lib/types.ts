@@ -1,5 +1,6 @@
 // Domain types mirrored from the Prisma schema (subset used by the web UI).
 import type { AdminProfile } from "@/lib/admin-areas";
+import type { GradeNumbering } from "@/lib/grade-numbering";
 
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
@@ -226,6 +227,12 @@ export interface AcademicYear {
    * unplaced below it. A label only — nothing is moved on its account.
    */
   graduatingGradeLevel: number | null;
+  /**
+   * The numbering of the year's årskurser (20261121091000): NIOARIG today's,
+   * TIOARIG the tioårig grundskola's from HT 2028. Written once. Absent from
+   * a payload older than the column: read it as NIOARIG.
+   */
+  gradeNumbering?: GradeNumbering;
 }
 
 /**
