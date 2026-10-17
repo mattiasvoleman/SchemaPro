@@ -18,7 +18,7 @@ const DRAFT_ID = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2';
 /** The year row as the dialog's PUT has to lock it. */
 const YEARS: LockedTable = {
   name: 'AcademicYears',
-  columns: ['id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive'],
+  columns: ['id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'gradeNumbering'],
   lock: 'FOR NO KEY UPDATE',
 };
 
@@ -124,6 +124,24 @@ describe('AcademicYearTimplansService', () => {
         { gradeLevel: 7, localTimplanId: DECIDED_ID, planName: 'Grundskolan 2024', planStatus: 'DECIDED', planTioarig: false },
         { gradeLevel: 8, localTimplanId: DRAFT_ID, planName: 'Grundskolan 2027 (utkast)', planStatus: 'DRAFT', planTioarig: false },
       ]);
+    });
+
+    it('400s a plan for årskurs 0 in a tioårig year, which has no förskoleklass, and takes a null row for it', async () => {
+      Object.assign(tx, {
+        $queryRaw: jest.fn((...call: unknown[]) =>
+          Promise.resolve(lockingRead(YEARS, [{ id: YEAR_ID, schoolId: SCHOOL_ID, gradeNumbering: 'TIOARIG' }], call)),
+        ),
+      });
+      const rows = givenTable(tx, []);
+      const refusal = await service
+        .replace(YEAR_ID, { timplans: [{ gradeLevel: 0, localTimplanId: DECIDED_ID }] }, testUser())
+        .catch((e) => e);
+      expect(refusal).toBeInstanceOf(BadRequestException);
+      expect(refusal.message).toMatch(/tioårigt och har ingen förskoleklass/);
+      expect(rows.size).toBe(0);
+      await expect(
+        service.replace(YEAR_ID, { timplans: [{ gradeLevel: 0, localTimplanId: null }, { gradeLevel: 1, localTimplanId: DECIDED_ID }] }, testUser()),
+      ).resolves.toHaveLength(1);
     });
 
     it('an empty list empties the year', async () => {
