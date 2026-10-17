@@ -50,6 +50,12 @@ verification (step 9).
   wiring.
 - A host for the web app (Vercel is the path of least resistance).
 - Node.js 20+, Docker, and the Supabase dashboard open.
+- For the mobile app only: an Expo organisation, Apple Developer Program and
+  Google Play Console memberships as an organisation, and a Firebase
+  project. Apple and Google verify the organisation and want its D-U-N-S
+  number, which takes days to weeks, so start them on day one (§12.1).
+  Nothing else in this runbook waits for them, and the half day above does
+  not count them.
 
 Generate two secrets now and keep them handy:
 
@@ -78,7 +84,9 @@ All in the Supabase dashboard:
    - Redirect URLs: add `https://app.yourschool.example/**` (the invite and
      password-reset flows land on `/<locale>/update-password`, and "Logga in
      med skolkonto" on `/<locale>/auth/callback`), and the app's
-     `schemapro://auth/callback` (§11)
+     `schemapro://auth/callback` (its production and preview builds, §11).
+     A project that development builds sign in to also gets
+     `schemapro-dev://auth/callback` (§12)
 3. **Email templates** (Authentication → Emails): review the *Invite user* and
    *Reset password* templates; the defaults work. For real deliverability,
    configure custom SMTP (Authentication → SMTP) — Supabase's built-in sender
@@ -212,8 +220,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `CANDIDATE_RUNS_MAX` | optional, `1`–`10`, default `2`: candidate runs active across all schools at once; a start beyond it answers 409 `CANDIDATES_BUSY`. A run cut off by a redeploy while the engine was solving for it, or whose call timed out (cancelled or not), frees its year at once but keeps counting here until that solve could have ended (at most its call's timeout, about 1½ minutes at the defaults): the engine solves on once its caller stops waiting, whether the API restarted or only gave up on the call, and the engine's own 503 at its timeout does not stop the solve either. "Ta bort förslagen" hides such a run at once, and the sweep deletes its row after that |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |
 | `PUBLIC_VIEWER_PROXY_KEY` | optional, at least 32 random characters, the **same value as on the web app**. Schemavisaren (`/v/<token>`) is fetched by the web server, so without it every family shares the web server's rate-limit bucket (120 a minute); with it the API trusts the viewer's address the web server forwards |
-| `PUSH_NOTIFICATIONS` | `off` (the default, and what unset means) or `expo`. Off, push is inert: `GET /api/v1/push/config` answers `{enabled:false}`, the app never asks for permission, registration is refused (409 `PUSH_DISABLED`), no Expo request is made and no receipt is checked. Turn it on only as in §8.1 |
-| `EXPO_ACCESS_TOKEN` | optional, at least 20 characters; sent as a Bearer to Expo only when set, which Expo requires once *enhanced push security* is on for the EAS project |
+| `PUSH_NOTIFICATIONS` | `off` (the default, and what unset means) or `expo`. Off, push is inert: `GET /api/v1/push/config` answers `{enabled:false}`, the app never asks for permission, registration is refused (409 `PUSH_DISABLED`), no Expo request is made and no receipt is checked. Turn it on in production only as in §8.1; §12.6 tries it on a test stack first |
+| `EXPO_ACCESS_TOKEN` | optional, at least 20 characters; sent as a Bearer to Expo only when set, which Expo requires once *enhanced push security* is on for the EAS project (§12.6) |
 | `EXPO_PUSH_API_URL` | optional, `https` only; defaults to `https://exp.host/--/api/v2/push` |
 | `INTEGRATION_SECRETS_KEY` | optional; base64 of exactly 32 random bytes (`openssl rand -base64 32`), kept in Railway's variables and nowhere else. The SS12000 source's credentials (client secret, static token, client key and certificate) are sealed with it (AES-256-GCM, bound to school, source, kind and the host they are sent to), and so are the integration keys' webhook signing secrets (bound to school and key, 20261014120000). Unset: an admin cannot save a credential or create a signing secret (503 `SS12000_SECRETS_NOT_CONFIGURED`), no sync runs, and no key can register a subscription. Losing it means every school re-enters its credentials and recreates its signing secrets; it never decrypts anything else |
 | `INTEGRATION_SECRETS_KEY_PREVIOUS` | optional, same shape: the key before a rotation, which still decrypts and never encrypts. Rotate by moving the current key here, setting a new one, letting each school's admin save its credential again (or waiting for the next save), then clearing it |
@@ -293,21 +301,45 @@ account."*
    user is invited through **Admin → People** (the API sends the Supabase
    invite email automatically).
 
-## 8. Mobile app (teacher attendance)
+## 8. Mobile app
 
-The mobile app is distributed as a build, not a deployment:
+The app is distributed as a build, not deployed. Its code and settings are
+compiled into each build, so it does not change when the API or the web
+redeploys, and a change to it reaches nobody until a new build is installed
+(§12.9). Builds run on EAS or with `eas build --local` on a Mac, never on
+GitHub Actions: CI typechecks, tests and bundles the app and builds nothing.
+§12 covers the accounts, the credentials, internal builds, push on a device
+and the stores' internal tracks.
+
+The app reads these when it is built: a developer's `npm start` from
+`mobile/.env.local`, a preview or production build from the EAS environment
+of its profile (§12.2).
+
+| Variable | Value | Unset |
+| --- | --- | --- |
+| `EXPO_PUBLIC_API_BASE_URL` | the API origin, `https://`; plain `http://` only to localhost, in a development build | nothing loads; a preview or production build on EAS stops before it builds |
+| `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | from step 1 | no sign-in; a preview or production build on EAS stops before it builds |
+| `EXPO_PUBLIC_WS_BASE_URL` | the API origin, `wss://` | no live schedule updates; the schedule still loads |
+| `EXPO_PUBLIC_SCHOOL_ACCOUNTS` | `on` | no *Logga in med skolkonto* in the app (§11.1) |
+
+Push needs no value here: the EAS project's id is in `app.json` (§12.2), and
+an Android build's `google-services.json` comes from EAS (§12.3).
+
+Local development runs in the app's own development build (SchemaPro Dev),
+not in Expo Go, which cannot run it: the app refuses to open its database
+without SQLCipher, and push needs the app's own native build.
 
 ```bash
 cd mobile
-npm install --legacy-peer-deps
-cp .env.example .env.local   # EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_SUPABASE_URL,
-                             # EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-npx expo start               # development on a device via Expo Go*
-npx eas build --platform all # store/TestFlight builds via EAS
+npm ci                       # with npm 11, as CI; mobile/.npmrc sets legacy-peer-deps
+cp .env.example .env.local   # or: eas env:pull --environment development
+npm start                    # APP_VARIANT=development expo start
 ```
 
-\* Note: `expo-secure-store` and biometrics require a development build
-(`npx expo run:ios` / `run:android`) rather than Expo Go.
+The lockfile is npm 11's, which CI pins (`npm install -g npm@11`); an npm of
+another major may rewrite it or refuse it. The development build itself comes
+from `eas build --profile development` (§12.5), or from `npm run ios` /
+`npm run android` on a Mac with Xcode or the Android SDK.
 
 ### 8.1 Turning push on
 
@@ -322,20 +354,17 @@ production changes before the last step.
    (no name, no subject, group or room, no free text; see
    `src/notifications/push-messages.ts`), but a device token and the fact
    of a notice are still personal data.
-2. **An EAS project and credentials**: FCM V1 credentials (Android) and an
-   APNs key (iOS, a paid Apple developer account) uploaded to EAS.
-3. **A new native build** of the app with `EXPO_PUBLIC_EAS_PROJECT_ID` set to
-   the EAS project's id (the `expo-notifications` config plugin needs a new
-   binary; remote push does not work in Expo Go on Android). Without the id
-   the app reports push as unavailable and registers nothing. The same build
-   carries the display name `mobile/app.json` gives it, today "SchemaPro"
-   (it was "SchemaPro Teacher"); the slug, bundle identifier and Android
-   package are unchanged, so it installs as an update of the existing app.
-   The renamed apps, Rastra and Rastra vårdnadshavare, come later with new
-   bundle identifiers (`se.rastra.app`, `se.rastra.vardnadshavare`). They are
-   new store apps that people install beside the old one, each with its own
-   FCM and APNs setup and its own push tokens, and this step is rewritten
-   when they land. Until then no text the API sends names an app.
+2. **An EAS project and push credentials** (§12.2, §12.3): the project's id
+   in `app.json`; for Android, `google-services.json` as an EAS file
+   variable and the FCM V1 service-account key; for iOS, an APNs key (a
+   paid Apple Developer membership, §12.1).
+3. **A build made after step 2, tried and distributed** (§12.4 to §12.8).
+   The id, `google-services.json` and the iOS push entitlement go into the
+   binary when it is built, so only such a build can register: one without
+   the id reports push as unavailable and registers nothing, and one without
+   `google-services.json` gets no token on Android. Try push end to end on a
+   test stack first (§12.6), and have the build on people's phones before
+   step 4.
 4. **The API**: `PUSH_NOTIFICATIONS=expo` (plus `EXPO_ACCESS_TOKEN` if enhanced
    push security is on). The receipt checker starts with it: every five
    minutes, in-process, safe across instances (each ticket is claimed with
@@ -370,10 +399,12 @@ Walk the full product loop once, in order:
 7. **Publish** (`/admin/timetable`): review per group/teacher, publish, and
    confirm `CalendarLessons` appear for the term.
 8. **Teacher flow**: sign in as the teacher (web): weekly schedule shows;
-   record attendance for today's lesson. On mobile: sign in, open the
-   schedule tab, take attendance in airplane mode, re-enable network and
-   confirm the queue syncs (banner returns to *Connected*, records appear in
-   the web view).
+   record attendance for today's lesson. On mobile, with an internal build
+   whose EAS environment points at this deployment (§12.4, §12.5): sign in,
+   open the schedule tab, take attendance in airplane mode, re-enable
+   network and confirm the queue syncs (banner returns to *Connected*,
+   records appear in the web view). Push stays off here until §8.1; its
+   device check is §12.6.
 9. **Student flow**: sign in as a student; verify they see **only** their own
    schedule and attendance.
 10. **Automated suites**: `npm run test:e2e` (API), `npm run test:engine`
@@ -678,6 +709,11 @@ Walk the full product loop once, in order:
   legacy JWT secret invalidates all sessions and requires updating `JWT_SECRET`
   at the same time, but that key now only covers first-party service tokens.
   Rotate the service-role key freely (only the API uses it).
+- **The app's memberships and signing** run on their own clocks: the Apple
+  membership yearly, the iOS distribution certificate and ad hoc profiles
+  after a year, a TestFlight build after 90 days. §12.9 lists them and what
+  each stops; an expired ad hoc profile stops internal iPhone builds from
+  opening.
 
 ## 11. School-account sign-in ("Logga in med skolkonto")
 
@@ -778,7 +814,7 @@ person sees changes before the operator turns them on.
 |---|---|---|
 | `SCHOOL_ACCOUNTS=on` | API | Lets a school save its row on /admin/integrations → Inloggning. Off, the tab says "Inte påslaget än" and saves nothing (409 `SIGN_IN_NOT_AVAILABLE`); removing a row always works. |
 | `NEXT_PUBLIC_SCHOOL_ACCOUNTS=on` | web (build time) | Shows *Logga in med skolkonto* on /login. |
-| `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` | app (build time) | Shows the button in the app. |
+| `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` | app (build time, in the build's EAS environment, §12.2) | Shows the button in the app. |
 
 1. Run the migration (§2) **before** the code that uses it is deployed: the
    gateway's `/api/v1/sign-in-method` and `/public/v1/sign-in-methods/:domain`
@@ -804,22 +840,24 @@ person sees changes before the operator turns them on.
    school's period for departed people is already in force, its next night
    deletes the logins of those it covers who are already due, as it would
    for anyone invited.
-2. Deploy the API, the web and the app's JavaScript with the switches off.
-   The Inloggning tab is visible to every school admin from the merge on, and
-   says the feature is not turned on yet.
+2. Deploy the API and the web with the switches off. The Inloggning tab is
+   visible to every school admin from the merge on, and says the feature is
+   not turned on yet. The app has nothing to deploy here: its code reaches a
+   phone only inside a build (§12.9), which is step 4.
 3. Turn the hook on (11.2), then set up the providers (11.3, 11.4) and the
    redirect URLs (11.5). With the providers on and the hook off, anyone
    invited could sign in with any matching school account and nothing would
    be pinned: **never enable a provider without the hook.**
-4. Make a new native build of the app with `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on`
-   (`expo-web-browser` is a native module; the variable is in
-   `mobile/.env.example`), publish it and wait until staff have updated.
-   **Only then** go on: once the next step lets schools save, an admin can
-   turn on *Kräv skolkonto för personal*, and an older app has no
-   school-account button and cannot sign staff in at all once their
-   password is refused. The switch's help text says so too. The older app
-   itself still starts: the new JavaScript loads the module only when the
-   button is used, and asks for an update if it is missing.
+4. Make a new build of the app with `EXPO_PUBLIC_SCHOOL_ACCOUNTS=on` in the
+   EAS environment it is built from (§12.2), distribute it (§12.7, §12.8)
+   and wait until staff have updated. **Only then** go on: once the next
+   step lets schools save, an admin can turn on *Kräv skolkonto för
+   personal*, and an older build has no school-account button and cannot
+   sign staff in at all once their password is refused. The switch's help
+   text says so too. The older build itself still starts, and signs in with
+   a password while passwords are allowed: the app has no over-the-air
+   updates (§12.9), so each build keeps the code it was built with, button
+   or no button.
 5. Turn `SCHOOL_ACCOUNTS` on (API) and `NEXT_PUBLIC_SCHOOL_ACCOUNTS` on
    (`web/.env.example`), and redeploy the web (the flag is read at build
    time).
@@ -954,8 +992,10 @@ For each kommun (or school) that wants it:
 
 Authentication → URL Configuration → Redirect URLs must contain
 `https://<web origin>/**` (or `/sv/auth/callback` and `/en/auth/callback`)
-and `schemapro://auth/callback` for the app. A redirect that is not listed
-fails at Auth, before any provider.
+and `schemapro://auth/callback` for the app's production and preview builds.
+A project that development builds sign in to also lists
+`schemapro-dev://auth/callback`, the development build's own scheme (§12).
+A redirect that is not listed fails at Auth, before any provider.
 
 ### 11.6 Verify (per school)
 
@@ -1097,11 +1137,533 @@ start a school-account sign-in of its own with that redirect and receive the
 result, and Entra may sign in silently through the shared browser session.
 The fix is a claimed https redirect (Universal Links on iOS, verified App
 Links on Android) on the web origin, which needs the app's signing identity
-and an `apple-app-site-association` / `assetlinks.json` served by the web;
-it is planned with the app's store release (roadmap, Appbygget). Until then
-the risk is accepted: it needs a malicious app already installed on a staff
+and an `apple-app-site-association` / `assetlinks.json` served by the web.
+§12.10 lists what it takes; it waits for the home domain and for the signing
+identities the first store uploads create (§12.7, §12.8). Until then the
+risk is accepted: it needs a malicious app already installed on a staff
 member's phone, and the 24-hour limit above bounds how long a stolen session
-lasts.
+lasts. The development build's `schemapro-dev://auth/callback` carries the
+same risk, on developers' phones only.
+
+## 12. Building and distributing the app (EAS)
+
+The app reaches a phone only as a build. Builds are made by EAS Build,
+Expo's build service, from `mobile/`, or on a Mac with `eas build --local`,
+and never on GitHub Actions: CI typechecks, tests and bundles the app (the
+mobile job in `.github/workflows/ci.yml`) and builds nothing. Nothing has
+been distributed yet. This section goes from no accounts to an internal
+build on a phone, push on a real device and the stores' internal tracks; the
+store listings, review and a public release belong to the stores phase.
+
+`mobile/eas.json` has three build profiles. Each takes its variables from
+the EAS environment of the same name and sets `APP_VARIANT`, which
+`mobile/app.config.ts` applies on top of `app.json`:
+
+| Profile | Name under the icon | Bundle id and package | Scheme | Distribution |
+| --- | --- | --- | --- | --- |
+| `development` | SchemaPro Dev | `com.schemapro.teacher.dev` | `schemapro-dev` | internal: a development client that loads its JavaScript from a developer's `npm start` |
+| `preview` | SchemaPro Test | `com.schemapro.teacher` | `schemapro` | internal: ad hoc on an iPhone, an APK on Android |
+| `production` | SchemaPro | `com.schemapro.teacher` | `schemapro` | store: TestFlight and Play's internal track |
+
+Preview and production share an identity on purpose: one Firebase Android
+app, one Apple App ID, one set of push credentials and one build-number
+counter. The cost is that they cannot sit side by side: a preview build
+takes the production app's place on the phone (§12.4 has Android's catch).
+Development has an id of its own, so that a developer's client can sit
+beside either. `APP_VARIANT` unset means production, so `expo export`, CI and
+anything else that does not ask build exactly what `app.json` describes; an
+unknown value stops the build.
+
+Build from a clean checkout of a commit that is on GitHub, and note the
+commit in the build log (§12.9). EAS uploads the working tree as it is on
+disk, untracked files included, minus what `.gitignore` excludes.
+
+### 12.1 Accounts and lead times
+
+Start these on day one. Apple and Google verify the organisation, which
+takes days to weeks, and every iPhone build waits for Apple; only the
+Android APK of §12.4 can be made before.
+
+1. **Expo.** An organisation on expo.dev owns the EAS project, with at least
+   two members, so that the project does not hang on one person's account,
+   and two-factor authentication for each. EAS Build works on the free plan,
+   with a limited monthly allowance and a slower queue.
+2. **Apple Developer Program, as an organisation** (99 USD a membership
+   year; accredited educational institutions, nonprofits and government
+   entities can ask for a fee waiver). Apple wants a legal entity (not a
+   trade name), its D-U-N-S number (government entities excepted), an
+   enrolling person with the authority to bind it, and a public website and
+   a work e-mail address on the organisation's own domain. Enrolled as an
+   individual instead, the person's legal name is shown as the seller. Even
+   an ad hoc build for one iPhone needs the paid membership. The home domain
+   is undecided (PRODUCT.md), and Apple checks the website and the e-mail
+   address against it, so it is decided before this enrolment.
+3. **Google Play Console, as an organisation** (a one-time registration
+   fee). An organisation account needs a D-U-N-S number too; Dun & Bradstreet
+   issues one free, and Google says to allow up to 30 days. Google's rule
+   that a new account runs a closed test with 12 testers for 14 days before
+   production is written for personal accounts, and internal testing
+   (§12.8) is not affected either way.
+4. **Firebase.** One project for push on Android (FCM, to which Expo hands
+   every Android push), with two Android apps: `com.schemapro.teacher`
+   (production and preview) and `com.schemapro.teacher.dev` (development).
+5. **The Expo data processing agreement**, before a push reaches a real
+   user (§8.1 step 1). Internal builds against a test stack (§12.6) carry no
+   real person's data and do not wait for it.
+
+Each account belongs to the organisation, and its sign-ins live in the
+password manager, never in this repository: the repository is public.
+
+### 12.2 The EAS project, environments and profiles
+
+1. **The CLI is the npm package `eas-cli`.** `npx eas …` runs an unrelated
+   package called `eas` and builds nothing. Install a pinned version once,
+   `npm install -g eas-cli@25.1.1` (`mobile/eas.json` asks for `>= 24.0.0`,
+   and the CLI needs Node 20.18.3 or later), or run each command below as
+   `npx eas-cli@25.1.1 <command>`. Then `eas login` with your own Expo
+   account, a member of the organisation, and check it with `eas whoami`.
+   Every `eas` command runs in `mobile/`.
+2. **Link the project, once:** `eas init --account <the Expo organisation>`.
+   It creates the project on expo.dev and writes its id and owner into
+   `app.json` (`extra.eas.projectId`, `owner`). `app.config.ts` passes
+   `app.json` through, which is what lets the CLI write the static file.
+   Commit the change. The id is an identifier, not a secret, and the app
+   asks Expo for its push token with it: a build made without it says "Den
+   här versionen av appen kan inte ta emot pushnotiser." when push is turned
+   on. The slug, `schemapro-teacher`, is the project's name on EAS and stays
+   as it is from here on, since the CLI refuses an app config whose slug is
+   not the project's. Anyone who builds later finds the id in the repository
+   and does not run `eas init` again.
+3. **The environments.** EAS has three, `development`, `preview` and
+   `production`, and each profile names its own, so a build always takes the
+   variables of its profile's environment. Set §8's values in each, for
+   example:
+
+   ```bash
+   eas env:set --name EXPO_PUBLIC_API_BASE_URL --value https://api.yourschool.example \
+     --environment preview --visibility plaintext
+   eas env:list --environment preview
+   ```
+
+   Set them as plain text or sensitive, **never secret**. They are compiled
+   into the app, where anyone who has it can read them, so "secret" protects
+   nothing and only hides the value from the CLI and from `eas env:pull`.
+
+   On EAS, a preview or production build stops while it reads the app
+   config, before anything is compiled, unless its environment has
+   `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL` and
+   `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and for Android also
+   `GOOGLE_SERVICES_JSON` (§12.3): without them it would install and then
+   fail at the sign-in screen, or never receive a push. The error names what
+   is missing. A development build is not checked. Its JavaScript comes from
+   the developer's own `npm start`, which reads `mobile/.env.local`;
+   `eas env:pull --environment development` writes one from the development
+   environment, replacing the file that is there. `.env.local` never reaches
+   EAS: it is gitignored.
+
+   Which deployment each environment points at is the operator's choice.
+   The preview environment decides it for every internal build at once:
+   point it at a test stack (§12.6) while push is tried, since production
+   keeps push off until §8.1 step 1.
+4. **The profiles** are the table above. `APP_VARIANT` is set in each
+   profile's `env` in `eas.json`, which wins over a variable of that name in
+   the environment. EAS installs the dependencies with a plain `npm ci`:
+   `mobile/.npmrc` makes it resolve peers as CI does (`legacy-peer-deps`),
+   and the `eas-build-pre-install` script in `mobile/package.json` first
+   installs npm 11, which wrote the lockfile and which CI pins, whatever npm
+   the build image ships. Versions and build numbers are §12.9.
+
+`mobile/ios` and `mobile/android` are generated for each build and are
+gitignored (`mobile/.gitignore`). Committed, they would make EAS treat the
+app as a bare native project and stop applying `app.config.ts`: the
+variants, the Swedish permission texts and the icons would be gone from the
+build. `npm run ios` and `npm run android` generate them locally, where they
+do no harm.
+
+### 12.3 Credentials
+
+Signing and push credentials live in EAS (`eas credentials`, or the
+project's Credentials page on expo.dev) and, where a copy is kept, in the
+password manager. None goes in the repository: it is public.
+`mobile/.gitignore` keeps out the usual files (`google-services.json`, the
+Firebase service-account key, `credentials.json`, keystores, `.p8` and
+`.p12` files and provisioning profiles); read `git status` all the same
+before the first commit after a credentials session.
+
+**iOS: EAS manages it.** At the first `eas build -p ios` of a profile, sign
+in with the Apple account when the CLI asks. EAS then:
+
+- registers the App ID, `com.schemapro.teacher` (or `.dev` for the
+  development profile), with the push capability, since `expo-notifications`
+  puts the `aps-environment` entitlement in every build;
+- creates a distribution certificate (Apple allows two per account; each
+  lasts a year) and a provisioning profile per bundle id and kind: ad hoc,
+  listing the registered iPhones, for development and preview, and App Store
+  for production;
+- asks whether to set up push notifications. Answer yes: it creates an APNs
+  key or reuses the account's. One key serves every bundle id of the team,
+  in both of Apple's push environments, and does not expire; Apple allows
+  two per account. Later, `eas credentials -p ios` → *Push Notifications:
+  Manage your Apple Push Notifications Key* does the same.
+
+**Android: back the keystore up.** At the first Android build of a profile,
+EAS offers to generate an upload keystore: accept. There is one for
+`com.schemapro.teacher` (preview and production) and one for `.dev`.
+Download each at once with `eas credentials -p android` (choose the profile,
+then the keystore), put the file and its passwords in the password manager,
+and delete the download. Every APK of §12.4 is signed with it, and Android
+updates an installed app only from the same key. Play App Signing (§12.8)
+lets a lost upload key be reset with Google for the app from Play; an APK
+signed with a lost key can never be updated, only uninstalled.
+
+**Android push (FCM V1)** takes two files, both from the Firebase project
+of §12.1:
+
+1. **`google-services.json`.** With both Android apps added, download it
+   from Firebase (Project settings → General → Your apps); it then names
+   both packages. Upload it to EAS as a file variable for all three
+   environments:
+
+   ```bash
+   eas env:set --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json \
+     --environment development --environment preview --environment production \
+     --visibility secret
+   ```
+
+   On the builder EAS writes the file outside the project and puts its path
+   in `GOOGLE_SERVICES_JSON`, and `app.config.ts` hands that path to the
+   Android build (`android.googleServicesFile`). Expo's documentation says
+   the file may be committed, since it holds only public Firebase
+   identifiers; here it never is, because the repository is public and the
+   file's API key would trip every secret scanner. Keep the local copy at
+   `mobile/google-services.json`, which is gitignored: EAS gives no secret
+   variable to a local build, and `app.config.ts` uses that file when the
+   variable is not set (`npm run android`, `eas build --local`). On EAS, a
+   preview or production Android build stops without the variable (§12.2).
+   A development build without the file still builds, but gets no push
+   token: turning push on says "Pushnotiserna gick inte att slå på. Försök
+   igen."
+2. **The service-account key**, with which Expo sends to FCM. In Firebase,
+   Project settings → Service accounts → *Generate new private key*. Then
+   `eas credentials -p android`, the `production` profile, *Google Service
+   Account* → *Manage your Google Service Account Key for Push Notifications
+   (FCM V1)* → *Set up a Google Service Account Key for Push Notifications
+   (FCM V1)*, and upload the file. Do the same with the `development`
+   profile, choosing the key already uploaded or uploading the same file, so
+   that `.dev` has it too. Then delete the downloaded file: it can send a
+   push to every install of the app, and a new one can always be generated.
+   The key and `google-services.json` come from the same Firebase project,
+   or every Android send fails with `MismatchSenderId`.
+
+**Store submission keys**, for `eas submit` (§12.7, §12.8):
+
+- App Store Connect: an API key, which `eas submit -p ios` offers to create
+  the first time, or `eas credentials -p ios` → *App Store Connect: Manage
+  your API Key*.
+- Google Play: a Google Cloud service account with a JSON key, invited in
+  Play Console (Users and permissions) with permission to release this app
+  to testing tracks, and uploaded with `eas credentials -p android` under
+  *Google Service Account*, as the key for Play Store submissions. The first
+  Play upload is by hand anyway (§12.8), so this can wait for the second.
+
+### 12.4 The first internal Android build
+
+1. `eas build -p android --profile preview`, once the preview environment
+   has its values (§12.2) and `GOOGLE_SERVICES_JSON` (§12.3). The first run
+   generates the keystore (§12.3). The result is an APK signed by EAS, with
+   the next build number.
+2. On the Android phone, open the build's page (the link the CLI prints, or
+   its QR code), download the APK and install it, allowing the browser to
+   install apps when Android asks.
+3. Check: "SchemaPro Test" under the icon, the splash, a sign-in with a test
+   account against the deployment the preview environment points at, the
+   schedule, and attendance taken in airplane mode that syncs once the
+   network is back.
+
+Every later preview build installs over the one before and keeps its data,
+since the build number only rises. **Android's catch:** a preview APK and
+the production app from Play (§12.8) have the same package but not the same
+signing key, so Android refuses to install one over the other. The tester
+then uninstalls first, which deletes the app's local data, the offline
+attendance queue included: let the queue empty before.
+
+### 12.5 The first internal iPhone build
+
+1. Register each iPhone with `eas device:create`, choosing the website
+   option. The tester opens the link or QR code on that iPhone and installs
+   the profile it offers in Settings. `eas device:list` lists the registered
+   devices, and `eas device:rename` gives one a name you will recognise.
+2. `eas build -p ios --profile preview`, interactively the first time,
+   signing in with the Apple account (§12.3). The build is signed ad hoc for
+   every iPhone registered when it is made. For a new or just renewed
+   membership, Apple can take 24 to 72 hours to accept a new device, and a
+   build that includes it may fail until then: wait and build again.
+3. On the iPhone, open the build's page and install. iOS 16 and later run it
+   only in Developer Mode: open the app once and let iOS refuse, then
+   Settings → Privacy & Security → Developer Mode → on, restart, and confirm
+   with *Turn On* and the passcode. This is once per iPhone.
+4. Check as in §12.4, step 3.
+
+**An iPhone added later** is in no build made before it was registered.
+Register it, then either build again, interactively so that EAS updates the
+provisioning profile (a non-interactive build reuses the old profile unless
+it is given `--refresh-ad-hoc-provisioning-profile` and an App Store Connect
+API key), or re-sign the latest build: `eas build:resign -p ios -e preview`.
+Apple allows 100 iPhones a membership year for ad hoc builds, and a device
+disabled during the year still counts.
+
+**Development builds** work the same way with `--profile development`, on
+both platforms; an iPhone is registered first. Install SchemaPro Dev, run
+`npm start` in `mobile/` (it sets `APP_VARIANT=development`) and open the
+server from the app. The phone and the computer must be on the same network,
+and the API the app talks to must be https, as a phone is not localhost
+(§8). A plain `npx expo start`, without `APP_VARIANT`, describes the
+production app to the development build, and a school-account sign-in would
+not come back to it.
+
+### 12.6 Push on a real iPhone and Android phone
+
+**Never in production before §8.1 step 1.** A push test sends real pushes
+to whoever the gateway holds, so it runs against a test stack:
+
+- a Supabase project that is not production's, set up as in §1 to §3, with
+  test accounts only (`npm run db:seed` gives a demo school);
+- a gateway deployed against it as in §5, with `PUSH_NOTIFICATIONS=expo`
+  (and `EXPO_ACCESS_TOKEN` if enhanced push security is on), reachable over
+  https: a second service on the container host, or an https tunnel to a
+  gateway on a laptop, since a phone's localhost is the phone;
+- internal builds pointed at both: preview builds (§12.4, §12.5) built with
+  the preview environment's values, or development builds with
+  `.env.local`.
+
+On one iPhone and one Android phone:
+
+1. Sign in as a test teacher, open Inställningar → Pushnotiser and turn the
+   switch on. The phone asks for permission here and only here: allow it.
+2. Read what Settings says:
+   - No switch, only "Skolan har inte slagit på pushnotiser.": the gateway
+     this build talks to has push off, or did not answer
+     `GET /api/v1/push/config`.
+   - "Den här versionen av appen kan inte ta emot pushnotiser.": the build
+     has no EAS project id (§12.2, step 2). Commit it and build again.
+   - "Notiser är avstängda för SchemaPro i telefonens inställningar.": the
+     phone's permission was refused. Allow notifications for the app in the
+     phone's settings and turn the switch on again.
+   - "Pushnotiserna gick inte att slå på. Försök igen.": the phone gave no
+     token, or the gateway refused the registration. On Android it is
+     usually a development build without `google-services.json` (§12.3); on
+     iOS, a build signed without the push capability.
+   - The switch stays on, with nothing under it: the device is registered.
+3. As the owner on the test database, find the device's row:
+
+   ```sql
+   select platform, locale, token, "lastSeenAt" from "DevicePushTokens"
+    where "revokedAt" is null order by "lastSeenAt" desc;
+   ```
+
+4. With the phone locked, book the test teacher as substitute on a lesson
+   later this week in the Day planner (`/admin/lessons`). The push
+   *Vikariepass* ("Du har ett vikariepass …") goes out whatever the teacher
+   chose in Settings. It shows on the lock screen with no name, subject,
+   group or room, and a tap opens the app's Notiser. On Android, Expo sends
+   at normal priority, so a phone in deep sleep may show it some minutes
+   late.
+5. To tell the Expo leg from the gateway, send to the token from step 3 by
+   hand, with Expo's push notification tool (expo.dev/notifications) or:
+
+   ```bash
+   curl -H 'Content-Type: application/json' -X POST https://exp.host/--/api/v2/push/send \
+     -d '{"to":"ExponentPushToken[…]","title":"Test","body":"Test"}'
+   ```
+
+   adding `-H 'Authorization: Bearer <EXPO_ACCESS_TOKEN>'` once enhanced
+   push security is on. If this arrives and step 4's did not, read the
+   gateway's log; if neither arrives, look at the credentials (§12.3).
+6. After 15 to 20 minutes the receipt checker has asked Expo about the send:
+   today's `push-receipts` row in `JobRuns` shows no failures, and the
+   gateway's log names no error code (`MismatchSenderId`,
+   `InvalidCredentials`, `DeviceNotRegistered`).
+7. Log out of the app: the row from step 3 is gone.
+8. Write the result in the build log (§12.9): the date, the phone and its OS
+   version, the build, and what arrived.
+
+**Enhanced push security** makes Expo refuse a send without the project's
+access token. Turn it on (expo.dev, the account's access token settings)
+only once every gateway that sends has `EXPO_ACCESS_TOKEN`; the other way
+round, every send fails as unauthorised in between.
+
+### 12.7 TestFlight internal testing
+
+1. `eas build -p ios --profile production`: an App Store build with the
+   next build number.
+2. `eas submit -p ios --profile production --latest` uploads it (or add
+   `--auto-submit` to the build). With no `ascAppId` in
+   `submit.production.ios` yet, the first submit creates the app's record in
+   App Store Connect. Check its name, which must be unique in the App Store
+   (§12.11), and set Swedish as the primary language under App Information.
+   Then put the app's Apple ID (App Store Connect → the app → App
+   Information) into `mobile/eas.json` as `submit.production.ios.ascAppId`
+   and commit it: it is an identifier, not a secret, and later submits skip
+   the creation.
+
+   **The bundle id is final from this upload.** Apple does not let an app's
+   bundle id change once a build is uploaded, so §12.11's first question is
+   decided before this step.
+3. **Export compliance.** Until `ios.config.usesNonExemptEncryption` is
+   decided (§12.11), every uploaded build waits in TestFlight as *Missing
+   Compliance* until someone answers Apple's encryption questions for that
+   build. Answer them as the owner has decided, never just to get a build
+   through.
+4. TestFlight → Internal Testing: create a group and add testers. Internal
+   testers are App Store Connect users of the team, at most 100, and each
+   accepts the invitation in the TestFlight app. Internal builds need no
+   beta review, and each one can be installed for 90 days after upload. A
+   school's teachers are not App Store Connect users: testing with them is
+   TestFlight's external testing, which Apple reviews, and belongs to the
+   stores phase.
+
+### 12.8 Google Play internal testing
+
+1. In Play Console, create the app by hand: its name, default language
+   Swedish (sv-SE), app, free, and the declarations Play asks for; only what
+   internal testing needs, as the store listing waits for the stores phase.
+2. `eas build -p android --profile production`: an app bundle (AAB) signed
+   with the upload keystore. Download it from the build's page.
+3. **The first upload is by hand.** Testing → Internal testing → Create new
+   release. Play asks to use Play App Signing: accept, so that Google holds
+   the key that signs the app on phones and the EAS keystore is only the
+   upload key. Upload the AAB, save, and roll the release out to internal
+   testing. This upload fixes the package name for good, so §12.11's first
+   question is decided before it. (Expo's documentation says `eas submit`
+   can make this first release too; by hand, the person who accepts Play App
+   Signing reads what they accept.)
+4. Testers: Internal testing → Testers, an e-mail list of Google accounts
+   (at most 100) and the opt-in link to send them. A tester opts in with
+   that account and installs the app from Play.
+5. Later builds go with `eas submit -p android --profile production
+   --latest` and the Play key of §12.3. `submit.production.android` sends
+   each to the internal track as a draft, which is all Play accepts while
+   the app itself is a draft; roll each one out in Play Console.
+6. Note the app signing key's SHA-256 (App integrity → App signing):
+   App Links need it (§12.10), next to the upload keystore's own.
+
+### 12.9 Versions, updates and expiry
+
+- **Version and build number.** `version` in `app.json` (now `1.0.0`) is
+  the one people see; raise it by hand when a release means something to
+  them. The build number (iOS `buildNumber`, Android `versionCode`) lives on
+  EAS (`cli.appVersionSource: "remote"`), and preview and production raise
+  it at every build (`autoIncrement`). Never set it in `app.json`, where EAS
+  would ignore it. Preview and production share the counter, as they share
+  the id, and the first build gets 1; `eas build:version:set -p ios` (or
+  `-p android`) sets it by hand if it ever has to jump.
+- **No over-the-air updates.** The app has no `expo-updates`. Every change
+  to its code or its texts, however small, reaches a phone only as a new
+  build that the person installs: from TestFlight or Play, or from the
+  build's page for an internal build. A fix therefore takes a build, an
+  upload and a rollout, and a phone runs the old code until it updates. The
+  app tells the gateway nothing about its version, so the gateway keeps
+  answering every build still installed: an API change an older build
+  cannot read breaks that build without a word. When an older build must
+  not meet a change, ship the build first and wait, as §11.1 step 4 does.
+  EAS Update would allow JavaScript-only fixes; adopting it is a decision of
+  its own (it needs `expo-updates`, a runtime version policy and a channel
+  per profile).
+- **The build log.** For every build that leaves a developer's hands: the
+  date, profile, version and build number, commit, the API its environment
+  points at, and where it went (which testers, TestFlight, Play). Once it
+  names testers, keep it with the operator's notes rather than in this
+  repository.
+- **What expires:**
+  - a TestFlight build, 90 days after upload;
+  - an ad hoc provisioning profile, after 12 months. An internal iPhone
+    build made with it stops opening and needs a new build or a re-sign
+    (§12.5);
+  - the iOS distribution certificate, after a year. EAS offers a new one at
+    the next build; the ad hoc builds signed with the old one stop opening,
+    apps installed from the App Store do not;
+  - the Apple Developer Program membership, every year. If it lapses, the
+    app leaves the App Store and TestFlight stops;
+  - on Play, the target API level: Google requires an update to target a
+    recent Android version, about a year after each release, and keeping
+    the Expo SDK current is what keeps the app eligible.
+
+  The APNs key, the FCM service-account key and the Android keystores do
+  not expire.
+
+### 12.10 Universal Links and App Links
+
+This is the follow-up that closes §11's accepted risk of the custom scheme.
+The app would come back from a school-account sign-in on an https address of
+the web origin, which only SchemaPro's own signed app can claim, instead of
+on `schemapro://auth/callback`, which any app can register. It takes:
+
+- **the home domain**, which is undecided (PRODUCT.md). The claimed address
+  sits on the web origin, and moving it later takes a new build;
+- **on iOS**, the Associated Domains entitlement (`ios.associatedDomains`,
+  `applinks:<web host>`) in the app config, and the web serving
+  `/.well-known/apple-app-site-association` (JSON, over https, with no
+  redirect) that names the app as `<Team ID>.com.schemapro.teacher` and the
+  callback path. The Team ID is the Apple Developer account's (§12.1);
+- **on Android**, an intent filter with `autoVerify` for the same https
+  path, and the web serving `/.well-known/assetlinks.json` with the package
+  and the SHA-256 of every key that signs an installed app: Play's app
+  signing key (§12.8), and the EAS upload keystore for preview APKs, which
+  `eas credentials -p android` shows (§12.3);
+- **in the app**, a sign-in that receives the https redirect instead of a
+  scheme (`mobile/src/services/auth/authService.ts`). Check how
+  `expo-web-browser`'s authentication session takes an https callback on
+  the iOS versions the app supports;
+- **on the web**, a page at that path for a phone without the app, and **in
+  Supabase**, the new redirect URL (§11.5). `schemapro://auth/callback`
+  comes off the list only once no installed build uses it, since every
+  build keeps the redirect it was built with (§12.9). The development build,
+  `com.schemapro.teacher.dev`, keeps `schemapro-dev://` unless it is named in
+  both files too.
+
+### 12.11 Open decisions for the owner
+
+The build keeps today's values until the owner decides. What each touches:
+
+1. **The bundle id and package, `com.schemapro.teacher`.** "teacher" dates
+   from when the app was for teachers alone; pupils and guardians use it
+   now, and a reverse-domain id usually follows the home domain, which is
+   undecided. The id is in `app.json` (`ios.bundleIdentifier`,
+   `android.package`), and `app.config.ts` derives `.dev` from it. It
+   becomes permanent at the first App Store Connect upload (§12.7) and at
+   the first Play upload (§12.8). Changed before those, it costs a new App
+   ID, new Firebase Android apps and a new `google-services.json`, the FCM
+   key assigned again, new keystores and a build counter from 1; changed
+   after, it is a new app in both stores. Nobody using the app sees the id.
+2. **Tablet support** (`ios.supportsTablet: false` and `orientation:
+   "portrait"` in `app.json`). Teachers often take attendance on a shared
+   tablet (PRODUCT.md). Off, an iPad runs the app in iPhone compatibility
+   mode, in portrait, and the App Store asks for no iPad screenshots. On,
+   the screens must lay out at iPad sizes in both orientations, be tested on
+   an iPad and come with iPad screenshots. Android has no such switch: from
+   Android 16, an app that targets it, as this one does, has its
+   orientation lock ignored on large screens, so Android tablets can show it
+   in landscape either way.
+3. **The display name, "SchemaPro"** (`name` in `app.json`; the variants
+   add " Dev" and " Test"). It is the name under the icon and the one iOS
+   puts in its Face ID question, and the app's own Swedish texts name
+   SchemaPro too ("Notiser är avstängda för SchemaPro …"). The store names
+   are set apart from it: the App Store name must be unique in the store
+   (§12.7), and Play's title is set in Play Console (§12.8).
+4. **Dark only, or following the phone** (`userInterfaceStyle: "dark"`).
+   Automatic alone would turn the system's own parts (alerts, pickers, the
+   keyboard) light over an app that stays dark, since the screens' colours
+   are fixed in the code and the status bar is set to light. Following the
+   phone for real takes a light theme for every screen, a light splash, and
+   the WCAG 2.1 AA contrast check in both themes (PRODUCT.md).
+5. **Export compliance** (`ios.config.usesNonExemptEncryption`, unset). The
+   app encrypts its local database itself, with SQLCipher (`expo-sqlite`'s
+   `useSQLCipher`), beyond the HTTPS and keychain that iOS provides. Whether
+   that is exempt under the US export rules Apple asks about is the owner's
+   call. Unset, every build waits as *Missing Compliance* until its
+   questions are answered by hand (§12.7). Set, the value goes into every
+   build's Info.plist; `true` also brings the export documentation Apple
+   then asks for.
 
 ## 12. Several schools per login ("Flera skolor per inloggning")
 
@@ -1420,8 +1982,9 @@ Roughly ordered by expected value for a real school.
 
 **Engineering**
 11. ~~**CI pipeline**~~ — ✅ done: `.github/workflows/ci.yml` runs API
-    typecheck + e2e, web typecheck + build, solver pytest and mobile
-    typecheck on every push/PR.
+    typecheck + e2e, web typecheck + build, solver pytest, and mobile
+    typecheck, unit tests and a Metro bundle on every push/PR. It never
+    builds the app: builds run on EAS or with `eas build --local` (§12).
 12. **Durable job queue** — move optimization jobs from the in-memory map to
     Redis/BullMQ or a `OptimizationJobs` table; prerequisite for horizontal
     scaling and job history.

@@ -42,9 +42,10 @@ teacher/student schedule views and offline-first attendance tracking.
 - **AI engine** (`optimization-engine/`): Python FastAPI + Google OR-Tools
   CP-SAT solver. Receives **only anonymized UUIDs and numbers** — never names,
   emails or free text. Returns a weekly plan plus a conflict analysis.
-- **Mobile** (`mobile/`): Expo/React Native teacher app. Supabase sign-in,
-  tokens in `expo-secure-store`, offline attendance queue in local SQLite with
-  exponential-backoff sync, read-only schedule tab.
+- **Mobile** (`mobile/`): Expo/React Native app for teachers, pupils and
+  guardians. Supabase sign-in, tokens in `expo-secure-store`, offline
+  attendance queue in local SQLite with exponential-backoff sync, read-only
+  schedule tab.
 - **Database** (`prisma/`): 12-table multi-tenant schema; RLS enabled on every
   table (see “Security model” below).
 
@@ -131,10 +132,19 @@ npm run dev                 # http://localhost:3000
 
 ```bash
 cd mobile
-npm install --legacy-peer-deps
-cp .env.example .env.local  # API base URL + Supabase URL/key
-npm start
+npm ci                      # with npm 11, as CI; mobile/.npmrc sets legacy-peer-deps
+cp .env.example .env.local  # API base URL + Supabase URL/key (https on a phone)
+npm start                   # APP_VARIANT=development expo start
 ```
+
+The app runs in its own development build (SchemaPro Dev), not in Expo Go:
+it refuses to open its database without SQLCipher, which only its own build
+compiles in, and push needs that build too. Make one with `npm run ios` /
+`npm run android` (Xcode / the Android SDK), or on EAS with
+`eas build --profile development` (the CLI is the npm package `eas-cli`). The
+lockfile is written by npm 11, which CI pins. Internal and store builds,
+credentials and push on a device: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+§12.
 
 ### Docker (Postgres + API + solver)
 
@@ -188,7 +198,7 @@ Follows the non-negotiable constraints in `.cursorrules`:
 ├── src/                  # NestJS gateway (auth, CRUD, calendar, optimization proxy, attendance)
 ├── prisma/               # Schema + migrations (RLS policies live here)
 ├── web/                  # Next.js app (admin/teacher/student UIs, sv+en)
-├── mobile/               # Expo teacher app (offline attendance, schedule)
+├── mobile/               # Expo app (offline attendance, schedule, notices)
 ├── optimization-engine/  # FastAPI + OR-Tools CP-SAT solver
 ├── test/                 # API e2e tests
 ├── docker-compose.yml    # Postgres + API + solver

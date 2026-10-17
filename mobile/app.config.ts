@@ -74,7 +74,8 @@ function required(value: string | string[] | undefined, field: string): string {
  * it may be a gitignored mobile/google-services.json. Neither is ever in the
  * repository. Prebuild throws on a configured path that does not exist, so
  * the field is set only when there is a file to point at; without it the
- * Android build has no FCM and the app reports push as unsupported.
+ * Android build has no FCM, and turning push on in Settings fails because
+ * no token can be fetched.
  */
 function googleServicesFile(env: NodeJS.ProcessEnv, projectRoot: string): string | undefined {
   if (env.GOOGLE_SERVICES_JSON) return env.GOOGLE_SERVICES_JSON;
