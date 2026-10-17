@@ -4219,7 +4219,10 @@ async function runChecks(
           // work-rule read above, the days a column of the post read, and the
           // week's teaching dates are asked only of a post with a limit —
           // two statements where one is, which (ld-b) counts.
-          'assign a substitute': 34,
+          // +1 since Skolområden och restid: the cover warnings ask whether
+          // the school has a travel figure (SiteTravelTimes, one indexed
+          // SELECT), and a school without one, as here, asks nothing more.
+          'assign a substitute': 35,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           // +1 since Halvklasser on a PATCH that meets another group's lesson

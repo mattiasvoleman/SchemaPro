@@ -261,7 +261,7 @@ describe('PublicationsService (DIRECT)', () => {
     // The report and both timplan layers are read to judge, unrecorded; the
     // läslogg names only the teacher the check stops on, with the names read
     // in the same transaction.
-    expect(load.load).toHaveBeenCalledWith(YEAR_ID, 'planned', testUser(), { record: false });
+    expect(load.load).toHaveBeenCalledWith(YEAR_ID, 'planned', testUser(), { record: false, travel: false });
     expect(coverage.scheduled).toHaveBeenCalledWith({ academicYearId: YEAR_ID }, testUser(), { record: false });
     expect(coverage.planned).toHaveBeenCalledWith({ academicYearId: YEAR_ID }, testUser(), { record: false });
     expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: ['tea'] }]);

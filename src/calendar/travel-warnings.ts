@@ -1,3 +1,4 @@
+import type { LessonRecurrence } from '@prisma/client';
 import { travelBreaches, type PlacedLesson, type SiteMap, type TravelBreach } from '../common/site-travel';
 
 /**
@@ -50,6 +51,13 @@ export interface TravelWarning {
   };
 }
 
+/** The weeks a lesson runs: its parity and its Från and Till (yyyy-mm-dd, inclusive). */
+export interface TravelWeeks {
+  recurrence: LessonRecurrence;
+  startDate: string | null;
+  endDate: string | null;
+}
+
 /** A lesson of the day as the rule reads it. */
 export interface TravelDayLesson extends PlacedLesson {
   subjectName: string;
@@ -58,6 +66,26 @@ export interface TravelDayLesson extends PlacedLesson {
   groupIds: readonly string[];
   /** Every pupil it holds: the groups' members and the pupils named on it. */
   pupils: ReadonlySet<string>;
+  weeks: TravelWeeks;
+}
+
+/**
+ * Whether `m` runs in every week `a` and `b` both run: its parity is every
+ * week, or theirs; its Från is no later than theirs and its Till no earlier.
+ * A lesson between two others hides the walk from one to the other only in
+ * the weeks it runs — an odd-week lesson in between leaves the even weeks'
+ * walk, and one that stops at Christmas leaves the spring's.
+ */
+export function weeksCover(m: TravelWeeks, a: TravelWeeks, b: TravelWeeks): boolean {
+  const both =
+    a.recurrence === 'ALL_WEEKS' ? b.recurrence : b.recurrence === 'ALL_WEEKS' || b.recurrence === a.recurrence ? a.recurrence : null;
+  if (both === null) return true;
+  if (m.recurrence !== 'ALL_WEEKS' && m.recurrence !== both) return false;
+  const from = [a.startDate, b.startDate].reduce<string | null>((x, y) => (x === null ? y : y === null ? x : x > y ? x : y), null);
+  const to = [a.endDate, b.endDate].reduce<string | null>((x, y) => (x === null ? y : y === null ? x : x < y ? x : y), null);
+  if (m.startDate !== null && (from === null || m.startDate > from)) return false;
+  if (m.endDate !== null && (to === null || m.endDate < to)) return false;
+  return true;
 }
 
 export interface TravelWarningContext {
@@ -106,14 +134,25 @@ export function travelWarningsOf(
     });
   };
 
+  // A teacher's lesson between O and the target hides O only in the weeks it
+  // runs: some lesson between must run every week the two do.
+  const teacherHidden = (o: TravelDayLesson, between: readonly TravelDayLesson[]) =>
+    between.some((m) => weeksCover(m.weeks, o.weeks, target.weeks));
   for (const teacher of new Set(target.teacherIds)) {
     const own = meeting.filter((other) => other.teacherIds.includes(teacher));
-    for (const breach of travelBreaches(map, target, own)) say('TEACHER', context.teacherName(teacher), breach);
+    for (const breach of travelBreaches(map, target, own, teacherHidden)) say('TEACHER', context.teacherName(teacher), breach);
   }
 
-  const shares = (a: TravelDayLesson, b: TravelDayLesson) => sharePupils(a, b, context.halvesPair);
-  const together = meeting.filter((other) => shares(target, other));
-  for (const breach of travelBreaches(map, target, together, shares)) {
+  // Pupils: O is hidden when every pupil it and the target share goes to a
+  // lesson in between that runs every week the two do. Shared through a half
+  // alone (no pupil placed yet), nobody is known to go anywhere: kept.
+  const pupilsHidden = (o: TravelDayLesson, between: readonly TravelDayLesson[]) => {
+    const walkers = [...o.pupils].filter((pupil) => target.pupils.has(pupil));
+    const covering = between.filter((m) => weeksCover(m.weeks, o.weeks, target.weeks));
+    return walkers.length > 0 && walkers.every((pupil) => covering.some((m) => m.pupils.has(pupil)));
+  };
+  const together = meeting.filter((other) => sharePupils(target, other, context.halvesPair));
+  for (const breach of travelBreaches(map, target, together, pupilsHidden)) {
     const other = breach.from.id === target.id ? breach.to : breach.from;
     const smaller = other.pupils.size < target.pupils.size ? other : target;
     say('PUPILS', smaller.groupIds.map(context.groupName).join(', '), breach);

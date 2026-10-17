@@ -943,7 +943,7 @@ export class PublicationsService {
       // The whole load report is read to judge, and not recorded as such:
       // the check hands out only the teachers it stops on, and records those
       // (EMPLOYMENT, their posts' figures) with their names below.
-      const report = await this.load.load(academicYearId, 'planned', user, { record: false });
+      const report = await this.load.load(academicYearId, 'planned', user, { record: false, travel: false });
       const unqualified = policy.qualificationMode === 'REFUSE' ? report.unqualifiedAssignments : [];
       const over = policy.overAllocationMode === 'REFUSE' ? report.teachers.filter((row) => row.status === 'OVER') : [];
       const ids = [...new Set([...unqualified.map((row) => row.userId), ...over.map((row) => row.userId)])];

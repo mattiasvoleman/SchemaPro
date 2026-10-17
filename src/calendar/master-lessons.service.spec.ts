@@ -1983,11 +1983,19 @@ describe('MasterLessonsService', () => {
       };
       const before = () =>
         otherLesson({ teacherId: TEACHER_ID, roomId: NORRA_ROOM, startTime: t('09:00'), endTime: t('10:00') });
+      /** The edited lesson as the day read after the write finds it. */
+      const edited = (from: string, to: string) => ({
+        ...lessonRecord({ startTime: t(from), endTime: t(to) }),
+        subject: { name: 'Svenska' },
+      });
+
+      /** The school's statement counts its travel figures (one here); the walks ask nothing without one. */
+      const WITH_TRAVEL = { school: { id: SCHOOL_ID, timezone: 'Europe/Stockholm', _count: { academicYears: 1, siteTravelTimes: 1 } } };
 
       it('saves a lesson moved to five minutes after the teacher’s lesson at the other site, and warns', async () => {
-        arrangeUpdate({}, { startTime: t('10:05'), endTime: t('11:05') });
+        arrangeUpdate(WITH_TRAVEL, { startTime: t('10:05'), endTime: t('11:05') });
         arrangeSites();
-        sameDay([before()]);
+        sameDay([before(), edited('10:05', '11:05')]);
 
         const updated = await service.update(LESSON_ID, { startTime: '10:05', endTime: '11:05' }, testUser());
 
@@ -2010,21 +2018,30 @@ describe('MasterLessonsService', () => {
       });
 
       it('says nothing when the gap holds the walk, the pair has no figure, or the edit moves no walk', async () => {
-        arrangeUpdate({}, { startTime: t('10:15'), endTime: t('11:15') });
+        arrangeUpdate(WITH_TRAVEL, { startTime: t('10:15'), endTime: t('11:15') });
         arrangeSites();
-        sameDay([before()]);
+        sameDay([before(), edited('10:15', '11:15')]);
         await expect(
           service.update(LESSON_ID, { startTime: '10:15', endTime: '11:15' }, testUser()),
         ).resolves.toMatchObject({ warnings: [] });
 
-        arrangeUpdate({}, { startTime: t('10:05'), endTime: t('11:05') });
+        arrangeUpdate(WITH_TRAVEL, { startTime: t('10:05'), endTime: t('11:05') });
         arrangeSites([]);
         await expect(
           service.update(LESSON_ID, { startTime: '10:05', endTime: '11:05' }, testUser()),
         ).resolves.toMatchObject({ warnings: [] });
 
+        // A school whose statement counts no figure asks nothing of the walks at all.
+        arrangeUpdate({}, { startTime: t('10:05'), endTime: t('11:05') });
+        arrangeSites();
+        tx.siteTravelTime.findMany.mockClear();
+        await expect(
+          service.update(LESSON_ID, { startTime: '10:05', endTime: '11:05' }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        expect(tx.siteTravelTime.findMany).not.toHaveBeenCalled();
+
         // A lock asks nothing of the walks: the day is not even read for them.
-        arrangeUpdate({ startTime: t('10:05'), endTime: t('11:05') }, { startTime: t('10:05'), endTime: t('11:05'), isLocked: true });
+        arrangeUpdate({ ...WITH_TRAVEL, startTime: t('10:05'), endTime: t('11:05') }, { startTime: t('10:05'), endTime: t('11:05'), isLocked: true });
         arrangeSites();
         tx.siteTravelTime.findMany.mockClear();
         await expect(service.update(LESSON_ID, { isLocked: true }, testUser())).resolves.toMatchObject({ warnings: [] });

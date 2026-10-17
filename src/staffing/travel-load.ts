@@ -19,11 +19,12 @@ import { teachingWeeks, type ClosedRange, type YearBounds } from './teaching-wee
  * tjänstgöringsomfattning, and SS12000's Duty the post's grade and annual
  * hours; restid is neither, so neither file changes.
  *
- * WHAT IS COUNTED. Every school day of the läsår: each weekday from the
- * year's first day to its last that no school-wide lov closes (a closure for
- * some grades only leaves the teacher's other lessons that day, and the day
- * is counted), with the lessons of the grundschema that run on it — their
- * weekday, their weeks (odd, even) and their Från and Till. On each such day
+ * WHAT IS COUNTED. Every school day of the läsår: each day from the year's
+ * first to its last that no school-wide lov closes, with the lessons of the
+ * grundschema that run on it — their weekday, their weeks (odd, even), their
+ * Från and Till, and not a lesson whose class a lov for some grades closes
+ * that day (its class's årskurs inside the lov's span, as the published
+ * calendar drops it, publish-days.ts). On each such day
  * the walks between one lesson and the next (common/site-travel.ts walksOfDay)
  * are the teacher's: lead and co-teacher alike, whatever the gap. A walk to
  * or from a room on no site, or between two sites with no figure, is unknown
@@ -53,6 +54,8 @@ export interface TravelMaster {
   /** Inclusive yyyy-mm-dd, or null for the year's own bound. */
   startDate: string | null;
   endDate: string | null;
+  /** The class's årskurs, for a lov that closes some grades; null for a group without one. */
+  gradeLevel?: number | null;
 }
 
 export interface TeacherTravel {
@@ -68,6 +71,14 @@ export interface TeacherTravel {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const asDay = (date: Date): string => date.toISOString().slice(0, 10);
 const round1 = (value: number): number => Math.round(value * 10) / 10;
+
+/** A lov for some grades closes a lesson whose class's årskurs it spans; one without a grade it never closes. */
+function closedForGrade(closure: ClosedRange, gradeLevel: number | null | undefined): boolean {
+  if (gradeLevel === null || gradeLevel === undefined) return false;
+  const min = closure.minGradeLevel ?? null;
+  const max = closure.maxGradeLevel ?? null;
+  return (min === null || gradeLevel >= min) && (max === null || gradeLevel <= max);
+}
 
 function runsOn(master: TravelMaster, day: string, odd: boolean): boolean {
   if (master.startDate !== null && day < master.startDate) return false;
@@ -89,6 +100,7 @@ export function travelLoad(
 ): TeacherTravel[] {
   if (!hasTravel(map) || masters.length === 0) return [];
   const schoolWide = closures.filter((c) => (c.minGradeLevel ?? null) === null && (c.maxGradeLevel ?? null) === null);
+  const someGrades = closures.filter((c) => !schoolWide.includes(c));
   const byTeacherDay = new Map<string, TravelMaster[]>();
   for (const master of masters) {
     for (const teacher of new Set(master.teacherIds)) {
@@ -110,8 +122,12 @@ export function travelLoad(
     const weekday = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
     const monday = asDay(new Date(date.getTime() - (weekday - 1) * DAY_MS));
     const odd = isoWeekNumber(new Date(`${monday}T00:00:00.000Z`)) % 2 === 1;
+    const closedToday = someGrades.filter((closure) => day >= closure.startDate && day <= closure.endDate);
     for (const teacher of teachers) {
-      const lessons = (byTeacherDay.get(`${teacher}|${weekday}`) ?? []).filter((master) => runsOn(master, day, odd));
+      const lessons = (byTeacherDay.get(`${teacher}|${weekday}`) ?? []).filter(
+        (master) =>
+          runsOn(master, day, odd) && !closedToday.some((closure) => closedForGrade(closure, master.gradeLevel)),
+      );
       if (lessons.length < 2) continue;
       const placed: PlacedLesson[] = lessons.map((master) => ({
         id: master.id,

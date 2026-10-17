@@ -99,13 +99,15 @@ export class StaffingLoadService {
    * `record: false` is for a caller that reads the report to judge something
    * and hands out only part of it (the publication check, which names the
    * teachers it stops on and records those itself). Every route that returns
-   * the report records it.
+   * the report records it. `travel: false` leaves the restid out (null) for a
+   * caller that never reads it, the same check: it is a walk through the
+   * whole grundschema, and the check judges the counted minutes alone.
    */
   async load(
     academicYearId: string,
     horizon: string | undefined,
     user: AuthenticatedUser,
-    options: { record?: boolean } = {},
+    options: { record?: boolean; travel?: boolean } = {},
   ): Promise<TeacherLoadReportResponse> {
     requireSchoolId(user);
     const chosen = horizon ?? 'planned';
@@ -127,7 +129,11 @@ export class StaffingLoadService {
       if (user.role === Role.SCHOOL_ADMIN && options.record !== false) {
         await recordRead(tx, 'EMPLOYMENT', built.teachers.map((row) => row.userId), user.channel);
       }
-      const travel = await this.readTravel(tx, academicYearId, user, read.year, read.input.closures);
+      const walks = options.travel === false ? null : await this.readTravel(tx, academicYearId, user, read.year, read.input.closures);
+      // The report's teachers alone: a person put on a lesson by hand with no
+      // post, row or uppdrag has no row to stand beside.
+      const reported = new Set(built.teachers.map((row) => row.userId));
+      const travel = walks && { teachers: walks.teachers.filter((row) => reported.has(row.userId)) };
       return { year: read.year, report: built, travel };
     });
 
@@ -409,9 +415,19 @@ export class StaffingLoadService {
           startDate: true,
           endDate: true,
           isParked: true,
+          studentGroupId: true,
         },
         orderBy: { id: 'asc' },
       }),
+    );
+    // The classes' årskurser, for a lov that closes some grades (one statement).
+    const grades = new Map(
+      (
+        await tx.studentGroup.findMany({
+          where: { id: { in: [...new Set(rows.map((row) => row.studentGroupId))] } },
+          select: { id: true, gradeLevel: true },
+        })
+      ).map((group) => [group.id, group.gradeLevel]),
     );
     const minutes = (value: Date) => value.getUTCHours() * 60 + value.getUTCMinutes();
     const masters = rows
@@ -426,6 +442,7 @@ export class StaffingLoadService {
         recurrence: row.recurrence,
         startDate: asDayOrNull(row.startDate),
         endDate: asDayOrNull(row.endDate),
+        gradeLevel: grades.get(row.studentGroupId) ?? null,
       }));
     return { teachers: travelLoad(map, masters, year, closures) };
   }
