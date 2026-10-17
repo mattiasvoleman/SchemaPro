@@ -505,6 +505,8 @@ const GROUP_CHOICE_SV: Record<string, string> = {
   PROMOTE_GRADUATING: 'går ut och kan inte flyttas upp',
   PROMOTE_WITHOUT_GRADE: 'har ingen årskurs att flytta upp',
   INTAKE_NOT_LOWEST: 'är inte en klass i den lägsta årskursen, så INTAKE går inte',
+  CARRY_FORSKOLEKLASS:
+    'är förskoleklass och kan inte följa med oförändrad in i hösten 2028: den börjar direkt i årskurs 2 (SFS 2025:729)',
 };
 
 /** The first blocking problem as the 400 or 409 the execute answers with. */
@@ -534,6 +536,33 @@ function refuseBlockedRollover(plan: RolloverPlan, source: RolloverSource): void
     throw new BadRequestException({
       message: `groups: ${String(choice.params['group'])} ${GROUP_CHOICE_SV[String(choice.params['error'])] ?? 'kan inte få det utfallet'}.`,
       code: String(choice.params['error']),
+    });
+  }
+  const formUnknown = first('ROLLOVER_2028_SCHOOL_FORM_UNKNOWN');
+  if (formUnknown) {
+    throw new BadRequestException({
+      message:
+        'renumber2028: läsåret visar inte om skolan är grundskola, anpassad grundskola, specialskola eller sameskola. ' +
+        'Ange true för den tioåriga numreringen (SFS 2025:729) eller false för att behålla skolans numrering.',
+      code: 'ROLLOVER_2028_SCHOOL_FORM_UNKNOWN',
+    });
+  }
+  const required = first('ROLLOVER_2028_RENUMBERING_REQUIRED');
+  if (required) {
+    throw new BadRequestException({
+      message:
+        'renumber2028: läsåret har en timplan eller en förskoleklass, så skolan har en av de skolformer som ' +
+        'SFS 2025:729 numrerar om från hösten 2028. Numreringen kan inte behållas.',
+      code: 'ROLLOVER_2028_RENUMBERING_REQUIRED',
+    });
+  }
+  const aboveTwelve = first('ROLLOVER_GRADE_ABOVE_12');
+  if (aboveTwelve) {
+    const groups = aboveTwelve.params['groups'] as string[];
+    throw new BadRequestException({
+      message: `groups: ${listNames(groups)} skulle hamna över årskurs 12 nästa läsår. Välj ett annat utfall för dem.`,
+      code: 'ROLLOVER_GRADE_ABOVE_12',
+      params: { groups },
     });
   }
   const grade = first('GRADUATING_GRADE_REQUIRED');

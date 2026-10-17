@@ -51,6 +51,12 @@ export function RolloverYearStep({
           ? t(`gradeSource.${plan.graduatingGradeSource}`)
           : "";
 
+  // Into HT 2028 (SFS 2025:729) the numbering is asked here when the source
+  // year shows no school form, and stays shown once answered.
+  const asksNumbering =
+    plan?.reform2028 != null &&
+    (form.renumber2028 !== null || plan.problems.some((problem) => problem.code === "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN"));
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3 [&>*]:min-w-0">
@@ -112,6 +118,25 @@ export function RolloverYearStep({
           </Select>
         )}
       </FormField>
+
+      {asksNumbering ? (
+        <FormField id="rollover-numbering" label={t("numbering2028")} hint={t("numbering2028Hint")} className="max-w-xl">
+          {(control) => (
+            <Select
+              value={form.renumber2028 === null ? "" : form.renumber2028 ? "renumber" : "keep"}
+              onValueChange={(value) => update({ renumber2028: value === "renumber" })}
+            >
+              <SelectTrigger {...control}>
+                <SelectValue placeholder={t("numbering2028Placeholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="renumber">{t("numbering2028Renumber")}</SelectItem>
+                <SelectItem value="keep">{t("numbering2028Keep")}</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </FormField>
+      ) : null}
     </div>
   );
 }

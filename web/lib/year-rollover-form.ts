@@ -100,6 +100,13 @@ export interface RolloverFormState {
    * means either way.
    */
   carryStaffing: boolean;
+  /**
+   * Into HT 2028: the admin's answer to the numbering, null until given. The
+   * gateway renumbers without asking when the source year shows one of the
+   * four forms, and asks (ROLLOVER_2028_SCHOOL_FORM_UNKNOWN) when it shows
+   * none; sent only once answered, so the preview's key stays as it was.
+   */
+  renumber2028: boolean | null;
   /** The SELECTED lov, by source break id; absent means not carried. */
   breaks: Record<string, BreakChoiceState>;
 }
@@ -147,6 +154,7 @@ export function rolloverOptions(form: RolloverFormState): RolloverOptions | null
     keepTeachers: form.keepTeachers,
     carryClassRules: form.carryClassRules,
     carryStaffing: form.carryStaffing,
+    ...(form.renumber2028 !== null ? { renumber2028: form.renumber2028 } : {}),
     ...(breaks.length > 0 ? { breaks } : {}),
   };
 }

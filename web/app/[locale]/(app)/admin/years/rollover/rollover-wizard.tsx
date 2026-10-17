@@ -42,7 +42,8 @@ import {
   rolloverOptions,
   type RolloverFormState,
 } from "@/lib/year-rollover-form";
-import { nameCollisions, resolveGroups, type GroupChoice } from "@/lib/year-rollover";
+import { INTO_TIOARIG, nameCollisions, ONE_YEAR, resolveGroups, type GroupChoice } from "@/lib/year-rollover";
+import { TIOARIG_FROM } from "@/lib/grade-numbering";
 import { cn } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -96,6 +97,7 @@ function initialForm(source: { name: string; startDate: string; endDate: string 
     keepTeachers: true,
     carryClassRules: true,
     carryStaffing: decides,
+    renumber2028: null,
     breaks: {},
   };
 }
@@ -165,13 +167,21 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
     return map;
   }, [form?.groups]);
   const carryTeachingGroups = form?.carryTeachingGroups ?? true;
+  // Into HT 2028 the gateway may renumber (SFS 2025:729): the mirror names
+  // with the same step once the admin, or else the preview, has said so.
+  const crossing =
+    source !== null &&
+    source.gradeNumbering !== "TIOARIG" &&
+    source.startDate < TIOARIG_FROM &&
+    (form?.startDate ?? "") >= TIOARIG_FROM;
+  const gradeStep = crossing && (form?.renumber2028 ?? plan?.reform2028?.renumbers ?? false) ? INTO_TIOARIG : ONE_YEAR;
   const resolved = useMemo(
-    () => resolveGroups(sourceGroups, graduatingGrade ?? 99, { carryTeachingGroups }, choices),
-    [sourceGroups, graduatingGrade, carryTeachingGroups, choices],
+    () => resolveGroups(sourceGroups, graduatingGrade ?? 99, { carryTeachingGroups }, choices, gradeStep),
+    [sourceGroups, graduatingGrade, carryTeachingGroups, choices, gradeStep],
   );
   const defaults = useMemo(
-    () => resolveGroups(sourceGroups, graduatingGrade ?? 99, { carryTeachingGroups }),
-    [sourceGroups, graduatingGrade, carryTeachingGroups],
+    () => resolveGroups(sourceGroups, graduatingGrade ?? 99, { carryTeachingGroups }, new Map(), gradeStep),
+    [sourceGroups, graduatingGrade, carryTeachingGroups, gradeStep],
   );
   const collisions = useMemo(() => nameCollisions(resolved), [resolved]);
 

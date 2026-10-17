@@ -3405,6 +3405,11 @@
     "graduatingGrade": "Graduating grade",
     "graduatingGradePlaceholder": "Choose a grade",
     "gradeOption": "{grade, select, 0 {Preschool class} other {Grade {grade}}}",
+    "numbering2028": "Grade numbering from autumn 2028",
+    "numbering2028Hint": "The year has neither a timplan nor a preschool class, so it does not show whether the ten-year compulsory school applies to the school.",
+    "numbering2028Placeholder": "Choose numbering",
+    "numbering2028Renumber": "Ten-year: the school is a grundskola, anpassad grundskola, specialskola or sameskola",
+    "numbering2028Keep": "Keep the numbering: the school has none of the four school forms",
     "gradeChosen": "Chosen by you.",
     "gradeConflict": "The timplan ends at grade {timplan} but the highest class is in grade {classes}. Choose which grade graduates.",
     "gradeSource": {
@@ -3451,7 +3456,8 @@
     "choiceError": {
       "PROMOTE_GRADUATING": "The group graduates and cannot be promoted.",
       "PROMOTE_WITHOUT_GRADE": "The group has no grade to promote.",
-      "INTAKE_NOT_LOWEST": "A new intake class is possible only for classes in the lowest grade."
+      "INTAKE_NOT_LOWEST": "A new intake class is possible only for classes in the lowest grade.",
+      "CARRY_FORSKOLEKLASS": "The preschool class cannot stay unchanged into autumn 2028: it starts directly in grade 2."
     },
     "leaves": {
       "PROMOTE": "—",
@@ -3577,7 +3583,11 @@
       "VOLUME_DIFFERS_FROM_TIMPLAN": "The teaching requirements of {groups} differ from the decided timplan for the grade they are promoted into.",
       "ROLLOVER_TIMPLAN_NO_FITTING_PLAN": "Grade {grades} gets no timplan next year, because no decided plan applies to that cohort. From autumn 2028 the new grade 1 follows only a plan under the 2028 law, and everyone already in school only an older one. Choose a plan under Timplan per årskurs once the year is created.",
       "ISO_WEEK_53_CROSSED": "The rollover crosses a week 53: {rows, plural, one {# odd- or even-week requirement switches} other {# odd- or even-week requirements switch}} to the other week type. Check them.",
-      "ROLLOVER_2028_RENUMBERING": "The new year starts in {startYear}: under {source}, pupils already in school move up two grades instead of one (the 2027/28 preschool class starts directly in grade 2). The rollover moves classes up one grade today, so check the classes’ grades before the year is activated."
+      "ROLLOVER_2028_RENUMBERING": "The new year starts in {startYear} and uses the ten-year numbering: under {source}, every class moves up two grades instead of one (8A becomes 10A, the preschool class starts directly in grade 2), and a class that stays moves up one. The new grade 1 gets a class through New intake class or once the year is created. Every older cohort keeps its timplan and the older total time.",
+      "ROLLOVER_2028_NOT_RENUMBERED": "The new year starts in {startYear} but keeps the school’s numbering, because the school has none of the school forms {source} renumbers. Classes move up one grade as usual.",
+      "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN": "The new year starts in {startYear}, when {source} renumbers grundskolan, anpassade grundskolan, specialskolan and sameskolan. Choose the numbering under Grade numbering from autumn 2028.",
+      "ROLLOVER_2028_RENUMBERING_REQUIRED": "The year has a timplan or a preschool class, so the school has one of the school forms {source} renumbers from {startYear}. The numbering cannot be kept.",
+      "ROLLOVER_GRADE_ABOVE_12": "{groups} would end up above grade 12 next year. Choose another outcome for them."
     },
     "errors": {
       "YEAR_HAS_SUCCESSOR": "This year has already been rolled over to {successor}.",
@@ -3598,6 +3608,10 @@
       "ROLLOVER_UNKNOWN_BREAK": "A chosen break is no longer in the year. Reload the page.",
       "GRADUATING_GRADE_REQUIRED": "Choose which grade graduates.",
       "INTAKE_NOT_LOWEST": "A new intake class can only open beside a class in the lowest grade.",
+      "CARRY_FORSKOLEKLASS": "The preschool class cannot stay unchanged into autumn 2028: it starts directly in grade 2.",
+      "ROLLOVER_2028_SCHOOL_FORM_UNKNOWN": "Choose the grade numbering from autumn 2028 in step 1.",
+      "ROLLOVER_2028_RENUMBERING_REQUIRED": "The school has one of the school forms renumbered in autumn 2028, so the numbering cannot be kept.",
+      "ROLLOVER_GRADE_ABOVE_12": "Some groups would end up above grade 12 next year. Choose another outcome for them.",
       "PROMOTE_WITHOUT_GRADE": "A group without a grade cannot be promoted.",
       "PROMOTE_GRADUATING": "A graduating group cannot be promoted.",
       "ROLLOVER_UNKNOWN_GROUP": "A chosen group is no longer in the year. Reload the page.",
