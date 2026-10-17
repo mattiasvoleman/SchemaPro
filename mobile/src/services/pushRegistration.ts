@@ -125,10 +125,11 @@ async function register(token: string, locale: Locale): Promise<void> {
 /**
  * The person turns push on: the school must have it, the phone must allow it
  * (asked here, and only here), and the build must be able to get a token.
- * On Android the channel is made first and awaited: Android 13 shows the
- * permission prompt only once a channel exists, and Expo wants one before
- * the token. The root layout's own call is not awaited, so it may not have
- * landed yet.
+ * On Android the channel is made first and awaited, because Expo wants one
+ * before the token. (Below targetSdk 33 Android would also prompt only once
+ * a channel exists; this app targets 36, where the prompt comes from
+ * requestPermissionsAsync alone.) The root layout's own call is not awaited,
+ * so it may not have landed yet.
  */
 export async function enablePush(userId: string, locale: Locale): Promise<PushOutcome> {
   if (!(await serverPushEnabled())) return 'SERVER_OFF';

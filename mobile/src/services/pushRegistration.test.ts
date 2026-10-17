@@ -386,7 +386,7 @@ describe('the Android channel', () => {
     });
   });
 
-  it('exists, in the reader’s language, before push is asked for: Android 13 shows no prompt without one', async () => {
+  it('exists, in the reader’s language, before push is asked for and before the token is fetched', async () => {
     const steps: string[] = [];
     // Resolves a turn later, so a channel that was started but not awaited
     // would land after the permission calls.
@@ -405,8 +405,12 @@ describe('the Android channel', () => {
       steps.push('permission asked');
       return { granted: true, canAskAgain: true };
     });
+    (Notifications.getExpoPushTokenAsync as jest.Mock).mockImplementationOnce(async () => {
+      steps.push('token');
+      return { type: 'expo', data: TOKEN };
+    });
     await expect(enablePush(A, 'en')).resolves.toBe('ENABLED');
-    expect(steps).toEqual(['channel "School notifications"', 'permission read', 'permission asked']);
+    expect(steps).toEqual(['channel "School notifications"', 'permission read', 'permission asked', 'token']);
   });
 
   it('is not made on iPhone, where push is turned on as before', async () => {
