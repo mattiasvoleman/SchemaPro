@@ -191,7 +191,6 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
   travel?: { teachers: TeacherTravel[] } | null;
 }
 
-
 /**
  * The report for one läsår, computed by the gateway. Only the planned horizon
  * exists in Fas 1, so no parameter for it: the day a second one is added, the

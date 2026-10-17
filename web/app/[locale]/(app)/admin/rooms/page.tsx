@@ -42,6 +42,7 @@ import {
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SitesCard } from "./sites-card";
 import { SITES_KEY, useSites } from "./use-sites";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
 
 interface RoomForm {
   name: string;
@@ -165,7 +166,8 @@ export default function RoomsPage() {
     building?: string | null;
     floor?: number | null;
     siteId?: string | null;
-  }>("/api/v1/rooms", [["rooms"], SITES_KEY]);
+    // A room's site moves the sites' room counts and the load's restid.
+  }>("/api/v1/rooms", [["rooms"], SITES_KEY, [...STAFFING_KEYS.load]]);
 
   const [importOpen, setImportOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);

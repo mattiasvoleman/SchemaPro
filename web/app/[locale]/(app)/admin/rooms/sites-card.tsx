@@ -17,7 +17,9 @@
  * once, and a menu row would cost every route bytes.
  */
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Pencil, Plus, Trash2 } from "lucide-react";
@@ -42,25 +44,35 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableCard } from "@/components/ui/table-card";
-import { SITES_KEY, pairKey, sitePairs, useSaveTravelTimes, useSites, type Site } from "./use-sites";
+import { SITES_KEY, pairKey, sitePairs, travelBasis, useSaveTravelTimes, useSites, type Site } from "./use-sites";
 
 /** The range the database holds a travel time to (SiteTravelTimes_minutes_range). */
 const MAX_MINUTES = 240;
 
-/** A typed figure: null when empty, undefined when it is not 0..240 whole minutes. */
+/**
+ * A typed figure: null when empty, undefined when it is not 0..240 whole
+ * minutes written as digits ("1e2" and "-" are not minutes, and are said to
+ * be wrong rather than read as a number or as nothing).
+ */
 export function minutesFromField(value: string): number | null | undefined {
   const trimmed = value.trim();
   if (trimmed === "") return null;
+  if (!/^\d{1,3}$/.test(trimmed)) return undefined;
   const parsed = Number(trimmed);
-  return Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_MINUTES ? parsed : undefined;
+  return parsed <= MAX_MINUTES ? parsed : undefined;
 }
+
+/** A pair's key as a field id: the pair key with no "|", which a CSS selector would read as an operator. */
+const fieldId = (key: string) => `site-travel-${key.replace("|", "-")}`;
 
 export function SitesCard() {
   const t = useTranslations("sites");
   const tCommon = useTranslations("common");
   const sites = useSites();
-  const mutations = useCrudMutations<{ name: string }>("/api/v1/sites", [SITES_KEY, ["rooms"]]);
+  // A site removed leaves its rooms on none, and the load's restid with them.
+  const mutations = useCrudMutations<{ name: string }>("/api/v1/sites", [SITES_KEY, ["rooms"], [...STAFFING_KEYS.load]]);
   const saveTimes = useSaveTravelTimes();
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Site | null>(null);
   const [name, setName] = useState("");
@@ -69,14 +81,31 @@ export function SitesCard() {
 
   const list = useMemo(() => sites.data?.sites ?? [], [sites.data]);
   const pairs = useMemo(() => sitePairs(list), [list]);
+  // On the travel times alone: a room saved or a site renamed refetches the
+  // list, and the pairs keep their reference (react-query's structural
+  // sharing), so nothing typed is touched.
+  const travelTimes = sites.data?.travelTimes;
   const saved = useMemo(
-    () => new Map((sites.data?.travelTimes ?? []).map((time) => [pairKey(time.siteAId, time.siteBId), time.minutes])),
-    [sites.data],
+    () => new Map((travelTimes ?? []).map((time) => [pairKey(time.siteAId, time.siteBId), time.minutes])),
+    [travelTimes],
   );
-  // The figures as typed, by pair; reset to the saved ones whenever they change.
+  // The figures as typed, by pair. When the saved ones change, a field the
+  // admin has not touched takes the new figure; one they have edited keeps
+  // what they typed.
   const [typed, setTyped] = useState<Record<string, string>>({});
+  const previous = useRef<Map<string, number>>(new Map());
   useEffect(() => {
-    setTyped(Object.fromEntries([...saved.entries()].map(([key, minutes]) => [key, String(minutes)])));
+    const before = previous.current;
+    previous.current = saved;
+    setTyped((current) => {
+      const next: Record<string, string> = {};
+      for (const key of new Set([...Object.keys(current), ...saved.keys()])) {
+        const untouched = (current[key] ?? "") === (before.has(key) ? String(before.get(key)) : "");
+        const value = untouched ? (saved.has(key) ? String(saved.get(key)) : "") : current[key]!;
+        if (value !== "") next[key] = value;
+      }
+      return next;
+    });
   }, [saved]);
 
   const valueOf = (a: Site, b: Site) => typed[pairKey(a.id, b.id)] ?? "";
@@ -138,14 +167,17 @@ export function SitesCard() {
     }
   };
 
-  const saveTravelTimes = async () => {
-    if (invalidPairs.length > 0) return;
+  const saveTravelTimes = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!dirty || invalidPairs.length > 0) return;
     const times = pairs.flatMap(([a, b]) => {
       const minutes = minutesFromField(valueOf(a, b));
       return minutes === null || minutes === undefined ? [] : [{ siteIds: [a.id, b.id] as [string, string], minutes }];
     });
     try {
-      await saveTimes.mutateAsync(times);
+      await saveTimes.mutateAsync({ times, basis: travelBasis(travelTimes ?? []) });
+      // The load's restid is read from these figures.
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
       toast.success(t("travelSaved"));
     } catch (error) {
       toast.error(errorText(error));
@@ -216,7 +248,7 @@ export function SitesCard() {
           </TableCard>
 
           {list.length >= 2 ? (
-            <section aria-labelledby="sites-travel-title" className="space-y-3">
+            <form aria-labelledby="sites-travel-title" className="space-y-3" onSubmit={saveTravelTimes} noValidate>
               <div className="space-y-1">
                 <h3 id="sites-travel-title" className="text-sm font-semibold">
                   {t("travelTitle")}
@@ -240,17 +272,15 @@ export function SitesCard() {
                   return (
                     <li key={key}>
                       <FormField
-                        id={`site-travel-${key}`}
+                        id={fieldId(key)}
                         label={t("pairLabel", { a: a.name, b: b.name })}
                         optional
                         error={minutesFromField(value) === undefined ? t("minutesInvalid") : undefined}
                       >
                         <Input
-                          type="number"
                           inputMode="numeric"
-                          min={0}
-                          max={MAX_MINUTES}
-                          step={1}
+                          autoComplete="off"
+                          maxLength={3}
                           value={value}
                           placeholder={t("minutesPlaceholder")}
                           onChange={(event) => setTyped((current) => ({ ...current, [key]: event.target.value }))}
@@ -261,15 +291,11 @@ export function SitesCard() {
                 })}
               </ul>
               <div className="flex justify-end">
-                <Button
-                  type="button"
-                  onClick={saveTravelTimes}
-                  disabled={!dirty || invalidPairs.length > 0 || saveTimes.isPending}
-                >
+                <Button type="submit" disabled={!dirty || invalidPairs.length > 0 || saveTimes.isPending}>
                   {t("saveTravel")}
                 </Button>
               </div>
-            </section>
+            </form>
           ) : (
             <p className="text-sm text-muted-foreground">{t("oneSite")}</p>
           )}

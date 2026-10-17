@@ -405,7 +405,7 @@
     "missingTitle": "Restid saknas",
     "missing": "Ingen restid är angiven för {pairs}. Mellan de skolområdena varnar schemat inte och ingen restid räknas.",
     "roomsWithoutSiteTitle": "Salar utan skolområde",
-    "roomsWithoutSite": "{count, plural, one {# sal står} other {# salar står}} inte på något skolområde. Ingen restid räknas till eller från dem.",
+    "roomsWithoutSite": "{count, plural, one {# sal står inte på något skolområde. Ingen restid räknas till eller från den.} other {# salar står inte på något skolområde. Ingen restid räknas till eller från dem.}}",
     "addTitle": "Lägg till skolområde",
     "editTitle": "Redigera {name}",
     "dialogHint": "Namnet syns i salslistan och i varningarna om restid.",
@@ -419,7 +419,9 @@
       "SITE_NAME_TAKEN": "Skolan har redan ett skolområde med det namnet.",
       "SITE_NAME_EMPTY": "Skolområdet behöver ett namn.",
       "SITE_TRAVEL_PAIR_INVALID": "Samma par av skolområden står två gånger, eller ett skolområde mot sig självt.",
-      "SITE_NOT_FOUND": "Skolområdet finns inte längre. Ladda om sidan."
+      "SITE_NOT_FOUND": "Skolområdet finns inte längre. Ladda om sidan.",
+      "SITE_LIMIT": "En skola har högst 50 skolområden.",
+      "SITE_TRAVEL_STALE": "Restiderna har ändrats sedan du öppnade sidan. De nya visas nu, med det du skrev kvar; spara igen."
     }
   },
   "groups": {
