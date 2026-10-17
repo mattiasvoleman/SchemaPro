@@ -129,7 +129,7 @@ describe('pushLessonBatch (the offline queue’s way out)', () => {
     });
   });
 
-  it('throws on a refusal, so the queue keeps the rows and counts a retry', async () => {
+  it('throws on a refusal with its status, so the queue keeps the rows and can tell a busy server from a refused batch', async () => {
     fetchMock.mockResolvedValue(answer(500));
     await expect(pushLessonBatch('lesson-1', [record('s-1', 'present')], 'worker-token')).rejects.toMatchObject({ status: 500 });
   });

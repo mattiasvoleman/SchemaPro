@@ -1,7 +1,7 @@
 import * as Network from 'expo-network';
 import { getAccessToken } from '../supabase';
 import { SecureTokenStore } from '../auth/secureTokenStore';
-import { apiRequest } from '../api';
+import { ApiError, apiRequest } from '../api';
 import {
   getPendingAttendanceRecords,
   getPendingQueueCount,
@@ -18,7 +18,9 @@ import type { AttendanceStatus, PendingAttendanceRecord, SyncProblem, SyncStatus
 //   retry 3 → 4 000 ms
 //   retry 4 → 8 000 ms
 //   retry 5+ → capped at 30 000 ms
-// After MAX_RETRIES the record is left in the queue for manual resolution.
+// Only a permanent refusal counts as a retry (isPermanentFailure). After
+// MAX_RETRIES of those the record is left in the queue for manual resolution;
+// a transient failure is sent again on every cycle, however many there are.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 5;
@@ -42,6 +44,23 @@ export type SyncStatusCallback = (
 function backoffDelay(retryCount: number): number {
   if (retryCount === 0) return 0;
   return Math.min(BASE_DELAY_MS * Math.pow(2, retryCount - 1), MAX_DELAY_MS);
+}
+
+/**
+ * Whether a failed push counts toward MAX_RETRIES: only a 4xx the same batch
+ * would get again. No answer at all, a 5xx, 408 and 429 say nothing about the
+ * marks, and nor do 409, a busy or conflicting server that a retry resolves,
+ * and 401, a sign-in the next cycle renews (the gateway also answers 401 when
+ * it cannot check a token for a moment). Counting those gave up on a
+ * teacher's register after a minute of bad network or a busy server, and
+ * nothing ever sent it again. A 401 also answers an account the school has
+ * deactivated: the batch is then refused before it reaches the register, on
+ * every cycle until the account is active again or the teacher signs out,
+ * and is kept, as the banner says.
+ */
+function isPermanentFailure(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  return err.status >= 400 && err.status < 500 && ![401, 408, 409, 429].includes(err.status);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -183,7 +202,9 @@ export class AttendanceSyncWorker {
         await pushLessonBatch(lessonId, batch, token);
         await Promise.all(batch.map((record) => markAttendanceRecordSynced(record.id)));
       } catch (err) {
-        await Promise.all(batch.map((record) => incrementRetryCount(record.id)));
+        if (isPermanentFailure(err)) {
+          await Promise.all(batch.map((record) => incrementRetryCount(record.id)));
+        }
         failureCount += batch.length;
         // The status only: a message can carry the gateway's words about a
         // child, and this log is not the place for them.
