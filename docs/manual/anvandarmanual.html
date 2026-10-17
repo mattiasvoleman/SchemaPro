@@ -471,6 +471,46 @@
       salar, eller på ingen.
     </p>
   </div>
+  <p id="skolomraden">
+    <strong>Skolområden och restid.</strong> Ligger skolan på mer än ett
+    ställe — högstadiet i stan och F–6 på andra sidan ån, eller en idrottshall
+    en bussresa bort — lägger du in platserna i kortet
+    <span class="ui">Skolområden</span> under salslistan och anger
+    <span class="ui">restiden</span> mellan dem, i hela minuter. Varje sal får
+    sedan sitt skolområde i fältet <span class="ui">Skolområde</span>, och
+    kolumnen <span class="ui">Plats</span> börjar med det, till exempel
+    <em>Norra · Hus A · plan 2</em>. Ett skolområde ligger ovanför byggnaden och
+    är inte samma sak som en skolenhet: en skolenhet kan finnas på två
+    skolområden, och ett skolområde kan rymma två skolenheter.
+  </p>
+  <p>
+    Restiden används på tre ställen. Schemat varnar när en ändring du gör för
+    hand lämnar en lärare eller elever mindre tid mellan två lektioner på olika
+    skolområden än restiden (5.3). Vikarieförslagen säger samma sak om
+    vikariens dag (6.3). Och restiden räknas som arbetstid bredvid
+    undervisningen i belastningen (4.3). Genereringen läser den inte ännu.
+  </p>
+  <div class="note">
+    <span class="label">En siffra per par, samma åt båda hållen</span>
+    <p>
+      Restiden mellan Norra och Södra är en siffra, och den gäller åt båda
+      hållen: regeln är ett minsta avstånd mellan två lektioner, hur läraren än
+      går. Tar vägen olika lång tid åt olika håll, till exempel en buss som
+      bara går ett varv åt ett håll, anger du den längre tiden. 0 minuter är ett
+      svar, till exempel för två delar av samma område. Ett tomt fält betyder
+      att restiden inte är angiven.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Det som inte är angivet räknas inte</span>
+    <p>
+      En sal utan skolområde, och ett par utan restid, räknas som okända.
+      Ingen varning ges och ingen restid räknas till eller från dem. Kortet
+      säger därför vilka par som saknar restid och hur många salar som inte står
+      på något skolområde. En skola på ett ställe behöver inga skolområden
+      alls, och märker ingen skillnad.
+    </p>
+  </div>
   <div class="note">
     <span class="label">Undervisningsgrupper räknas efter sina elever</span>
     <p>
@@ -1944,6 +1984,19 @@
     <em>enligt skolans inställningar</em>. Undervisningen räknas över läsårets
     undervisningsveckor med lov avräknade; uppdragen över samma veckor.
   </p>
+  <p>
+    Har skolan skolområden med restid (3.3) visar kortet också
+    <span class="ui">Restid mellan skolområden</span>: timmar per läsår och
+    minuter per standardvecka. Den räknas ur grundschemat, varje skoldag med
+    lov för hela skolan avräknade, mellan en lektion och nästa på ett annat
+    skolområde, hur lång luckan än är. Restiden är arbetstid bredvid
+    undervisningen, som ett uppdrag som inte räknas som undervisning: den
+    räknas aldrig mot riktmärket, saldot eller statusen. Vill skolan att en
+    lärare som förflyttar sig ska undervisa mindre gör ni det i tjänstens
+    riktmärke eller med ett uppdrag. Restiden står också i lärarens
+    uppdragsbeskrivning och i Samverkan-filen, och den finns inte i SCB-filen
+    eller SS12000.
+  </p>
   <div class="note">
     <span class="label">A-dagar skalas inte</span>
     <p>
@@ -2560,6 +2613,15 @@
     plats. Du kan även lägga till, duplicera och ta bort lektioner, samt ångra
     och göra om. Dialogen visar överst vilken lektion den gäller — ämne, klass,
     lärare och sal — så tre matematiklektioner samma dag går att hålla isär.
+  </p>
+  <p>
+    Har skolan skolområden med restid (3.3) varnar sparandet när ändringen
+    lämnar en lärare, eller elever på lektionen, mindre tid mellan två
+    lektioner på olika skolområden än restiden. Varningen namnger läraren eller
+    gruppen, de två skolområdena, den andra lektionen och hur många minuter som
+    fattas. Den gäller lärarna på lektionen och varje elev från den lektion hen
+    faktiskt kommer ifrån. Lektionen sparas ändå: det är en varning, inte ett
+    nej, eftersom skolan kan veta något schemat inte vet.
   </p>
   <h4>Parallella block i grundschemat</h4>
   <p>
@@ -3188,6 +3250,13 @@
     plats — utom när lektionen är inställd för en aktivitet (prao, friluftsdag,
     studiedag): då hamnar hen längre ner, eftersom hen kan vara med klassen.
     Varje förslag säger sina skäl i klartext med poängen bredvid.
+  </p>
+  <p>
+    Har skolan skolområden med restid (3.3) står det överst bland skälen när
+    vikariens lektion före eller efter ligger på ett annat skolområde och tiden
+    emellan är kortare än restiden. Skälet drar ner förslaget men tar inte bort
+    det. Väljer du en sådan vikarie med <span class="ui">Annan lärare</span>
+    får du samma varning.
   </p>
   <p>
     Under <span class="ui">Kan inte</span> står de som inte föreslås och
