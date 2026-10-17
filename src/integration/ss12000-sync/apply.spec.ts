@@ -186,7 +186,7 @@ describe('applyChanges, op by op', () => {
     const back = change({ entity: 'PERSON', op: 'REACTIVATE', externalId: ext(2), localId: loc(2) });
     const nowhere = change({ entity: 'PERSON', op: 'REACTIVATE', externalId: ext(3) });
     const outcome = await run([email, back, nowhere]);
-    expect(outcome.applied).toEqual([email.id, back.id]);
+    expect(outcome.applied.sort()).toEqual([email.id, back.id].sort());
     expect(tx.user.updateMany).toHaveBeenCalledWith({
       where: { id: loc(1), schoolId: SCHOOL, role: { not: 'SCHOOL_ADMIN' } },
       data: { email: 'ny@skola.se', updatedAt: STAMP },
@@ -195,6 +195,29 @@ describe('applyChanges, op by op', () => {
       where: { id: loc(2), schoolId: SCHOOL, isActive: false, role: { not: 'SCHOOL_ADMIN' } },
       data: { isActive: true, updatedAt: STAMP },
     });
+  });
+
+  it('writes the e-mail addresses after everything else, one at a time in the source order', async () => {
+    // An address change locks the person's row until the apply commits, and a
+    // register save naming the person waits for it: last, it is held for the
+    // apply's last moments only.
+    tx.user.updateMany.mockResolvedValue({ count: 1 });
+    const first = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(1), localId: loc(1), after: { email: 'ny1@skola.se' } });
+    const second = change({ entity: 'PERSON', op: 'UPDATE', externalId: ext(2), localId: loc(2), after: { email: 'ny2@skola.se' } });
+    const back = change({ entity: 'PERSON', op: 'REACTIVATE', externalId: ext(3), localId: loc(3) });
+    const gone = change({ entity: 'PERSON', op: 'DEACTIVATE', externalId: ext(4), localId: loc(4) });
+    await run([first, second, back, gone]);
+
+    const emailCalls = tx.user.updateMany.mock.calls
+      .map(([arg], i) => ({ order: tx.user.updateMany.mock.invocationCallOrder[i]!, email: (arg as { data: { email?: string } }).data.email }))
+      .filter((call) => call.email !== undefined);
+    expect(emailCalls.map((call) => call.email)).toEqual(['ny1@skola.se', 'ny2@skola.se']);
+    const others = [
+      ...tx.user.updateMany.mock.invocationCallOrder.filter((_, i) => (tx.user.updateMany.mock.calls[i]![0] as { data: { email?: string } }).data.email === undefined),
+      ...tx.$executeRaw.mock.invocationCallOrder,
+    ];
+    expect(others.length).toBeGreaterThan(0);
+    expect(Math.min(...emailCalls.map((call) => call.order))).toBeGreaterThan(Math.max(...others));
   });
 
   it('adds a teaching-group member into a group made in the same apply, and skips one with no group', async () => {

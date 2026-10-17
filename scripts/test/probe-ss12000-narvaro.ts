@@ -55,6 +55,11 @@
  *         phone mark that arrives after a newer correction leaves it
  *         standing and alerts nobody, and a pupil the web sends back
  *         unchanged keeps out no phone mark made before;
+ *   nv-n  the real SS12000 apply, stopped at its deactivations with every
+ *         earlier write held, does not hold up a register save that names
+ *         a pupil whose address it changes (it writes addresses last);
+ *         once the address is written, a save waits for the apply's
+ *         commit, and goes through then;
  *   nv-m  a decision is ordered against the writers: a start waits for a
  *         removal and for a writer that read "not shared"; while a start is
  *         being written a register save goes through at once, versioning as
@@ -81,6 +86,7 @@ import { AttendanceService } from '../../src/attendance/attendance.service';
 import type { PrismaService } from '../../src/database/prisma.service';
 import { GallringJob } from '../../src/gallring/gallring.job';
 import { AttendanceSharingController } from '../../src/integration/attendance-sharing.controller';
+import { applyChanges, type StoredChange } from '../../src/integration/ss12000-sync/apply';
 import { IntegrationKeysController } from '../../src/integration/integration.controller';
 import type { ClientOptions } from '../../src/integration/ss12000-sync/client';
 import { sqlStateOf } from '../../src/integration/ss12000-sync/errors';
@@ -852,6 +858,100 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       assert.deepEqual(await mark('EXCUSED'), { created: 0, updated: 0 }, 'the web wrote a pupil it sent back unchanged');
       assert.deepEqual(await mark('ABSENT', phoneMark), { created: 0, updated: 1 }, 'a phone mark newer than the register was not written');
       assert.deepEqual(alerts, ['ABSENCE_UNREPORTED'], 'a pupil turned absent alerted nobody');
+    });
+
+    await check('(nv-n) an SS12000 apply holds a pupil\'s row against a register save only while it writes e-mail addresses, at its end', async () => {
+      const notifications = { notifyUsers: async () => 0, guardiansOf: async () => [] } as unknown as NotificationsService;
+      const attendance = new AttendanceService(api, notifications);
+      // A pupil of the class, linked to the source by an administrator.
+      const pupilX = await person('STUDENT', 'Ebba', 'Epost', klass.id);
+      const sourceId = randomUUID();
+      await owner.query('BEGIN');
+      try {
+        await owner.query(`SELECT set_config('request.jwt.claims', json_build_object('sub', $1::text)::text, true)`, [adminRow.authId]);
+        await owner.query(`UPDATE "Users" SET "ss12000Id" = $2 WHERE id = $1`, [pupilX.id, sourceId]);
+        await owner.query('COMMIT');
+      } catch (error) {
+        await owner.query('ROLLBACK');
+        throw error;
+      }
+      const lessonsOfX = [await lessonOf(klass.id, day(-9)), await lessonOf(klass.id, day(-10))];
+      // Another pupil the same apply deactivates: a write that came after the addresses before.
+      const leaving = await person('STUDENT', 'Ville', 'Vidare', klass.id);
+      const changes: StoredChange[] = [
+        { id: randomUUID(), seq: 1, entity: 'PERSON', op: 'UPDATE', externalId: sourceId, localId: pupilX.id, after: { firstName: 'Ebba', lastName: 'Epostsson' } },
+        { id: randomUUID(), seq: 2, entity: 'PERSON', op: 'UPDATE', externalId: sourceId, localId: pupilX.id, after: { email: `${marker}-nv-ny-${randomUUID()}@example.invalid` } },
+        { id: randomUUID(), seq: 3, entity: 'PERSON', op: 'DEACTIVATE', externalId: null, localId: leaving.id, after: null },
+      ];
+      const gate = () => {
+        let open!: () => void;
+        const opened = new Promise<void>((resolve) => (open = resolve));
+        return { open, opened };
+      };
+      const atLast = gate();
+      const goOn = gate();
+      const written = gate();
+      const commit = gate();
+      // The real apply, in an administrator's transaction, stopped at its deactivations (the last
+      // write before the addresses now, after them before) and again after its last write, as its
+      // caller's bookkeeping would hold it.
+      const applying = api.withRls(admin, async (tx) => {
+        const raw = tx.$executeRaw.bind(tx) as (...args: unknown[]) => Promise<number>;
+        const stopped = new Proxy(tx, {
+          get(target, prop, receiver) {
+            if (prop !== '$executeRaw') return Reflect.get(target, prop, receiver);
+            return async (...args: unknown[]) => {
+              if ((args[0] as { sql?: string }).sql?.includes('SET "isActive" = false')) {
+                atLast.open();
+                await goOn.opened;
+              }
+              return raw(...args);
+            };
+          },
+        });
+        const outcome = await applyChanges(stopped as never, s, changes, new Date());
+        written.open();
+        await commit.opened;
+        return outcome;
+      });
+      const lockWaiters = async () =>
+        Number((await one<{ n: string }>(`SELECT count(*)::text AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`)).n);
+      let saving: Promise<string> = Promise.resolve('none');
+      try {
+        await atLast.opened;
+        // Every write of the apply but its deactivations and addresses is made and held, the pupil's new
+        // name among them: a save that names the pupil (a new record, so its foreign key checks the
+        // pupil's row) goes through.
+        const started = Date.now();
+        await attendance.reportAttendance({ calendarLessonId: lessonsOfX[0]!.id, records: [{ studentId: pupilX.id, status: 'PRESENT' }] } as never, admin);
+        const took = Date.now() - started;
+        assert.ok(took < 3_000, `a register save waited ${took} ms for an apply that should not yet have written an address`);
+        goOn.open();
+        await written.opened;
+        // The address is written and held until the apply commits: a save naming the pupil now waits.
+        saving = attendance
+          .reportAttendance({ calendarLessonId: lessonsOfX[1]!.id, records: [{ studentId: pupilX.id, status: 'LATE' }] } as never, admin)
+          .then(
+            () => 'saved',
+            (error: unknown) => `failed: ${String(error).slice(0, 160)}`,
+          );
+        const end = Date.now() + 3_000;
+        while (Date.now() < end && (await lockWaiters()) < 1) await pause();
+        assert.ok((await lockWaiters()) >= 1, 'a register save did not wait for the address the apply holds');
+      } finally {
+        atLast.open();
+        goOn.open();
+        commit.open();
+        await applying.catch(() => undefined);
+      }
+      const outcome = await applying;
+      assert.equal(outcome.applied.length, 3, 'the apply did not write the name, the address and the deactivation');
+      assert.equal(await saving, 'saved', 'the save that waited for the address did not go through once the apply committed');
+      const statuses = await owner.query<{ status: string }>(
+        `SELECT status::text AS status FROM "AttendanceRecords" WHERE "studentId" = $1 ORDER BY status`,
+        [pupilX.id],
+      );
+      assert.deepEqual(statuses.rows.map((row) => row.status), ['LATE', 'PRESENT'], 'the two saves are not in the register');
     });
 
     await check('(nv-m) a decision is ordered against the writers, and a register save never waits for one', async () => {
