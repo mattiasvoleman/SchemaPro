@@ -51,7 +51,10 @@
  *         at once; the apply writes no record's version, only the pupils' own
  *         rows, stamped as it commits, and a read from before the commit
  *         reads the records and absences again; the meta bounds compare
- *         exactly what is emitted, for a record a save creates too;
+ *         exactly what is emitted, for a record a save creates too; and a
+ *         phone mark that arrives after a newer correction leaves it
+ *         standing and alerts nobody, and a pupil the web sends back
+ *         unchanged keeps out no phone mark made before;
  *   nv-m  a decision is ordered against the writers: a start waits for a
  *         removal and for a writer that read "not shared"; while a start is
  *         being written a register save goes through at once, versioning as
@@ -818,6 +821,37 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
         assert.ok(ids((await provider.listAttendances(caller, { 'meta.modified.after': before })).data).includes(item.id), `${item.id} is not read after ${before}`);
         assert.ok(!ids((await provider.listAttendances(caller, { 'meta.modified.before': before })).data).includes(item.id), `${item.id} is read before ${before}`);
       }
+
+      // A phone mark that arrives after a newer correction on the web leaves the correction standing
+      // and alerts nobody; a mark as new as the register's is written and alerts.
+      const alerts: string[] = [];
+      const counting = {
+        guardiansOf: async () => [guardianRow.id],
+        notifyUsers: async (_tx: unknown, notice: { type: string }) => {
+          alerts.push(notice.type);
+          return 1;
+        },
+      } as unknown as NotificationsService;
+      const register = new AttendanceService(api, counting);
+      const lateLesson = await lessonOf(klass.id, day(-8));
+      const mark = (status: string, recordedAt?: string) =>
+        register.reportAttendance({ calendarLessonId: lateLesson.id, records: [{ studentId: pupil.id, status, ...(recordedAt ? { recordedAt } : {}) }] } as never, admin);
+      assert.deepEqual(await mark('EXCUSED'), { created: 1, updated: 0 }, 'the web correction was not written');
+      const marked = new Date(Date.now() - 60 * 60 * 1_000).toISOString();
+      assert.deepEqual(await mark('ABSENT', marked), { created: 0, updated: 0 }, 'a phone mark an hour old was written over a newer correction');
+      const standing = await one<{ status: string }>(
+        `SELECT status::text AS status FROM "AttendanceRecords" WHERE "calendarLessonId" = $1 AND "studentId" = $2`,
+        [lateLesson.id, pupil.id],
+      );
+      assert.equal(standing.status, 'EXCUSED', 'the correction did not stand');
+      assert.deepEqual(alerts, [], 'a mark kept out of the register alerted a guardian');
+      // A phone mark made now, then the web saving the lesson again with this pupil untouched: the
+      // echo is no new mark, so the phone mark, delivered after it, still goes in and alerts.
+      const phoneMark = new Date().toISOString();
+      await pause();
+      assert.deepEqual(await mark('EXCUSED'), { created: 0, updated: 0 }, 'the web wrote a pupil it sent back unchanged');
+      assert.deepEqual(await mark('ABSENT', phoneMark), { created: 0, updated: 1 }, 'a phone mark newer than the register was not written');
+      assert.deepEqual(alerts, ['ABSENCE_UNREPORTED'], 'a pupil turned absent alerted nobody');
     });
 
     await check('(nv-m) a decision is ordered against the writers, and a register save never waits for one', async () => {

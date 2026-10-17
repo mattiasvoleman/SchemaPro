@@ -11,7 +11,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import { Role } from '../auth/enums/role.enum';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
-import { AttendanceService } from './attendance.service';
+import { ATTENDANCE_REGISTER_BUSY, AttendanceService } from './attendance.service';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
 
 const NOW = new Date('2026-09-02T06:05:00.000Z');
@@ -169,10 +169,9 @@ describe('AttendanceService', () => {
     tx.calendarLessonTeacher.findUnique.mockImplementation(
       answerUnique([{ id: 'assignment', calendarLessonId: LESSON_ID, teacherId: TEACHER_ID }]),
     );
-    tx.attendanceRecord.upsert.mockResolvedValue({
-      createdAt: NOW,
-      updatedAt: NOW,
-    });
+    // A mark is written: a conditional update over an older one, or an insert.
+    tx.attendanceRecord.updateMany.mockResolvedValue({ count: 1 });
+    tx.attendanceRecord.createMany.mockResolvedValue({ count: 1 });
     // Nothing in the register yet — the ordinary first report.
     register([]);
   });
@@ -186,6 +185,30 @@ describe('AttendanceService', () => {
   /** The lesson as the database holds it, read by id under RLS. */
   const storeLesson = (overrides: Record<string, unknown> = {}) =>
     tx.calendarLesson.findUnique.mockImplementation(answerUnique([lessonRow(overrides)]));
+
+  type Write = { how: 'update' | 'insert'; studentId: string; args: Record<string, any> };
+  /** The register's writes in the order they were made: which pupil, and how. */
+  const writes = (): Write[] =>
+    [
+      ...tx.attendanceRecord.updateMany.mock.calls.map((call, i) => ({
+        how: 'update' as const,
+        order: tx.attendanceRecord.updateMany.mock.invocationCallOrder[i]!,
+        args: call[0] as Record<string, any>,
+      })),
+      ...tx.attendanceRecord.createMany.mock.calls.map((call, i) => ({
+        how: 'insert' as const,
+        order: tx.attendanceRecord.createMany.mock.invocationCallOrder[i]!,
+        args: call[0] as Record<string, any>,
+      })),
+    ]
+      .sort((a, b) => a.order - b.order)
+      .map(({ how, args }) => ({ how, args, studentId: how === 'update' ? args['where'].studentId : args['data'][0].studentId }));
+  const expectNothingWritten = () => {
+    expect(tx.attendanceRecord.updateMany).not.toHaveBeenCalled();
+    expect(tx.attendanceRecord.createMany).not.toHaveBeenCalled();
+  };
+  /** The values the first insert wrote. */
+  const inserted = () => (tx.attendanceRecord.createMany.mock.calls[0]?.[0] as { data: Array<Record<string, unknown>> }).data[0]!;
 
   /** The attendance register as it stood before the batch arrived. */
   const register = (
@@ -247,22 +270,44 @@ describe('AttendanceService', () => {
 
       // The same order for every save of the lesson, whatever each read: two
       // saves never hold one each of the other's rows or versions. No wait
-      // and no refusal of the save (20261114090000).
-      const order = tx.attendanceRecord.upsert.mock.calls.map(
-        (call) => (call[0] as { where: { calendarLessonId_studentId: { studentId: string } } }).where.calendarLessonId_studentId.studentId,
-      );
-      expect(order).toEqual([STUDENT_A, STUDENT_B, STUDENT_C]);
-      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      // for an apply and no refusal of the save (20261114090000).
+      expect(writes().map((write) => [write.studentId, write.how])).toEqual([
+        [STUDENT_A, 'insert'],
+        [STUDENT_B, 'insert'],
+        [STUDENT_C, 'update'],
+      ]);
     });
 
-    it('upserts one row per entry and separates creates from updates', async () => {
+    it('waits for a lock at most 5 s, set before anything is read', async () => {
+      arrangeRoster([STUDENT_A]);
+
+      await service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher());
+
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      const [strings] = tx.$executeRaw.mock.calls[0] as [TemplateStringsArray];
+      expect(strings.join('?')).toBe("SELECT set_config('lock_timeout', '5s', true)");
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(tx.calendarLesson.findUnique.mock.invocationCallOrder[0]!);
+    });
+
+    it('answers 409 ATTENDANCE_REGISTER_BUSY when a lock is waited for 5 s, and nothing else as that', async () => {
+      arrangeRoster([STUDENT_A]);
+      // The database's lock_timeout, as the driver reports it: an SS12000 apply
+      // that changes the e-mail of a person this save names holds that row.
+      tx.attendanceRecord.createMany.mockRejectedValueOnce(new Error('canceling statement due to lock timeout (55P03)'));
+      await expect(
+        service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher()),
+      ).rejects.toMatchObject({ status: 409, response: { code: ATTENDANCE_REGISTER_BUSY } });
+
+      tx.attendanceRecord.createMany.mockRejectedValueOnce(new Error('something else'));
+      await expect(
+        service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]), teacher()),
+      ).rejects.toThrow('something else');
+    });
+
+    it('writes one row per entry and separates creates from updates', async () => {
       arrangeRoster([STUDENT_A, STUDENT_B]);
-      tx.attendanceRecord.upsert
-        .mockResolvedValueOnce({ createdAt: NOW, updatedAt: NOW })
-        .mockResolvedValueOnce({
-          createdAt: NOW,
-          updatedAt: new Date(NOW.getTime() + 60_000),
-        });
+      // B is in the register already, A is not.
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_B, status: 'PRESENT' }]);
       const user = teacher();
 
       await expect(
@@ -276,30 +321,90 @@ describe('AttendanceService', () => {
       ).resolves.toEqual({ created: 1, updated: 1 });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
-      expect(tx.attendanceRecord.upsert).toHaveBeenNthCalledWith(2, {
-        where: {
-          calendarLessonId_studentId: {
+      expect(tx.attendanceRecord.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            schoolId: SCHOOL_ID,
             calendarLessonId: LESSON_ID,
-            studentId: STUDENT_B,
+            studentId: STUDENT_A,
+            status: 'PRESENT',
+            recordedById: TEACHER_ID,
+            recordedAt: NOW,
+            note: null,
           },
-        },
-        create: {
-          schoolId: SCHOOL_ID,
+        ],
+        skipDuplicates: true,
+      });
+      // Only over an older mark (or one from before marks were dated).
+      expect(tx.attendanceRecord.updateMany).toHaveBeenCalledWith({
+        where: {
           calendarLessonId: LESSON_ID,
           studentId: STUDENT_B,
-          status: 'LATE',
-          recordedById: TEACHER_ID,
-          recordedAt: NOW,
-          note: 'Buss sen',
+          OR: [{ recordedAt: null }, { recordedAt: { lte: NOW } }],
         },
-        update: {
-          status: 'LATE',
-          recordedById: TEACHER_ID,
-          recordedAt: NOW,
-          note: 'Buss sen',
-        },
-        select: { createdAt: true, updatedAt: true },
+        data: { status: 'LATE', recordedById: TEACHER_ID, recordedAt: NOW, note: 'Buss sen' },
       });
+    });
+
+    it('keeps a newer mark: a late one is neither written over it nor alerted', async () => {
+      // A phone mark that arrives days late, after a correction on the web:
+      // the register holds a later recordedAt, so both conditional updates
+      // match nothing and the insert meets the row.
+      arrangeUsers({ homeClass: [STUDENT_A], named: [{ id: STUDENT_A, firstName: 'Åsa', lastName: 'Åkesson' }] });
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'EXCUSED' }]);
+      tx.attendanceRecord.updateMany.mockResolvedValue({ count: 0 });
+      tx.attendanceRecord.createMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.reportAttendance(
+          {
+            calendarLessonId: LESSON_ID,
+            records: [{ studentId: STUDENT_A, status: 'ABSENT' as never, recordedAt: '2026-09-01T09:10:00.000Z' }],
+          } as never,
+          teacher(),
+        ),
+      ).resolves.toEqual({ created: 0, updated: 0 });
+
+      expect(writes().map((write) => write.how)).toEqual(['update', 'insert', 'update']);
+      expect(writes()[0]!.args['where'].OR).toEqual([{ recordedAt: null }, { recordedAt: { lte: new Date('2026-09-01T09:10:00.000Z') } }]);
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('writes over a row a concurrent save has just inserted, when this mark is not older', async () => {
+      arrangeRoster([STUDENT_A]);
+      // Nothing at the read; the insert meets the other save's row, and the
+      // conditional update then goes through.
+      tx.attendanceRecord.createMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.reportAttendance(dto([{ studentId: STUDENT_A, status: 'LATE' as never }]), teacher()),
+      ).resolves.toEqual({ created: 0, updated: 1 });
+      expect(writes().map((write) => write.how)).toEqual(['insert', 'update']);
+    });
+
+    it('lets the later of two marks of one pupil in a batch stand, and alerts by what stands', async () => {
+      // The phone's queue keeps every submit: the same pupil can come twice,
+      // the later mark last or first.
+      arrangeUsers({ homeClass: [STUDENT_A], named: [{ id: STUDENT_A, firstName: 'Åsa', lastName: 'Åkesson' }] });
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'PRESENT' }]);
+      // The later mark (PRESENT, 09:20) is written; the earlier ABSENT (09:10) then meets it.
+      tx.attendanceRecord.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValue({ count: 0 });
+      tx.attendanceRecord.createMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.reportAttendance(
+          {
+            calendarLessonId: LESSON_ID,
+            records: [
+              { studentId: STUDENT_A, status: 'PRESENT' as never, recordedAt: '2026-09-01T09:20:00.000Z' },
+              { studentId: STUDENT_A, status: 'ABSENT' as never, recordedAt: '2026-09-01T09:10:00.000Z' },
+            ],
+          } as never,
+          teacher(),
+        ),
+      ).resolves.toEqual({ created: 0, updated: 1 });
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
     it('stores a missing note and a principal without a userId as null', async () => {
@@ -310,12 +415,7 @@ describe('AttendanceService', () => {
         testUser({ role: Role.SCHOOL_ADMIN, userId: undefined }),
       );
 
-      expect(tx.attendanceRecord.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ note: null, recordedById: null }),
-          update: expect.objectContaining({ note: null, recordedById: null }),
-        }),
-      );
+      expect(inserted()).toEqual(expect.objectContaining({ note: null, recordedById: null }));
     });
 
     it('throws NotFound when RLS hides the lesson', async () => {
@@ -327,7 +427,7 @@ describe('AttendanceService', () => {
           teacher(),
         ),
       ).rejects.toThrow(new NotFoundException(`Calendar lesson not found: ${LESSON_ID}`));
-      expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
+      expectNothingWritten();
     });
 
     it('rejects a teacher who is not assigned to the lesson', async () => {
@@ -340,7 +440,7 @@ describe('AttendanceService', () => {
           teacher(),
         ),
       ).rejects.toThrow('You are not assigned to this lesson');
-      expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
+      expectNothingWritten();
     });
 
     it('rejects a teacher principal that carries no userId', async () => {
@@ -459,7 +559,7 @@ describe('AttendanceService', () => {
       await expect(promise).rejects.toThrow(
         `These students are not on the roster for lesson ${LESSON_ID}: ${STUDENT_B}`,
       );
-      expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
+      expectNothingWritten();
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
@@ -500,7 +600,7 @@ describe('AttendanceService', () => {
           teacher(),
         ),
       ).rejects.toThrow(ForbiddenException);
-      expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
+      expectNothingWritten();
     });
   });
 
@@ -540,10 +640,7 @@ describe('AttendanceService', () => {
         teacher(),
       );
 
-      const call = tx.attendanceRecord.upsert.mock.calls[0]?.[0] as {
-        create: { recordedAt: Date };
-      };
-      expect(call.create.recordedAt).toEqual(new Date('2026-09-01T09:10:00.000Z'));
+      expect(inserted()['recordedAt']).toEqual(new Date('2026-09-01T09:10:00.000Z'));
     });
 
     it.each([
@@ -561,15 +658,12 @@ describe('AttendanceService', () => {
         teacher(),
       );
 
-      const call = tx.attendanceRecord.upsert.mock.calls[0]?.[0] as {
-        create: { recordedAt: Date };
-      };
-      expect(call.create.recordedAt).toEqual(NOW);
+      expect(inserted()['recordedAt']).toEqual(NOW);
     });
 
     it('stays silent when the pupil was already absent in the register', async () => {
       // The device retries whenever a response is lost. The write is idempotent
-      // — upsert on (lesson, student) — but the alert was not, so every retry
+      // — one row per (lesson, student) — but the alert was not, so every retry
       // told the guardian about the same absence again. A guardian who is told
       // four times learns to ignore the fifth.
       register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'ABSENT' }]);
@@ -577,9 +671,45 @@ describe('AttendanceService', () => {
       await reportAbsent();
 
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
-      // The record itself is still written: a replay must converge, not be
-      // refused.
-      expect(tx.attendanceRecord.upsert).toHaveBeenCalled();
+      // A replay is answered, not refused, and changes nothing: the register
+      // already holds it, and a save without a time of its own is no new mark.
+      expectNothingWritten();
+    });
+
+    it('leaves a pupil the web sends back unchanged as it was, so a phone mark made before that save still goes in', async () => {
+      // The web saves every pupil it lists. Stamped again with the server's
+      // clock, the ones nobody touched would keep out a phone mark made
+      // before the save and delivered after it.
+      arrangeRoster([STUDENT_A, STUDENT_B]);
+      register([
+        { calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'PRESENT' },
+        { calendarLessonId: LESSON_ID, studentId: STUDENT_B, status: 'PRESENT' },
+      ]);
+
+      await expect(
+        service.reportAttendance(
+          dto([
+            { studentId: STUDENT_A, status: 'PRESENT' as never },
+            { studentId: STUDENT_B, status: 'LATE' as never },
+          ]),
+          teacher(),
+        ),
+      ).resolves.toEqual({ created: 0, updated: 1 });
+      expect(writes().map((write) => write.studentId)).toEqual([STUDENT_B]);
+    });
+
+    it('writes a phone mark that says what the register holds, since it carries the moment it was made', async () => {
+      arrangeRoster([STUDENT_A]);
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'PRESENT' }]);
+
+      await service.reportAttendance(
+        {
+          calendarLessonId: LESSON_ID,
+          records: [{ studentId: STUDENT_A, status: 'PRESENT' as never, recordedAt: '2026-09-01T09:10:00.000Z' }],
+        } as never,
+        teacher(),
+      );
+      expect(writes().map((write) => [write.studentId, write.how])).toEqual([[STUDENT_A, 'update']]);
     });
 
     it('alerts when a correction turns a present pupil absent', async () => {
@@ -619,10 +749,7 @@ describe('AttendanceService', () => {
         teacher(),
       );
 
-      const call = tx.attendanceRecord.upsert.mock.calls[0]?.[0] as {
-        create: { recordedAt: Date };
-      };
-      expect(call.create.recordedAt).toEqual(oldest);
+      expect(inserted()['recordedAt']).toEqual(oldest);
     });
 
     it('alerts only the guardians of the pupils marked absent, and says who and when', async () => {
