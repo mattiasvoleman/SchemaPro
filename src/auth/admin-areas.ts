@@ -168,6 +168,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   SchoolBreaks: only('PLANERING'),
   // Skolenheter: the school's units and their codes, grunddata.
   SchoolUnits: only('PLANERING'),
+  // Skolområden och restid: the sites, and the minutes between them, as the rooms.
+  SiteTravelTimes: only('PLANERING'),
+  Sites: only('PLANERING'),
   Schools: just('PLANERING', 'update'),
   StaffingPolicies: only('PLANERING'),
   StudentGroupMembers: only('PLANERING'),

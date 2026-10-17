@@ -1061,6 +1061,58 @@ BEGIN
     (s2, 'Delad 7–9', '32323232', '{GR}', 7, 9);
 END $$;
 
+-- Skolområden och restid (20261124090000), sections 180–183: a school with
+-- two sites, a room on each, the minutes between them, and every role; and
+-- another school with a site of its own that nothing here may reach.
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  klass uuid;
+  pupil uuid;
+  guardian uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-skolomraden-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Skolområden', 'rls-skolomraden-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Skolområden i år', current_date - 30, current_date + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'SO7A', 7, now()) RETURNING id INTO klass;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'skolomraden-admin@example.invalid', 'Skolområde', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001240', true, now()),
+    (s1, 'skolomraden-exp@example.invalid', 'Skolområde', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-000000001244', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'skolomraden-teacher@example.invalid', 'Skolområde', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-000000001241', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'skolomraden-pupil@example.invalid', 'Skolområde', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000001242', true, klass, now())
+  RETURNING id INTO pupil;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'skolomraden-guardian@example.invalid', 'Skolområde', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000001243', true, now())
+  RETURNING id INTO guardian;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s1, guardian, pupil);
+  INSERT INTO "Sites" ("schoolId", name) VALUES (s1, 'SO Norra'), (s1, 'SO Södra');
+  INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+  SELECT s1, least(a.id, b.id), greatest(a.id, b.id), 15
+    FROM "Sites" a, "Sites" b WHERE a."schoolId" = s1 AND b."schoolId" = s1 AND a.name = 'SO Norra' AND b.name = 'SO Södra';
+  INSERT INTO "Rooms" ("schoolId", name, "siteId", "updatedAt")
+  SELECT s1, 'SO ' || x.name, x.id, now() FROM "Sites" x WHERE x."schoolId" = s1;
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Skolområden annan', 'rls-skolomraden-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s2, 'skolomraden-annan-admin@example.invalid', 'Annan', 'Admin', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-000000001245', true, now());
+  INSERT INTO "Sites" ("schoolId", name) VALUES (s2, 'Annan Norra'), (s2, 'Annan Södra');
+  INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+  SELECT s2, least(a.id, b.id), greatest(a.id, b.id), 20
+    FROM "Sites" a, "Sites" b WHERE a."schoolId" = s2 AND b."schoolId" = s2 AND a.name = 'Annan Norra' AND b.name = 'Annan Södra';
+  INSERT INTO "Rooms" ("schoolId", name, "siteId", "updatedAt")
+  SELECT s2, 'Annan rum', id, now() FROM "Sites" WHERE "schoolId" = s2 AND name = 'Annan Norra';
+END $$;
+
 -- The role × table matrix's school (Roller i skolan, 20261110100000): one row
 -- in every table an administrator's arm reaches, and one administrator of
 -- each profile. Section 116 runs every profile against every table here; no
@@ -1192,6 +1244,13 @@ BEGIN
   -- Planering: a skolenhet and a block of parallel teaching.
   INSERT INTO "SchoolUnits" ("schoolId", name, code, "schoolTypes", "gradeFrom", "gradeTo")
   VALUES (m, 'Roller F–9', '41414141', '{FKLASS,GR}', 0, 9);
+  -- Skolområden och restid: two sites, the minutes between them, a room on one.
+  INSERT INTO "Sites" ("schoolId", name) VALUES (m, 'Roller Norra'), (m, 'Roller Södra');
+  INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+  SELECT m, least(a.id, b.id), greatest(a.id, b.id), 10
+    FROM "Sites" a, "Sites" b
+   WHERE a."schoolId" = m AND b."schoolId" = m AND a.name = 'Roller Norra' AND b.name = 'Roller Södra';
+  UPDATE "Rooms" SET "siteId" = (SELECT id FROM "Sites" WHERE "schoolId" = m AND name = 'Roller Norra') WHERE id = room;
   INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (m, yr, 'Roller block', now());
 
   -- The decisions: rektor's delegation of short leave to the mentors.
