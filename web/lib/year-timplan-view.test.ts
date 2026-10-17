@@ -9,6 +9,11 @@ describe("dialogGrades", () => {
   it("adds a grade the year attaches or has a class in, never one outside 0..11", () => {
     expect(dialogGrades([10], [null, 7, 11, 12])).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
+
+  it("lists åk 1 to åk 10 for a tioårig year, with no förskoleklass unless the year holds one", () => {
+    expect(dialogGrades([], [], "TIOARIG")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(dialogGrades([0], [11], "TIOARIG")).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
 });
 
 describe("yearTimplansBody", () => {

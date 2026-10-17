@@ -778,6 +778,7 @@
     "footerSkolansValValue": "{taken} av {available} h tagna ur ämnena · {placed} h lagda i egna ämnen och över målen",
     "footerSkolansValNone": "Ingen pott att jämföra med i den här timplanen · {placed} h lagda",
     "footerSkolansValEmpty": "Inget planerat som räknas mot timplanen ännu.",
+    "footerSkolansValUnpublished": "Fördelningen är inte publicerad, så det finns inga ämnen att ta ur eller lägga över.",
     "unpublishedTitle": "Fördelning ej publicerad",
     "unpublishedBody": "Fördelningen mellan ämnen och stadier för {version} är inte publicerad ännu. Planen jämförs bara mot den garanterade totalen {total} h — inte ämne för ämne.",
     "warningsTitle": "Under mål och noteringar",
@@ -855,7 +856,11 @@
     "coverageLink": "Täckning",
     "yearTimplans": {
       "title": "Timplan per årskurs",
-      "body": "Vilken lokal timplan varje årskurs följer under läsåret. Ett nytt läsår följer den senast beslutade planen i planens årskurser; här ändrar du det. Ett utkast kan väljas när nästa läsår planeras före beslutet, och markeras då som utkast överallt där målen visas.",
+      "body": "Vilken lokal timplan varje årskurs följer under läsåret. Ett nytt läsår följer den senast beslutade plan som årskullen får följa; här ändrar du det. Ett utkast kan väljas när nästa läsår planeras före beslutet, och markeras då som utkast överallt där målen visas.",
+      "cohortNote": "Varje årskull följer lydelsen för det år den började åk 1: en plan enligt 2028 års lydelse (7 424 timmar i grundskolan) gäller bara den som börjar åk 1 hösten 2028 eller senare, och alla som redan går i skolan, också förskoleklassen 2027/28, behåller den äldre totala tiden (6 890 timmar).",
+      "lydelse2028": "lydelse från 2028",
+      "lydelseOlder": "äldre lydelse",
+      "notThisCohort": "{grade} får inte följa den här lydelsen",
       "yearLabel": "Läsår",
       "yearLocked": "Spara eller avbryt innan du byter läsår.",
       "noYear": "Skolan har inget läsår ännu. Skapa läsåret under Kom igång först.",
@@ -4013,7 +4018,7 @@
         "backfilled": "Klassen före {from} är antagen från läget när klasshistoriken började föras; en flytt före dess syns inte.",
         "backfilledUntil": "Klassen från {from} till {until} är antagen: det är den klass eleven hade när klasshistoriken började föras, och en flytt före dess syns inte.",
         "versionMissing": "{regime, select, REFORMED_2028 {{stageTitle}: lydelsen från hösten 2028 för elevens skolform finns inte i referensdatan, så ingen nationell jämförelse görs.} other {{stageTitle}: lydelsen som gäller är äldre än referensdatan, så ingen nationell jämförelse görs.}}",
-        "unpublished": "{stageTitle}: enligt referensdata ({version}) är totalen {total}, men fördelningen på ämnen är inte publicerad, så stadiet jämförs inte ämne för ämne.",
+        "unpublished": "{stageTitle}: fördelningen på ämnen enligt {version} är inte publicerad, så stadiet jämförs inte ämne för ämne. Lydelsens total, {total}, gäller hela skolformen, inte stadiet.",
         "assumed": "{stageTitle}: från hösten 2028 jämförs med {version} enligt referensdata. Fördelningen för äldre årskullar efter 2028 är inte publicerad; SFS 2025:729 behåller bara totalen.",
         "formChanged": "{stageTitle}: stadiets läsår följer timplaner för olika skolformer, och jämförelsen görs med den senaste.",
         "gradeUnknown": "Klassen läsåret {year} har ingen årskurs, så året räknas inte till något stadium.",
@@ -4053,7 +4058,7 @@
     "cohort": "{regime, select, REFORMED_2028 {Åk 1 HT {ht}, ny numrering från hösten 2028} other {Åk 1 HT {ht}}}",
     "noClasses": "ingen klass ännu",
     "stageVersion": "{stage, select, LAG {Lågstadiet} MELLAN {Mellanstadiet} other {Högstadiet}}: {state, select, missing {äldre lydelse, inte i referensdatan} missingReformed {lydelsen från hösten 2028 finns inte i referensdatan} unpublished {{version}, bara totalen — fördelningen är inte publicerad} assumed {{version}, fördelningen antagen efter 2028} other {{version}}}",
-    "sources": "Källor, lästa 10 oktober 2026: SFS 2023:945 (bilaga 1, 3 och 4) gäller stadier som inte var avslutade 1 juli 2024. SFS 2025:729 (utfärdad 19 juni 2025) inför den tioåriga grundskolan med 7 424 timmar för årskullar som börjar åk 1 hösten 2028; den som redan går i skolan flyttas upp en extra årskurs och behåller 6 890 timmar totalt (övergångsbestämmelserna 4 och 12). Enligt SFS 2026:1243 (prop. 2025/26:194) blir timplanerna en del av läroplanerna, och fördelningen per ämne väntas i en läroplansförordning efter Skolverkets förslag 14 maj 2027 (U2026/01483). Rullningen till ett läsår från hösten 2028 flyttar ännu bara upp en årskurs."
+    "sources": "Källor, lästa 10 oktober 2026: SFS 2023:945 (bilaga 1, 3 och 4) gäller stadier som inte var avslutade 1 juli 2024. SFS 2025:729 (utfärdad 19 juni 2025) inför den tioåriga grundskolan med 7 424 timmar för årskullar som börjar åk 1 hösten 2028; den som redan går i skolan flyttas upp en extra årskurs och behåller 6 890 timmar totalt (övergångsbestämmelserna 4 och 12). Enligt SFS 2026:1243 (prop. 2025/26:194) blir timplanerna en del av läroplanerna, och fördelningen per ämne väntas i en läroplansförordning efter Skolverkets förslag 14 maj 2027 (U2026/01483). Rullningen in i hösten 2028 flyttar varje årskull två årskurser och gör läsåret tioårigt."
   },
   "uppdrag": {
     "title": "Uppdragsbeskrivning",

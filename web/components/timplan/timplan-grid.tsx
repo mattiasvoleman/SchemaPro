@@ -342,13 +342,16 @@ export function TimplanGrid({
             >
               {nothingPlanned
                 ? t("footerSkolansValEmpty")
-                : check.skolansVal.availableHours === null
-                  ? t("footerSkolansValNone", { placed: formatH(check.skolansVal.placedHours) })
-                  : t("footerSkolansValValue", {
-                      taken: formatH(check.skolansVal.takenHours),
-                      available: formatH(check.skolansVal.availableHours),
-                      placed: formatH(check.skolansVal.placedHours),
-                    })}
+                : !check.distributionPublished
+                  ? // No cells to place in or take from: hours here would read as zero.
+                    t("footerSkolansValUnpublished")
+                  : check.skolansVal.availableHours === null
+                    ? t("footerSkolansValNone", { placed: formatH(check.skolansVal.placedHours) })
+                    : t("footerSkolansValValue", {
+                        taken: formatH(check.skolansVal.takenHours),
+                        available: formatH(check.skolansVal.availableHours),
+                        placed: formatH(check.skolansVal.placedHours),
+                      })}
             </td>
           </tr>
         </tfoot>

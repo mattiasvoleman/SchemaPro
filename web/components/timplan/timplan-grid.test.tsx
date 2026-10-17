@@ -339,6 +339,39 @@ describe("TimplanGrid: an empty plan", () => {
     expect(within(row("s-ma")).getByText("uncodedBadge")).toHaveAttribute("title", "uncodedBadgeHint");
   });
 
+  it("says a 2028 lydelse without a published distribution has no subjects to take from, not that 0 h are placed", () => {
+    // The 7 424 h row is seeded without entries: every coded minute sits in
+    // an extra cell, and "· 0 h lagda" read as if the plan placed nothing.
+    const subjects = [subject("s-ma", "Matematik", "MA")];
+    const check = checkLocalTimplan({
+      planningWeeksTenths: 356,
+      version: toCoverageVersion({ ...B1, code: "SFS2025:729/GR", totalHours: 7424, skolansValHours: null, entries: [] }),
+      nationalSubjects: NATIONAL.subjects,
+      subjects,
+      entries: [{ subjectId: "s-ma", gradeLevel: 1, minutesPerWeek: 120 }],
+    });
+    expect(check.distributionPublished).toBe(false);
+    render(
+      <TimplanGrid
+        subjects={subjects}
+        parentOf={parentOf}
+        columns={gridColumns(check.stageGrades)}
+        stageGrades={check.stageGrades}
+        draft={new Map([["s-ma:1", "120"]])}
+        notes={new Map()}
+        check={check}
+        weeksTenths={356}
+        readOnly={false}
+        highlight={null}
+        onCellChange={() => {}}
+      />,
+    );
+    const footer = document.querySelector("tfoot")!;
+    expect(within(footer).getByText("footerSkolansValUnpublished")).toBeInTheDocument();
+    expect(footer).not.toHaveTextContent("footerSkolansValNone");
+    expect(within(footer).getByText(/footerTotalValue\(.*\|7424\)/)).toBeInTheDocument();
+  });
+
   it("says nothing is planned yet instead of a pool figure that reads as a fault", () => {
     // Was "Skolans val 6890 av 600 h tagna", red: true arithmetic for a plan
     // with no minutes, and it looked like an error.

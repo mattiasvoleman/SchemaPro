@@ -778,6 +778,7 @@
     "footerSkolansValValue": "{taken} of {available} h taken from subjects · {placed} h placed in own subjects and above targets",
     "footerSkolansValNone": "No pool to compare with in this timplan · {placed} h placed",
     "footerSkolansValEmpty": "Nothing planned yet that counts toward the timplan.",
+    "footerSkolansValUnpublished": "The distribution is not published, so there are no subjects to take from or place above.",
     "unpublishedTitle": "Distribution not published",
     "unpublishedBody": "The distribution between subjects and stages for {version} has not been published yet. The plan is only compared with the guaranteed total of {total} h — not subject by subject.",
     "warningsTitle": "Below target and notes",
@@ -855,7 +856,11 @@
     "coverageLink": "Coverage",
     "yearTimplans": {
       "title": "Timplan per year",
-      "body": "Which local timplan each year group follows during the academic year. A new academic year follows the most recently decided plan in that plan's year groups; change it here. A draft may be chosen while next year is planned ahead of the decision, and is then marked as a draft wherever the targets are shown.",
+      "body": "Which local timplan each year group follows during the academic year. A new academic year follows the most recently decided plan the cohort may follow; change it here. A draft may be chosen while next year is planned ahead of the decision, and is then marked as a draft wherever the targets are shown.",
+      "cohortNote": "Each cohort follows the wording for the year it started grade 1: a plan under the 2028 wording (7,424 hours in grundskolan) applies only to pupils starting grade 1 in autumn 2028 or later, and everyone already in school, the 2027/28 preschool class included, keeps the older total (6,890 hours).",
+      "lydelse2028": "2028 wording",
+      "lydelseOlder": "older wording",
+      "notThisCohort": "{grade} may not follow this wording",
       "yearLabel": "Academic year",
       "yearLocked": "Save or cancel before switching academic year.",
       "noYear": "The school has no academic year yet. Create it under School setup first.",
@@ -4013,7 +4018,7 @@
         "backfilled": "The class before {from} is assumed from where the pupil was when the class history began; a move before then does not show.",
         "backfilledUntil": "The class from {from} to {until} is assumed: it is the class the pupil had when the class history began, and a move before then does not show.",
         "versionMissing": "{regime, select, REFORMED_2028 {{stageTitle}: the version from autumn 2028 for the pupil's school form is not in the reference data, so no national comparison is made.} other {{stageTitle}: the version that applies is older than the reference data, so no national comparison is made.}}",
-        "unpublished": "{stageTitle}: according to the reference data ({version}) the total is {total}, but the distribution by subject is not published, so the stage is not compared subject by subject.",
+        "unpublished": "{stageTitle}: the distribution by subject under {version} is not published, so the stage is not compared subject by subject. The wording's total, {total}, is the whole school form's, not the stage's.",
         "assumed": "{stageTitle}: from autumn 2028 it is compared with {version} according to the reference data. The distribution for older cohorts after 2028 is not published; SFS 2025:729 keeps only the total.",
         "formChanged": "{stageTitle}: the stage's years follow timplans for different school forms, and the comparison uses the latest.",
         "gradeUnknown": "The class in the year {year} has no grade, so the year counts towards no stage.",
@@ -4053,7 +4058,7 @@
     "cohort": "{regime, select, REFORMED_2028 {Grade 1 in autumn {ht}, new numbering from autumn 2028} other {Grade 1 in autumn {ht}}}",
     "noClasses": "no class yet",
     "stageVersion": "{stage, select, LAG {Lower school} MELLAN {Middle school} other {Upper school}}: {state, select, missing {older version, not in the reference data} missingReformed {the version from autumn 2028 is not in the reference data} unpublished {{version}, total only — the distribution is not published} assumed {{version}, distribution assumed after 2028} other {{version}}}",
-    "sources": "Sources, read 10 October 2026: SFS 2023:945 (annexes 1, 3 and 4) applies to stages not completed by 1 July 2024. SFS 2025:729 (issued 19 June 2025) introduces the ten-year compulsory school with 7,424 hours for cohorts starting grade 1 in autumn 2028; pupils already in school move up one extra grade and keep 6,890 hours in total (transitional provisions 4 and 12). Under SFS 2026:1243 (Govt. Bill 2025/26:194) timplans become part of the curricula, and the distribution by subject is expected in a curriculum ordinance after the Swedish National Agency for Education's proposals of 14 May 2027 (U2026/01483). The rollover into a year from autumn 2028 still moves classes up one grade only."
+    "sources": "Sources, read 10 October 2026: SFS 2023:945 (annexes 1, 3 and 4) applies to stages not completed by 1 July 2024. SFS 2025:729 (issued 19 June 2025) introduces the ten-year compulsory school with 7,424 hours for cohorts starting grade 1 in autumn 2028; pupils already in school move up one extra grade and keep 6,890 hours in total (transitional provisions 4 and 12). Under SFS 2026:1243 (Govt. Bill 2025/26:194) timplans become part of the curricula, and the distribution by subject is expected in a curriculum ordinance after the Swedish National Agency for Education's proposals of 14 May 2027 (U2026/01483). The rollover into autumn 2028 moves every cohort up two grades and makes the year ten-year."
   },
   "uppdrag": {
     "title": "Assignment description",

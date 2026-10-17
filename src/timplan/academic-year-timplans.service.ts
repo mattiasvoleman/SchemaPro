@@ -73,7 +73,15 @@ export class AcademicYearTimplansService {
     }
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        if (!(await lockYear(tx, academicYearId))) throw yearNotFound();
+        const year = await lockYear(tx, academicYearId);
+        if (!year) throw yearNotFound();
+        // A tioårig läsår has no förskoleklass (SFS 2025:729): its årskurs 0
+        // follows no plan. A row sent as null is no plan, and passes.
+        if (year.gradeNumbering === 'TIOARIG' && wanted.has(0)) {
+          throw new BadRequestException(
+            'timplans: läsåret är tioårigt och har ingen förskoleklass (SFS 2025:729), så årskurs 0 kan inte följa en timplan.',
+          );
+        }
 
         const planIds = [...new Set(wanted.values())];
         if (planIds.length > 0) {
@@ -125,15 +133,18 @@ export class AcademicYearTimplansService {
   }
 }
 
-/** True when the year exists for the caller; the row stays locked till commit. */
-async function lockYear(tx: Prisma.TransactionClient, academicYearId: string): Promise<boolean> {
-  const rows = await tx.$queryRaw<{ id: string }[]>`
-    SELECT "id"
+/** The year with its numbering when it exists for the caller; the row stays locked till commit. */
+async function lockYear(
+  tx: Prisma.TransactionClient,
+  academicYearId: string,
+): Promise<{ id: string; gradeNumbering: string } | null> {
+  const rows = await tx.$queryRaw<{ id: string; gradeNumbering: string }[]>`
+    SELECT "id", "gradeNumbering"
     FROM "AcademicYears"
     WHERE "id" = ${academicYearId}::uuid
     FOR NO KEY UPDATE
   `;
-  return rows.length > 0;
+  return rows[0] ?? null;
 }
 
 /** One row per årskurs; the primary key would refuse the second as a bare 409. */

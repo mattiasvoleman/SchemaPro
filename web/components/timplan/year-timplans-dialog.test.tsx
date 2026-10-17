@@ -22,11 +22,20 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
 
 const state = vi.hoisted(() => ({
   saved: [] as { gradeLevel: number; localTimplanId: string; planName: string; planStatus: string }[],
-  plans: [] as { id: string; name: string; status: "DRAFT" | "DECIDED" }[],
+  plans: [] as { id: string; name: string; status: "DRAFT" | "DECIDED"; nationalTimplanVersionId?: string }[],
   save: { mutateAsync: vi.fn(), isPending: false },
 }));
 
 vi.mock("@/lib/queries", () => ({
+  useNationalTimplans: () => ({
+    data: {
+      versions: [
+        { id: "v-2024", appliesFromCohortTerm: "HT2024" },
+        { id: "v-2028", appliesFromCohortTerm: "HT2028" },
+      ],
+      subjects: [],
+    },
+  }),
   useGroups: () => ({
     data: [
       { id: "g-7a", academicYearId: "y-1", name: "7A", kind: "CLASS", gradeLevel: 7 },
@@ -165,6 +174,45 @@ describe("YearTimplansDialog", () => {
     expect(select(7)).not.toHaveAttribute("data-writes");
     expect(screen.getByRole("button", { name: "save" })).toHaveAttribute("data-writes", "PLANERING");
     expect(screen.getByRole("combobox", { name: "yearLabel" })).not.toHaveAttribute("data-writes-inert");
+  });
+
+  it("names each plan's lydelse and says the cohort rule, and marks a 2028 plan an older årskull cannot follow", async () => {
+    state.plans = [
+      { id: "p-2024", name: "Grundskola 2024", status: "DECIDED", nationalTimplanVersionId: "v-2024" },
+      { id: "p-2028", name: "Grundskola 2028", status: "DECIDED", nationalTimplanVersionId: "v-2028" },
+    ];
+    state.saved = [{ gradeLevel: 7, localTimplanId: "p-2028", planName: "Grundskola 2028", planStatus: "DECIDED" }];
+    const user = userEvent.setup();
+    render(<YearTimplansDialog open onOpenChange={() => {}} years={YEARS} initialYearId={null} />);
+    expect(screen.getByText("cohortNote")).toBeInTheDocument();
+    // 2026/27: every årskull began before 2028, so the 2028 plan fits none.
+    const seventh = screen.getAllByRole("row").find((row) => within(row).queryByText("grade(7)"))!;
+    expect(within(seventh).getByText("notThisCohort(grade(7))")).toBeInTheDocument();
+    await user.click(select(8));
+    expect(screen.getByRole("option", { name: /Grundskola 2024 · statusDecided · lydelseOlder/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Grundskola 2028 · statusDecided · lydelse2028/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /Grundskola 2024/ }));
+    const eighth = screen.getAllByRole("row").find((row) => within(row).queryByText("grade(8)"))!;
+    expect(within(eighth).queryByText(/notThisCohort/)).toBeNull();
+  });
+
+  it("lists åk 1 to åk 10 for a tioårig year, and the new åk 1 may follow the 2028 plan", () => {
+    state.plans = [{ id: "p-2028", name: "Grundskola 2028", status: "DECIDED", nationalTimplanVersionId: "v-2028" }];
+    state.saved = [
+      { gradeLevel: 1, localTimplanId: "p-2028", planName: "Grundskola 2028", planStatus: "DECIDED" },
+      { gradeLevel: 2, localTimplanId: "p-2028", planName: "Grundskola 2028", planStatus: "DECIDED" },
+    ];
+    const tioarig: AcademicYear[] = [
+      { id: "y-1", name: "2028/29", startDate: "2028-08-14", endDate: "2029-06-08", isActive: true, predecessorId: null, graduatingGradeLevel: null, gradeNumbering: "TIOARIG" },
+    ];
+    render(<YearTimplansDialog open onOpenChange={() => {}} years={tioarig} initialYearId={null} />);
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows.map((row) => within(row).getAllByRole("rowheader")[0]!.textContent)).toEqual(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((grade) => `grade(${grade})`),
+    );
+    // The new åk 1 follows the 2028 lydelse; åk 2 (last year's förskoleklass) keeps the older total.
+    expect(within(rows[0]!).queryByText(/notThisCohort/)).toBeNull();
+    expect(within(rows[1]!).getByText("notThisCohort(grade(2))")).toBeInTheDocument();
   });
 
   it("points to Timplan when the school has no plan to choose", () => {

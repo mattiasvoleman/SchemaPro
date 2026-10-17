@@ -15,6 +15,11 @@
 // changed. A new year already follows the newest decided plan for that plan's
 // årskurser (AcademicYearsService.create); this is where that is changed.
 //
+// WHICH LYDELSE. Every option names its plan's lydelse, and a row whose plan
+// its årskull cannot follow is marked (planFitsCohort): from HT 2028 a plan
+// on the 2028 lydelse is the new åk 1's only, and every older årskull keeps
+// an older one. A tioårig läsår lists åk 1–10 and no förskoleklass.
+//
 // Opened from Kom igång's läsår step and from Lokal timplan. It reads its own
 // rows — the plans, the year's classes, the year's current mapping — so both
 // pages open it with no more than the years and the one to start on.
@@ -24,7 +29,9 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Link } from "@/i18n/navigation";
 import { useReadOnly } from "@/components/profile-context";
-import { useGroups } from "@/lib/queries";
+import { lydelseIsTioarig } from "@/lib/grade-numbering";
+import { useGroups, useNationalTimplans } from "@/lib/queries";
+import { planFitsCohort } from "@/lib/timplan-cohorts";
 import { useLocalTimplans } from "@/lib/timplan-queries";
 import type { AcademicYear } from "@/lib/types";
 import { useSaveYearTimplans, useYearTimplans } from "@/lib/year-timplan-queries";
@@ -81,6 +88,7 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
   const year = years.find((entry) => entry.id === yearId) ?? null;
 
   const plans = useLocalTimplans();
+  const national = useNationalTimplans();
   const groups = useGroups();
   const saved = useYearTimplans(yearId);
   const save = useSaveYearTimplans();
@@ -101,8 +109,9 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
       dialogGrades(
         (saved.data ?? []).map((row) => row.gradeLevel),
         classes.map((group) => group.gradeLevel),
+        year?.gradeNumbering,
       ),
-    [saved.data, classes],
+    [saved.data, classes, year?.gradeNumbering],
   );
   const savedChoices = useMemo<YearChoices>(
     () => new Map((saved.data ?? []).map((row) => [row.gradeLevel, row.localTimplanId])),
@@ -121,6 +130,18 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
   const failed = plans.isError || saved.isError || groups.isError;
 
   const gradeName = (grade: number) => t("grade", { grade: String(grade) });
+  // The lydelse a plan is on, by its national version; unknown while the
+  // reference data loads, and then nothing is said or warned.
+  const termOf = new Map((national.data?.versions ?? []).map((version) => [version.id, version.appliesFromCohortTerm]));
+  const lydelseOf = (planId: string): string | null => {
+    const term = termOf.get(planById.get(planId)?.nationalTimplanVersionId ?? "");
+    return term === undefined ? null : t(lydelseIsTioarig(term) ? "lydelse2028" : "lydelseOlder");
+  };
+  const ht = year ? Number(year.startDate.slice(0, 4)) : 0;
+  const misfits = (grade: number, planId: string): boolean => {
+    const term = termOf.get(planById.get(planId)?.nationalTimplanVersionId ?? "");
+    return term !== undefined && !planFitsCohort(term, ht, grade);
+  };
   const statusOf = (planId: string): "DRAFT" | "DECIDED" | null =>
     planById.get(planId)?.status ?? savedOnly.find((row) => row.localTimplanId === planId)?.planStatus ?? null;
 
@@ -159,6 +180,7 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>{t("body")}</DialogDescription>
+          <p className="text-sm text-muted-foreground">{t("cohortNote")}</p>
         </DialogHeader>
 
         {years.length > 1 ? (
@@ -221,6 +243,7 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
                 const chosen = choices.get(grade) ?? "";
                 const inGrade = classes.filter((group) => group.gradeLevel === grade);
                 const status = chosen === "" ? null : statusOf(chosen);
+                const misfit = chosen !== "" && misfits(grade, chosen);
                 return (
                   <tr key={grade} className="border-b last:border-b-0">
                     <th scope="row" className="py-2 pr-3 text-left font-medium">
@@ -246,13 +269,17 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value={NONE}>{t("none")}</SelectItem>
-                            {planList.map((plan) => (
-                              <SelectItem key={plan.id} value={plan.id}>
-                                {plan.name}
-                                {" · "}
-                                {plan.status === "DECIDED" ? tPlan("statusDecided") : tPlan("statusDraft")}
-                              </SelectItem>
-                            ))}
+                            {planList.map((plan) => {
+                              const lydelse = lydelseOf(plan.id);
+                              return (
+                                <SelectItem key={plan.id} value={plan.id}>
+                                  {plan.name}
+                                  {" · "}
+                                  {plan.status === "DECIDED" ? tPlan("statusDecided") : tPlan("statusDraft")}
+                                  {lydelse ? ` · ${lydelse}` : null}
+                                </SelectItem>
+                              );
+                            })}
                             {savedOnly.map((row) => (
                               <SelectItem key={row.localTimplanId} value={row.localTimplanId}>
                                 {row.planName}
@@ -261,6 +288,9 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
                           </SelectContent>
                         </Select>
                         {status === "DRAFT" ? <Badge variant="warning">{t("draft")}</Badge> : null}
+                        {misfit ? (
+                          <Badge variant="warning">{t("notThisCohort", { grade: gradeName(grade) })}</Badge>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
