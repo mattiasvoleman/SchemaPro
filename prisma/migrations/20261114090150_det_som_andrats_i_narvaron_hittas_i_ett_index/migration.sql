@@ -1,0 +1,16 @@
+-- Det som ändrats i närvaron hittas i ett index: an incremental read of
+-- /attendances (meta.modified.after) answers the records whose version, whose
+-- pupil's row or whose creation is later than the cursor, and while those are
+-- fewer than 50 000 it finds each of the three through an index instead of
+-- walking the school's history (app.ss12000_attendances, 20261114090000). The
+-- versions have theirs (Ss12000EntityVersions_modified_idx), a pupil's
+-- records are found by pupil (AttendanceRecords_studentId_recordedAt_idx);
+-- this is the third, the school's records by when they were created.
+--
+-- CONCURRENTLY, and so the only statement of its migration (it cannot run
+-- inside a transaction block): a register save writes AttendanceRecords all
+-- through the build, and a plain CREATE INDEX would block it for as long as
+-- the build takes. A build that fails half way leaves an invalid index of
+-- this name: drop it, mark the migration rolled back and run it again (no
+-- IF NOT EXISTS, which would take the invalid index for a built one).
+CREATE INDEX CONCURRENTLY "AttendanceRecords_schoolId_createdAt_idx" ON "AttendanceRecords"("schoolId", "createdAt");

@@ -1926,6 +1926,8 @@ model AttendanceRecord {
   @@index([calendarLessonId])
   /// SS12000's /attendances keyset, page by page within one school (20261114090000).
   @@index([schoolId, id])
+  /// SS12000's incremental /attendances: the records created after the cursor (20261114090150).
+  @@index([schoolId, createdAt])
   @@map("AttendanceRecords")
 }
 

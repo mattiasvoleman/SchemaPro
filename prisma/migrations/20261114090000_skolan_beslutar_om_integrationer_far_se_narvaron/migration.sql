@@ -6,18 +6,19 @@
 -- What leaves is minutes and giltig or ogiltig per lesson, and an absence's
 -- time and kind: never a reason, never a note, never a leave request's
 -- reason. docs/integration-api.md "Attendances and Absences" is the field
--- list; this migration and the five after it are what the database adds.
+-- list; this migration and the seven after it are what the database adds.
 --
 --   20261114090000  this one: the decision, the column, the read functions,
 --                   the recorders (the tables live requests write)
 --   20261114090100  AttendanceRecords_schoolId_id_idx, built CONCURRENTLY
+--   20261114090150  AttendanceRecords_schoolId_createdAt_idx, the same
 --   20261114090200  IntegrationApiKeys: the two scopes
 --   20261114090300  Ss12000Subscriptions: the two resources, and the notices
 --   20261114090400  Ss12000EntityVersions: the two resources, and who sees them
 --   20261114090500  Ss12000Tombstones: the same
 --   20261114090600  both CHECKs validated, without blocking anyone
 --
--- They are seven so that each takes its locks on as few tables as it can,
+-- They are eight so that each takes its locks on as few tables as it can,
 -- all at once or none, beside the API that is serving: see "Locks" below.
 --
 -- ## The school's decision ("AttendanceSharingDecisions"), append-only
@@ -675,14 +676,25 @@ $$;
 -- modified.after X is "the run began after X, or either version moved or
 -- the record was created after X", and the first half is answered here,
 -- before the statement: an incremental read from before the run is a whole
--- read, and one from within it compares the rest, each version looked up by
--- its key as the walk below reaches the record. The
--- bounds compare at the millisecond an ISO string carries (S1: before
--- inclusive, after exclusive): truncated(m) > X is m >= X + 1 ms. The
--- statement is planned with its values at every call (EXECUTE ... USING), so
--- a filter not asked folds away and the keyset walks
--- AttendanceRecords_schoolId_id_idx from the page's last id, as a page of a
--- school with a million rows must. LIMIT NULL is no limit.
+-- read. One of some ids, lessons or pupils is driven by that filter's index,
+-- and asks each of its records whether it moved. Any other from within the
+-- run (an organisation's too, which asks for every group of its unit) reads
+-- what moved: while fewer than 50 000 records moved, it reads only those
+-- after the page's last id, each through an index, never the school's
+-- history (the records whose version moved,
+-- Ss12000EntityVersions_modified_idx; the records of a pupil whose row moved,
+-- AttendanceRecords_studentId_recordedAt_idx; the records created since,
+-- AttendanceRecords_schoolId_createdAt_idx, 20261114090150), then the keyset
+-- and the page; from 50 000 (every pupil linked, a year made emitted) it
+-- walks the school's records in id order from the page's last, a chunk at a
+-- time, until the page is full, so a page costs about a page divided by the
+-- share that moved. The bounds compare at the
+-- millisecond an ISO string carries (S1: before inclusive, after exclusive):
+-- truncated(m) > X is m >= X + 1 ms. The statement is planned with its
+-- values at every call (EXECUTE ... USING), so a filter not asked folds away
+-- and a whole read's keyset walks AttendanceRecords_schoolId_id_idx from the
+-- page's last id, as a page of a school with a million rows must. LIMIT NULL
+-- is no limit.
 CREATE FUNCTION app.ss12000_attendances(
     p_ids uuid[], p_lessons uuid[], p_students uuid[], p_groups uuid[],
     p_created_before timestamptz, p_created_after timestamptz,
@@ -696,6 +708,17 @@ DECLARE
   school uuid := app.current_service_school_id();
   since timestamptz;
   modified_after timestamptz := p_modified_after;
+  -- Changes since the cursor read through their indexes; at this many the
+  -- read walks the school's records instead (a page then walks about a page
+  -- times the school's records over this, and the union would rebuild this
+  -- many on every page).
+  many constant integer := 50000;
+  moved uuid[];
+  changes integer;
+  walked uuid := coalesce(p_after, '00000000-0000-0000-0000-000000000000');
+  chunk uuid[];
+  answered integer := 0;
+  n integer;
 BEGIN
   IF school IS NULL OR NOT app.service_reads_attendance('attendances.read') THEN
     RETURN;
@@ -708,7 +731,8 @@ BEGIN
   IF modified_after IS NOT NULL AND since >= modified_after + interval '1 millisecond' THEN
     modified_after := NULL;
   END IF;
-  RETURN QUERY EXECUTE $q$
+  IF modified_after IS NULL THEN
+    RETURN QUERY EXECUTE $q$
     SELECT a."id", a."calendarLessonId", a."studentId", a."status"::text, a."createdAt",
            l."startsAt", l."endsAt", l."studentGroupId",
            coalesce(v."createdAt", a."createdAt"), greatest(v."modifiedAt", p."modifiedAt", $13, a."createdAt")
@@ -731,13 +755,159 @@ BEGIN
        AND ($9 IS NULL OR ((v."modifiedAt" IS NULL OR v."modifiedAt" < $9 + interval '1 millisecond')
                            AND (p."modifiedAt" IS NULL OR p."modifiedAt" < $9 + interval '1 millisecond')
                            AND a."createdAt" < $9 + interval '1 millisecond'))
-       AND ($10 IS NULL OR v."modifiedAt" >= $10 + interval '1 millisecond' OR p."modifiedAt" >= $10 + interval '1 millisecond'
-                        OR a."createdAt" >= $10 + interval '1 millisecond')
        AND ($11 IS NULL OR a."id" > $11)
      ORDER BY a."id"
      LIMIT $12
   $q$ USING school, app.ss12000_emitted_years(school), p_ids, p_lessons, p_students, p_groups,
             p_created_before, p_created_after, p_modified_before, modified_after, p_after, p_limit, since;
+  ELSIF p_ids IS NOT NULL OR p_lessons IS NOT NULL OR p_students IS NOT NULL THEN
+    -- A read of some ids, lessons or pupils is driven by that filter's index,
+    -- and asks each of its records whether it moved. Not groups: an
+    -- organisation asks for every group of its unit, often the whole school.
+    RETURN QUERY EXECUTE $q$
+    SELECT a."id", a."calendarLessonId", a."studentId", a."status"::text, a."createdAt",
+           l."startsAt", l."endsAt", l."studentGroupId",
+           coalesce(v."createdAt", a."createdAt"), greatest(v."modifiedAt", p."modifiedAt", $13, a."createdAt")
+      FROM "AttendanceRecords" a
+      JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
+      JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
+      JOIN "Users" u ON u."id" = a."studentId" AND u."isActive" AND u."role" = 'STUDENT'
+      LEFT JOIN "Ss12000EntityVersions" v
+        ON v."schoolId" = a."schoolId" AND v."resource" = 'Attendance' AND v."entityId" = a."id"
+      LEFT JOIN "Ss12000EntityVersions" p
+        ON p."schoolId" = a."schoolId" AND p."resource" = 'AttendancePupil' AND p."entityId" = a."studentId"
+     WHERE a."schoolId" = $1
+       AND g."academicYearId" = ANY ($2)
+       AND ($3 IS NULL OR a."id" = ANY ($3))
+       AND ($4 IS NULL OR a."calendarLessonId" = ANY ($4))
+       AND ($5 IS NULL OR a."studentId" = ANY ($5))
+       AND ($6 IS NULL OR l."studentGroupId" = ANY ($6))
+       AND ($7 IS NULL OR a."createdAt" < $7 + interval '1 millisecond')
+       AND ($8 IS NULL OR a."createdAt" >= $8 + interval '1 millisecond')
+       AND ($9 IS NULL OR ((v."modifiedAt" IS NULL OR v."modifiedAt" < $9 + interval '1 millisecond')
+                           AND (p."modifiedAt" IS NULL OR p."modifiedAt" < $9 + interval '1 millisecond')
+                           AND a."createdAt" < $9 + interval '1 millisecond'))
+       AND (v."modifiedAt" >= $10 + interval '1 millisecond' OR p."modifiedAt" >= $10 + interval '1 millisecond'
+            OR a."createdAt" >= $10 + interval '1 millisecond')
+       AND ($11 IS NULL OR a."id" > $11)
+     ORDER BY a."id"
+     LIMIT $12
+  $q$ USING school, app.ss12000_emitted_years(school), p_ids, p_lessons, p_students, p_groups,
+            p_created_before, p_created_after, p_modified_before, modified_after, p_after, p_limit, since;
+  ELSE
+    -- What moved since the cursor (and before modified.before), counted no
+    -- further than `many`, each through its index: the records of a pupil
+    -- whose row moved (linked or back), and the records whose version moved
+    -- or that were created, the larger of the two, since a record created
+    -- while the school shares is versioned as it is created.
+    moved := ARRAY(SELECT x."entityId" FROM "Ss12000EntityVersions" x
+                    WHERE x."schoolId" = school AND x."resource" = 'AttendancePupil'
+                      AND x."modifiedAt" >= modified_after + interval '1 millisecond'
+                      AND (p_modified_before IS NULL OR x."modifiedAt" < p_modified_before + interval '1 millisecond'));
+    changes := (SELECT count(*) FROM (SELECT 1 FROM "AttendanceRecords" r
+                                       WHERE r."schoolId" = school AND r."studentId" = ANY (moved) LIMIT many) s)
+             + greatest(
+                 (SELECT count(*) FROM (SELECT 1 FROM "Ss12000EntityVersions" x
+                                         WHERE x."schoolId" = school AND x."resource" = 'Attendance'
+                                           AND x."modifiedAt" >= modified_after + interval '1 millisecond'
+                                           AND (p_modified_before IS NULL OR x."modifiedAt" < p_modified_before + interval '1 millisecond')
+                                         LIMIT many) s),
+                 (SELECT count(*) FROM (SELECT 1 FROM "AttendanceRecords" r
+                                         WHERE r."schoolId" = school
+                                           AND r."createdAt" >= greatest(modified_after, p_created_after) + interval '1 millisecond'
+                                           AND (p_modified_before IS NULL OR r."createdAt" < p_modified_before + interval '1 millisecond')
+                                           AND (p_created_before IS NULL OR r."createdAt" < p_created_before + interval '1 millisecond')
+                                         LIMIT many) s));
+    IF changes < many THEN
+      RETURN QUERY EXECUTE $q$
+    SELECT a."id", a."calendarLessonId", a."studentId", a."status"::text, a."createdAt",
+           l."startsAt", l."endsAt", l."studentGroupId",
+           coalesce(v."createdAt", a."createdAt"), greatest(v."modifiedAt", p."modifiedAt", $13, a."createdAt")
+      FROM (
+             -- After the cursor: a record's version, a moved pupil's records, a record's creation.
+             SELECT x."entityId" AS "id" FROM "Ss12000EntityVersions" x
+              WHERE x."schoolId" = $1 AND x."resource" = 'Attendance' AND x."modifiedAt" >= $10 + interval '1 millisecond'
+                AND ($9 IS NULL OR x."modifiedAt" < $9 + interval '1 millisecond') AND ($11 IS NULL OR x."entityId" > $11)
+             UNION
+             SELECT r."id" FROM "AttendanceRecords" r
+              WHERE r."schoolId" = $1 AND r."studentId" = ANY ($14) AND ($11 IS NULL OR r."id" > $11)
+             UNION
+             SELECT r."id" FROM "AttendanceRecords" r
+              WHERE r."schoolId" = $1 AND r."createdAt" >= $10 + interval '1 millisecond'
+                AND ($9 IS NULL OR r."createdAt" < $9 + interval '1 millisecond') AND ($11 IS NULL OR r."id" > $11)
+           ) c
+      JOIN "AttendanceRecords" a ON a."id" = c."id"
+      JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
+      JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
+      JOIN "Users" u ON u."id" = a."studentId" AND u."isActive" AND u."role" = 'STUDENT'
+      LEFT JOIN "Ss12000EntityVersions" v
+        ON v."schoolId" = a."schoolId" AND v."resource" = 'Attendance' AND v."entityId" = a."id"
+      LEFT JOIN "Ss12000EntityVersions" p
+        ON p."schoolId" = a."schoolId" AND p."resource" = 'AttendancePupil' AND p."entityId" = a."studentId"
+     WHERE a."schoolId" = $1
+       AND g."academicYearId" = ANY ($2)
+       AND ($3 IS NULL OR a."id" = ANY ($3))
+       AND ($4 IS NULL OR a."calendarLessonId" = ANY ($4))
+       AND ($5 IS NULL OR a."studentId" = ANY ($5))
+       AND ($6 IS NULL OR l."studentGroupId" = ANY ($6))
+       AND ($7 IS NULL OR a."createdAt" < $7 + interval '1 millisecond')
+       AND ($8 IS NULL OR a."createdAt" >= $8 + interval '1 millisecond')
+       AND ($9 IS NULL OR ((v."modifiedAt" IS NULL OR v."modifiedAt" < $9 + interval '1 millisecond')
+                           AND (p."modifiedAt" IS NULL OR p."modifiedAt" < $9 + interval '1 millisecond')
+                           AND a."createdAt" < $9 + interval '1 millisecond'))
+       AND ($11 IS NULL OR a."id" > $11)
+     ORDER BY a."id"
+     LIMIT $12
+  $q$ USING school, app.ss12000_emitted_years(school), p_ids, p_lessons, p_students, p_groups,
+            p_created_before, p_created_after, p_modified_before, modified_after, p_after, p_limit, since, moved;
+      RETURN;
+    END IF;
+    -- Many: the school's records in id order from the page's last, a chunk
+    -- at a time, each read with the cursor's predicate, until the page is
+    -- full. A page costs about a page divided by the share that moved, and a
+    -- mass link (every pupil moved) about a page.
+    LOOP
+      chunk := ARRAY(SELECT r."id" FROM "AttendanceRecords" r
+                      WHERE r."schoolId" = school AND r."id" > walked
+                      ORDER BY r."id" LIMIT 5000);
+      EXIT WHEN cardinality(chunk) = 0;
+      RETURN QUERY EXECUTE $q$
+    SELECT a."id", a."calendarLessonId", a."studentId", a."status"::text, a."createdAt",
+           l."startsAt", l."endsAt", l."studentGroupId",
+           coalesce(v."createdAt", a."createdAt"), greatest(v."modifiedAt", p."modifiedAt", $13, a."createdAt")
+      FROM "AttendanceRecords" a
+      JOIN "CalendarLessons" l ON l."id" = a."calendarLessonId"
+      JOIN "StudentGroups" g ON g."id" = l."studentGroupId"
+      JOIN "Users" u ON u."id" = a."studentId" AND u."isActive" AND u."role" = 'STUDENT'
+      LEFT JOIN "Ss12000EntityVersions" v
+        ON v."schoolId" = a."schoolId" AND v."resource" = 'Attendance' AND v."entityId" = a."id"
+      LEFT JOIN "Ss12000EntityVersions" p
+        ON p."schoolId" = a."schoolId" AND p."resource" = 'AttendancePupil' AND p."entityId" = a."studentId"
+     WHERE a."schoolId" = $1
+       AND a."id" = ANY ($14)
+       AND g."academicYearId" = ANY ($2)
+       AND ($3 IS NULL OR a."id" = ANY ($3))
+       AND ($4 IS NULL OR a."calendarLessonId" = ANY ($4))
+       AND ($5 IS NULL OR a."studentId" = ANY ($5))
+       AND ($6 IS NULL OR l."studentGroupId" = ANY ($6))
+       AND ($7 IS NULL OR a."createdAt" < $7 + interval '1 millisecond')
+       AND ($8 IS NULL OR a."createdAt" >= $8 + interval '1 millisecond')
+       AND ($9 IS NULL OR ((v."modifiedAt" IS NULL OR v."modifiedAt" < $9 + interval '1 millisecond')
+                           AND (p."modifiedAt" IS NULL OR p."modifiedAt" < $9 + interval '1 millisecond')
+                           AND a."createdAt" < $9 + interval '1 millisecond'))
+       AND (v."modifiedAt" >= $10 + interval '1 millisecond' OR p."modifiedAt" >= $10 + interval '1 millisecond'
+            OR a."createdAt" >= $10 + interval '1 millisecond')
+     ORDER BY a."id"
+     LIMIT $12
+  $q$ USING school, app.ss12000_emitted_years(school), p_ids, p_lessons, p_students, p_groups,
+            p_created_before, p_created_after, p_modified_before, modified_after, NULL::uuid,
+            p_limit - answered, since, chunk;
+      GET DIAGNOSTICS n = ROW_COUNT;
+      answered := answered + n;
+      EXIT WHEN p_limit IS NOT NULL AND answered >= p_limit;
+      walked := chunk[cardinality(chunk)];
+    END LOOP;
+  END IF;
 END
 $$;
 
