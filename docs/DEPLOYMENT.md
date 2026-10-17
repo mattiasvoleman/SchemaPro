@@ -1225,7 +1225,7 @@ password manager, never in this repository: the repository is public.
    `>= 24.0.0`, and the CLI needs Node 20.18.3 or later). Not as `npx
    eas-cli@…` in `mobile/`: `mobile/.npmrc` makes npm there refuse a version
    published less than seven days ago, and a global install does not read
-   it. Then `eas login` with your own Expo account, a member of the
+   it (a local build needs one more step, item 4). Then `eas login` with your own Expo account, a member of the
    organisation, and check it with `eas whoami`. Every `eas` command runs in
    `mobile/`.
 2. **Link the project, once:** `eas init --account <the Expo organisation>`.
@@ -1277,8 +1277,14 @@ password manager, never in this repository: the repository is public.
    and the `eas-build-pre-install` script in `mobile/package.json` first
    installs npm 11, which wrote the lockfile and which CI pins, whatever npm
    the build image ships. It does so only on EAS's own machines. `eas build
-   --local` installs with the npm of the machine it runs on, which is
-   therefore npm 11 too. Versions and build numbers are §12.9.
+   --local` installs with the npm of the machine it runs on, which should be
+   npm 11 as in §8. Run it as `NPM_CONFIG_MIN_RELEASE_AGE=0 eas build -p
+   <platform> --profile <profile> --local`. eas-cli fetches its local build
+   plugin with `npx`, at its own exact version and in `mobile/`, where
+   `mobile/.npmrc` refuses a version published less than seven days ago. The
+   variable lifts that rule for this one command, as Expo's own build tools
+   do for their `npx` calls. The plugin's `npm ci` still installs the
+   lockfile exactly as it is. Versions and build numbers are §12.9.
 
 `mobile/ios` and `mobile/android` are generated for each build and are
 gitignored (`mobile/.gitignore`). Committed, they would make EAS treat the
@@ -1349,7 +1355,7 @@ of §12.1:
    leaves gitignored files out, and EAS gives no secret variable to a local
    build. So before a local Android build, run `export
    GOOGLE_SERVICES_JSON="$PWD/google-services.json"` in `mobile/` (an
-   absolute path). With the local copy present, every cloud Android build
+   absolute path), and build as in §12.2 item 4. With the local copy present, every cloud Android build
    prints that `android.googleServicesFile` "won't be uploaded to the
    builder". That is expected, because the builder takes the file variable
    instead. A preview or production Android build, on EAS or local, stops
@@ -1467,11 +1473,21 @@ to whoever the gateway holds, so it runs against a test stack:
   the seeded admin row's `"authId"` and `"invitedAt"`. Do the same for one
   seeded teacher, or invite a test teacher at `/admin/people` to a mailbox
   you control. Then generate and publish a timetable as in §9 steps 6 and
-  7, so that the Day planner has this week's lessons;
+  7, so that the Day planner has this week's lessons. These steps run in
+  the test stack's web app, below;
 - a gateway deployed against it as in §5, with `PUSH_NOTIFICATIONS=expo`
   (and `EXPO_ACCESS_TOKEN` if enhanced push security is on), reachable over
   https: a second service on the container host, or an https tunnel to a
-  gateway on a laptop, since a phone's localhost is the phone;
+  gateway on a laptop, since a phone's localhost is the phone. Its
+  `AI_ENGINE_URL` and `AI_ENGINE_API_KEY` point at a solver as in §4,
+  either a second one or production's. Production's holds no data (§4),
+  but the test gateway then shares its key;
+- a web app built against that project and gateway: a second deployment as
+  in §6, or `npm run dev` in `web/` with its `.env.local` pointing at them.
+  Production's web app cannot stand in, because its addresses are fixed
+  when it is built. The test web app's origin comes first in the test
+  gateway's `CORS_ORIGINS`, since invite links go there, and is in the test
+  project's redirect URLs;
 - internal builds pointed at both: preview builds (§12.4, §12.5) built with
   the preview environment's values, or development builds with
   `.env.local`.

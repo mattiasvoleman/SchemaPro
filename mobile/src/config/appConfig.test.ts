@@ -225,6 +225,13 @@ describe('texts and assets iOS and Android show before the app runs', () => {
     expect(dev).not.toMatch(/["\\\n]/);
   });
 
+  it('is written the way EAS CLI writes it, so its rollback and `eas init` leave a clean diff', () => {
+    // @expo/json-file: two spaces and a final newline. A hand-formatted array
+    // would be rewritten by the CLI's rollback of the encryption answer, and
+    // §12.5 tells the operator to treat any app.json change as suspect.
+    expect(readFileSync(join(MOBILE, 'app.json'), 'utf8')).toBe(`${JSON.stringify(staticConfig, null, 2)}\n`);
+  });
+
   it('leaves the export-compliance answer to the owner, in ios.config where Expo reads it', () => {
     // app.config.ts drops infoPlist.ITSAppUsesNonExemptEncryption, so set
     // there it would do nothing: the decision is ios.config.usesNonExemptEncryption.
