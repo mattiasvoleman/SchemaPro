@@ -47,16 +47,22 @@ import { cohortYear, stageGradesFor, type BaseStage, type SchoolForm } from './t
  *
  * PRE_2028 | REFORMED_2028, decided in this order (the order matters):
  *
- *   1. any year the pupil is recorded in that starts before HT 2028 gives
- *      PRE_2028: everyone in school before HT 2028, förskoleklass included,
- *      falls under övergångsbestämmelserna 4 and 12;
- *   2. otherwise the årskurs recorded in the year starting HT 2028: 1 or
- *      lower is REFORMED_2028 (the first cohort of the new åk 1);
+ *   1. the årskurs recorded in the year starting HT 2028, when there is one:
+ *      1 or lower is REFORMED_2028, 2 or higher PRE_2028. It is övergångs-
+ *      bestämmelse 12's own test — the old total is for the pupil who "höst-
+ *      terminen 2028 påbörjar årskurs 2 eller en högre årskurs" — so it
+ *      decides even for a pupil recorded before: last year's förskoleklass
+ *      placed in the new åk 1 by an exception (övergångsbestämmelse 4, "om
+ *      annat beslutas") begins åk 1 and has the new total;
+ *   2. otherwise any year the pupil is recorded in that starts before HT 2028
+ *      gives PRE_2028: everyone in school before HT 2028, förskoleklass
+ *      included, falls under övergångsbestämmelserna 4 and 12;
  *   3. otherwise the earliest recorded year, by arithmetic: årskurs − (HT −
  *      2028) ≤ 1 is REFORMED_2028.
  *
  * A single formula would turn an old-cohort pupil who repeats new åk 2 in
- * 2029/30 into REFORMED (2 − 1 = 1); rule 1 keeps them PRE.
+ * 2029/30 into REFORMED (2 − 1 = 1); rule 1 (their 2028 årskurs) or rule 2
+ * keeps them PRE.
  *
  * ## The version grade
  *
@@ -127,12 +133,12 @@ export interface CohortYear {
 
 /** PRE_2028 or REFORMED_2028, by the three rules of the header. */
 export function pupilRegime(years: readonly CohortYear[]): Regime {
-  if (years.some((year) => year.ht < REFORM_HT)) return 'PRE_2028';
   const known = years.filter((year): year is { ht: number; gradeLevel: number } => year.gradeLevel !== null);
   const reformYear = known.filter((year) => year.ht === REFORM_HT);
   if (reformYear.length > 0) {
     return Math.min(...reformYear.map((year) => year.gradeLevel)) <= 1 ? 'REFORMED_2028' : 'PRE_2028';
   }
+  if (years.some((year) => year.ht < REFORM_HT)) return 'PRE_2028';
   if (known.length === 0) return 'PRE_2028';
   const earliest = known.reduce((a, b) => (b.ht < a.ht ? b : a));
   return earliest.gradeLevel - (earliest.ht - REFORM_HT) <= 1 ? 'REFORMED_2028' : 'PRE_2028';

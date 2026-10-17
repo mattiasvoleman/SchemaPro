@@ -23,8 +23,13 @@ describe('årskullar: the regime, the version grade and the version', () => {
     expect([htOf('2026-08-17'), htOf('2027-06-14'), htOf('2028-07-01')]).toEqual([2026, 2026, 2028]);
   });
 
-  it('decides the regime in the header’s order: before 2028, then the grade in 2028, then arithmetic', () => {
+  it('decides the regime in the header’s order: the grade in 2028, then before 2028, then arithmetic', () => {
     expect(pupilRegime([{ ht: 2027, gradeLevel: 0 }, { ht: 2028, gradeLevel: 2 }])).toBe('PRE_2028');
+    // Last year's förskoleklass placed in the new åk 1 by an exception begins
+    // åk 1 in HT 2028, and övergångsbestämmelse 12 keeps the old total only for
+    // those beginning åk 2 or higher.
+    expect(pupilRegime([{ ht: 2027, gradeLevel: 0 }, { ht: 2028, gradeLevel: 1 }])).toBe('REFORMED_2028');
+    expect(pupilRegime([{ ht: 2027, gradeLevel: 0 }])).toBe('PRE_2028');
     expect(pupilRegime([{ ht: 2028, gradeLevel: 1 }])).toBe('REFORMED_2028');
     expect(pupilRegime([{ ht: 2028, gradeLevel: 2 }])).toBe('PRE_2028');
     expect(pupilRegime([{ ht: 2030, gradeLevel: 3 }])).toBe('REFORMED_2028');
