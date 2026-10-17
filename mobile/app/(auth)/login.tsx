@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -13,8 +14,11 @@ import { useAuth } from '../../src/context/AuthContext';
 import { schoolAccountsOffered } from '../../src/services/auth/schoolAccount';
 import { useI18n } from '../../src/context/LocaleContext';
 
-/** The logo's letters: a mark, the same in every language. */
-const BRAND_MARK = 'SP';
+/**
+ * The brand tile is the splash image itself, so the screen the splash hands
+ * over to shows the same mark (scripts/render-brand-assets.mjs draws both).
+ */
+const BRAND_TILE = require('../../assets/images/splash-icon.png');
 
 export default function LoginScreen(): React.JSX.Element {
   const { login, loginWithSchoolAccount, isLoading, error } = useAuth();
@@ -41,9 +45,14 @@ export default function LoginScreen(): React.JSX.Element {
     >
       <View style={styles.inner}>
         {/* ── Brand ────────────────────────────────────────────────────── */}
-        <View style={styles.brand}>
-          <Text style={styles.brandMark}>{BRAND_MARK}</Text>
-        </View>
+        {/* Decorative, so hidden from screen readers: the title under it
+            says the name. */}
+        <Image
+          source={BRAND_TILE}
+          style={styles.brand}
+          accessible={false}
+          importantForAccessibility="no"
+        />
         <Text style={styles.title}>{t('login.title')}</Text>
         <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
 
@@ -148,17 +157,7 @@ const styles = StyleSheet.create({
   brand: {
     width: 72,
     height: 72,
-    borderRadius: 20,
-    backgroundColor: '#6366f1',
-    justifyContent: 'center',
-    alignItems: 'center',
     marginBottom: 16,
-  },
-  brandMark: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#fff',
-    letterSpacing: 1,
   },
   title: {
     fontSize: 28,
