@@ -8,6 +8,15 @@ import type { Span } from './cover-rules';
  * its params, which the web renders in plain Swedish ("Legitimerad i
  * Matematik för åk 7–9"). The weights, and why:
  *
+ *   TRAVEL_TOO_SHORT −20 each (Skolområden och restid, 20261124090000)
+ *       The candidate's lesson before or after the cover is at another site,
+ *       and the gap is shorter than the walk between the two
+ *       (common/site-travel.ts). A reason and never a filter, as the hand
+ *       edit's warning is never a refusal: the school may know a way the
+ *       data does not. Listed FIRST, so the day's proposal, which shows a
+ *       pick's first three reasons, shows it. A walk the school has given no
+ *       figure, or a room on no site, is unknown and costs nothing.
+ *
  *   QUAL_LEGITIMATION +40 / QUAL_BEHORIG +30 / QUAL_TILLATEN +15
  *       Behörighet first — the old picker's first key: a legitimerad
  *       stranger beats a familiar obehörig colleague.
@@ -64,6 +73,7 @@ import type { Span } from './cover-rules';
  */
 
 export type RankReasonCode =
+  | 'TRAVEL_TOO_SHORT'
   | 'QUAL_LEGITIMATION'
   | 'QUAL_BEHORIG'
   | 'QUAL_TILLATEN'
@@ -114,6 +124,8 @@ export interface RankInput {
   prefersFree: boolean;
   /** The lesson's date is the weekday their work rule wishes free. */
   wishesFreeDay?: boolean;
+  /** The walks between sites the cover leaves too little time for: site names, the walk, the gap. */
+  travel?: readonly { from: string; to: string; minutes: number; gap: number }[];
   names: { subject: string; group: string; grades: string | null };
 }
 
@@ -141,6 +153,10 @@ export function rankCandidate(input: RankInput): Ranked {
   const add = (code: RankReasonCode, points: number, params: Record<string, string | number> = {}) =>
     reasons.push({ code, params, points });
   const { subject, group, grades } = input.names;
+
+  for (const walk of input.travel ?? []) {
+    add('TRAVEL_TOO_SHORT', -20, { from: walk.from, to: walk.to, minutes: walk.minutes, gap: walk.gap });
+  }
 
   if (input.qualification) {
     const params: Record<string, string | number> = { subject };

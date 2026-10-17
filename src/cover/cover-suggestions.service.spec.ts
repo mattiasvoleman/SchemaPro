@@ -242,6 +242,41 @@ describe('CoverSuggestionsService', () => {
     expect(away.reasons.map((r) => r.code)).not.toContain('RELEASED');
   });
 
+  it('candidates: a colleague whose lesson before ends at the other site too close to the cover is told so, and still offered', async () => {
+    const NORRA = '10000000-0000-4000-8000-0000000000c1';
+    const SODRA = '20000000-0000-4000-8000-0000000000c2';
+    // The cover is in a room on Södra; S's own lesson before it, on Norra, ends at 09:55 Stockholm.
+    tx.calendarLesson.findMany.mockImplementation((query: { where: { id?: unknown } }) =>
+      Promise.resolve(
+        query.where.id
+          ? [{ id: LESSON, schoolId: 'school', date: new Date(`${D}T00:00:00.000Z`), startsAt: START, endsAt: END, subjectId: 'ma',
+               studentGroupId: '7a', roomId: 'room-s', teachers: [{ teacherId: A }], extraGroups: [], participants: [] }]
+          : [{ id: LESSON, startsAt: START, endsAt: END, status: 'SCHEDULED', teachers: [{ teacherId: A, role: 'LEAD' }] }],
+      ),
+    );
+    tx.calendarLessonTeacher.findMany.mockImplementation((query: { where: { teacherId?: unknown } }) =>
+      Promise.resolve(
+        query.where.teacherId
+          ? [
+              { teacherId: A, calendarLesson: { id: LESSON, date: new Date(`${D}T00:00:00Z`), startsAt: START, endsAt: END, status: 'SCHEDULED', studentGroupId: '7a', subjectId: 'ma', roomId: 'room-s' } },
+              { teacherId: S, calendarLesson: { id: 'early', date: new Date(`${D}T00:00:00Z`), startsAt: new Date('2026-10-14T07:00:00Z'), endsAt: new Date('2026-10-14T07:55:00Z'), status: 'SCHEDULED', studentGroupId: '8a', subjectId: 'ma', roomId: 'room-n' } },
+            ]
+          : [],
+      ),
+    );
+    tx.siteTravelTime.findMany.mockResolvedValue([{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }]);
+    tx.site.findMany.mockResolvedValue([{ id: NORRA, name: 'Norra' }, { id: SODRA, name: 'Södra' }]);
+    tx.room.findMany.mockResolvedValue([{ id: 'room-n', siteId: NORRA }, { id: 'room-s', siteId: SODRA }]);
+
+    const s = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+    expect(s.reasons[0]).toEqual({ code: 'TRAVEL_TOO_SHORT', params: { from: 'Norra', to: 'Södra', minutes: 15, gap: 5 }, points: -20 });
+
+    // The same day with the pair given no figure: nothing is known, and nothing is said.
+    tx.siteTravelTime.findMany.mockResolvedValue([]);
+    const unknown = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+    expect(unknown.reasons.map((r) => r.code)).not.toContain('TRAVEL_TOO_SHORT');
+  });
+
   it('candidates: the class’s mentor is the one holding the mentorskap on the lesson’s day, not one whose Till has passed', async () => {
     // 2026-10-14: S was 7A's mentor until 2026-09-30, a mentorship that names
     // nobody that day; from 2026-10-01 it is S again under a new uppdrag.

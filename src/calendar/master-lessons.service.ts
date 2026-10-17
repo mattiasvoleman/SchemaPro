@@ -52,6 +52,8 @@ import {
 } from '../common/teacher-day';
 import { readsHr } from '../staffing/hr-visibility';
 import { recordRead } from '../access-log/access-log';
+import { hasTravel, readSiteMap } from '../common/site-travel';
+import { travelWarningsOf, type TravelDayLesson, type TravelWarning } from './travel-warnings';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -180,12 +182,13 @@ export type TeacherDayWarning =
 /**
  * What a hand edit is told beside the saved lesson: the staffing policy's WARN
  * about a teacher it put on the lesson, the ämnesfördelning the timplanspost
- * is held to when the edit breaks it, a parallel block the move split, and a
- * teacher's day or week the edit leaves over their rule. Each is a code from
- * the engine catalogue and its params, rendered by the page; none is a
- * refusal.
+ * is held to when the edit breaks it, a parallel block the move split, a
+ * teacher's day or week the edit leaves over their rule, and a walk between
+ * two sites the edit leaves too little time for (travel-warnings.ts). Each
+ * is a code from the engine catalogue and its params, rendered by the page;
+ * none is a refusal.
  */
-export type LessonWarning = StaffingWarning | DistributionWarning | BlockSplitWarning | TeacherDayWarning;
+export type LessonWarning = StaffingWarning | DistributionWarning | BlockSplitWarning | TeacherDayWarning | TravelWarning;
 
 export interface CreateMasterLessonResult extends MasterLessonResult {
   /**
@@ -469,6 +472,7 @@ export class MasterLessonsService {
           teachers,
         )),
       );
+      warnings.push(...(await this.travelWarnings(tx, rosters, year.schoolId, created)));
 
       this.logger.log(`Master lesson created manually [lesson=${created.id}]`);
       this.announce(year.schoolId, mode);
@@ -785,6 +789,22 @@ export class MasterLessonsService {
       if (movesTheWeek) {
         warnings.push(...(await this.distributionWarnings(tx, updated)));
       }
+      // The walks between sites, asked of an edit that can change who walks
+      // where and when: the day, the times, the weeks, the room, the
+      // teachers, the classes or pupils on it, or a lesson back from the
+      // tray. A lock or a note asks nothing.
+      const movesTheWalks =
+        movesTheWeek ||
+        candidate.startMinutes !== toMinutes(lesson.startTime) ||
+        candidate.endMinutes !== toMinutes(lesson.endTime) ||
+        updated.roomId !== lesson.roomId ||
+        updated.teacherId !== lesson.teacherId ||
+        updated.coTeacherId !== lesson.coTeacherId ||
+        dto.extraGroupIds !== undefined ||
+        dto.studentIds !== undefined;
+      if (movesTheWalks) {
+        warnings.push(...(await this.travelWarnings(tx, rosters, lesson.school.id, updated)));
+      }
 
       // Lärarens dag, asked of the week as the PATCH leaves it, beside the
       // ämnesfördelning and a warning for the same reason. Asked about every
@@ -1095,6 +1115,7 @@ export class MasterLessonsService {
         if (dto.dayOfWeek !== lesson.dayOfWeek) {
           warnings.push(...(await this.distributionWarnings(tx, updated)));
         }
+        warnings.push(...(await this.travelWarnings(tx, rosters, lesson.school.id, updated)));
         const after = toResult(updated);
         await this.writeChangeLog(tx, {
           schoolId: lesson.school.id,
@@ -1241,6 +1262,91 @@ export class MasterLessonsService {
       }
       return { blockId: block.id, isLocked: dto.isLocked, lessonIds: targets.map((lesson) => lesson.id), parked };
     });
+  }
+
+  /**
+   * TRAVEL_TIME_SHORT (travel-warnings.ts): the walks between sites the
+   * lesson is one end of, that its day as the edit leaves it has too little
+   * time for. Read after the write, under the caller's RLS.
+   *
+   * A school with no travel figure asks one question (readSiteMap) and
+   * nothing more, and so does a lesson whose room stands on no site: an
+   * unknown walk is no walk. The pupils are read through the year's basis
+   * and rosterOf, as the clash check reads them, so a hand edit is held to
+   * the pupils the clash check holds it to.
+   */
+  private async travelWarnings(
+    tx: PrismaClient,
+    basis: RosterBasis,
+    schoolId: string,
+    lesson: LessonRecord,
+  ): Promise<TravelWarning[]> {
+    if (lesson.isParked) return [];
+    const map = await readSiteMap(tx, schoolId);
+    if (!hasTravel(map) || lesson.roomId === null || !map.siteOfRoom.has(lesson.roomId)) return [];
+    const day = await tx.masterLesson.findMany({
+      where: { academicYearId: lesson.academicYearId, dayOfWeek: lesson.dayOfWeek, isParked: false, id: { not: lesson.id } },
+      select: {
+        id: true,
+        teacherId: true,
+        coTeacherId: true,
+        roomId: true,
+        studentGroupId: true,
+        startTime: true,
+        endTime: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
+        subject: { select: { name: true } },
+        extraGroups: { select: { studentGroupId: true } },
+        participants: { select: { studentId: true } },
+      },
+    });
+    const subject = await tx.subject.findUnique({ where: { id: lesson.subjectId }, select: { name: true } });
+    const all = [{ ...lesson, subject: { name: subject?.name ?? '' } }, ...day];
+    const groupIds = new Set(all.flatMap((row) => [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)]));
+    const teacherIds = [...new Set(all.flatMap((row) => [row.teacherId, row.coTeacherId]))].filter(
+      (id): id is string => id !== null,
+    );
+    const [{ membersOf, halves }, groups, teachers] = await Promise.all([
+      this.rosterOf(tx, basis, groupIds),
+      tx.studentGroup.findMany({ where: { id: { in: [...groupIds] } }, select: { id: true, name: true } }),
+      tx.user.findMany({ where: { id: { in: teacherIds } }, select: { id: true, firstName: true, lastName: true } }),
+    ]);
+    const halfPairKeys = new Set(
+      halfPairs(halves, membersOf, groupsOfPupils(membersOf)).map(([a, b]) => `${a}:${b}`),
+    );
+    const halvesPair = (a: string, b: string): boolean => halfPairKeys.has(a < b ? `${a}:${b}` : `${b}:${a}`);
+    const weeksOf = new Map(all.map((row) => [row.id, row]));
+    const asTravel = (row: (typeof all)[number]): TravelDayLesson => {
+      const attending = [row.studentGroupId, ...row.extraGroups.map((g) => g.studentGroupId)];
+      return {
+        id: row.id,
+        start: toMinutes(row.startTime),
+        end: toMinutes(row.endTime),
+        roomId: row.roomId,
+        subjectName: row.subject.name,
+        teacherIds: [row.teacherId, row.coTeacherId].filter((id): id is string => id !== null),
+        groupIds: attending,
+        pupils: new Set([
+          ...attending.flatMap((groupId) => [...(membersOf.get(groupId) ?? [])]),
+          ...row.participants.map((p) => p.studentId),
+        ]),
+      };
+    };
+    const groupName = new Map(groups.map((group) => [group.id, group.name]));
+    const teacherName = new Map(teachers.map((t) => [t.id, `${t.firstName} ${t.lastName}`.trim()]));
+    return travelWarningsOf(
+      {
+        map,
+        weeksMeet: (a, b) => weeksCanOverlap(weeksOf.get(a.id)!, weeksOf.get(b.id)!),
+        halvesPair,
+        teacherName: (id) => teacherName.get(id) ?? '',
+        groupName: (id) => groupName.get(id) ?? '',
+      },
+      asTravel(all[0]!),
+      day.map(asTravel),
+    );
   }
 
   /**

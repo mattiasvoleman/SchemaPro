@@ -85,6 +85,7 @@ const asPick = (lesson: ProposalLesson): PersonLesson => ({
   status: 'SCHEDULED',
   studentGroupId: '',
   subjectId: '',
+  roomId: lesson.target.roomId ?? null,
 });
 
 /** The pair's key: a lesson with two absent teachers is two pairs. */

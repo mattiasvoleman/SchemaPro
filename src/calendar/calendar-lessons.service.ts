@@ -29,9 +29,10 @@ import {
   type RemovedTeacher,
 } from '../cover/cover-decisions';
 import { readPersonDays, schoolTimezone } from '../cover/cover-context';
-import { hardFindings, maskWarnings, softWarnings, type CoverWarningCode } from '../cover/cover-rules';
+import { hardFindings, holdsTime, maskWarnings, softWarnings, type CoverWarningCode } from '../cover/cover-rules';
 import { recordRead } from '../access-log/access-log';
 import { readsHr } from '../staffing/hr-visibility';
+import { readSiteMap, travelBreaches } from '../common/site-travel';
 import { coverEmail, coverMeta, withdrawnEmail, withdrawnMeta, type NoticeLesson } from '../cover/cover-notices';
 import { scopeOf } from './lesson-roster';
 import { lessonEmail, type LessonNoticeType } from './lesson-notices';
@@ -632,7 +633,30 @@ export class CalendarLessonsService {
     if (findings.some((finding) => finding.code === 'WORK_DAYS')) {
       await recordRead(tx, 'EMPLOYMENT', [substitute.id], user.channel);
     }
-    return maskWarnings(softWarnings(findings), readsHr(user));
+    const warnings: CoverWarning[] = maskWarnings(softWarnings(findings), readsHr(user));
+    // The walks between sites the pick leaves too little time for: from the
+    // substitute's own lesson before it that day, and to the one after.
+    const sites = await readSiteMap(tx, lesson.schoolId);
+    const minute = (at: number) => Math.round(at / 60_000);
+    const breaches = travelBreaches(
+      sites,
+      { id: lesson.id, start: minute(lesson.startsAt.getTime()), end: minute(lesson.endsAt.getTime()), roomId: lesson.roomId },
+      day.lessons
+        .filter((row) => holdsTime(row) && row.date === date && row.id !== lesson.id)
+        .map((row) => ({ id: row.id, start: minute(row.start), end: minute(row.end), roomId: row.roomId ?? null })),
+    );
+    for (const breach of breaches) {
+      warnings.push({
+        code: 'COVER_TRAVEL_TIME_SHORT',
+        params: {
+          from: sites.nameOf.get(breach.walk.fromSite) ?? '',
+          to: sites.nameOf.get(breach.walk.toSite) ?? '',
+          minutes: breach.walk.minutes,
+          gap: breach.gap,
+        },
+      });
+    }
+    return warnings;
   }
 
   /**

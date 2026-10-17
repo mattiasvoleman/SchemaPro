@@ -1955,6 +1955,83 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    describe('restid (Skolområden och restid)', () => {
+      const NORRA = '10000000-0000-4000-8000-0000000000a1';
+      const SODRA = '20000000-0000-4000-8000-0000000000a2';
+      const NORRA_ROOM = '00000000-aaaa-4aaa-8aaa-0000000000a3';
+
+      /** Norra and Södra 15 minutes apart; the lesson's room on Södra, another on Norra. */
+      const arrangeSites = (pairs = [{ siteAId: NORRA, siteBId: SODRA, minutes: 15 }]) => {
+        tx.siteTravelTime.findMany.mockImplementation(answerRows(pairs.map((pair) => ({ schoolId: SCHOOL_ID, ...pair }))));
+        tx.site.findMany.mockImplementation(
+          answerRows([
+            { id: NORRA, name: 'Norra', schoolId: SCHOOL_ID },
+            { id: SODRA, name: 'Södra', schoolId: SCHOOL_ID },
+          ]),
+        );
+        tx.room.findMany.mockImplementation(
+          answerRows([
+            { id: ROOM_ID, siteId: SODRA, schoolId: SCHOOL_ID },
+            { id: NORRA_ROOM, siteId: NORRA, schoolId: SCHOOL_ID },
+          ]),
+        );
+        tx.subject.findUnique.mockResolvedValue({ name: 'Svenska' });
+        tx.studentGroup.findMany.mockResolvedValue([]);
+        tx.user.findMany.mockImplementation(
+          answerRows([{ id: TEACHER_ID, role: 'TEACHER', firstName: 'Anna', lastName: 'Ek' }]),
+        );
+      };
+      const before = () =>
+        otherLesson({ teacherId: TEACHER_ID, roomId: NORRA_ROOM, startTime: t('09:00'), endTime: t('10:00') });
+
+      it('saves a lesson moved to five minutes after the teacher’s lesson at the other site, and warns', async () => {
+        arrangeUpdate({}, { startTime: t('10:05'), endTime: t('11:05') });
+        arrangeSites();
+        sameDay([before()]);
+
+        const updated = await service.update(LESSON_ID, { startTime: '10:05', endTime: '11:05' }, testUser());
+
+        expect(tx.masterLesson.update).toHaveBeenCalled();
+        expect(updated.warnings).toEqual([
+          {
+            code: 'TRAVEL_TIME_SHORT',
+            params: {
+              party: 'TEACHER',
+              name: 'Anna Ek',
+              from: 'Norra',
+              to: 'Södra',
+              minutes: 15,
+              gap: 5,
+              other: 'Math',
+              time: '09:00–10:00',
+            },
+          },
+        ]);
+      });
+
+      it('says nothing when the gap holds the walk, the pair has no figure, or the edit moves no walk', async () => {
+        arrangeUpdate({}, { startTime: t('10:15'), endTime: t('11:15') });
+        arrangeSites();
+        sameDay([before()]);
+        await expect(
+          service.update(LESSON_ID, { startTime: '10:15', endTime: '11:15' }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+
+        arrangeUpdate({}, { startTime: t('10:05'), endTime: t('11:05') });
+        arrangeSites([]);
+        await expect(
+          service.update(LESSON_ID, { startTime: '10:05', endTime: '11:05' }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+
+        // A lock asks nothing of the walks: the day is not even read for them.
+        arrangeUpdate({ startTime: t('10:05'), endTime: t('11:05') }, { startTime: t('10:05'), endTime: t('11:05'), isLocked: true });
+        arrangeSites();
+        tx.siteTravelTime.findMany.mockClear();
+        await expect(service.update(LESSON_ID, { isLocked: true }, testUser())).resolves.toMatchObject({ warnings: [] });
+        expect(tx.siteTravelTime.findMany).not.toHaveBeenCalled();
+      });
+    });
+
     it('404s on an unknown lesson', async () => {
       tx.masterLesson.findUnique.mockResolvedValue(null);
 

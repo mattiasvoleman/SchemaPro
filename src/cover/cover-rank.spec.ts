@@ -60,6 +60,26 @@ describe('cover ranking', () => {
     expect(points(base({ teachesSubject: true, qualification: 'BEHORIG' })).TEACHES_SUBJECT).toBeUndefined();
   });
 
+  it('a walk between sites the cover leaves too little time for: −20 each, listed first, never a filter', () => {
+    const ranked = rankCandidate(
+      base({
+        qualification: 'BEHORIG',
+        travel: [
+          { from: 'Norra', to: 'Södra', minutes: 15, gap: 5 },
+          { from: 'Södra', to: 'Norra', minutes: 15, gap: 10 },
+        ],
+      }),
+    );
+    expect(ranked.reasons.slice(0, 3)).toEqual([
+      { code: 'TRAVEL_TOO_SHORT', params: { from: 'Norra', to: 'Södra', minutes: 15, gap: 5 }, points: -20 },
+      { code: 'TRAVEL_TOO_SHORT', params: { from: 'Södra', to: 'Norra', minutes: 15, gap: 10 }, points: -20 },
+      { code: 'QUAL_BEHORIG', params: { subject: 'Matematik', grades: '7' }, points: 30 },
+    ]);
+    expect(ranked.score).toBe(rankCandidate(base({ qualification: 'BEHORIG' })).score - 40);
+    // Without a walk, nothing: a school with one site, or none, ranks as before.
+    expect(points(base({ travel: [] })).TRAVEL_TOO_SHORT).toBeUndefined();
+  });
+
   it('presence: on site +6, called in −15', () => {
     expect(points(base()).ON_SITE).toBe(6);
     expect(points(base({ dayLessons: [] })).NOT_ON_SITE).toBe(-15);

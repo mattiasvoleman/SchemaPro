@@ -65,6 +65,15 @@ export class CreateRoomDto {
   @Max(50)
   floor?: number | null;
 
+  /**
+   * The skolområde the room stands on (Sites, 20261124090000); null is
+   * unknown, and no travel is counted to or from the room. A site of another
+   * school is refused by the composite key.
+   */
+  @IsOptional()
+  @IsUUID('all')
+  siteId?: string | null;
+
   @IsOptional()
   @IsBoolean()
   requiresApproval?: boolean;
@@ -125,6 +134,15 @@ export class UpdateRoomDto {
   @Min(-5)
   @Max(50)
   floor?: number | null;
+
+  /**
+   * The skolområde the room stands on (Sites, 20261124090000); null is
+   * unknown, and no travel is counted to or from the room. A site of another
+   * school is refused by the composite key.
+   */
+  @IsOptional()
+  @IsUUID('all')
+  siteId?: string | null;
 
   @IsOptional()
   @IsBoolean()

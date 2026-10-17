@@ -28,6 +28,7 @@ import {
   type QualificationRow,
 } from './cover-context';
 import { lockCoverDay, lockLessons, lockTeachers } from './cover-decisions';
+import { readSiteMap, travelBreaches, type PlacedLesson, type SiteMap } from '../common/site-travel';
 import { compareRanked, poolTier, rankCandidate, type RankReason } from './cover-rank';
 import {
   hardFindings,
@@ -73,6 +74,7 @@ interface LessonInfo {
   extraGroupIds: string[];
   studentIds: string[];
   teacherIds: string[];
+  roomId: string | null;
 }
 
 interface YearInfo {
@@ -103,6 +105,8 @@ interface RankContext {
    * reader, who is told the period in force that week.
    */
   yearTargets: Map<string, number | null> | null;
+  /** The school's sites and the minutes between them (site-travel.ts); empty with no figure. */
+  sites: SiteMap;
 }
 
 /**
@@ -354,6 +358,15 @@ export class CoverSuggestionsService {
       poolPreference: context.poolPreference,
       prefersFree: prefersFree(day, target),
       wishesFreeDay: day.preferredFreeDay === isoWeekday(lesson.date),
+      // The walks the cover leaves too little time for, between the lesson
+      // and the candidate's own before and after it that day (a pick of the
+      // day's proposal among them). A reason, never a filter.
+      travel: travelBreaches(context.sites, placed(target), dayLessons.map(placed)).map((breach) => ({
+        from: context.sites.nameOf.get(breach.walk.fromSite) ?? '',
+        to: context.sites.nameOf.get(breach.walk.toSite) ?? '',
+        minutes: breach.walk.minutes,
+        gap: breach.gap,
+      })),
       names: {
         subject: context.subjectName.get(lesson.subjectId) ?? '',
         group: context.groupName.get(lesson.studentGroupId) ?? '',
@@ -430,6 +443,7 @@ export class CoverSuggestionsService {
     const settings = await tx.coverSettings.findUnique({ where: { schoolId }, select: { poolPreference: true } });
     const counter = await readCounter(tx, date, year, this.cover.now());
     const weekMinutes = await readWeekMinutes(tx, date);
+    const sites = await readSiteMap(tx, schoolId);
     const [subjects, groups] = await Promise.all([
       tx.subject.findMany({ where: { id: { in: subjectIds } }, select: { id: true, name: true } }),
       tx.studentGroup.findMany({ where: { id: { in: groupIds } }, select: { id: true, name: true } }),
@@ -452,6 +466,7 @@ export class CoverSuggestionsService {
       subjectName: new Map((subjects ?? []).map((row) => [row.id, row.name])),
       groupName: new Map([...(groups ?? []), ...(releasedGroups ?? [])].map((row) => [row.id, row.name])),
       yearTargets,
+      sites,
     };
   }
 
@@ -468,6 +483,7 @@ export class CoverSuggestionsService {
           endsAt: true,
           subjectId: true,
           studentGroupId: true,
+          roomId: true,
           teachers: { select: { teacherId: true } },
           extraGroups: { select: { studentGroupId: true } },
           participants: { select: { studentId: true } },
@@ -484,6 +500,7 @@ export class CoverSuggestionsService {
       extraGroupIds: (row.extraGroups ?? []).map((entry) => entry.studentGroupId),
       studentIds: (row.participants ?? []).map((entry) => entry.studentId),
       teacherIds: (row.teachers ?? []).map((entry) => entry.teacherId),
+      roomId: row.roomId ?? null,
     }));
   }
 
@@ -506,12 +523,30 @@ function targetOf(lesson: LessonInfo): CoverTarget {
     start: lesson.startsAt.getTime(),
     end: lesson.endsAt.getTime(),
     teacherIds: lesson.teacherIds,
+    roomId: lesson.roomId,
   };
 }
 
 function pickOf(target: CoverTarget): PersonLesson {
-  return { id: target.id, date: target.date, start: target.start, end: target.end, status: 'SCHEDULED', studentGroupId: '', subjectId: '' };
+  return {
+    id: target.id,
+    date: target.date,
+    start: target.start,
+    end: target.end,
+    status: 'SCHEDULED',
+    studentGroupId: '',
+    subjectId: '',
+    roomId: target.roomId ?? null,
+  };
 }
+
+/** A lesson on the day as the walk between sites reads it: whole minutes (site-travel.ts). */
+const placed = (row: { id: string; start: number; end: number; roomId?: string | null }): PlacedLesson => ({
+  id: row.id,
+  start: Math.round(row.start / 60_000),
+  end: Math.round(row.end / 60_000),
+  roomId: row.roomId ?? null,
+});
 
 function proposalStale(lessonId?: string): ConflictException {
   return new ConflictException({
