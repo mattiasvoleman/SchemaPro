@@ -2,12 +2,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
@@ -347,7 +347,6 @@ export function AttendanceScreen(): React.JSX.Element {
         data={listData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        estimatedItemSize={64}
         contentContainerStyle={{ paddingBottom: 110 }}
       />
 

@@ -1,0 +1,26 @@
+# Expo's machine-local state: device history, dev-server settings, logs.
+.expo/
+
+# Native projects are generated from app.json and app.config.ts (continuous
+# native generation) by `expo prebuild` or `expo run:*`. Committed, they would
+# make EAS Build treat the app as a bare project and stop applying the app
+# config: the build variants, the Swedish texts, the icons.
+/ios/
+/android/
+
+# `eas env:pull` writes file variables here.
+.eas/
+
+# Push and signing credentials. google-services.json reaches EAS Build as the
+# file variable GOOGLE_SERVICES_JSON (docs/DEPLOYMENT.md §12.3), never through
+# the repository: the repository is public. The rest are what `eas
+# credentials` and the stores hand out, and belong in the password manager.
+google-services.json
+GoogleService-Info.plist
+*-firebase-adminsdk-*.json
+credentials.json
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision

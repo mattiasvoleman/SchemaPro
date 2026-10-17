@@ -9,8 +9,8 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchChildren } from '../../services/children';
 import { deciderOf, fetchLeaveRequests, requestLeave } from '../../services/leaveRequests';
 import { useAuth } from '../../context/AuthContext';

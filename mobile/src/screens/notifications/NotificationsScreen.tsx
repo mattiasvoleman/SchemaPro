@@ -7,8 +7,8 @@ import {
   Text,
   TouchableOpacity,
   View,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchNotifications, markAllRead as markOwnRead } from '../../services/notifications';
 import { notificationText } from '../../services/notificationText';
 import { useAuth } from '../../context/AuthContext';
