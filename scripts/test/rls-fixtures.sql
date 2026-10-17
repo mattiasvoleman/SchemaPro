@@ -1244,13 +1244,6 @@ BEGIN
   -- Planering: a skolenhet and a block of parallel teaching.
   INSERT INTO "SchoolUnits" ("schoolId", name, code, "schoolTypes", "gradeFrom", "gradeTo")
   VALUES (m, 'Roller F–9', '41414141', '{FKLASS,GR}', 0, 9);
-  -- Skolområden och restid: two sites, the minutes between them, a room on one.
-  INSERT INTO "Sites" ("schoolId", name) VALUES (m, 'Roller Norra'), (m, 'Roller Södra');
-  INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
-  SELECT m, least(a.id, b.id), greatest(a.id, b.id), 10
-    FROM "Sites" a, "Sites" b
-   WHERE a."schoolId" = m AND b."schoolId" = m AND a.name = 'Roller Norra' AND b.name = 'Roller Södra';
-  UPDATE "Rooms" SET "siteId" = (SELECT id FROM "Sites" WHERE "schoolId" = m AND name = 'Roller Norra') WHERE id = room;
   INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (m, yr, 'Roller block', now());
 
   -- The decisions: rektor's delegation of short leave to the mentors.
@@ -1478,6 +1471,28 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'rls-fixtures: the matrix school''s teacher has no work rule to plan';
   END IF;
+END $$;
+
+-- The matrix school's skolområden (Skolområden och restid, 20261124090000):
+-- two sites, the minutes between them, a room on one. A block of its own,
+-- not inside the matrix school's: in production order that block has
+-- already run on main and returns at once, and the rows below would never
+-- be planted.
+DO $$
+DECLARE
+  m uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Sites" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Sites" ("schoolId", name) VALUES (m, 'Roller Norra'), (m, 'Roller Södra');
+  INSERT INTO "SiteTravelTimes" ("schoolId", "siteAId", "siteBId", minutes)
+  SELECT m, least(a.id, b.id), greatest(a.id, b.id), 10
+    FROM "Sites" a, "Sites" b
+   WHERE a."schoolId" = m AND b."schoolId" = m AND a.name = 'Roller Norra' AND b.name = 'Roller Södra';
+  UPDATE "Rooms" SET "siteId" = (SELECT id FROM "Sites" WHERE "schoolId" = m AND name = 'Roller Norra')
+   WHERE "schoolId" = m AND name = 'Roller 1';
 END $$;
 
 -- The policy tests run as the unprivileged role, which by design cannot see

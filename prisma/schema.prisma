@@ -476,7 +476,7 @@ model Room {
 
   school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   roomType                RoomType?                @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
-  site                    Site?                    @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull)
+  site                    Site?                    @relation(fields: [siteId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
   availabilityConstraints AvailabilityConstraint[]
@@ -531,8 +531,8 @@ model SiteTravelTime {
   updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  siteA  Site   @relation("SiteTravelA", fields: [siteAId, schoolId], references: [id, schoolId], onDelete: Cascade)
-  siteB  Site   @relation("SiteTravelB", fields: [siteBId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  siteA  Site   @relation("SiteTravelA", fields: [siteAId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  siteB  Site   @relation("SiteTravelB", fields: [siteBId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([siteAId, siteBId])
   @@index([schoolId])
