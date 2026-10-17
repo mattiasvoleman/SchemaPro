@@ -558,10 +558,15 @@ decision is not shared.**
   and holds them to its end; in opposite orders each would hold a version the
   other waits for. So before its first write the save takes the school's
   people lock shared (`app.attendance_recording_waits_for_sync`, the lock
-  `readLocalSlice` takes exclusively and a guardian's calendar feed shared):
-  during an apply it waits, at most as long as the apply, and an apply waits
-  for a save in progress. At a school that does not share, it waits for
-  nothing.
+  `readLocalSlice` takes exclusively and a guardian's calendar feed shared),
+  and an apply waits for a save in progress. A save waits at most 5 s: an
+  apply still running then, it answers 409 `ATTENDANCE_SYNC_IN_PROGRESS`
+  having written nothing, and the phone's queue sends it again (the web
+  register says to try again). At a school that does not share it waits for
+  no apply. Whether the school shares is read once per save, so a decision
+  waits for the saves already writing (`'AttendanceSharing:<school>'`,
+  shared by every save, exclusive for a decision): no save that read "not
+  shared" writes on after a decision to share.
 * **A granted leave and a span.** Only the leave decision marks a day as
   `Beviljad ledighet` (a guardian or a pupil who tries is refused); and a
   reported span ends after it starts (a report from before 20261114090000
@@ -1054,7 +1059,7 @@ with the scope (not to one without it), but not of a row created and
 removed within the stop, nor what was reported meanwhile for a pupil who
 leaves, while a row versioned as the stop was decided still is; and
 nothing is versioned (159). The
-adapter probe's (nv-a)–(nv-l) run the same through the real services,
+adapter probe's (nv-a)–(nv-m) run the same through the real services,
 including that a school that never shared records nothing, the school's
 timezone, a gallring night, a subscription that stops hearing when the
 school stops sharing, an unfiltered /deletedEntities that still tells a
@@ -1063,7 +1068,9 @@ was reported and went within it, an integration
 that misses a stop and a start between two reads and is still told
 everything (nv-j), a start decided while a notice is in flight (nv-k), and
 a register save corrected while an apply links its pupils in the opposite
-order, which waits for the apply instead of either being aborted (nv-l).
+order, which waits for the apply instead of either being aborted (nv-l),
+and that wait ending after about 5 s with 409 and nothing written, and a
+decision waiting for a save that began before it (nv-m).
 
 The six migrations after `20261114090000` exist for production's sake: it
 migrates while the previous API serves requests, and the reviewed single
