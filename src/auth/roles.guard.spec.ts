@@ -146,7 +146,7 @@ describe('RolesGuard', () => {
 
   describe("an administrator's areas (Roller i skolan)", () => {
     it('lets every profile read a route whose area it does not write', () => {
-      for (const profile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION'] as const) {
+      for (const profile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const) {
         for (const method of ['GET', 'HEAD', 'OPTIONS']) {
           expect(guard.canActivate(routeTo(PeopleController, 'edit', admin(profile), method))).toBe(true);
         }
@@ -158,8 +158,30 @@ describe('RolesGuard', () => {
       for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
         const body = refusal(() => guard.canActivate(routeTo(PeopleController, 'edit', admin('SCHEMALAGGARE'), method)));
         expect(body).toMatchObject({ code: AREA_NOT_YOURS, area: 'PERSONAL' });
-        expect(body.message).toBe('Schemaläggare ändrar inte personal. Be rektor eller en administratör som har det området.');
+        expect(body.message).toBe(
+          'Schemaläggare ändrar inte personal. Personal ändras av rektor, en fullständig administratör eller expeditionen.',
+        );
       }
+    });
+
+    it('refuses a läsare every write by name, saying it changes nothing and who does (Läsbehörighet)', () => {
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+        expect(refusal(() => guard.canActivate(routeTo(PeopleController, 'edit', admin('LASARE', true), method)))).toEqual({
+          message:
+            'Läsare ändrar inte personal: profilen läser men ändrar ingenting. Personal ändras av rektor, en fullständig administratör eller expeditionen.',
+          code: AREA_NOT_YOURS,
+          area: 'PERSONAL',
+        });
+      }
+      expect(refusal(() => guard.canActivate(routeTo(PeopleController, 'publish', admin('LASARE'))))).toMatchObject({
+        code: AREA_NOT_YOURS,
+      });
+      expect(refusal(() => guard.canActivate(routeTo(PeopleController, 'changeRole', admin('LASARE', true))))).toMatchObject({
+        code: DECISION_NOT_YOURS,
+        message: 'Läsare fattar inte det här beslutet. Det gör rektor eller en fullständig administratör.',
+      });
+      // Its own notice choices are its own, as for every administrator.
+      expect(guard.canActivate(routeTo(PeopleController, 'ownNotices', admin('LASARE')))).toBe(true);
     });
 
     it("lets a handler's areas replace the class's, and asks for every one of them", () => {
@@ -175,7 +197,7 @@ describe('RolesGuard', () => {
     it('leaves a decision to rektor and a full administrator, HR-läs or not', () => {
       expect(guard.canActivate(routeTo(PeopleController, 'changeRole', admin('FULL')))).toBe(true);
       expect(guard.canActivate(routeTo(PeopleController, 'changeRole', admin('REKTOR')))).toBe(true);
-      for (const profile of ['SCHEMALAGGARE', 'EXPEDITION'] as const) {
+      for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const) {
         expect(
           refusal(() => guard.canActivate(routeTo(PeopleController, 'changeRole', admin(profile, true)))),
         ).toMatchObject({ code: DECISION_NOT_YOURS });

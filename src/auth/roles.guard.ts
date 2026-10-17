@@ -11,6 +11,7 @@ import {
   PROFILE_LABELS,
   profileDecides,
   profileWrites,
+  writersOf,
 } from './admin-areas';
 import { AREA_KEY, type AreaRequirement } from './decorators/area.decorator';
 import { ROLES_KEY } from './decorators/roles.decorator';
@@ -97,8 +98,13 @@ export function assertAdministratorMay(user: AuthenticatedUser, requirement: Are
   }
   const missing = requirement.areas.find((area) => !profileWrites(profile, area));
   if (missing) {
+    // Named for the reader: what the profile does not change, and who does.
+    // A läsare changes nothing, which the sentence says, so it does not read
+    // as a gap in one area.
+    const area = AREA_LABELS[missing];
+    const why = profile === 'LASARE' ? ': profilen läser men ändrar ingenting' : '';
     throw new ForbiddenException({
-      message: `${named} ändrar inte ${AREA_LABELS[missing].toLowerCase()}. Be rektor eller en administratör som har det området.`,
+      message: `${named} ändrar inte ${area.toLowerCase()}${why}. ${area} ändras av ${writersOf(missing)}.`,
       code: AREA_NOT_YOURS,
       area: missing,
     });

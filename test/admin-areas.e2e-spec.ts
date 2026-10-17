@@ -36,7 +36,9 @@ describe('Administrator profiles and areas (e2e)', () => {
       .expect(403);
 
     expect(response.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
-    expect(response.body.detail).toBe('Schemaläggare ändrar inte personal. Be rektor eller en administratör som har det området.');
+    expect(response.body.detail).toBe(
+      'Schemaläggare ändrar inte personal. Personal ändras av rektor, en fullständig administratör eller expeditionen.',
+    );
     expect(harness.tx['user']!['create']).not.toHaveBeenCalled();
   });
 
@@ -59,9 +61,39 @@ describe('Administrator profiles and areas (e2e)', () => {
   });
 
   it('lets every profile read what it does not write', async () => {
-    for (const profile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION']) {
+    for (const profile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE']) {
       await request(http()).get('/api/v1/room-types').set('x-test-user', as(profile)).expect(200);
     }
+  });
+
+  it('refuses the läsare every write by name, saying it changes nothing and who does (Läsbehörighet)', async () => {
+    const room = await request(http()).post('/api/v1/rooms').set('x-test-user', as('LASARE', true)).send({ name: 'Sal 1' }).expect(403);
+    expect(room.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+    expect(room.body.detail).toBe(
+      'Läsare ändrar inte planering: profilen läser men ändrar ingenting. Planering ändras av rektor, en fullständig administratör eller en schemaläggare.',
+    );
+    const person = await request(http())
+      .post('/api/v1/users')
+      .set('x-test-user', as('LASARE'))
+      .send({ role: 'TEACHER', firstName: 'Ny', lastName: 'Lärare', email: 'ny@skola.se' })
+      .expect(403);
+    expect(person.body.detail).toMatch(/^Läsare ändrar inte personal/);
+    expect(harness.tx['room']!['create']).not.toHaveBeenCalled();
+    expect(harness.tx['user']!['create']).not.toHaveBeenCalled();
+  });
+
+  it("lets the läsare reach the activation preview, a read by POST that /admin/years shows (Läsbehörighet)", async () => {
+    // Past the guard to the handler, which finds no year here: 404, not 403.
+    await request(http())
+      .post(`/api/v1/academic-years/${YEAR_ID}/activation/preview`)
+      .set('x-test-user', as('LASARE'))
+      .expect(404);
+    // The activation itself stays planering's.
+    await request(http())
+      .post(`/api/v1/academic-years/${YEAR_ID}/activation`)
+      .set('x-test-user', as('LASARE'))
+      .send({ planHash: 'x'.repeat(64) })
+      .expect(403);
   });
 
   it("refuses the expedition the planner's rooms and the planner the expedition's guardian links", async () => {
