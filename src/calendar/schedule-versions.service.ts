@@ -8,7 +8,8 @@ import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { enterGrundschemaWrite } from '../publication/publish-mode';
+import { enterGrundschemaWrite, isLockTimeout } from '../publication/publish-mode';
+import { lockYearForRegeneration, scheduleBusy, SCHEDULE_BUSY } from '../optimization/regeneration-lock';
 
 /**
  * One lesson inside a version snapshot (times as `HH:MM`, dates as
@@ -197,92 +198,116 @@ export class ScheduleVersionsService {
         throw new NotFoundException('Schedule version not found.');
       }
 
-      // Safety net: snapshot the current timetable before replacing it.
-      const safety = await this.snapshotInTransaction(
-        tx,
-        version.academicYearId,
-        `Before restore of "${version.name}"`,
-        user,
-      );
-
-      const lessons = version.lessons as unknown as VersionLesson[];
-      if (!Array.isArray(lessons)) {
-        throw new BadRequestException('Version snapshot is malformed.');
+      // The year's regeneration lock, second, as Generera's persist and a
+      // schemaförslag apply take it (optimization/regeneration-lock.ts). A
+      // restore replaces the whole year: run beside an apply, its delete
+      // skipped the rows the apply was inserting and then recreated the
+      // version on top of them, and both commits stood. Queued for 5 s, then
+      // 409 SCHEDULE_BUSY with nothing written. The version is read first only
+      // because it is what names the year; versions are never edited.
+      await lockYearForRegeneration(tx, version.academicYearId, SCHEDULE_BUSY);
+      try {
+        return await this.replaceWithVersion(tx, version, user);
+      } catch (error) {
+        // The 5 s holds for the rest of the transaction; a row a hand edit
+        // holds past it is the same answer.
+        if (isLockTimeout(error)) throw scheduleBusy(SCHEDULE_BUSY);
+        throw error;
       }
+    });
+  }
 
-      // Every time is parsed before the wipe. A throw would roll the
-      // transaction back either way; what parsing first buys is that a damaged
-      // snapshot is refused while nothing has been deleted yet, instead of
-      // somewhere in the middle of the inserts — where the old parser's
-      // Invalid Date met Prisma's own validation and came back as the filter's
-      // anonymous 400, and a missing key as a TypeError and a 500.
-      const rows = lessons.map((lesson) => ({
-        ...lesson,
-        startTime: parseHHMM(lesson.startTime),
-        endTime: parseHHMM(lesson.endTime),
-      }));
+  /** The body of restore(), under its locks. */
+  private async replaceWithVersion(
+    tx: PrismaClient,
+    version: { id: string; schoolId: string; academicYearId: string; name: string; lessons: Prisma.JsonValue },
+    user: AuthenticatedUser,
+  ): Promise<{ restoredLessons: number; safetyVersionId: string }> {
+    // Safety net: snapshot the current timetable before replacing it.
+    const safety = await this.snapshotInTransaction(
+      tx,
+      version.academicYearId,
+      `Before restore of "${version.name}"`,
+      user,
+    );
 
-      await tx.masterLesson.deleteMany({
-        where: { academicYearId: version.academicYearId },
-      });
-      for (const lesson of rows) {
-        await tx.masterLesson.create({
-          data: {
-            schoolId: version.schoolId,
-            academicYearId: version.academicYearId,
-            subjectId: lesson.subjectId,
-            studentGroupId: lesson.studentGroupId,
-            teacherId: lesson.teacherId,
-            coTeacherId: lesson.coTeacherId ?? null,
-            roomId: lesson.roomId,
-            dayOfWeek: lesson.dayOfWeek,
-            startTime: lesson.startTime,
-            endTime: lesson.endTime,
-            isLocked: lesson.isLocked,
-            // See VersionLesson.isGenerated for why an absent key is false.
-            isGenerated: lesson.isGenerated ?? false,
-            // See VersionLesson.isParked for why an absent key is false.
-            isParked: lesson.isParked ?? false,
-            recurrence: lesson.recurrence ?? 'ALL_WEEKS',
-            startDate: parseDateOrNull(lesson.startDate),
-            endDate: parseDateOrNull(lesson.endDate),
-            extraGroups: {
-              create: (lesson.extraGroupIds ?? []).map((studentGroupId) => ({
-                schoolId: version.schoolId,
-                studentGroupId,
-              })),
-            },
-            participants: {
-              create: (lesson.studentIds ?? []).map((studentId) => ({
-                schoolId: version.schoolId,
-                studentId,
-              })),
-            },
-          },
-        });
-      }
+    const lessons = version.lessons as unknown as VersionLesson[];
+    if (!Array.isArray(lessons)) {
+      throw new BadRequestException('Version snapshot is malformed.');
+    }
 
-      await tx.scheduleChangeLog.create({
+    // Every time is parsed before the wipe. A throw would roll the
+    // transaction back either way; what parsing first buys is that a damaged
+    // snapshot is refused while nothing has been deleted yet, instead of
+    // somewhere in the middle of the inserts — where the old parser's
+    // Invalid Date met Prisma's own validation and came back as the filter's
+    // anonymous 400, and a missing key as a TypeError and a 500.
+    const rows = lessons.map((lesson) => ({
+      ...lesson,
+      startTime: parseHHMM(lesson.startTime),
+      endTime: parseHHMM(lesson.endTime),
+    }));
+
+    await tx.masterLesson.deleteMany({
+      where: { academicYearId: version.academicYearId },
+    });
+    for (const lesson of rows) {
+      await tx.masterLesson.create({
         data: {
           schoolId: version.schoolId,
           academicYearId: version.academicYearId,
-          actorId: user.userId ?? null,
-          action: 'RESTORE',
-          after: {
-            versionId: version.id,
-            versionName: version.name,
-            restoredLessons: lessons.length,
-            safetyVersionId: safety.id,
+          subjectId: lesson.subjectId,
+          studentGroupId: lesson.studentGroupId,
+          teacherId: lesson.teacherId,
+          coTeacherId: lesson.coTeacherId ?? null,
+          roomId: lesson.roomId,
+          dayOfWeek: lesson.dayOfWeek,
+          startTime: lesson.startTime,
+          endTime: lesson.endTime,
+          isLocked: lesson.isLocked,
+          // See VersionLesson.isGenerated for why an absent key is false.
+          isGenerated: lesson.isGenerated ?? false,
+          // See VersionLesson.isParked for why an absent key is false.
+          isParked: lesson.isParked ?? false,
+          recurrence: lesson.recurrence ?? 'ALL_WEEKS',
+          startDate: parseDateOrNull(lesson.startDate),
+          endDate: parseDateOrNull(lesson.endDate),
+          extraGroups: {
+            create: (lesson.extraGroupIds ?? []).map((studentGroupId) => ({
+              schoolId: version.schoolId,
+              studentGroupId,
+            })),
+          },
+          participants: {
+            create: (lesson.studentIds ?? []).map((studentId) => ({
+              schoolId: version.schoolId,
+              studentId,
+            })),
           },
         },
       });
+    }
 
-      this.logger.log(
-        `Schedule version restored [version=${versionId}, lessons=${lessons.length}]`,
-      );
-
-      return { restoredLessons: lessons.length, safetyVersionId: safety.id };
+    await tx.scheduleChangeLog.create({
+      data: {
+        schoolId: version.schoolId,
+        academicYearId: version.academicYearId,
+        actorId: user.userId ?? null,
+        action: 'RESTORE',
+        after: {
+          versionId: version.id,
+          versionName: version.name,
+          restoredLessons: lessons.length,
+          safetyVersionId: safety.id,
+        },
+      },
     });
+
+    this.logger.log(
+      `Schedule version restored [version=${version.id}, lessons=${lessons.length}]`,
+    );
+
+    return { restoredLessons: lessons.length, safetyVersionId: safety.id };
   }
 
   async remove(versionId: string, user: AuthenticatedUser): Promise<{ id: string }> {

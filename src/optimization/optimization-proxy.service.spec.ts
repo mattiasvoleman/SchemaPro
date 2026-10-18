@@ -4,7 +4,7 @@ import type { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
 import { of, throwError, timer } from 'rxjs';
 import { mergeMap } from 'rxjs/operators';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -21,12 +21,20 @@ import type {
   DayOfWeek,
 } from './interfaces/ai-engine-payload.interface';
 import {
+  calendarSweepWhere,
+  coverageLessonsOf,
   OptimizationProxyService,
+  previousLessonsFrom,
+  unplacedOf,
   type AnonMaps,
+  type CandidateApplyInput,
+  type CandidateLesson,
+  type PreparedSchedule,
 } from './optimization-proxy.service';
 import * as eligibility from './room-eligibility';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
 import { recordedReads } from '../../test/utils/recorded-reads';
+import * as candidateBasis from './candidate-basis';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
 /** One requirement, as the database holds it and as the engine sees it. */
@@ -51,6 +59,31 @@ const makeConfigService = () =>
 type Row = Record<string, unknown>;
 type Selection = Record<string, unknown> | undefined;
 type Query = { where?: Row; select?: Selection };
+
+/** 55P03 as @prisma/adapter-pg hands a lock_timeout over. */
+const lockTimeout = () =>
+  new Prisma.PrismaClientKnownRequestError('canceling statement due to lock timeout', {
+    code: 'P2010',
+    clientVersion: '7',
+    meta: { driverAdapterError: { cause: { originalCode: '55P03' } } },
+  });
+
+/** The SQL text of a tagged-template $executeRaw call, its values as `?`. */
+const rawSql = (call: unknown[]): string => (call[0] as readonly string[]).join('?');
+
+/** The body an HttpException answers with. */
+const bodyOf = (error: unknown): Record<string, unknown> =>
+  (error as HttpException).getResponse() as Record<string, unknown>;
+
+/** The preserve rule, as every where-clause that names it spells it. */
+const PRESERVED = {
+  OR: [
+    { isGenerated: false },
+    { isLocked: true },
+    { extraGroups: { some: {} } },
+    { participants: { some: {} } },
+  ],
+};
 
 /*
  * Tables that answer as Prisma does. A select returns the fields it names and
@@ -182,6 +215,12 @@ describe('OptimizationProxyService', () => {
       /** Sittings carrying REAL group ids, as realiseLunches hands them over. */
       lunches = [] as AiEngineLunch[],
       headcountByGroup = new Map<string, number>(),
+      /**
+       * The draft's own masters as the fetch saw them. The default is what an
+       * unstubbed findMany answers under the lock, an empty draft, so the
+       * GENERATE_STALE check passes unless a test says otherwise.
+       */
+      draftIds = [] as string[],
     } = {},
   ) =>
     (
@@ -196,7 +235,8 @@ describe('OptimizationProxyService', () => {
           roomAnonMap: Map<string, string>,
           lunches: AiEngineLunch[],
           headcountByGroup: Map<string, number>,
-        ) => Promise<void>;
+          draftIds: string[],
+        ) => Promise<unknown>;
       }
     ).persistMasterLessons(
       tx as unknown as PrismaClient,
@@ -208,6 +248,16 @@ describe('OptimizationProxyService', () => {
       new Map(),
       lunches,
       headcountByGroup,
+      draftIds,
+    );
+
+  /**
+   * The master lessons a write created, in order: one createMany for the lot
+   * (no create carries a nested write), so the rows are its data.
+   */
+  const written = (): Record<string, any>[] =>
+    (tx.masterLesson.createMany.mock.calls as [{ data: Record<string, any>[] }][]).flatMap(
+      ([call]) => call.data,
     );
 
   /** A placement of `ANON_REQ`, as the engine words it. */
@@ -290,7 +340,10 @@ describe('OptimizationProxyService', () => {
         order.push('delete');
         return { count: 0 };
       });
-      tx.masterLesson.findMany.mockImplementation(async () => {
+      tx.masterLesson.findMany.mockImplementation(async ({ where }: { where?: Record<string, unknown> } = {}) => {
+        // The draft's own lessons, read again under the year lock
+        // (GENERATE_STALE): the empty draft the fetch saw.
+        if (where?.['NOT']) return [];
         order.push('read');
         return [
           { teacherId: 'hand-1', coTeacherId: null, dayOfWeek: 5, isParked: false },
@@ -299,9 +352,9 @@ describe('OptimizationProxyService', () => {
           { teacherId: 'parked-1', coTeacherId: null, dayOfWeek: 4, isParked: true },
         ];
       });
-      tx.masterLesson.create.mockImplementation(async () => {
+      tx.masterLesson.createMany.mockImplementation(async () => {
         order.push('create');
-        return {};
+        return { count: 1 };
       });
       tx.teachingRequirement.findMany.mockResolvedValue([
         { id: REAL_REQ, subjectId: 'subject-1', studentGroupId: 'group-1', teacherId: 'lead-1', coTeacherId: null },
@@ -356,7 +409,7 @@ describe('OptimizationProxyService', () => {
     const expectNothingTouched = () => {
       expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
       expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
-      expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
       expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
     };
 
@@ -449,10 +502,10 @@ describe('OptimizationProxyService', () => {
       );
 
       expect(tx.masterLesson.deleteMany).toHaveBeenCalledTimes(1);
-      expect(tx.masterLesson.create).toHaveBeenCalledTimes(2);
+      expect(written()).toHaveLength(2);
       // Built before the delete, written after it — and every create must land
       // after the delete, or the new lessons would be deleted with the old.
-      expect(tx.masterLesson.create.mock.invocationCallOrder[0]).toBeGreaterThan(
+      expect(tx.masterLesson.createMany.mock.invocationCallOrder[0]).toBeGreaterThan(
         tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!,
       );
     });
@@ -463,7 +516,7 @@ describe('OptimizationProxyService', () => {
       await persist({ status: 'FEASIBLE', lessons: [] });
 
       expect(tx.masterLesson.deleteMany).toHaveBeenCalledTimes(1);
-      expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
     });
   });
 
@@ -927,6 +980,104 @@ describe('OptimizationProxyService', () => {
     });
   });
 
+  /*
+   * One wholesale rewrite of a year at a time (regeneration-lock.ts), and no
+   * answer written over a draft that changed while the solver ran. Both sit
+   * after the INFEASIBLE/TIMEOUT return, so a run with nothing to write waits
+   * for nobody, and before the first delete.
+   */
+  describe('persistMasterLessons — the year lock and a draft that moved', () => {
+    beforeEach(() => {
+      tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.masterLesson.count.mockResolvedValue(0);
+    });
+
+    it('takes the year lock after the publication lock and before the first delete', async () => {
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      expect(tx.$executeRaw.mock.calls.map(rawSql)).toEqual([
+        "SET LOCAL lock_timeout = '5s'",
+        "SELECT pg_advisory_xact_lock(hashtext('grundschema-regenerate'), hashtext(?::uuid::text))",
+      ]);
+      expect(tx.$executeRaw.mock.calls[1]!.slice(1)).toEqual([ACADEMIC_YEAR]);
+      const lockedAt = tx.$executeRaw.mock.invocationCallOrder[1]!;
+      // enterGrundschemaWrite is the $queryRaw: publication first, the year second.
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(lockedAt);
+      expect(lockedAt).toBeLessThan(tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!);
+    });
+
+    it.each(['INFEASIBLE', 'TIMEOUT'])('waits for nobody when the solver returned %s', async (status) => {
+      await persist({ status: status as AiEngineScheduleResponse['status'] });
+
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 SCHEDULE_BUSY when another rewrite holds the year past 5 s, and touches nothing', async () => {
+      tx.$executeRaw = jest.fn().mockResolvedValueOnce(0).mockRejectedValueOnce(lockTimeout());
+
+      const error = await persist({ status: 'FEASIBLE', lessons: [] }).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(409);
+      expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_BUSY' });
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+    });
+
+    it('answers a row a hand edit holds past the same 5 s the same way', async () => {
+      tx.masterLesson.deleteMany.mockRejectedValue(lockTimeout());
+
+      const error = await persist({ status: 'FEASIBLE', lessons: [] }).catch((thrown: unknown) => thrown);
+
+      expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_BUSY' });
+    });
+
+    it('reads the draft again under the lock, by the rule the delete uses', async () => {
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith({
+        where: { academicYearId: ACADEMIC_YEAR, NOT: PRESERVED },
+        select: { id: true },
+      });
+      expect(tx.masterLesson.findMany.mock.invocationCallOrder[0]!).toBeGreaterThan(
+        tx.$executeRaw.mock.invocationCallOrder[1]!,
+      );
+    });
+
+    it('refuses 409 GENERATE_STALE when the draft lost or gained a lesson of its own while the solver ran', async () => {
+      // A lesson unlocked by hand during the solve: one more machine-owned
+      // lesson than the fetch saw, which this write would delete unseen.
+      tx.masterLesson.findMany.mockResolvedValue([{ id: 'b' }, { id: 'c' }, { id: 'a' }]);
+
+      const error = await persist({ status: 'FEASIBLE', lessons: [] }, { draftIds: ['a', 'b'] }).catch(
+        (thrown: unknown) => thrown,
+      );
+
+      expect((error as HttpException).getStatus()).toBe(409);
+      expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE', message: expect.any(String) });
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+    });
+
+    it('writes when the draft is the one the fetch saw, whatever order its rows come in', async () => {
+      tx.masterLesson.findMany.mockResolvedValue([{ id: 'b' }, { id: 'a' }]);
+
+      await persist({ status: 'FEASIBLE', lessons: [] }, { draftIds: ['a', 'b'] });
+
+      expect(tx.masterLesson.deleteMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the 502 a mismatched answer has always had, under the lock', async () => {
+      await expect(
+        persist({ status: 'FEASIBLE', lessons: [placement(), placement()] }, oneRequirement(3)),
+      ).rejects.toMatchObject({ status: 502 });
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('callAiEngine — failure mapping', () => {
     /**
      * Maps a refusal can name something through; empty unless a test fills one.
@@ -1285,6 +1436,78 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    /** A call with options, as a schemaförslag run makes it. */
+    const callWith = (payload: object, options?: { timeoutMs?: number }) =>
+      (
+        service as unknown as {
+          callAiEngine: (path: string, p: unknown, m: unknown, o?: unknown) => Promise<unknown>;
+        }
+      ).callAiEngine('/v1/schedule', payload, maps(), options);
+
+    it('waits as long as the call says, past the configured timeout, and tells axios so too', async () => {
+      // The configured timeout is 50 ms; this answer takes 120.
+      http.post.mockReturnValue(timer(120).pipe(mergeMap(() => of({ data: { status: 'OPTIMAL', lessons: [] } }))));
+
+      await expect(callWith({}, { timeoutMs: 2000 })).resolves.toEqual({ status: 'OPTIMAL', lessons: [] });
+      // The module's axios timeout would cut the call off at the default
+      // first; the call's own replaces it for this request only.
+      expect(http.post.mock.calls[0][2]).toMatchObject({ timeout: 2000 });
+    });
+
+    it('gives up at the call’s own deadline', async () => {
+      http.post.mockReturnValue(timer(500).pipe(mergeMap(() => of({ data: {} }))));
+
+      await expect(callWith({}, { timeoutMs: 20 })).rejects.toThrow('did not respond in time');
+    });
+
+    it('sets no timeout of its own when the call names none: Generera waits as it always has', async () => {
+      http.post.mockReturnValue(of({ data: { status: 'OPTIMAL', lessons: [] } }));
+
+      await callWith({});
+
+      expect(Object.keys(http.post.mock.calls[0][2] as object)).toEqual(['headers']);
+    });
+
+    /** The engine's refusal of a field its models do not know. */
+    const extraForbidden = (loc: string[]) => {
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 422,
+        data: {
+          code: 'VALIDATION_ERROR',
+          message: 'Request payload failed schema validation.',
+          details: { errors: [{ type: 'extra_forbidden', loc, msg: 'Extra inputs are not permitted' }] },
+        },
+      } as never;
+      return refused;
+    };
+
+    it('says an engine older than `search` is one, when the request carried it', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'search'])));
+
+      const error = await callWith({ search: { seed: 1 } }).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(503);
+      expect(bodyOf(error)).toEqual({ message: expect.any(String), code: 'ENGINE_LACKS_CANDIDATES' });
+    });
+
+    it('leaves the same refusal of a request without `search` the validation error it is', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'search'])));
+
+      const error = await callWith({}).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(422);
+      expect(bodyOf(error)).not.toHaveProperty('code', 'ENGINE_LACKS_CANDIDATES');
+    });
+
+    it('reads only `search` itself as missing: a field refused inside it is this gateway’s mistake', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'search', 'beam'])));
+
+      const error = await callWith({ search: { seed: 1 } }).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(422);
+    });
+
     it('never leaks the API key in the thrown error', async () => {
       http.post.mockReturnValue(throwError(() => new Error('kkkk')));
 
@@ -1413,6 +1636,8 @@ describe('OptimizationProxyService', () => {
       workRules?: unknown[];
       /** The year's posts (TeacherEmployments), as stored: { id, userId, maxTeachingDaysPerWeek }. */
       posts?: unknown[];
+      /** The draft's own (non-preserved) masters, as the draft read selects them. */
+      draftLessons?: unknown[];
     };
 
     const arrange = (overrides: Arrangement = {}) => {
@@ -1451,15 +1676,18 @@ describe('OptimizationProxyService', () => {
       );
       const locked = (overrides.lockedLessons ?? []) as Row[];
       const unlocked = (overrides.unlockedLessons ?? []) as Row[];
+      const draft = (overrides.draftLessons ?? []) as Row[];
       // Nobody edits the timetable during the solve unless a test says so.
       const kept = (overrides.keptAfterSolve ?? locked) as Row[];
       // fetchAndAnonymize queries masterLesson twice: the locked/manual set
       // (where.OR, unparked) and the previous unlocked placements
-      // (where.isLocked=false). persistMasterLessons reads the kept set once
-      // more, after its delete (where.OR, parked or not).
+      // (where.isLocked=false). The prepare step and the persist read the
+      // draft's own lessons (where.NOT the preserved rule) once each: in the
+      // fetch, and again under the lock. The shared write reads the kept set
+      // once more, after its delete (where.OR, parked or not).
       tx.masterLesson.findMany.mockImplementation(async ({ where, select }: Query = {}) => {
         assertSelects(select);
-        const rows = where?.['isLocked'] === false ? unlocked : where?.['isParked'] === false ? locked : kept;
+        const rows = where?.['NOT'] ? draft : where?.['isLocked'] === false ? unlocked : where?.['isParked'] === false ? locked : kept;
         return rows.map((row) => selected(row, select));
       });
       tx.room.findMany.mockImplementation(
@@ -1497,7 +1725,8 @@ describe('OptimizationProxyService', () => {
       });
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 4 });
-      tx.masterLesson.create.mockResolvedValue({});
+      tx.masterLesson.count.mockResolvedValue(1);
+      tx.masterLesson.createMany.mockResolvedValue({ count: 0 });
       tx.scheduleChangeLog.create.mockResolvedValue({});
     };
 
@@ -2167,9 +2396,7 @@ describe('OptimizationProxyService', () => {
 
         await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-        const written = (tx.masterLesson.create.mock.calls as [{ data: { startTime: Date; endTime: Date } }][])
-          .map(([call]) => call.data);
-        const minutes = written
+        const minutes = written()
           .map((row) => (row.endTime.getTime() - row.startTime.getTime()) / 60000)
           .sort((a, b) => b - a);
         expect(minutes).toEqual([80, 40]);
@@ -2182,7 +2409,7 @@ describe('OptimizationProxyService', () => {
 
         await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({ status: 502 });
         expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
-        expect(tx.masterLesson.create).not.toHaveBeenCalled();
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
       });
 
       it('still checks a uniform requirement by count alone, as it always did', async () => {
@@ -2322,25 +2549,24 @@ describe('OptimizationProxyService', () => {
       );
 
       // Three lessons a week were asked for, so three come back and three are
-      // written — the whole solution, not a sample of it.
-      expect(tx.masterLesson.create).toHaveBeenCalledTimes(3);
-      expect(tx.masterLesson.create).toHaveBeenCalledWith({
-        data: {
-          schoolId: 'school-A',
-          academicYearId: ACADEMIC_YEAR,
-          subjectId: SUBJECT_ID,
-          studentGroupId: GROUP_ID,
-          teacherId: TEACHER_ID,
-          coTeacherId: null,
-          roomId: ROOM_ID,
-          dayOfWeek: 1,
-          startTime: new Date('1970-01-01T08:00:00.000Z'),
-          endTime: new Date('1970-01-01T09:15:00.000Z'),
-          recurrence: 'ALL_WEEKS',
-          startDate: null,
-          endDate: null,
-          isGenerated: true,
-        },
+      // written — the whole solution, not a sample of it — in ONE statement.
+      expect(tx.masterLesson.createMany).toHaveBeenCalledTimes(1);
+      expect(written()).toHaveLength(3);
+      expect(written()).toContainEqual({
+        schoolId: 'school-A',
+        academicYearId: ACADEMIC_YEAR,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: TEACHER_ID,
+        coTeacherId: null,
+        roomId: ROOM_ID,
+        dayOfWeek: 1,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:15:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isGenerated: true,
       });
     });
 
@@ -2365,8 +2591,8 @@ describe('OptimizationProxyService', () => {
       // it ran all year — so the period can only be stamped on here, from the
       // requirement. Without it "slöjd udda veckor" comes back weekly and
       // all-year, and the timplan is quietly rewritten by a regeneration.
-      expect(tx.masterLesson.create).toHaveBeenCalledTimes(1);
-      expect(tx.masterLesson.create.mock.calls[0]![0].data).toMatchObject({
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({
         recurrence: 'ODD_WEEKS',
         startDate: springStart,
         endDate: springEnd,
@@ -2404,7 +2630,7 @@ describe('OptimizationProxyService', () => {
       ).rejects.toMatchObject({ status: 502 });
 
       expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
-      expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
       expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
     });
 
@@ -4355,7 +4581,7 @@ describe('OptimizationProxyService', () => {
       // One person, one token: the engine keeps a co-teacher out of two rooms at once.
       expect(payload.requirements[0].coTeacherId).toEqual(expect.any(String));
       expect(payload.fixedLessons[0].coTeacherId).toBe(payload.requirements[0].coTeacherId);
-      expect(tx.masterLesson.create.mock.calls[0]![0].data.coTeacherId).toBe(CO_TEACHER);
+      expect(written()[0]!.coTeacherId).toBe(CO_TEACHER);
     });
 
     describe('groups whose year cannot be derived', () => {
@@ -4671,6 +4897,636 @@ describe('OptimizationProxyService', () => {
           .groups.map((g: any) => g.lunchHeadcount)
           .sort(),
       ).toEqual([1, 2]);
+    });
+
+    /*
+     * The steps a schemaförslag run and its apply share with Generera
+     * (design §3–§5): one fetch, solved several times, written later.
+     */
+    describe('the shared steps of a schemaförslag', () => {
+      const ROOM_2 = '55555555-bbbb-4bbb-8bbb-555555555555';
+      const REQ_2 = '11111111-cccc-4ccc-8ccc-111111111111';
+      const SUBJECT_2 = '22222222-cccc-4ccc-8ccc-222222222222';
+
+      const prepare = (options?: { coverage?: boolean }) =>
+        service.prepareSchedule(tx as unknown as PrismaClient, ACADEMIC_YEAR, testUser(), options);
+      const ready = async (options?: { coverage?: boolean }): Promise<PreparedSchedule> => {
+        const result = await prepare(options);
+        if (!result.ready) throw new Error(`refused: ${result.refusalCode}`);
+        return result;
+      };
+
+      /** One of the draft's own lessons, as the draft read selects it. */
+      const draftRow = (overrides: Record<string, unknown> = {}) => ({
+        id: 'draft-1',
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: TEACHER_ID,
+        coTeacherId: null,
+        roomId: ROOM_ID,
+        dayOfWeek: 3,
+        startTime: eightAm,
+        endTime: nineAm,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isParked: false,
+        ...overrides,
+      });
+
+      it('hands back what a run and an apply need: the demand and rows in real ids, the draft, the basis', async () => {
+        arrange({
+          lockedLessons: [lockedLesson()],
+          draftLessons: [draftRow({ id: 'draft-b' }), draftRow({ id: 'draft-a', dayOfWeek: 4 })],
+        });
+
+        const prepared = await ready();
+
+        // Three a week, one of them locked: two to place, by the real id.
+        expect(prepared.demand).toEqual([{ requirementId: REQ_ID, lessonsPerWeek: 2 }]);
+        expect(prepared.requirementRows).toEqual([
+          {
+            id: REQ_ID,
+            subjectId: SUBJECT_ID,
+            studentGroupId: GROUP_ID,
+            teacherId: TEACHER_ID,
+            coTeacherId: null,
+            recurrence: 'ALL_WEEKS',
+            startDate: null,
+            endDate: null,
+          },
+        ]);
+        expect(prepared.draftIds).toEqual(['draft-a', 'draft-b']);
+        expect(prepared.draftLessons).toContainEqual(
+          expect.objectContaining({ id: 'draft-a', dayOfWeek: 4, startTime: '08:00', endTime: '09:00', isParked: false }),
+        );
+        expect(prepared.basis).toMatch(/^[0-9a-f]{64}$/);
+        expect(Object.keys(prepared.basisParts).sort()).toEqual(
+          ['draft', 'preserved', 'requirements', 'rooms', 'rosters', 'rules'],
+        );
+        expect(prepared.coverage).toBeNull();
+        // The draft is read by the rule the delete uses.
+        expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { academicYearId: ACADEMIC_YEAR, NOT: PRESERVED } }),
+        );
+        // A refusal may name no person: the teacher map stays inside the fetch.
+        expect(Object.keys(prepared.anonMaps)).not.toContain('teacherAnonMap');
+      });
+
+      it('agrees with itself across two reads of an unchanged school, its rows in another order', async () => {
+        const rows = {
+          requirements: [requirement(), requirement({ id: REQ_2, subjectId: SUBJECT_2, teacherId: null })],
+          rooms: [
+            { id: ROOM_ID, capacity: 30, roomTypeId: null },
+            { id: ROOM_2, capacity: 24, roomTypeId: null },
+          ],
+          lockedLessons: [
+            lockedLesson(),
+            lockedLesson({ id: 'locked-2', subjectId: SUBJECT_2, dayOfWeek: 4, roomId: ROOM_2 }),
+          ],
+          draftLessons: [draftRow({ id: 'draft-a' }), draftRow({ id: 'draft-b', dayOfWeek: 5 })],
+          unlockedLessons: [
+            { subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, dayOfWeek: 3, startTime: eightAm },
+            { subjectId: SUBJECT_2, studentGroupId: GROUP_ID, dayOfWeek: 5, startTime: nineAm },
+          ],
+        };
+        arrange(rows);
+        const first = await ready();
+        arrange({
+          requirements: [...rows.requirements].reverse(),
+          rooms: [...rows.rooms].reverse(),
+          lockedLessons: [...rows.lockedLessons].reverse(),
+          draftLessons: [...rows.draftLessons].reverse(),
+          unlockedLessons: [...rows.unlockedLessons].reverse(),
+        });
+        const second = await ready();
+
+        // Not one anonymous id in common…
+        expect(second.payload.requirements.map((r) => r.id)).not.toContain(first.payload.requirements[0]!.id);
+        // …and one basis.
+        expect(second.basisParts).toEqual(first.basisParts);
+        expect(second.basis).toBe(first.basis);
+      });
+
+      it('takes a locked lesson by what it is: its id is nothing to the basis, its room is the preserved part', async () => {
+        const rooms = [
+          { id: ROOM_ID, capacity: 30, roomTypeId: null },
+          { id: ROOM_2, capacity: 30, roomTypeId: null },
+        ];
+        arrange({ rooms, lockedLessons: [lockedLesson({ id: 'locked-x' })] });
+        const before = await ready();
+        arrange({ rooms, lockedLessons: [lockedLesson({ id: 'locked-y' })] });
+        const renamed = await ready();
+        arrange({ rooms, lockedLessons: [lockedLesson({ roomId: ROOM_2 })] });
+        const moved = await ready();
+
+        expect(renamed.basis).toBe(before.basis);
+        expect(candidateBasis.changedParts(before.basisParts, moved.basisParts)).toEqual(['preserved']);
+      });
+
+      it('reads no pupil into the basis, though pupils are what sizes, pairs and lunches come from', async () => {
+        const PUPIL = '00000000-0000-4000-8000-900000000001';
+        const MEMBER = '00000000-0000-4000-8000-900000000007';
+        const NAMED = '00000000-0000-4000-8000-900000000013';
+        arrange({
+          requirements: [requirement(), requirement({ id: REQ_2, studentGroupId: EXTRA_GROUP_ID })],
+          teachingMembers: [{ studentId: MEMBER, studentGroupId: EXTRA_GROUP_ID }],
+          lockedLessons: [lockedLesson({ participants: [{ studentId: NAMED }] })],
+          groups: [
+            { id: GROUP_ID, gradeLevel: null, kind: 'CLASS' },
+            { id: EXTRA_GROUP_ID, gradeLevel: null, kind: 'TEACHING_GROUP' },
+          ],
+        });
+        const inputs = jest.spyOn(candidateBasis, 'basisPartsOf');
+
+        const prepared = await ready();
+
+        expect(inputs).toHaveBeenCalledTimes(1);
+        const hashed = candidateBasis.canonicalJson(inputs.mock.calls[0]![0]);
+        // The pupils are there in what was hashed — as a size, a headcount and
+        // the pair 7A shares with the teaching group — and not as themselves.
+        expect(hashed).toContain('"lunchHeadcount":24');
+        expect(prepared.payload.groupConflicts).toHaveLength(1);
+        for (const pupil of [PUPIL, MEMBER, NAMED]) {
+          expect(hashed).not.toContain(pupil);
+          expect(JSON.stringify(prepared, (_key, value: unknown) =>
+            value instanceof Map ? [...value] : value,
+          )).not.toContain(pupil);
+        }
+        inputs.mockRestore();
+      });
+
+      it('refuses before the payload, as Generera does, when the staffing policy refuses', async () => {
+        arrange();
+        tx.staffingPolicy.findUnique.mockResolvedValue({ unstaffedGeneration: 'REFUSE' });
+        tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
+          Promise.resolve(
+            query.where && 'teacherId' in query.where
+              ? [{ id: REQ_ID, subject: { name: 'Matematik' }, studentGroup: { name: '7A' } }]
+              : [],
+          ),
+        );
+
+        const result = await prepare();
+
+        expect(result).toMatchObject({
+          ready: false,
+          refusalCode: 'STAFF_UNSTAFFED_REQUIREMENTS',
+          refusal: { status: 'INFEASIBLE', lessons: [] },
+        });
+        expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a block whose lessons are partly locked, by its code, and Generera answers it as before', async () => {
+        const block = {
+          requirements: [
+            requirement({ blockId: 'block-1' }),
+            requirement({ id: REQ_2, subjectId: SUBJECT_2, blockId: 'block-1' }),
+          ],
+          lockedLessons: [lockedLesson()],
+        };
+        arrange(block);
+
+        const result = await prepare();
+
+        expect(result).toMatchObject({ ready: false, refusalCode: 'BLOCK_PARTLY_LOCKED_SUMMARY' });
+
+        arrange(block);
+        const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        expect(answer).toMatchObject({ status: 'INFEASIBLE', lessons: [], lunches: [] });
+        expect(answer.conflicts?.conflicts[0]).toMatchObject({ code: 'BLOCK_PARTLY_LOCKED' });
+        expect(http.post).not.toHaveBeenCalled();
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses to write a Generera run whose draft changed while it solved, and writes nothing', async () => {
+        arrange({ draftLessons: [draftRow({ id: 'draft-a' })] });
+        echoEngine();
+        const fetchRead = tx.masterLesson.findMany.getMockImplementation()!;
+        let draftReads = 0;
+        tx.masterLesson.findMany.mockImplementation(async (query: Query = {}) =>
+          // The second read is persist's, under the lock: a lesson has been
+          // unlocked meanwhile.
+          query.where?.['NOT'] && ++draftReads > 1 ? [{ id: 'draft-a' }, { id: 'unlocked-since' }] : fetchRead(query),
+        );
+
+        const error = await service.triggerScheduling(ACADEMIC_YEAR, testUser()).catch((thrown: unknown) => thrown);
+
+        expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE' });
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      });
+
+      it('sends Generera’s request without `search`, byte for byte as before', async () => {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload()).not.toHaveProperty('search');
+      });
+
+      describe('solveCandidate', () => {
+        const options = {
+          weights: { disruption: 2, teacherGap: 8 },
+          search: { seed: 1, maxSeconds: 30, probes: false, workers: 4 },
+          timeoutMs: 95_000,
+        };
+
+        it('sends the fetch with the candidate’s weights and search, the school’s rules, its own request id', async () => {
+          arrange({
+            lunchSettings: {
+              lunchEnabled: true,
+              lunchStartTime: new Date('1970-01-01T11:00:00.000Z'),
+              lunchEndTime: new Date('1970-01-01T13:00:00.000Z'),
+              lunchMinutes: 30,
+              diningSeats: null,
+              maxLessonsPerDayPerGroup: null,
+            },
+          });
+          echoEngine('FEASIBLE');
+          const prepared = await ready();
+
+          const solution = await service.solveCandidate(prepared, options);
+
+          const sent = postedPayload();
+          expect(sent.search).toEqual(options.search);
+          expect(sent.weights).toEqual(options.weights);
+          expect(sent.rules).toEqual({ lunchStartTime: '11:00:00', lunchEndTime: '13:00:00', lunchMinutes: 30 });
+          expect(sent.requestId).not.toBe(prepared.requestId);
+          expect(sent.requirements).toEqual(prepared.payload.requirements);
+          // The call's own budget, for the rxjs timeout and axios alike.
+          expect(http.post.mock.calls[0][2]).toMatchObject({ timeout: 95_000 });
+
+          expect(solution).toEqual({
+            status: 'FEASIBLE',
+            lessons: Array.from({ length: 3 }, () => ({
+              requirementId: REQ_ID,
+              roomId: ROOM_ID,
+              dayOfWeek: 1,
+              startTime: '08:00',
+              endTime: '09:15',
+            })),
+            // The echo places no meal: the stored sittings would stand.
+            lunches: null,
+            conflicts: null,
+          });
+        });
+
+        it('brings the sittings back under real group ids', async () => {
+          arrange();
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'OPTIMAL',
+                lessons: Array.from({ length: 3 }, (_, i) => ({
+                  requirementId: payload.requirements[0].id,
+                  roomId: null,
+                  dayOfWeek: i + 1,
+                  startTime: '08:00:00',
+                  endTime: '09:00:00',
+                })),
+                lunches: [
+                  { studentGroupId: payload.groups[0].id, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' },
+                ],
+              },
+            }),
+          );
+
+          const solution = await service.solveCandidate(await ready(), options);
+
+          expect(solution.lunches).toEqual([
+            { studentGroupId: GROUP_ID, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' },
+          ]);
+          expect(solution.lessons.map((lesson) => lesson.roomId)).toEqual([null, null, null]);
+        });
+
+        it('rejects an answer that does not carry the demand it was sent, and keeps none of it', async () => {
+          arrange();
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'OPTIMAL',
+                lessons: [placement(payload.requirements[0].id)],
+              },
+            }),
+          );
+          warnings();
+
+          const solution = await service.solveCandidate(await ready(), options);
+
+          expect(solution).toMatchObject({ status: 'OPTIMAL', lessons: [], lunches: null, rejected: true });
+        });
+
+        it('rejects an answer naming a requirement nobody sent, even beside the whole demand', async () => {
+          arrange({ requirements: [requirement({ lessonsPerWeek: 1 })] });
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'OPTIMAL',
+                lessons: [placement(payload.requirements[0].id), placement('ffffffff-ffff-4fff-8fff-ffffffffffff')],
+              },
+            }),
+          );
+          warnings();
+
+          await expect(service.solveCandidate(await ready(), options)).resolves.toMatchObject({ rejected: true });
+        });
+
+        it('brings a refusal back realised, with no lessons', async () => {
+          arrange();
+          answerWithConflicts((payload) => ({
+            summary: `Requirement ${payload.requirements[0].id} has nowhere to go.`,
+            summaryCode: 'X',
+            summaryParams: {},
+            conflicts: [],
+          }));
+
+          const solution = await service.solveCandidate(await ready(), options);
+
+          expect(solution).toMatchObject({ status: 'INFEASIBLE', lessons: [], lunches: null });
+          expect(solution.conflicts?.summary).toContain(REQ_ID);
+        });
+
+        it('asks no engine when locks already place everything', async () => {
+          arrange({ requirements: [requirement({ lessonsPerWeek: 1 })], lockedLessons: [lockedLesson()] });
+
+          const solution = await service.solveCandidate(await ready(), options);
+
+          expect(http.post).not.toHaveBeenCalled();
+          expect(solution).toEqual({ status: 'FEASIBLE', lessons: [], lunches: null, conflicts: null });
+        });
+
+        it('hints a refresh with an old candidate’s lessons, under the new fetch’s ids', async () => {
+          arrange();
+          echoEngine();
+          const old = await service.solveCandidate(await ready(), options);
+          http.post.mockClear();
+          arrange();
+          echoEngine();
+          const today = await ready();
+
+          const hints = previousLessonsFrom(today, [
+            ...old.lessons,
+            // A lesson of a timplanspost since deleted is a hint for nothing.
+            { requirementId: 'gone', roomId: null, dayOfWeek: 2, startTime: '10:00', endTime: '11:00' },
+          ]);
+          await service.solveCandidate(today, { ...options, previousLessons: hints });
+
+          const anonymous = today.payload.requirements[0]!.id;
+          expect(hints).toEqual(
+            Array.from({ length: 3 }, () => ({ requirementId: anonymous, dayOfWeek: 1, startTime: '08:00:00' })),
+          );
+          expect(postedPayload().previousLessons).toEqual(hints);
+        });
+      });
+
+      describe('what a timetable leaves unplaced', () => {
+        it('counts lines short of the timplan, the preserved lessons held, by the publish gate’s rule', async () => {
+          arrange({
+            groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
+            lockedLessons: [lockedLesson({ participants: [{ studentId: 'pupil-named' }] })],
+            draftLessons: [draftRow({ id: 'draft-a' }), draftRow({ id: 'draft-b', dayOfWeek: 4 })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({
+            startDate: new Date('2026-08-17T00:00:00.000Z'),
+            endDate: new Date('2027-06-11T00:00:00.000Z'),
+          });
+          tx.subject.findMany.mockImplementation(
+            table([{ id: SUBJECT_ID, name: 'Matematik', nationalCode: null, countsTowardTimplan: true }]),
+          );
+
+          const prepared = await ready({ coverage: true });
+          const base = prepared.coverage!;
+
+          // 3 × 60 planned; the lock gives 60 and the draft 120.
+          expect(unplacedOf(base, base.draftLessons)).toEqual({ lines: 0, minutes: 0 });
+          expect(unplacedOf(base, [])).toEqual({ lines: 1, minutes: 120 });
+          const candidate: CandidateLesson[] = [1, 2].map((dayOfWeek) => ({
+            requirementId: REQ_ID,
+            roomId: null,
+            dayOfWeek: dayOfWeek as DayOfWeek,
+            startTime: '10:00',
+            endTime: '10:30',
+          }));
+          expect(unplacedOf(base, coverageLessonsOf(prepared, candidate))).toEqual({ lines: 1, minutes: 60 });
+          // No pupil rides along, not even a named one.
+          expect(base.preservedLessons[0]).toMatchObject({ studentIds: [], extraGroupIds: [] });
+        });
+      });
+
+      describe('applyCandidateWrite', () => {
+        const DRAFT = ['draft-a', 'draft-b'];
+        let versions: { snapshotInTransaction: jest.Mock };
+        let createdCount: number;
+
+        const lessons = (count = 2): CandidateLesson[] =>
+          Array.from({ length: count }, (_, i) => ({
+            requirementId: REQ_ID,
+            roomId: ROOM_ID,
+            dayOfWeek: (i + 1) as DayOfWeek,
+            startTime: '08:00',
+            endTime: '09:00',
+          }));
+
+        const prepareForApply = async (): Promise<PreparedSchedule> => {
+          arrange({
+            lockedLessons: [lockedLesson()],
+            draftLessons: DRAFT.map((id) => draftRow({ id })),
+          });
+          const prepared = await ready();
+          versions = { snapshotInTransaction: jest.fn().mockResolvedValue({ id: 'version-1' }) };
+          createdCount = 2;
+          tx.masterLesson.deleteMany.mockResolvedValue({ count: DRAFT.length });
+          // The preserved count for the log, and after the write the machine's
+          // own lessons, which must be exactly the ones just created.
+          tx.masterLesson.count.mockImplementation(async ({ where }: Query = {}) =>
+            where?.['NOT'] ? createdCount : 1,
+          );
+          return prepared;
+        };
+
+        const apply = (prepared: PreparedSchedule, overrides: Partial<CandidateApplyInput> = {}) =>
+          service.applyCandidateWrite(tx as unknown as PrismaClient, {
+            user: testUser({ schoolId: THIS_SCHOOL, userId: 'admin-1' }),
+            prepared,
+            mode: 'DIRECT',
+            lessons: lessons(),
+            lunches: null,
+            solverStatus: 'OPTIMAL',
+            snapshot: { versions, name: 'Före schemaförslag 2 – Färre håltimmar för lärarna' },
+            after: { source: 'CANDIDATE', runId: 'run-1', ordinal: 2, variant: 'TEACHER_GAPS', metrics: { moved: 3 } },
+            ...overrides,
+          });
+
+        it('saves the safety version first, then deletes exactly the ids the basis saw, dated lessons and masters alike', async () => {
+          const prepared = await prepareForApply();
+          jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] }).setSystemTime(new Date('2026-08-12T08:00:00.000Z'));
+          let result;
+          try {
+            result = await apply(prepared);
+          } finally {
+            jest.useRealTimers();
+          }
+
+          expect(versions.snapshotInTransaction).toHaveBeenCalledWith(
+            tx,
+            ACADEMIC_YEAR,
+            'Före schemaförslag 2 – Färre håltimmar för lärarna',
+            expect.objectContaining({ userId: 'admin-1' }),
+          );
+          expect(versions.snapshotInTransaction.mock.invocationCallOrder[0]!).toBeLessThan(
+            tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!,
+          );
+          // One scope for both: the ids, never the rule.
+          expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+            where: {
+              masterLessonId: { in: DRAFT },
+              status: 'SCHEDULED',
+              date: { gte: new Date('2026-08-12T00:00:00.000Z') },
+              attendanceRecords: { none: {} },
+            },
+          });
+          // And the clause a check counts with is the one the write deleted by.
+          expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+            where: calendarSweepWhere(
+              { kind: 'IDS', ids: DRAFT },
+              ACADEMIC_YEAR,
+              new Date('2026-08-12T00:00:00.000Z'),
+            ),
+          });
+          expect(tx.masterLesson.deleteMany).toHaveBeenCalledWith({
+            where: { academicYearId: ACADEMIC_YEAR, id: { in: DRAFT } },
+          });
+          expect(written()).toHaveLength(2);
+          expect(written()[0]).toMatchObject({
+            schoolId: THIS_SCHOOL,
+            subjectId: SUBJECT_ID,
+            studentGroupId: GROUP_ID,
+            teacherId: TEACHER_ID,
+            roomId: ROOM_ID,
+            startTime: new Date('1970-01-01T08:00:00.000Z'),
+            isGenerated: true,
+          });
+          expect(result).toEqual({
+            versionId: 'version-1',
+            lessonsCreated: 2,
+            unlockedReplaced: 2,
+            lockedPreserved: 1,
+            calendarLessonsRemoved: 4,
+          });
+        });
+
+        it('stamps the lessons from the rows the basis was hashed from, with no second read', async () => {
+          const prepared = await prepareForApply();
+          const reads = tx.teachingRequirement.findMany.mock.calls.length;
+
+          await apply(prepared);
+
+          expect(tx.teachingRequirement.findMany.mock.calls.length).toBe(reads);
+        });
+
+        it('logs the apply as a regeneration that says which candidate it was', async () => {
+          await apply(await prepareForApply());
+
+          expect(tx.scheduleChangeLog.create).toHaveBeenCalledWith({
+            data: {
+              schoolId: THIS_SCHOOL,
+              academicYearId: ACADEMIC_YEAR,
+              masterLessonId: null,
+              actorId: 'admin-1',
+              action: 'REGENERATE',
+              after: {
+                source: 'CANDIDATE',
+                runId: 'run-1',
+                ordinal: 2,
+                variant: 'TEACHER_GAPS',
+                metrics: { moved: 3 },
+                solverStatus: 'OPTIMAL',
+                lessonsCreated: 2,
+                unlockedReplaced: 2,
+                lockedPreserved: 1,
+                calendarLessonsRemoved: 4,
+              },
+            },
+          });
+        });
+
+        it('in DRAFT leaves the calendar to the next publish', async () => {
+          await apply(await prepareForApply(), { mode: 'DRAFT' });
+
+          expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+        });
+
+        it('refuses STALE when an id the basis saw is gone, before a lesson is written', async () => {
+          const prepared = await prepareForApply();
+          tx.masterLesson.deleteMany.mockResolvedValue({ count: 1 });
+
+          const error = await apply(prepared).catch((thrown: unknown) => thrown);
+
+          expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_STALE', changed: ['draft'] });
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+
+        it('refuses STALE when a machine-owned lesson outlives the write', async () => {
+          const prepared = await prepareForApply();
+          createdCount = 3;
+
+          const error = await apply(prepared).catch((thrown: unknown) => thrown);
+
+          expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_STALE', changed: ['draft'] });
+          expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+        });
+
+        it('refuses STALE when the preserved lessons are no longer the ones it was solved around', async () => {
+          const prepared = await prepareForApply();
+          const fetchRead = tx.masterLesson.findMany.getMockImplementation()!;
+          tx.masterLesson.findMany.mockImplementation(async (query: Query = {}) =>
+            query.where?.['isParked'] === false
+              ? [{ ...lockedLesson({ roomId: ROOM_2 }), extraGroups: [] }]
+              : fetchRead(query),
+          );
+
+          const error = await apply(prepared).catch((thrown: unknown) => thrown);
+
+          expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_STALE', changed: ['preserved'] });
+          expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+        });
+
+        it('refuses STALE, not 502, for lessons the rebuilt demand does not hold, and deletes nothing', async () => {
+          const prepared = await prepareForApply();
+          warnings();
+          jest.spyOn((service as unknown as { logger: Logger }).logger, 'error').mockImplementation(() => undefined);
+
+          const error = await apply(prepared, { lessons: lessons(1) }).catch((thrown: unknown) => thrown);
+
+          expect((error as HttpException).getStatus()).toBe(409);
+          expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_STALE', changed: ['requirements'] });
+          expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+        });
+
+        it.each([
+          ['a deadlock', 'P2034', undefined],
+          ['a room deleted under it', 'P2003', undefined],
+          ['a foreign key by its SQLSTATE', 'P2010', '23503'],
+        ])('answers %s as SCHEDULE_CANDIDATE_BUSY', async (_case, code, originalCode) => {
+          const prepared = await prepareForApply();
+          tx.masterLesson.createMany.mockRejectedValue(
+            new Prisma.PrismaClientKnownRequestError('write failed', {
+              code,
+              clientVersion: '7',
+              meta: originalCode ? { driverAdapterError: { cause: { originalCode } } } : undefined,
+            }),
+          );
+
+          const error = await apply(prepared).catch((thrown: unknown) => thrown);
+
+          expect(bodyOf(error)).toMatchObject({ code: 'SCHEDULE_CANDIDATE_BUSY' });
+        });
+      });
     });
   });
 

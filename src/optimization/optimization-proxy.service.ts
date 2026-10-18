@@ -9,14 +9,16 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { AxiosError } from 'axios';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type LessonRecurrence, type PrismaClient } from '@prisma/client';
 import { firstValueFrom, TimeoutError } from 'rxjs';
 import { timeout, catchError } from 'rxjs/operators';
 import type { AiEngineConfig } from '../config/configuration';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
+import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { isWriteConflict } from '../common/utils/prisma-errors';
 import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
 import { coverLockedLessons } from './locked-coverage';
 import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
@@ -24,6 +26,28 @@ import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
 import { effectiveDistribution, hasDistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
+import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
+import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
+import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
+import { readPlannedRows } from '../timplan/timplan-coverage.service';
+import {
+  basisInputsOf,
+  basisOf,
+  basisPartsOf,
+  clockOf,
+  dayOf,
+  preservedPartOf,
+  type BasisParts,
+  type DraftContent,
+} from './candidate-basis';
+import {
+  generateStale,
+  lockYearForRegeneration,
+  scheduleBusy,
+  scheduleCandidateStale,
+  SCHEDULE_BUSY,
+  SCHEDULE_CANDIDATE_BUSY,
+} from './regeneration-lock';
 
 /** A @db.Time column (midnight-anchored UTC) as minutes since midnight. */
 const clockMinutes = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
@@ -35,13 +59,14 @@ const lessonMinutes = (start: Date, end: Date): number => {
   return clock(end) - clock(start);
 };
 import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
-import { enterGrundschemaWrite, type PublishMode } from '../publication/publish-mode';
+import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
 import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
 import { unkeptFreeDayWishes, type FreeDayWish, type TeachersOnDay } from './free-day-wishes';
 import type {
   AiEngineConflictAnalysis,
+  AiEngineLesson,
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
   AnonymousConstraint,
@@ -63,6 +88,7 @@ import type {
   ObjectiveWeights,
   ResourceKind,
   ScheduleRules,
+  SearchOptions,
 } from './interfaces/ai-engine-payload.interface';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
@@ -184,6 +210,477 @@ export function requirementName(subject: string, group: string | undefined | nul
   return group ? `${subject} för ${group}` : subject;
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * The shared steps of a regeneration (Generera and Schemaförslag, design §3–§4)
+ * ---------------------------------------------------------------------------
+ *
+ * Generera is one fetch, one engine call and one write. A schemaförslag run is
+ * one fetch, two to four engine calls whose answers are stored, and — days
+ * later, perhaps — one write of the answer an administrator picked. The three
+ * steps are the same code in both: prepareSchedule (the fetch, its refusals and
+ * the basis), the engine call, and writeRegeneration (the guard, the deletes,
+ * the creates, the sittings, the change log). What differs is passed in: the
+ * weights and search of a call, and the DELETE SCOPE of a write.
+ */
+
+/** A timplanspost as a regeneration stamps its lessons from it. */
+export interface RegenerationRequirementRow {
+  id: string;
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+}
+
+/** What an answer must place for one timplanspost, in real ids. */
+export interface RegenerationDemand {
+  requirementId: string;
+  lessonsPerWeek: number;
+  /** A split remainder's lengths; the placed lengths must equal them. Absent when uniform. */
+  lessonLengths?: number[];
+}
+
+/** A placed lesson in real ids: what a candidate stores and an apply writes. */
+export interface CandidateLesson {
+  requirementId: string;
+  roomId: string | null;
+  dayOfWeek: DayOfWeek;
+  /** HH:MM */
+  startTime: string;
+  /** HH:MM */
+  endTime: string;
+}
+
+/**
+ * A placed lesson on its way to being checked: the requirement is null when
+ * the engine named one this request never sent, and stays in the list so the
+ * guard counts it as unmatched rather than never seeing it.
+ */
+interface ResolvedLesson {
+  requirementId: string | null;
+  roomId: string | null;
+  dayOfWeek: DayOfWeek;
+  startTime: string;
+  endTime: string;
+}
+
+/** A preserved master as the fetch reads it, minus its named pupils. */
+interface PreservedLessonRow {
+  id: string;
+  subjectId: string;
+  studentGroupId: string;
+  startTime: Date;
+  endTime: Date;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+  extraGroups: { studentGroupId: string }[];
+}
+
+/** One of the draft's own (non-preserved) lessons: what "moved" and the draft's coverage read. */
+export interface DraftLesson extends DraftContent {
+  id: string;
+  isParked: boolean;
+}
+
+/** The payload a fetch builds, before a request adds its weights, rules and search. */
+export type PreparedPayload = Omit<AiEngineScheduleRequest, 'weights' | 'rules' | 'search'>;
+
+/**
+ * What computeScheduledCoverage needs to say what a timetable leaves
+ * unplaced (timplan layer 2, the PUB_UNPLACED figure), minus the lessons whose
+ * placement is the question. Group lines only: no pupils are read or carried.
+ */
+export interface CoverageBase {
+  year: YearBounds;
+  closures: ClosedRange[];
+  subjects: PlannedSubject[];
+  groups: PlannedGroup[];
+  requirements: PlannedRequirement[];
+  /** The preserved, non-parked masters, which every candidate keeps as they are. */
+  preservedLessons: ScheduledLessonInput[];
+  /** The draft's own lessons, parked ones flagged: the "Nuvarande" figure's other half. */
+  draftLessons: ScheduledLessonInput[];
+}
+
+/** The pre-flight refused: nothing to solve, and the refusal is the answer. */
+export interface PreparedRefusal {
+  ready: false;
+  requestId: string;
+  academicYearId: string;
+  /** INFEASIBLE with no lessons and the refusal realised, as triggerScheduling answers it. */
+  refusal: AiEngineScheduleResponse;
+  /** STAFF_UNSTAFFED_REQUIREMENTS or BLOCK_PARTLY_LOCKED_SUMMARY: the refusal's summary code. */
+  refusalCode: string;
+}
+
+/** One fetch, ready to be solved once or several times, and written from. */
+export interface PreparedSchedule {
+  ready: true;
+  requestId: string;
+  academicYearId: string;
+  schoolId: string;
+  payload: PreparedPayload;
+  /** The school's saved lunch rules; a request's own rules win over them (Generera only). */
+  storedRules: ScheduleRules | null;
+  /** The maps an engine answer and a refusal are turned back through. No teacher map: see AnonMaps. */
+  anonMaps: AnonMaps;
+  /** Every free-day wish of the school's teachers, in real ids, for Generera's notes. Never sent. */
+  freeDayWishes: FreeDayWish[];
+  /** groupId → children who eat AS this group, for the stored sittings. */
+  headcountByGroup: Map<string, number>;
+  /** The demand sent, in real ids: what an answer must place exactly. */
+  demand: RegenerationDemand[];
+  /** The timplansposter as this fetch read them; an apply stamps its lessons from these. */
+  requirementRows: RegenerationRequirementRow[];
+  /** sha256 hex over the six parts (candidate-basis.ts). */
+  basis: string;
+  basisParts: BasisParts;
+  /** The non-preserved masters' ids, sorted: exactly what a regeneration deletes. */
+  draftIds: string[];
+  /** The same masters by content. */
+  draftLessons: DraftLesson[];
+  /** Only when asked for ({ coverage: true }): it costs six more reads. */
+  coverage: CoverageBase | null;
+}
+
+export type PrepareResult = PreparedSchedule | PreparedRefusal;
+
+export interface SolveCandidateOptions {
+  /** The candidate's own weights (the run's base with its variant's overrides); null for engine defaults. */
+  weights?: ObjectiveWeights | null;
+  search?: SearchOptions;
+  /**
+   * Hints in place of the fetch's own previousLessons — a refresh's old
+   * candidate, through previousLessonsFrom. Absent: the draft's, as Generera.
+   */
+  previousLessons?: readonly AnonymousPreviousLesson[];
+  /** This call's whole wait for the engine, overriding AI_ENGINE_TIMEOUT_MS. */
+  timeoutMs: number;
+}
+
+export interface CandidateSolution {
+  status: AiEngineScheduleResponse['status'];
+  /** Real ids, HH:MM; empty unless OPTIMAL or FEASIBLE and accepted. */
+  lessons: CandidateLesson[];
+  /** Real group ids; null when the engine was not asked, which leaves the stored sittings standing. */
+  lunches: AiEngineLunch[] | null;
+  conflicts: AiEngineConflictAnalysis | null;
+  /** The answer did not carry exactly the demand sent: the guard persist applies refused it. */
+  rejected?: true;
+}
+
+export interface CandidateApplyInput {
+  user: AuthenticatedUser;
+  /**
+   * The prepare step rebuilt IN THIS TRANSACTION, after the locks, whose basis
+   * the caller has already found equal to the run's. Its draftIds are the
+   * delete scope and its requirement rows what the lessons are stamped from.
+   */
+  prepared: PreparedSchedule;
+  mode: PublishMode;
+  lessons: readonly CandidateLesson[];
+  lunches: AiEngineLunch[] | null;
+  solverStatus: string;
+  /** The safety version, taken first in the same transaction ("Före schemaförslag …"). */
+  snapshot: { versions: Pick<ScheduleVersionsService, 'snapshotInTransaction'>; name: string };
+  /** Merged into the REGENERATE entry's after: source, runId, ordinal, variant, metrics. */
+  after: Prisma.InputJsonObject;
+}
+
+export interface RegenerationCounts {
+  lessonsCreated: number;
+  unlockedReplaced: number;
+  lockedPreserved: number;
+  calendarLessonsRemoved: number;
+}
+
+/**
+ * What a regeneration wrote, and the timetable it leaves by teacher and
+ * weekday — the lessons it kept, as they stand after its delete, and the ones
+ * it wrote — which Generera reads the free-day wishes against
+ * (unkeptFreeDayWishes). Not logged: the counts are the REGENERATE entry.
+ */
+export interface RegenerationWritten extends RegenerationCounts {
+  timetable: TeachersOnDay[];
+}
+
+export interface CandidateApplyResult extends RegenerationCounts {
+  versionId: string;
+}
+
+/**
+ * Which masters a regeneration replaces, said once for the master delete AND
+ * the calendar sweep. Generera's is the rule itself — everything not
+ * PRESERVED_FROM_REGENERATION — and an apply's is the exact ids its basis
+ * saw, so a lesson that changed hands under it is never swept by a rule the
+ * apply did not check.
+ */
+export type RegenerationScope = { kind: 'NOT_PRESERVED' } | { kind: 'IDS'; ids: readonly string[] };
+
+/**
+ * The dated lessons a regeneration of this scope removes in DIRECT mode:
+ * future, still SCHEDULED, no attendance, of the masters the scope replaces.
+ * The write's own where-clause, exported so a check can count exactly the rows
+ * an apply would take off the calendar (design §3, futureCalendarLessons).
+ */
+/**
+ * The year's machine-owned masters: everything a regeneration replaces, by
+ * PRESERVED_FROM_REGENERATION. The one statement of that rule outside the
+ * write, for the candidate service's counts, so a lesson cannot be a draft
+ * lesson in one place and a kept one in another.
+ */
+export function draftMastersWhere(academicYearId: string): Prisma.MasterLessonWhereInput {
+  return { academicYearId, NOT: { OR: PRESERVED_FROM_REGENERATION } };
+}
+
+export function calendarSweepWhere(
+  scope: RegenerationScope,
+  academicYearId: string,
+  today: Date = startOfUtcDay(new Date()),
+): Prisma.CalendarLessonWhereInput {
+  return {
+    ...(scope.kind === 'IDS'
+      ? { masterLessonId: { in: [...scope.ids] } }
+      : { masterLesson: { is: draftMastersWhere(academicYearId) } }),
+    status: 'SCHEDULED',
+    date: { gte: today },
+    attendanceRecords: { none: {} },
+  };
+}
+
+/** Midnight UTC of the day `now` falls on: the boundary a regeneration's sweep starts at. */
+export function startOfUtcDay(now: Date): Date {
+  const day = new Date(now);
+  day.setUTCHours(0, 0, 0, 0);
+  return day;
+}
+
+/**
+ * A stored candidate's lessons as the engine's previousLessons, for a refresh:
+ * each lesson under its requirement's anonymous id in THIS fetch. A lesson whose
+ * requirement this fetch does not send (deleted since, or now wholly covered by
+ * locks) has nothing to be a hint for and is left out, as the fetch leaves out a
+ * draft lesson without a requirement.
+ */
+export function previousLessonsFrom(
+  prepared: PreparedSchedule,
+  lessons: readonly Pick<CandidateLesson, 'requirementId' | 'dayOfWeek' | 'startTime'>[],
+): AnonymousPreviousLesson[] {
+  const sent = new Set(prepared.payload.requirements.map((requirement) => requirement.id));
+  return lessons.flatMap((lesson) => {
+    const anonId = prepared.anonMaps.requirementAnonMap.get(lesson.requirementId);
+    if (anonId === undefined || !sent.has(anonId)) return [];
+    return [{ requirementId: anonId, dayOfWeek: lesson.dayOfWeek, startTime: withSeconds(lesson.startTime) }];
+  });
+}
+
+/**
+ * Lessons in real ids as timplan coverage counts them: subject, group and
+ * window from the requirement, as the write stamps them. A lesson whose
+ * requirement the fetch did not read counts nothing.
+ */
+export function coverageLessonsOf(
+  prepared: Pick<PreparedSchedule, 'requirementRows'>,
+  lessons: readonly CandidateLesson[],
+): ScheduledLessonInput[] {
+  const rows = new Map(prepared.requirementRows.map((row) => [row.id, row]));
+  return lessons.flatMap((lesson, index) => {
+    const row = rows.get(lesson.requirementId);
+    if (row === undefined) return [];
+    return [
+      {
+        id: `candidate-${index}`,
+        studentGroupId: row.studentGroupId,
+        subjectId: row.subjectId,
+        startTime: lesson.startTime,
+        endTime: lesson.endTime,
+        recurrence: row.recurrence,
+        startDate: dayOf(row.startDate),
+        endDate: dayOf(row.endDate),
+        isParked: false,
+        extraGroupIds: [],
+        studentIds: [],
+      },
+    ];
+  });
+}
+
+/** Lines left UNSCHEDULED or SHORT, and the minutes a week they are short by. */
+export interface UnplacedTally {
+  lines: number;
+  minutes: number;
+}
+
+/**
+ * What a timetable of the preserved lessons plus `lessons` leaves unplaced, by
+ * the rule the PUB_UNPLACED gate reads (publications.service.ts): timplan
+ * layer 2's group lines UNSCHEDULED or SHORT, and Σ planned − scheduled over
+ * them. `unplacedOf(base, base.draftLessons)` is the current draft's figure.
+ */
+export function unplacedOf(base: CoverageBase, lessons: readonly ScheduledLessonInput[]): UnplacedTally {
+  const coverage = computeScheduledCoverage({
+    year: base.year,
+    closures: base.closures,
+    subjects: base.subjects,
+    groups: base.groups,
+    requirements: base.requirements,
+    lessons: [...base.preservedLessons, ...lessons],
+    pupils: [],
+    includePupils: false,
+  });
+  let lines = 0;
+  let minutes = 0;
+  for (const group of coverage.groups) {
+    for (const line of group.lines) {
+      if (line.status !== 'UNSCHEDULED' && line.status !== 'SHORT') continue;
+      lines++;
+      minutes += Math.max(0, line.plannedMinutesPerWeek - line.scheduledMinutesPerWeek);
+    }
+  }
+  return { lines, minutes };
+}
+
+/** The guard's tally: see writeRegeneration. */
+interface DemandVerdict {
+  requested: number;
+  placed: number;
+  unmatched: number;
+  offTarget: number;
+}
+
+/**
+ * Whether an answer carries exactly the demand it was sent: per requirement
+ * the count, and for a split one the lengths. A lesson naming a requirement
+ * the demand does not hold, or one the rows no longer hold (deleted while the
+ * solver ran), is unmatched — and one unmatched lesson refuses the answer even
+ * when every count is right, because it is then an answer to some other
+ * request. Pure, so a candidate run judges its answers by the same rule the
+ * write refuses them by.
+ */
+function checkAgainstDemand(
+  lessons: readonly ResolvedLesson[],
+  demand: readonly RegenerationDemand[],
+  rowIds: ReadonlySet<string>,
+): DemandVerdict {
+  const wanted = new Map(demand.map((entry) => [entry.requirementId, entry.lessonsPerWeek]));
+  const lengths = new Map(
+    demand.flatMap((entry) => (entry.lessonLengths ? [[entry.requirementId, entry.lessonLengths] as const] : [])),
+  );
+  const placedBy = new Map<string, number>();
+  const minutesBy = new Map<string, number[]>();
+  let unmatched = 0;
+  let placed = 0;
+  for (const lesson of lessons) {
+    const id = lesson.requirementId;
+    if (id === null || !rowIds.has(id) || !wanted.has(id)) {
+      unmatched++;
+      continue;
+    }
+    placed++;
+    placedBy.set(id, (placedBy.get(id) ?? 0) + 1);
+    if (lengths.has(id)) {
+      const list = minutesBy.get(id) ?? [];
+      list.push(minutesOf(lesson.endTime) - minutesOf(lesson.startTime));
+      minutesBy.set(id, list);
+    }
+  }
+  const sameLengths = (sent: readonly number[], got: readonly number[]): boolean => {
+    const a = [...sent].sort((x, y) => y - x);
+    const b = [...got].sort((x, y) => y - x);
+    return a.length === b.length && a.every((minutes, i) => minutes === b[i]);
+  };
+  const offTarget = [...wanted].filter(
+    ([id, count]) =>
+      (placedBy.get(id) ?? 0) !== count ||
+      (lengths.has(id) && !sameLengths(lengths.get(id)!, minutesBy.get(id) ?? [])),
+  ).length;
+  const requested = [...wanted.values()].reduce((sum, count) => sum + count, 0);
+  return { requested, placed, unmatched, offTarget };
+}
+
+/**
+ * The engine's lessons in real ids. An unknown requirement id becomes null —
+ * kept, so the guard counts it — and an unknown room no room, as persist has
+ * always read it.
+ */
+function resolveLessons(
+  lessons: readonly AiEngineLesson[],
+  requirementAnonMap: ReadonlyMap<string, string>,
+  roomAnonMap: ReadonlyMap<string, string>,
+): ResolvedLesson[] {
+  const realRequirement = reversed(requirementAnonMap);
+  const realRoom = reversed(roomAnonMap);
+  return lessons.map((lesson) => ({
+    requirementId: realRequirement.get(lesson.requirementId) ?? null,
+    roomId: lesson.roomId ? (realRoom.get(lesson.roomId) ?? null) : null,
+    dayOfWeek: lesson.dayOfWeek,
+    startTime: lesson.startTime,
+    endTime: lesson.endTime,
+  }));
+}
+
+/** realId → anonId, turned round. */
+function reversed(map: ReadonlyMap<string, string>): Map<string, string> {
+  return new Map([...map].map(([realId, anonId]) => [anonId, realId]));
+}
+
+/** The engine's HH:MM:SS as the HH:MM a candidate is stored in (the solver's grid has no seconds). */
+function withoutSeconds(clock: string): string {
+  return /^\d{2}:\d{2}/.test(clock) ? clock.slice(0, 5) : clock;
+}
+
+/** HH:MM as the HH:MM:SS the payload's clocks carry. */
+function withSeconds(clock: string): string {
+  return /^\d{2}:\d{2}$/.test(clock) ? `${clock}:00` : clock;
+}
+
+/** A foreign key the write met that no longer holds (a room deleted under it, say). */
+function isForeignKeyViolation(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code === 'P2003') return true;
+  const cause = (error.meta as { driverAdapterError?: { cause?: { originalCode?: unknown } } } | undefined)
+    ?.driverAdapterError?.cause;
+  return cause?.originalCode === '23503';
+}
+
+/**
+ * The engine's validation refusal of exactly `search` as an unknown field:
+ * {details: {errors: [{type: 'extra_forbidden', loc: ['body', 'search']}]}}.
+ */
+function refusesSearch(body: { details?: { errors?: unknown } | null } | null): boolean {
+  const errors = body?.details?.errors;
+  return (
+    Array.isArray(errors) &&
+    errors.some((entry: unknown) => {
+      const { type, loc } = (entry ?? {}) as { type?: unknown; loc?: unknown };
+      return (
+        type === 'extra_forbidden' &&
+        Array.isArray(loc) &&
+        loc.length === 2 &&
+        loc[0] === 'body' &&
+        loc[1] === 'search'
+      );
+    })
+  );
+}
+
+/** Two sorted id lists, element by element. */
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+function sortedIds(ids: readonly string[]): string[] {
+  return [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** The engine refuses a request carrying `search` — it is older than the field. */
+export const ENGINE_LACKS_CANDIDATES = 'ENGINE_LACKS_CANDIDATES';
+
 @Injectable()
 export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
@@ -209,119 +706,36 @@ export class OptimizationProxyService {
       `Optimization requested [requestId=${requestId}, academicYearId=${academicYearId}]`,
     );
 
-    // Step 1: Fetch raw data under the authenticated user's RLS session.
-    // teacherAnonMap / subjectAnonMap are produced by fetchAndAnonymize and not
-    // needed here: the response names requirements, rooms and — since the
-    // engine began returning sittings — student groups, so those three maps are
-    // the ones that have to come back out.
-    //
-    // The staffing pre-flight runs first, in the same transaction: a school
-    // whose policy refuses to generate around a teacherless row is answered
-    // before the payload is built, the engine is never called, and nothing is
-    // written — see unstaffedRefusal.
-    const fetched = await this.prisma.withRls(user, async (tx) => {
-      // Whose classes these are: for a rolled year not yet activated, the
-      // pupils its activation would place (projected-rosters.ts), so next
-      // year's timetable can be generated in spring. A year two steps ahead
-      // is still refused there (ROLLOVER_NOT_ACTIVATED, R6): walking straight
-      // through an unactivated year is not what activating it does.
-      const basis = await rostersOfYear(tx, user, academicYearId);
-      const refusal = await this.unstaffedRefusal(tx, academicYearId, requireSchoolId(user), requestId);
-      if (refusal) return { refusal, data: null };
-      return {
-        refusal: null,
-        data: await this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user), basis, user.channel),
-      };
-    });
-    if (fetched.refusal) {
-      this.logger.warn(
-        `Optimization refused before the engine: ${fetched.refusal.conflicts?.summaryParams?.count ?? 0} requirement(s) without a teacher [requestId=${requestId}, academicYearId=${academicYearId}]`,
-      );
-      return fetched.refusal;
+    // Step 1: Fetch raw data under the authenticated user's RLS session —
+    // prepareSchedule, the step a schemaförslag run shares. The staffing
+    // pre-flight and the block judgement run in it, in the same transaction:
+    // a school whose policy refuses to generate around a teacherless row, or
+    // a block whose lessons are partly locked, is answered before the engine
+    // is woken, and nothing is written — see unstaffedRefusal and judgeBlocks.
+    const prepared = await this.prisma.withRls(user, (tx) =>
+      this.prepareSchedule(tx, academicYearId, user, { requestId }),
+    );
+    if (!prepared.ready) {
+      if (prepared.refusalCode === STAFF_UNSTAFFED_REQUIREMENTS) {
+        this.logger.warn(
+          `Optimization refused before the engine: ${prepared.refusal.conflicts?.summaryParams?.count ?? 0} requirement(s) without a teacher [requestId=${requestId}, academicYearId=${academicYearId}]`,
+        );
+      } else {
+        this.logger.warn(
+          `Optimization refused before the engine: ${prepared.refusal.conflicts?.conflicts.length ?? 0} block(s) partly locked [requestId=${requestId}, academicYearId=${academicYearId}]`,
+        );
+      }
+      return prepared.refusal;
     }
-    const {
-      requirements,
-      rooms,
-      constraints,
-      frameTimes,
-      lunchServings,
-      lunchPlacements,
-      rasts,
-      roomPreferences,
-      teacherWorkRules,
-      teacherDayLimits,
-      fixedLessons,
-      groups,
-      previousLessons,
-      groupConflicts,
-      roomAnonMap,
-      requirementAnonMap,
-      groupAnonMap,
-      headcountByGroup,
-      roomTypeAnonMap,
-      constraintAnonMap,
-      workRuleAnonMap,
-      dayLimitAnonMap,
-      dayLimitTeacherIds,
-      nameById,
-      blockAnonMap,
-      blockRefusal,
-      storedRules,
-      freeDayWishes,
-    } = fetched.data;
-
-    const anonMaps: AnonMaps = {
-      requirementAnonMap,
-      roomAnonMap,
-      groupAnonMap,
-      roomTypeAnonMap,
-      constraintAnonMap,
-      workRuleAnonMap,
-      blockAnonMap,
-      dayLimitAnonMap,
-      dayLimitTeacherIds,
-      nameById,
-    };
-
-    // A block whose lessons are partly locked is refused here, by name, for
-    // the reason unstaffedRefusal gives for its own: the engine is not woken,
-    // nothing is written, and the grundschema stands. See judgeBlocks.
-    if (blockRefusal) {
-      this.logger.warn(
-        `Optimization refused before the engine: ${blockRefusal.conflicts.length} block(s) partly locked [requestId=${requestId}, academicYearId=${academicYearId}]`,
-      );
-      return {
-        requestId,
-        status: 'INFEASIBLE',
-        lessons: [],
-        lunches: [],
-        conflicts: this.realiseConflicts(blockRefusal, anonMaps),
-      };
-    }
+    const { anonMaps } = prepared;
 
     // The school's saved lunch rules, unless this caller brought their own.
     // Body-wins rather than merge-per-field: two half-specified rule sets
     // silently combining into a third nobody wrote is worse than either.
-    const effectiveRules = rules ?? storedRules;
+    const effectiveRules = rules ?? prepared.storedRules;
 
     const payload: AiEngineScheduleRequest = {
-      requestId,
-      academicYearId,
-      requirements,
-      rooms,
-      constraints,
-      frameTimes,
-      lunchServings,
-      lunchPlacements,
-      rasts,
-      roomPreferences,
-      teacherWorkRules,
-      // Only when somebody's post limits their days: see AiEngineScheduleRequest.
-      ...(teacherDayLimits.length > 0 ? { teacherDayLimits } : {}),
-      fixedLessons,
-      groups,
-      previousLessons,
-      groupConflicts,
+      ...prepared.payload,
       ...(weights ? { weights } : {}),
       ...(effectiveRules ? { rules: effectiveRules } : {}),
     };
@@ -330,13 +744,13 @@ export class OptimizationProxyService {
     // requirement is already covered by locked lessons there is nothing left
     // to solve — skip the engine and just clean up unlocked leftovers.
     const response: AiEngineScheduleResponse =
-      requirements.length > 0
+      payload.requirements.length > 0
         ? await this.callAiEngine<AiEngineScheduleResponse>('/v1/schedule', payload, anonMaps)
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // The sittings, with real group ids, computed once: they are both written
     // below and returned to the caller. Null when the engine was not asked.
-    const realisedLunches = this.realiseLunches(response, groupAnonMap);
+    const realisedLunches = this.realiseLunches(response, anonMaps.groupAnonMap);
     if (realisedLunches === null) {
       this.logger.warn(
         `Engine skipped (every requirement is hand-placed); the previous run's sittings stand [academicYearId=${academicYearId}].`,
@@ -345,18 +759,20 @@ export class OptimizationProxyService {
 
     // Step 3: Persist the master-lesson output, translating anon ids back.
     // `requirements` rides along as the demand the response is checked against
-    // before anything is deleted — see persistMasterLessons.
+    // before anything is deleted, and the draft's ids as what the fetch saw —
+    // see persistMasterLessons.
     const written = await this.prisma.withRls(user, (tx) =>
       this.persistMasterLessons(
         tx,
         academicYearId,
         user,
         response,
-        requirements,
-        requirementAnonMap,
-        roomAnonMap,
+        payload.requirements,
+        anonMaps.requirementAnonMap,
+        anonMaps.roomAnonMap,
         realisedLunches,
-        headcountByGroup,
+        prepared.headcountByGroup,
+        prepared.draftIds,
       ),
     );
 
@@ -378,8 +794,405 @@ export class OptimizationProxyService {
       ...response,
       lunches: realisedLunches ?? [],
       conflicts: this.realiseConflicts(response.conflicts, anonMaps),
-      notes: written === null ? [] : unkeptFreeDayWishes(freeDayWishes, written),
+      notes: written === null ? [] : unkeptFreeDayWishes(prepared.freeDayWishes, written),
     };
+  }
+
+  /**
+   * THE FETCH OF A REGENERATION, shared by Generera and a schemaförslag run
+   * (and rebuilt by the apply, and by its staleness check): the year's
+   * rosters, the staffing pre-flight, the anonymised payload, the block
+   * judgement, the draft's own lessons and the basis over all of it, in the
+   * caller's transaction.
+   *
+   * A refusal comes back as one ({ ready: false }), realised exactly as
+   * triggerScheduling has always answered it, so a candidate run and an apply
+   * read the same code the job row stores.
+   *
+   * `coverage: true` adds the timplan rows the "unplaced" figure needs; only a
+   * candidate run asks, since it is six more reads.
+   */
+  async prepareSchedule(
+    tx: PrismaClient,
+    academicYearId: string,
+    user: AuthenticatedUser,
+    options: { requestId?: string; coverage?: boolean } = {},
+  ): Promise<PrepareResult> {
+    const requestId = options.requestId ?? randomUUID();
+    // Whose classes these are: for a rolled year not yet activated, the
+    // pupils its activation would place (projected-rosters.ts), so next
+    // year's timetable can be generated in spring. A year two steps ahead
+    // is still refused there (ROLLOVER_NOT_ACTIVATED, R6): walking straight
+    // through an unactivated year is not what activating it does.
+    const rosterBasis = await rostersOfYear(tx, user, academicYearId);
+    const schoolId = requireSchoolId(user);
+    const unstaffed = await this.unstaffedRefusal(tx, academicYearId, schoolId, requestId);
+    if (unstaffed) {
+      return {
+        ready: false,
+        requestId,
+        academicYearId,
+        refusal: unstaffed,
+        refusalCode: unstaffed.conflicts?.summaryCode ?? STAFF_UNSTAFFED_REQUIREMENTS,
+      };
+    }
+    const data = await this.fetchAndAnonymize(tx, academicYearId, schoolId, rosterBasis, user.channel);
+    const anonMaps: AnonMaps = {
+      requirementAnonMap: data.requirementAnonMap,
+      roomAnonMap: data.roomAnonMap,
+      groupAnonMap: data.groupAnonMap,
+      roomTypeAnonMap: data.roomTypeAnonMap,
+      constraintAnonMap: data.constraintAnonMap,
+      workRuleAnonMap: data.workRuleAnonMap,
+      blockAnonMap: data.blockAnonMap,
+      dayLimitAnonMap: data.dayLimitAnonMap,
+      dayLimitTeacherIds: data.dayLimitTeacherIds,
+      nameById: data.nameById,
+    };
+
+    // A block whose lessons are partly locked is refused here, by name, for
+    // the reason unstaffedRefusal gives for its own: the engine is not woken,
+    // nothing is written, and the grundschema stands. See judgeBlocks.
+    if (data.blockRefusal) {
+      return {
+        ready: false,
+        requestId,
+        academicYearId,
+        refusal: {
+          requestId,
+          status: 'INFEASIBLE',
+          lessons: [],
+          lunches: [],
+          conflicts: this.realiseConflicts(data.blockRefusal, anonMaps),
+        },
+        refusalCode: data.blockRefusal.summaryCode,
+      };
+    }
+
+    // The draft's own lessons: the machine-owned masters a regeneration
+    // replaces (the complement of PRESERVED_FROM_REGENERATION, parked ones
+    // included, since the delete takes them too). Their ids are what Generera
+    // checks again under the year lock before it deletes (GENERATE_STALE) and
+    // what an apply deletes by; their content is what "moved" is counted
+    // against and part of the basis.
+    const draftRows = await tx.masterLesson.findMany({
+      where: { academicYearId, NOT: { OR: PRESERVED_FROM_REGENERATION } },
+      select: {
+        id: true,
+        subjectId: true,
+        studentGroupId: true,
+        teacherId: true,
+        coTeacherId: true,
+        roomId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
+        isParked: true,
+      },
+    });
+    const draftLessons: DraftLesson[] = draftRows.map((row) => ({
+      id: row.id,
+      subjectId: row.subjectId,
+      studentGroupId: row.studentGroupId,
+      teacherId: row.teacherId ?? null,
+      coTeacherId: row.coTeacherId ?? null,
+      roomId: row.roomId ?? null,
+      dayOfWeek: row.dayOfWeek,
+      startTime: clockOf(row.startTime) ?? '',
+      endTime: clockOf(row.endTime) ?? '',
+      recurrence: row.recurrence ?? null,
+      startDate: dayOf(row.startDate),
+      endDate: dayOf(row.endDate),
+      isParked: row.isParked ?? false,
+    }));
+
+    const payload: PreparedPayload = {
+      requestId,
+      academicYearId,
+      requirements: data.requirements,
+      rooms: data.rooms,
+      constraints: data.constraints,
+      frameTimes: data.frameTimes,
+      lunchServings: data.lunchServings,
+      lunchPlacements: data.lunchPlacements,
+      rasts: data.rasts,
+      roomPreferences: data.roomPreferences,
+      teacherWorkRules: data.teacherWorkRules,
+      // Only when somebody's post limits their days: see AiEngineScheduleRequest.
+      ...(data.teacherDayLimits.length > 0 ? { teacherDayLimits: data.teacherDayLimits } : {}),
+      fixedLessons: data.fixedLessons,
+      groups: data.groups,
+      previousLessons: data.previousLessons,
+      groupConflicts: data.groupConflicts,
+    };
+
+    // Over the payload turned back to real ids — the teacher's and the
+    // subject's maps too, which leave this method no further — so two reads of
+    // an unchanged school agree although every anonymous id differs.
+    const basisParts = basisPartsOf(
+      basisInputsOf({
+        payload,
+        maps: [
+          data.requirementAnonMap,
+          data.subjectAnonMap,
+          data.groupAnonMap,
+          data.teacherAnonMap,
+          data.roomAnonMap,
+          data.roomTypeAnonMap,
+          data.constraintAnonMap,
+          data.workRuleAnonMap,
+          data.blockAnonMap,
+          data.dayLimitAnonMap,
+        ],
+        storedRules: data.storedRules,
+        draftLessons,
+      }),
+    );
+
+    const realRequirement = reversed(data.requirementAnonMap);
+    return {
+      ready: true,
+      requestId,
+      academicYearId,
+      schoolId,
+      payload,
+      storedRules: data.storedRules,
+      anonMaps,
+      freeDayWishes: data.freeDayWishes,
+      headcountByGroup: data.headcountByGroup,
+      // Every sent entry's anonymous id came out of the map, so each has a
+      // real one; the fallback can only be reached by a broken map, and then
+      // names nothing an answer could match, which refuses the answer.
+      demand: data.requirements.map((requirement) => ({
+        requirementId: realRequirement.get(requirement.id) ?? `unsent:${requirement.id}`,
+        lessonsPerWeek: requirement.lessonsPerWeek,
+        ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
+      })),
+      requirementRows: data.requirementRows,
+      basis: basisOf(basisParts),
+      basisParts,
+      draftIds: sortedIds(draftLessons.map((lesson) => lesson.id)),
+      draftLessons,
+      coverage: options.coverage
+        ? await this.readCoverageBase(tx, academicYearId, data.preservedRows, draftLessons)
+        : null,
+    };
+  }
+
+  /**
+   * The timplan rows layer 2 judges against (readPlannedRows, the reader the
+   * coverage page and the publish gate share), with the year's own lessons
+   * split into what every candidate keeps and what the draft has now. No
+   * roster is read: group lines need none, and no pupil id is carried.
+   */
+  private async readCoverageBase(
+    tx: PrismaClient,
+    academicYearId: string,
+    preservedRows: PreservedLessonRow[],
+    draftLessons: readonly DraftLesson[],
+  ): Promise<CoverageBase | null> {
+    const year = await tx.academicYear.findUnique({
+      where: { id: academicYearId },
+      select: { startDate: true, endDate: true },
+    });
+    if (!year) return null;
+    const rows = await readPlannedRows(tx, academicYearId);
+    return {
+      year: { startDate: dayOf(year.startDate) ?? '', endDate: dayOf(year.endDate) ?? '' },
+      closures: rows.closures,
+      subjects: rows.subjects,
+      groups: rows.groups,
+      requirements: rows.requirements,
+      preservedLessons: preservedRows.map((row) => ({
+        id: row.id,
+        studentGroupId: row.studentGroupId,
+        subjectId: row.subjectId,
+        startTime: clockOf(row.startTime) ?? '',
+        endTime: clockOf(row.endTime) ?? '',
+        recurrence: row.recurrence ?? null,
+        startDate: dayOf(row.startDate),
+        endDate: dayOf(row.endDate),
+        isParked: false,
+        extraGroupIds: (row.extraGroups ?? []).map((entry) => entry.studentGroupId),
+        studentIds: [],
+      })),
+      // No extra groups and no named pupils: a lesson with either is preserved.
+      draftLessons: draftLessons.map((lesson) => ({
+        id: lesson.id,
+        studentGroupId: lesson.studentGroupId,
+        subjectId: lesson.subjectId,
+        startTime: lesson.startTime,
+        endTime: lesson.endTime,
+        recurrence: lesson.recurrence,
+        startDate: lesson.startDate,
+        endDate: lesson.endDate,
+        isParked: lesson.isParked,
+        extraGroupIds: [],
+        studentIds: [],
+      })),
+    };
+  }
+
+  /**
+   * ONE CANDIDATE: the prepared fetch sent with this candidate's weights,
+   * search and hints, and the answer brought back in real ids.
+   *
+   * No transaction and no write: a candidate is stored by its run, and only an
+   * apply writes. The answer is judged by the guard persist applies
+   * (checkAgainstDemand) — one that does not carry exactly the demand sent
+   * comes back `rejected` with no lessons, and the run stores it as REJECTED
+   * instead of a timetable that answers some other request.
+   *
+   * Every failure of the call itself is callAiEngine's: a timeout or an
+   * unreachable engine is a 503, an engine older than `search` a 503
+   * ENGINE_LACKS_CANDIDATES, a refusal its own status and code.
+   */
+  async solveCandidate(
+    prepared: PreparedSchedule,
+    options: SolveCandidateOptions,
+  ): Promise<CandidateSolution> {
+    const { storedRules, anonMaps } = prepared;
+    const payload: AiEngineScheduleRequest = {
+      ...prepared.payload,
+      // Its own correlation id per call: several requests of one fetch.
+      requestId: randomUUID(),
+      previousLessons: options.previousLessons
+        ? [...options.previousLessons]
+        : prepared.payload.previousLessons,
+      ...(options.weights ? { weights: options.weights } : {}),
+      ...(storedRules ? { rules: storedRules } : {}),
+      ...(options.search ? { search: options.search } : {}),
+    };
+    // Nothing left to place: the same shortcut Generera takes, and the same
+    // answer — no lessons, and no sittings to replace the stored ones with.
+    if (payload.requirements.length === 0) {
+      return { status: 'FEASIBLE', lessons: [], lunches: null, conflicts: null };
+    }
+
+    const response = await this.callAiEngine<AiEngineScheduleResponse>(
+      '/v1/schedule',
+      payload,
+      anonMaps,
+      { timeoutMs: options.timeoutMs },
+    );
+    const conflicts = this.realiseConflicts(response.conflicts, anonMaps);
+    if (response.status === 'INFEASIBLE' || response.status === 'TIMEOUT') {
+      return { status: response.status, lessons: [], lunches: null, conflicts };
+    }
+
+    const resolved = resolveLessons(response.lessons, anonMaps.requirementAnonMap, anonMaps.roomAnonMap);
+    const verdict = checkAgainstDemand(
+      resolved,
+      prepared.demand,
+      new Set(prepared.requirementRows.map((row) => row.id)),
+    );
+    if (verdict.unmatched > 0 || verdict.offTarget > 0) {
+      this.logger.warn(
+        `Rejected AI engine candidate [academicYearId=${prepared.academicYearId}, status=${response.status}, requestedLessons=${verdict.requested}, placedLessons=${verdict.placed}, unmatchedLessons=${verdict.unmatched}, requirementsOffTarget=${verdict.offTarget}].`,
+      );
+      return { status: response.status, lessons: [], lunches: null, conflicts, rejected: true };
+    }
+    return {
+      status: response.status,
+      lessons: resolved.map((lesson) => ({
+        requirementId: lesson.requirementId as string,
+        roomId: lesson.roomId,
+        dayOfWeek: lesson.dayOfWeek,
+        startTime: withoutSeconds(lesson.startTime),
+        endTime: withoutSeconds(lesson.endTime),
+      })),
+      lunches: this.realiseLunches(response, anonMaps.groupAnonMap),
+      conflicts,
+    };
+  }
+
+  /**
+   * THE APPLY'S WRITE (design §4 steps 7–10), in the caller's transaction,
+   * after the caller has taken the locks (enterGrundschemaWrite, then
+   * lockYearForCandidateApply, then lockYearMasters), re-loaded its run and
+   * found the rebuilt basis equal to the stored one.
+   *
+   *  7. The safety version, before the first write and in this transaction,
+   *     so a refused apply leaves no version promising a change that never
+   *     happened.
+   *  8. The shared write, scoped to exactly the ids the rebuilt fetch saw; a
+   *     different number deleted means the draft moved under the apply.
+   *  9. Before the change log: no machine-owned lesson of the year is left
+   *     but the ones just created, and the preserved lessons are still, by
+   *     content, the ones the candidate was solved around. Either failing is
+   *     409 SCHEDULE_CANDIDATE_STALE, and the transaction rolls back whole.
+   *     What is left open is a hand INSERT committing after these reads and
+   *     before the commit — the window Generera has always had.
+   * 10. The REGENERATE entry, with the caller's `after` (source, run,
+   *     candidate, metrics) under the counts.
+   *
+   * A deadlock or a foreign key the write meets (40P01, P2003/23503) and a
+   * lock wait past the 5 s are 409 SCHEDULE_CANDIDATE_BUSY.
+   */
+  async applyCandidateWrite(tx: PrismaClient, input: CandidateApplyInput): Promise<CandidateApplyResult> {
+    const { prepared, user } = input;
+    const schoolId = requireSchoolId(user);
+    const { academicYearId } = prepared;
+    try {
+      const version = await input.snapshot.versions.snapshotInTransaction(
+        tx,
+        academicYearId,
+        input.snapshot.name,
+        user,
+      );
+      const { timetable: _timetable, ...counts } = await this.writeRegeneration(tx, {
+        schoolId,
+        academicYearId,
+        actorId: user.userId ?? null,
+        mode: input.mode,
+        solverStatus: input.solverStatus,
+        lessons: input.lessons,
+        demand: prepared.demand,
+        requirementRows: prepared.requirementRows,
+        lunches: input.lunches,
+        headcountByGroup: prepared.headcountByGroup,
+        scope: { kind: 'IDS', ids: prepared.draftIds },
+        after: input.after,
+        // A basis that matched cannot meet either; if one is met anyway, the
+        // draft is not what the basis says it is.
+        refusals: {
+          mismatch: () => scheduleCandidateStale(['requirements']),
+          scopeChanged: () => scheduleCandidateStale(['draft']),
+        },
+        verify: async (created) => {
+          const machineOwned = await tx.masterLesson.count({
+            where: { academicYearId, NOT: { OR: PRESERVED_FROM_REGENERATION } },
+          });
+          if (machineOwned !== created) throw scheduleCandidateStale(['draft']);
+          const preserved = await tx.masterLesson.findMany({
+            where: { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION },
+            select: {
+              studentGroupId: true,
+              teacherId: true,
+              coTeacherId: true,
+              roomId: true,
+              dayOfWeek: true,
+              startTime: true,
+              endTime: true,
+              extraGroups: { select: { studentGroupId: true } },
+            },
+          });
+          if (preservedPartOf(preserved) !== prepared.basisParts.preserved) {
+            throw scheduleCandidateStale(['preserved']);
+          }
+        },
+      });
+      return { versionId: version.id, ...counts };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (isLockTimeout(error) || isWriteConflict(error) || isForeignKeyViolation(error)) {
+        throw scheduleBusy(SCHEDULE_CANDIDATE_BUSY);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -695,6 +1508,18 @@ export class OptimizationProxyService {
     storedRules: ScheduleRules | null;
     /** Every free-day wish of the school's teachers, in real ids. Never sent. */
     freeDayWishes: FreeDayWish[];
+    /**
+     * The teacher's and the subject's maps, which nothing turns an engine
+     * answer back through. Returned for the basis alone (prepareSchedule),
+     * which has to read the payload in real ids, and dropped there: a refusal
+     * may name no person, so the teacher map never reaches AnonMaps.
+     */
+    teacherAnonMap: Map<string, string>;
+    subjectAnonMap: Map<string, string>;
+    /** The timplansposter as read, for the lessons a write stamps from them. */
+    requirementRows: RegenerationRequirementRow[];
+    /** The preserved, non-parked masters as read, without their named pupils. */
+    preservedRows: PreservedLessonRow[];
   }> {
     // Anonymous-id lookup tables: realId → anonId.
     const teacherAnonMap = new Map<string, string>();
@@ -1831,6 +2656,30 @@ export class OptimizationProxyService {
         storedRules !== null && Object.keys(storedRules).length > 0
           ? storedRules
           : null,
+      teacherAnonMap,
+      subjectAnonMap,
+      requirementRows: rawRequirements.map((r) => ({
+        id: r.id,
+        subjectId: r.subjectId,
+        studentGroupId: r.studentGroupId,
+        teacherId: r.teacherId ?? null,
+        coTeacherId: r.coTeacherId ?? null,
+        recurrence: r.recurrence,
+        startDate: r.startDate ?? null,
+        endDate: r.endDate ?? null,
+      })),
+      // Named field by field: the participants' pupil ids stay in here.
+      preservedRows: preservedLessons.map((lesson) => ({
+        id: lesson.id,
+        subjectId: lesson.subjectId,
+        studentGroupId: lesson.studentGroupId,
+        startTime: lesson.startTime,
+        endTime: lesson.endTime,
+        recurrence: lesson.recurrence,
+        startDate: lesson.startDate,
+        endDate: lesson.endDate,
+        extraGroups: lesson.extraGroups ?? [],
+      })),
     };
   }
 
@@ -1883,13 +2732,21 @@ export class OptimizationProxyService {
    *
    * `maps` turns ids in a refusal back into ones the school can look up; pass
    * the maps the payload was built with.
+   *
+   * `timeoutMs` is this call's whole wait, in place of AI_ENGINE_TIMEOUT_MS —
+   * for the rxjs timeout AND the module's axios timeout, which would otherwise
+   * cut a longer call off at the default first. A schemaförslag sets it from
+   * the budget it gives the solver; every other caller passes nothing and
+   * waits exactly as before.
    */
   async callAiEngine<TResponse>(
     path: string,
     payload: object,
     maps: AnonMaps,
+    options: { timeoutMs?: number } = {},
   ): Promise<TResponse> {
     const url = `${this.aiConfig.baseUrl}${path}`;
+    const carriesSearch = (payload as { search?: unknown }).search !== undefined;
 
     try {
       const response = await firstValueFrom(
@@ -1899,9 +2756,10 @@ export class OptimizationProxyService {
               'X-API-Key': this.aiConfig.apiKey,
               'Content-Type': 'application/json',
             },
+            ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
           })
           .pipe(
-            timeout(this.aiConfig.timeoutMs),
+            timeout(options.timeoutMs ?? this.aiConfig.timeoutMs),
             /*
              * Three different failures, told apart, because they need three
              * different things done about them.
@@ -1953,8 +2811,29 @@ export class OptimizationProxyService {
                  */
                 const body = error.response.data as {
                   message?: unknown;
-                  details?: { code?: unknown; params?: unknown } | null;
+                  details?: { code?: unknown; params?: unknown; errors?: unknown } | null;
                 } | null;
+                /*
+                 * An engine older than `search`. Its models forbid fields they
+                 * do not know, so the request is refused whole with a 422 that
+                 * names the field — the deploy order the contract allows (the
+                 * engine ships with the API, from the same merge) leaves a few
+                 * minutes in which a schemaförslag run meets one. Said as what
+                 * it is, so the run fails with a sentence a school can wait
+                 * out rather than "validation failed". Only a request that
+                 * carried `search`, and only that exact refusal: any other
+                 * 422 is this gateway's mistake and keeps its own sentence.
+                 */
+                if (error.response.status === 422 && carriesSearch && refusesSearch(body)) {
+                  throw new HttpException(
+                    {
+                      message:
+                        'Schemamotorn är äldre än API:t och kan inte ta fram schemaförslag ännu. Försök igen om några minuter.',
+                      code: ENGINE_LACKS_CANDIDATES,
+                    },
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                  );
+                }
                 const readable =
                   error.response.status < 500 && typeof body?.message === 'string';
                 const detail = readable
@@ -2027,6 +2906,8 @@ export class OptimizationProxyService {
     lunches: AiEngineLunch[] | null,
     /** groupId → children seated, so the kitchen's list needs no re-derivation. */
     headcountByGroup: Map<string, number>,
+    /** The draft's own masters as the fetch saw them, sorted (prepareSchedule). */
+    draftIds: readonly string[],
   ): Promise<TeachersOnDay[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
@@ -2044,36 +2925,122 @@ export class OptimizationProxyService {
       return null;
     }
 
-    // Invert: anonId → realId for requirements and rooms.
-    const realRequirementId = new Map<string, string>(
-      [...requirementAnonMap.entries()].map(([real, anon]) => [anon, real]),
-    );
-    const realRoomId = new Map<string, string>(
-      [...roomAnonMap.entries()].map(([real, anon]) => [anon, real]),
-    );
+    try {
+      // One wholesale rewrite of a year at a time (regeneration-lock.ts): an
+      // apply or a restore in progress is waited for 5 s, then 409
+      // SCHEDULE_BUSY. After the early return, so a run with nothing to write
+      // waits for nobody.
+      await lockYearForRegeneration(tx, academicYearId, SCHEDULE_BUSY);
 
-    if (!user.schoolId) {
-      throw new Error('Cannot persist master lessons: schoolId missing from JWT.');
+      // The lost update the lock alone does not stop. The fetch was a minute
+      // ago; if a lesson was locked, unlocked or deleted since, a candidate
+      // applied or another run written, this answer was solved for a draft
+      // that no longer exists, and writing it would silently throw away
+      // whatever replaced it. The set of the draft's own lessons is what this
+      // write deletes, so that set is what is compared.
+      const now = await tx.masterLesson.findMany({
+        where: { academicYearId, NOT: { OR: PRESERVED_FROM_REGENERATION } },
+        select: { id: true },
+      });
+      if (!sameIds(sortedIds(now.map((row) => row.id)), sortedIds(draftIds))) {
+        this.logger.warn(
+          `Generated timetable not written: the draft changed while the solver ran [academicYearId=${academicYearId}].`,
+        );
+        throw generateStale();
+      }
+
+      if (!user.schoolId) {
+        throw new Error('Cannot persist master lessons: schoolId missing from JWT.');
+      }
+
+      // Fetch requirement details needed for the MasterLesson record. Read again
+      // rather than carried from the fetch phase: the solver has been running in
+      // between, and every other field written below comes from this same row.
+      const requirementRows = await tx.teachingRequirement.findMany({
+        where: { academicYearId },
+        select: {
+          id: true,
+          subjectId: true,
+          studentGroupId: true,
+          teacherId: true,
+          coTeacherId: true,
+          recurrence: true,
+          startDate: true,
+          endDate: true,
+        },
+      });
+
+      // The demand in real ids, as the shared write checks it. Every sent id
+      // came out of this map; one that did not would name nothing an answer can
+      // match, and refuse the answer.
+      const realRequirement = reversed(requirementAnonMap);
+      const written = await this.writeRegeneration(tx, {
+        schoolId: user.schoolId,
+        academicYearId,
+        actorId: user.userId ?? null,
+        mode,
+        solverStatus: response.status,
+        lessons: resolveLessons(response.lessons, requirementAnonMap, roomAnonMap),
+        demand: requirements.map((r) => ({
+          requirementId: realRequirement.get(r.id) ?? `unsent:${r.id}`,
+          lessonsPerWeek: r.lessonsPerWeek,
+          ...(r.lessonLengths ? { lessonLengths: r.lessonLengths } : {}),
+        })),
+        requirementRows,
+        lunches,
+        headcountByGroup,
+        scope: { kind: 'NOT_PRESERVED' },
+      });
+      return written.timetable;
+    } catch (error) {
+      // lock_timeout stays 5 s for the rest of the transaction, so a row a
+      // hand edit holds is waited for as long as the lock was, and answered
+      // the same way.
+      if (isLockTimeout(error)) throw scheduleBusy(SCHEDULE_BUSY);
+      throw error;
     }
-    const schoolId = user.schoolId;
+  }
 
-    // Fetch requirement details needed for the MasterLesson record. Read again
-    // rather than carried from the fetch phase: the solver has been running in
-    // between, and every other field written below comes from this same row.
-    const requirementDetails = await tx.teachingRequirement.findMany({
-      where: { academicYearId },
-      select: {
-        id: true,
-        subjectId: true,
-        studentGroupId: true,
-        teacherId: true,
-        coTeacherId: true,
-        recurrence: true,
-        startDate: true,
-        endDate: true,
-      },
-    });
-    const reqById = new Map(requirementDetails.map((r) => [r.id, r]));
+  /**
+   * THE REGENERATION WRITE, one body for Generera and for an apply: the
+   * guard, the dated lessons of the masters going, the masters, the new
+   * lessons, the sittings and the REGENERATE entry, in the caller's
+   * transaction and in that order.
+   *
+   * The scope is the one difference that matters, and it is used IDENTICALLY
+   * by the calendar sweep and the master delete: a lesson whose master stays
+   * must keep its dated lessons, and one whose master goes must lose them.
+   * Generera's is today's rule (NOT preserved); an apply's is the ids its
+   * basis saw (`id IN`, `masterLessonId IN`), with the number deleted checked.
+   *
+   * The requirement rows are passed in: Generera passes the ones it re-read
+   * after the solve, an apply the ones its basis was hashed from, so no second
+   * read can hand the lessons a teacher the basis never saw.
+   */
+  private async writeRegeneration(
+    tx: PrismaClient,
+    input: {
+      schoolId: string;
+      academicYearId: string;
+      actorId: string | null;
+      mode: PublishMode;
+      solverStatus: string;
+      lessons: readonly ResolvedLesson[];
+      demand: readonly RegenerationDemand[];
+      requirementRows: readonly RegenerationRequirementRow[];
+      lunches: AiEngineLunch[] | null;
+      headcountByGroup: Map<string, number>;
+      scope: RegenerationScope;
+      /** Merged into the entry's `after`, under the counts (which it cannot override). */
+      after?: Prisma.InputJsonObject;
+      /** What a guard failure throws, when not Generera's 502 / a plain error. */
+      refusals?: { mismatch?: () => Error; scopeChanged?: () => Error };
+      /** Run after the writes and before the change log; throw to roll back. */
+      verify?: (lessonsCreated: number) => Promise<void>;
+    },
+  ): Promise<RegenerationWritten> {
+    const { schoolId, academicYearId, mode, scope } = input;
+    const rowById = new Map(input.requirementRows.map((row) => [row.id, row]));
 
     /*
      * The whole replacement is built and checked here, BEFORE a single row is
@@ -2087,101 +3054,56 @@ export class OptimizationProxyService {
      * `{status:"FEASIBLE", lessons:[]}` used to reach the delete below and
      * leave the school's year with nothing in it — and no snapshot is taken
      * before a regeneration, so there was nothing to put back.
+     *
+     * Lektionslängder: an entry sent WITH a list must come back as exactly
+     * those lengths — an engine placing 1 × 80 + 1 × 40 as two 80s answered
+     * another request. Only those entries: a uniform one is checked by count
+     * as it always was, so no school that never splits meets a new 502.
      */
-    const demandByRequirement = new Map(
-      requirements.map((r) => [r.id, r.lessonsPerWeek]),
-    );
-    const placedByRequirement = new Map<string, number>();
-    // Lektionslängder: an entry sent WITH a list must come back as exactly
-    // those lengths — an engine placing 1 × 80 + 1 × 40 as two 80s answered
-    // another request. Only those entries: a uniform one is checked by count
-    // as it always was, so no school that never splits meets a new 502.
-    const lengthsByRequirement = new Map(
-      requirements.flatMap((r) => (r.lessonLengths ? [[r.id, r.lessonLengths] as const] : [])),
-    );
-    const placedMinutesByRequirement = new Map<string, number[]>();
-    let unmatchedLessons = 0;
-
-    const creates = response.lessons.flatMap((lesson) => {
-      const realReqId = realRequirementId.get(lesson.requirementId);
-      const req = realReqId ? reqById.get(realReqId) : undefined;
-      // Either the response names a requirement this request never sent, or
-      // the requirement has been deleted while the solver was running. Both
-      // mean the solution no longer describes this academic year.
-      if (!req || !demandByRequirement.has(lesson.requirementId)) {
-        unmatchedLessons++;
-        return [];
-      }
-
-      placedByRequirement.set(
-        lesson.requirementId,
-        (placedByRequirement.get(lesson.requirementId) ?? 0) + 1,
-      );
-      if (lengthsByRequirement.has(lesson.requirementId)) {
-        const placed = placedMinutesByRequirement.get(lesson.requirementId) ?? [];
-        placed.push(minutesOf(lesson.endTime) - minutesOf(lesson.startTime));
-        placedMinutesByRequirement.set(lesson.requirementId, placed);
-      }
-
-      const realRoom = lesson.roomId ? realRoomId.get(lesson.roomId) : null;
-
-      return [
-        {
-          schoolId,
-          academicYearId,
-          subjectId: req.subjectId,
-          studentGroupId: req.studentGroupId,
-          teacherId: req.teacherId ?? null,
-          coTeacherId: req.coTeacherId ?? null,
-          roomId: realRoom ?? null,
-          dayOfWeek: lesson.dayOfWeek,
-          startTime: this.parseTime(lesson.startTime),
-          endTime: this.parseTime(lesson.endTime),
-          // The window comes from the requirement, never from the engine — the
-          // engine was never told about weeks and packs a spring-only course as
-          // if it ran all year. Stamping the period on afterwards over-provisions
-          // (two half-year subjects get separate slots where one would have
-          // done) and that is the visible kind of wrong; a lesson that came back
-          // as an ordinary weekly one would silently turn "kemi bara på
-          // vårterminen" into a year-long course.
-          recurrence: req.recurrence,
-          startDate: req.startDate,
-          endDate: req.endDate,
-          // What makes the next run allowed to delete this row again: the one
-          // place in the codebase that sets it true, and the column
-          // PRESERVED_FROM_REGENERATION asks to tell whose lesson this is.
-          isGenerated: true,
-        },
-      ];
-    });
-
-    const sameLengths = (sent: readonly number[], placed: readonly number[]): boolean => {
-      const a = [...sent].sort((x, y) => y - x);
-      const b = [...placed].sort((x, y) => y - x);
-      return a.length === b.length && a.every((minutes, i) => minutes === b[i]);
-    };
-    const offTarget = [...demandByRequirement].filter(
-      ([anonRequirementId, wanted]) =>
-        (placedByRequirement.get(anonRequirementId) ?? 0) !== wanted ||
-        (lengthsByRequirement.has(anonRequirementId) &&
-          !sameLengths(
-            lengthsByRequirement.get(anonRequirementId)!,
-            placedMinutesByRequirement.get(anonRequirementId) ?? [],
-          )),
-    ).length;
-    if (unmatchedLessons > 0 || offTarget > 0) {
-      const requested = [...demandByRequirement.values()].reduce(
-        (sum, count) => sum + count,
-        0,
-      );
+    const verdict = checkAgainstDemand(input.lessons, input.demand, new Set(rowById.keys()));
+    if (verdict.unmatched > 0 || verdict.offTarget > 0) {
       this.logger.error(
-        `Rejected AI engine solution [academicYearId=${academicYearId}, status=${response.status}, requestedLessons=${requested}, placedLessons=${creates.length}, unmatchedLessons=${unmatchedLessons}, requirementsOffTarget=${offTarget}]. Timetable left untouched.`,
+        `Rejected AI engine solution [academicYearId=${academicYearId}, status=${input.solverStatus}, requestedLessons=${verdict.requested}, placedLessons=${verdict.placed}, unmatchedLessons=${verdict.unmatched}, requirementsOffTarget=${verdict.offTarget}]. Timetable left untouched.`,
       );
-      throw new HttpException(
-        'The AI engine returned a solution that does not match the requested timetable. The existing timetable was left unchanged.',
-        HttpStatus.BAD_GATEWAY,
+      throw (
+        input.refusals?.mismatch?.() ??
+        new HttpException(
+          'The AI engine returned a solution that does not match the requested timetable. The existing timetable was left unchanged.',
+          HttpStatus.BAD_GATEWAY,
+        )
       );
     }
+
+    // Every lesson matched a row above, so every lookup below finds one.
+    const creates = input.lessons.map((lesson) => {
+      const req = rowById.get(lesson.requirementId as string)!;
+      return {
+        schoolId,
+        academicYearId,
+        subjectId: req.subjectId,
+        studentGroupId: req.studentGroupId,
+        teacherId: req.teacherId ?? null,
+        coTeacherId: req.coTeacherId ?? null,
+        roomId: lesson.roomId ?? null,
+        dayOfWeek: lesson.dayOfWeek,
+        startTime: this.parseTime(lesson.startTime),
+        endTime: this.parseTime(lesson.endTime),
+        // The window comes from the requirement, never from the engine — the
+        // engine was never told about weeks and packs a spring-only course as
+        // if it ran all year. Stamping the period on afterwards over-provisions
+        // (two half-year subjects get separate slots where one would have
+        // done) and that is the visible kind of wrong; a lesson that came back
+        // as an ordinary weekly one would silently turn "kemi bara på
+        // vårterminen" into a year-long course.
+        recurrence: req.recurrence,
+        startDate: req.startDate,
+        endDate: req.endDate,
+        // What makes the next run allowed to delete this row again: the one
+        // place in the codebase that sets it true, and the column
+        // PRESERVED_FROM_REGENERATION asks to tell whose lesson this is.
+        isGenerated: true,
+      };
+    });
 
     // Non-destructive regeneration: handmade lessons, locked lessons AND
     // participant lessons (manual multi-class / individual-student constructs)
@@ -2190,6 +3112,7 @@ export class OptimizationProxyService {
     // rows about to be deleted are exactly the ones a previous run stamped
     // `isGenerated`; see the constant for why that is a column and not a guess.
     const preservedWhere = { OR: PRESERVED_FROM_REGENERATION };
+    const ids = scope.kind === 'IDS' ? [...scope.ids] : [];
 
     /*
      * The dated lessons of the templates about to go, removed before the
@@ -2206,35 +3129,38 @@ export class OptimizationProxyService {
      * future, still-SCHEDULED, no attendance recorded. What has already
      * happened stays exactly as it happened, orphaned but intact.
      */
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    const today = startOfUtcDay(new Date());
     // Not in DRAFT: the regeneration is a draft, its published rows stay, and
     // the delete below records them (PublicationPendingRemovals) for the next
     // publish to adopt or remove.
     const { count: removedCalendarLessons } =
       mode === 'DRAFT'
         ? { count: 0 }
-        : await tx.calendarLesson.deleteMany({
-            where: {
-              masterLesson: { is: { academicYearId, NOT: preservedWhere } },
-              status: 'SCHEDULED',
-              date: { gte: today },
-              attendanceRecords: { none: {} },
-            },
-          });
+        : await tx.calendarLesson.deleteMany({ where: calendarSweepWhere(scope, academicYearId, today) });
 
     const { count: removedUnlocked } = await tx.masterLesson.deleteMany({
-      where: { academicYearId, NOT: preservedWhere },
+      where:
+        scope.kind === 'IDS'
+          ? { academicYearId, id: { in: ids } }
+          : { academicYearId, NOT: preservedWhere },
     });
+    // An id the basis saw that is gone, or no longer the year's: the draft
+    // moved under the write, and the scope no longer says what it said.
+    if (scope.kind === 'IDS' && removedUnlocked !== ids.length) {
+      throw (
+        input.refusals?.scopeChanged?.() ??
+        new Error(`Regeneration scope changed: ${ids.length} expected, ${removedUnlocked} deleted.`)
+      );
+    }
     /*
      * What the delete left: the audit's count, and the kept half of the
      * timetable the free-day wishes are read against. Read here, after the
      * delete, and not carried from the fetch: the solver has been running in
      * between, and a lesson placed by hand while it ran is kept now, as one
      * unlocked while it ran is deleted now — neither as the fetch saw them.
-     * (The publication lock is shared in DIRECT, so a hand edit committed
-     * between this read and this transaction's commit is still missed: a
-     * window of the writes below, not of a solve.) One read for both, where a
+     * (A hand edit through MasterLessonsService takes its share of the year's
+     * regeneration lock before it writes, and this write holds that lock, so
+     * none lands between this read and the commit.) One read for both, where a
      * count stood: the transaction, which holds that lock, sends no more
      * statements than it did. A parked lesson is kept and counted, and
      * occupies no day.
@@ -2245,7 +3171,10 @@ export class OptimizationProxyService {
     });
     const lockedPreserved = preserved.length;
 
-    await Promise.all(creates.map((data) => tx.masterLesson.create({ data })));
+    // One INSERT for the lot: no create carries a nested write.
+    if (creates.length > 0) {
+      await tx.masterLesson.createMany({ data: creates });
+    }
 
     /*
      * The sittings, in the same transaction and with the same all-or-nothing
@@ -2260,33 +3189,41 @@ export class OptimizationProxyService {
      * last week's flow exactly where it was — and so does a run that never
      * asked the engine, which has no sittings to replace them with.
      */
-    if (lunches !== null) {
-      await this.replaceSittings(tx, schoolId, academicYearId, lunches, headcountByGroup, today, mode);
+    if (input.lunches !== null) {
+      await this.replaceSittings(tx, schoolId, academicYearId, input.lunches, input.headcountByGroup, today, mode);
     }
 
+    await input.verify?.(creates.length);
+
     // Append a REGENERATE entry to the schedule audit trail.
+    const counts: RegenerationCounts = {
+      lessonsCreated: creates.length,
+      unlockedReplaced: removedUnlocked,
+      lockedPreserved,
+      calendarLessonsRemoved: removedCalendarLessons,
+    };
     await tx.scheduleChangeLog.create({
       data: {
         schoolId,
         academicYearId,
         masterLessonId: null,
-        actorId: user.userId ?? null,
+        actorId: input.actorId,
         action: 'REGENERATE',
         after: {
-          solverStatus: response.status,
-          lessonsCreated: creates.length,
-          unlockedReplaced: removedUnlocked,
-          lockedPreserved,
-          calendarLessonsRemoved: removedCalendarLessons,
+          ...(input.after ?? {}),
+          solverStatus: input.solverStatus,
+          ...counts,
         },
       },
     });
-
-    return [...preserved.filter((lesson) => !lesson.isParked), ...creates].map((lesson) => ({
-      teacherId: lesson.teacherId,
-      coTeacherId: lesson.coTeacherId,
-      dayOfWeek: lesson.dayOfWeek,
-    }));
+    return {
+      ...counts,
+      timetable: [...preserved.filter((lesson) => !lesson.isParked), ...creates].map((lesson) => ({
+        teacherId: lesson.teacherId,
+        coTeacherId: lesson.coTeacherId,
+        dayOfWeek: lesson.dayOfWeek,
+      })),
+    };
   }
 
   /**

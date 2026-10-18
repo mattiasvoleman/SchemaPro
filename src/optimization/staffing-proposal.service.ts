@@ -569,7 +569,7 @@ export class StaffingProposalService {
     }
 
     const result = await this.prisma.withRls(user, async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('staffing-proposal'), hashtext(${dto.academicYearId}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('staffing-proposal'), hashtext(${dto.academicYearId}::uuid::text))`;
       const people = [
         ...new Set(
           dto.changes.flatMap((change) => [change.fromTeacherId, change.toTeacherId]).filter((id): id is string => id !== null),

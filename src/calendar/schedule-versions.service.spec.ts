@@ -1,9 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { LessonRecurrence } from '@prisma/client';
+import { Prisma, type LessonRecurrence } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -891,6 +892,65 @@ describe('ScheduleVersionsService', () => {
       });
       expect(tx.masterLesson.deleteMany).toHaveBeenCalled();
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
+    });
+
+    /*
+     * A restore replaces the whole year, so it queues with Generera's persist
+     * and a schemaförslag apply on the year's regeneration lock — second,
+     * after the publication lock, the order every grundschema writer keeps.
+     */
+    describe('the year’s regeneration lock', () => {
+      const rawSql = (call: unknown[]): string => (call[0] as readonly string[]).join('?');
+      const lockTimeout = () =>
+        new Prisma.PrismaClientKnownRequestError('canceling statement due to lock timeout', {
+          code: 'P2010',
+          clientVersion: '7',
+          meta: { driverAdapterError: { cause: { originalCode: '55P03' } } },
+        });
+
+      it('takes it after the publication lock and before the safety snapshot and the wipe', async () => {
+        arrangeRestore();
+
+        await service.restore(VERSION_ID, testUser());
+
+        expect(tx.$executeRaw.mock.calls.map(rawSql)).toEqual([
+          "SET LOCAL lock_timeout = '5s'",
+          "SELECT pg_advisory_xact_lock(hashtext('grundschema-regenerate'), hashtext(?::uuid::text))",
+        ]);
+        expect(tx.$executeRaw.mock.calls[1]!.slice(1)).toEqual([YEAR_ID]);
+        const lockedAt = tx.$executeRaw.mock.invocationCallOrder[1]!;
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(lockedAt);
+        expect(lockedAt).toBeLessThan(tx.scheduleVersion.create.mock.invocationCallOrder[0]!);
+        expect(lockedAt).toBeLessThan(tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!);
+      });
+
+      it('answers 409 SCHEDULE_BUSY when an apply or a generate holds the year, and writes nothing', async () => {
+        arrangeRestore();
+        tx.$executeRaw = jest.fn().mockResolvedValueOnce(0).mockRejectedValueOnce(lockTimeout());
+
+        const error = await service.restore(VERSION_ID, testUser()).catch((thrown: unknown) => thrown);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: 'SCHEDULE_BUSY' });
+        expect(tx.scheduleVersion.create).not.toHaveBeenCalled();
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('answers a row held past the same 5 s the same way', async () => {
+        arrangeRestore();
+        tx.masterLesson.deleteMany.mockRejectedValue(lockTimeout());
+
+        const error = await service.restore(VERSION_ID, testUser()).catch((thrown: unknown) => thrown);
+
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: 'SCHEDULE_BUSY' });
+      });
+
+      it('takes no lock for a version that does not exist', async () => {
+        tx.scheduleVersion.findUnique.mockResolvedValue(null);
+
+        await expect(service.restore(VERSION_ID, testUser())).rejects.toThrow(NotFoundException);
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+      });
     });
 
     it('404s when the academic year behind the version has vanished', async () => {

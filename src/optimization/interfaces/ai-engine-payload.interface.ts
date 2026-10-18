@@ -445,6 +445,25 @@ export interface ObjectiveWeights {
   teacherGap?: number;
 }
 
+/**
+ * How one request's search is run, never what is searched for: the engine's
+ * SearchOptions (schemas/schedule.py). Sent ONLY by a schemaförslag run, whose
+ * candidates differ by their weights and by where CP-SAT starts looking.
+ * Absent is today's request byte for byte, and Generera never sends it: an
+ * engine older than the field answers 422 to a request carrying it (its models
+ * forbid extras), and only a candidate run may meet that.
+ */
+export interface SearchOptions {
+  /** CP-SAT's random_seed on the generation solves, 0..2147483647. */
+  seed?: number;
+  /** The solve budget in seconds, 5..600, min'd with the engine's own. */
+  maxSeconds?: number;
+  /** False skips the timeout probe, the blocks verdict and the explanation. Absent is true. */
+  probes?: boolean;
+  /** CP-SAT's num_workers, 1..16. Absent is every core. */
+  workers?: number;
+}
+
 /** Optional hard scheduling rules forwarded to the engine. */
 export interface ScheduleRules {
   /** HH:MM:SS */
@@ -510,6 +529,8 @@ export interface AiEngineScheduleRequest {
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
   roomPreferences: AnonymousRoomPreference[];
+  /** A schemaförslag's search settings; see SearchOptions. Never sent by Generera. */
+  search?: SearchOptions;
 }
 
 export type ConflictCategory =
