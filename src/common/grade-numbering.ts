@@ -23,13 +23,22 @@
  * A läsår stores its numbering (AcademicYears.gradeNumbering, 20261121091000).
  * A lokal timplan's rows are in its lydelse's numbering (one applying from HT
  * 2028 is TIOARIG). School-wide spans — frames, lunch, raster, salsregler,
- * årskursregler, behörigheter, salar, skolenheter — are stated in NIOARIG and
- * never move; a reader of a TIOARIG läsår reads its årskurs in NIOARIG before
- * comparing (toNioarig). A skolenhet is the one exception to come: SFS
- * 2025:729 övergångsbestämmelse 5 moves its approval at the bottom too (an
- * åk 1 approval also covers the new åk 1; one for förskoleklass lapses), so
- * its TIOARIG span will be a pair of its own, confirmed by an admin — not
- * this translation. Twelve is "and above" in both, as the bounds that run to 12
+ * weekly årskursregler, behörigheter, salar, skolenheter — are stated in
+ * NIOARIG and never move; a reader of a TIOARIG läsår reads its årskurs in
+ * NIOARIG before comparing (toNioarig, toNioarigSpan), and says the årskurs in
+ * the läsår's own numbering. Two readings differ:
+ *
+ *   * a skolenhet: SFS 2025:729 övergångsbestämmelse 5 moves an approval at
+ *     the bottom too (an åk 1 approval also covers the new åk 1; one for
+ *     förskoleklass alone lapses), so a TIOARIG läsår reads a unit's span as
+ *     the statute does (unitSpanIn), not one down. A pair an admin confirms
+ *     instead is a follow-up;
+ *   * a DATED årskursregel — a closure on a day, a prao, a studiedag — is
+ *     stated in the numbering of the läsår its day falls in, as the admin who
+ *     adds it for that day reads the classes; only the solver, which compares
+ *     in NIOARIG, reads it over.
+ *
+ * Twelve is "and above" in both, as the bounds that run to 12
  * have always meant it: TIOARIG 12 is NIOARIG 12, and NIOARIG 11, which no
  * school form has, reads as 12.
  */
@@ -74,6 +83,38 @@ export function planRowOf(planTioarig: boolean, numbering: GradeNumbering, grade
 export function gradeOfPlanRow(planTioarig: boolean, numbering: GradeNumbering, row: number): number | null {
   const grade = row + (numbering === 'TIOARIG' ? 1 : 0) - (planTioarig ? 1 : 0);
   return grade < 0 ? null : grade;
+}
+
+/**
+ * A span of årskurser in a läsår of `numbering`, read in NIOARIG — what every
+ * school-wide span (frames, lunch, raster, salsregler, årskursregler,
+ * behörigheter, salar) is stated in. A TIOARIG läsår's 8–10 is NIOARIG 7–9.
+ * Readers compare a class's or a group's span through this, never raw.
+ */
+export function toNioarigSpan(
+  span: { min: number; max: number } | null,
+  numbering: GradeNumbering,
+): { min: number; max: number } | null {
+  return span === null ? null : { min: toNioarig(span.min, numbering)!, max: toNioarig(span.max, numbering)! };
+}
+
+/**
+ * A skolenhet's årskurser in a läsår of `numbering`. Its span is stated in
+ * NIOARIG; a TIOARIG läsår reads it as SFS 2025:729 övergångsbestämmelse 5
+ * reads an approval: one årskurs up, an approval from åk 1 also for the new
+ * åk 1, and one for förskoleklass alone lapses — F–6 and 1–6 are 1–7, 7–9 is
+ * 8–10, specialskolan's F–10 is 1–11, F–F holds nothing. Not toNioarig at
+ * the bottom: the new åk 1 belongs to a 1–6 unit, not to an F unit. Null for
+ * a unit without a span. (The pair an admin confirms instead is a follow-up.)
+ */
+export function unitSpanIn(
+  span: { gradeFrom: number | null; gradeTo: number | null },
+  numbering: GradeNumbering,
+): { gradeFrom: number; gradeTo: number } | null {
+  if (span.gradeFrom === null || span.gradeTo === null) return null;
+  if (numbering === 'NIOARIG') return { gradeFrom: span.gradeFrom, gradeTo: span.gradeTo };
+  if (span.gradeTo === 0) return null;
+  return { gradeFrom: span.gradeFrom <= 1 ? 1 : span.gradeFrom + 1, gradeTo: span.gradeTo + 1 };
 }
 
 /** Whether a lydelse ('HT2028', 'HT2024' …) numbers its årskurser TIOARIG. */

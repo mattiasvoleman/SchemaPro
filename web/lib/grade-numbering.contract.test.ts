@@ -8,12 +8,21 @@ import {
   toNioarig,
   type GradeNumbering,
 } from "@/lib/grade-numbering";
+import { toNioarigSpan } from "@/lib/nioarig-span";
+import { unitSpanIn } from "@/lib/school-units";
 
 /**
  * One numbering, implemented twice — the web half of
  * src/common/grade-numbering.contract.spec.ts, replaying the same fixture.
  */
-const { spans, planRows, lydelser } = fixture as {
+const { spans, planRows, lydelser, gradeSpans, unitSpans } = fixture as {
+  gradeSpans: { numbering: GradeNumbering; min: number; max: number; toNioarigSpan: { min: number; max: number } | null }[];
+  unitSpans: {
+    numbering: GradeNumbering;
+    gradeFrom: number | null;
+    gradeTo: number | null;
+    unitSpanIn: { gradeFrom: number; gradeTo: number } | null;
+  }[];
   spans: { numbering: GradeNumbering; gradeLevel: number | null; toNioarig: number | null; fromNioarig: number | null }[];
   planRows: { planTioarig: boolean; numbering: GradeNumbering; grade: number; planRowOf: number | null; gradeOfPlanRow: number | null }[];
   lydelser: { term: string; tioarig: boolean }[];
@@ -37,6 +46,15 @@ describe("the numbering agrees with the shared fixture", () => {
       expect(gradeOfPlanRow(row.planTioarig, row.numbering, row.grade)).toBe(row.gradeOfPlanRow);
     },
   );
+
+  it("reads every span of årskurser and every skolenhet span the same way", () => {
+    expect(gradeSpans.length).toBeGreaterThan(0);
+    for (const row of gradeSpans) expect(toNioarigSpan({ min: row.min, max: row.max }, row.numbering)).toEqual(row.toNioarigSpan);
+    expect(unitSpans.length).toBeGreaterThan(0);
+    for (const row of unitSpans) {
+      expect(unitSpanIn({ gradeFrom: row.gradeFrom, gradeTo: row.gradeTo }, row.numbering)).toEqual(row.unitSpanIn);
+    }
+  });
 
   it("reads the lydelser", () => {
     for (const row of lydelser) expect(lydelseIsTioarig(row.term)).toBe(row.tioarig);

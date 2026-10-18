@@ -15,6 +15,8 @@
  * school-units.test.ts and school-unit-map.spec.ts hold the same cases.
  */
 
+import type { GradeNumbering } from "@/lib/grade-numbering";
+
 /** S1 SchoolTypesEnum values a unit may hold, in the order SchemaPro lists them. */
 export const SCHOOL_UNIT_TYPES = ["FKLASS", "FTH", "GR", "GRS", "TR", "SP", "SAM"] as const;
 export type SchoolUnitType = (typeof SCHOOL_UNIT_TYPES)[number];
@@ -52,23 +54,55 @@ export function firstUnit<T extends UnitSpan>(units: readonly T[]): T | null {
   return units.length === 0 ? null : [...units].sort(compareUnits)[0]!;
 }
 
-export function unitHolding<T extends UnitSpan>(units: readonly T[], grade: number | null): T | null {
+/**
+ * A skolenhet's årskurser in a läsår of `numbering`: as stated in NIOARIG,
+ * and in TIOARIG as SFS 2025:729 övergångsbestämmelse 5 reads an approval —
+ * the gateway's unitSpanIn (src/common/grade-numbering.ts), replayed from the
+ * shared fixture by grade-numbering.contract.test.ts. Here and not in
+ * lib/grade-numbering.ts, which every importer bundles whole.
+ */
+export function unitSpanIn(
+  span: { gradeFrom: number | null; gradeTo: number | null },
+  numbering: GradeNumbering,
+): { gradeFrom: number; gradeTo: number } | null {
+  if (span.gradeFrom === null || span.gradeTo === null) return null;
+  if (numbering === "NIOARIG") return { gradeFrom: span.gradeFrom, gradeTo: span.gradeTo };
+  if (span.gradeTo === 0) return null;
+  return { gradeFrom: span.gradeFrom <= 1 ? 1 : span.gradeFrom + 1, gradeTo: span.gradeTo + 1 };
+}
+
+/** The unit holding `grade` in a läsår of `numbering` (unitSpanIn, as the gateway's school-unit-map reads it). */
+export function unitHolding<T extends UnitSpan>(
+  units: readonly T[],
+  grade: number | null,
+  numbering: GradeNumbering = "NIOARIG",
+): T | null {
   if (grade === null) return null;
   return (
-    units.find((unit) => unit.gradeFrom !== null && unit.gradeTo !== null && unit.gradeFrom <= grade && grade <= unit.gradeTo) ??
-    null
+    units.find((unit) => {
+      const span = unitSpanIn(unit, numbering);
+      return span !== null && span.gradeFrom <= grade && grade <= span.gradeTo;
+    }) ?? null
   );
 }
 
 /** The unit a class (or anything with an årskurs, or none) belongs to; null only when the school has no unit. */
-export function unitForGrade<T extends UnitSpan>(units: readonly T[], grade: number | null): T | null {
+export function unitForGrade<T extends UnitSpan>(
+  units: readonly T[],
+  grade: number | null,
+  numbering: GradeNumbering = "NIOARIG",
+): T | null {
   if (units.length <= 1) return units[0] ?? null;
-  return unitHolding(units, grade) ?? firstUnit(units);
+  return unitHolding(units, grade, numbering) ?? firstUnit(units);
 }
 
 /** Whether `grade` falls to the first unit only because no span holds it (several units). */
-export function gradeOutsideUnits(units: readonly UnitSpan[], grade: number | null): boolean {
-  return units.length > 1 && unitHolding(units, grade) === null;
+export function gradeOutsideUnits(
+  units: readonly UnitSpan[],
+  grade: number | null,
+  numbering: GradeNumbering = "NIOARIG",
+): boolean {
+  return units.length > 1 && unitHolding(units, grade, numbering) === null;
 }
 
 export function spansOverlap(

@@ -4,6 +4,8 @@ import {
   lydelseIsTioarig,
   planRowOf,
   toNioarig,
+  toNioarigSpan,
+  unitSpanIn,
 } from './grade-numbering';
 
 /**
@@ -58,5 +60,29 @@ describe('the row of a lokal timplan an årskurs reads', () => {
 
   it('knows a lydelse from HT 2028 numbers its årskurser TIOARIG', () => {
     expect(['HT2024', 'HT2028', 'HT2031', 'VT2028', 'x'].map(lydelseIsTioarig)).toEqual([false, true, true, true, false]);
+  });
+});
+
+describe('a school-wide span against a TIOARIG läsår', () => {
+  it('reads the läsår\'s årskurser in NIOARIG, where a frame or a behörighet is stated: 8–10 is 7–9', () => {
+    expect(toNioarigSpan({ min: 8, max: 10 }, 'TIOARIG')).toEqual({ min: 7, max: 9 });
+    expect(toNioarigSpan({ min: 1, max: 4 }, 'TIOARIG')).toEqual({ min: 0, max: 3 });
+    expect(toNioarigSpan({ min: 7, max: 9 }, 'NIOARIG')).toEqual({ min: 7, max: 9 });
+    expect(toNioarigSpan(null, 'TIOARIG')).toBeNull();
+  });
+});
+
+describe('a skolenhet in a TIOARIG läsår (SFS 2025:729 övergångsbestämmelse 5)', () => {
+  it('reads an approval one årskurs up, and one from åk 1 also for the new åk 1', () => {
+    expect(unitSpanIn({ gradeFrom: 7, gradeTo: 9 }, 'TIOARIG')).toEqual({ gradeFrom: 8, gradeTo: 10 });
+    expect(unitSpanIn({ gradeFrom: 0, gradeTo: 6 }, 'TIOARIG')).toEqual({ gradeFrom: 1, gradeTo: 7 });
+    expect(unitSpanIn({ gradeFrom: 1, gradeTo: 6 }, 'TIOARIG')).toEqual({ gradeFrom: 1, gradeTo: 7 });
+    expect(unitSpanIn({ gradeFrom: 0, gradeTo: 10 }, 'TIOARIG')).toEqual({ gradeFrom: 1, gradeTo: 11 });
+  });
+
+  it('lets a förskoleklass-only approval lapse, keeps a nine-year läsår as stated, and knows no span for none', () => {
+    expect(unitSpanIn({ gradeFrom: 0, gradeTo: 0 }, 'TIOARIG')).toBeNull();
+    expect(unitSpanIn({ gradeFrom: 0, gradeTo: 6 }, 'NIOARIG')).toEqual({ gradeFrom: 0, gradeTo: 6 });
+    expect(unitSpanIn({ gradeFrom: null, gradeTo: null }, 'TIOARIG')).toBeNull();
   });
 });

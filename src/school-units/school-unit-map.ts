@@ -1,3 +1,4 @@
+import { unitSpanIn, type GradeNumbering } from '../common/grade-numbering';
 import type { SchoolUnitType } from '@prisma/client';
 
 /**
@@ -50,21 +51,47 @@ export function firstUnit<T extends UnitSpan>(units: readonly T[]): T | null {
   return units.length === 0 ? null : [...units].sort(compareUnits)[0]!;
 }
 
-/** The unit whose span holds `grade`, if one does. */
-export function unitHolding<T extends UnitSpan>(units: readonly T[], grade: number | null): T | null {
+/**
+ * The unit whose span holds `grade`, if one does. `numbering` is the läsår's
+ * the grade is in: a unit's span is stated in NIOARIG, and a TIOARIG läsår
+ * reads it as SFS 2025:729 övergångsbestämmelse 5 reads an approval
+ * (unitSpanIn: F–6 holds åk 1–7, 7–9 holds 8–10, F alone holds nothing).
+ */
+export function unitHolding<T extends UnitSpan>(
+  units: readonly T[],
+  grade: number | null,
+  numbering: GradeNumbering = 'NIOARIG',
+): T | null {
   if (grade === null) return null;
-  return units.find((unit) => unit.gradeFrom !== null && unit.gradeTo !== null && unit.gradeFrom <= grade && grade <= unit.gradeTo) ?? null;
+  return (
+    units.find((unit) => {
+      const span = unitSpanIn(unit, numbering);
+      return span !== null && span.gradeFrom <= grade && grade <= span.gradeTo;
+    }) ?? null
+  );
 }
 
-/** The unit a class (or anything with an årskurs, or none) belongs to; null only when the school has no unit. */
-export function unitForGrade<T extends UnitSpan>(units: readonly T[], grade: number | null): T | null {
+/**
+ * The unit a class (or anything with an årskurs, or none) belongs to; null
+ * only when the school has no unit. The first unit is the nine-year one in
+ * either numbering, so a room's owner does not move with the läsår.
+ */
+export function unitForGrade<T extends UnitSpan>(
+  units: readonly T[],
+  grade: number | null,
+  numbering: GradeNumbering = 'NIOARIG',
+): T | null {
   if (units.length <= 1) return units[0] ?? null;
-  return unitHolding(units, grade) ?? firstUnit(units);
+  return unitHolding(units, grade, numbering) ?? firstUnit(units);
 }
 
 /** Whether `grade` falls to the first unit only because no span holds it (several units). */
-export function gradeOutsideUnits(units: readonly UnitSpan[], grade: number | null): boolean {
-  return units.length > 1 && unitHolding(units, grade) === null;
+export function gradeOutsideUnits(
+  units: readonly UnitSpan[],
+  grade: number | null,
+  numbering: GradeNumbering = 'NIOARIG',
+): boolean {
+  return units.length > 1 && unitHolding(units, grade, numbering) === null;
 }
 
 /** Whether two spans share an årskurs. */
