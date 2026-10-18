@@ -376,12 +376,14 @@ describe('PrismaService', () => {
       Object.assign(service, { $connect, $disconnect, $queryRaw, logger });
     });
 
-    it('connects on module init and disconnects on destroy', async () => {
+    it('connects on module init and disconnects at application shutdown, after the HTTP server has drained', async () => {
       await boot({});
       expect($connect).toHaveBeenCalledTimes(1);
       expect(logger.log).toHaveBeenCalledWith('Prisma connected.');
 
-      await service.onModuleDestroy();
+      // Not a destroy hook: those run before Nest closes the HTTP server.
+      expect((service as unknown as Record<string, unknown>)['onModuleDestroy']).toBeUndefined();
+      await service.onApplicationShutdown();
       expect($disconnect).toHaveBeenCalledTimes(1);
     });
 

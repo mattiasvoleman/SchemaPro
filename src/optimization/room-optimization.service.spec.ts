@@ -1272,7 +1272,11 @@ describe('RoomOptimizationService', () => {
         rawSql(call).includes('pg_advisory_xact_lock'),
       );
       expect(locks).toHaveLength(1);
-      expect(locks[0]!.slice(1)).toEqual([YEAR]);
+      expect(locks[0]!.slice(1)).toEqual(['room-optimization', YEAR]);
+      // Waited for at most 5 s (a schemaförslag apply holds this key too), and
+      // the transaction's own lock_timeout put back after it.
+      const settings = executeRaw.mock.calls.map(rawSql).filter((sql) => sql.includes("set_config('lock_timeout'"));
+      expect(settings).toEqual(["SELECT set_config('lock_timeout', '5s', true)", "SELECT set_config('lock_timeout', ?, true)"]);
       const lockedAt = executeRaw.mock.invocationCallOrder[executeRaw.mock.calls.indexOf(locks[0]!)]!;
       expect(lockedAt).toBeLessThan(tx.academicYear.findUnique.mock.invocationCallOrder[0]!);
       expect(lockedAt).toBeLessThan(tx.masterLesson.findMany.mock.invocationCallOrder[0]!);

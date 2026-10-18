@@ -100,6 +100,34 @@ export async function lockYearForCandidateApply(tx: PrismaClient, academicYearId
 }
 
 /**
+ * The room or staffing apply's own year key, waited for at most 5 s. Those
+ * keys used to be held only by another apply of the same kind, a moment; a
+ * candidate apply now holds both for its whole transaction (up to a minute),
+ * and an unbounded wait ran into the waiter's own 15 s and a 500. Answered
+ * with SCHEDULE_BUSY, whose sentence the room and staffing dialogs show as
+ * the gateway's message. Only this statement is bounded: the transaction's
+ * lock_timeout is put back after it, so the apply's later row waits stay as
+ * they were.
+ */
+export async function lockApplyYearKey(
+  tx: PrismaClient,
+  key: 'room-optimization' | 'staffing-proposal',
+  academicYearId: string,
+): Promise<void> {
+  try {
+    const [setting] = await tx.$queryRaw<{ previous: string }[]>(
+      Prisma.sql`SELECT current_setting('lock_timeout') AS "previous"`,
+    );
+    await tx.$executeRaw`SELECT set_config('lock_timeout', '5s', true)`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}), hashtext(${academicYearId}::uuid::text))`;
+    await tx.$executeRaw`SELECT set_config('lock_timeout', ${setting?.previous ?? '0'}, true)`;
+  } catch (error) {
+    if (isLockTimeout(error)) throw scheduleBusy(SCHEDULE_BUSY);
+    throw error;
+  }
+}
+
+/**
  * Every master lesson of the year, locked FOR UPDATE until commit, in id
  * order so two lockers meet the rows in the same order. Blocks a hand update
  * or delete of any of them and the KEY SHARE a new MasterLessonGroups or

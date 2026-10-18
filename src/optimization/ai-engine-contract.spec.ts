@@ -1,4 +1,5 @@
 import { of } from 'rxjs';
+import { BASIS_EXCLUDED_FIELDS, BASIS_PAYLOAD_FIELDS } from './candidate-basis';
 import { searchFor, type CallShape } from './candidate-variants';
 import type { ObjectiveWeights } from './interfaces/ai-engine-payload.interface';
 import { OptimizationProxyService } from './optimization-proxy.service';
@@ -449,6 +450,17 @@ describe('AI engine wire contract', () => {
     expect(Object.keys(await buildPayload()).sort()).toEqual(PAYLOAD_FIELDS);
     // Generera's call keeps the module's timeout: no per-call one rides along.
     expect(lastPost.mock.calls[0][2]).not.toHaveProperty('timeout');
+  });
+
+  it('leaves no field of the payload outside the schemaförslag basis, unless it is excluded by name', () => {
+    // A field added to the payload (and to PAYLOAD_FIELDS) fails here until
+    // candidate-basis.ts reads it or names it as excluded: otherwise a
+    // candidate solved before a change to it would be applied after.
+    const covered = [...BASIS_PAYLOAD_FIELDS, ...BASIS_EXCLUDED_FIELDS];
+    expect(new Set(covered).size).toBe(covered.length);
+    expect(PAYLOAD_FIELDS.filter((field) => !covered.includes(field as never))).toEqual([]);
+    // And nothing is read that the payload no longer has.
+    expect(BASIS_PAYLOAD_FIELDS.filter((field) => !PAYLOAD_FIELDS.includes(field))).toEqual([]);
   });
 
   it('sends a schemaförslag candidate Generera\'s fields plus search, and search exactly its four', async () => {

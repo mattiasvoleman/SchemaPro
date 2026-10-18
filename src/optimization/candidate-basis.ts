@@ -50,6 +50,39 @@ import type {
 export const BASIS_VERSION = 1;
 
 export const BASIS_PARTS = ['requirements', 'preserved', 'draft', 'rooms', 'rules', 'rosters'] as const;
+
+/**
+ * Every top-level field of Generera's payload is in exactly one of these two
+ * lists, and ai-engine-contract.spec.ts holds them to the payload it posts. A
+ * field the engine is sent later, and the basis does not read, would let a
+ * candidate solved before a change to it be applied after: that spec fails
+ * until the field is read in basisInputsOf (and BASIS_VERSION bumped) or put
+ * among the exclusions with its reason. Fields inside a piece are covered by
+ * the spreads below.
+ */
+export const BASIS_PAYLOAD_FIELDS = [
+  'constraints',
+  'fixedLessons',
+  'frameTimes',
+  'groupConflicts',
+  'groups',
+  'lunchPlacements',
+  'lunchServings',
+  'previousLessons',
+  'rasts',
+  'requirements',
+  'roomPreferences',
+  'rooms',
+  'teacherWorkRules',
+] as const;
+
+/**
+ * Not the draft's content: the request's own id, the year (one run, one
+ * year), and what a caller adds per request — a body's rules (a candidate run
+ * sends the school's stored rules, which the basis reads), the weights and
+ * the search, which differ between the candidates of one run by design.
+ */
+export const BASIS_EXCLUDED_FIELDS = ['academicYearId', 'requestId', 'rules', 'search', 'weights'] as const;
 export type BasisPart = (typeof BASIS_PARTS)[number];
 export type BasisParts = Record<BasisPart, string>;
 

@@ -40,13 +40,14 @@ async function bootstrap(): Promise<void> {
   // Apply the HTTP CORS allowlist to the Socket.IO gateway as well.
   app.useWebSocketAdapter(new CorsIoAdapter(app));
 
-  // SIGTERM (a redeploy) runs the modules' onModuleDestroy hooks before the
-  // process goes. Without it Nest never calls them outside app.close(): a
+  // SIGTERM (a redeploy) runs the modules' shutdown hooks before the process
+  // goes. Without it Nest never calls them outside app.close(): a
   // schemaförslag run in flight was left RUNNING until its lease ran out
-  // instead of being marked CANDIDATE_RUN_INTERRUPTED at once. The other
-  // hooks only stop their timers, and PrismaService disconnects last (Nest
-  // destroys in reverse order of initialisation). The platform must leave a
-  // few seconds between SIGTERM and SIGKILL for this to land (docs/DEPLOYMENT.md).
+  // instead of being marked CANDIDATE_RUN_INTERRUPTED at once. In order: the
+  // destroy hooks (that mark, and the jobs stopping their timers), then the
+  // HTTP server closes and waits for the requests in flight, then
+  // PrismaService disconnects (onApplicationShutdown). The platform must leave
+  // a few seconds between SIGTERM and SIGKILL for this to land (docs/DEPLOYMENT.md).
   app.enableShutdownHooks();
 
   const port = appConfig.port;

@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   GENERATE_STALE,
   generateStale,
+  lockApplyYearKey,
   lockYearForCandidateApply,
   lockYearForRegeneration,
   lockYearForSolveStart,
@@ -54,6 +55,34 @@ describe('the year’s start lock (Generera’s POST jobs and a candidate start)
     );
 
     expect(bodyOf(error)).toMatchObject({ code: 'CANDIDATES_RUNNING' });
+  });
+});
+
+describe('the room and staffing applies’ own year keys', () => {
+  it('waits at most 5 s for the key and puts the transaction’s lock_timeout back after it', async () => {
+    const executeRaw = jest.fn().mockResolvedValue(0);
+    const queryRaw = jest.fn().mockResolvedValue([{ previous: '0' }]);
+
+    await lockApplyYearKey(clientWith(executeRaw, queryRaw), 'room-optimization', YEAR);
+
+    expect(executeRaw.mock.calls.map(rawSql)).toEqual([
+      "SELECT set_config('lock_timeout', '5s', true)",
+      'SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?::uuid::text))',
+      "SELECT set_config('lock_timeout', ?, true)",
+    ]);
+    expect(executeRaw.mock.calls[1]!.slice(1)).toEqual(['room-optimization', YEAR]);
+    expect(executeRaw.mock.calls[2]!.slice(1)).toEqual(['0']);
+  });
+
+  it('answers 409 SCHEDULE_BUSY when a schemaförslag apply holds the key past the 5 s', async () => {
+    const executeRaw = jest.fn().mockResolvedValueOnce(0).mockRejectedValueOnce(lockTimeout());
+    const queryRaw = jest.fn().mockResolvedValue([{ previous: '0' }]);
+
+    const error = await lockApplyYearKey(clientWith(executeRaw, queryRaw), 'staffing-proposal', YEAR).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(bodyOf(error)).toMatchObject({ code: SCHEDULE_BUSY });
   });
 });
 
