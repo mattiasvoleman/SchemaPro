@@ -1451,6 +1451,55 @@ describe('OptimizationProxyService', () => {
         });
       });
 
+      it.each<[string, Record<string, string | number>]>([
+        // The rest of CLASS_SPAN_CODES, each with the params scheduler_solver.py
+        // raises it with: FRAME_NO_WINDOW is above, ROOM_NONE_ELIGIBLE through
+        // the run below. Every one echoes a timplanspost's or a class's span.
+        [
+          'MARGIN_NO_WINDOW_FOR_REQUIREMENT',
+          { grades: '7–9', minutes: 60, before: 10, after: 0, changeover: 5, remaining: 55 },
+        ],
+        ['RAST_NO_STRETCH_FOR_REQUIREMENT', { grades: '7–9', minutes: 60, remaining: 40 }],
+        ['ROOM_LOCK_LEAVES_NO_ROOM', { grades: '7–9' }],
+        [
+          'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
+          { day: 1, grades: '7–9', rast: '09:40', opens: '08:00', remaining: 40, minutes: 60, bound: 'closed' },
+        ],
+      ])('names %s’s class span back too, and nothing else of it', async (code, params) => {
+        http.post.mockReturnValue(throwError(() => refusal(code, params)));
+
+        expect((await paramsOf({ ...maps(), gradeNumbering: 'TIOARIG' })).params).toEqual({
+          ...params,
+          grades: '8–10',
+        });
+      });
+
+      it('names every tioårig årskurs back as the class it was sent for, twelve as “and above”', () => {
+        /*
+         * yearGrades is the payload's toNioarig run backwards: åk 1 went as
+         * förskoleklassen's 0, specialskolans 11 as 10, and 12 as the 12 the
+         * bounds have always run to. Each comes back as the class it was.
+         */
+        for (let grade = 1; grade <= 12; grade++) {
+          const sent = String(toNioarig(grade, 'TIOARIG'));
+
+          expect(yearGrades('ROOM_LOCK_LEAVES_NO_ROOM', { grades: sent }, { gradeNumbering: 'TIOARIG' })).toEqual({
+            grades: String(grade),
+          });
+        }
+        expect(
+          yearGrades('FRAME_NO_WINDOW_FOR_REQUIREMENT', { grades: '9–12' }, { gradeNumbering: 'TIOARIG' }),
+        ).toEqual({ grades: '10–12' });
+      });
+
+      it.each(['any', ''])('leaves a span the engine could not state (%j) as it said it', (grades) => {
+        // "any" for a timplanspost whose classes have no year, "" for a group
+        // or a reservation without one (_grade_span_text): no årskurs to name.
+        expect(
+          yearGrades('FRAME_NO_WINDOW_FOR_REQUIREMENT', { grades, minutes: 60 }, { gradeNumbering: 'TIOARIG' }),
+        ).toEqual({ grades, minutes: 60 });
+      });
+
       /** A reservation's params, as _constraint_params writes them. */
       const reservation = (kind: string, date: string) => ({
         constraint: 'c-1',
@@ -5986,6 +6035,60 @@ describe('OptimizationProxyService', () => {
         });
       });
 
+      it.each<[string, string, string]>([
+        ['of the tioårig läsår', '2029-03-12', '8–10'],
+        ['of last year, nioårig', '2028-03-13', '7–9'],
+      ])('names a dated årskursregel %s back through the run as its admin wrote it', async (_label, day, said) => {
+        /*
+         * Through triggerScheduling, so the maps are the run's own: the
+         * numbering of each day's läsår has to reach the relay from
+         * fetchAndAnonymize, not from a map a test built. The engine echoes
+         * the span it was sent (7–9 both times).
+         */
+        yearNumbered('TIOARIG');
+        arrange({
+          groups: [{ id: GROUP_ID, gradeLevel: 10, kind: 'CLASS' }],
+          constraints: [
+            constraintRow({
+              resourceType: 'GRADE_LEVEL',
+              minGradeLevel: day.startsWith('2029') ? 8 : 7,
+              maxGradeLevel: day.startsWith('2029') ? 10 : 9,
+              dayOfWeek: null,
+              date: new Date(`${day}T00:00:00.000Z`),
+            }),
+          ],
+        });
+        http.post.mockImplementation((_url: string, payload: any) =>
+          throwError(() => {
+            const constraint = payload.constraints[0];
+            const refused = new AxiosError('boom');
+            refused.response = {
+              status: 400,
+              data: {
+                message: `Constraint ${constraint.id} is off the grid.`,
+                details: {
+                  code: 'INPUT_CONSTRAINT_TIME_OFF_GRID',
+                  params: {
+                    constraint: constraint.id,
+                    kind: constraint.resourceKind,
+                    resource: '',
+                    grades: `${constraint.minGradeLevel}–${constraint.maxGradeLevel}`,
+                    day: 0,
+                    date: constraint.date,
+                    start: '08:00',
+                    end: '09:07',
+                    slotMinutes: 5,
+                  },
+                },
+              },
+            } as never;
+            return refused;
+          }),
+        );
+
+        expect((await refusedParams()).params).toMatchObject({ kind: 'GRADE_LEVEL', date: day, grades: said });
+      });
+
       it('names a class span back on a conflict too, and leaves a sitting’s as stated', async () => {
         // The INFEASIBLE route reads its conflicts through the same yearGrades
         // as the 4xx relay above.
@@ -6025,6 +6128,156 @@ describe('OptimizationProxyService', () => {
           { grades: '10', minutes: 60 },
           { grades: '7–9', seats: 60 },
         ]);
+      });
+
+      /** A pupil whose home class is `studentGroupId`. */
+      const pupil = (n: number, studentGroupId: string) => ({
+        id: `00000000-0000-4000-8000-90000000${String(n).padStart(4, '0')}`,
+        studentGroupId,
+      });
+      /** One timplanspost, for a teaching group of one pupil from each of two classes. */
+      const arrangeAcross = (classes: [number, number]) =>
+        arrange({
+          requirements: [
+            requirement({
+              studentGroupId: TEACHING,
+              subject: { name: 'Kemi', requiredRoomTypeId: 'room-type-lab' },
+            }),
+          ],
+          homeMembers: [pupil(1, GROUP_ID), pupil(2, CLASS_8)],
+          teachingMembers: [
+            { studentId: pupil(1, GROUP_ID).id, studentGroupId: TEACHING },
+            { studentId: pupil(2, CLASS_8).id, studentGroupId: TEACHING },
+          ],
+          groups: [
+            { id: GROUP_ID, gradeLevel: classes[0], kind: 'CLASS' },
+            { id: CLASS_8, gradeLevel: classes[1], kind: 'CLASS' },
+            { id: TEACHING, gradeLevel: null, kind: 'TEACHING_GROUP' },
+          ],
+        });
+      /** A span as the engine writes it (_grade_span_text): "9", "7–9". */
+      const spanText = (payload: any) => {
+        const { minGradeLevel: min, maxGradeLevel: max } = payload.requirements[0];
+        return min === max ? String(min) : `${min}–${max}`;
+      };
+
+      it.each<[GradeNumbering, [number, number], string, string]>(
+        [
+          'FRAME_NO_WINDOW_FOR_REQUIREMENT',
+          'MARGIN_NO_WINDOW_FOR_REQUIREMENT',
+          'RAST_NO_STRETCH_FOR_REQUIREMENT',
+          'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT',
+          'ROOM_LOCK_LEAVES_NO_ROOM',
+          'RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT',
+        ].flatMap((code): [GradeNumbering, [number, number], string, string][] => [
+          ['TIOARIG', [10, 8], code, '8–10'],
+          ['NIOARIG', [9, 7], code, '7–9'],
+        ]),
+      )('names a %s läsår’s group across classes %j back on a %s conflict as %s', async (numbering, classes, code, said) => {
+        /*
+         * The same pupils in either läsår — 10A's and 8B's, or 9A's and 7B's —
+         * are sent as nioårig 7–9, and the INFEASIBLE route names the span
+         * back at both ends, for each code whose `grades` is a class span.
+         */
+        yearNumbered(numbering);
+        arrangeAcross(classes);
+        answerWithConflicts((payload) => ({
+          summary: 'blocked',
+          summaryCode: 'CONFLICT_CORE_SUMMARY',
+          summaryParams: {},
+          conflicts: [
+            {
+              category: 'AVAILABILITY',
+              code,
+              params: { grades: spanText(payload), minutes: 60 },
+              message: 'blocked',
+              requirementIds: [],
+              roomIds: [],
+              constraintIds: [],
+              resourceIds: [],
+            },
+          ],
+        }));
+
+        const { conflicts } = (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!;
+
+        expect(conflicts.map((detail) => detail.params)).toEqual([{ grades: said, minutes: 60 }]);
+      });
+
+      it('sends specialskolans åk 11 as 10 and twelve as twelve, and names the span back as the läsår numbers it', async () => {
+        /*
+         * Twelve is "and above" in both numberings, so only the bottom of a
+         * group of åk 11 and åk 12 pupils moves: 10–12 to the engine, each
+         * class on its own as 10 and 12, and 11–12 back to the school.
+         */
+        yearNumbered('TIOARIG');
+        arrangeAcross([12, 11]);
+        refuseFirstRequirement('ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT', spanText);
+
+        const refused = await refusedParams();
+        const payload = postedPayload();
+
+        expect(payload.requirements[0]).toMatchObject({ minGradeLevel: 10, maxGradeLevel: 12 });
+        expect(payload.groups.map((group) => [group.minGradeLevel, group.maxGradeLevel]).sort()).toEqual([
+          [10, 10],
+          [12, 12],
+        ]);
+        expect(refused).toMatchObject({ code: 'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT', params: { grades: '11–12' } });
+      });
+
+      it('sends a class no year can be derived for without one, not one guessed down', async () => {
+        // Unknown is unrestricted to the engine, and still unknown here.
+        yearNumbered('TIOARIG');
+        arrange({ homeMembers: [], groups: [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS' }] });
+        echoEngine();
+        const warn = warnings();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = postedPayload();
+
+        expect(payload.requirements[0]).toMatchObject({ minGradeLevel: null, maxGradeLevel: null });
+        expect(payload.groups).toEqual([expect.objectContaining({ minGradeLevel: null, maxGradeLevel: null })]);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/^1 group\(s\) with requirements have no derivable year/),
+        );
+      });
+
+      it('sends a salslås and the spans that run to twelve as the school stated them', async () => {
+        /*
+         * A lock is a salsregel like a wish, and a frame, a sitting, a rast or
+         * a room for 10–12 is nioårig 10–12: none is read one down. Each would
+         * move if it were, since toNioarig takes 10 to 9.
+         */
+        const upper = { minGradeLevel: 10, maxGradeLevel: 12 };
+        yearNumbered('TIOARIG');
+        arrange({
+          groups: [{ id: GROUP_ID, gradeLevel: 11, kind: 'CLASS' }],
+          frames: [frame(upper)],
+          servings: [serving(upper)],
+          rasts: [rast(upper)],
+          rooms: [{ id: ROOM_ID, capacity: 30, roomTypeId: 'room-type-lab', ...upper }],
+          roomPreferences: [
+            {
+              id: 'lock-1',
+              subjectId: SUBJECT_ID,
+              kind: 'LOCK',
+              ...upper,
+              roomTypeId: null,
+              weight: 50,
+              rooms: [{ roomId: ROOM_ID }],
+            },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = postedPayload();
+
+        expect(payload.requirements[0]).toMatchObject({ minGradeLevel: 10, maxGradeLevel: 10 });
+        expect(payload.roomPreferences[0]).toMatchObject({ kind: 'LOCK', ...upper });
+        for (const span of schoolWideSpans(payload)) {
+          expect(span).toMatchObject(upper);
+        }
       });
     });
   });

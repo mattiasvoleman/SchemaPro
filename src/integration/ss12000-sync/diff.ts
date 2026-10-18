@@ -1,4 +1,4 @@
-import { toNioarig, type GradeNumbering } from '../../common/grade-numbering';
+import { unitGradeOf, type GradeNumbering } from '../../common/grade-numbering';
 import { normaliseUnitCode, spansOverlap, unitForGrade } from '../../school-units/school-unit-map';
 import type { FetchedRoster } from './fetch-plan';
 import { activeOn, isProtected, type DutyRole, type S1Duty, type S1Group, type S1Organisation, type S1Person } from './s1';
@@ -1122,7 +1122,8 @@ function sourceCode(organisation: S1Organisation, note: UnitsDiffInput['note'], 
  * `today`, in the nine-year numbering a unit's span is stated in (0..10); null
  * when none gives one. The register numbers its årskurser as the läsår
  * containing `today` does (`numbering`): from HT 2028 a tioårig register's
- * 8–10 is the unit's 7–9, never a widening to 10.
+ * 8–10 is the unit's 7–9, never a widening to 10, and its new åk 1 a 1–6
+ * unit's 1, never a widening to förskoleklass (unitGradeOf).
  */
 function sourceSpan(
   roster: FetchedRoster,
@@ -1134,7 +1135,7 @@ function sourceSpan(
   for (const person of roster.persons.values()) {
     for (const enrolment of person.enrolments) {
       if (enrolment.organisationId !== organisationId || enrolment.cancelled || !activeOn(today, enrolment.startDate, enrolment.endDate)) continue;
-      const grade = toNioarig(enrolment.schoolYear, numbering);
+      const grade = unitGradeOf(enrolment.schoolYear, numbering);
       if (grade !== null && grade >= 0 && grade <= 10) grades.push(grade);
     }
   }

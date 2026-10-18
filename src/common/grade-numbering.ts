@@ -117,6 +117,19 @@ export function unitSpanIn(
   return { gradeFrom: span.gradeFrom <= 1 ? 1 : span.gradeFrom + 1, gradeTo: span.gradeTo + 1 };
 }
 
+/**
+ * The årskurs a skolenhet's nioårig span must hold for a class of `grade` in a
+ * läsår of `numbering`: unitSpanIn read the other way, one class at a time, so
+ * a unit holds the class exactly when gradeFrom <= this <= gradeTo. A tioårig
+ * åk 1 is a 1–6 unit's (övergångsbestämmelse 5), never förskoleklassens, so
+ * it reads as 1; every other tioårig årskurs one down. For a reader that sets
+ * or widens a unit's span from where its classes are (the SS12000 sync).
+ */
+export function unitGradeOf(grade: number | null, numbering: GradeNumbering): number | null {
+  if (grade === null || numbering === 'NIOARIG') return grade;
+  return grade <= 1 ? 1 : toNioarig(grade, numbering);
+}
+
 /** Whether a lydelse ('HT2028', 'HT2024' …) numbers its årskurser TIOARIG. */
 export function lydelseIsTioarig(appliesFromCohortTerm: string): boolean {
   const match = /^(?:HT|VT)(\d{4})$/.exec(appliesFromCohortTerm);

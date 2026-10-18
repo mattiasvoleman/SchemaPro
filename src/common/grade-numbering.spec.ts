@@ -5,6 +5,7 @@ import {
   planRowOf,
   toNioarig,
   toNioarigSpan,
+  unitGradeOf,
   unitSpanIn,
 } from './grade-numbering';
 
@@ -84,5 +85,24 @@ describe('a skolenhet in a TIOARIG läsår (SFS 2025:729 övergångsbestämmelse
     expect(unitSpanIn({ gradeFrom: 0, gradeTo: 0 }, 'TIOARIG')).toBeNull();
     expect(unitSpanIn({ gradeFrom: 0, gradeTo: 6 }, 'NIOARIG')).toEqual({ gradeFrom: 0, gradeTo: 6 });
     expect(unitSpanIn({ gradeFrom: null, gradeTo: null }, 'TIOARIG')).toBeNull();
+  });
+
+  it('reads a class back to the årskurs a unit must hold: the new åk 1 as 1, the rest one down', () => {
+    expect([1, 2, 7, 8, 10, 11, 12].map((grade) => unitGradeOf(grade, 'TIOARIG'))).toEqual([1, 1, 6, 7, 9, 10, 12]);
+    expect([0, 1, 9, 10].map((grade) => unitGradeOf(grade, 'NIOARIG'))).toEqual([0, 1, 9, 10]);
+    expect(unitGradeOf(null, 'TIOARIG')).toBeNull();
+  });
+
+  it('is unitSpanIn the other way: a unit holds a tioårig class exactly when its span holds unitGradeOf', () => {
+    for (let from = 0; from <= 10; from++) {
+      for (let to = from; to <= 10; to++) {
+        const read = unitSpanIn({ gradeFrom: from, gradeTo: to }, 'TIOARIG');
+        for (let grade = 1; grade <= 12; grade++) {
+          const held = read !== null && read.gradeFrom <= grade && grade <= read.gradeTo;
+          const back = unitGradeOf(grade, 'TIOARIG')!;
+          expect([from, to, grade, from <= back && back <= to]).toEqual([from, to, grade, held]);
+        }
+      }
+    }
   });
 });
