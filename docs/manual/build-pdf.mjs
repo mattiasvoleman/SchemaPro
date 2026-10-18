@@ -25,13 +25,13 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "../../web/node_modules/playwright/index.mjs";
 
 const DOCS = {
-  anvandarmanual: { html: "anvandarmanual.html", pdf: "SchemaPro-Anvandarmanual.pdf",
-                    footer: "SchemaPro — Användarmanual" },
-  lararmanual:    { html: "lararmanual.html",    pdf: "SchemaPro-Lararmanual.pdf",
-                    footer: "SchemaPro — Lärarmanual" },
+  anvandarmanual: { html: "anvandarmanual.html", pdf: "Rastra-Schema-Anvandarmanual.pdf",
+                    footer: "Rastra Schema — Användarmanual" },
+  lararmanual:    { html: "lararmanual.html",    pdf: "Rastra-Schema-Lararmanual.pdf",
+                    footer: "Rastra Schema — Lärarmanual" },
   vardnadshavarmanual: { html: "vardnadshavarmanual.html",
-                    pdf: "SchemaPro-For-vardnadshavare.pdf",
-                    footer: "SchemaPro — För vårdnadshavare" },
+                    pdf: "Rastra-Schema-For-vardnadshavare.pdf",
+                    footer: "Rastra Schema — För vårdnadshavare" },
 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));

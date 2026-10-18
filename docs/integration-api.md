@@ -1,11 +1,18 @@
-# SchemaPro integration API (SS12000)
+# Rastra timetable integration API (SS12000)
 
 External systems (Vklass, IST, StudyBee, municipal registries) integrate in
 two ways. `/ss12000/v1` is a REST API modeled on **SS12000:2020** naming and
 resources, a pragmatic subset whose mapping below is the contract.
 `/ss12000/v2.0` is SS12000 2.1 in the standard's own shape (SIS OpenAPI
-2.1.0). SchemaPro also pulls the roster from an SS12000 source (the consumer,
+2.1.0). Rastra timetable also pulls the roster from an SS12000 source (the consumer,
 further down).
+
+**The name.** Rastra timetable (Rastra Schema in Swedish, formerly SchemaPro)
+was renamed on 2026-10-17. The rename changes no path, key, header or id: the
+webhook's `X-SchemaPro-Delivery`, `X-SchemaPro-Timestamp` and
+`X-SchemaPro-Signature` headers, its User-Agent `SchemaPro-SS12000-Webhook/2.1`,
+the namespace of every derived id and the calendar feed's UIDs stay as they
+are, so nothing an integration stored or verifies moves.
 
 ## Authentication
 
@@ -70,7 +77,7 @@ Deviations from the standard, stated: paging is the house's
 `{totalCount, limit, offset, data}` ordered by the post's id, not `pageToken`;
 no `expand`, `expandReferenceNames` or filters (no `modifiedAfter`: `meta.modified`
 is best effort). `startDate`/`endDate` mean "employment at the skolenhet" in
-the standard; SchemaPro holds no employment date, so the läsår's bounds are
+the standard; Rastra timetable holds no employment date, so the läsår's bounds are
 sent, and a teacher gets a **new Duty id every läsår** (posts are per year).
 
 **A post that changes during the year** (`TeacherEmploymentPeriods`,
@@ -82,7 +89,7 @@ clipped to those dates. Every day of the läsår is in exactly one of them.
 `meta.created` is the post's; `meta.modified` is the latest of the post's,
 its periods' and its mentorships'. The first stretch keeps the post's id, so
 a reference to the post's Duty still resolves. Every other stretch has an
-id SchemaPro derives from its first day and a value of the post that no
+id Rastra timetable derives from its first day and a value of the post that no
 integration ever gets: the same for as long as the stretch starts on that day,
 so a period no Duty shows names nothing and moves no id, and not one a
 reader can compute, so a stretch that is buried says nothing of when the
@@ -119,7 +126,7 @@ switch knowing it:
   feed sends stays the same. For a post split into stretches it is also the
   latest `updatedAt` of the post's periods, which moves the same way. A system
   polling the feed can see that something it is not shown changed on that
-  teacher's post at that time. SchemaPro has
+  teacher's post at that time. Rastra timetable has
   no per-column timestamp to narrow it to the sent fields; the post's own
   version history (TeacherEmploymentLogs) is deliberately not readable by the
   service principal.
@@ -160,7 +167,7 @@ S1's only security scheme is `BearerAuth` (http, bearer). The integration key
 is that bearer: `Authorization: Bearer sp_…`. `X-API-Key: sp_…` is also
 accepted. A key resolves to one school. A missing, malformed or revoked key
 answers **401** `{code: "UNAUTHENTICATED", …}` with `WWW-Authenticate: Bearer`;
-S1 has no 401, so this is SchemaPro's extension.
+S1 has no 401, so this is Rastra timetable's extension.
 
 Each key has **scopes** (`IntegrationApiKeys.scopes`, migration
 `20261014120000`):
@@ -219,12 +226,12 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
   during it. `ModifiedDesc` can skip or repeat an object that is modified
   mid-walk, which is inherent in sorting by a value that moves.
 * **Filters.** Every parameter S1 defines for an operation is accepted. A
-  filter on an attribute SchemaPro never holds (`civicNo`, `identifier.*`,
+  filter on an attribute Rastra timetable never holds (`civicNo`, `identifier.*`,
   `eduPersonPrincipalName`, `organisationCode`, `municipalityCode`, `parent`,
   the placement relationship types, the `civicNos` of a lookup) answers an
   empty page, which is true. A parameter S1 does not define, or a value that
   is not what S1's schema says, is 400 `INVALID_FILTER`. A sortkey on a field
-  SchemaPro never holds (`CivicNo*`, `SubjectCode*`, `Course*`) is 400
+  Rastra timetable never holds (`CivicNo*`, `SubjectCode*`, `Course*`) is 400
   `SORTKEY_NOT_SUPPORTED`. Arrays are repeated parameters
   (`?groupType=Klass&groupType=Undervisning`). Date filters on a value that is
   not set always include the object, as S1's endDate filters say.
@@ -245,7 +252,7 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
   echoes a value you sent. **Logs carry the method, the path and the status,
   never the query string**, so a personnummer or a name in a filter never
   reaches a log line. That holds also for a request under `/ss12000/v2.0`
-  that no route answers (an S1 endpoint SchemaPro does not serve, a wrong
+  that no route answers (an S1 endpoint Rastra timetable does not serve, a wrong
   method): the house error filter drops its query from the log and from
   `instance`. A page token missing a parameter the operation requires is
   `INVALID_PAGE_TOKEN`.
@@ -259,21 +266,21 @@ address. Past either limit the answer is 429 `TOO_MANY_REQUESTS` with
 
 | Object | Id |
 |---|---|
-| Person, PersonReference | the source's id when an admin linked the person (`Users.ss12000Id`), else SchemaPro's |
-| Group, GroupReference | the source's id when linked (`StudentGroups.ss12000Id`), else SchemaPro's |
+| Person, PersonReference | the source's id when an admin linked the person (`Users.ss12000Id`), else Rastra timetable's |
+| Group, GroupReference | the source's id when linked (`StudentGroups.ss12000Id`), else Rastra timetable's |
 | Organisation | one `Skolenhet` per skolenhet the school has (SchoolUnits, set up under Klasser or created by the consumer from the source): the source's id once the unit is linked, else the unit's own. A school without units is emitted itself, as before units: the source's skolenhet id when exactly one is chosen (organisationType `Skolenhet`, with its `schoolUnitCode`); with several, the school's own id as a `Skola`; with none, the school's own id as a `Skolenhet`. The sync turns the chosen skolenheter into units |
 | Duty, DutyReference | the teacher's earliest live teaching-role duty at the source for the active year (`Ss12000DutyLinks`), else the post's id (`TeacherEmployments.id`, as v1). A teacher with a source duty and no post is referenced by that duty id in activities and events, but `/duties` serves posts only. A teacher with neither is left out |
-| Activity | the master lesson's id. An ad-hoc lesson's own Activity has a UUIDv5 (SchemaPro namespace, name `adhoc-activity:<lesson id>`) and never the lesson's id |
-| CalendarEvent, Room, Syllabus | SchemaPro's own |
+| Activity | the master lesson's id. An ad-hoc lesson's own Activity has a UUIDv5 (Rastra timetable namespace, name `adhoc-activity:<lesson id>`) and never the lesson's id |
+| CalendarEvent, Room, Syllabus | Rastra timetable's own |
 
 Path ids, filters and lookups accept any RFC 4122 uuid version, matched
 lowercased. IST's ids are not promised to be version 4. A link made after a
-consumer saw an object under SchemaPro's id buries the old id in
+consumer saw an object under Rastra timetable's id buries the old id in
 `/deletedEntities`, so the consumer drops the duplicate.
 
 ### Resources, field by field
 
-Only an S1 property is ever written, and an optional one only when SchemaPro
+Only an S1 property is ever written, and an optional one only when Rastra timetable
 holds a value for it.
 
 **Organisations** (`organisations.read`): one `Skolenhet` per unit. `id`,
@@ -313,11 +320,11 @@ a new enrolment, and moving up a year is not one either: the summer between
 two consecutive läsår does not break the chain. There is no `endDate` while
 the pupil is active.
 `responsibles` holds `{person}` only; **`relationType` is omitted** because
-SchemaPro does not store it. **`eduPersonPrincipalNames` is omitted**: S1
+Rastra timetable does not store it. **`eduPersonPrincipalNames` is omitted**: S1
 defines it as "spårbar, persistent och globalt unik", and an email address can
 change and be reused. v1 still sends the email there. Expands: `duties`,
 `responsibleFor`, `groupMemberships` (`{group: GroupFragment, startDate,
-endDate}`), and `placements`/`ownedPlacements` (always `[]`; SchemaPro has no
+endDate}`), and `placements`/`ownedPlacements` (always `[]`; Rastra timetable has no
 förskola or fritids). `relationship.*` filters act on enrolment, duty,
 responsibleFor.enrolment and groupMembership relations.
 
@@ -418,7 +425,7 @@ närvarorapport's rule, the lesson's length rounded to whole minutes:
 | Ogiltig frånvaro (ABSENT) | 0 | 0 | the lesson |
 | Sen (LATE) | the lesson less 15 | 0 | 15 (at most the lesson) |
 
-**Never written:** `absenceReason` (SchemaPro does not hand out a reason,
+**Never written:** `absenceReason` (Rastra timetable does not hand out a reason,
 under any name), `reporter` (a member of staff's activity, not the pupil's
 attendance), `otherAttendanceMinutes` (not held) and `reportedTimestamp`
 (the register stamps its time anew at every save, so it would say when the
@@ -480,7 +487,7 @@ that are not uuids are 400 `INVALID_BODY`.
 
 ### Attendances and Absences (SS12000-närvaro)
 
-Pupils' attendance and absence leave SchemaPro only when **the school has
+Pupils' attendance and absence leave Rastra timetable only when **the school has
 decided so**: rektor or a full administrator records the decision under
 Integrationer → API-nycklar → *Närvaro och frånvaro till integrationer*
 (`POST /api/v1/integrations/attendance-sharing {shares, reference?}`,
@@ -521,7 +528,7 @@ decision is not shared.**
     and so is everything else that goes, so an integration that keeps
     calling it without naming categories (S1's default) keeps deleting
     what it must. A subscription is told of those removals too. Only what
-    may have left SchemaPro is told: a record or report created during the
+    may have left Rastra timetable is told: a record or report created during the
     stop and removed during it was never handed out, and is told to
     nobody, also not with a pupil who leaves (told at the instant of the
     pupil's own removal, it would count the absences the pupil had while
@@ -686,7 +693,7 @@ för multipla förändringar"). The delivery watermark is a transaction-id
 horizon, not a time, so a change committed late is never skipped. Any 2xx is
 accepted (S1 names 200).
 
-**Signing** (a SchemaPro extension, in headers only):
+**Signing** (a Rastra timetable extension, in headers only):
 
 ```
 X-SchemaPro-Delivery:  <uuid per attempt>
@@ -726,18 +733,18 @@ subscription.
 
 | Item | Reason |
 |---|---|
-| `Placement` | S1 uses it for förskola and fritids only (`schoolType` FS, FTH, OPPFTH). SchemaPro holds no such data |
-| `AttendanceEvent`, `AttendanceSchedule`, `AggregatedAttendance` | Check-ins and fritids schedules SchemaPro does not hold, and a sum a consumer can make from `/attendances` |
-| Writing attendance or absence (`POST /attendances`, `DELETE /attendances/{id}`, `POST /absences`) | The register is the teachers' and the families', in SchemaPro; an integration reads it |
+| `Placement` | S1 uses it for förskola and fritids only (`schoolType` FS, FTH, OPPFTH). Rastra timetable holds no such data |
+| `AttendanceEvent`, `AttendanceSchedule`, `AggregatedAttendance` | Check-ins and fritids schedules Rastra timetable does not hold, and a sum a consumer can make from `/attendances` |
+| Writing attendance or absence (`POST /attendances`, `DELETE /attendances/{id}`, `POST /absences`) | The register is the teachers' and the families', in Rastra timetable; an integration reads it |
 | `Attendance.absenceReason`, `reporter`, `otherAttendanceMinutes`, `reportedTimestamp`; `Absence.registeredBy` | A reason under any name never leaves, nor who reported or registered; no other activity is held; the register stamps its time anew at every save, so it would say when the register was last saved, not when attendance was taken. See "Attendances and Absences" |
 | `Absence.organisation` | Optional in S1. The skolenhet of an absence would be the pupil's class's, which moves at every rollover without the absence changing; the `organisation` filter matches the pupil's class instead |
-| `Programme`, `StudyPlan`, `SchoolUnitOffering`, `Resource`, `Grade`, `/log`, `/statistics` | No source in SchemaPro |
+| `Programme`, `StudyPlan`, `SchoolUnitOffering`, `Resource`, `Grade`, `/log`, `/statistics` | No source in Rastra timetable |
 | A token endpoint for this provider | S1 requires only a bearer; the key is one. A JWT issuer would need a signing key of its own |
 | civicNo, addresses, phone numbers, securityMarking, middleName | Not stored, or not stored for this |
 
 ## Pulling the roster from a source (SS12000 consumer)
 
-The other direction: SchemaPro reads its pupils, staff, guardians and classes
+The other direction: Rastra timetable reads its pupils, staff, guardians and classes
 from the school's student register (IST, Edlevo or any other provider of the
 standard) instead of having them typed in twice. Nothing in the school changes
 until an admin applies a diff, or a nightly run the admin explicitly enabled
@@ -824,7 +831,7 @@ record is parsed.
 
 ### Mapping
 
-| SS12000 | SchemaPro | rule |
+| SS12000 | Rastra timetable | rule |
 |---|---|---|
 | `Person.id` | `Users.ss12000Id` | matched first, always |
 | `givenName` / `familyName` | `firstName` / `lastName` | UPDATE when different |
@@ -836,7 +843,7 @@ record is parsed.
 | Klass `groupMemberships` active on T | `Users.studentGroupId` | through the role-guarded write; P4's trigger records the move (dated the school's today) |
 | Undervisning `groupMemberships` | `StudentGroupMembers` | added, never removed |
 | `Duty.id` | `Ss12000DutyLinks` | no HR figure; an ended duty gets `endedAt` |
-| a chosen `Organisation` of type `Skolenhet` | `SchoolUnits` (`ss12000Id`, name, `code`, `schoolTypes`) | matched by id, else LINKed to the one unlinked unit with the same skolenhetskod (or, without a code, the same name), else CREATEd; the source owns the name, a valid eight-digit code and the skolformer SchemaPro holds; never automatic |
+| a chosen `Organisation` of type `Skolenhet` | `SchoolUnits` (`ss12000Id`, name, `code`, `schoolTypes`) | matched by id, else LINKed to the one unlinked unit with the same skolenhetskod (or, without a code, the same name), else CREATEd; the source owns the name, a valid eight-digit code and the skolformer Rastra timetable holds; never automatic |
 | active enrolments' `schoolYear` at the skolenhet | the unit's årskurs span | a FULL run only: set where the unit has none, widened to hold them, never narrowed; deselected after a local edit |
 | `securityMarking` ≠ Ingen | — | every change for the person deselected, never automatic, not stored; any value other than `Ingen` (another Unicode form, case, an unknown value) counts as protected |
 
@@ -856,7 +863,7 @@ nothing; the dependants are skipped with `SS12000_DEPENDENCY_NOT_APPLIED`.
 Skolenheter: a code that is not eight digits is `SCHOOL_UNIT_CODE_INVALID`
 and is not written; one another unit of the school holds is
 `SCHOOL_UNIT_CODE_TAKEN`; a span that would share an årskurs with another unit
-is `SCHOOL_UNIT_SPAN_OVERLAP`; a skolform outside the seven SchemaPro holds
+is `SCHOOL_UNIT_SPAN_OVERLAP`; a skolform outside the seven Rastra timetable holds
 (`FKLASS`, `FTH`, `GR`, `GRS`, `TR`, `SP`, `SAM`) is
 `SCHOOL_UNIT_TYPES_UNSUPPORTED`; a chosen organisation of another type is
 `ORGANISATION_NOT_SKOLENHET`; a linked unit the source no longer reads is
@@ -1194,6 +1201,6 @@ Wire personnummer/civic numbers are intentionally not accepted or stored.
 
 ## Positioning
 
-`/activities` + `/calendarEvents` are the "lesson export" that lets SchemaPro
+`/activities` + `/calendarEvents` are the "lesson export" that lets Rastra timetable
 act as the scheduling engine feeding an existing Skola24/Vklass installation —
 the adoption wedge from the parity roadmap.

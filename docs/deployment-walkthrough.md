@@ -1,6 +1,6 @@
-# Setting up SchemaPro — a step-by-step walkthrough
+# Setting up Rastra — a step-by-step walkthrough
 
-This guide takes you from nothing to a working SchemaPro installation. It
+This guide takes you from nothing to a working Rastra installation. It
 assumes no prior experience with servers, databases or Docker. Every step says
 what you are doing, exactly what to click or paste, and how to check it worked
 before you move on.
@@ -36,7 +36,7 @@ is not the same as being able to tell when something has gone subtly wrong.
 
 ## What you are building
 
-SchemaPro is four separate pieces that talk to each other. You will set each up
+Rastra is four separate pieces that talk to each other. You will set each up
 in turn.
 
 | Piece | What it does | Think of it as |
@@ -148,7 +148,7 @@ Still in Supabase, so that staff can sign in and get invitation emails.
      reminder — invitation emails will go to the wrong place until you do.
 2. Go to **Authentication → Providers → Email**.
    - Turn **off** "Allow new users to sign up".
-   - This matters: SchemaPro has no public registration by design. Staff are
+   - This matters: Rastra has no public registration by design. Staff are
      invited by an administrator. Leaving this on would let anyone on the
      internet create an account.
 3. Optional but recommended for a real school: **Authentication → SMTP**.
@@ -166,7 +166,7 @@ up" is off.
 **This is the step that matters most.** Read the whole thing before doing it.
 
 The database has an all-powerful administrator account. The API must *not* use
-it. SchemaPro keeps each school's data separate using database rules that only
+it. Rastra keeps each school's data separate using database rules that only
 apply to restricted accounts — the administrator account is exempt from them,
 by design, the way a master key opens every door.
 
@@ -433,7 +433,7 @@ no red messages mentioning CORS.
 
 ## Step 9 — Create the first school and administrator
 
-There is no sign-up button anywhere in SchemaPro — the first administrator has
+There is no sign-up button anywhere in Rastra — the first administrator has
 to be created by hand, and everyone after that is invited from inside the app.
 
 1. In Supabase, go to **Authentication → Users → Add user**.

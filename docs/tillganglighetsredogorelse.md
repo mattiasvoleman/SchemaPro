@@ -1,8 +1,8 @@
-# Tillgänglighetsredogörelse för SchemaPro
+# Tillgänglighetsredogörelse för Rastra Schema
 
-{Huvudmannens namn} står bakom SchemaPro, skolans tjänst för schema, närvaro och frånvaro. Vi vill att så många som möjligt ska kunna använda tjänsten. Den här redogörelsen beskriver hur SchemaPro uppfyller lagen om tillgänglighet till digital offentlig service, vilka tillgänglighetsproblem vi känner till och hur du kan rapportera brister till oss så att vi kan åtgärda dem.
+{Huvudmannens namn} står bakom Rastra Schema, skolans tjänst för schema, närvaro och frånvaro. Vi vill att så många som möjligt ska kunna använda tjänsten. Den här redogörelsen beskriver hur Rastra Schema uppfyller lagen om tillgänglighet till digital offentlig service, vilka tillgänglighetsproblem vi känner till och hur du kan rapportera brister till oss så att vi kan åtgärda dem.
 
-Redogörelsen gäller webbtjänsten SchemaPro: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, och Schemavisaren, där skolan delar sitt publicerade schema med en länk. Den gäller inte SchemaPros mobilapp, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.
+Redogörelsen gäller webbtjänsten Rastra Schema: inloggningen, alla sidor för skolans administratörer, lärare, elever och vårdnadshavare, och Schemavisaren, där skolan delar sitt publicerade schema med en länk. Den gäller inte mobilappen, som ännu inte finns i App Store eller Google Play. Appen får en egen redogörelse när den publiceras där.
 
 ## Hur tillgänglig är tjänsten?
 
@@ -10,7 +10,7 @@ Vi är medvetna om att delar av tjänsten inte är helt tillgängliga. Se avsnit
 
 ### Vad kan du göra om du inte kan använda delar av tjänsten?
 
-Om du behöver innehåll från SchemaPro som inte är tillgängligt för dig kan du kontakta oss:
+Om du behöver innehåll från Rastra Schema som inte är tillgängligt för dig kan du kontakta oss:
 
 - E-post: [{e-postadress}](mailto:{e-postadress})
 - Telefon: {telefonnummer}
@@ -27,7 +27,7 @@ Myndigheten för digital förvaltning (Digg) har ansvaret för tillsyn över lag
 
 ## Teknisk information om tjänstens tillgänglighet
 
-SchemaPro är delvis förenlig med lagen om tillgänglighet till digital offentlig service, på grund av de brister som beskrivs nedan. Kraven är nivå AA i WCAG 2.1, som standarden EN 301 549 hänvisar till.
+Rastra Schema är delvis förenlig med lagen om tillgänglighet till digital offentlig service, på grund av de brister som beskrivs nedan. Kraven är nivå AA i WCAG 2.1, som standarden EN 301 549 hänvisar till.
 
 ## Innehåll som inte är tillgängligt
 
@@ -40,11 +40,11 @@ Det innehåll som beskrivs nedan är på ett eller annat sätt inte helt tillgä
 
 ### Innehåll som inte omfattas av lagen
 
-Vi känner inte till något innehåll i SchemaPro som är undantaget från lagen.
+Vi känner inte till något innehåll i Rastra Schema som är undantaget från lagen.
 
 ## Hur vi har testat tjänsten
 
-Vi har gjort en självskattning (intern testning) av SchemaPro:
+Vi har gjort en självskattning (intern testning) av Rastra Schema:
 
 - Automatisk granskning med verktyget axe mot WCAG 2.1 nivå A och AA av varje sida i tjänsten: inloggningen, alla sidor för administratörer, lärare, elever och vårdnadshavare (som var och en av rollerna), Schemavisaren och den här redogörelsen, i dator- och mobilbredd och i ljust och mörkt tema (Schemavisaren har bara det ljusa). Granskningen körs vid varje ändring av tjänsten. Den granskar sidorna som de ser ut när de har laddats, och dessutom huvudmenyn på mobil och notismenyn öppna. Andra dialogrutor och menyer som öppnas med ett klick granskas inte automatiskt; de ingår i skärmläsartestet, som återstår.
 - Granskning av vad hjälpmedel får veta om de viktigaste sidorna (namn, roller, rubriker och meddelanden), med sparade jämförelser som visar varje ändring.
@@ -53,4 +53,4 @@ Vi har gjort en självskattning (intern testning) av SchemaPro:
 
 Senaste bedömningen gjordes den 14 oktober 2026.
 
-Redogörelsen uppdaterades senast den 14 oktober 2026.
+Redogörelsen uppdaterades senast den 18 oktober 2026.

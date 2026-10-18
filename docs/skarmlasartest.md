@@ -1,4 +1,4 @@
-# Skärmläsartest av SchemaPro – manus
+# Skärmläsartest av Rastra Schema – manus
 
 Det här är manuset för det inspelade skärmläsartestet som tillgänglighetsredogörelsen ([tillganglighetsredogorelse.md](tillganglighetsredogorelse.md)) säger återstår. Testet görs av en person med en riktig skärmläsare. Manuset ska göra testet snabbt och möjligt att upprepa. Det täcker de viktigaste uppgifterna för de fyra rollerna: administratör, lärare, elev och vårdnadshavare. För varje steg står vad skärmläsaren ska säga.
 
@@ -151,7 +151,7 @@ Gör det här med VoiceOver på iPhone, eller i en smal webbläsare.
 | 5.1 | Välj "Öppna meny" i sidhuvudet | En dialog "Huvudmeny" öppnas, och fokus står på "Stäng". Svep eller Tabb stannar i dialogen. |
 | 5.2 | Tryck Escape eller välj "Stäng" | Dialogen stängs, och fokus går tillbaka till "Öppna meny" |
 | 5.3 | Öppna en tabell som är bredare än skärmen (till exempel Personer) | Tabellen går att nå med Tabb, och piltangenterna rullar den i sidled |
-| 5.4 | Öppna Tillgänglighetsredogörelse | Rubrik nivå 1 "Tillgänglighetsredogörelse för SchemaPro", rubriker nivå 2 och 3 i den ordning Diggs mall har dem, och länken "göra en anmälan till Digg" |
+| 5.4 | Öppna Tillgänglighetsredogörelse | Rubrik nivå 1 "Tillgänglighetsredogörelse för Rastra Schema", rubriker nivå 2 och 3 i den ordning Diggs mall har dem, och länken "göra en anmälan till Digg" |
 
 ## Efter testet
 
